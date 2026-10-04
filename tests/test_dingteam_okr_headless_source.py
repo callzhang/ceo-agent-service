@@ -223,6 +223,82 @@ def test_existing_local_account_uses_direct_submission_without_qr(monkeypatch):
     assert calls == [("submit", Page.url)]
 
 
+def test_local_account_submission_selects_visible_org_without_native_prompt(monkeypatch):
+    module = load_module()
+    calls = []
+
+    class Locator:
+        @property
+        def first(self):
+            return self
+
+        def filter(self, **_kwargs):
+            return self
+
+        def is_visible(self):
+            return True
+
+        def wait_for(self, **_kwargs):
+            pass
+
+        def click(self, **_kwargs):
+            calls.append("click")
+
+    class Page:
+        url = "https://login.dingtalk.com/oauth2/challenge.htm"
+
+        def locator(self, _selector):
+            return Locator()
+
+        def wait_for_timeout(self, _milliseconds):
+            pass
+
+    def unexpected_confirmation():
+        raise AssertionError("visible organization chooser needs no native prompt")
+
+    monkeypatch.setattr(module, "_confirm_local_dingtalk_login", unexpected_confirmation)
+    module._submit_local_dingtalk_account(Page())
+    assert calls == ["click", "click"]
+
+
+def test_local_account_submission_does_not_hide_failed_org_selection(monkeypatch):
+    module = load_module()
+
+    class Locator:
+        def __init__(self, selector):
+            self.selector = selector
+
+        @property
+        def first(self):
+            return self
+
+        def filter(self, **_kwargs):
+            return self
+
+        def is_visible(self):
+            return False
+
+        def wait_for(self, **_kwargs):
+            if self.selector == module.LOCAL_SSO_CORP_ITEM:
+                raise RuntimeError("target organization is unavailable")
+
+        def click(self, **_kwargs):
+            pass
+
+    class Page:
+        url = "https://login.dingtalk.com/oauth2/challenge.htm"
+
+        def locator(self, selector):
+            return Locator(selector)
+
+        def wait_for_timeout(self, _milliseconds):
+            pass
+
+    monkeypatch.setattr(module, "_confirm_local_dingtalk_login", lambda: None)
+    with pytest.raises(RuntimeError, match="target organization is unavailable"):
+        module._submit_local_dingtalk_account(Page())
+
+
 def test_local_account_submission_confirms_native_prompt_before_selecting_org(monkeypatch):
     module = load_module()
     calls = []
@@ -238,6 +314,9 @@ def test_local_account_submission_confirms_native_prompt_before_selecting_org(mo
 
         def wait_for(self, **kwargs):
             calls.append(("wait_for", kwargs))
+
+        def is_visible(self):
+            return False
 
         def click(self, **kwargs):
             calls.append(("click", kwargs))
@@ -258,7 +337,8 @@ def test_local_account_submission_confirms_native_prompt_before_selecting_org(mo
 
     module._submit_local_dingtalk_account(Page())
 
-    assert calls.index("confirm") < calls.index(("locator", module.LOCAL_SSO_CORP_ITEM))
+    assert calls.index("confirm") < len(calls) - 1
+    assert calls[-1] == ("click", {"timeout": module.LOCAL_SSO_TIMEOUT_MS})
 
 
 def test_local_account_submission_skips_native_confirmation_after_redirect(monkeypatch):

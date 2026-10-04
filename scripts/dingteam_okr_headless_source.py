@@ -123,18 +123,20 @@ def _submit_local_dingtalk_account(page) -> None:
     direct_login.click(timeout=LOCAL_SSO_TIMEOUT_MS)
 
     page.wait_for_timeout(LOCAL_SSO_DIALOG_DELAY_MS)
-    if _is_dingtalk_login_url(getattr(page, "url", "")):
+    corp = page.locator(LOCAL_SSO_CORP_ITEM).filter(
+        has_text=LOCAL_SSO_CORP_NAME
+    ).first
+    # The organization chooser shares the login URL but needs no native prompt.
+    if _is_dingtalk_login_url(getattr(page, "url", "")) and not corp.is_visible():
         _confirm_local_dingtalk_login()
 
     try:
-        corp = page.locator(LOCAL_SSO_CORP_ITEM).filter(
-            has_text=LOCAL_SSO_CORP_NAME
-        ).first
         corp.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
         corp.click(timeout=LOCAL_SSO_TIMEOUT_MS)
     except Exception:
         # A single-organization account navigates directly to Dingteam.
-        pass
+        if _is_dingtalk_login_url(getattr(page, "url", "")):
+            raise
 
 
 def _attempt_local_dingtalk_sso(page) -> bool:

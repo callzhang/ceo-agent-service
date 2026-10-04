@@ -9,6 +9,12 @@
 
 ## Unreleased
 
+- 2026-10-04: OKR local SSO selects an already-visible target organization
+  without requiring a nonexistent native confirmation dialog. An organization
+  selection failure on the login page remains a failure; only a completed
+  redirect may omit that selection. The same account, organization and
+  headless source boundaries remain unchanged.
+
 - 2026-10-04: WeChat Reader Skill operations require and forward an explicit
   service database path. Status and bounded reads can no longer silently inspect
   a checkout-local database. Missing database arguments fail before IPC starts;
