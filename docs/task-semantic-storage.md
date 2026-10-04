@@ -144,7 +144,9 @@ then retrieves related Tasks. Project roles and facts are not inferred from
 Task owners; a Project with no Task still brings its latest context revision,
 recent Project-to-Signal evidence, and the older Signals cited by current roles
 and facts. Same-source Projects and Tasks remain visible across source revisions
-regardless of lexical rank. Existing Attention membership is read unchanged;
+regardless of lexical rank. These forced Tasks are reserved before the remaining
+per-kind retrieval budget is filled; exceeding the budget for known source
+identity does not also retain unrelated ranked Tasks. Existing Attention membership is read unchanged;
 other Tasks in that Project are context, not automatically Attention members.
 
 Project revision reads are paginated (default 100; retrieval requests only the

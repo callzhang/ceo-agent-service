@@ -240,7 +240,9 @@ def retrieve_task_semantic_context(
     unverified_rows: list[BusinessTask] = []
     evidence_by_task: dict[int, tuple[BusinessTaskEvidence, ...]] = {}
     owner_signal_by_task: dict[int, int] = {}
-    for score, task in ranked_tasks:
+    # Reserve the bucket for all known same-source Tasks before filling its
+    # remaining lexical/Project budget; a forced overflow must not retain noise.
+    for score, task in sorted(ranked_tasks, key=lambda pair: pair[1].id not in same_source_task_ids):
         if (score <= 0 and task.id not in same_source_task_ids and task.id not in project_task_ids) or task.stage.value != "formal":
             continue
         task_evidence = store.list_business_task_evidence(task.id)

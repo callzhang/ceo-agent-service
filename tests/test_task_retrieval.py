@@ -79,6 +79,7 @@ def test_shared_source_same_source_formal_tasks_are_not_lost_to_rank_limit(tmp_p
         store.link_business_task_evidence(task_id=id, signal_id=signal, evidence_role="assignment")
         own.append(id)
     item = WorkItem.model_validate({"source": {"type": "ai_minutes", "ref": "meeting:own#new"}, "summary": "完全变了的措辞", "context": {"source_conversation_kind": "minutes"}})
+    _sourced_formal_task(store, title="完全变了的措辞", suffix="unrelated")
     context = retrieve_task_semantic_context(store, item, limit_per_kind=1)
     assert {task.id for task in context.formal_tasks} == set(own)
     payload = json.loads(render_task_semantic_context(context, work_item=item))

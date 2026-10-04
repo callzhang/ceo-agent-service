@@ -452,6 +452,8 @@ Work Item、当前存储/检索状态和新来源证据。Codex CLI 自己管理
 本分支检索先读取正式 Project 的独立当前 context，再读取相关 Tasks；零 Task 项目仍带最新资料版本、近期项目证明及职责/事实引用的旧来源，不从 Task owner 推导项目分工。项目与任务的同来源旧版本不因词面排名丢失；Project context revision 使用 limit=1，证据使用 limit_per_kind 的近期行并保留当前资料明确引用的 Signal，不加载全历史。
 `source_bundle` 让 source_documents 按精确来源版本装载正文一次，source_signals 保留实际 Signal ID、source_document_id、类型、ref、时间、作者、会话和上下文，使用 document_id 引用正文。当前 WorkItem 只在 current_work_item 保留元数据，其正文也进入同一来源装配；顶层 prompt 不再重复 summary。只有八项来源身份完全相同才共用现存正文 ID，否则 current:<identity hash> 仅是本轮输入定位，不伪造持久化 Signal ID。原 WorkItem 不变，继续供应用核验。
 历史长文沿原 2048 字符预算保留首尾及引用区间，输出 full_length、truncated 与真实半开字符 visible_ranges。JSON 解码引文单独标明一个实际字符串叶子的 path/start/end，不跨字段拼接；关键引用超预算时显式 citation_budget_exceeded，不静默删引用。当前输入延续原有完整正文可见性；若与旧 Signal 是同一精确版本，该共享文档保持全量可见。source_metrics 记录来源数、正文数、共享前/唯一/可见正文字符数；这是正文体积观测，不等于整个 prompt 的 token 保证。负责人引文校验仍读取数据库原文或单个解码叶子，输入呈现不改其证据身份。
+同来源已知正式 Task（含未核验正式行）先占用各自 bucket，剩余预算才放其他 Project/词面候选；为保留已知身份而超预算时，不额外保留先前排入的无关行。
+
 若 CLI 明确报告 compaction 自身因模型 context window 超限而失败，当前 run 会清除此 route 的共享
 session 指针并在同一路由的新 session 重试一次；若 fresh session 仍超限，则转入既有 runtime route
 fallback，不循环创建 session。普通会话冲突或其他错误不会清除共享 session。
