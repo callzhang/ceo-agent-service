@@ -17857,7 +17857,8 @@ class AutoReplyStore:
                           available_at=''
                           or datetime(available_at) <= datetime(?)
                       )
-                    order by datetime(eligible_at), id
+                    order by max(datetime(eligible_at),
+                        coalesce(datetime(nullif(available_at,'')), datetime(eligible_at))), id
                     limit ?
                 )
                 update meeting_alignment_jobs
@@ -17872,7 +17873,11 @@ class AutoReplyStore:
                 (now, now, limit),
             ).fetchall()
             jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
-            return sorted(jobs, key=lambda job: (job.eligible_at, job.id))
+            return sorted(jobs, key=lambda job: (
+                max(self._parse_stored_timestamp(job.eligible_at),
+                    self._parse_stored_timestamp(job.available_at or job.eligible_at)),
+                job.id,
+            ))
 
     def update_meeting_alignment_job(self, job_id: int, **values: object) -> None:
         if not values:

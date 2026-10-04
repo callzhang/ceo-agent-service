@@ -115,6 +115,32 @@ def _work_summary(store: AutoReplyStore) -> int:
     return store.enqueue_work_summary_input("reply_attempt", "task-1", "{}")
 
 
+@pytest.mark.parametrize("claim_path", ["dispatcher", "legacy"])
+def test_due_meeting_retry_does_not_starve_earlier_pending_attempt(
+    tmp_path: Path, claim_path: str
+) -> None:
+    store = _store(tmp_path)
+    retry_id = _meeting(store)
+    store.update_meeting_alignment_job(
+        retry_id, status="retry", available_at=(NOW - timedelta(minutes=1)).isoformat()
+    )
+    pending_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-2", title="New meeting", source_json="{}",
+        participants_json="[]", ended_at=(NOW - timedelta(minutes=5)).isoformat(),
+        eligible_at=(NOW - timedelta(minutes=3)).isoformat(), status="pending",
+    )
+    if claim_path == "dispatcher":
+        envelope = MeetingQueueAdapter(store).claim(
+            NOW, owner="dispatcher", owner_pid=42, lease=timedelta(minutes=5)
+        )
+        assert envelope is not None
+        claimed_id = int(envelope.source_id)
+    else:
+        claimed_id = store.claim_meeting_alignment_jobs(1, NOW.isoformat())[0].id
+    assert claimed_id == pending_id
+    assert store.get_meeting_alignment_job(retry_id).status == "retry"
+
+
 def _okr_review(store: AutoReplyStore, *, index: int = 1) -> int:
     return store.create_okr_review_request(
         conversation_id=f"okr-cid-{index}",

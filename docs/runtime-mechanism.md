@@ -1318,6 +1318,13 @@ when its task ID, generation, and pending status otherwise match. The mutation
 checks the lifecycle again under its write transaction.
 # Task Evidence Repair And Retired Anchors
 
+Meeting claims order attempts by the later of `eligible_at` and `available_at`,
+with the job ID as the tie-breaker. A due retry is not ordered by the meeting's
+original date: otherwise an old external dependency failure can repeatedly
+occupy the single meeting consumer and starve pending meetings. The dispatcher
+keyset scan and legacy claim path use the same ordering; eligibility, lease
+ownership, and external delivery guards are unchanged.
+
 Meeting discovery may refresh a waiting recording, but once a job is queued,
 claimed, retrying, ready for delivery or terminal, discovery cannot replace its
 persisted source snapshot or participant evidence. Recovery refreshes failed
