@@ -239,6 +239,16 @@ wording alone is not established as sufficient. The fixture/title contract needs
 an explicit resolution, and the remaining business-judgment failures need their
 own expected-vs-actual review before any further algorithm change.
 
+Readback of `candidate-contract2-project-risk-without-task.sqlite3` confirms that
+at least some apparent title-related “missing context” failures are evaluator-key
+cascades, not absent stored context: the Project row is titled
+`甲客户一期交付项目`, its latest revision contains the payment-date fact, Project
+evidence contains both meeting and chat Signals, no Task was created, and an active
+Attention item is linked to that Project. The oracle looks up context/card identity
+under `甲客户一期交付`, so it reports context, evidence and Attention mismatches
+for this exact-title difference. This evidence does not resolve whether the desired
+business title should retain or drop the generic suffix “项目”.
+
 The third run used commit `4cf23b9f` and the same loaded Skill SHA-256
 `11c5df5b30aec5acd3df7e31be3bca740609db02147875ad1831d898d1d357c2`. The full
 `tests/test_task_agent.py` file passed (**225 passed / 9.63s**), Ruff and
