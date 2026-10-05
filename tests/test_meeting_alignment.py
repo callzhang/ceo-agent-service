@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ConfigDict, create_model
 
 import app.meeting_alignment as meeting_alignment
 from app.agent_cron.commands import (
@@ -289,8 +290,14 @@ def test_delivery_cleanup_cannot_release_same_timestamp_successor(tmp_path):
     store.release_ready_to_send_meeting_alignment_claims([first])
     remaining = store.get_meeting_alignment_job(job_id)
     assert remaining.locked_at == first.locked_at
-    assert remaining.delivery_claim_token == second.delivery_claim_token
+    with sqlite3.connect(store.path) as db:
+        assert db.execute(
+            "select claim_token from meeting_alignment_delivery_claims where job_id=?",
+            (job_id,),
+        ).fetchone()[0] == second.delivery_claim_token
     assert first.delivery_claim_token != second.delivery_claim_token
+    store.release_ready_to_send_meeting_alignment_claims([second])
+    assert store.get_meeting_alignment_job(job_id).locked_at is None
 
 
 def test_delivery_and_cleanup_failure_preserve_both_errors(tmp_path, monkeypatch):
@@ -337,7 +344,7 @@ def test_delivery_claim_token_migration_preserves_existing_receipt(tmp_path):
     )
     store.update_meeting_alignment_job(job_id, send_result_json='{"status":"sent"}')
     with sqlite3.connect(path) as db:
-        db.execute("alter table meeting_alignment_jobs drop column delivery_claim_token")
+        db.execute("drop table meeting_alignment_delivery_claims")
     legacy_path = tmp_path / "legacy.sqlite3"
     with sqlite3.connect(path) as source, sqlite3.connect(legacy_path) as target:
         source.backup(target)
@@ -350,6 +357,90 @@ def test_delivery_claim_token_migration_preserves_existing_receipt(tmp_path):
     assert claimed.send_result_json == job.send_result_json
     migrated.release_ready_to_send_meeting_alignment_claims([claimed])
     assert migrated.get_meeting_alignment_job(job_id).locked_at is None
+
+
+def test_delivery_claim_migration_keeps_old_strict_job_model_readable(tmp_path):
+    from app.meeting_alignment_models import MeetingAlignmentJob
+
+    old_model = create_model(
+        "PreClaimTokenMeetingAlignmentJob", __config__=ConfigDict(extra="forbid"),
+        **{name: (field.annotation, field.default) for name, field in
+           MeetingAlignmentJob.model_fields.items() if name != "delivery_claim_token"},
+    )
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="ready_to_send",
+    )
+    claim = store.claim_ready_to_send_meeting_alignment_job(job_id, now=NOW.isoformat())
+    with sqlite3.connect(store.path) as db:
+        db.row_factory = sqlite3.Row
+        row = dict(db.execute("select * from meeting_alignment_jobs where id=?", (job_id,)).fetchone())
+    assert old_model.model_validate(row).id == job_id
+    store.release_ready_to_send_meeting_alignment_claims([claim])
+
+
+@pytest.mark.parametrize("entry", ["single", "batch_first", "batch_second"])
+def test_delivery_claim_insert_failure_rolls_back_job_lock(tmp_path, entry):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    ids = [store.upsert_meeting_alignment_job(
+        meeting_id=f"minutes-{index}", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="ready_to_send",
+    ) for index in range(2)]
+    failure_id = ids[1] if entry == "batch_second" else ids[0]
+    with sqlite3.connect(store.path) as db:
+        db.execute(f"""create trigger reject_claim before insert
+                      on meeting_alignment_delivery_claims when new.job_id={failure_id} begin
+                      select raise(abort, 'claim insert failed'); end""")
+    with pytest.raises(sqlite3.IntegrityError, match="claim insert failed"):
+        if entry != "single":
+            store.claim_ready_to_send_meeting_alignment_jobs(limit=2, now=NOW.isoformat())
+        else:
+            store.claim_ready_to_send_meeting_alignment_job(ids[0], now=NOW.isoformat())
+    assert [store.get_meeting_alignment_job(job_id).locked_at for job_id in ids] == [None, None]
+    with sqlite3.connect(store.path) as db:
+        assert db.execute("select count(*) from meeting_alignment_delivery_claims").fetchone()[0] == 0
+
+
+def test_delivery_claim_delete_failure_rolls_back_release(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="ready_to_send",
+    )
+    claim = store.claim_ready_to_send_meeting_alignment_job(job_id, now=NOW.isoformat())
+    with sqlite3.connect(store.path) as db:
+        db.execute("""create trigger reject_release before delete
+                      on meeting_alignment_delivery_claims begin
+                      select raise(abort, 'claim delete failed'); end""")
+    with pytest.raises(sqlite3.IntegrityError, match="claim delete failed"):
+        store.release_ready_to_send_meeting_alignment_claims([claim])
+    assert store.get_meeting_alignment_job(job_id).locked_at == claim.locked_at
+    with sqlite3.connect(store.path) as db:
+        assert db.execute(
+            "select claim_token from meeting_alignment_delivery_claims where job_id=?",
+            (job_id,),
+        ).fetchone()[0] == claim.delivery_claim_token
+
+
+def test_startup_reset_removes_interrupted_and_terminal_delivery_claims(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    ids = [store.upsert_meeting_alignment_job(
+        meeting_id=f"minutes-{index}", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="ready_to_send",
+    ) for index in range(2)]
+    store.claim_ready_to_send_meeting_alignment_jobs(limit=2, now=NOW.isoformat())
+    store.update_meeting_alignment_job(ids[1], status="sent", send_result_json='{"status":"sent"}')
+    terminal = store.get_meeting_alignment_job(ids[1])
+    assert [job.id for job in store.reset_ready_to_send_meeting_alignment_jobs()] == [ids[0]]
+    assert store.get_meeting_alignment_job(ids[0]).locked_at is None
+    assert store.get_meeting_alignment_job(ids[1]) == terminal
+    with sqlite3.connect(store.path) as db:
+        assert db.execute("select count(*) from meeting_alignment_delivery_claims").fetchone()[0] == 0
 
 
 def test_delivery_cleanup_leaves_terminal_rows_unchanged(tmp_path):
