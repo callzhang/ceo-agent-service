@@ -14,8 +14,8 @@ No deferral or resume was applied. Approval does not bypass this blocker.
 
 Derek confirmed that Consumer may use ordinary work tools, including document
 work; only system-registered actions requiring Audit are directly unavailable.
-The whole-result completion-phrase parser was removed rather than moved into
-Audit. Two RED-to-GREEN full Consumer regressions retain historical and fabricated
+The whole-result completion-phrase parser and its unreferenced helper/obsolete
+phrase tests were removed rather than moved into Audit. Two RED-to-GREEN full Consumer regressions retain historical and fabricated
 summary text while proving zero execution/action-attempt/external-result/send
 rows. Consumer focus passed 128 tests with four intentional skips.
 
