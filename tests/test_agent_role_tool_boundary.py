@@ -12,6 +12,7 @@ from app.agent_runtime_contracts import (
 from app.dws_client import DwsClient
 from app.native_cli_metadata import AgentReadOnlyViolationError
 from app.service_codex_config import ServiceMcpServer, service_mcp_config_options
+from app.system_action_handlers import native_dws_handlers
 from app.wechat.codex_safety import make_audit_agent_command, make_consumer_agent_command
 
 
@@ -86,6 +87,10 @@ def test_codex_roles_disable_builtin_execution_and_select_service_tools(tmp_path
     )
     assert "consumer_document_write" in consumer_tools
     assert "consumer_document_write" not in audit_tools
+    assert "consumer_artifact_write" in consumer_tools
+    assert "consumer_artifact_write" not in audit_tools
+    assert "read_task_artifact" in consumer_tools + audit_tools
+    assert "list_task_artifacts" in consumer_tools + audit_tools
     assert "send_approved_dingtalk_message" not in consumer_tools + audit_tools
     assert "unsubscribe_email" not in consumer_tools + audit_tools
 
@@ -143,12 +148,18 @@ def test_agent_cli_role_catalogue_excludes_controlled_effects() -> None:
     } <= audit_tools
     assert "consumer_document_write" not in audit_tools
     assert "consumer_document_write" in consumer_tools
+    assert {"read_task_artifact", "list_task_artifacts"} <= audit_tools
+    assert "consumer_artifact_write" not in audit_tools
+    assert "consumer_artifact_write" in consumer_tools
     for tools in (audit_tools, consumer_tools):
+        registered_operations = {operation for _capability, operation in native_dws_handlers(None, None)}
+        assert registered_operations.isdisjoint(tools)
         assert "execute_reviewed_read" not in tools
         assert "send_approved_dingtalk_message" not in tools
         assert "unsubscribe_email" not in tools
     assert all(tool.annotations.readOnlyHint for tool in audit_catalogue.values())
     assert consumer_catalogue["consumer_document_write"].annotations.readOnlyHint is False
+    assert consumer_catalogue["consumer_artifact_write"].annotations.readOnlyHint is False
 
 
 def test_role_oa_pending_read_has_no_date_filter(monkeypatch) -> None:

@@ -1,5 +1,35 @@
 # Consumer / Audit / System Execution Validation
 
+## Independently approved Consumer work boundary, 2026-10-05
+
+Derek confirmed that Consumer may use ordinary work tools, including document
+work; only system-registered actions requiring Audit are directly unavailable.
+The whole-result completion-phrase parser was removed rather than moved into
+Audit. Two RED-to-GREEN full Consumer regressions retain historical and fabricated
+summary text while proving zero execution/action-attempt/external-result/send
+rows. Consumer focus passed 128 tests with four intentional skips.
+
+Task-generation artifact read/list/write is implemented through the existing
+role MCP server, with Consumer-only writes and read-only Audit access. The
+server freezes the generation; every call rechecks it. The existing bound
+report writer now also rejects a superseded generation before provider dispatch.
+Returned content, SHA and lists fit the existing 128 KiB output budget. Ordinary
+receipts do not become System receipts. No shell, arbitrary argv, or controlled
+provider action was added to the role catalog. The registered handler operations
+are checked against both role catalogs. Focused artifact/agent_cli/role checks
+passed 48 tests; reviewed orchestration and executor checks passed 46 tests.
+
+The new frozen native v4 manifest preserves the original eight cases and adds
+seven approved-boundary cases, baseline a195c452b5f3b48ac20ed74022d2ae768d66332a,
+gpt-5.6-sol/high, serial execution and 300-second turn timeout. Harness checks
+passed 29 tests. Ordinary and System receipts in this tool-free corpus are
+explicitly synthetic supplied facts. The fabricated-summary Audit subject is
+injected symmetrically and rebound to each ref's strict model/digest. Literal
+screening remains diagnostic; exact-output semantic review and a separate actual
+ordinary-tool native probe are required. Neither native run nor new Quality CI
+is claimed by these focused tests. Production publication and the single
+principal-only acceptance send remain pending.
+
 ## Current scope clarification from Derek
 
 Derek confirms that interview work and XiaoQing (小青) submissions are handled in his personal conversations. A read-only production inventory finds14 enabled/non-deleted scheduled tasks and no explicit XiaoQing references in their names,prompts,commands or Skill references. The active personnel-communication Skill mentions candidate evaluation and specialist composition,not a scheduled upload requirement. Background XiaoQing transcript/result upload and its service-owned OAuth client are therefore outside this service rollout; they are no longer a release blocker. Personal-conversation tools and native read capabilities are preserved. Earlier pending-scope notes below record historical checkpoints and are superseded by this clarification.

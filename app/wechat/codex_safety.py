@@ -67,9 +67,12 @@ AGENT_CLI_READ_TOOLS = (
     "daily_report_facts",
     "weekly_report_materials",
     "read_weekly_report_archive",
+    "read_task_artifact",
+    "list_task_artifacts",
 )
 AGENT_CLI_CONSUMER_TOOLS = AGENT_CLI_READ_TOOLS + (
     "consumer_document_write",
+    "consumer_artifact_write",
     "validate_weekly_report",
     "render_weekly_report",
 )
@@ -87,9 +90,9 @@ ROLE_MCP_READ_TOOLS = {
     ),
 }
 
-# These native surfaces can mutate local/app state or delegate work outside
-# the task-bound MCP catalog. The service roles use the named MCP operations
-# below instead; Consumer's report-document tool remains available there.
+# These native surfaces can bypass the task-bound MCP catalog. Consumer uses
+# the named ordinary artifact and report-document tools in that catalog;
+# registered reviewed system operations remain owned by SystemExecutor.
 ROLE_DISABLED_NATIVE_FEATURES = (
     "shell_tool", "unified_exec", "unified_exec_tty", "shell_snapshot",
     "apps", "plugins", "remote_plugin", "hooks", "computer_use",

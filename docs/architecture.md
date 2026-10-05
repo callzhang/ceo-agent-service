@@ -821,6 +821,14 @@ frontmatter 并以 SHA 防止并发覆盖。用户、系统或插件目录中的
 
 Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，系统执行已持久化且审核通过的完整结构化动作。Consumer 保留报告、文档准备能力，不自行执行提交审核的受控动作；没有新增 update_daily_report 动作。Email 退订保持独立的系统直接流程。
 
+Consumer 可以直接使用普通工作工具，写入并读回本任务本代次的材料，或通过既有绑定的
+日报/周报接口操作文档。普通写入不因为有副作用而被一律改成待审核系统动作；其事实证据是
+真实工具结果与读回。`consumer_artifact_write` 写入任务工作目录，`read_task_artifact` 与
+`list_task_artifacts` 为两角色提供只读材料；Audit 没有对应写入工具。系统已注册且需要审核的
+动作仍必须完整提案 → Audit → SystemExecutor → 真实回执。Consumer 解析器不扫描整个候选的
+自然语言完成短语，也不把摘要转换成执行事实。是否引用历史完成、是否还需要业务动作，由
+完整候选、来源及实际回执判断；风险拒绝、授权缺失与历史拒绝不可重放的机制保留。
+
 上述新审核执行契约适用于实际使用 AgentOrchestrator 的业务候选。已授权微信会话的 task3 保留原有 WechatReplyConsumer / WechatDecisionRunner 决策与持久化 delivery，随后由独立 Sender 循环发送；它没有独立 Audit 回合，本次未迁移到 candidate/review/SystemExecutor。微信结果中的 audit_summary 不是独立审核回执。系统任务对应表不代表新增该任务的审核流程。
 
 候选分为动作计划和当前实例的人工问题。人工问题包含来源上下文、具体原因、证据、互斥可行选项及后果；可执行选项各自绑定完整动作计划，停止选项写明 skipped 和原因。只有 Derek 能补充的开放事实使用 requested_input，不制造假选择。不能混合立即执行的动作与尚未选择的条件分支。

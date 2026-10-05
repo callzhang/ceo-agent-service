@@ -509,6 +509,34 @@ def _result_jsonl(*, session: str = "session-a") -> str:
     )
 
 
+@pytest.mark.parametrize("summary", [
+    "来源人在后续会话已发送参考文档；本轮没有发送，当前无需追加动作。",
+    "本轮已发送通知。",
+])
+def test_consumer_summary_is_not_an_execution_receipt(store, task, context, summary):
+    wire = _wire_result({
+        "outcome": "no_action", "summary": summary, "proposal": None,
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+    })
+    stream = "\n".join((
+        json.dumps({"type": "thread.started", "thread_id": "summary-boundary"}),
+        json.dumps({"type": "item.completed", "item": {
+            "type": "agent_message", "text": json.dumps(wire),
+        }}),
+    ))
+    result = ConsumerAgentRunner(store=store, workspace=Path("/workspace"),
+        executor=CapturingExecutor(stream)).run(
+            task, context, proposal_revision=0, parent_agent_run_id=None,
+        )
+    assert result.result.outcome.value == "no_action"
+    assert result.result.summary == summary
+    assert store.get_reply_task(task.id).status == "processing"
+    with store._connect() as db:
+        for table in ("candidate_executions", "candidate_action_attempts",
+                      "external_action_results", "sent_replies"):
+            assert db.execute("select count(*) from " + table).fetchone()[0] == 0
+
+
 def test_consumer_persists_native_mcp_reads_from_codex_session(
     store, task, context, tmp_path, monkeypatch
 ):

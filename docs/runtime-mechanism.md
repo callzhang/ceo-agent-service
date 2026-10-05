@@ -42,6 +42,17 @@ Status 的每次请求从一份新的只读 SQLite 快照读取队列、Attentio
 
 Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，系统执行已持久化且审核通过的完整结构化动作。Consumer 保留报告、文档准备能力，不自行执行提交审核的受控动作；没有新增 update_daily_report 动作。Email 退订保持独立的系统直接流程。
 
+Consumer 的普通工具工作不因写入而自动进入系统动作审核。任务绑定的本地文件由
+`consumer_artifact_write` 写入 `CEO_WORKSPACE/consumer-artifacts/<task_id>/<execution_generation>`，
+Consumer 与 Audit 可用 `read_task_artifact`、`list_task_artifacts` 读取该代次材料；Audit 没有写工具。
+原 `consumer_document_write` 继续只处理绑定的日报/周报文档。工具返回的实际内容读回及 SHA
+证明普通材料写入，不是已审核消息或 OA 动作的 System 回执。原生 V8 可调用具名工具和计算，
+通用 shell / 项目代码执行仍不是当前角色的可用能力；不可用能力应如实报告，不能伪造执行。
+系统注册且需要审核的动作仍只由 SystemExecutor 执行。Consumer 的结果解析只验证严格 wire，
+不再对整份文字扫描“已发送”等完成短语；历史事实和本轮工作由完整来源及真实回执支撑，
+摘要不会生成 candidate execution、外部动作回执或 sent_replies。此规则不改变已有运行时风险拒绝、
+授权缺失或历史拒绝不可重放的处理。
+
 候选分为动作计划和当前实例的人工问题。人工问题包含来源上下文、具体原因、证据、互斥可行选项及后果；可执行选项各自绑定完整动作计划，停止选项写明 skipped 和原因。只有 Derek 能补充的开放事实使用 requested_input，不制造假选择。不能混合立即执行的动作与尚未选择的条件分支。
 
 Consumer 的业务结果与 wire JSON Schema 和解析器一致：`proposal`、`no_action`、`failed` 的 `decision_options` 为空，`requested_input`、`needs_human_reason`、`decision_basis` 不得有值；这些字段只属于 `needs_human`。普通方案的事实证据写在 `proposal.sourced_facts`，无需动作的依据写在 `summary`，不借用人工问题字段。

@@ -23,6 +23,16 @@
 
 Derek requires every system-review item to map to an actual system task and its current business instance. Use `docs/audit-task-scope.md` as the current14-task inventory and frozen business-case correspondence;do not build review requirements from the MCP/tool catalog. XiaoQing has no background interview task and remains in personal conversations. Existing technical command verification does not gain an Audit turn.
 
+## Independently approved post-publication scopes (2026-10-05)
+
+Consumer ordinary work uses actual tools and receipts; only registered reviewed
+system actions require whole-candidate approval before System execution. Remove
+the whole-result completion-phrase scan, preserve strict wire and real receipts,
+and provide task-generation artifact writing with read-only Audit access. Keep
+existing runtime risk/authorization and historical no-replay boundaries. Verify
+with fixed native baseline/candidate judgments and separate real tool probes;
+contract replay alone does not establish native behavior.
+
 ## File responsibilities and interfaces
 
 | Area | Exact files | Responsibility |
