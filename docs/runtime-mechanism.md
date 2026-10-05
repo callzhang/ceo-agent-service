@@ -1257,11 +1257,14 @@ keyset scan and legacy claim path use the same ordering; eligibility, lease
 ownership, and external delivery guards are unchanged.
 
 Meeting delivery batches release still-ready claims on both normal completion
-and exceptional exit. Each acquisition persists a fresh `delivery_claim_token`;
-release compares job ID, original lock timestamp and nonempty token, so even a
-same-second successor cannot be unlocked by a stale batch. The additive column
-defaults to empty for pre-migration records; existing startup recovery releases
-interrupted old claims before fresh acquisition. Cleanup never changes receipts,
+and exceptional exit. Each acquisition persists a fresh token in the separate
+`meeting_alignment_delivery_claims` table, in the same transaction as the job
+lock. The token is returned only with the claimed job, not stored in the job
+row. Release compares job ID, original lock timestamp and nonempty token, so
+even a same-second successor cannot be unlocked by a stale batch. The job row
+shape stays unchanged for strict parsing during code rollback. Startup recovery
+releases interrupted locks and clears abandoned ownership records before fresh
+acquisition. Cleanup never changes receipts,
 retry deadlines, attempt counts or terminal status. If delivery and release both
 fail, a grouped exception records both causes instead of hiding the first.
 Persisted `sent` receipts remain authoritative: recovery resumes only calendar

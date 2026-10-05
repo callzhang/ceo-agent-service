@@ -257,6 +257,7 @@ create index if not exists idx_task_memory_write_events_lease
 
 STORE_SCHEMA_REQUIRED_TABLES = (
     *REVIEWED_CANDIDATE_TABLES,
+    "meeting_alignment_delivery_claims",
     "task_memory_write_events",
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -407,6 +408,7 @@ STORE_SCHEMA_REMOVED_COLUMNS = {
     "agent_runs": ("tool_events_json",),
 }
 STORE_SCHEMA_REQUIRED_COLUMNS = {
+    "meeting_alignment_delivery_claims": ("job_id", "claim_token"),
     "business_task_signals": (
         "id", "source_type", "source_ref", "source_time", "conversation_id",
         "conversation_title", "author_user_id", "author_name", "evidence_text",
@@ -556,7 +558,6 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     "conversation_runtime_sessions": ("contract_hash",),
     "task_agent_runs": ("status", "error", "finished_at", "updated_at"),
     "meeting_alignment_jobs": (
-        "delivery_claim_token",
         "calendar_summary_status",
         "calendar_summary_result_json",
     ),
@@ -3409,7 +3410,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     status text not null default 'waiting',
                     attempts integer not null default 0,
                     locked_at text,
-                    delivery_claim_token text not null default '',
                     available_at text not null default '',
                     error text not null default '',
                     decision_json text not null default '{}',
@@ -3426,6 +3426,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 );
                 create index if not exists idx_meeting_alignment_jobs_claim
                     on meeting_alignment_jobs(status, available_at, eligible_at, id);
+                create table if not exists meeting_alignment_delivery_claims (
+                    job_id integer primary key,
+                    claim_token text not null,
+                    foreign key(job_id) references meeting_alignment_jobs(id) on delete cascade
+                );
                 create table if not exists meeting_alignment_runs (
                     id integer primary key autoincrement,
                     job_id integer not null,
@@ -4791,7 +4796,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             for column, definition in (
                 ("calendar_summary_status", "text not null default 'not_started'"),
                 ("calendar_summary_result_json", "text not null default '{}'"),
-                ("delivery_claim_token", "text not null default ''"),
             ):
                 if column not in meeting_alignment_columns:
                     db.execute(
@@ -17987,7 +17991,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> list[MeetingAlignmentJob]:
         if limit <= 0:
             return []
-        with self._connect() as db:
+        with self._immediate_write_transaction() as db:
             rows = db.execute(
                 """
                 with candidates as (
@@ -18004,16 +18008,25 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
                 update meeting_alignment_jobs
                 set locked_at=current_timestamp,
-                    delivery_claim_token=?,
                     updated_at=current_timestamp
                 where id in (select id from candidates)
                   and status='ready_to_send'
                   and locked_at is null
                 returning *
                 """,
-                (now, limit, uuid4().hex),
+                (now, limit),
             ).fetchall()
-            jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
+            token = uuid4().hex
+            jobs = [
+                self._meeting_alignment_job_from_row(row).model_copy(
+                    update={"delivery_claim_token": token}
+                ) for row in rows
+            ]
+            db.executemany(
+                """insert into meeting_alignment_delivery_claims(job_id, claim_token)
+                   values (?, ?) on conflict(job_id) do update set claim_token=excluded.claim_token""",
+                [(job.id, token) for job in jobs],
+            )
             return sorted(jobs, key=lambda job: job.id)
 
     def claim_ready_to_send_meeting_alignment_job(
@@ -18021,17 +18034,26 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> MeetingAlignmentJob | None:
         if job_id <= 0:
             raise ValueError("meeting alignment job id must be positive")
-        with self._connect() as db:
+        with self._immediate_write_transaction() as db:
             row = db.execute(
                 """update meeting_alignment_jobs
-                   set locked_at=current_timestamp, delivery_claim_token=?,
-                       updated_at=current_timestamp
+                   set locked_at=current_timestamp, updated_at=current_timestamp
                    where id=? and status='ready_to_send' and locked_at is null
                      and (available_at='' or datetime(available_at)<=datetime(?))
                    returning *""",
-                (uuid4().hex, job_id, now),
+                (job_id, now),
             ).fetchone()
-            return self._meeting_alignment_job_from_row(row) if row else None
+            if row is None:
+                return None
+            token = uuid4().hex
+            db.execute(
+                """insert into meeting_alignment_delivery_claims(job_id, claim_token)
+                   values (?, ?) on conflict(job_id) do update set claim_token=excluded.claim_token""",
+                (job_id, token),
+            )
+            return self._meeting_alignment_job_from_row(row).model_copy(
+                update={"delivery_claim_token": token}
+            )
 
     def release_ready_to_send_meeting_alignment_claims(
         self, jobs: list[MeetingAlignmentJob]
@@ -18041,10 +18063,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             db.executemany(
                 """update meeting_alignment_jobs
-                   set locked_at=null, delivery_claim_token=''
+                   set locked_at=null
                    where id=? and status='ready_to_send' and locked_at=?
-                     and delivery_claim_token=? and delivery_claim_token!=''""",
+                     and exists (
+                         select 1 from meeting_alignment_delivery_claims claim
+                         where claim.job_id=meeting_alignment_jobs.id
+                           and claim.claim_token=? and claim.claim_token!=''
+                     )""",
                 [(job.id, job.locked_at, job.delivery_claim_token) for job in jobs],
+            )
+            db.executemany(
+                "delete from meeting_alignment_delivery_claims where job_id=? and claim_token=?",
+                [(job.id, job.delivery_claim_token) for job in jobs],
             )
 
     def schedule_ready_to_send_meeting_alignment_retry(
@@ -18090,6 +18120,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 returning *
                 """
             ).fetchall()
+            db.execute("delete from meeting_alignment_delivery_claims")
             jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
             return sorted(jobs, key=lambda job: job.id)
 

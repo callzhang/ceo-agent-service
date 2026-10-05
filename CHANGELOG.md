@@ -14,6 +14,8 @@
   prevents same-second successor claims from being released by an old owner.
   Delivery and cleanup failures are both retained in the recorded exception;
   confirmed sends resume only their unfinished calendar stage.
+  Ownership is persisted in a separate claim table, preserving the strict job
+  row shape required by the previous release during code rollback.
 
 - 2026-10-05: A runtime `provider_risk_rejected` refusal can no longer be
   replayed from a failed Attempt's manual rerun button or POST endpoint. The
