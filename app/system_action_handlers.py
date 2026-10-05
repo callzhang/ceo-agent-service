@@ -1,6 +1,7 @@
 """Native, typed handlers for reviewed service-owned actions."""
 
 import json
+from datetime import datetime
 
 from app.agent_contracts import ProposedAction
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
@@ -92,7 +93,35 @@ class DingTalkMessageHandler:
         if receipt is not None:
             return self._verified(receipt)
         if action.operation != "reply_to_message":
-            return None
+            target = action.target
+            conversation_id = target.get("conversation_id")
+            user_id = target.get("user_id")
+            open_id = target.get("open_dingtalk_id")
+            if action.operation == "send_direct_message":
+                conversation_id = None
+            if conversation_id:
+                user_id = None
+                open_id = None
+            elif user_id:
+                open_id = None
+            conversation = DingTalkConversation(
+                open_conversation_id=conversation_id or "", title=task.conversation_title,
+                single_chat=not bool(conversation_id), unread_point=0,
+                direct_user_id=user_id or "", direct_open_dingtalk_id=open_id or "",
+            )
+            boundary = datetime.fromisoformat(candidate["action_attempt"]["created_at"])
+            if boundary.tzinfo is None:
+                # Old second-precision rows cannot establish the dispatch instant.
+                return None
+            receipt = self.dws.reconcile_message_send(
+                conversation, prepared.final_body, not_before=boundary,
+            )
+            if receipt is None:
+                return None
+            result = self._verified(receipt)
+            if result.status == "verified":
+                self.store.record_outbound_postfix_receipt("dingtalk", prepared.delivery_key, receipt)
+            return result
         trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
         conversation = DingTalkConversation(
             open_conversation_id=task.conversation_id, title=task.conversation_title,
@@ -383,7 +412,11 @@ class DocumentCommentHandler:
         return ActionOutcome("uncertain", {"reason": "document_comment_key_missing"})
 
     def reconcile(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome | None:
-        return None
+        return ActionOutcome("uncertain", {
+            "reason": "comment_operation_identity_unavailable",
+            "node_id": action.target["node_id"],
+            "readback": self.dws.read_doc_comments(action.target["node_id"]),
+        })
 
 
 class OaCommentHandler:
@@ -404,7 +437,11 @@ class OaCommentHandler:
         return ActionOutcome("uncertain", {"reason": "oa_comment_id_missing"})
 
     def reconcile(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome | None:
-        return None
+        return ActionOutcome("uncertain", {
+            "reason": "comment_operation_identity_unavailable",
+            "process_instance_id": action.target["process_instance_id"],
+            "readback": self.dws.read_oa_approval_records(action.target["process_instance_id"]),
+        })
 
 
 class MessageEmotionHandler:
