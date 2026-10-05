@@ -31,6 +31,8 @@ def _status_message(
     attempt: Any, attention: Any, *, rerun_block_reason: str = ""
 ) -> tuple[str, bool]:
     status = str(getattr(attempt, "send_status", "") or "").strip().lower()
+    if getattr(attempt, "resolved_at", "") and getattr(attempt, "resolution", ""):
+        return str(attempt.resolution), False
     if status == "sent":
         return "这条回复已发送，无需你操作。", False
     if status == "completed":

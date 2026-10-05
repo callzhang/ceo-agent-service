@@ -2983,6 +2983,8 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
             select
                 a.*,
                 case
+                    when lower(a.send_status)='needs_human'
+                     and trim(coalesce(a.resolved_at, ''))<>'' then 'skipped'
                     when a.channel='wechat' and lower(a.send_status)='failed'
                      and exists (
                         select 1 from wechat_deliveries d
@@ -11432,6 +11434,8 @@ def _attempt_rerun_block_reason(
     attempt: ReplyAttempt,
     agent_runs: list[AgentRun],
 ) -> str:
+    if attempt.resolved_at and attempt.send_status.strip().lower() in {"needs_human", "skipped"}:
+        return attempt.resolution or "这条旧问题已退役，无需重新处理。"
     if attempt.send_status.strip().lower() != "failed":
         return ""
     terminal_run = next(

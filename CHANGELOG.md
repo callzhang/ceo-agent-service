@@ -9,6 +9,12 @@
 
 ## Unreleased
 
+- 2026-10-05: Obsolete task-class questions now have an explicit single-attempt
+  retirement command with read-only preview and retained provenance. Original
+  results and statuses remain historical; retired questions consistently show
+  skipped in detail, History and queues and cannot be rerun. Current malformed
+  questions still fail the unchanged quality gate.
+
 - 2026-10-05: Interrupted meeting delivery releases its own unfinished batch
   claims without changing persisted send receipts. A durable UUID claim token
   prevents same-second successor claims from being released by an old owner.

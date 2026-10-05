@@ -1068,6 +1068,8 @@ class ReplyAttempt(BaseModel):
     reviewed_at: str | None = None
     reviewer_feedback: str = ""
     corrected_reply_text: str = ""
+    resolved_at: str = ""
+    resolution: str = ""
     feedback_scope: str = "one_time"
     skill_update_requested: bool = False
     skill_update_receipts_json: str = "[]"
@@ -26067,6 +26069,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     end as output_text,
                     action,
                     case
+                        when send_status='needs_human' and trim(coalesce(resolved_at, ''))<>'' then 'skipped'
                         when channel = 'wechat' then coalesce((
                             select case deliveries.status
                                 when 'ready_to_send' then 'pending'
@@ -30648,6 +30651,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     'Reply' as category,
                     action as action,
                     case
+                        when send_status='needs_human' and trim(coalesce(resolved_at, ''))<>'' then 'skipped'
                         -- Candidate completion is independent of delivery.
                         -- Only the latest delivery for this object and its
                         -- owning task generation supplies its send outcome.

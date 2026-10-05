@@ -33,6 +33,8 @@ def project_attempt_status(
     reported as the stale pending state of an older attempt row.
     """
     fallback = str(getattr(attempt, "send_status", "") or "").strip() or "failed"
+    if fallback == "needs_human" and str(getattr(attempt, "resolved_at", "") or "").strip():
+        return "skipped"
     if task is None:
         return fallback
     task_status = str(getattr(task, "status", "") or "").strip()
