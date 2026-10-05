@@ -10,6 +10,18 @@ from app.wechat.models import principal_reply_supersession
 _TERMINAL_TASK_STATES = {"done", "skipped", "needs_human"}
 
 
+def current_wechat_delivery_matches(attempt: Any, task: Any, delivery: Any) -> bool:
+    """Require the exact owning task, execution generation and conversation."""
+    return task is not None and (
+        str(getattr(attempt, "channel", "") or "") == "wechat"
+        and delivery is not None
+        and int(getattr(delivery, "task_id", 0) or 0) == int(task.id)
+        and str(getattr(delivery, "execution_generation", "") or "") == str(getattr(task, "execution_generation", "") or "").strip()
+        and str(getattr(delivery, "conversation_id", "") or "")
+        == str(getattr(attempt, "conversation_id", "") or "")
+    )
+
+
 def project_attempt_status(
     attempt: Any, task: Any, runs: list[Any], *, delivery: Any = None
 ) -> str:
@@ -25,14 +37,7 @@ def project_attempt_status(
         return fallback
     task_status = str(getattr(task, "status", "") or "").strip()
     generation = str(getattr(task, "execution_generation", "") or "").strip()
-    if (
-        str(getattr(attempt, "channel", "") or "") == "wechat"
-        and delivery is not None
-        and int(getattr(delivery, "task_id", 0) or 0) == int(task.id)
-        and str(getattr(delivery, "execution_generation", "") or "") == generation
-        and str(getattr(delivery, "conversation_id", "") or "")
-        == str(getattr(attempt, "conversation_id", "") or "")
-    ):
+    if current_wechat_delivery_matches(attempt, task, delivery):
         delivery_status = str(getattr(delivery, "status", "") or "")
         if fallback == "failed" and delivery_status in {"failed", "send_unknown"}:
             return "failed"

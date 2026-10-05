@@ -3458,3 +3458,24 @@ def test_principal_superseded_wechat_delivery_is_terminal_in_detail_and_retry_ap
     assert sends == []
     assert _wechat_delivery_and_attempt_state(store, delivery_id) == before
     assert store.get_reply_task(1).status == "done"
+
+
+@pytest.mark.parametrize("generation,conversation", [("new-generation", "u1"), ("initial", "other")])
+def test_old_principal_supersession_does_not_describe_current_pending_task(tmp_path, generation, conversation):
+    from tests.wechat.test_store import _seed_exhausted_target_open_failure, _wechat_delivery_and_attempt_state
+
+    store, delivery_id, attempt_id, old_generation = _seed_exhausted_target_open_failure(tmp_path)
+    store.skip_exhausted_stale_wechat_delivery(
+        delivery_id, expected_execution_generation=old_generation,
+        reason="stale_pre_action_retry_exhausted; superseded_by_principal_reply:synthetic-reply",
+        inactive_before="2026-07-30 10:10:00",
+    )
+    with store._connect() as db:
+        db.execute("update reply_tasks set execution_generation=?,status='pending' where id=1", (generation,))
+        db.execute("update wechat_deliveries set conversation_id=? where id=?", (conversation, delivery_id))
+    before = _wechat_delivery_and_attempt_state(store, delivery_id)
+    with _client(tmp_path) as client:
+        item = client.get(f"/api/console/history/{attempt_id}").json()["item"]
+    assert item["status"]["raw"] == "pending"
+    assert "已在后续消息中亲自回复" not in item["status"]["message"]
+    assert _wechat_delivery_and_attempt_state(store, delivery_id) == before

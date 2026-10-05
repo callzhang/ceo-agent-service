@@ -725,7 +725,7 @@ def build_attempt_detail(
     # The stored Attempt row is historical.  Render the current projection
     # from the task generation's last effective run so an old pending row
     # cannot mask a later done/skipped result.
-    from app.attempt_projection import project_attempt_status
+    from app.attempt_projection import current_wechat_delivery_matches, project_attempt_status
 
     wechat_delivery = (
         store.get_wechat_delivery_for_task(reply_task.id)
@@ -770,7 +770,8 @@ def build_attempt_detail(
         if delivery_status == "ready_to_send":
             status_message = "这条微信回复已准备好，确认后即可发送。"
         elif delivery_status == "skipped" and principal_reply_supersession(str(getattr(wechat_delivery, "error", "") or "")):
-            status_message = "你已在后续消息中亲自回复；这条旧候选已跳过，未发送，无需重试。"
+            if current_wechat_delivery_matches(attempt, reply_task, wechat_delivery):
+                status_message = "你已在后续消息中亲自回复；这条旧候选已跳过，未发送，无需重试。"
         elif delivery_status == "skipped" and delivery_started:
             status_message = "这条微信回复此前未能打开会话，尚未发送；你可以重试。"
     decision_options = []

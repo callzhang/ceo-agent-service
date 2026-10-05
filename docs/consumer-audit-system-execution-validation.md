@@ -135,3 +135,6 @@ Independent combined-head review found a P2 status projection defect:current rev
 
 
 A separately scoped live projection/retry defect was reproduced from formal principal-reply supersession:current delivery/Attempt were skipped but task done masked the terminal state,UI suggested retry,and the existing retry transition accepted that closed candidate. Synthetic tests first failed at both Store transition and API projection;the correction reads only the exact formal close-field/source reference within the existing immediate write transaction,retains original state and blocks requeue/sender invocation. Current task/generation/conversation projection and UI use that same source-reference reader;ordinary expired-retry behavior is retained. No live retry was invoked,no private content copied into fixtures and no historical record rewritten.
+
+
+Follow-up independent review reproduced a stale-generation status explanation despite correct raw pending state.2 regression cases first fail for old generation or mismatched conversation;the correction shares the exact existing task/generation/conversation identity predicate between raw projection and explanation. Historical close evidence remains readable without describing current pending work as resolved.
