@@ -10014,8 +10014,31 @@ class AutoReplyStore:
         db: sqlite3.Connection,
         *,
         migration_name: str,
+        allow_existing_foreign_key_violations: bool = False,
     ) -> Iterator[None]:
-        """Run a table rebuild with foreign keys verifiably disabled."""
+        """Run a table rebuild with foreign keys verifiably disabled.
+
+        Most rebuilds require a globally clean database. A narrowly scoped
+        migration may instead preserve a pre-existing set of violations, but
+        only when the exact foreign_key_check rows are unchanged afterward.
+        """
+        baseline_violations = tuple(sorted(
+            tuple(row) for row in db.execute("pragma foreign_key_check").fetchall()
+        ))
+        if baseline_violations and not allow_existing_foreign_key_violations:
+            raise sqlite3.IntegrityError(
+                f"{migration_name} migration found pre-existing foreign key violations"
+            )
+
+        def verify_foreign_keys(*, stage: str) -> None:
+            actual = tuple(sorted(
+                tuple(row) for row in db.execute("pragma foreign_key_check").fetchall()
+            ))
+            if actual != baseline_violations:
+                raise sqlite3.IntegrityError(
+                    f"{migration_name} migration changed foreign key violations {stage}"
+                )
+
         if db.in_transaction:
             db.commit()
         if db.in_transaction:
@@ -10033,17 +10056,9 @@ class AutoReplyStore:
                 raise sqlite3.IntegrityError(
                     f"{migration_name} migration transaction is missing"
                 )
-            violations = db.execute("pragma foreign_key_check").fetchall()
-            if violations:
-                raise sqlite3.IntegrityError(
-                    f"{migration_name} migration broke foreign keys"
-                )
+            verify_foreign_keys(stage="before commit")
             db.commit()
-            violations = db.execute("pragma foreign_key_check").fetchall()
-            if violations:
-                raise sqlite3.IntegrityError(
-                    f"{migration_name} migration broke foreign keys"
-                )
+            verify_foreign_keys(stage="after commit; readback is not rollbackable")
         except Exception:
             if db.in_transaction:
                 db.rollback()
@@ -10065,7 +10080,11 @@ class AutoReplyStore:
         # Keep the referenced parent under its original name until every row
         # has been copied and read back. Renaming the old parent would rewrite
         # all existing child foreign keys to the temporary table's name.
-        with AutoReplyStore._foreign_key_rebuild(db, migration_name="business source documents"):
+        with AutoReplyStore._foreign_key_rebuild(
+            db,
+            migration_name="business source documents",
+            allow_existing_foreign_key_violations=True,
+        ):
             db.execute("begin immediate")
             for statement in BUSINESS_SOURCE_DOCUMENT_SCHEMA:
                 db.execute(statement)
@@ -10099,8 +10118,6 @@ class AutoReplyStore:
             ).fetchone()[0]
             if new_count != old_count:
                 raise sqlite3.IntegrityError("business source document migration changed signal count")
-            if db.execute("pragma foreign_key_check").fetchall():
-                raise sqlite3.IntegrityError("business source document migration broke foreign keys")
             db.execute("drop table business_task_signals")
             db.execute("alter table business_task_signals_source_migration rename to business_task_signals")
             if old_sequence is not None:

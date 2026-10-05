@@ -2,6 +2,31 @@
 
 ## Scope and completion level
 
+2026-10-05 continuation: Derek confirmed the exact source Project title and the
+migration rule to preserve the original foreign-key violation set without repair.
+The fixed fixture is now version 2: source titles follow the source's full formal
+name, and source records carry the runtime's actual AI Minutes action-item or
+authorized-assignment metadata. Task Agent prompt and shared Skill now require a
+complete ProjectContext snapshot on new facts, an actionable display-only next
+step for material unresolved Project risks based on saved responsibilities, and
+no such suggestion for routine/settled/ambiguous evidence. Focused verification
+passed **742 tests**, Ruff and `git diff --check`; a native smoke passed the
+role-based suggestion case. These are not the full fixed native comparison.
+
+The immutable W39 source copy was read-only backed up to
+`/private/tmp/project-centered-w39-final-20261005.sqlite3` and opened using the
+current Store code. All 403 Signal bodies and identity fields matched the source
+hash exactly; Task and Project counts stayed 259 and 20; input 27465's hash was
+unchanged; `quick_check=ok`; and the foreign-key check returned exactly the same
+single pre-existing `meeting_alignment_runs` → missing
+`meeting_alignment_jobs` row. No repair or original-copy write occurred. The
+ordinary Store upgrade also introduced current-schema Project evidence/context
+tables, populated Project evidence, and added default `origin=source` /
+empty-suggestion fields to historical Tasks; the existing `business_object_tasks`
+rebuild rewrote its timestamps. That timestamp behavior predates this change and
+is recorded as a migration observation, not attributed to the Project-centered
+source-body migration. Exact W39 replay and business-domain readback remain pending.
+
 The approved design is `superpowers/specs/2026-10-04-project-centered-work-design.md`;
 the implementation checklist is `superpowers/plans/2026-10-04-project-centered-work.md`.
 Tasks 1–7 are one release unit. Core integration is saved in `eeb69de9`; API/UI
@@ -13,7 +38,7 @@ Local tests and synthetic browser checks do not establish a live business effect
 
 ## Fixed evidence and comparison procedure
 
-`tests/fixtures/task_project_centered_v1.json` contains 19 version-1 cases. Both
+`tests/fixtures/task_project_centered_v2.json` contains 19 version-2 cases. Both
 runtimes receive the same original `source_inputs` in the same order. Native
 cases have empty `existing_context`: neither side receives manually seeded
 Project roles, owner, risk or conclusions. Unit tests may seed persisted facts
@@ -165,7 +190,7 @@ uses native CLI OAuth configuration for its connected MCP servers. A read-only
 preflight verified the manifest and the `codex_oauth` / `gpt-5.6-luna` route;
 no production database was opened or changed.
 
-The full 19-case fixture was then replayed sequentially on fresh isolated SQLite
+The first full 19-case fixture was then replayed sequentially on fresh isolated SQLite
 databases, using the same original inputs, model, route, timeout and concurrency
 for the pinned baseline (`da368453`) and candidate (`f45a7a7a`), with each side's
 own CI Skill root. The native database artifacts are retained under

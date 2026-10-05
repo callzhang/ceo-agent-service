@@ -768,6 +768,8 @@ Task 1–7 是整体发布单元，不能把本节当成上线或业务效果证
 连续逐字引文；总负责与负责结果不能从 Task owner 猜出。未改变的职责沿用历史原文证据。
 context=null 只补 Project↔Signal 关系；明确提供空分工快照才清空当前分工，旧版本仍可读。
 当前 Project 读取最新 context revision，不双存可失配的 current JSON；相同结构快照不追加版本。
+Agent 得到新事实时仍须返回完整的当前 ProjectContext 快照，带回先前有效职责、事实和出处；
+不能因本轮只讨论一项新风险，就把未变化资料从快照中丢掉。
 
 `business_source_documents` 保存不可变原文，Signal 通过真实 source_document_id 外键引用。
 只有来源类型/ref/时间、会话、作者 ID/姓名/类型和正文八项完全相同才共享正文；Signal ID、
@@ -790,6 +792,9 @@ suggested_owner 不写实际 owner；建议记录为 open candidate、commitment
 保留建议发现历史，真实接受后不因 origin 阻止原有 TODO 资格。真实 source Task 不被重新标为建议。
 后续更新必须携带已检索 Task ID，不从可共享/被合并复制的证据关系猜唯一任务。
 仅改建议理由时省略 title/description 保留原值；确实变更才记事件。
+发现尚未解决且需要推进的重大项目风险时，即使原文未直接指派某人，也可依据该项目已保存且有出处的
+职责提出带 Project 关联、建议负责人和下一步的显示型 Task 建议；这不构成正式派活。普通进展、
+已解决事项、单独的模糊线索不因“可能有帮助”而生成建议。
 
 正式指派是 assigned_unaccepted，不等于本人已接受。接受仍需唯一既有 Task、本人身份、
 精确已链接指派 Signal、同会话与可信 reply_to_source_ref；收到、TODO 存在或服务消息不证明承诺。
@@ -868,7 +873,7 @@ Project；原有关系即使 anchor 后来退休也仅作历史证明保留。�
 已有证据保留，多角色 Signal 去重，失败整体回滚，后续初始化/读取不继续补写。
 只读 inspector 输出当前 Project 决定、真实回执映射及由这些实际身份查得的最新 context/revision；
 历史缺字段仍缺失，不补为 not_needed，不推测 ID，不改源库或历史 run。
-多来源回归已经通过；W39/native 同案例评测和生产迁移尚未通过。评测读回独立判断的提案，
+多来源回归已经通过；v2 native 对照、W39 副本迁移/回放和生产迁移尚未全部完成。评测读回独立判断的提案，
 要求每项提案有对应真实卡片与实际 applied 回执；缺回执或仅写 completed 不判成功。
 当前 negative assessment 也要有对应保存的回执，历史缺字段不自动升级。既有会议表外键问题另行处理，
 不通过忽略外键或修改 frozen baseline 隐藏。这里没有新审批、工具白名单或风险关键词逻辑。

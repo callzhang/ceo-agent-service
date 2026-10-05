@@ -25,8 +25,8 @@ def require_copy(path):
 
 def load_cases(path):
     payload = json.loads(path.read_text())
-    if payload["version"] != 1:
-        raise ValueError("fixture version must be 1")
+    if payload["version"] not in {1, 2}:
+        raise ValueError("fixture version must be 1 or 2")
     cases = payload["cases"]
     if len({case["case_id"] for case in cases}) != len(cases):
         raise ValueError("duplicate case_id")
@@ -969,7 +969,7 @@ def main():
         "--fixtures",
         type=Path,
         default=Path(__file__).resolve().parents[1]
-        / "tests/fixtures/task_attention_multisource.json",
+        / "tests/fixtures/task_project_centered_v2.json",
     )
     parser.add_argument(
         "--code-root", type=Path, default=Path(__file__).resolve().parents[1]

@@ -44,7 +44,10 @@ to make business judgments.
    result, other `responsibilities`, and source-backed facts. Unknown overall
    owner is null (待明确), not a concatenation of people or several overall owners.
    Each person has a distinct responsibility and original evidence. Keep unchanged
-   roles' historical references when updating a snapshot. Each dated fact names
+   roles' and facts' historical references when updating a snapshot. Whenever new
+   facts or roles are learned, read the saved context and return the complete current
+   snapshot, retaining prior valid items with their citations; do not return only
+   this source's delta. Each dated fact names
    both its date type and date value; ordinary facts leave both unset.
 5. Preserve genuine standalone Tasks without forcing a Project. Unknown Project
    clues retain their source names and evidence in assessments without registering
@@ -65,6 +68,10 @@ to make business judgments.
    deadline. Keep actual owner fields, owner assignment metadata, formal basis,
    typed dates, status and relevance changes unset. Record a candidate or update
    its existing ID; do not send TODOs, notifications or follow-ups.
+   An unresolved material Project risk should have an actionable next step: create
+   one Project-linked display-only suggestion and derive its suggested person from
+   the saved responsibility that best matches the work. Do not create one merely
+   for routine progress, a settled/resolved fact, or an ambiguous clue.
    Never quote your inferred action or earlier suggestion as a human instruction.
 7. Later real human assignment promotes the same suggestion Task ID through the
    actual lifecycle; discovery origin and suggested rationale remain historical.
@@ -96,6 +103,11 @@ speaker_only/unknown or a team remains candidate. Authoritative source identity
 metadata, not an Agent-generated identity, establishes a stable owner_user_id.
 When a live directory lookup is available, use it to verify the exact named person;
 keep the name and leave the ID empty when identity is not established.
+Treat a meeting action item as formal only when the source context identifies an
+AI Minutes conversation and the current source reference carries its
+`#todos-sha256=` action-item record marker. A non-meeting explicit assignment is
+formal only when current source metadata explicitly says
+`assignment_authorized=true`; otherwise preserve it as a display-only candidate.
 
 An assignment or meeting action creates assigned_unaccepted, not accepted.
 Only explicit identified-owner acceptance bound to exactly that existing Task

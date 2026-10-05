@@ -65,9 +65,12 @@ The one-time old-body migration uses the Store's existing foreign-key rebuild
 transaction. It creates shared bodies and a replacement Signal table under
 `BEGIN IMMEDIATE`, preserves every Signal ID and the AUTOINCREMENT high-water
 mark, and reads every original field/body back before removing the old table.
-It checks row counts and foreign keys, then installs the final indexes and
-immutability triggers in the same transaction. Failure rolls all source
-representation changes back. Existing Task/evidence relationships and event/run
+It checks row counts and compares the exact sorted `foreign_key_check` rows
+before and after the rebuild. Pre-existing violations are preserved as-is;
+any added, removed, or changed violation aborts and rolls the transaction back.
+This migration-specific comparison does not repair or suppress unrelated
+integrity problems. It then installs the final indexes and immutability triggers
+in the same transaction. Existing Task/evidence relationships and event/run
 JSON are not rewritten. A genuinely older Signal without `author_kind` gets
 the existing `unknown` value before its document identity is computed; it is
 not promoted to a human or observed source. Fresh stores create the final

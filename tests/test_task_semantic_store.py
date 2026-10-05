@@ -1494,10 +1494,23 @@ def test_legacy_signal_bodies_migrate_without_changing_evidence_identity_or_hist
 def test_source_body_migration_rolls_back_on_foreign_key_failure(tmp_path):
     path = tmp_path / "legacy-source-failure.sqlite3"
     original_signals = legacy_source_store(path)
-    with sqlite3.connect(path) as db:
-        db.execute("insert into business_task_evidence (task_id, signal_id, evidence_role) values (2, 999, 'discovery')")
-    with pytest.raises(sqlite3.IntegrityError, match="foreign keys"):
-        AutoReplyStore(path)
+    original_migration = AutoReplyStore._business_source_document_id
+
+    def inject_new_violation(db, source):
+        document_id = original_migration(db, source)
+        if source.get("id") == 1:
+            db.execute(
+                "insert into business_task_evidence (task_id, signal_id, evidence_role) "
+                "values (2, 999, 'discovery')"
+            )
+        return document_id
+
+    AutoReplyStore._business_source_document_id = staticmethod(inject_new_violation)
+    try:
+        with pytest.raises(sqlite3.IntegrityError, match="changed foreign key violations"):
+            AutoReplyStore(path)
+    finally:
+        AutoReplyStore._business_source_document_id = staticmethod(original_migration)
     with sqlite3.connect(path) as db:
         db.row_factory = sqlite3.Row
         assert [dict(r) for r in db.execute("select * from business_task_signals order by id")] == original_signals
@@ -1506,6 +1519,68 @@ def test_source_body_migration_rolls_back_on_foreign_key_failure(tmp_path):
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
             db.execute("update business_task_signals set evidence_text='rewritten' where id=1")
         assert db.execute("select value from service_state where key=?", (store_module.STORE_SCHEMA_VERSION_KEY,)).fetchone()[0] == "2026-09-25.1"
+
+
+def test_source_body_migration_preserves_exact_preexisting_foreign_key_violations(tmp_path):
+    path = tmp_path / "legacy-source-with-existing-orphan.sqlite3"
+    legacy_source_store(path)
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "insert into meeting_alignment_runs (job_id, status) values (4908, 'failed')"
+        )
+        db.execute(
+            "insert into business_task_evidence (task_id, signal_id, evidence_role) "
+            "values (2, 999, 'discovery')"
+        )
+        before = sorted(tuple(row) for row in db.execute("pragma foreign_key_check"))
+        assert {row[0] for row in before} == {
+            "meeting_alignment_runs", "business_task_evidence",
+        }
+
+    migrated = AutoReplyStore(path)
+    assert len(migrated.list_business_task_signals()) == 3
+    with migrated._connect() as db:
+        after = sorted(tuple(row) for row in db.execute("pragma foreign_key_check"))
+        assert after == before
+        assert "evidence_text" not in {
+            row["name"] for row in db.execute("pragma table_info(business_task_signals)")
+        }
+        assert db.execute("select count(*) from business_source_documents").fetchone()[0] == 2
+
+
+def test_source_body_migration_rolls_back_if_it_adds_a_foreign_key_violation(tmp_path):
+    path = tmp_path / "legacy-source-with-new-orphan.sqlite3"
+    original_signals = legacy_source_store(path)
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "insert into meeting_alignment_runs (job_id, status) values (4908, 'failed')"
+        )
+        before = sorted(tuple(row) for row in db.execute("pragma foreign_key_check"))
+    original_migration = AutoReplyStore._business_source_document_id
+
+    def inject_new_violation(db, source):
+        document_id = original_migration(db, source)
+        if source.get("id") == 1:
+            db.execute(
+                "insert into business_task_evidence (task_id, signal_id, evidence_role) "
+                "values (2, 998, 'discovery')"
+            )
+        return document_id
+
+    AutoReplyStore._business_source_document_id = staticmethod(inject_new_violation)
+    try:
+        with pytest.raises(sqlite3.IntegrityError, match="changed foreign key violations"):
+            AutoReplyStore(path)
+    finally:
+        AutoReplyStore._business_source_document_id = staticmethod(original_migration)
+    with sqlite3.connect(path) as db:
+        db.row_factory = sqlite3.Row
+        assert [dict(row) for row in db.execute("select * from business_task_signals order by id")] == original_signals
+        assert sorted(tuple(row) for row in db.execute("pragma foreign_key_check")) == before
+        assert db.execute(
+            "select name from sqlite_master where name in "
+            "('business_source_documents', 'business_task_signals_source_migration')"
+        ).fetchall() == []
 
 
 @pytest.mark.parametrize("statement", [

@@ -451,6 +451,10 @@ def test_independent_project_prompt_and_skill_have_one_current_contract():
     assert "New, record_candidate and skip decisions must leave status and business_relevance unset" in prompt
     assert "When promoting a suggestion, omit the suggestion field" in prompt
     assert "requires that Project selector" in prompt
+    assert "return the complete current ProjectContext whenever new facts or roles are learned" in prompt
+    assert "unresolved material Project risk needs an actionable next step" in prompt
+    assert "meeting action item is an actual assignment only when" in prompt
+    assert "assignment_authorized=true" in prompt
 
 
 def test_independent_project_process_marks_project_only_input_done(tmp_path):

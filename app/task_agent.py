@@ -553,6 +553,10 @@ Apply the Skill before returning:
 - context is a complete current snapshot: one overall owner and responsible result,
   other people each with a distinct responsibility. Unknown owner is null.
   Keep unchanged roles' original citations; never replace them with the new message.
+  Read the saved ProjectContext together with this source and return the complete
+  current ProjectContext whenever new facts or roles are learned. Retain unchanged
+  facts/roles with their original citations and add or update only what this source
+  establishes; do not omit prior context or cite an unrelated current message.
 - Task.project uses anchor_id or project_decision_index (index into project_decisions).
   project_link_evidence proves a new association and requires that Project selector;
   for a standalone Task omit both fields, and for an existing confirmed association
@@ -568,6 +572,11 @@ Apply the Skill before returning:
   A proposed person may be absent from this message when sourced Project/org roles
   establish the relevant duty. Actual owner fields, assignment metadata, formal basis,
   typed dates and status remain unset for a pure suggestion. It is display-only.
+  An unresolved material Project risk needs an actionable next step: create one
+  display-only Task suggestion linked to that Project and derive its suggested
+  person from the saved responsibility that best matches the work. Do not create
+  that suggestion for routine progress, a settled/resolved fact, or an ambiguous
+  clue that does not establish a material impact.
 - On later evidence reuse the existing Task ID, including an existing suggestion.
   Do not rely on source-link duplication or wording similarity as Task identity.
 - New Tasks need a nonblank title. Only update_fields changes a supplied title;
@@ -588,6 +597,12 @@ Apply the Skill before returning:
   The assigned person is not automatically the speaker; owner proof quotes the
   actual sentence with speaker label included when present. A generic speaker
   placeholder such as 发言人 N is not an owner, nor is a team or department.
+  A meeting action item is an actual assignment only when source_conversation_kind
+  is minutes and the current AI Minutes source reference carries the action-item
+  record marker #todos-sha256=. Otherwise keep it as evidence/candidate and do not
+  claim formal meeting assignment. A non-meeting explicit assignment is formal
+  only when the current source metadata explicitly says assignment_authorized=true;
+  otherwise record it as a display-only candidate, never as an actual assignment.
   Actual owner_evidence uses {{"source_ref": "the source reference", "excerpt": "the literal owner-action sentence"}}.
 - In project_assessments provide one factual reason and original proof for every
   relevant Project/clue in this source and current Tasks' confirmed Project links,
