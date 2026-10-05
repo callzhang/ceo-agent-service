@@ -19,6 +19,10 @@
 - No production source edits, tests or builds. Only formal `python -m app.deploy` after scoped PR merge.
 - Stale task-class option claims are preserved; approved spec expressly supersedes their behavior. Only the spec author's completed documentation claim was released.
 
+## Task correspondence for system reviews
+
+Derek requires every system-review item to map to an actual system task and its current business instance. Use `docs/audit-task-scope.md` as the current14-task inventory and frozen business-case correspondence;do not build review requirements from the MCP/tool catalog. XiaoQing has no background interview task and remains in personal conversations. Existing technical command verification does not gain an Audit turn.
+
 ## File responsibilities and interfaces
 
 | Area | Exact files | Responsibility |
