@@ -4,9 +4,18 @@
 
 Derek confirms that interview work and XiaoQing (小青) submissions are handled in his personal conversations. A read-only production inventory finds14 enabled/non-deleted scheduled tasks and no explicit XiaoQing references in their names,prompts,commands or Skill references. The active personnel-communication Skill mentions candidate evaluation and specialist composition,not a scheduled upload requirement. Background XiaoQing transcript/result upload and its service-owned OAuth client are therefore outside this service rollout; they are no longer a release blocker. Personal-conversation tools and native read capabilities are preserved. Earlier pending-scope notes below record historical checkpoints and are superseded by this clarification.
 
-PR still requires normal latest-main integration,its corresponding independent review/fixed evaluation and exact final-head Quality,then formal synchronized publication and live readback. Historical provider-risk and legacy15012 protections remain;this scope clarification neither executes business actions nor changes error/recovery policy.
+PR #12 was merged at `d184dc2c820fa9bc389cf575a717480816ac593a` and formally published with synchronized configuration. Post-publication repairs and live acceptance are tracked in PR #13. Historical provider-risk objects remain protected; the authorized acceptance message is a separate principal-only instance. Earlier release-gate notes below are dated historical checkpoints, not the current publication state.
 
-Status: implementation in progress, not deployed.
+Status: runtime formally published at `d184dc2c` on 2026-10-05 05:22 UTC; live acceptance is tracked separately and is not inferred from code publication.
+
+
+## Post-publication checkpoint — 2026-10-05 05:58 UTC
+
+Formal operation `deploy-19f35a12-29c0-4305-8e19-b28fecdbfc4a` succeeded at d184, with nine installed assets verified, configuration 13→14 and all five scheduled-task reference sets retained. Service and email load receipts matched their actual supervisor child PIDs; the API listener is a separate process. The native daily backup replaced the pre-upgrade snapshot and was independently checked complete with integrity_check=ok. The old operation backup path is not claimed to remain available.
+
+Live readback exposed two defects, so publication was not counted as complete acceptance: an obsolete task-class question remained unresolved across quality/detail/list projections, and service-captured historical DingTalk feedback rendering was treated as current outgoing text, causing legal no_action results to fail repeatedly. Separately scoped repair commits `fafa3276` and `92d8e2c0` preserve raw history, strict current-question checks and captured source snapshots. RED regressions covered detail state, preview schema mutation, technical-error retirement, rendered/serialized source callbacks and bracket/brace body handling; final focused checks include 11 retirement cases, 479 projection/quality/History/audit cases, 176 Consumer/runtime/feedback cases (4 intentional skips) and 7 worker retry cases. Counts overlap and are not a full-suite aggregate.
+
+Independent final review found no P1/P2 and passed 23 bounded regressions. It also accepted all three actual previously failing historical text leaves without changing their snapshots. Exact-head Quality and formal code-only publication of the repair are separate required evidence. Only the proven obsolete question may be explicitly retired; no Audit approval or business action is fabricated. The single authorized principal-only acceptance message has not been dispatched at this checkpoint, and historical refused business work has not been replayed.
 
 Baseline ref: `a7d4738a3b6591abc4d8fc69236b5517b4f98004`. Frozen cases: `evals/consumer_audit_system_execution/v1.json`. Persisted-contract replay is separate from model/business evaluation and controlled live receipt verification.
 

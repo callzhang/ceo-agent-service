@@ -30,6 +30,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-consumer-release-checkpoint | docs/consumer-audit-system-execution-validation.md (current status and timestamped checkpoint only), docs/agent-claims.md | Correct the pre-release headline after d184 formal publication; preserve historical checkpoints and distinguish code publication from pending live acceptance. | 2026-10-04 |
+
 
 
 
