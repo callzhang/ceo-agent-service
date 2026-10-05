@@ -1,0 +1,33 @@
+{
+  "reviewer": "execution_inventory (independent read-only agent)",
+  "actual_evaluated_ref": "09974b7368b8236766903eb54b4facf608314f09",
+  "raw_sha256": "f687cb0227cdc93b109ea2c313b8c76b12de6ee75ab8eae96258884f50ea8854",
+  "rescored": false,
+  "provider_actions": false,
+  "cases": {
+    "complete_finance_approval": "OA P-101/task801 strings; approve only; continue=true for verified following notification stage, which was not generated or executed here. Audit approves current stage.",
+    "applicant_material_gap": "Only current OA material-request comment; no approve/reject; continue=false until actual material arrival.",
+    "current_instance_policy_choice": "Two complete U-3 notification branches; explicit no-payment boundary; no fabricated OA or funding execution.",
+    "technical_auth_failure": "Raw failed HTTP_401_AUTHORIZATION_REQUIRED; no business question/actions/Audit. Normalized agent_reported_failure has retryable=true, authorization_required=false, retains source_code. This sample does not prove original source auth/retry classification.",
+    "established_group_audience": "Exact G-105 group target and Chinese milestone M-1/next-review facts. English literal substring miss retained.",
+    "current_form_no_future_field": "Exact P-106/task806 current approval; no future post-trip report requested.",
+    "irrelevant_broadcast": "Reviewed no_action; no external action.",
+    "standing_rule_autonomy": "Failed MISSING_PROCESS_INSTANCE_ID; no invented OA target/signoff; no actual Audit. Fixed expected proposal remains failed."
+  },
+  "raw_metrics": {
+    "baseline_outcome": 7,
+    "baseline_literal": 7,
+    "baseline_audit_labels": "0/6",
+    "candidate_outcome": 7,
+    "candidate_literal": 6,
+    "candidate_audit_labels": "6/7",
+    "actual_candidate_audit_turns": 6,
+    "total_cases": 8
+  },
+  "limits": [
+    "All six actual candidate Audit judgments are appropriate and bound to stored digest; native tool events empty.",
+    "Baseline six raw Audits approve in dry_run but old wire rejects that output; zero labels is not six incorrect business judgments or a 0-to-100 quality improvement.",
+    "Frozen scorer counts failed P-108 Audit applicable even though runtime correctly skips it; do not rewrite raw scores.",
+    "Sol/high serial/no-tools synthetic-inline evidence is not production Luna quality, provider availability, source freshness, real writes or all system-task completion."
+  ]
+}

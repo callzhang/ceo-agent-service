@@ -1,0 +1,280 @@
+{
+  "mode": "synthetic_contract_replay",
+  "business_model_evaluation": false,
+  "manifest": "/Users/derek/.codex/worktrees/consumer-audit-system-execution/ceo-agent-service/evals/consumer_audit_system_execution/v1.json",
+  "baseline_ref": "a7d4738a3b6591abc4d8fc69236b5517b4f98004",
+  "manifest_sha256": "e2aea61f9b0974a94b57d73fa2a549e27f1435bbd9ecb2ede8305364946fd33c",
+  "harness_sha256": "5249e8fcdac7354e585f5681de782be3592265d2e99d80a87c9188b1a0198d57",
+  "scenario_sha256": "e2819006484f300f809acbbad978a22133ac01a314fe3244f4b5bfdfb6517fd9",
+  "candidate_ref": "9caecd5c3c5ed3f4606707a6b8d49344dbe359f1",
+  "candidate_root": null,
+  "settings": {
+    "runtime_mode": "persisted-contract-replay",
+    "provider": "scripted-domain-clients",
+    "concurrency": 1,
+    "timeout_seconds": 30,
+    "model": null,
+    "thinking": null
+  },
+  "total": 20,
+  "baseline_passed": 4,
+  "candidate_passed": 20,
+  "cases": [
+    {
+      "id": "readonly_audit",
+      "expected": "Audit has no controlled tool; approved plan runs without an active Audit.",
+      "baseline": {
+        "case_id": "readonly_audit",
+        "ok": false,
+        "error": "ModuleNotFoundError: No module named 'app.reviewed_candidates'"
+      },
+      "candidate": {
+        "case_id": "readonly_audit",
+        "ok": true
+      }
+    },
+    {
+      "id": "whole_return",
+      "expected": "Unchanged body plus requested evidence is allowed after return.",
+      "baseline": {
+        "case_id": "whole_return",
+        "ok": false,
+        "error": "ModuleNotFoundError: No module named 'app.reviewed_candidates'"
+      },
+      "candidate": {
+        "case_id": "whole_return",
+        "ok": true
+      }
+    },
+    {
+      "id": "substantive_reject",
+      "expected": "Metadata/cosmetic changes cannot resolve a substantive rejection.",
+      "baseline": {
+        "case_id": "substantive_reject",
+        "ok": false,
+        "error": "ModuleNotFoundError: No module named 'app.reviewed_candidates'"
+      },
+      "candidate": {
+        "case_id": "substantive_reject",
+        "ok": true
+      }
+    },
+    {
+      "id": "review_budget",
+      "expected": "Initial review and three resubmissions; exhaustion failed.",
+      "baseline": {
+        "case_id": "review_budget",
+        "ok": true
+      },
+      "candidate": {
+        "case_id": "review_budget",
+        "ok": true
+      }
+    },
+    {
+      "id": "technical_budget",
+      "expected": "Provider failures do not consume business feedback budget.",
+      "baseline": {
+        "case_id": "technical_budget",
+        "ok": true
+      },
+      "candidate": {
+        "case_id": "technical_budget",
+        "ok": true
+      }
+    },
+    {
+      "id": "human_review",
+      "expected": "Consumer question reaches Audit; only approve makes it visible.",
+      "baseline": {
+        "case_id": "human_review",
+        "ok": false,
+        "error": "ModuleNotFoundError: No module named 'app.reviewed_candidates'"
+      },
+      "candidate": {
+        "case_id": "human_review",
+        "ok": true
+      }
+    },
+    {
+      "id": "unnecessary_human",
+      "expected": "Existing rule supports autonomy; Audit rejects unnecessary question.",
+      "baseline": {
+        "case_id": "unnecessary_human",
+        "ok": false,
+        "error": "ModuleNotFoundError: No module named 'app.reviewed_candidates'"
+      },
+      "candidate": {
+        "case_id": "unnecessary_human",
+        "ok": true
+      }
+    },
+    {
+      "id": "question_quality",
+      "expected": "Missing context/vague reason/source unreadable/false or long-term choices returned/rejected.",
+      "baseline": {
+        "case_id": "question_quality",
+        "ok": false,
+        "error": "ValidationError: 5 validation errors for ConsumerAgentResult\ndecision_options.0.applies_to\n  Field required [type=missing, input_value={'key': 'go', 'label': 'G...judgment': 'synthetic'}}, input_type=dict]\n    For further information visit https://errors.py"
+      },
+      "candidate": {
+        "case_id": "question_quality",
+        "ok": true
+      }
+    },
+    {
+      "id": "exact_choice",
+      "expected": "Only selected stored complete target/body plan executes without Agent rerun.",
+      "baseline": {
+        "case_id": "exact_choice",
+        "ok": false,
+        "error": "ValidationError: 5 validation errors for ConsumerAgentResult\ndecision_options.0.applies_to\n  Field required [type=missing, input_value={'key': 'go', 'label': 'G...judgment': 'synthetic'}}, input_type=dict]\n    For further information visit https://errors.py"
+      },
+      "candidate": {
+        "case_id": "exact_choice",
+        "ok": true
+      }
+    },
+    {
+      "id": "selection_idempotency",
+      "expected": "Same choice idempotent; conflicting/foreign IDs and missing option rejected.",
+      "baseline": {
+        "case_id": "selection_idempotency",
+        "ok": false,
+        "error": "AttributeError: type object 'AutoReplyStore' has no attribute 'select_candidate_option'"
+      },
+      "candidate": {
+        "case_id": "selection_idempotency",
+        "ok": true
+      }
+    },
+    {
+      "id": "supplement",
+      "expected": "New instruction/open-ended input receives new full review and retains answer.",
+      "baseline": {
+        "case_id": "supplement",
+        "ok": false,
+        "error": "AttributeError: type object 'AutoReplyStore' has no attribute 'record_candidate_supplement'"
+      },
+      "candidate": {
+        "case_id": "supplement",
+        "ok": true
+      }
+    },
+    {
+      "id": "stop_and_progress",
+      "expected": "Stop skipped with reason; selected execute not done before verification.",
+      "baseline": {
+        "case_id": "stop_and_progress",
+        "ok": false,
+        "error": "ImportError: cannot import name 'SystemExecutionResult' from 'app.agent_contracts' (/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/consumer-audit-baseline-_2ewzbg_/app/agent_contracts.py)"
+      },
+      "candidate": {
+        "case_id": "stop_and_progress",
+        "ok": true
+      }
+    },
+    {
+      "id": "oa_notification",
+      "expected": "OA then applicant notice respects verified prerequisites; only notice retries.",
+      "baseline": {
+        "case_id": "oa_notification",
+        "ok": false,
+        "error": "ModuleNotFoundError: No module named 'app.system_action_handlers'"
+      },
+      "candidate": {
+        "case_id": "oa_notification",
+        "ok": true
+      }
+    },
+    {
+      "id": "staged_materials",
+      "expected": "Material request stage precedes reviewed decision; receipts retained, separate budget.",
+      "baseline": {
+        "case_id": "staged_materials",
+        "ok": false,
+        "error": "AttributeError: 'ConsumerAgentResult' object has no attribute 'stage_index'"
+      },
+      "candidate": {
+        "case_id": "staged_materials",
+        "ok": true
+      }
+    },
+    {
+      "id": "uncertain_dispatch",
+      "expected": "Timeout/crash/delayed readback reconcile original object before replay.",
+      "baseline": {
+        "case_id": "uncertain_dispatch",
+        "ok": false,
+        "error": "ModuleNotFoundError: No module named 'app.system_executor'"
+      },
+      "candidate": {
+        "case_id": "uncertain_dispatch",
+        "ok": true
+      }
+    },
+    {
+      "id": "restart_bindings",
+      "expected": "Approved-not-started, pending-question and selected-plan restart exact binding.",
+      "baseline": {
+        "case_id": "restart_bindings",
+        "ok": false,
+        "error": "ModuleNotFoundError: No module named 'app.system_executor'"
+      },
+      "candidate": {
+        "case_id": "restart_bindings",
+        "ok": true
+      }
+    },
+    {
+      "id": "consumer_documents",
+      "expected": "Report/document work allowed; unsubscribe direct; no Skill decision side effect.",
+      "baseline": {
+        "case_id": "consumer_documents",
+        "ok": true
+      },
+      "candidate": {
+        "case_id": "consumer_documents",
+        "ok": true
+      }
+    },
+    {
+      "id": "current_projections",
+      "expected": "Current approved question, selection and verified completion distinct; history immutable.",
+      "baseline": {
+        "case_id": "current_projections",
+        "ok": false,
+        "error": "AttributeError: type object 'AutoReplyStore' has no attribute 'current_reviewed_candidate'"
+      },
+      "candidate": {
+        "case_id": "current_projections",
+        "ok": true
+      }
+    },
+    {
+      "id": "historical_refusal",
+      "expected": "Historical provider_risk_rejected including source_code cannot replay through another channel.",
+      "baseline": {
+        "case_id": "historical_refusal",
+        "ok": false,
+        "error": "AttributeError: type object 'AutoReplyStore' has no attribute '_check_historical_runtime_refusal'"
+      },
+      "candidate": {
+        "case_id": "historical_refusal",
+        "ok": true
+      }
+    },
+    {
+      "id": "old_unbound_options",
+      "expected": "Old text-only human choices cannot authorize system dispatch.",
+      "baseline": {
+        "case_id": "old_unbound_options",
+        "ok": true
+      },
+      "candidate": {
+        "case_id": "old_unbound_options",
+        "ok": true
+      }
+    }
+  ]
+}
