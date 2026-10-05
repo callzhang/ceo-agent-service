@@ -1272,3 +1272,15 @@ Consumer/Audit stages (2026-10-04): immediate continuation is reserved for work 
 角色 MCP 启动参数携带原领取 run 的 execution_generation，启动时与当前任务校验；旧回合不能在 generation 更换后绑定到新一代工件，运行中的既有读写仍逐次检查当前 generation。
 
 未解除的实际 provider-risk refusal 保留 failed 与原始错误码，不重放；Consumer 不能把“拒绝后不重试”报告为 no_action 完成，Audit 应退回该终态错误。这个规则依据真实拒绝证据，不扫描正文完成短语。
+
+### 显式维护部署（2026-10-05）
+
+Derek 明确授权解除生产循环对部署的阻塞。`python -m app.deploy --maintenance-task <id>`
+可重复声明本次允许中断的任务；普通部署仍等待空闲。维护入口在同一发布锁内核实所有在途
+工作，只有指定且无候选、动作意图、回执或工具/未知事件的 Consumer 准备运行允许中断；
+摘要、会议、邮件动作和其他调度领取仍会阻止维护。先冻结已核实的 Dispatcher owner 及其后代至进程树稳定，阻止新领取和子进程产生；通过现有 launchd 停止入口停止整个服务并终止存活的已冻结后代，
+确认已记录的运行进程及其子进程退出，再核对业务对象、执行代、输入版本和效果。
+这是受控中断，不是优雅排空。先创建完整且 integrity_check 验证的维护备份，随后调用既有
+服务中断恢复方法，原任务回到 pending、保留业务身份和历史，保存 maintenance 回执；
+正常空闲检查、部署备份、主线快进、构建、验证、启动和健康检查继续执行。确认进程树全灭、尚未应用代码或契约时的准备失败才启动
+原服务；冻结、终止失败或 needs_manual 保持停止。生产源码仍在 finally 重新锁定。不修改业务成功状态、不手工抢租约、不重放风险拒绝。

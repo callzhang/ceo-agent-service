@@ -23,6 +23,7 @@ from uuid import uuid4
 
 from app.config import PRODUCTION_CHECKOUT_MESSAGE, read_env_file, service_root, worker_db_path
 from app.consumer_system_release import prepare_consumer_system_contracts
+from app.deploy_maintenance import check_maintenance, prepare_maintenance, stop_for_maintenance
 from app.repository_updater import (
     ExistingSchemaUpgradeStateStore,
     RepositoryUpdater,
@@ -129,6 +130,7 @@ def _production_audit_rules_path(root: Path) -> Path:
 
 def deploy(
     root: Path, database_path: Path, *, publish_contracts: bool = False,
+    maintenance_tasks: tuple[int, ...] = (),
 ) -> str:
     ensure_production_guards(root)
     repository = GitRepository(root)
@@ -164,15 +166,41 @@ def deploy(
     changed = repository._run(
         ["diff", "--name-only", current, target], category="deploy_changed_paths"
     ).stdout.decode().split()
+    stopped = False
+
+    def stop_once() -> None:
+        nonlocal stopped
+        if not stopped:
+            _default_stop()
+            stopped = True
+
+    def start() -> None:
+        nonlocal stopped
+        _default_start()
+        stopped = False
+
+    def quiet() -> None:
+        if maintenance_tasks:
+            processes = check_maintenance(database_path, maintenance_tasks)
+            processes = stop_for_maintenance(processes, stop_once)
+            try:
+                prepare_maintenance(database_path, maintenance_tasks, operation.operation_id, processes)
+                wait_until_quiet(database_path)
+            except Exception:
+                start()
+                raise
+        else:
+            wait_until_quiet(database_path)
+
     updater = RepositoryUpdater(
         root,
         ExistingSchemaUpgradeStateStore(database_path),
         remote=REMOTE,
         branch=BRANCH,
         database_path=database_path,
-        wait_for_quiet=lambda: wait_until_quiet(database_path),
-        stop=_default_stop,
-        restart=_default_start,
+        wait_for_quiet=quiet,
+        stop=stop_once,
+        restart=start,
         dependency_sync=lambda: build_frontend(root, changed),
         verification=lambda: verify_imports(root),
         health=wait_for_health,
@@ -233,7 +261,11 @@ def main() -> int:
         action="store_true",
         help="publish the reviewed Consumer/Audit Skill and Audit-rule files in the quiet deploy window",
     )
+    parser.add_argument("--maintenance-task", type=int, action="append", default=[],
+                        help="explicitly authorized recoverable reply task interrupted for maintenance; repeat per task")
     args = parser.parse_args()
+    if args.restart and args.maintenance_task:
+        parser.error("maintenance requires a commit deployment")
     if args.restart and args.publish_consumer_system_contracts:
         parser.error("--restart cannot publish Consumer/Audit contracts")
     if args.restart:
@@ -242,6 +274,7 @@ def main() -> int:
     print(deploy(
         args.root or service_root(), args.db or worker_db_path(),
         publish_contracts=args.publish_consumer_system_contracts,
+        maintenance_tasks=tuple(args.maintenance_task),
     ), flush=True)
     return 0
 
