@@ -129,3 +129,6 @@ Existing Audit binding focus passes5 tests:task-bound read CLI,complete context,
 
 
 Main60125400 integration preserves the upstream historical runtime-risk refusal behavior: the old rerun button is unavailable and direct submission returns conflict without queueing. Backend-owned reevaluation labels remain only for eligible reruns; block reasons take precedence in API, React and HTML. Three merge conflicts were resolved at those shared presentation boundaries. Adapted historical-risk assertions retain the original candidate and run records.111 targeted backend tests and70 frontend tests pass;frontend build and Python lint pass. These are integration checks,not the final exact-head Quality or deployment gate. The latest human task-correspondence rule and XiaoQing background-task exclusion remain unchanged.
+
+
+Independent combined-head review found a P2 status projection defect:current reviewed execution messages could override the existing runtime-refusal block reason,although the rerun action stayed disabled and POST remained409. A real approved/selected/failed-action regression first failed and then passed after making the already computed block reason the final status priority.46 current-human/Attempt API tests pass,including preserved candidate,choice,generation,failed action,error and absent receipt;no execution or refusal policy changes.

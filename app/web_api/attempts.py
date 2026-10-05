@@ -814,7 +814,9 @@ def build_attempt_detail(
                 "skipped": "已按审核通过的停止方案结束，原因已记录。",
             }
             status_message = execution_messages.get(system_execution["status"], status_message)
-    if attempt.send_status == "failed" and rerun.explanation and not rerun_block_reason:
+    if rerun_block_reason:
+        status_message = rerun_block_reason
+    elif attempt.send_status == "failed" and rerun.explanation:
         status_message = rerun.explanation
     try:
         audit_explanation = _attempt_reason_text(attempt)

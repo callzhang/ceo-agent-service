@@ -234,3 +234,37 @@ def test_scheduled_reviewed_question_accepts_exact_selection_and_new_facts(tmp_p
         db.execute("update reply_attempts set channel='scheduled' where id=?", (attempt_id,))
     assert _submit(second, attempt_id, kind="select", candidate_id=candidate["id"],
                    review_id=review["id"], option_key="stop")[0] == 303
+
+
+def test_selected_execution_refusal_keeps_block_reason_in_status(tmp_path):
+    from app.audit_web import handle_rerun_attempt_post
+
+    store, task, candidate, review, attempt_id = _approved_question(tmp_path / "risk.sqlite3")
+    store.select_candidate_option(candidate["id"], review["id"], "send")
+    store.wake_selected_candidate_execution(candidate["id"], review["id"])
+    execution = store.claim_candidate_execution(candidate["id"], review["id"], "executor", 60)
+    store.begin_candidate_action(execution["id"], "executor", 0, "risk-refused")
+    error = {"code": "provider_risk_rejected"}
+    store.record_candidate_action_outcome(execution["id"], "executor", 0, "failed", error)
+    store.finish_candidate_execution(execution["id"], "executor", "failed", {"error": error})
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='failed',error=? where id=?", (error["code"], task.id))
+        db.execute("update reply_attempts set send_status='failed',send_error=? where id=?", (error["code"], attempt_id))
+    original_task = store.get_reply_task(task.id)
+    original_execution = store.get_candidate_execution(candidate["id"])
+    original_candidate = store.current_reviewed_candidate(task.id, task.execution_generation)
+
+    status, detail = build_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert detail["actions"]["can_rerun"] is False
+    assert detail["status"]["message"] == detail["actions"]["rerun_block_reason"]
+    assert "此入口不能重放历史候选" in detail["status"]["message"]
+    assert detail["system_execution"]["status"] == "failed"
+    assert detail["system_execution"]["error"] == error
+    assert detail["system_execution"]["actions"][0]["status"] == "failed"
+    assert detail["system_execution"]["actions"][0]["receipt"] is None
+    assert handle_rerun_attempt_post(store, attempt_id)[0] == 409
+    assert store.get_reply_task(task.id) == original_task
+    assert store.get_candidate_execution(candidate["id"]) == original_execution
+    assert store.current_reviewed_candidate(task.id, task.execution_generation) == original_candidate
