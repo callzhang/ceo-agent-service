@@ -42,6 +42,24 @@ were independent. The v4 fixture/oracle and Task Agent guidance were refined for
 these findings; the candidate replay after those changes is still required.
 All case databases are isolated under `/private/tmp/project-centered-v4-full-75d78850`.
 
+### Full v4 rerun at candidate `3a3070e2` (2026-10-05)
+
+After the responsibility/owner rules and evidence alternatives were updated, a
+fresh 19-case run completed **16/19**. The role-only task suppression,
+overall-owner dispute, one-Project/multiple-source context, distinct deliverables,
+same-source idempotency, same-reference versioning, same-ID promotion semantic
+case, and exact Attention membership all passed in this run. Two cases ended in
+`runtime_result_validation_failed` after a result-correction attempt
+(`role-based-unnamed-suggestion` and `suggestion-promoted-same-id`); they are
+unresolved runtime-contract failures, not semantic passes. The remaining
+`completed-task-risk-persists` fixture lacked an explicit Project decision and
+trusted completion linkage, so the Agent correctly retained an unresolved
+Project clue and did not complete an ambiguously linked Task. The fixture is
+being corrected to include the meeting's continuation decision, stable owner
+identity, same conversation, and explicit reply-to reference. A new full replay
+is required after this fixture correction. Artifacts:
+`/private/tmp/project-centered-v4-candidate-3a3070e2`.
+
 ### Focused v4 native follow-up (2026-10-05)
 
 The six-case native subset at candidate `ee02df12` completed **3/6** cases:
