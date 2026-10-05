@@ -3423,3 +3423,38 @@ def test_current_wechat_delivery_failure_remains_in_history_after_candidate_done
         ).fetchone()) == before
     assert store.get_reply_task(task.id).status == "done"
     assert store.get_reply_attempt(attempt_id).send_status == "failed"
+
+
+def test_principal_superseded_wechat_delivery_is_terminal_in_detail_and_retry_api(tmp_path, monkeypatch):
+    from tests.wechat.test_store import _seed_exhausted_target_open_failure, _wechat_delivery_and_attempt_state
+
+    store, delivery_id, attempt_id, generation = _seed_exhausted_target_open_failure(tmp_path)
+    store.replace_wechat_reply_scopes("acct-1", [WechatReplyScope(
+        account_id="acct-1", target_type="direct", target_id="u1", conversation_id="u1",
+        display_name="Alex", trigger_mode="every_inbound_text", binding_status="verified",
+    )])
+    store.skip_exhausted_stale_wechat_delivery(
+        delivery_id, expected_execution_generation=generation,
+        reason="stale_pre_action_retry_exhausted; superseded_by_principal_reply:synthetic-reply",
+        inactive_before="2026-07-30 10:10:00",
+    )
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='done' where id=1")
+    before = _wechat_delivery_and_attempt_state(store, delivery_id)
+    sends = []
+    monkeypatch.setattr("app.wechat.service.build_sender", lambda: SimpleNamespace())
+    monkeypatch.setattr("app.wechat.accessibility.WechatSender.send", lambda self, delivery, scope: sends.append(delivery.id) or SimpleNamespace(status="sent"))
+    with _client(tmp_path, spa_enabled=True) as client:
+        detail = client.get(f"/api/console/history/{attempt_id}")
+        response = client.post(f"/api/console/wechat/deliveries/{delivery_id}/retry")
+    item = detail.json()["item"]
+    assert item["status"]["raw"] == "skipped"
+    assert "已在后续消息中亲自回复" in item["status"]["message"]
+    assert "无需重试" in item["status"]["message"]
+    assert item["actions"]["delivery_action_url"] == ""
+    assert item["actions"]["can_rerun"] is False
+    assert item["actions"]["terminal"] is True
+    assert response.status_code == 409
+    assert sends == []
+    assert _wechat_delivery_and_attempt_state(store, delivery_id) == before
+    assert store.get_reply_task(1).status == "done"

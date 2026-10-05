@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from app.attempt_projection import project_attempt_status
 
 
@@ -53,3 +55,22 @@ def test_a_live_task_still_reports_its_failing_run():
     ]
 
     assert project_attempt_status(attempt, task, runs) == "failed"
+
+
+@pytest.mark.parametrize("generation,conversation,task_id,error,expected", [
+    ("g2", "current", 1, "stale_pre_action_retry_exhausted; superseded_by_principal_reply:reply-2", "skipped"),
+    ("g1", "current", 1, "stale_pre_action_retry_exhausted; superseded_by_principal_reply:reply-2", "done"),
+    ("g2", "other", 1, "stale_pre_action_retry_exhausted; superseded_by_principal_reply:reply-2", "done"),
+    ("g2", "current", 2, "stale_pre_action_retry_exhausted; superseded_by_principal_reply:reply-2", "done"),
+    ("g2", "current", 1, "expired_after_target_open_retries", "done"),
+    ("g2", "current", 1, "note: superseded_by_principal_reply:reply-2", "done"),
+    ("g2", "current", 1, "superseded_by_principal_reply:", "done"),
+])
+def test_only_current_formally_superseded_wechat_delivery_retains_skipped(
+    generation, conversation, task_id, error, expected,
+):
+    attempt = SimpleNamespace(send_status="skipped", channel="wechat", conversation_id="current")
+    task = SimpleNamespace(id=1, status="done", execution_generation="g2")
+    delivery = SimpleNamespace(task_id=task_id, execution_generation=generation,
+                               conversation_id=conversation, status="skipped", error=error)
+    assert project_attempt_status(attempt, task, [], delivery=delivery) == expected

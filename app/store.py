@@ -16189,11 +16189,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         non-empty action start time but never performed a send.  User-rejected,
         sent, and uncertain deliveries do not meet this transition.
         """
-        from app.wechat.models import WechatDelivery
+        from app.wechat.models import WechatDelivery, principal_reply_supersession
 
         if delivery_id < 1:
             raise ValueError("delivery_id must be positive")
         with self._immediate_write_transaction() as db:
+            closed = db.execute("select error from wechat_deliveries where id=?", (delivery_id,)).fetchone()
+            if closed is not None and principal_reply_supersession(closed["error"]):
+                raise AgentRunLeaseLostError(f"WeChat delivery superseded by principal reply: {delivery_id}")
             cursor = db.execute(
                 """
                 update wechat_deliveries
