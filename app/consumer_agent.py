@@ -17,12 +17,6 @@ from app.agent_contracts import (
     ProposedAction,
     dingtalk_chat_delivery,
 )
-from app.agent_effect_claim import (
-    EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT,
-    channel_is_judged_by_tool_events,
-    claims_external_action_without_tools,
-    generation_tool_events,
-)
 from app.agent_result import ResultParseError
 from app.agent_effects import LEASE_SECONDS
 from app.agent_runtime_config import AgentRuntimeConfig
@@ -117,15 +111,34 @@ regenerated; do not rewrite it yourself.
 SHARED_RULES_PATH = Path.home() / ".agents" / "AGENT.md"
 AGENT_CAPABILITY_INSTRUCTIONS = """
 Use the role's actual declared tools to read the sources needed for this task.
-Consumer may perform task-bound report/document preparation; controlled proposal
-operations are dispatched only by system code after whole-candidate approval.
+Consumer may use its ordinary work tools for documents, artifacts, research,
+analysis and computation. Ordinary work does not require a controlled-action
+proposal merely because a tool writes. Use actual tool results and readback as
+evidence of that work. A summary is not a receipt of a controlled action.
+Use consumer_artifact_write for ordinary local drafts and files, with
+read_task_artifact/list_task_artifacts for this task generation's artifacts.
+consumer_document_write remains the bound scheduled-report document workflow.
+Codex Consumer can run local code using native command and patch tools in its
+current task workspace. The native workspace sandbox keeps writes in that
+workspace and native temporary directories, and disables command network
+access. Claude has declared read and artifact tools only. Use the actual current runtime catalog; do not invent a
+successful execution result.
+Only the registered reviewed system actions in the supplied action contracts
+are dispatched by system code after whole-candidate approval. Do not invoke
+those actions directly or claim them completed without the System receipt.
 Audit has read tools only. Do not try nested CLI inventory, nested Agents,
-shell commands, or a different channel to reach an unavailable write operation.
+commands or a different channel to reach an unavailable operation.
 Call direct read MCP tools where available. Use memory_recall for relevant
 stable context; memory never proves current external state or recipient scope.
 Preserve concrete provider error codes and source context when a read fails.
 Technical/provider authentication or schema errors are failed, not fabricated
-business questions. A genuine human-only fact or action needs its exact context
+business questions. An unresolved provider-risk refusal for the current
+intended action remains failed with its original error code and no retry;
+not retrying a refused action does not make the task completed or no_action.
+Audit must return a candidate that incorrectly reports such a refusal as
+no_action. Historical refusal evidence never authorizes a new effect, a new
+action identity, or another channel to evade the refusal.
+A genuine human-only fact or action needs its exact context
 and must be formulated by Consumer and reviewed before it is requested.
 A low-consequence operating choice is autonomous when the applicable rules and
 facts support it. Do not ask Derek merely because an equivalent default exists.
@@ -561,6 +574,23 @@ class ConsumerAgentRunner:
             proposal_revision=proposal_revision,
         )
 
+        def configure_consumer_command(command):
+            from app.agent_cli import _task_file_root
+
+            task_workspace = _task_file_root(
+                self.store.path, task.id, task.execution_generation, create=True,
+            )
+            make_consumer_agent_command(
+                command, task_workspace=str(task_workspace),
+                controlled_cli=ControlledCliConfig(
+                    command=sys.executable,
+                    args=("-m", "app.agent_cli", "--role", "consumer", "--task-id",
+                          str(task.id), "--db", str(self.store.path),
+                          "--execution-generation", task.execution_generation),
+                    cwd=str(SERVICE_ROOT),
+                ),
+            )
+
         result = process.execute(
                 run=claim.run,
                 skill_names=context.skill_names,
@@ -591,16 +621,8 @@ class ConsumerAgentRunner:
                         ) if part
                     ),
                 ),
-                configure_command=lambda command: make_consumer_agent_command(
-                    command, controlled_cli=ControlledCliConfig(
-                        command=sys.executable,
-                        args=("-m", "app.agent_cli", "--role", "consumer", "--task-id", str(task.id), "--db", str(self.store.path)),
-                        cwd=str(SERVICE_ROOT),
-                    ),
-                ),
-                parse_result=_claim_checked_consumer_result(
-                    self.store, claim.run.id, task.channel
-                ),
+                configure_command=configure_consumer_command,
+                parse_result=_parse_consumer_result,
                 prepare_result=lambda parsed: _prepare_reviewable_candidate(
                     parsed,
                     store=self.store,
@@ -780,34 +802,6 @@ def consumer_developer_instructions(
         )
         if part
     )
-
-
-def _claim_checked_consumer_result(store, run_id: int, channel: str = ""):
-    """Hold a result that says an external action happened to this turn's tools.
-
-    Consumer run 20016 returned `no_action` whose summary read "已按实时 OA 材料
-    核验并执行通过" after making zero tool calls; the approval was untouched and
-    the task closed `done`. A turn that called no tool cannot report a
-    completed external action, so that gets the ordinary correction turn.
-    """
-
-    def parse(raw: str):
-        result = _parse_consumer_result(raw)
-        if not channel_is_judged_by_tool_events(channel):
-            return result
-        run = store.get_agent_run(run_id)
-        if run is not None and claims_external_action_without_tools(
-            result=result.model_dump(mode="json") if hasattr(result, "model_dump") else result,
-            tool_events=generation_tool_events(
-                store,
-                reply_task_id=run.reply_task_id,
-                execution_generation=run.execution_generation,
-            ),
-        ):
-            raise ResultParseError(EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT)
-        return result
-
-    return parse
 
 
 def _parse_consumer_result(raw: str):

@@ -12,6 +12,7 @@ from app.agent_runtime_contracts import (
 from app.dws_client import DwsClient
 from app.native_cli_metadata import AgentReadOnlyViolationError
 from app.service_codex_config import ServiceMcpServer, service_mcp_config_options
+from app.system_action_handlers import native_dws_handlers
 from app.wechat.codex_safety import make_audit_agent_command, make_consumer_agent_command
 
 
@@ -30,7 +31,7 @@ def _codex_command() -> list[str]:
     ]
 
 
-def test_codex_roles_disable_builtin_execution_and_select_service_tools(tmp_path, monkeypatch) -> None:
+def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, monkeypatch) -> None:
     home = tmp_path / "codex-home"
     home.mkdir()
     (home / "config.toml").write_text(
@@ -42,12 +43,10 @@ def test_codex_roles_disable_builtin_execution_and_select_service_tools(tmp_path
     monkeypatch.setenv("CODEX_HOME", str(home))
     consumer = _codex_command()
     audit = _codex_command()
-    make_consumer_agent_command(consumer)
+    make_consumer_agent_command(consumer, task_workspace=str(tmp_path / "task-workspace"))
     make_audit_agent_command(audit)
 
     for command in (consumer, audit):
-        assert "features.shell_tool=false" in command
-        assert "features.unified_exec=false" in command
         assert "features.apps=false" in command
         assert "features.plugins=false" in command
         assert "features.computer_use=false" in command
@@ -63,11 +62,8 @@ def test_codex_roles_disable_builtin_execution_and_select_service_tools(tmp_path
         assert "features.code_mode_host=false" not in command
         assert "features.code_mode_only=true" in command
         assert "features.code_mode_only=false" not in command
-        assert 'features.code_mode.excluded_tool_namespaces=["functions"]' in command
-        assert 'features.code_mode.excluded_tool_namespaces=[]' not in command
         assert 'features.code_mode.direct_only_tool_namespaces=[]' in command
         assert 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli"]' not in command
-        assert 'sandbox_mode="read-only"' in command
         assert "mcp_servers.node_repl.enabled=false" in command
         assert "mcp_servers.plaud.enabled=false" in command
         assert "mcp_servers.future_executor.enabled=false" in command
@@ -78,6 +74,18 @@ def test_codex_roles_disable_builtin_execution_and_select_service_tools(tmp_path
         assert not any(option.startswith("tools.enabled_tools=") for option in command)
         assert "--dangerously-bypass-approvals-and-sandbox" not in command
         assert not any("execute_reviewed_read" in option for option in command)
+    assert "--skip-git-repo-check" in consumer
+    assert "features.shell_tool=true" in consumer
+    assert "features.unified_exec=true" in consumer
+    assert 'sandbox_mode="workspace-write"' in consumer
+    assert 'sandbox_workspace_write.network_access=false' in consumer
+    assert 'sandbox_workspace_write.writable_roots=[]' in consumer
+    assert consumer[consumer.index("--cd") + 1] == str(tmp_path / "task-workspace")
+    assert 'features.code_mode.excluded_tool_namespaces=[]' in consumer
+    assert "features.shell_tool=false" in audit
+    assert "features.unified_exec=false" in audit
+    assert 'sandbox_mode="read-only"' in audit
+    assert 'features.code_mode.excluded_tool_namespaces=["functions"]' in audit
     consumer_tools = next(
         option for option in consumer if option.startswith("mcp_servers.agent_cli.enabled_tools=")
     )
@@ -86,6 +94,10 @@ def test_codex_roles_disable_builtin_execution_and_select_service_tools(tmp_path
     )
     assert "consumer_document_write" in consumer_tools
     assert "consumer_document_write" not in audit_tools
+    assert "consumer_artifact_write" in consumer_tools
+    assert "consumer_artifact_write" not in audit_tools
+    assert "read_task_artifact" in consumer_tools + audit_tools
+    assert "list_task_artifacts" in consumer_tools + audit_tools
     assert "send_approved_dingtalk_message" not in consumer_tools + audit_tools
     assert "unsubscribe_email" not in consumer_tools + audit_tools
 
@@ -143,12 +155,18 @@ def test_agent_cli_role_catalogue_excludes_controlled_effects() -> None:
     } <= audit_tools
     assert "consumer_document_write" not in audit_tools
     assert "consumer_document_write" in consumer_tools
+    assert {"read_task_artifact", "list_task_artifacts"} <= audit_tools
+    assert "consumer_artifact_write" not in audit_tools
+    assert "consumer_artifact_write" in consumer_tools
     for tools in (audit_tools, consumer_tools):
+        registered_operations = {operation for _capability, operation in native_dws_handlers(None, None)}
+        assert registered_operations.isdisjoint(tools)
         assert "execute_reviewed_read" not in tools
         assert "send_approved_dingtalk_message" not in tools
         assert "unsubscribe_email" not in tools
     assert all(tool.annotations.readOnlyHint for tool in audit_catalogue.values())
     assert consumer_catalogue["consumer_document_write"].annotations.readOnlyHint is False
+    assert consumer_catalogue["consumer_artifact_write"].annotations.readOnlyHint is False
 
 
 def test_role_oa_pending_read_has_no_date_filter(monkeypatch) -> None:
@@ -251,3 +269,12 @@ def test_consumer_document_write_requires_a_bound_scheduled_report(tmp_path) -> 
             db_path=tmp_path / "empty.sqlite3", task_id=1,
             content="# Unbound report", expected_revision=None,
         )
+
+
+def test_consumer_resume_uses_global_cwd_and_keeps_session_prompt_positions(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.wechat.codex_safety.inherited_native_server_names", lambda: ())
+    command = ["codex", "exec", "resume", "--json", "session-id", "-"]
+    make_consumer_agent_command(command, task_workspace=str(tmp_path))
+    assert command[:5] == ["codex", "--cd", str(tmp_path), "exec", "resume"]
+    assert command[-2:] == ["session-id", "-"]
+    assert "--cd" not in command[5:]

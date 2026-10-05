@@ -6,7 +6,7 @@
 
 ## 当前任务运行机制
 
-本节是所有任务类型的统一运行契约。每个任务都遵循“执行 Agent → 审核 Agent → 反馈/修正 → 再审核”的生命周期；领域任务只能替换输入和工具能力，不能改变这条基本链路。外部系统的读取、写入和重试由 Agent 按业务 Skill 完成，服务只保存结果投影和去重所需的事实。
+本节描述实际进入 AgentOrchestrator 的运行契约。进入 AgentOrchestrator 的业务任务遵循“执行 Agent → 审核 Agent → 反馈/修正 → 再审核”的生命周期；领域任务替换输入和工具能力。WeChat task 3 保留 DecisionRunner/persistent Sender，Email 退订和确定性技术命令沿用独立系统直接路径。Consumer 可按业务 Skill 读取事实、准备材料并执行普通工具工作；系统注册的受控外部动作由 System Executor 根据持久化且审核通过的精确方案执行和回读。服务保存候选、审核、选择、执行及回执事实。
 
 ```text
 pending -> processing -> done
@@ -27,7 +27,7 @@ pending -> processing -> done
 ```text
 执行 Agent 生成 R0
   -> 审核 Agent 审核 R0
-      -> 通过：审核 Agent 执行/发布 R0，provider 返回成功结果后完成
+      -> 通过：System Executor 执行持久化的 R0，provider 回执与实际回读确认后完成
       -> 需要修改：审核 Agent 写入 F0，R0 保留
           -> 执行 Agent 收到 F0，生成 R1
               -> 审核 Agent 审核 R1
@@ -48,7 +48,7 @@ CLI 原生 `auto_review` 是 Codex 对 `codex-auto-review` 模型的一次额外
 历史 `workbench_confirmations` 仅用于读取既有记录，不属于新 turn 的执行路径；确认与取消
 接口固定拒绝执行，主页也不再显示操作按钮。
 
-审核 Agent 只能反馈规则、观察结果和具体修改要求，不能直接改写执行 Agent 的业务正文。执行 Agent 必须基于反馈生成新 revision；原 run 不覆盖、不删除。一个任务最多允许三个内容反馈周期，基础设施失败不消耗反馈周期。反馈次数耗尽本身是自动闭环失败，不是人工决策依据；只有 Audit 自身返回信息完整且满足 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 的结构化结果时才进入 `needs_human`。
+审核 Agent 只能反馈规则、观察结果和具体修改要求，不能直接改写执行 Agent 的业务正文。执行 Agent 必须基于反馈生成新 revision；原 run 不覆盖、不删除。一个任务最多允许三个内容反馈周期，基础设施失败不消耗反馈周期。反馈次数耗尽本身是自动闭环失败，不是人工决策依据；只有 Consumer 提出的完整当前实例问题经过 Audit approve，才进入 `needs_human`；分值描述证据，不作为固定路由阈值。
 
 所有任务都禁止使用 `discard` 动作或写入 `discarded` 状态。无需动作的结果在 trace 记录 `no_action` 后进入 `done`；需要修正时由审核 Agent 写入 `audit_feedback`，执行 Agent 生成新 revision；处理失败使用 `failed`；无法自动解决使用 `needs_human`。
 
@@ -186,7 +186,7 @@ OA 定时任务冻结传入通用 `dingtalk-oa-approval` 与 Stardust 财务、�
 运行时规则来源，代码与默认 Prompt 都不引用它们。Consumer 按 live `processCode` 和表单事实选择适用类别；跨类别事项组合适用 Skill。
 财务 Skill 的规则卡只适用于登记的财务模板，不匹配其他类别不得单独触发升级；规则卡只提供判断标准，动作与其他类别一样按通用决策表（2026-09-24）。适用业务 Skill
 必须覆盖当前事项的规则条件、例外、权限和动作映射，且内容有效，
-`rule_coverage` 才能为 1.0；否则低于 1.0，规则缺口进入 `needs_human`，不得自动批准或拒绝。
+`rule_coverage` 才能为 1.0；否则低于 1.0，当前实例的规则缺口需要完整候选和 Audit approve 后才能进入 `needs_human`，不得按分值自动批准、拒绝或升级。
 申请人可以补足事实或材料；若政策判断仍无法解决，先审核并执行必要的材料请求阶段，再提交带前阶段回执的当前实例人工问题。申请人补足事实不自动覆盖规则或权限边界。个人审批偏好仍来自定时任务 Prompt。
 
 ### Business Object、Task、Agent Run 与 Reply Attempt 的关系
@@ -458,7 +458,7 @@ provider-folder snapshot 上离线、分阶段执行，shadow 模型不进入实
 
 历史和实时移动都先读取 provider 当前状态，写入后以服务器应答给出的新 locator 为准（没给才回读）；
 important flag 在移动后的 locator 上执行。用户随后在邮箱中移动邮件时，下一份冻结 snapshot 直接采用新文件夹标签。
-`junk` 的退订候选由代码从标准 header/body 链接中发现，Agent 只在已审计的退订任务里决定和执行
+`junk` 的退订候选由代码从标准 header/body 链接中发现，独立的系统直接退订流程执行
 后续网页步骤；成功或无需继续后再移动到系统 Trash。连接邮箱的邮件 OTP 只在站点、收件人和有限
 时间窗同时匹配时临时读取；普通 CAPTCHA 可在隔离 profile 中尝试，密码/MFA/CAPTCHA 无法完成时
 保存有界 continuation 并转人工接管，不持久化 OTP、cookie、完整 URL 或浏览器秘密。
@@ -615,12 +615,12 @@ History 不承诺旧查询参数或旧 URL 的兼容别名；接口和页面使�
 ## 设计目标
 
 CEO Agent Service 是本地优先的企业消息处理服务。它发现需要 Derek 处理的消息、
-审批和任务，把业务判断与外部执行拆给两个职责明确的 Agent：
+审批和任务，由两个 Agent 准备及审核候选，再由系统执行：
 
-- **Consumer Agent A** 理解业务、读取当前事实并提出精确候选；它与用户 Agent 继承相同的
-  runtime 能力，但按角色和结果协议不发布候选中的消息、审批等外部动作。
-- **Audit Agent B** 独立审阅候选，并负责在 service 生命周期中正式发布 accepted action；
-  provider 命令、工具和结果判断属于 Agent/runtime，不由应用层再次审核。
+- **Consumer Agent A** 理解业务、读取当前事实并提出精确候选；它使用同一原生
+  runtime，按角色限定可用能力，不发布候选中的消息、审批等受控外部动作。
+- **Audit Agent B** 只读独立审阅整份候选，包括拟提交给 Derek 的问题；不发布外部动作。
+- **System Executor** 执行审核通过的持久化精确方案，并保存 provider 回执与回读；人工选项执行绑定的原方案，不由模型重写。
 - Service 负责触发发现、队列、会话指针、角色编排、严格结果校验、租约恢复和精确重复
   投递保护，不替 Agent 做业务判断。
 
@@ -821,7 +821,22 @@ frontmatter 并以 SHA 防止并发覆盖。用户、系统或插件目录中的
 
 Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，系统执行已持久化且审核通过的完整结构化动作。Consumer 保留报告、文档准备能力，不自行执行提交审核的受控动作；没有新增 update_daily_report 动作。Email 退订保持独立的系统直接流程。
 
+Consumer 可以直接使用普通工作工具，写入并读回本任务本代次的材料，或通过既有绑定的
+日报/周报接口操作文档。普通写入不因为有副作用而被一律改成待审核系统动作；其事实证据是
+真实工具结果与读回。`consumer_artifact_write` 写入任务工作目录，`read_task_artifact` 与
+`list_task_artifacts` 为两角色提供只读材料；Audit 没有对应写入工具。系统已注册且需要审核的
+动作仍必须完整提案 → Audit → SystemExecutor → 真实回执。Consumer 解析器不扫描整个候选的
+自然语言完成短语，也不把摘要转换成执行事实。是否引用历史完成、是否还需要业务动作，由
+完整候选、来源及实际回执判断；风险拒绝、授权缺失与历史拒绝不可重放的机制保留。
+
 上述新审核执行契约适用于实际使用 AgentOrchestrator 的业务候选。已授权微信会话的 task3 保留原有 WechatReplyConsumer / WechatDecisionRunner 决策与持久化 delivery，随后由独立 Sender 循环发送；它没有独立 Audit 回合，本次未迁移到 candidate/review/SystemExecutor。微信结果中的 audit_summary 不是独立审核回执。系统任务对应表不代表新增该任务的审核流程。
+
+发布可达性使用独立的显式单任务调度暂缓入口 `app.reply_task_deferral`，默认只读；本次操作
+仅授权原 386130/386131。应用需完整备份及精确业务对象/代次/输入版本/失败 run 指纹，锁内
+确认没有活跃处理者、候选或可归属的已有/未知效果后，才设置原任务的有界 available_at 并保存
+调度回执。活跃 ownership 不能因批准或某时点没有 AgentRun 而忽略。恢复只撤销该回执的精确
+延迟，身份、历史、错误与外部回执不改；相同请求幂等，中间变化拒绝。它不产生 Audit 通过或
+业务完成，也不重放历史风险拒绝。具体 CLI 与资格检查见 runtime-mechanism。
 
 候选分为动作计划和当前实例的人工问题。人工问题包含来源上下文、具体原因、证据、互斥可行选项及后果；可执行选项各自绑定完整动作计划，停止选项写明 skipped 和原因。只有 Derek 能补充的开放事实使用 requested_input，不制造假选择。不能混合立即执行的动作与尚未选择的条件分支。
 
@@ -864,7 +879,7 @@ Derek 2026-09-24：长期记忆由执行 Agent A 在结果里给出、系统写�
 
 ### Audit Agent B
 
-Audit 使用实际只读工具接口审核候选；既无受控发送、审批能力，也无命令执行工具。Consumer 的允许文档和报告能力由固定任务绑定操作接口提供。Codex 关闭 shell、browser、image generation、委派、自动 Skill 安装和记忆写入等原生入口，使用原生 code_mode_only 与具名 MCP enabled_tools。原生 V8 host 只承载工具调用与计算，不提供文件、网络或模块导入；从它的工具目录排除内建 functions namespace，因此命令和 ApplyPatch 不暴露给角色，而任务绑定 MCP 仍可调用。原生 registry 中 ApplyPatch handler 仍存在，不把目录排除描述为物理注销。Claude 使用受限内建读工具和角色 MCP；没有对应能力的 Friday 不能承担这两个角色。发布验证使用实际具名读取回执及工具目录，不以只读沙箱拒绝写入代替接口范围证明。
+Audit 使用实际只读工具接口审核候选，没有受控发送、审批或命令执行能力。Consumer 保留任务绑定的文档和报告操作；Codex Consumer 使用原生 shell、unified execution、补丁和 V8 host 在当前 task/generation 的 consumer-artifacts 目录执行普通本地代码。原生 workspace-write 沙箱允许任务目录及原生临时目录写入，命令网络关闭；MCP 进程仍从服务源码目录启动，受控发送、OA 等注册操作仍只由 System 执行。Audit 排除内建 functions namespace 并保留 read-only 沙箱。两种角色均不开放 browser、image generation、委派、自动 Skill 安装、记忆写入或未登记 MCP 操作。Claude 仍只有受限内建读取与角色 MCP 工件工具，没有 shell 代码执行；Friday 不能承担这两个角色。原生执行验证必须保留实际命令结果和文件回读，写出代码文件不等于执行代码。
 
 ## 会话与反馈周期
 
@@ -903,23 +918,11 @@ transport，还用 `disabled_servers` 列出后台 Agent 不得使用的个人�
 整表 `enabled = false` 覆盖（Codex 不接受单字段覆盖，占位 transport 不会被启动）。Settings → MCP
 读取 `codex mcp list --json` 展示全局服务器与清单服务器，保存即写回清单，从下一个 Agent turn 生效。
 
-所有 Agent 直接继承安装用户的 `~/.codex/config.toml`、已安装 MCP、plugin 和 skills；hooks 例外，
-`codex exec` 固定带 `--disable hooks`（Derek 2026-09-24）。原因：插件的 Stop hook（如 memory-connector
-的「结束前检查要不要写记忆」）会在一轮里让 Agent 再给出一份同样合格的结构化结果，服务取到的是后一份，
-真正的结果被覆盖（日报运行 83977、83997）。长期记忆改由执行 Agent 在结果的 `durable_memories` 里给出、
-系统写入，见「任务长期记忆」一节。服务不复制 OAuth header、token 或 MCP transport，也不维护第二套 MCP 清单。这样同一套已登录
-的 Memory、Xiaoqing、Exa、Lark 等能力既可在 Codex 桌面端使用，也可在 CEO Agent 任务中使用。
+后台 Agent 使用安装用户的原生 CLI home 和已安装 skills，MCP 直接连接；不复制 OAuth header、token，也不添加本地 credential proxy。Codex 每轮按角色发出显式工具 allowlist：Consumer 的 agent_cli 普通材料读写与原生工作区代码执行可用；Audit 仅保留只读审核能力。Codex 清单中的第三方 Memory、Xiaoqing 等工具只开放已列出的读取能力，不能把个人安装的全部 MCP 写能力视为后台授权。Claude 的本轮 MCP 配置只连接 agent_cli，沿用其原生 home 和 inline 配置。
 
-Consumer A 和 Audit B 没有两阶段 MCP permission profile，也没有 service-owned technical MCP
-allowlist。安装用户配置中的 MCP 可能同时公开读写工具；service 不声称能够技术性屏蔽其中每一个
-写能力。A/B 的区别由角色指令、候选/审计 result contract 和 service 状态机定义：A 只应读取、
-分析和提案，B 才被授权执行并发布 accepted action。任何绕过该顺序的 A-side 外部写入都违反协议，
-不能作为 service 的已完成结果。
+Codex 后台角色固定 `features.plugins=false`；`codex exec` 固定带 `--disable hooks`（Derek 2026-09-24）。插件 Stop hook 曾使结构化结果重复；长期记忆由 Consumer 在 `durable_memories` 提出、系统写入，见「任务长期记忆」。Consumer 生成候选并按共享 Audit Rules 自检；Audit 只读独立审核；System Executor 执行已持久化审核通过的受控动作。普通工具工作不因产生材料而自动注册为系统受控动作。个人对话中的小青面试或上传没有对应后台系统任务，不设置服务审核项。
 
-服务仍保留职责边界：A 生成候选并按共享 Audit Rules 自检；B 只读独立审阅完整候选，System Executor 执行已经持久化审核通过的精确方案。
-两者都可以使用用户安装的工具和 skills。服务只负责 DWS/Lark channel gate、任务去重和结果持久化；
-Agent 不执行 `auth login`、`reset` 或 `logout`。某个 MCP 实际返回未授权时，
-任务如实记录该依赖不可用，不把认证失败伪装成材料缺失。
+Agent 不执行 `auth login`、`reset` 或 `logout`。MCP 实际返回未授权时，任务保留认证失败，不把它解释为材料缺失。
 
 Agent 不得把嵌套 shell 里的 `codex mcp list` 或 `codex exec` 结果当成当前父 Agent session 的
 MCP 注入证明。需要 Xiaoqing、Memory、Exa、Lark 等 MCP 时，Consumer/Audit 必须直接调用当前
@@ -1265,3 +1268,7 @@ Attempt 详情的 system_execution 按 candidate、review、selection 绑定显�
 原生 OA detail 明确 success=false 时，来源读取边界保留 errcode/errorCode 及 errmsg/errorMessage，按提供方错误记录原 server/code/认证属性；不把 native 失败 envelope 当成空表单或通用 Codex 错误。Consumer 失败 run 保留原始脱敏说明，System 执行技术失败保留来源和原码，不派发或制造业务人工问题。
 
 Consumer/Audit stages (2026-10-04): immediate continuation is reserved for work whose inputs are established by the preceding verified action, such as approval followed by applicant notification. Material requests complete their own stage and wait for a later source update; their delivery receipt is not evidence that materials arrived. Audit uses the same complete production review instructions as the frozen model evaluation, and checks actual provider identities and complete effects rather than outcome labels alone.
+
+角色 MCP 启动参数携带原领取 run 的 execution_generation，启动时与当前任务校验；旧回合不能在 generation 更换后绑定到新一代工件，运行中的既有读写仍逐次检查当前 generation。
+
+未解除的实际 provider-risk refusal 保留 failed 与原始错误码，不重放；Consumer 不能把“拒绝后不重试”报告为 no_action 完成，Audit 应退回该终态错误。这个规则依据真实拒绝证据，不扫描正文完成短语。

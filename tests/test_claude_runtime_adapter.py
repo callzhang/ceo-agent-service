@@ -111,7 +111,7 @@ def normalizer(adapter):
 def test_role_command_uses_only_task_bound_agent_cli(adapter, route):
     command = adapter.build_command(
         route=route, session_id=None, max_turns=5,
-        policy=ClaudeCommandPolicy.consumer(task_id=17, db_path="/tmp/role.sqlite3"),
+        policy=ClaudeCommandPolicy.consumer(task_id=17, db_path="/tmp/role.sqlite3", execution_generation="claim-generation"),
     )
     assert "--restricted" in command
     assert command[command.index("--tools") + 1] == "Read,Glob,Grep"
@@ -122,6 +122,7 @@ def test_role_command_uses_only_task_bound_agent_cli(adapter, route):
         "args": [
             "-m", "app.agent_cli", "--role", "consumer",
             "--task-id", "17", "--db", "/tmp/role.sqlite3",
+            "--execution-generation", "claim-generation",
         ],
     }
 

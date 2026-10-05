@@ -2985,6 +2985,12 @@ class DwsClient:
             raise DwsError("invalid doc comment response")
         return payload
 
+    def read_doc_comments(self, node_id: str) -> Any:
+        return self.run_json([
+            self.dws_bin, "doc", "+comment-list", "--node", node_id,
+            "--limit", "50", "--format", "json",
+        ])
+
     def get_resource_download_url(
         self,
         open_conversation_id: str,
@@ -3271,6 +3277,29 @@ class DwsClient:
             if message.open_conversation_id == conversation.open_conversation_id
             and message.quoted_message_id == trigger.open_message_id
             and "".join(message.content.split()) == expected_body
+            and not message.is_recalled()
+            and self.is_current_user_message(message)
+        ]
+        if len(matches) != 1:
+            return None
+        message = matches[0]
+        return {
+            "success": True,
+            "result": {"openMessageId": message.open_message_id},
+            "readback": message.model_dump(mode="json"),
+        }
+
+    def reconcile_message_send(
+        self, conversation: DingTalkConversation, text: str, *, not_before: datetime,
+    ) -> dict[str, Any] | None:
+        """Positive original-target readback; an empty page never permits resend."""
+        boundary_ms = int(not_before.timestamp() * 1000)
+        matches = [
+            message for message in self.read_recent_messages(conversation)
+            if (not conversation.open_conversation_id
+                or message.open_conversation_id == conversation.open_conversation_id)
+            and message.content == text
+            and self._datetime_string_to_epoch_ms(message.create_time) >= boundary_ms
             and not message.is_recalled()
             and self.is_current_user_message(message)
         ]

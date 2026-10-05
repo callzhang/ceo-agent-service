@@ -134,6 +134,54 @@ def test_v3_keeps_frozen_cases_and_settings_and_records_scoring_repairs():
     assert v3["harness_contract"] == business_eval.V3_HARNESS_CONTRACT
 
 
+def test_v4_keeps_v3_cases_and_settings_with_a195_baseline():
+    v3 = load_manifest()
+    v4 = load_manifest(MANIFEST_PATH.with_name("v4.json"))
+    assert v4["version"] == "consumer-audit-business.v4"
+    assert v4["baseline_ref"] == "a195c452b5f3b48ac20ed74022d2ae768d66332a"
+    assert v4["settings"] == v3["settings"]
+    assert v4["cases"][:8] == v3["cases"]
+    assert len(v4["cases"]) == 15
+    assert {case["id"] for case in v4["cases"][8:]} == {
+        "historical_delivered_document", "ordinary_document_receipt",
+        "controlled_tools_unavailable", "approved_system_receipt",
+        "fabricated_execution_claim", "current_instance_choice_v4",
+        "historical_risk_refusal_no_replay",
+    }
+
+
+def test_v4_audit_injection_changes_exact_subject_and_digest_without_model_call(monkeypatch):
+    case = load_manifest(MANIFEST_PATH.with_name("v4.json"))["cases"][12]
+    assert case["id"] == "fabricated_execution_claim"
+    original = {"outcome": "proposal", "summary": "Propose one controlled message",
+                "proposal": {"objective": "Notify the requester", "actions": []}}
+    calls = []
+    monkeypatch.setattr(business_eval, "normalize_review_subject", lambda root, value:
+                        calls.append(value) or {"ok": True, "result": value, "digest": "b" * 64})
+    changed = business_eval.audit_subject(ROOT, case, original, "a" * 64)
+    assert changed["result"]["summary"] == case["audit_override"]["summary"]
+    assert changed["digest"] == "b" * 64
+    assert original["summary"] == "Propose one controlled message"
+    assert calls[0]["proposal"] == original["proposal"]
+
+
+def test_v4_audit_oracle_is_separate_from_consumer_lexical_screen():
+    case = {"expected_consumer": "proposal", "expected_audit": ["return", "reject"],
+            "required_concepts": [], "forbidden_concepts": []}
+    assert score_case(case, {"outcome": "proposal"}, {"outcome": "return"})["audit_ok"]
+    assert score_case(case, {"outcome": "proposal"}, {"outcome": "reject"})["audit_ok"]
+    assert not score_case(case, {"outcome": "proposal"}, {"outcome": "approve"})["audit_ok"]
+
+
+def test_v4_refuses_changed_frozen_case_facts(tmp_path: Path):
+    manifest = load_manifest(MANIFEST_PATH.with_name("v4.json"))
+    manifest["cases"][9]["facts"] += " Invented extra receipt."
+    altered = tmp_path / "changed-v4.json"
+    altered.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="cases changed"):
+        load_manifest(altered)
+
+
 def test_ref_specific_wire_schema_is_supplied_to_both_role_prompts():
     schemas = business_eval.role_instructions(ROOT)["wire_schemas"]
     case = load_manifest()["cases"][0]

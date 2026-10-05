@@ -65,7 +65,9 @@ def test_consumer_oa_work_uses_live_identity_and_autonomous_business_rules():
     assert "Use originatorUserid/originatorOpenDingTalkId" in instructions
     assert "A low-consequence operating choice is autonomous" in instructions
     assert "A real provider read outage stays failed" in instructions
-    assert "controlled proposal" in instructions
+    assert "Ordinary work does not require a controlled-action proposal" in instructions
+    assert "Only the registered reviewed system actions" in instructions
+    assert "after whole-candidate approval" in instructions
 
 
 CARD_CONTENT = """@Alex Chen(明哥) 明哥，董事会报告根据昨天的会议进行了修改，您是否已完成审核？是否可以定稿了？

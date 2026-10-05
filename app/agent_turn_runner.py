@@ -1070,11 +1070,13 @@ class AgentTurnProcess(Generic[ResultT]):
                             ClaudeCommandPolicy.consumer(
                                 task_id=self.task.id,
                                 db_path=str(self.store.path),
+                                execution_generation=run.execution_generation,
                             )
                             if run.role is AgentRole.CONSUMER
                             else ClaudeCommandPolicy.audit(
                                 task_id=self.task.id,
                                 db_path=str(self.store.path),
+                                execution_generation=run.execution_generation,
                             )
                         ),
                     )
@@ -1990,13 +1992,20 @@ def _validate_runtime_reference_domain_result(
                 )
             except ValueError as exc:
                 raise RuntimeResultValidationError("runtime_result_source_invalid") from exc
-        domain_result = cast(
-            dict[str, object],
-            sanitize_configured_feedback_links(
-                domain_result,
-                vercel_base_url=feedback_spike_vercel_base_url(),
-            ),
-        )
+        try:
+            domain_result = cast(
+                dict[str, object],
+                sanitize_configured_feedback_links(
+                    domain_result,
+                    vercel_base_url=feedback_spike_vercel_base_url(),
+                ),
+            )
+        except ValueError as exc:
+            # This validates the authored result, so use the same bounded
+            # correction path as its wire/parser failures. A bare ValueError
+            # escapes orchestration after failure persistence and requeues
+            # the task before the existing retry ceiling can be reached.
+            raise ResultParseError(str(exc)) from exc
     _redact_local_runtime_values(domain_result)
     # Local paths can be accidentally echoed while describing source material.
     # Redact the serialized domain fields before enforcing the result boundary.

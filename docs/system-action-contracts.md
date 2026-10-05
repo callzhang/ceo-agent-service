@@ -1,5 +1,20 @@
 # Reviewed system action contracts
 
+This registry describes the actions that require system business review for an
+actual configured system task. Ordinary Consumer work is not made a reviewed
+action merely because a tool writes. Consumer may write its task-generation
+artifacts and use the existing bound report-document workflow, with the actual
+tool result and content readback as evidence. These are ordinary work receipts,
+not SystemExecutor receipts for a registered action.
+
+Consumer cannot directly dispatch the registered reviewed operations below.
+It supplies the complete proposal for Audit and SystemExecutor. Audit remains
+read-only. A `summary`, including a historical quotation or an assertion of
+completion, never creates an execution record. The parser validates the wire;
+it does not scan prose for completion phrases. Audit assesses the complete
+candidate against its sources and actual receipts. System completion comes
+only from the registered handler's persisted dispatch and verification.
+
 The Consumer proposes `ConsumerProposal.actions`; the Audit reviews the exact
 candidate digest, and the service executes only its approved plan or selected
 option. An action has `description`, a stable `action_identity`, `capability`,

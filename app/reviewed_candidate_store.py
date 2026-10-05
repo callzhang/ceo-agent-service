@@ -409,7 +409,7 @@ class ReviewedCandidateStoreMixin:
                 elif old["status"] == "confirmed_no_effect":
                     db.execute("update candidate_action_attempts set status='dispatched',updated_at=current_timestamp where id=?", (old["id"],))
                 return dict(db.execute("select * from candidate_action_attempts where id=?", (old["id"],)).fetchone())
-            db.execute("insert into candidate_action_attempts(execution_id,action_index,external_action_key,status) values (?,?,?,?)", (execution_id,action_index,external_action_key,"verified" if existing_success else "dispatched"))
+            db.execute("insert into candidate_action_attempts(execution_id,action_index,external_action_key,status,created_at) values (?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))", (execution_id,action_index,external_action_key,"verified" if existing_success else "dispatched"))
             return dict(db.execute("select * from candidate_action_attempts where id=last_insert_rowid()").fetchone())
 
     def record_candidate_action_outcome(self, execution_id: int, owner: str, action_index: int, status: str, result: Any) -> dict[str, Any]:

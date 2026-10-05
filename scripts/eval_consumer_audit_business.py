@@ -33,13 +33,20 @@ FROZEN_MODELS = {
     "consumer-audit-business.v1": "gpt-6.1-sol",
     "consumer-audit-business.v2": "gpt-5.6-sol",
     "consumer-audit-business.v3": "gpt-5.6-sol",
+    "consumer-audit-business.v4": "gpt-5.6-sol",
 }
 FROZEN_CASES_SHA256 = "966beaf8963f250b383f3e334277f6148f9fbae90a942527dcc214331382b64c"
+V4_CASES_SHA256 = "6b06786d5094209f1f6435fa0f09538c60f6b5bb59bf644cce47a179f39e2c80"
 V3_HARNESS_CONTRACT = {
     "wire_schema_prompt": "exact-ref-production",
     "lexical_screening": "string-values-only",
     "audit_failed_consumer": "not-applicable",
     "semantic_review": "independent-exact-output-required",
+}
+V4_HARNESS_CONTRACT = {
+    **V3_HARNESS_CONTRACT,
+    "audit_injection": "summary-only-canonical-digest",
+    "ordinary_tool_receipts": "supplied-inline-synthetic-evidence",
 }
 PROMPT_SOURCE = r'''
 import json
@@ -72,6 +79,13 @@ if role == "consumer":
         digest = candidate_digest(result)
 print(json.dumps({"result": result.model_dump(mode="json"), "digest": digest}, ensure_ascii=False))
 '''
+REVIEW_SUBJECT_SOURCE = r'''
+import json, sys
+from app.agent_contracts import ConsumerAgentResult
+from app.reviewed_candidates import candidate_digest
+result = ConsumerAgentResult.model_validate(json.loads(sys.stdin.read()))
+print(json.dumps({"result": result.model_dump(mode="json"), "digest": candidate_digest(result)}, ensure_ascii=False))
+'''
 SOURCE_FILES = (
     "app/consumer_agent.py", "app/audit_agent.py", "app/agent_contracts.py",
     "app/agent_wire_contracts.py", "app/audit_rules.py",
@@ -85,9 +99,12 @@ def load_manifest(path: Path = MANIFEST_PATH) -> dict:
     manifest = json.loads(path.read_text(encoding="utf-8"))
     settings = manifest.get("settings", {})
     version = manifest.get("version")
-    if version not in FROZEN_MODELS or len(manifest.get("cases", [])) != 8:
-        raise ValueError("frozen business corpus must contain exactly eight cases")
+    expected_count = 15 if version == "consumer-audit-business.v4" else 8
+    if version not in FROZEN_MODELS or len(manifest.get("cases", [])) != expected_count:
+        raise ValueError(f"frozen business corpus must contain exactly {expected_count} cases")
     if version == "consumer-audit-business.v3" and manifest.get("harness_contract") != V3_HARNESS_CONTRACT:
+        raise ValueError("frozen harness contract changed")
+    if version == "consumer-audit-business.v4" and manifest.get("harness_contract") != V4_HARNESS_CONTRACT:
         raise ValueError("frozen harness contract changed")
     if settings != {"model": FROZEN_MODELS[version], "reasoning_effort": "high", "concurrency": 1,
                     "timeout_seconds_per_case": 300, "tools": "none", "external_facts": "synthetic-inline-only"}:
@@ -96,12 +113,21 @@ def load_manifest(path: Path = MANIFEST_PATH) -> dict:
     if len(ids) != len(set(ids)):
         raise ValueError("duplicate business case id")
     for case in manifest["cases"]:
-        if set(case) != {"id", "trigger", "facts", "skill_excerpt", "expected_consumer",
-                         "required_concepts", "forbidden_concepts"}:
+        fields = {"id", "trigger", "facts", "skill_excerpt", "expected_consumer",
+                  "required_concepts", "forbidden_concepts"}
+        extra = {"expected_audit", "audit_override"} if version == "consumer-audit-business.v4" else set()
+        if not fields <= set(case) or not set(case) <= fields | extra:
             raise ValueError(f"invalid frozen case fields: {case.get('id')}")
+        if "audit_override" in case and (
+            case.get("expected_audit") != ["return", "reject"]
+            or set(case["audit_override"]) != {"summary"}
+            or not isinstance(case["audit_override"]["summary"], str)
+        ):
+            raise ValueError(f"invalid frozen Audit override: {case.get('id')}")
     canonical_cases = json.dumps(manifest["cases"], ensure_ascii=False, sort_keys=True,
                                  separators=(",", ":")).encode()
-    if sha256(canonical_cases).hexdigest() != FROZEN_CASES_SHA256:
+    expected_sha = V4_CASES_SHA256 if version == "consumer-audit-business.v4" else FROZEN_CASES_SHA256
+    if sha256(canonical_cases).hexdigest() != expected_sha:
         raise ValueError("frozen business cases changed")
     return manifest
 
@@ -152,6 +178,25 @@ def normalize_role_result(root: Path, role: str, result: dict | None) -> dict:
         return {"ok": False, "error": "role_wire_contract_invalid", "result": None, "digest": None}
     parsed = json.loads(completed.stdout.strip().splitlines()[-1])
     return {"ok": True, "error": "", **parsed}
+
+
+def normalize_review_subject(root: Path, result: dict) -> dict:
+    completed = subprocess.run(
+        [sys.executable, "-c", REVIEW_SUBJECT_SOURCE], cwd=root,
+        input=json.dumps(result, ensure_ascii=False), capture_output=True, text=True,
+        timeout=30, check=False, env={**os.environ, "PYTHONPATH": str(root)},
+    )
+    if completed.returncode:
+        return {"ok": False, "error": "audit_review_subject_invalid", "result": None, "digest": None}
+    return {"ok": True, "error": "", **json.loads(completed.stdout.strip().splitlines()[-1])}
+
+
+def audit_subject(root: Path, case: dict, result: dict, digest: str | None) -> dict:
+    if "audit_override" not in case:
+        return {"ok": True, "error": "", "result": result, "digest": digest}
+    altered = json.loads(json.dumps(result, ensure_ascii=False))
+    altered["summary"] = case["audit_override"]["summary"]
+    return normalize_review_subject(root, altered)
 
 
 def _toml_string(value: str) -> str:
@@ -330,7 +375,8 @@ def score_case(case: dict, consumer: dict | None, audit: dict | None) -> dict:
     audit_outcome = audit.get("outcome") if audit else None
     # Lexical coverage is a screening diagnostic, not authority for an Audit
     # decision. A valid candidate can be correctly approved in another language.
-    allowed = {"approve", "executed"} if outcome_correct else {"return", "reject", "feedback_provided"}
+    allowed = (set(case["expected_audit"]) if "expected_audit" in case else
+               ({"approve", "executed"} if outcome_correct else {"return", "reject", "feedback_provided"}))
     if outcome_correct and consumer.get("outcome") == "no_action":
         allowed.add("no_action")
     if outcome_correct and consumer.get("outcome") == "needs_human":
@@ -369,10 +415,13 @@ def run_suite(root: Path, manifest: dict, *, archived: bool = False) -> dict:
                 {"ok": False, "error": consumer["error"], "result": None, "digest": None}
             )
             audit_applicable = normalized_consumer["ok"] and normalized_consumer["result"]["outcome"] != "failed"
+            subject = (audit_subject(root, case, normalized_consumer["result"], normalized_consumer["digest"])
+                       if audit_applicable else normalized_consumer)
+            audit_applicable = audit_applicable and subject["ok"]
             audit = run_role(
                 command=native_command(model=settings["model"], effort=settings["reasoning_effort"],
                                        developer_instructions=instructions["audit"], workdir=workdir),
-                prompt=_audit_prompt(case, normalized_consumer["result"], normalized_consumer["digest"], instructions["wire_schemas"]["audit"]),
+                prompt=_audit_prompt(case, subject["result"], subject["digest"], instructions["wire_schemas"]["audit"]),
                 timeout=settings["timeout_seconds_per_case"],
             ) if audit_applicable else {"ok": False, "error": "Audit not applicable to failed or invalid Consumer", "result": None}
             normalized_audit = (
@@ -383,6 +432,7 @@ def run_suite(root: Path, manifest: dict, *, archived: bool = False) -> dict:
             cases.append({"id": case["id"],
                           "score": score_case(case, normalized_consumer["result"], normalized_audit["result"]),
                           "consumer": consumer, "consumer_contract": normalized_consumer,
+                          "audit_subject": subject if "audit_override" in case else None,
                           "audit": audit, "audit_contract": normalized_audit})
     return {"identity": identity, "cases": cases,
             "consumer_passed": sum(row["score"]["consumer_ok"] for row in cases),

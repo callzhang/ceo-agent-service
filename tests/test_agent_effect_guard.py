@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 
 from app.agent_effect_guard import provider_receipts
 
@@ -115,6 +116,9 @@ def test_consumer_role_keeps_report_documents_without_controlled_write_tools(tmp
     from app.consumer_agent import ConsumerAgentRunner
 
     db_path = tmp_path / "role.sqlite3"
+    with sqlite3.connect(db_path) as db:
+        db.execute("create table reply_tasks (id integer primary key, execution_generation text not null)")
+        db.execute("insert into reply_tasks values (1, 'catalog-test')")
     consumer = {tool.name for tool in asyncio.run(build_role_server(
         "consumer", task_id=1, db_path=db_path,
     ).list_tools())}

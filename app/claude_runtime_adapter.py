@@ -67,11 +67,13 @@ class ClaudeCommandPolicy:
     role: str = ""
     task_id: int = 0
     db_path: str = ""
+    execution_generation: str = ""
     _seal: object
 
     def __init__(
         self, *, tools_enabled: bool, seal: object,
         role: str = "", task_id: int = 0, db_path: str = "",
+        execution_generation: str = "",
     ) -> None:
         if seal is not _POLICY_SEAL:
             raise ValueError("Claude command policies use named constructors")
@@ -79,6 +81,7 @@ class ClaudeCommandPolicy:
         object.__setattr__(self, "role", role)
         object.__setattr__(self, "task_id", task_id)
         object.__setattr__(self, "db_path", db_path)
+        object.__setattr__(self, "execution_generation", execution_generation)
         object.__setattr__(self, "_seal", seal)
 
     @classmethod
@@ -90,17 +93,17 @@ class ClaudeCommandPolicy:
         return cls(tools_enabled=True, seal=_POLICY_SEAL)
 
     @classmethod
-    def consumer(cls, *, task_id: int, db_path: str) -> ClaudeCommandPolicy:
+    def consumer(cls, *, task_id: int, db_path: str, execution_generation: str) -> ClaudeCommandPolicy:
         return cls(
             tools_enabled=True, role="consumer", task_id=task_id,
-            db_path=db_path, seal=_POLICY_SEAL,
+            db_path=db_path, execution_generation=execution_generation, seal=_POLICY_SEAL,
         )
 
     @classmethod
-    def audit(cls, *, task_id: int, db_path: str) -> ClaudeCommandPolicy:
+    def audit(cls, *, task_id: int, db_path: str, execution_generation: str) -> ClaudeCommandPolicy:
         return cls(
             tools_enabled=True, role="audit", task_id=task_id,
-            db_path=db_path, seal=_POLICY_SEAL,
+            db_path=db_path, execution_generation=execution_generation, seal=_POLICY_SEAL,
         )
 
 
@@ -468,6 +471,7 @@ class ClaudeRuntimeAdapter:
                 "args": [
                     "-m", "app.agent_cli", "--role", policy.role,
                     "--task-id", str(policy.task_id), "--db", policy.db_path,
+                    "--execution-generation", policy.execution_generation,
                 ],
             }}
         else:

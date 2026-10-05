@@ -8,14 +8,17 @@ import importlib
 import json
 import os
 import shutil
+import sqlite3
 import stat
 import subprocess
 import sys
 import tempfile
 import zipfile
 from collections.abc import Callable, Sequence
+from contextlib import closing
 from dataclasses import dataclass, replace
 from pathlib import Path
+from urllib.parse import quote
 from xml.etree import ElementTree
 
 from mcp.server.fastmcp import FastMCP
@@ -61,6 +64,8 @@ SPREADSHEET_MATERIAL_ROOTS = (
     Path(tempfile.gettempdir()).resolve(),
 )
 TEXT_MATERIAL_ROOTS = SPREADSHEET_MATERIAL_ROOTS
+MAX_TASK_FILE_BYTES = MAX_CLI_OUTPUT_BYTES
+_TASK_ARTIFACT_TEMP_PREFIX = ".task-artifact-"
 
 
 @dataclass(frozen=True, slots=True)
@@ -888,6 +893,80 @@ def read_spreadsheet_tool(
     return read_spreadsheet(path, max_rows=max_rows, max_columns=max_columns)
 
 
+def _task_file_component(value: str) -> bool:
+    return (
+        isinstance(value, str) and bool(value) and value not in {".", ".."}
+        and Path(value).name == value and "/" not in value
+        and "\\" not in value and "\x00" not in value
+    )
+
+
+def _current_task_generation(db_path: Path | None, task_id: int | None) -> str:
+    """Read the binding without initializing or migrating the live Store."""
+    if db_path is None or type(task_id) is not int or task_id <= 0:
+        raise ValueError("task file binding is missing")
+    database = Path(db_path).resolve()
+    try:
+        with closing(sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True)) as connection:
+            row = connection.execute(
+                "select execution_generation from reply_tasks where id=?", (task_id,)
+            ).fetchone()
+    except sqlite3.Error as exc:
+        raise ValueError("task file binding is unavailable") from exc
+    if row is None or not _task_file_component(row[0]):
+        raise ValueError("task file generation is unavailable")
+    return row[0]
+
+
+def _task_file_root(
+    db_path: Path | None, task_id: int | None, generation: str | None, *, create: bool,
+) -> Path:
+    from app.config import repo_root, workspace_path
+
+    if generation is None:
+        raise ValueError("task file binding is missing")
+    if _current_task_generation(db_path, task_id) != generation:
+        raise ValueError("task file generation changed")
+    root = workspace_path().resolve()
+    if root.is_relative_to(repo_root().resolve()):
+        raise ValueError("task file workspace overlaps service source")
+    if create:
+        root.mkdir(parents=True, exist_ok=True)
+    for component in ("consumer-artifacts", str(task_id), generation):
+        root = root / component
+        if root.is_symlink():
+            raise ValueError("task file directory is linked")
+        if create:
+            root.mkdir(exist_ok=True)
+    return root
+
+
+def _task_file_path(root: Path, name: str) -> Path:
+    if (
+        not _task_file_component(name) or len(name) > 255
+        or name.startswith(_TASK_ARTIFACT_TEMP_PREFIX)
+    ):
+        raise ValueError("task file name is invalid")
+    path = root / name
+    if path.is_symlink():
+        raise ValueError("task file is linked")
+    return path
+
+
+def _read_task_file(root: Path, name: str) -> dict[str, str]:
+    path = _task_file_path(root, name)
+    if not path.is_file():
+        raise ValueError("task file is unavailable")
+    data = path.read_bytes()
+    if len(data) > MAX_TASK_FILE_BYTES:
+        raise ValueError("task file is too large")
+    item = {"name": name, "content": data.decode("utf-8"),
+            "sha256": hashlib.sha256(data).hexdigest()}
+    if len(json.dumps(item).encode("utf-8")) > MAX_CLI_OUTPUT_BYTES:
+        raise ValueError("task file readback is too large")
+    return item
+
+
 def _bound_report(db_path: Path | None, task_id: int | None):
     from app.store import AutoReplyStore
 
@@ -1052,10 +1131,17 @@ def _write_bound_report_document(
 
 def build_role_server(
     role: str, *, task_id: int | None = None, db_path: Path | None = None,
+    execution_generation: str | None = None,
 ) -> FastMCP:
     """Expose only the operations owned by one Agent role."""
     if role not in {"consumer", "audit"}:
         raise ValueError("unsupported agent role")
+    artifact_generation = (
+        _current_task_generation(db_path, task_id)
+        if task_id is not None and db_path is not None else None
+    )
+    if execution_generation is not None and artifact_generation != execution_generation:
+        raise ValueError("task file generation changed")
     bound = FastMCP("agent_cli", instructions="Task-bound Agent reads and Consumer report documents")
     read = ToolAnnotations(readOnlyHint=True, destructiveHint=False,
                            idempotentHint=True, openWorldHint=True)
@@ -1064,6 +1150,35 @@ def build_role_server(
     bound.add_tool(read_skill_tool, name="read_skill", annotations=read)
     bound.add_tool(read_text_file_tool, name="read_text_file", annotations=read)
     bound.add_tool(read_spreadsheet_tool, name="read_spreadsheet", annotations=read)
+
+    def read_task_artifact(name: str) -> dict[str, str]:
+        """Read a text artifact from this task's current execution generation."""
+        return _read_task_file(
+            _task_file_root(db_path, task_id, artifact_generation, create=False), name
+        )
+
+    def list_task_artifacts() -> dict[str, object]:
+        """List text artifacts from this task's current execution generation."""
+        root = _task_file_root(db_path, task_id, artifact_generation, create=False)
+        if not root.is_dir():
+            return {"files": []}
+        files = []
+        for path in sorted(root.iterdir()):
+            if (path.is_file() and not path.is_symlink()
+                    and not path.name.startswith(_TASK_ARTIFACT_TEMP_PREFIX)):
+                if path.stat().st_size > MAX_TASK_FILE_BYTES:
+                    raise ValueError("task file is too large")
+                digest = hashlib.sha256()
+                with path.open("rb") as source:
+                    for chunk in iter(lambda: source.read(65536), b""):
+                        digest.update(chunk)
+                files.append({"name": path.name, "sha256": digest.hexdigest()})
+                if len(json.dumps({"files": files}).encode("utf-8")) > MAX_CLI_OUTPUT_BYTES:
+                    raise ValueError("task file listing is too large")
+        return {"files": files}
+
+    bound.add_tool(read_task_artifact, name="read_task_artifact", annotations=read)
+    bound.add_tool(list_task_artifacts, name="list_task_artifacts", annotations=read)
 
     def read_dingtalk_document(node_id: str) -> dict[str, object]:
         """Read a DingTalk document and its current content."""
@@ -1378,6 +1493,29 @@ def build_role_server(
         bound.add_tool(tool, name=name, annotations=read)
 
     if role == "consumer":
+        def consumer_artifact_write(name: str, content: str) -> dict[str, str]:
+            """Write a text artifact only in this task's current workspace generation."""
+            if not isinstance(content, str) or len(content.encode("utf-8")) > MAX_TASK_FILE_BYTES:
+                raise ValueError("task file content is invalid or too large")
+            root = _task_file_root(db_path, task_id, artifact_generation, create=True)
+            path = _task_file_path(root, name)
+            if len(json.dumps({"name": name, "content": content,
+                               "sha256": "0" * 64}).encode("utf-8")) > MAX_CLI_OUTPUT_BYTES:
+                raise ValueError("task file readback is too large")
+            descriptor, temporary = tempfile.mkstemp(prefix=_TASK_ARTIFACT_TEMP_PREFIX, dir=root)
+            try:
+                with os.fdopen(descriptor, "wb") as output:
+                    output.write(content.encode("utf-8"))
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.replace(temporary, path)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+            return _read_task_file(root, name)
+
+        bound.add_tool(consumer_artifact_write, name="consumer_artifact_write", annotations=write)
+
         def validate_weekly_report(
             manifest: dict, report: dict, previous_issues: list[dict],
         ) -> dict[str, object]:
@@ -1417,6 +1555,10 @@ def build_role_server(
             content: str, expected_revision: int | None = None,
         ) -> dict[str, object]:
             """Publish this scheduled CEO report to its service-resolved document."""
+            if artifact_generation is None:
+                raise ValueError("task file binding is missing")
+            if _current_task_generation(db_path, task_id) != artifact_generation:
+                raise ValueError("task file generation changed")
             return _write_bound_report_document(
                 db_path=db_path, task_id=task_id, content=content,
                 expected_revision=expected_revision,
@@ -1433,5 +1575,7 @@ if __name__ == "__main__":
     parser.add_argument("--role", choices=("consumer", "audit"), required=True)
     parser.add_argument("--task-id", type=int, required=True)
     parser.add_argument("--db", type=Path, required=True)
+    parser.add_argument("--execution-generation", required=True)
     args = parser.parse_args()
-    build_role_server(args.role, task_id=args.task_id, db_path=args.db).run(transport="stdio")
+    build_role_server(args.role, task_id=args.task_id, db_path=args.db,
+                      execution_generation=args.execution_generation).run(transport="stdio")

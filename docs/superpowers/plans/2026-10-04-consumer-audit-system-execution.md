@@ -23,7 +23,30 @@
 
 Derek requires every system-review item to map to an actual system task and its current business instance. Use `docs/audit-task-scope.md` as the current14-task inventory and frozen business-case correspondence;do not build review requirements from the MCP/tool catalog. XiaoQing has no background interview task and remains in personal conversations. Existing technical command verification does not gain an Audit turn.
 
+## Independently approved post-publication scopes (2026-10-05)
+
+Consumer ordinary work uses actual tools and receipts; only registered reviewed
+system actions require whole-candidate approval before System execution. Remove
+the whole-result completion-phrase scan, preserve strict wire and real receipts,
+and provide task-generation artifact writing and native Codex ordinary local
+code/patch execution with read-only Audit access. Consumer uses the CLI native
+workspace-write sandbox with command network disabled; original claim generation
+is passed into role MCP startup. Claude remains read/artifact-only. Keep
+existing runtime risk/authorization and historical no-replay boundaries. Verify
+with fixed native baseline/candidate judgments and separate real tool probes;
+contract replay alone does not establish native behavior.
+
 ## File responsibilities and interfaces
+
+The separately approved deployment-reachability scope may defer only original
+reply tasks 386130/386131 after exact identity, latest failed-run fingerprint,
+verified backup and absence of active ownership, candidates or possible effects
+are rechecked in one transaction. `app.reply_task_deferral` provides read-only
+preview and explicit single atomic apply/resume. It preserves input, generation,
+history and receipts, uses a bounded available_at, and restores only its exact
+receipt's delay after formal deployment. Active processing ownership blocks the
+operation. This scope has its own code, regression evidence, review and commit;
+it neither retries other tasks nor replays historical risk refusal.
 
 | Area | Exact files | Responsibility |
 | --- | --- | --- |
@@ -32,7 +55,7 @@ Derek requires every system-review item to map to an actual system task and its 
 | Candidate hashing | new `app/reviewed_candidates.py` | Canonical JSON binding, action-content comparison, stage facts, whole-candidate validation |
 | Execution | new `app/system_executor.py`, `app/agent_cli.py`, existing `app/dws_client.py`, `app/service_message_sender.py` | Typed domain handlers, ordered claims, reconciliation and verified receipts |
 | Orchestration | `app/agent_orchestrator.py`, `app/agent_context.py`, `app/consumer_agent.py`, `app/audit_agent.py` | Both candidate kinds reviewed; feedback vs technical retry vs stage counters |
-| Capability boundary | `app/agent_turn_runner.py`, `app/wechat/codex_safety.py`, `app/service_codex_config.py`, `app/claude_runtime_adapter.py`, `app/agent_cli.py`, runtime route/probe capabilities | Native tool restrictions + typed reads/document work; no arbitrary shell/argv or controlled Agent write tools |
+| Capability boundary | `app/agent_turn_runner.py`, `app/wechat/codex_safety.py`, `app/service_codex_config.py`, `app/claude_runtime_adapter.py`, `app/agent_cli.py`, runtime route/probe capabilities | Native task-workspace code + typed reads/document work; no generic shell/argv System action executor or controlled Agent dispatch tools |
 | Final projection | `app/worker.py`, `app/agent_cron/consumer.py`, `app/decision_quality.py`, `app/audit_web.py`, `app/web_api/attempts.py` | Current reviewed question, selection, execution results; historical facts read-only |
 | Console | `frontend/src/api/console.ts`, `frontend/src/pages/AttemptDetailPage.tsx`, its tests and styles | Exact branch actions/context/tradeoffs; selection identity vs new instruction |
 | Rules | `docs/architecture.md`, `docs/runtime-mechanism.md`, role prompts, `ci/shared-skills/*/SKILL.md`, applicable `/Users/derek/.agents/skills/*/SKILL.md` | Match implemented responsibility and current-instance decisions, no automatic Skill edits |
@@ -140,7 +163,7 @@ def test_partial_success_does_not_repeat_oa(executor, approved_oa_and_notice, pr
 **Files:** role/runtime wiring and agent_cli above; focused native/Claude/router tests.
 
 - [ ] Add red command/tool-list tests and native controlled synthetic probe proving Audit has no exec/code/write or controlled MCP interface, while Consumer can do document preparation. A prompt assertion alone is insufficient.
-- [ ] Disable builtin shell/code executors using the native inline config mechanism already exercised by `tests/support/native_codex_read_fixture.py`; restrict MCP tool IDs by actual provider tool declarations/annotations and exact supported operation interfaces. Do not use keyword tool filters or credential proxies. Keep native home and direct OAuth.
+- [x] Audit disables builtin execution. Codex Consumer retains ordinary native command/patch tools inside its task-generation workspace, with CLI workspace-write, command network off and no extra writable roots. Restrict MCP to exact declared read/ordinary operations; registered reviewed sends/OA remain System-owned. Use native inline config/home/OAuth, without keyword filters or credential proxies. Verified actual patch, Python execution, file readback, denied fixture outside write/network, and same-session resume at 2afcfe96; this is not a production deploy.
 - [ ] Extend agent_cli with typed DWS evidence reads and Consumer document operations; do not expose `execute_reviewed_read(argv)` because current code marks arbitrary argv read-only without enforcing it.
 - [ ] Use Claude native tool controls and role-specific direct MCP config. Require a role-boundary capability on routes; Friday currently lacks tool-policy fields and cannot serve these turns until it supports that capability. Existing route fallback still handles eligible providers only.
 - [ ] Run real read-only synthetic native probes plus adapter/router tests; commit boundary with precise documentation of actual enforcement and eligible routes.

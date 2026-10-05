@@ -509,6 +509,34 @@ def _result_jsonl(*, session: str = "session-a") -> str:
     )
 
 
+@pytest.mark.parametrize("summary", [
+    "来源人在后续会话已发送参考文档；本轮没有发送，当前无需追加动作。",
+    "本轮已发送通知。",
+])
+def test_consumer_summary_is_not_an_execution_receipt(store, task, context, summary):
+    wire = _wire_result({
+        "outcome": "no_action", "summary": summary, "proposal": None,
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+    })
+    stream = "\n".join((
+        json.dumps({"type": "thread.started", "thread_id": "summary-boundary"}),
+        json.dumps({"type": "item.completed", "item": {
+            "type": "agent_message", "text": json.dumps(wire),
+        }}),
+    ))
+    result = ConsumerAgentRunner(store=store, workspace=Path("/workspace"),
+        executor=CapturingExecutor(stream)).run(
+            task, context, proposal_revision=0, parent_agent_run_id=None,
+        )
+    assert result.result.outcome.value == "no_action"
+    assert result.result.summary == summary
+    assert store.get_reply_task(task.id).status == "processing"
+    with store._connect() as db:
+        for table in ("candidate_executions", "candidate_action_attempts",
+                      "external_action_results", "sent_replies"):
+            assert db.execute("select count(*) from " + table).fetchone()[0] == 0
+
+
 def test_consumer_persists_native_mcp_reads_from_codex_session(
     store, task, context, tmp_path, monkeypatch
 ):
@@ -1016,7 +1044,7 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
     command = executor.commands[0]
-    assert command[:3] == ["codex", "exec", "resume"]
+    assert command[3:5] == ["exec", "resume"]
     assert command[-2:] == ["session-a", "-"]
     assert "--sandbox" not in command
     assert 'sandbox_mode="read-only"' not in command
@@ -1100,7 +1128,7 @@ def test_consumer_resumes_session_when_wire_contract_changes(store, task, contex
         codex_session_exists=lambda _: True,
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert executor.commands[0][:3] == ["codex", "exec", "resume"]
+    assert executor.commands[0][3:5] == ["exec", "resume"]
     assert executor.commands[0][-2:] == ["session-old", "-"]
     assert store.get_codex_session_id(task.conversation_id) == "session-old"
     assert (
@@ -1128,7 +1156,7 @@ def test_consumer_forced_rerun_resumes_the_compatible_session(store, task, conte
         parent_agent_run_id=None,
     )
 
-    assert executor.commands[0][:3] == ["codex", "exec", "resume"]
+    assert executor.commands[0][3:5] == ["exec", "resume"]
     assert executor.commands[0][-2:] == ["session-old", "-"]
     assert store.get_codex_session_id(task.conversation_id) == "session-old"
 
@@ -1270,7 +1298,7 @@ def test_consumer_resumes_session_when_agent_capability_contract_changes(
         codex_session_exists=lambda _: True,
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert executor.commands[0][:3] == ["codex", "exec", "resume"]
+    assert executor.commands[0][3:5] == ["exec", "resume"]
     assert executor.commands[0][-2:] == ["session-old", "-"]
     assert store.get_codex_session_id(task.conversation_id) == "session-old"
     assert store.get_codex_session_contract_hash(task.conversation_id) == (
@@ -1328,7 +1356,7 @@ def test_consumer_retryable_failure_without_tool_progress_preserves_session(
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
     assert result.result.outcome.value == "failed"
-    assert executor.commands[0][:3] == ["codex", "exec", "resume"]
+    assert executor.commands[0][3:5] == ["exec", "resume"]
     assert store.get_codex_session_id(task.conversation_id) == "session-failed"
 
 
@@ -1722,7 +1750,7 @@ def test_retryable_consumer_turn_uses_the_current_conversation_session(
         codex_session_exists=lambda _: True,
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert executor.commands[0][:3] == ["codex", "exec", "resume"]
+    assert executor.commands[0][3:5] == ["exec", "resume"]
     assert executor.commands[0][-2:] == ["session-new", "-"]
     assert store.get_codex_session_id(task.conversation_id) == "session-new"
     failed = store.get_agent_run_for_turn(
@@ -1834,7 +1862,7 @@ def test_retry_after_missing_result_creates_new_run_in_same_session(store, task,
     assert failed is not None and failed.status == "failed"
     assert failed.codex_session_id == "session-old"
     assert retry is not None and retry.turn_attempt == 1
-    assert second.commands[0][:3] == ["codex", "exec", "resume"]
+    assert second.commands[0][3:5] == ["exec", "resume"]
     assert second.commands[0][-2:] == ["session-old", "-"]
     assert retry.codex_session_id == "session-old"
     assert store.get_codex_session_id(task.conversation_id) == "session-old"
@@ -1887,7 +1915,7 @@ def test_repeated_identical_result_failure_restarts_consumer_session(
         codex_session_exists=lambda _: True,
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert executor.commands[0][:2] == ["codex", "exec"]
+    assert executor.commands[0][3] == "exec"
     assert "resume" not in executor.commands[0]
     assert store.get_codex_session_id(task.conversation_id) == "session-recovered"
 
@@ -2966,9 +2994,9 @@ def test_api_consumer_preserves_a_live_session_across_contract_updates(
         ),
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert executor.commands[0][:2] == ["codex", "exec"]
+    assert executor.commands[0][3] == "exec"
     if invalidation == "wire_mismatch":
-        assert executor.commands[0][:3] == ["codex", "exec", "resume"]
+        assert executor.commands[0][3:5] == ["exec", "resume"]
         assert executor.commands[0][-2:] == ["api-old", "-"]
     else:
         assert "resume" not in executor.commands[0]
@@ -3060,9 +3088,9 @@ def test_api_contract_refresh_keeps_each_route_session_current(
         codex_session_exists=lambda _: True,
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert api_executor.commands[0][:3] == ["codex", "exec", "resume"]
+    assert api_executor.commands[0][3:5] == ["exec", "resume"]
     assert api_executor.commands[0][-2:] == ["api-old", "-"]
-    assert oauth_executor.commands[0][:3] == ["codex", "exec", "resume"]
+    assert oauth_executor.commands[0][3:5] == ["exec", "resume"]
     assert oauth_executor.commands[0][-2:] == ["oauth-old", "-"]
     assert store.get_conversation_runtime_session_contract_hash(
         task.conversation_id, "codex_oauth"
@@ -3086,7 +3114,7 @@ def test_route_session_without_contract_hash_is_resumed(store, task, context):
         codex_session_exists=lambda _: True,
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert executor.commands[0][:3] == ["codex", "exec", "resume"]
+    assert executor.commands[0][3:5] == ["exec", "resume"]
     assert executor.commands[0][-2:] == ["upgraded-row-without-hash", "-"]
     assert store.get_conversation_runtime_session_contract_hash(
         task.conversation_id, "codex_api"
