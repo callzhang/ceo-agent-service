@@ -39,3 +39,22 @@ def test_native_audit_binding_and_outcome_are_both_required(monkeypatch):
                                'candidate_digest': subject['digest']},
     })
     assert review.run_suite(review.ROOT, manifest)['passed'] == 1
+
+
+def test_corrected_open_input_stimulus_is_frozen_without_invented_options():
+    from app.agent_contracts import ConsumerAgentResult
+
+    path = review.ROOT / 'evals/consumer_audit_human_review/v2.json'
+    assert sha256(path.read_bytes()).hexdigest() == "ebddd919f764a244c30b08fcc726bcfedfc4c4b535e897bc5f4af20e055228a8"
+    manifest = json.loads(path.read_text())
+    candidate = next(case['consumer_result'] for case in manifest['cases']
+                     if case['id'] == 'valid_principal_only_fact')
+    result = ConsumerAgentResult.model_validate(candidate)
+    assert result.decision_options == ()
+    assert result.requested_input
+    assert 'no selectable execution plan' in result.decision_basis.quality_explanation
+    assert 'recipient are verified' not in result.decision_basis.quality_explanation
+    original = json.loads(review.MANIFEST.read_text())
+    for before, after in zip(original['cases'], manifest['cases'], strict=True):
+        if before['id'] != 'valid_principal_only_fact':
+            assert before == after
