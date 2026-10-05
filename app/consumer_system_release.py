@@ -8,13 +8,12 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import stat
 import tempfile
 from typing import Any
 
 from app.agent_cron.models import ScheduledTaskSkillRef
-from app.managed_skills import REPOSITORY_IMPORT_SOURCE, RUNTIME_EDIT_SOURCE
+from app.managed_skills import REPOSITORY_IMPORT_SOURCE, RUNTIME_EDIT_SOURCE, RuntimeSkillBinding
 from app.store import AutoReplyStore
 
 
@@ -115,6 +114,7 @@ class ConsumerSystemPublication:
         receipt_dir: Path, old_config_id: int,
         original_task_refs: dict[int, tuple[ScheduledTaskSkillRef, ...]],
         original_task_versions: dict[int, int],
+        bindings: tuple[RuntimeSkillBinding, ...],
     ) -> None:
         self.store = store
         self.plans = plans
@@ -122,6 +122,7 @@ class ConsumerSystemPublication:
         self.old_config_id = old_config_id
         self.original_task_refs = original_task_refs
         self.original_task_versions = original_task_versions
+        self.bindings = bindings
         self.updated_task_versions: dict[int, int] = {}
         self.new_config_id: int | None = None
         self.new_revisions: dict[str, int] = {}
@@ -166,6 +167,39 @@ class ConsumerSystemPublication:
         for index, plan in enumerate(self.plans):
             _atomic_replace(plan.target, plan.new_bytes, plan.mode)
             self._written.append(index)
+
+    def publish(self) -> None:
+        self.publish_files()
+        revisions = _target_revisions(self.store, self.plans)
+        self.new_revisions = revisions
+        for task_id, refs in self.original_task_refs.items():
+            updated = tuple(
+                replace(ref, managed_revision_id=revisions[ref.skill_name])
+                if ref.skill_source == "managed" and ref.skill_name in MANAGED_NAMES
+                else ref
+                for ref in refs
+            )
+            task = self.store.update_scheduled_task(
+                task_id, expected_version=self.original_task_versions[task_id],
+                skill_refs=updated,
+            )
+            self.updated_task_versions[task_id] = task.version
+            self._save_receipt()
+        next_bindings = [
+            {
+                "skill_id": binding.skill_id,
+                "revision_id": revisions.get(self.store.get_managed_skill(binding.skill_id).name, binding.revision_id),
+                "enabled": binding.enabled,
+                "load_order": binding.load_order,
+                "purpose": binding.purpose,
+            }
+            for binding in self.bindings
+        ]
+        config = self.store.create_runtime_skill_config(
+            next_bindings, expected_parent_id=self.old_config_id,
+        )
+        self.new_config_id = config.id
+        self._save_receipt()
 
     def verify_loaded(self) -> None:
         if self.new_config_id is None:
@@ -231,10 +265,6 @@ class ConsumerSystemPublication:
         self.status = "verified"
         self._save_receipt()
 
-    def discard(self) -> None:
-        if self.receipt_dir.exists():
-            shutil.rmtree(self.receipt_dir)
-
 
 def _pid_alive(pid: int) -> bool:
     try:
@@ -271,12 +301,12 @@ def _target_revisions(store: AutoReplyStore, plans: tuple[_FilePlan, ...]) -> di
     return revisions
 
 
-def publish_consumer_system_contracts(
+def prepare_consumer_system_contracts(
     *, root: Path, database_path: Path, operation_id: str,
     skills_root: Path | None = None, audit_rules_path: Path | None = None,
     manifest_path: Path | None = None,
 ) -> ConsumerSystemPublication:
-    """Publish only the reviewed files and bind their managed revisions."""
+    """Return the preflight snapshot before changing any release asset."""
     root = Path(root)
     skills_root = Path(skills_root or Path.home() / ".agents/skills")
     audit_rules_path = Path(audit_rules_path or root / "data/prompts/audit_rules.md")
@@ -318,45 +348,8 @@ def publish_consumer_system_contracts(
         original_task_refs[task.id] = task.skill_refs
         original_task_versions[task.id] = task.version
     receipt_dir = Path(database_path).parent / "release-receipts" / operation_id
-    publication = ConsumerSystemPublication(
+    return ConsumerSystemPublication(
         store=store, plans=plans, receipt_dir=receipt_dir,
         old_config_id=original.id, original_task_refs=original_task_refs,
-        original_task_versions=original_task_versions,
+        original_task_versions=original_task_versions, bindings=tuple(bindings),
     )
-    try:
-        publication.publish_files()
-        revisions = _target_revisions(store, plans)
-        publication.new_revisions = revisions
-        for task_id, refs in original_task_refs.items():
-            updated = tuple(
-                replace(ref, managed_revision_id=revisions[ref.skill_name])
-                if ref.skill_source == "managed" and ref.skill_name in MANAGED_NAMES
-                else ref
-                for ref in refs
-            )
-            task = store.update_scheduled_task(
-                task_id, expected_version=original_task_versions[task_id],
-                skill_refs=updated,
-            )
-            publication.updated_task_versions[task_id] = task.version
-            publication._save_receipt()
-        next_bindings = [
-            {
-                "skill_id": binding.skill_id,
-                "revision_id": revisions.get(store.get_managed_skill(binding.skill_id).name, binding.revision_id),
-                "enabled": binding.enabled,
-                "load_order": binding.load_order,
-                "purpose": binding.purpose,
-            }
-            for binding in bindings
-        ]
-        config = store.create_runtime_skill_config(
-            next_bindings, expected_parent_id=original.id,
-        )
-        publication.new_config_id = config.id
-        publication._save_receipt()
-        return publication
-    except Exception:
-        publication.rollback()
-        publication.discard()
-        raise

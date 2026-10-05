@@ -67,6 +67,8 @@ class ExistingSchemaUpgradeStateStore:
 class UpgradePublication(Protocol):
     """External release assets changed while the service is stopped."""
 
+    def publish(self) -> None: ...
+
     def verify_loaded(self) -> None: ...
 
     def rollback(self) -> None: ...
@@ -358,10 +360,10 @@ class RepositoryUpdater:
                 self.dependency_sync()
                 self.verification()
                 if self.publication is not None:
-                    # The service is stopped and the database backup exists.
-                    # Publication is responsible for restoring a partial swap
-                    # if it raises before returning its rollback receipt.
+                    # Hold the restoration snapshot before the first asset
+                    # changes so every partial failure uses this same receipt.
                     published = self.publication()
+                    published.publish()
                 self._persist(operation, "restarting", backup_path=backup_path)
                 self.restart()
                 replacement_started = True

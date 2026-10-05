@@ -138,3 +138,6 @@ A separately scoped live projection/retry defect was reproduced from formal prin
 
 
 Follow-up independent review reproduced a stale-generation status explanation despite correct raw pending state.2 regression cases first fail for old generation or mismatched conversation;the correction shares the exact existing task/generation/conversation identity predicate between raw projection and explanation. Historical close evidence remains readable without describing current pending work as resolved.
+
+
+The independent publisher review reproduced a release-coordination defect:partial publication failed and rollback then hit a scheduled-task CAS conflict,yet the updater without a receipt restarted old code. The real offline regression first fails with stop/start/health. Two-phase prepare→held receipt→publish removes that ownership gap;the unchanged updater rollback path records needs_manual and leaves service stopped if restoration fails. Normal partial failure restores before old start;health/bootstrap rollback and complete refs/load-receipt verification remain. No extra authorization policy or database restore is introduced,and the nine source/target digests are unchanged.

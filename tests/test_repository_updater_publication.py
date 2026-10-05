@@ -65,6 +65,9 @@ class _Receipt:
     def __init__(self, events: list[str]) -> None:
         self.events = events
 
+    def publish(self) -> None:
+        self.events.append("publish")
+
     def verify_loaded(self) -> None:
         self.events.append("loaded")
 
@@ -84,7 +87,7 @@ def test_publication_runs_in_stopped_window_and_verifies_after_health(tmp_path: 
         stop=lambda: events.append("stop"),
         dependency_sync=lambda: events.append("dependencies"),
         verification=lambda: events.append("imports"),
-        publication=lambda: events.append("publish") or _Receipt(events),
+        publication=lambda: _Receipt(events),
         restart=lambda: events.append("start"),
         health=lambda: events.append("health") or True,
     )
@@ -106,7 +109,7 @@ def test_health_failure_stops_replacement_and_restores_publication_before_old_st
     updater = RepositoryUpdater(
         local, _State(), database_path=tmp_path / "absent.db",
         stop=lambda: events.append("stop"),
-        publication=lambda: events.append("publish") or _Receipt(events),
+        publication=lambda: _Receipt(events),
         restart=lambda: events.append("start"),
         health=lambda: events.append("health") or events.count("health") > 1,
     )
@@ -135,7 +138,7 @@ def test_failed_bootstrap_restores_publication_without_stopping_absent_replaceme
     updater = RepositoryUpdater(
         local, _State(), database_path=tmp_path / "absent.db",
         stop=lambda: events.append("stop"),
-        publication=lambda: events.append("publish") or _Receipt(events),
+        publication=lambda: _Receipt(events),
         restart=start,
         health=lambda: events.append("health") or True,
     )
@@ -210,7 +213,7 @@ def test_receipt_finalize_failure_keeps_truthful_healthy_upgrade_status(tmp_path
 
     assert result.status == "succeeded"
     assert "finalization failed" in result.error
-    assert events == ["start", "health", "loaded", "finalize_failure"]
+    assert events == ["publish", "start", "health", "loaded", "finalize_failure"]
     stored = json.loads(next(iter(state.values.values())))
     assert stored["status"] == "succeeded"
     assert "finalization failed" in stored["error"]
@@ -243,7 +246,7 @@ def test_deploy_output_shows_publication_finalization_error_without_changing_suc
     monkeypatch.setattr(deploy_module, "verify_imports", lambda _root: None)
     monkeypatch.setattr(deploy_module, "wait_for_health", lambda: True)
     monkeypatch.setattr(
-        deploy_module, "publish_consumer_system_contracts",
+        deploy_module, "prepare_consumer_system_contracts",
         lambda **_kwargs: FinalizeFails([]),
     )
 
@@ -283,3 +286,23 @@ def test_formal_deploy_does_not_migrate_live_database_before_backup(
             "select name from sqlite_master where type='table'"
         )}
     assert tables == {"service_state"}
+
+
+def test_partial_publish_failure_restores_receipt_before_old_service_start(tmp_path):
+    local, operation = _repo(tmp_path)
+    events = []
+
+    class PartialFails(_Receipt):
+        def publish(self):
+            self.events.append("partial_publish")
+            raise OSError("partial asset swap failed")
+
+    updater = RepositoryUpdater(
+        local, _State(), database_path=tmp_path / "absent.db",
+        stop=lambda: events.append("stop"), publication=lambda: PartialFails(events),
+        restart=lambda: events.append("start"), health=lambda: events.append("health") or True,
+    )
+    with pytest.raises(UpgradeFailed):
+        updater.execute(operation)
+    assert events == ["stop", "partial_publish", "rollback_publication", "start", "health"]
+    assert (local / "version").read_text() == "old\n"

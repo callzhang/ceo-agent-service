@@ -22,7 +22,7 @@ import stat
 from uuid import uuid4
 
 from app.config import PRODUCTION_CHECKOUT_MESSAGE, read_env_file, service_root, worker_db_path
-from app.consumer_system_release import publish_consumer_system_contracts
+from app.consumer_system_release import prepare_consumer_system_contracts
 from app.repository_updater import (
     ExistingSchemaUpgradeStateStore,
     RepositoryUpdater,
@@ -177,7 +177,7 @@ def deploy(
         verification=lambda: verify_imports(root),
         health=wait_for_health,
         publication=(
-            (lambda: publish_consumer_system_contracts(
+            (lambda: prepare_consumer_system_contracts(
                 root=root,
                 database_path=database_path,
                 operation_id=operation.operation_id,

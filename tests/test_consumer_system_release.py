@@ -9,9 +9,9 @@ import pytest
 
 from app.agent_cron.models import ScheduledTaskSkillRef
 from app.store import AutoReplyStore
-from app.consumer_system_release import publish_consumer_system_contracts
+from app.consumer_system_release import prepare_consumer_system_contracts
 from app.repository_upgrade import GitRepository
-from app.repository_updater import RepositoryUpdater, UpgradeFailed, UpgradeOperation
+from app.repository_updater import RepositoryUpdater, UpgradeFailed, UpgradeOperation, UPGRADE_OPERATION_STATE_KEY
 
 
 SKILLS = (
@@ -139,10 +139,11 @@ def test_publish_then_rollback_restores_exact_files_refs_and_config(tmp_path: Pa
     untouched = skills / "ceo-weekly-report/references/operator-note.md"
     untouched.write_text("keep me")
 
-    receipt = publish_consumer_system_contracts(
+    receipt = prepare_consumer_system_contracts(
         root=root, database_path=db, operation_id="offline-release",
         skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
     )
+    receipt.publish()
 
     assert (skills / "ceo-daily-report/SKILL.md").read_bytes() == new["ceo-daily-report/SKILL.md"]
     assert rules.read_bytes() == new["audit_rules"]
@@ -175,10 +176,11 @@ def test_loaded_readback_requires_the_new_config_and_exact_files(tmp_path: Path)
     root, skills, rules, manifest, old, _new = _fixture(tmp_path)
     db = tmp_path / "service.sqlite3"
     store, _old_config_id, _task_id = _store_with_refs(db, old)
-    receipt = publish_consumer_system_contracts(
+    receipt = prepare_consumer_system_contracts(
         root=root, database_path=db, operation_id="loaded-release",
         skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
     )
+    receipt.publish()
     with pytest.raises(ValueError, match="did not activate"):
         receipt.verify_loaded()
     config = store.get_pending_or_active_runtime_skill_config()
@@ -206,10 +208,11 @@ def test_loaded_readback_rejects_missing_or_replaced_scheduled_refs(
     root, skills, rules, manifest, old, _new = _fixture(tmp_path)
     db = tmp_path / "service.sqlite3"
     store, _old_config_id, task_id = _store_with_refs(db, old)
-    receipt = publish_consumer_system_contracts(
+    receipt = prepare_consumer_system_contracts(
         root=root, database_path=db, operation_id=f"readback-{mutation}",
         skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
     )
+    receipt.publish()
     config = store.get_pending_or_active_runtime_skill_config()
     store.record_runtime_skill_load(
         config.id, pid=os.getpid(),
@@ -256,10 +259,11 @@ def test_explicit_old_managed_digest_can_differ_from_installed_file(tmp_path: Pa
     mail_entry["old_managed_sha256"] = _digest(_skill("ceo-mail-review", True, "pinned"))
     manifest.write_text(json.dumps(payload))
 
-    receipt = publish_consumer_system_contracts(
+    receipt = prepare_consumer_system_contracts(
         root=root, database_path=db, operation_id="pinned-release",
         skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
     )
+    receipt.publish()
 
     task = store.get_scheduled_task(task_id)
     mail_ref = next(ref for ref in task.skill_refs if ref.skill_name == "ceo-mail-review")
@@ -286,7 +290,7 @@ def test_manifest_requires_64_hex_expected_old_digest(tmp_path: Path):
     payload["files"][0]["old_sha256"] = payload["files"][0]["old_sha256"][:-1]
     manifest.write_text(json.dumps(payload))
     with pytest.raises(ValueError, match="old SHA is invalid"):
-        publish_consumer_system_contracts(
+        prepare_consumer_system_contracts(
             root=root, database_path=db, operation_id="invalid-manifest",
             skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
         )
@@ -326,11 +330,13 @@ def test_concurrent_scheduled_edit_is_not_overwritten_by_publication_rollback(
         return original_update(task_id, expected_version=expected_version, **kwargs)
 
     monkeypatch.setattr(store, "update_scheduled_task", concurrent_edit)
+    receipt = prepare_consumer_system_contracts(
+        root=root, database_path=db, operation_id="task-race",
+        skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
+    )
     with pytest.raises(Exception, match="version conflict"):
-        publish_consumer_system_contracts(
-            root=root, database_path=db, operation_id="task-race",
-            skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
-        )
+        receipt.publish()
+    receipt.rollback()
 
     first = store.get_scheduled_task(first_task_id)
     second = store.get_scheduled_task(second_task.id)
@@ -395,7 +401,7 @@ def test_failed_health_restores_real_release_files_and_refs_before_old_restart(
         stop=lambda: events.append("stop"),
         restart=lambda: events.append("start"),
         health=lambda: events.append("health") or events.count("health") > 1,
-        publication=lambda: publish_consumer_system_contracts(
+        publication=lambda: prepare_consumer_system_contracts(
             root=root, database_path=db, operation_id=operation.operation_id,
             skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
         ),
@@ -440,10 +446,11 @@ def test_post_rollback_startup_preserves_old_binding_with_runtime_edit_file(
         "repository:skills", "runtime:agents-skills", "repository:skills",
     ]
 
-    receipt = publish_consumer_system_contracts(
+    receipt = prepare_consumer_system_contracts(
         root=root, database_path=db, operation_id="rollback-import",
         skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
     )
+    receipt.publish()
     receipt.rollback()
     assert (skills / "ceo-mail-review/SKILL.md").read_bytes() == old["ceo-mail-review/SKILL.md"]
     assert store.get_pending_or_active_runtime_skill_config().id != old_config_id
@@ -499,10 +506,60 @@ def test_partial_file_publish_failure_restores_every_changed_file(tmp_path: Path
         return original(path, data, mode)
 
     monkeypatch.setattr(release, "_atomic_replace", fail_second)
+    receipt = prepare_consumer_system_contracts(
+        root=root, database_path=db, operation_id="partial-release",
+        skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
+    )
     with pytest.raises(OSError, match="synthetic"):
-        publish_consumer_system_contracts(
-            root=root, database_path=db, operation_id="partial-release",
-            skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
-        )
+        receipt.publish()
+    receipt.rollback()
     assert all((skills / rel).read_bytes() == data for rel, data in old.items() if rel != "audit_rules")
     assert rules.read_bytes() == old["audit_rules"]
+
+
+def test_partial_publication_and_rollback_failure_never_start_old_service(tmp_path, monkeypatch):
+    from tests.test_repository_updater_publication import _repo, _State
+    import app.consumer_system_release as release
+
+    root, skills, rules, manifest, old, new = _fixture(tmp_path)
+    db = tmp_path / "service.sqlite3"
+    store, _, first_task_id = _store_with_refs(db, old)
+    first_ref = store.get_scheduled_task(first_task_id).skill_refs[0]
+    second = store.create_scheduled_task(
+        name="Second", description="Second", prompt="Before",
+        runtime_id="codex_cli", cron_expression="0 1 * * * *", timezone_name="UTC",
+        skill_refs=(replace(first_ref, position=0, scheduled_task_id=0),), enabled=False,
+    )
+    repository_path = tmp_path / "repository"
+    repository_path.mkdir()
+    local, operation = _repo(repository_path)
+    events = []
+    state = _State()
+    monkeypatch.setattr(release, "AutoReplyStore", lambda _path: store)
+    original_update = store.update_scheduled_task
+
+    def fail_with_concurrent_edit(task_id, *, expected_version, **kwargs):
+        if task_id == second.id:
+            current = store.get_scheduled_task(first_task_id)
+            original_update(first_task_id, expected_version=current.version, prompt="Concurrent edit")
+            raise OSError("publication failed after first task update")
+        return original_update(task_id, expected_version=expected_version, **kwargs)
+
+    monkeypatch.setattr(store, "update_scheduled_task", fail_with_concurrent_edit)
+    updater = RepositoryUpdater(
+        local, state, database_path=db,
+        stop=lambda: events.append("stop"), restart=lambda: events.append("start"),
+        health=lambda: events.append("health") or True,
+        publication=lambda: prepare_consumer_system_contracts(
+            root=root, database_path=db, operation_id=operation.operation_id,
+            skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
+        ),
+    )
+    with pytest.raises(UpgradeFailed):
+        updater.execute(operation)
+    assert events == ["stop"]
+    assert (local / "version").read_text() == "new\n"
+    assert store.get_scheduled_task(first_task_id).prompt == "Concurrent edit"
+    assert (skills / "ceo-calendar-invite/SKILL.md").read_bytes() == new["ceo-calendar-invite/SKILL.md"]
+    assert json.loads(state.values[UPGRADE_OPERATION_STATE_KEY])["status"] == "needs_manual"
+    assert (db.parent / "release-receipts" / operation.operation_id / "receipt.json").exists()

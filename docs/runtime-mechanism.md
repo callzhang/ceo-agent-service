@@ -482,6 +482,8 @@ candidate_executions 保存租约，candidate_action_attempts 在 provider 调�
 
 Codex 角色使用原生 code_mode_only，并保留无文件/网络/模块导入接口的 V8 host，供具名 MCP 操作调用与计算；排除内建 functions namespace，同时关闭 shell、browser、image generation、委派、自动 Skill 安装和记忆写入。命令与补丁工具因此不暴露在角色 direct/nested 目录中，任务绑定读取和 Consumer 文档工具仍保留；这不是注销原生 registry 的 ApplyPatch handler。实际读取回执和目录检查验证角色接口范围，固定无工具合成业务对比只验证判断和契约，不证明生产工具可用或已发生业务效果。
 
+正式 Consumer/Audit 契约发布使用 `python -m app.deploy --publish-consumer-system-contracts`，在服务空闲且停止、数据库备份已完成后，先校验并将恢复快照交给 updater，再开始替换九个契约文件、六个 managed Skill 修订和受影响任务的完整引用。发布中途失败也由 updater 持有该快照恢复；恢复失败时保留回执及原文件副本，记录 `needs_manual`，不回滚 Git 后启动可能与外部文件或引用不一致的旧服务。恢复成功后才启动旧版本；健康通过后仍核对 active 配置、全部启用绑定与新 worker 的加载回执/PID、九文件 SHA 和完整任务引用，最后标记 verified。代码上线、资产发布和实际业务结果分别验收。
+
 正式关闭的微信投递若在关闭原因中记录 `superseded_by_principal_reply:<source-message-id>`，表示本人后续回复已覆盖旧候选。仅在匹配当前任务、执行代和会话的投递上，详情状态保留 `skipped`，不被任务的 `done` 覆盖；页面说明已由本人回复、旧候选未发送且无需重试，不显示旧投递重试动作。手动重试的同一写事务读取该正式来源引用并拒绝重新入队，原投递、Attempt、执行代与回执不变。该判定读取分号分隔的精确关闭字段及非空来源引用，不匹配回复正文或一般文字。其他普通过期投递的现有手动重试合同保持。
 
 ## 用户反馈处理轮次
