@@ -14,6 +14,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright
 
@@ -135,7 +136,11 @@ def _submit_local_dingtalk_account(page) -> None:
         corp.click(timeout=LOCAL_SSO_TIMEOUT_MS)
     except Exception:
         # A single-organization account navigates directly to Dingteam.
-        if _is_dingtalk_login_url(getattr(page, "url", "")):
+        redirected = urlsplit(getattr(page, "url", ""))
+        entry = urlsplit(browser.ENTRY_URL)
+        if (redirected.scheme, redirected.netloc, redirected.path) != (
+            entry.scheme, entry.netloc, entry.path
+        ):
             raise
 
 

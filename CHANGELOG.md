@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-04: An absent organization chooser is accepted only after redirecting
+  to the configured OKR application's origin and path, not any non-login URL.
+  Regression coverage includes blank and unrelated pages, real JWT parsing and
+  expiry boundaries, and valid headers arriving during the refresh wait loop.
+
 - 2026-10-04: The OKR service wrapper reuses the shared source's validated
   request-header collector. An early expired or incomplete request no longer
   prevents a later valid SSO token from being captured. Expired credentials

@@ -1,4 +1,6 @@
 from contextlib import contextmanager
+import base64
+import json
 import os
 import signal
 import subprocess
@@ -420,6 +422,58 @@ def test_local_account_submission_selects_target_organization():
     ]
 
 
+@pytest.mark.parametrize(
+    "redirected_url, accepted",
+    [
+        ("https://dingokr.dingteam.com/web/okr/pc/index.html#/okr/personal", True),
+        ("about:blank", False),
+        ("https://dingokr.dingteam.com/unrelated", False),
+        ("https://example.com/web/okr/pc/index.html", False),
+    ],
+)
+def test_local_account_submission_requires_business_page_when_org_is_absent(
+    monkeypatch, redirected_url, accepted
+):
+    module = load_module()
+
+    class Locator:
+        @property
+        def first(self):
+            return self
+
+        def filter(self, **_kwargs):
+            return self
+
+        def wait_for(self, **_kwargs):
+            if page.url == redirected_url:
+                raise RuntimeError("organization is absent after redirect")
+
+        def click(self, **_kwargs):
+            pass
+
+    class Page:
+        url = "https://login.dingtalk.com/oauth2/challenge.htm"
+
+        def locator(self, _selector):
+            return Locator()
+
+        def wait_for_timeout(self, _milliseconds):
+            self.url = redirected_url
+
+    page = Page()
+    monkeypatch.setattr(
+        module, "_confirm_local_dingtalk_login",
+        lambda: pytest.fail("redirected page must not trigger a native confirmation"),
+    )
+    if accepted:
+        module._submit_local_dingtalk_account(page)
+    else:
+        with pytest.raises(RuntimeError, match="organization is absent"):
+            module._submit_local_dingtalk_account(page)
+        page.url = "https://login.dingtalk.com/oauth2/challenge.htm"
+        assert module._attempt_local_dingtalk_sso(page) is False
+
+
 def test_local_sso_selectors_are_scoped_to_the_current_login_page():
     module = load_module()
 
@@ -567,13 +621,28 @@ def test_header_refresh_reuses_the_authenticated_persistent_context(monkeypatch,
 
 
 @pytest.mark.parametrize(
-    "initial_headers",
-    [{"authorization": "Bearer expired"}, {"x-dingteam-auth-app-id": "40707"}],
+    "initial_kind", ["expired", "appid", "skew", "boundary", "malformed", "missing_exp"]
 )
 def test_header_refresh_waits_for_valid_auth_after_early_request(
-    monkeypatch, tmp_path, initial_headers
+    monkeypatch, tmp_path, initial_kind
 ):
     module = load_module()
+    now = 1_700_000_000
+    monkeypatch.setattr(time, "time", lambda: now)
+
+    def token(payload):
+        encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+        return f"Bearer test.{encoded}.signature"
+
+    initial_headers = {
+        "expired": {"authorization": token({"exp": now - 1})},
+        "appid": {"x-dingteam-auth-app-id": "40707"},
+        "skew": {"authorization": token({"exp": now + module.browser.TOKEN_SKEW_SECONDS - 1})},
+        "boundary": {"authorization": token({"exp": now + module.browser.TOKEN_SKEW_SECONDS})},
+        "malformed": {"authorization": "Bearer invalid"},
+        "missing_exp": {"authorization": token({})},
+    }[initial_kind]
+    refreshed = token({"exp": now + 3600})
 
     class Request:
         url = "https://dingokr.dingteam.com/data/okr/person/period/list"
@@ -586,12 +655,13 @@ def test_header_refresh_waits_for_valid_auth_after_early_request(
 
         def goto(self, *_args, **_kwargs):
             context.handler(Request(initial_headers))
-            context.handler(Request({"authorization": "Bearer refreshed"}))
 
         def wait_for_timeout(self, _milliseconds):
             pass
 
         def evaluate(self, _script):
+            if _script == module.OKR_REQUEST_NUDGE:
+                context.handler(Request({"authorization": refreshed}))
             if "root:" in _script:
                 return {"root": True, "mounted": True}
             return None
@@ -601,7 +671,9 @@ def test_header_refresh_waits_for_valid_auth_after_early_request(
             self.handler = handler
 
         def new_page(self):
-            return Page()
+            page = Page()
+            self.pages = [page]
+            return page
 
         def close(self):
             pass
@@ -617,19 +689,12 @@ def test_header_refresh_waits_for_valid_auth_after_early_request(
         yield object()
 
     monkeypatch.setattr(module.browser, "PROFILE_DIR", tmp_path)
-    monkeypatch.setattr(
-        module.browser,
-        "_jwt_exp",
-        lambda headers: int(time.time()) + 3600
-        if headers.get("Authorization") == "Bearer refreshed"
-        else 0,
-    )
-    monkeypatch.setattr(module, "HEADLESS_REFRESH_SECONDS", 0)
+    monkeypatch.setattr(module, "HEADLESS_REFRESH_SECONDS", 1)
     monkeypatch.setattr(module, "_service_browser", service_browser)
     monkeypatch.setattr(module, "sync_playwright", playwright)
 
     assert module._capture_stable_headless_headers() == {
-        "Authorization": "Bearer refreshed"
+        "Authorization": refreshed
     }
 
 
