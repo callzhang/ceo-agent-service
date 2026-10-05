@@ -9,6 +9,13 @@
 
 ## Unreleased
 
+- 2026-10-05: Consumer result inspection now distinguishes captured historical
+  feedback rendering and serialized provider containers from current outgoing
+  text. Original source snapshots remain bound to the candidate and reread;
+  the existing strict callback and credential checks remain active. Invalid
+  captured callbacks are recorded as nonretryable service result failures
+  instead of repeatable CLI process failures.
+
 - 2026-10-05: Obsolete task-class questions now have an explicit single-attempt
   retirement command with read-only preview and retained provenance. Original
   results and statuses remain historical; retired questions consistently show

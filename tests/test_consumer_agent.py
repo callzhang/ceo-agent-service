@@ -2250,6 +2250,71 @@ def test_consumer_prepares_structured_dingtalk_message_postfix_before_audit(
     assert prepared.final_body == text
 
 
+@pytest.mark.parametrize("serialized", [False, True])
+@pytest.mark.parametrize("prefix", ["", "[事项] ", "{讨论} "])
+def test_consumer_preserves_provider_rendered_historical_feedback_sources(
+    store, task, context, monkeypatch, serialized, prefix,
+):
+    from app.feedback_spike import prepare_outgoing_reply_text
+
+    base = "https://feedback.example.com"
+    monkeypatch.setenv("CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", base)
+    historical = prepare_outgoing_reply_text(
+        reply_text=prefix + "Historical synthetic notice", feedback_base_url=base,
+        feedback_token="spike_1780000000_deadbeef",
+    ).text.replace("\n\n", "  \n")
+    source = json.dumps({"text": historical}) if serialized else historical
+    context = replace(context, messages=(AgentContextMessage(
+        message_id="historical-synthetic", sender="Synthetic", text=source, create_time="2026-10-04T00:00:00Z",
+    ),), trigger_raw_payload=json.dumps({"text": historical}))
+    result = ConsumerAgentRunner(
+        store=store, workspace=Path("/workspace"), executor=CapturingExecutor(_result_jsonl()),
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    assert result.result.outcome == "no_action"
+    [binding] = result.result.source_bindings
+    assert binding.value["messages"][0]["text"] == source
+    assert binding.value["trigger_raw_payload"] == context.trigger_raw_payload
+    assert json.loads(store.get_agent_run(result.run_id).final_result_json)["source_bindings"][0]["value"] == binding.value
+
+
+@pytest.mark.parametrize("change", ["foreign", "token", "query", "unpaired", "source-secret"])
+def test_historical_feedback_does_not_exempt_invalid_urls_or_source_credentials(
+    store, task, context, monkeypatch, change,
+):
+    from app.feedback_spike import prepare_outgoing_reply_text
+
+    base = "https://feedback.example.com"
+    monkeypatch.setenv("CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", base)
+    source = prepare_outgoing_reply_text(
+        reply_text="Historical synthetic notice", feedback_base_url=base,
+        feedback_token="spike_1780000000_deadbeef",
+    ).text.replace("\n\n", "  \n")
+    if change == "foreign":
+        source = source.replace(base, "https://foreign.example.com")
+    elif change == "token":
+        source = source.replace("spike_1780000000_deadbeef", "sk-proj-ABCDEFGHIJKLMNO12345")
+    elif change == "query":
+        source = source.replace("&rating=", "&access_token=secret&rating=")
+    elif change == "unpaired":
+        source = source.split("｜")[0]
+    else:
+        source += "\nAuthorization: Bearer abcdef1234567890"
+    context = replace(context, messages=(AgentContextMessage(
+        message_id="historical-synthetic", sender="Synthetic", text=source, create_time="2026-10-04T00:00:00Z",
+    ),))
+    with pytest.raises(ValueError):
+        ConsumerAgentRunner(
+            store=store, workspace=Path("/workspace"), executor=CapturingExecutor(_result_jsonl()),
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    if change != "source-secret":
+        [run] = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
+        error = json.loads(run.structured_error_json)
+        assert error["code"] == "runtime_result_source_invalid"
+        assert error["stage"] == "result"
+        assert error["retryable"] is False
+        assert error["session_continuable"] is False
+
+
 def test_consumer_body_with_hand_typed_feedback_links_gets_a_correction(
     store, task, context, monkeypatch
 ):

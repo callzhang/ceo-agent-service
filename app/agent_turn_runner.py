@@ -70,7 +70,7 @@ from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter, FridayRuntimeError
 from app.agent_runtime_router import _runtime_failure_from_friday_error
 from app.config import feedback_spike_vercel_base_url
-from app.feedback_spike import sanitize_configured_feedback_links
+from app.feedback_spike import sanitize_configured_feedback_links, sanitize_source_feedback_links
 from app.runtime_fallback import plan_runtime_fallback
 from app.leak_check import (
     contains_credential,
@@ -1380,6 +1380,14 @@ class AgentTurnProcess(Generic[ResultT]):
             pass
         except CompletedRuntimeResultBlockedError:
             raise
+        except RuntimeResultValidationError as exc:
+            self._fail_runtime_attempt_unclassified(active_attempt, exc)
+            self._fail_running(
+                run, exc.code, detail=_runtime_failure_detail(exc.__cause__ or exc),
+                stage="result", source="service", source_code=exc.code,
+                retryable=False,
+            )
+            raise
         except RuntimeRouteUnavailableError as exc:
             self._fail_running(
                 run,
@@ -1684,6 +1692,11 @@ class AgentTurnProcess(Generic[ResultT]):
         persisted = self.store.get_agent_runtime_attempt(attempt.id)
         if persisted is None or persisted.status not in {"starting", "running"}:
             return
+        if isinstance(exc, RuntimeResultValidationError):
+            self.store.fail_agent_runtime_attempt(
+                attempt.id, RuntimeFailureClass.RESULT.value, exc.code, False,
+            )
+            return
         if isinstance(exc, ResultParseError):
             failure_code = _agent_process_error_code(exc)
             self.store.fail_agent_runtime_attempt(
@@ -1773,6 +1786,7 @@ class AgentTurnProcess(Generic[ResultT]):
         source: str = "",
         source_code: str = "",
         session_continuable: bool = False,
+        retryable: bool | None = None,
     ) -> None:
         persisted = self.store.get_agent_run(run.id)
         if persisted is not None and persisted.status == "running":
@@ -1781,7 +1795,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 run.id,
                 {
                     "code": code,
-                    "retryable": not terminal_auth_failure,
+                    "retryable": not terminal_auth_failure if retryable is None else retryable,
                     "authorization_required": False,
                     **({"detail": detail} if detail else {}),
                     **({"stage": stage} if stage else {}),
@@ -1966,6 +1980,16 @@ def _validate_runtime_reference_domain_result(
 ) -> None:
     domain_result = _project_runtime_domain_result(result)
     if allow_configured_feedback_links:
+        # Sources are service-captured provider reads, not current outgoing
+        # text. Inspect every field without imposing outbound paragraph layout
+        # on historical rendering or serialized provider containers.
+        for binding in domain_result.get("source_bindings", []):
+            try:
+                binding["value"] = sanitize_source_feedback_links(
+                    binding["value"], vercel_base_url=feedback_spike_vercel_base_url(),
+                )
+            except ValueError as exc:
+                raise RuntimeResultValidationError("runtime_result_source_invalid") from exc
         domain_result = cast(
             dict[str, object],
             sanitize_configured_feedback_links(

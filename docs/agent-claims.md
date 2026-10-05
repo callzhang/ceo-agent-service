@@ -30,7 +30,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-consumer-rule-question-retirement | app/feedback_spike.py (historical source callback validation only), app/agent_turn_runner.py (source snapshot validation projection only), tests/test_consumer_agent.py (historical callback source regressions only), app/rule_question_retirement.py (new explicit on-demand transition only), app/store.py (ReplyAttempt resolution fields and resolved question History status only), app/attempt_projection.py (resolved question status only), app/web_api/attempts.py (resolved question explanation only), app/audit_web.py (resolved question queue/rerun only), tests/test_rule_question_retirement.py (new), docs/architecture.md and docs/runtime-mechanism.md (legacy rule-question retirement paragraphs only), CHANGELOG.md (entry only), docs/agent-claims.md | Post-deploy fresh gate found old task-class question still unresolved while current UI has no approved candidate. Preserve raw history and gate strictness; explicit one-attempt retirement with evidence, no new Audit/decision/send/status rewrite. | 2026-10-04 |
 
 
 

@@ -1,3 +1,4 @@
+import json
 import re
 import secrets
 import time
@@ -220,6 +221,38 @@ def sanitize_configured_feedback_links(
     if pair is None:
         raise ValueError("feedback_callback_pair_invalid")
     return pair.body + "\n\n[service-generated feedback callbacks]"
+
+
+def sanitize_source_feedback_links(
+    value: object, *, vercel_base_url: str, depth: int = 0,
+) -> object:
+    """Inspect captured history using the same pair contract after rendering.
+
+    Normalize only the paragraph whitespace before the native feedback suffix,
+    and decode source JSON containers for inspection. The caller keeps the raw
+    snapshot; outgoing text continues to use the strict original parser.
+    """
+    if depth > 12:
+        raise ValueError("runtime_result_reference_depth_invalid")
+    if isinstance(value, dict):
+        return {key: sanitize_source_feedback_links(item, vercel_base_url=vercel_base_url,
+                depth=depth + 1) for key, item in value.items()}
+    if isinstance(value, list):
+        return [sanitize_source_feedback_links(item, vercel_base_url=vercel_base_url,
+                depth=depth + 1) for item in value]
+    if not isinstance(value, str) or FEEDBACK_CALLBACK_PATH not in value:
+        return value
+    suffix_marker = f"反馈：[{FEEDBACK_UP_LINK_LABEL}]("
+    body, marker, suffix = value.rpartition(suffix_marker)
+    inspected = body.rstrip() + "\n\n" + marker + suffix if marker else value
+    pair = _configured_feedback_link_pair(inspected, vercel_base_url=vercel_base_url,
+                                          link_prefix="反馈：")
+    if pair is not None:
+        return pair.body + "\n\n[service-generated feedback callbacks]"
+    if value.lstrip().startswith(("{", "[")):
+        return sanitize_source_feedback_links(json.loads(value),
+                vercel_base_url=vercel_base_url, depth=depth + 1)
+    return sanitize_configured_feedback_links(inspected, vercel_base_url=vercel_base_url)
 
 
 def _configured_feedback_link_pair(
