@@ -1125,7 +1125,7 @@ candidate_executions 保存租约，candidate_action_attempts 在 provider 调�
 
 历史 code 或 source_code 为 provider_risk_rejected 的同一业务对象不能通过换工具、渠道或执行代自动重放。保留拒绝来源和原始历史记录。native 引用回复仍使用原目标消息和准备正文的正向回读；空的有限消息列表不证明未发送。
 
-角色同一 revision 每个 pass 最多两个技术 turn；连续六次非等待型失败后终止，保留真实 source_code。路由等待、认证等待、容量等待和活动租约等待沿用已有退避，不消耗内容预算。
+角色同一 revision 每个 pass 最多两个技术 turn；连续六次实际技术失败后，在下一次 provider 调用前终止，容量/连接失败也计数并保留真实 source_code。未开始执行的活动租约等待不产生失败 turn，技术预算与内容预算独立。
 
 ## 统一外发消息后缀
 
@@ -1284,3 +1284,7 @@ Derek 明确授权解除生产循环对部署的阻塞。`python -m app.deploy -
 服务中断恢复方法，原任务回到 pending、保留业务身份和历史，保存 maintenance 回执；
 正常空闲检查、部署备份、主线快进、构建、验证、启动和健康检查继续执行。确认进程树全灭、尚未应用代码或契约时的准备失败才启动
 原服务；冻结、终止失败或 needs_manual 保持停止。生产源码仍在 finally 重新锁定。不修改业务成功状态、不手工抢租约、不重放风险拒绝。
+
+调度器处理 Reply handler 异常时计入既有三次任务 attempts：前两次共享退避 60/120 秒，
+第三次 failed，不再退回 attempts 并立即重新领取。此规则也适用于定时执行的 Reply 子类，
+保留业务对象、代次和底层错误。正常调度 release 与实际 handler 失败分开。

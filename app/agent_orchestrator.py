@@ -654,6 +654,16 @@ class AgentOrchestrator:
         error = _run_error(run)
         if error.code == "provider_risk_rejected" or error.source_code == "provider_risk_rejected":
             return self._run_terminal(run, "failed_terminal", error.model_copy(update={"retryable":False}), cycles)
+        if error.retryable and not error.authorization_required:
+            runs = self.store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
+            failed_turns = _consecutive_failed_turns([
+                prior for prior in runs
+                if prior.role is run.role and prior.proposal_revision == run.proposal_revision
+            ])
+            if failed_turns >= MAX_CONSECUTIVE_FAILED_TURNS:
+                return self._retry_exhausted_result(
+                    task, role=run.role, proposal_revision=run.proposal_revision,
+                )
         if (
             error.retryable
             and _is_waiting_failure(error)
@@ -915,7 +925,7 @@ def _consecutive_failed_turns(role_runs: list[AgentRun]) -> int:
         role_runs, key=lambda item: (item.turn_attempt, item.id), reverse=True
     )
     for run in newest_first:
-        if run.status != "failed" or _is_waiting_failure(_run_error(run)):
+        if run.status != "failed":
             break
         count += 1
     return count

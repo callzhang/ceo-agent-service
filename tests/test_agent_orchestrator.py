@@ -334,3 +334,25 @@ def test_two_tasks_can_share_runner_without_crossing_parent_or_context(tmp_path)
     assert consumer.calls[0][4].task_id == first.id
     assert consumer.calls[1][4].task_id == second.id
     assert len(handler.calls) == 2
+
+
+@pytest.mark.parametrize("code", ["temporary_read_error", "runtime_provider_unreachable", "codex_provider_capacity_exhausted"])
+@pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
+def test_six_persisted_technical_failures_prevent_another_provider_turn(tmp_path, code, role):
+    store, task, context = task_and_context(tmp_path)
+    parent = None
+    if role is AgentRole.AUDIT:
+        parent = ScriptedConsumer(store, candidate()).run(task, context, proposal_revision=0, parent_agent_run_id=None).run_id
+    for turn in range(6):
+        claim = store.claim_agent_run(task.id, task.execution_generation, role=role,
+            proposal_revision=0, turn_attempt=turn, parent_agent_run_id=parent,
+            operation_id=_operation_id(task, 0) if role is AgentRole.AUDIT else '', owner='test')
+        assert claim.claimed
+        store.fail_agent_run(claim.run.id, AgentError(code=code, retryable=True, source_code='ROOT_CAUSE').model_dump(mode='json'), owner='test')
+    driver, _ = orchestrator(store, ScriptedConsumer(store), ScriptedAudit(store))
+    result = driver.process(task, context, refresh_context=lambda: context)
+    assert result.status == 'failed_terminal'
+    assert result.error.code == code
+    assert result.error.source_code == 'ROOT_CAUSE'
+    assert result.error.retryable is False
+    assert len(store.list_agent_runs_for_task_generation(task.id, task.execution_generation)) == (7 if role is AgentRole.AUDIT else 6)
