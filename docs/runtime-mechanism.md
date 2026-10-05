@@ -47,7 +47,7 @@ Consumer 的普通工具工作不因写入而自动进入系统动作审核。�
 Consumer 与 Audit 可用 `read_task_artifact`、`list_task_artifacts` 读取该代次材料；Audit 没有写工具。
 原 `consumer_document_write` 继续只处理绑定的日报/周报文档。工具返回的实际内容读回及 SHA
 证明普通材料写入，不是已审核消息或 OA 动作的 System 回执。原生 V8 可调用具名工具和计算，
-通用 shell / 项目代码执行仍不是当前角色的可用能力；不可用能力应如实报告，不能伪造执行。
+Codex Consumer 可在绑定工作区进行原生代码执行；Audit 只读。实际不可用的工具应如实报告，不能伪造执行。
 系统注册且需要审核的动作仍只由 SystemExecutor 执行。Consumer 的结果解析只验证严格 wire，
 不再对整份文字扫描“已发送”等完成短语；历史事实和本轮工作由完整来源及真实回执支撑，
 摘要不会生成 candidate execution、外部动作回执或 sent_replies。此规则不改变已有运行时风险拒绝、
@@ -219,7 +219,7 @@ runtime config 加载。关闭功能不会取消、删除或改写已存在的 `
 
 新 wire 严格解析新合同；历史结果只在独立只读历史模型中解释，不补齐后重新执行，不改写原始 run。当前人工决策必须绑定原对象、execution_generation、持久化 candidate/review 和未被替代的当前版本；旧的无绑定选项仍可阅读但不能执行。人工决策和错误分别展示；审核批准不是投递完成。
 
-等 Derek 决定的事项出现在他先看的地方（Derek 2026-09-25）：Agent 首页左栏顶部「需要你决定 · N」列出History 中全部 `needs_human`，每条以事项名称为标题（OA 扫描取「待处理审批：」后的审批名，钉钉 DING 催办取「提醒您审批…」的审批名并注明催办人，评论提及取审批单名），次行是一句原因，点击打开该 attempt。首页原有的「处理反馈 · N」只计消息反馈，与待决事项无关。点击通知时，服务先在已打开的 Chrome/Safari 控制台标签页里切到该 attempt 并把窗口提到前面（AppleScript，按控制台 origin 匹配），只有没有已打开的控制台标签页时才新开页面（Derek 2026-09-25）。首次由服务进程控制浏览器时 macOS 会请求一次自动化权限。
+等 Derek 决定的事项出现在他先看的地方（Derek 2026-09-25）：Agent 首页左栏顶部「需要你决定 · N」列出当前 generation 中已经审核通过、未选择且绑定有效的 `needs_human`；旧无绑定问题仅在 History 只读展示，每条以事项名称为标题（OA 扫描取「待处理审批：」后的审批名，钉钉 DING 催办取「提醒您审批…」的审批名并注明催办人，评论提及取审批单名），次行是一句原因，点击打开该 attempt。首页原有的「处理反馈 · N」只计消息反馈，与待决事项无关。点击通知时，服务先在已打开的 Chrome/Safari 控制台标签页里切到该 attempt 并把窗口提到前面（AppleScript，按控制台 origin 匹配），只有没有已打开的控制台标签页时才新开页面（Derek 2026-09-25）。首次由服务进程控制浏览器时 macOS 会请求一次自动化权限。
 
 ## 审核反馈闭环
 
@@ -377,8 +377,8 @@ OA 通知不等于 OA 执行任务。来自 `OA审批` 的系统通知只写入
 原生回复所需的消息 JSON，但不创建 `reply_task`、`agent_run` 或独立审批 Session。定时
 `scan-oa-approvals` 读取实时待办后，如果当前用户恰好只有一个 `RUNNING` 节点，就把没有
 `task_id` 的催办事件认领到该节点；没有节点或有多个候选节点时不猜测，继续等待下一次扫描。
-实际审批仍只由定时扫描创建的 OA `reply_task` 执行。Audit 有 provider 回执并完成 OA
-动作后，服务使用 `oa-reminder-result:{event_id}:{attempt_id}` 的稳定投递键，对原催办消息
+实际审批仍只由定时扫描创建的 OA `reply_task` 执行。System Executor 保存并回读 OA
+动作成功回执后，服务使用 `oa-reminder-result:{event_id}:{attempt_id}` 的稳定投递键，对原催办消息
 做一次原生引用回复；发送失败会释放事件等待重试，已发送事件不会重复回复。这样通知页、
 系统通知和聊天催办都能作为同一个 OA 案例的观察输入，而不会重复启动审批。
 
@@ -404,21 +404,9 @@ Session 可用性测试同样按真实 `AgentRun` 提供业务 `status`；缺失
 Workers 的当前 attempt 队列统计会排除 `agent_run_id` 指向旧 execution generation
 的记录，即使同一业务对象更新了 trigger message；旧 attempt 仍可在历史详情中查看。
 
-对进入 Consumer/Audit 的 task，当前状态由 task 当前 `execution_generation` 中最后一个
-Agent run 决定：最后一个 run 失败则当前投影为 `failed`；只有该 generation 有明确完成的
-终态 run，task 才能投影为 `done`、`skipped` 或 `needs_human`。`reply_task.status` 只表示
-队列是否仍待领取或已被收口，不能单独把失败 run 改写成成功。外部 provider receipt 仍用于
-防止重放，但它不能覆盖 Agent run 的失败；服务必须创建新的 generation 并完成新的 run 才能
-修正当前投影。真实处于 `pending` 或 `processing` 的 task 则分别显示为等待或执行中。
-History 的当前筛选也遵循此投影：同一 generation 的更新 run 已在执行时，旧 attempt
-字段中的失败仅保留在 run 详情，不继续计入当前 `failed` 筛选。
-当失败 Audit 已持有同一稳定动作身份的 receipt 时，服务自动先持久化失败 run，再通过正式
-重试入口开启新的 generation。新一轮 Audit 只读取 receipt，System Executor 复用已经验证的结果，不重新执行外部动作；处理完成后才
-把 current projection 收口为 `done` 或 `skipped`。
+对进入 Consumer/Audit 的 task，当前投影结合当前 execution_generation 的候选、审核、人工选择、System execution 和真实回执。模型 run 完成或 Audit approve 不等于动作成功。System 已开始的精确动作在同一 candidate/review/generation/selection 下恢复；确认成功的持久化回执可完成执行投影，不要求为取得回执重新运行模型。无法确认的外部结果保持 uncertain，不取得再次发送资格。自动技术重试在同一 generation/revision 追加 turn；明确的人工 rerun 或来源补充通过正式入口创建新 generation；旧 run、attempt、session、runtime event 和回执保留为历史事实。真实 pending/processing 仍显示等待/执行中，旧 generation 的失败不覆盖当前进展。
 
-`needs_human` 收到明确人工指令后，必须创建新的 reviewed revision 并重新进入统一
-Consumer/Audit 流程；原 `needs_human` attempt 继续作为历史事实保留。没有明确指令时
-不得自动猜测决策，已经送达或完成的 attempt 也不得由该入口重新打开。
+`needs_human` 的有效绑定选项直接选择已审核精确方案，由 System Executor 执行；停止选项按原方案写入 skipped 和原因。requested_input 或新增事实进入 Consumer/Audit 生成并审核新 revision，不能改写已经批准的方案。旧无绑定选项不可执行，未收到选择时不猜测决定。
 
 如果 Derek 已直接在钉钉完成 OA，定时 OA 扫描会读取该 process instance 的实时状态。
 实例已进入明确终态时，服务不重放审批动作，而是把当前 `needs_human` attempt 收口为
@@ -480,12 +468,12 @@ OA 判断以当前节点的实际表单为边界：不存在于当前表单的�
 Prompt 另写入负责人的个人规则（只存在该定时任务的数据库记录里，代码默认值不含）。背景参考文档不由审批 Agent 读取，代码与默认 Prompt 都不引用它们。Consumer 按 live `processCode` 与表单事实
 分类，交叉事项组合适用类别；财务规则卡仅约束登记的财务模板，且只提供判断标准，动作按通用决策表。适用业务 Skill 必须覆盖
 当前事项的规则条件、例外、权限和动作映射，适用 Skill 完整覆盖时才允许 `rule_coverage=1.0`；其他情况
-低于 1.0，规则缺口 `needs_human`，不得自动批准/拒绝。申请人可补材料但不能关闭并存的政策升级。
+低于 1.0 描述证据缺口；当前实例问题必须有完整 Consumer 候选与 Audit approve 才能进入 `needs_human`，不得按分值自动批准、拒绝或升级。申请人可补材料但不能关闭并存的政策升级。
 六份 Stardust Skill 都只存在于运行时目录，没有仓库副本，按 `RUNTIME_ONLY_VERSIONED_SKILL_NAMES`
 版本化，**不得带 `metadata.managed_by` 标记**——操作 Skill 目录会拒绝带标记的文件，定时任务
 也就不能选择它们。Derek 的个人规则仅写在 OA 定时任务 Prompt，不得推广为公司规则。
 
-### 没有 runtime schema 的 DWS 写操作
+### 历史 DWS schema 闸口说明
 
 `oa approval revert-task` 和 `revert-activities` 在 DWS 的 runtime schema 里不存在
 （上游 issue #1406），同族的 `reject`、`redirect-task` 正常。命令功能完好，但两道闸口都依赖
@@ -498,7 +486,7 @@ schema 判断写操作，因此各自失效过一次：
   `REDIRECT_PROCESS` 且待办减少，任务仍被判 `provider_receipt_missing`。修法是让证据闸
   使用同一份登记表兜底（`ef6f4de4`）。
 
-**新登记一个没有 schema 的写操作时，两处都要能认出它**，否则服务会允许一个动作、然后拒绝相信它发生过。
+以上为旧 Agent 命令执行路径的历史问题。当前受控动作注册使用 typed System action handler，绑定精确 operation/target/payload，并由对应 provider 回执和读回来确认；不能依靠旧的命令证据分类器或成功 envelope 推断当前动作完成。
 
 ## 外部动作幂等与依赖
 
@@ -662,7 +650,7 @@ consumer、训练三个组件都至少成功完成一轮后才发布 `ready`。
 业务类别移动完成后在变更后的 locator 上执行 flag/read 动作，以服务器应答为结果；用户在 provider 中再次移动
 邮件时，下一份 snapshot 立即以该文件夹作为训练标签。旧的 staged/manual 历史评测入口仍用于候选
 验证；生产历史整理由上述定时模型窗口自动、小批量、可恢复地推进，不会一次性读取整个邮箱。
-`junk` 先由代码发现标准退订候选；只有 unsubscribe 进入 Consumer/Audit
+`junk` 先由代码发现标准退订候选；unsubscribe 使用独立的系统直接
 网页流程，最终再移动到系统 Trash。连接邮箱 OTP 仅允许站点、收件人、挑战上下文和时间窗全部
 匹配的临时读取；普通 CAPTCHA 在隔离 profile 中有限尝试，不能完成的密码/MFA/CAPTCHA 保存不含
 秘密的有界 continuation 并交给用户，恢复时不重放已经审计的 operation prefix。
