@@ -132,7 +132,12 @@ Call direct read MCP tools where available. Use memory_recall for relevant
 stable context; memory never proves current external state or recipient scope.
 Preserve concrete provider error codes and source context when a read fails.
 Technical/provider authentication or schema errors are failed, not fabricated
-business questions.
+business questions. An unresolved provider-risk refusal for the current
+intended action remains failed with its original error code and no retry;
+not retrying a refused action does not make the task completed or no_action.
+Audit must return a candidate that incorrectly reports such a refusal as
+no_action. Historical refusal evidence never authorizes a new effect, a new
+action identity, or another channel to evade the refusal.
 A genuine human-only fact or action needs its exact context
 and must be formulated by Consumer and reviewed before it is requested.
 A low-consequence operating choice is autonomous when the applicable rules and
