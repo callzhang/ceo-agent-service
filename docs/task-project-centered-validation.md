@@ -117,6 +117,38 @@ The review-stage fixture changes touched offline expectations only, before
 native execution. Each future native artifact must record its clean committed
 code revision and actual loaded Skill hash rather than assume these values.
 
+## Post-main-merge candidate smoke (2026-10-04)
+
+The feature branch was normally merged with the then-current `origin/main`
+(`60125400`) in merge commit `63c5bf0e`; the merged tree is clean. The pinned
+old baseline remains `da368453`. Candidate `63c5bf0e` still contains the frozen
+Task-centered fixture/oracle and CI Skill SHA-256 remains
+`11c5df5b30aec5acd3df7e31be3bca740609db02147875ad1831d898d1d357c2`.
+
+After the merge, the 15 directly affected Task/Project/evaluator/API test files
+passed (**1202 passed / 196.01s**); the two-file Task 8 evaluator/inspector
+check passed (**25 passed / 1.94s**). These verify deterministic behavior only.
+
+A one-case native candidate smoke used the planned `codex_oauth` /
+`gpt-5.6-luna` route, 900-second total / 300-second idle limits, concurrency 1,
+and the candidate's CI Skill root. The Codex CLI was present (`0.154.0`) and
+reported logged in, but no Task Agent turn reached the model: the production
+runtime probe could not configure the service MCP manifest. Direct command
+construction identified the missing required environment variable
+`MEMORY_CONNECTOR_URL`; `CONNECTOR_API_KEY` is also absent from the local shell,
+the production `.env`, and the launchd plist. The replay recorded a failed run
+with no runtime attempts and no Project, Task, or Attention rows. This is a
+runtime-configuration failure, not a native semantic result. The fixed native
+baseline/candidate comparison therefore remains unrun; do not treat this smoke
+as a candidate pass or failure on the fixture expectation.
+
+The pre-existing W39 migration blocker is unchanged: the frozen database has
+the unrelated `meeting_alignment_runs` row 2298 → missing
+`meeting_alignment_jobs` row 4908 foreign-key reference, so Task 1's complete
+real-copy migration and Task 8's real W39 replay/readback remain blocked. No
+orphan was repaired or bypassed, and no production semantic import/apply,
+push, PR, or deploy was performed. Task 9 remains unstarted.
+
 Earlier implementation checks: 14 core files / 636 passed; multisource plus
 Project readback / 161 passed; API four files / 25 passed; frontend eight files /
 86 passed and production build passed. Browser checks used synthetic fixtures,
