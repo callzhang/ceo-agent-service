@@ -30,7 +30,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-consumer-system-wechat-scope | docs/audit-task-scope.md (task3 scope only), docs/architecture.md (Consumer scope only), docs/runtime-mechanism.md (task-type scope only), docs/agent-claims.md | Record independently verified existing WeChat dispatcher/decision/delivery boundary; documentation only, no new Audit turn or runtime behavior change. | 2026-10-04 |
 
 
 
