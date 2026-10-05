@@ -461,6 +461,7 @@ def test_independent_project_prompt_and_skill_have_one_current_contract():
     assert "Do not reclassify the competing overall-owner candidates as responsibilities" in prompt
     assert "explicitly identified as the Project's overall accountable owner belongs in overall_owner" in prompt
     assert "an existing actionable Task already addresses that risk" in prompt
+    assert "X负责Y by itself remains a Project responsibility" in prompt
     assert "Missing ownership alone is not a material risk" in prompt
     assert "trailing rank/honorific" in prompt
     assert "task_ids must be copied only from that card's actual stored member IDs" in prompt
@@ -1917,8 +1918,11 @@ def test_task_agent_source_authority_and_independent_project_output(
     assert "Chats/emails" in text
     assert "A bare responsibility clause" in text
     assert "only independently evidenced, distinct work" in text
+    assert "X负责Y" in text
     assert "A person explicitly identified as the Project's overall accountable owner" in text
     assert "If an existing actionable Task already addresses that risk" in text
+    assert "X负责Y" in text
+    assert "a distinct business deliverable" in text
     assert (
         "one overall owner" in text
         if surface == "prompt"

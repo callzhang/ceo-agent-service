@@ -60,6 +60,19 @@ identity, same conversation, and explicit reply-to reference. A new full replay
 is required after this fixture correction. Artifacts:
 `/private/tmp/project-centered-v4-candidate-3a3070e2`.
 
+The corrected fixture was committed as `af893c10`; its fresh 19-case replay
+completed **18/19**. The explicit Project-decision and trusted completion-link
+fixture now passes, as do the two previously correction-sensitive cases. The
+only failure is `peer-not-auto-member`: the Agent correctly kept the new
+Wang Wu business-reconciliation responsibility in ProjectContext but also
+created a source candidate from “王五负责另一项独立的商务对账”. That sentence
+states a responsibility but contains no explicit action or action-item record,
+so it must not create a second Task. This final finding led to one more prompt /
+Skill rule: even when the responsibility names a distinct deliverable area,
+`X负责Y` alone remains ProjectContext. The fixed native set must be rerun after
+that rule is committed.
+Artifact: `/private/tmp/project-centered-v4-final-af893c10`.
+
 ### Focused v4 native follow-up (2026-10-05)
 
 The six-case native subset at candidate `ee02df12` completed **3/6** cases:

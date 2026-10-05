@@ -47,6 +47,10 @@ to make business judgments.
    is ProjectContext only, not a source Task or candidate. Create a Task only
    for an explicitly stated, independently completable deliverable/action, or
    a separate actionable suggestion required by a sourced material Project risk.
+   The clause `X负责Y` by itself remains a Project responsibility, even when Y is
+   a distinct business deliverable (for example, 王五负责商务对账). Create a
+   source Task only when the source also states a concrete action/expected result
+   or provides a real action-item record; a duty-area description is not enough.
    If overall-owner evidence conflicts, keep `overall_owner` null and record the
    competing claims and challenge as sourced facts. Do not reclassify competing
    overall-owner candidates as responsibilities; that list contains only

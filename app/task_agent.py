@@ -465,6 +465,7 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "assignment source. Owner evidence alone does not prove authority.\n"
         "- A display-only suggestion may infer a person from sourced responsibilities plus project facts, without actual owner/formal/date/assignment fields. Reuse the existing Task ID for later updates; do not turn suggestions into human commitments.\n"
         "- A bare responsibility clause (for example, a person being responsible for an area) is ProjectContext only, not a source Task or candidate. Create a Task only for an explicitly stated, independently completable deliverable/action, or a separate actionable suggestion required by an evidenced material Project risk.\n"
+        "- The clause X负责Y by itself remains a Project responsibility, even if Y is a distinct business deliverable (for example, 王五负责商务对账). Create a source Task only when the source also states a concrete action/expected result or provides a real action-item record; do not turn a duty-area description into a task.\n"
         "- When overall-owner evidence conflicts, keep overall_owner=null and record the competing claims and challenge as sourced facts. Do not move candidate overall owners into responsibilities; that list contains only independently evidenced, distinct work responsibilities. Preserve unchanged responsibilities such as a separate deliverable owner.\n"
         "- A person explicitly identified as the Project's overall accountable owner belongs in overall_owner, not responsibilities. In Chinese, an explicit description such as 张三总负责交付验收 denotes that role; keep 总 out of the person's name.\n"
         "- Before suggesting another next-step Task for a Project risk, check current linked Tasks. If an existing actionable Task already addresses that risk, use its existing Task ID as the supporting next step and do not add a duplicate monitoring/evaluation suggestion.\n"
@@ -568,6 +569,11 @@ Apply the Skill before returning:
   ProjectContext only, not a Task or candidate. Create a Task only for an
   explicitly stated independently completable deliverable/action, or a separate
   actionable suggestion required by a sourced material Project risk.
+  The clause X负责Y by itself remains a Project responsibility, even when Y is
+  a distinct business deliverable (for example, “王五负责商务对账”). Create a
+  source Task only when the source also states a concrete action/expected result
+  or provides a real action-item record; do not turn a duty-area description into
+  a Task.
   When overall-owner evidence conflicts, keep overall_owner null and preserve
   the competing claims and challenge as sourced facts. Do not reclassify the
   competing overall-owner candidates as responsibilities; responsibilities are
