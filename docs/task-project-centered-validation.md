@@ -52,8 +52,29 @@ payment-risk member. The prior fixture had required a second Task for that
 independent responsibility; this contradicted the confirmed Project-first rule
 and the instruction not to enumerate every small work item. The revised oracle
 checks both distinct Project responsibilities and expects the single relevant
-Task. The same-reference case still fails native result validation. These
-targeted cases do not replace the complete 19-case fixed comparison.
+Task. This fresh case replay repeated twice at `3c7dca96`: one run failed when
+correction hit `codex_provider_overloaded`; another failed result validation
+because a suggestion also carried actual-owner fields. The same-reference case
+also repeated “No TaskAgentDecision JSON found” on both normal and correction
+attempts. Therefore the earlier successful peer domain readback is useful
+semantic evidence, but the corrected fixed peer case has not yet passed its
+evaluator. These native result-contract failures block the full comparison, W39
+replay, PR merge and deployment.
+
+The isolated completed-Task replay at `3c7dca96` persisted the expected two
+separate Tasks: the formal验收材料 Task is `done`, the payment-risk suggestion
+remains a candidate, and the active Attention card contains only the latter
+Task. This confirms that completing the deliverable does not resolve the
+Project risk and that the completed peer is excluded from Attention membership.
+It is a focused persisted-row readback, not a substitute for the full fixed
+native comparison.
+
+For the current fixture revision, the source-only canonical input digest is
+`b832fa601464e2a675b58661a2fd0792fb352973e18cca99393a1572701261f3`; the
+full oracle fixture digest is
+`b2ec9a6e40ab5f019ebe16bc2a59c6ada872be3518827772d3ba38b2786b3a9d`, and the
+loaded candidate Skill digest is
+`4249e1919a1f1b6dfcc084294ea47c94348add49b011acf22b1ca7f6fd5d2d69`.
 
 The immutable W39 source copy was read-only backed up to
 `/private/tmp/project-centered-w39-final-20261005.sqlite3` and opened using the
