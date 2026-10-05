@@ -35,6 +35,16 @@ contract replay alone does not establish native behavior.
 
 ## File responsibilities and interfaces
 
+The separately approved deployment-reachability scope may defer only original
+reply tasks 386130/386131 after exact identity, latest failed-run fingerprint,
+verified backup and absence of active ownership, candidates or possible effects
+are rechecked in one transaction. `app.reply_task_deferral` provides read-only
+preview and explicit single atomic apply/resume. It preserves input, generation,
+history and receipts, uses a bounded available_at, and restores only its exact
+receipt's delay after formal deployment. Active processing ownership blocks the
+operation. This scope has its own code, regression evidence, review and commit;
+it neither retries other tasks nor replays historical risk refusal.
+
 | Area | Exact files | Responsibility |
 | --- | --- | --- |
 | Contracts | `app/agent_contracts.py`, `app/agent_wire_contracts.py`, `app/schemas/consumer_agent_result.schema.json`, `app/schemas/audit_agent_result.schema.json` | Current-instance complete branch plans; read-only review decisions; separate system results |

@@ -2,6 +2,16 @@
 
 ## Independently approved Consumer work boundary, 2026-10-05
 
+Separate deployment-reachability implementation: `app.reply_task_deferral`
+defaults to native read-only preview. Thirty RED-to-GREEN regressions cover
+verified exact backup, identity/fingerprint CAS, live ownership, mixed timestamp
+leases, unknown effect/native runtime, prior and post-pause sent replies,
+concurrent claim, duplicate pause, and exact idempotent resume. Independent
+review found the sent-reply omission and already-paused preview defect; both
+were fixed and rechecked. Fresh production preview of 386130/386131 still
+reported `processing`, original generation/input and `active_dispatcher_owner`.
+No deferral or resume was applied. Approval does not bypass this blocker.
+
 Derek confirmed that Consumer may use ordinary work tools, including document
 work; only system-registered actions requiring Audit are directly unavailable.
 The whole-result completion-phrase parser was removed rather than moved into
