@@ -458,6 +458,9 @@ def test_independent_project_prompt_and_skill_have_one_current_contract():
     assert "A Project role or responsibility is not itself a Task" in prompt
     assert "Missing ownership alone is not a material risk" in prompt
     assert "trailing rank/honorific" in prompt
+    assert "task_ids must be copied only from that card's actual stored member IDs" in prompt
+    assert "explicit unresolved dispute over who" in prompt
+    assert "Missing overall ownership without a stated impact or dispute" in prompt
 
 
 def test_independent_project_process_marks_project_only_input_done(tmp_path):

@@ -4,7 +4,7 @@
 
 2026-10-05 continuation: Derek confirmed the exact source Project title and the
 migration rule to preserve the original foreign-key violation set without repair.
-The fixed fixture is now version 3: source titles follow the source's full formal
+The fixed fixture is now version 4: source titles follow the source's full formal
 name; source records carry the runtime's actual AI Minutes action-item or
 authorized-assignment metadata; and report cases include an exact registry row.
 Task Agent prompt and shared Skill now require a
@@ -18,7 +18,12 @@ its original artifact is retained under
 registry / meeting action metadata in two fixtures and real prompt gaps around
 tasks inferred from roles or routine steps, missing-owner attention, and Chinese
 role suffixes included in names. Version 3 corrects the source metadata and these
-prompt rules. The full fixed v3 native comparison remains pending.
+prompt rules. The v3 focused rerun of the nine previously failing cases completed
+3/9; six still need correction or runtime diagnosis. The v4 oracle now distinguishes
+missing overall owner alone (`not_needed`) from an explicit disputed transfer
+(`needs_attention`), accepts a material-risk display-only next step when a sourced
+responsibility fits, and keeps the existing-card membership assertion strict.
+The full fixed v4 native comparison remains pending.
 
 The immutable W39 source copy was read-only backed up to
 `/private/tmp/project-centered-w39-final-20261005.sqlite3` and opened using the
@@ -45,7 +50,7 @@ Local tests and synthetic browser checks do not establish a live business effect
 
 ## Fixed evidence and comparison procedure
 
-`tests/fixtures/task_project_centered_v3.json` contains 19 version-3 cases. Both
+`tests/fixtures/task_project_centered_v4.json` contains 19 version-4 cases. Both
 runtimes receive the same original `source_inputs` in the same order. Native
 cases have empty `existing_context`: neither side receives manually seeded
 Project roles, owner, risk or conclusions. Unit tests may seed persisted facts

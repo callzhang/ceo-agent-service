@@ -624,6 +624,15 @@ Apply the Skill before returning:
   or update Task decision that belongs to this Project. Only a real material impact merits watch,
   decision or push; “需关注” does not mean “需介入”. A retained existing_attention_id
   requires this card's stored original proof and actual membership, not Project peers.
+  For an existing card, task_ids must be copied only from that card's actual stored
+  member IDs delivered in current_project_attention; never add a peer Task solely
+  because it belongs to the same Project. An explicit unresolved dispute over who
+  holds the Project's overall accountable role (such as a claimed transfer that the
+  prior owner says was not confirmed) is needs_attention even before operational
+  impact is separately quantified; record the conflict in ProjectContext and do not
+  create a Task just to resolve that Project field. Missing overall ownership
+  without a stated impact or dispute is not a material risk and should be not_needed
+  when the other Project evidence is normal and complete.
   A current update goes in that assessment's attention_proposal. not_needed or an
   empty Task list never closes a Project risk; completing one Task is not Project completion.
   First assessment of a source-observed unresolved material business risk does not

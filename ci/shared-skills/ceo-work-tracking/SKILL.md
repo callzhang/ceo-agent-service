@@ -169,6 +169,14 @@ A retained existing_attention_id claims that card's original proof, not an updat
 target. Cite at least one stored assessment_json.evidence triple unchanged and
 use actual current_project_attention membership, not other Project Tasks. For new
 risk/membership use this assessment's proposal; its Project key reuses the card.
+For an existing card, copy `task_ids` only from its actual stored member IDs in
+`current_project_attention`; never add a same-Project peer Task. An explicit,
+unresolved dispute over who holds the overall Project accountability (for example,
+a claimed transfer that the prior owner says was not confirmed) is 需关注 even
+before a separate operational impact is quantified. Record the conflict in
+ProjectContext, without creating a Task just to resolve that field. A missing
+overall owner without a stated impact or dispute is not a material risk; when the
+other Project evidence is normal and complete, classify it as not_needed.
 A not_needed judgment, zero Tasks or one Task's completion does not resolve a
 Project risk. Do not invent a Task update, next_check, owner or deadline to make
 Attention possible. Routine progress, relevance, acceptance, labels or date
