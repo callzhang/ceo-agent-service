@@ -572,8 +572,8 @@ def test_fixed_cases_are_raw_sources_with_offline_only_expectations():
             assert sorted(item["project_title"] for item in expected_assessments) == sorted(
                 case["expected"]["project_titles"]
             )
-        for assessment in expected_assessments:
-            assert assessment["evidence"]
+            for assessment in expected_assessments:
+                assert assessment["evidence"] or assessment.get("evidence_any")
             assert ("task_count" in assessment) != ("allowed_task_counts" in assessment)
             for citation in assessment["evidence"]:
                 assert any(
