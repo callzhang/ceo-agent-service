@@ -445,7 +445,11 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "- project_decisions, task_decisions and project_assessments are all required (0..N). Return one outcome, concrete reason, and original evidence for every relevant business Project or Project clue in the current source and current Tasks' confirmed Project links, whether or not this output emitted a selector for it. Semantic coverage is not limited to structured selectors. Every attention_proposal belongs to its needs_attention assessment, with optional actual Task membership; zero Tasks is valid. Project selectors index project_decisions, never task_decisions. Use [] assessments only when there is no relevant Project or clue, with a nonblank update_summary.\n"
         "- For project_assessments, use exactly one selector: if this output has a matching Project decision, use its project_decision_index; otherwise use anchor_id for a known registered Project; use neither only for an unresolved Project clue with insufficient_evidence. Never provide both anchor_id and project_decision_index.\n"
         "- Never include a skip decision in decision_indexes; supporting indexes may identify only a real candidate, create, or update Task decision that belongs to this Project.\n"
+        "- project_link_evidence requires a Project selector. Include evidence only when task.project selects the registered Project; for a standalone Task omit both fields.\n"
         "- status and business_relevance may only change through update_fields: set transition=update_fields when either field changes. They remain top-level fields, not a nested update_fields object; never set them under another transition.\n"
+        "- New, record_candidate and skip decisions must leave status and business_relevance unset. For an existing Task, set transition=update_fields to change either field; do not try to set a status or relevance during creation.\n"
+        "- When promoting a suggestion, omit the suggestion field; the saved Task keeps its existing suggestion history. A suggestion field is valid only when recording or updating a candidate.\n"
+        "- project_link_evidence requires a Project selector. Include evidence only when task.project selects the registered Project; for a standalone Task omit both fields.\n"
         "- Return the TaskAgentDecision envelope with task_decisions (0..N); "
         "every non-skip item needs a source_excerpt (a sentence of the source), source_ref and a locator (source_link when there is one, otherwise source_description) "
         "(evidence_origin says whether it is the current Work Item, an earlier session turn, or memory provenance).\n"
@@ -550,7 +554,9 @@ Apply the Skill before returning:
   other people each with a distinct responsibility. Unknown owner is null.
   Keep unchanged roles' original citations; never replace them with the new message.
 - Task.project uses anchor_id or project_decision_index (index into project_decisions).
-  project_link_evidence proves a new association; reuse actual confirmed existing links.
+  project_link_evidence proves a new association and requires that Project selector;
+  for a standalone Task omit both fields, and for an existing confirmed association
+  reuse the actual link without new proof.
 - For project_assessments, use exactly one selector: anchor_id for a known registered
   Project when this output has no matching Project decision, project_decision_index
   for the matching Project decision in this output, or neither only for an unresolved
@@ -572,6 +578,12 @@ Apply the Skill before returning:
   status and business_relevance may only change through update_fields: set
   transition=update_fields when either field changes. They remain top-level fields,
   not a nested update_fields object; never set them under another transition.
+  New, record_candidate and skip decisions must leave status and business_relevance
+  unset. For an existing Task, set transition=update_fields to change either field;
+  do not try to set a status or relevance during creation.
+  When promoting a suggestion, omit the suggestion field; the saved Task keeps its
+  existing suggestion history. A suggestion field is valid only when recording or
+  updating a candidate.
   For AI Minutes read complete meeting_summary, transcript_excerpts and action items.
   The assigned person is not automatically the speaker; owner proof quotes the
   actual sentence with speaker label included when present. A generic speaker

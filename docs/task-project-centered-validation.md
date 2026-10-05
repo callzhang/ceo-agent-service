@@ -191,9 +191,34 @@ did not state these exact constraints clearly enough.
 The Task Agent prompt and validation-repair prompt now state those existing
 contracts explicitly. Regression assertions were added and the full
 `tests/test_task_agent.py` file passed (**225 passed / 14.64s**), with Ruff and
-`git diff --check` clean. The 19-case candidate run against this clarified prompt
-is still pending; the earlier 2/19 result remains the only current native
-comparison evidence. The W39 foreign-key orphan blocker below is unchanged.
+`git diff --check` clean. The candidate rerun against this first clarification is
+recorded in the following section. Further prompt clarifications made after that
+rerun still need native verification. The W39 foreign-key orphan blocker below is
+unchanged.
+
+## Prompt-contract candidate rerun (2026-10-04)
+
+Commit `4b29348e` clarified assessment selector choice, disallowed `skip` indexes,
+and the existing `update_fields` transition. A second sequential 19-case candidate
+run used the same fixture, `codex_oauth` / `gpt-5.6-luna`, timeout, concurrency,
+and candidate Skill root on fresh isolated databases under
+`/tmp/project-centered-eval.NFdB25/candidate-guidance-*.sqlite3`. Only
+`unconfirmed-project` passed all current assertions (**1/19**). The run still
+showed title-oracle mismatches, Task/task-count mismatches and intermittent invalid
+TaskAgentDecision output. Examples include status/relevance without the required
+transition, a promotion that still carried a suggestion field, and
+`project_link_evidence` without a Project selector. This single run does not prove
+the prompt change made aggregate semantic quality worse; the native Agent is
+non-deterministic, and the comparison is not repeated-sample statistical evidence.
+
+The prompt now also states that new/skip decisions leave status and relevance
+unset, promotion omits the suggestion field while preserving its saved history,
+and project-link evidence requires a selected Project. These clarify existing
+model-validator rules and do not weaken or bypass them. Regression coverage and
+the full Task Agent file again pass (**225 passed / 9.63s**); Ruff and
+`git diff --check` are clean. A native rerun of this latest wording is pending,
+and the project-title source/oracle contract remains unresolved. No complete
+fixed native comparison, W39 verification, PR, or deployment is claimed.
 
 ## Real W39 and release blockers
 

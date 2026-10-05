@@ -448,6 +448,9 @@ def test_independent_project_prompt_and_skill_have_one_current_contract():
     assert "Never include a skip decision in decision_indexes" in prompt
     assert "status and business_relevance may only change through update_fields" in prompt
     assert "They remain top-level fields" in prompt
+    assert "New, record_candidate and skip decisions must leave status and business_relevance unset" in prompt
+    assert "When promoting a suggestion, omit the suggestion field" in prompt
+    assert "requires that Project selector" in prompt
 
 
 def test_independent_project_process_marks_project_only_input_done(tmp_path):
@@ -1094,6 +1097,9 @@ def test_task_result_validation_repair_prompt_lists_field_errors_and_rules():
     assert "For project_assessments, use exactly one selector" in prompt
     assert "Never include a skip decision in decision_indexes" in prompt
     assert "status and business_relevance may only change through update_fields" in prompt
+    assert "New, record_candidate and skip decisions must leave status and business_relevance unset" in prompt
+    assert "When promoting a suggestion, omit the suggestion field" in prompt
+    assert "project_link_evidence requires a Project selector" in prompt
     assert (
         "A source path may appear only in an evidence field whose key is "
         "exactly source or source_ref"
@@ -1960,7 +1966,7 @@ def test_task_agent_existing_project_link_contract_is_distinct_from_registration
     assert (
         "confirmed links" in text
         if surface == "skill"
-        else "confirmed existing links" in text
+        else "existing confirmed association" in text
     )
     assert "registration" in text
     assert (
