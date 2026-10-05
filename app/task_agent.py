@@ -553,6 +553,8 @@ Apply the Skill before returning:
 - context is a complete current snapshot: one overall owner and responsible result,
   other people each with a distinct responsibility. Unknown owner is null.
   Keep unchanged roles' original citations; never replace them with the new message.
+  In Chinese source wording, separate a person's name from a trailing rank/honorific
+  such as "总"; store only the person's name and keep the role in responsibility.
   Read the saved ProjectContext together with this source and return the complete
   current ProjectContext whenever new facts or roles are learned. Retain unchanged
   facts/roles with their original citations and add or update only what this source
@@ -577,6 +579,13 @@ Apply the Skill before returning:
   person from the saved responsibility that best matches the work. Do not create
   that suggestion for routine progress, a settled/resolved fact, or an ambiguous
   clue that does not establish a material impact.
+  A Project role or responsibility is not itself a Task, and ordinary milestones
+  or routine next steps are Project facts, not candidates. Do not create a Task
+  just to fill a missing/contested Project owner or other ProjectContext field;
+  record the unresolved fact and assess its Project impact. Missing ownership alone
+  is not a material risk; use 需关注 only when source evidence shows a material
+  delivery/business impact or required Gate. A suggestion must be an independently
+  actionable step beyond clarifying the Project record itself.
 - On later evidence reuse the existing Task ID, including an existing suggestion.
   Do not rely on source-link duplication or wording similarity as Task identity.
 - New Tasks need a nonblank title. Only update_fields changes a supplied title;

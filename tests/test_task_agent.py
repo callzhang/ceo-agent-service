@@ -455,6 +455,9 @@ def test_independent_project_prompt_and_skill_have_one_current_contract():
     assert "unresolved material Project risk needs an actionable next step" in prompt
     assert "meeting action item is an actual assignment only when" in prompt
     assert "assignment_authorized=true" in prompt
+    assert "A Project role or responsibility is not itself a Task" in prompt
+    assert "Missing ownership alone is not a material risk" in prompt
+    assert "trailing rank/honorific" in prompt
 
 
 def test_independent_project_process_marks_project_only_input_done(tmp_path):

@@ -49,6 +49,8 @@ to make business judgments.
    snapshot, retaining prior valid items with their citations; do not return only
    this source's delta. Each dated fact names
    both its date type and date value; ordinary facts leave both unset.
+   Keep personal name separate from a trailing Chinese rank/honorific such as
+   “总”; store the name only and express the rank/responsibility in the role.
 5. Preserve genuine standalone Tasks without forcing a Project. Unknown Project
    clues retain their source names and evidence in assessments without registering
    fake Projects. Uncertain Task association remains proposed, not confirmed.
@@ -72,6 +74,12 @@ to make business judgments.
    one Project-linked display-only suggestion and derive its suggested person from
    the saved responsibility that best matches the work. Do not create one merely
    for routine progress, a settled/resolved fact, or an ambiguous clue.
+   Project roles are not Tasks; routine milestones and next steps are Project facts,
+   not Task candidates. Never create a Task merely to fill or resolve a Project
+   owner/responsibility field. Record that fact and assess its impact at Project
+   level. Missing ownership alone is not a material risk: require sourced delivery/
+   business impact or a required Gate for 需关注. Any suggestion must be an
+   independently actionable step beyond editing the Project record.
    Never quote your inferred action or earlier suggestion as a human instruction.
 7. Later real human assignment promotes the same suggestion Task ID through the
    actual lifecycle; discovery origin and suggested rationale remain historical.

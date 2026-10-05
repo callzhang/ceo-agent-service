@@ -400,10 +400,10 @@ Task 7 执行记录：API 新独立 ProjectContext 回归先 5 RED 后 GREEN，�
 
 ## Task 8：固定案例、真实原文与可观测结果验收
 
-**Files:** 新建 version 1 的 `tests/fixtures/task_project_centered_v1.json`（现由 version 2 的 `task_project_centered_v2.json` 替代）、`tests/test_task_project_centered_eval.py`、`docs/task-project-centered-validation.md`；修改 `scripts/replay_task_attention.py`、`scripts/inspect_task_attention.py` 的新契约读回，保留旧 fixture/oracle 的历史版本。
+**Files:** 新建 version 1 的 `tests/fixtures/task_project_centered_v1.json`（现由 version 3 的 `task_project_centered_v3.json` 替代；v2 的 10/19 原始结果保留为历史），`tests/test_task_project_centered_eval.py`、`docs/task-project-centered-validation.md`；修改 `scripts/replay_task_attention.py`、`scripts/inspect_task_attention.py` 的新契约读回，保留旧 fixture/oracle 的历史版本。
 
 - [x] 固定至少下列案例，预期只在离线 oracle，不能放进 Agent 输入：多来源同项目、单报告多项目、无周报的会议/聊天、零 Task 的真实风险、正常进展、模糊风险、未确认 Project、独立明确 Task、按职责推导未点名人选、未知总负责、职责变更/冲突、建议变实际指派、同 Task 更新、不同交付不可合并、同源重复、同 ref 不同版本、旧卡片成员与同项目同伴、Task 完成但项目风险未消除。
-- [x] fixture v1 沿用现有 `cases` 格式并扩展 `existing_context.projects` 的 context/evidence；v2 明确正式项目全名并补齐实际 AI Minutes action-item / 授权指派来源元数据。具体建议案例内容为：项目负责人张三、商务职责王五；当前来源只有“付款日期未确定，影响本期现金安排”；预期已有项目、watch、建议王五确认排期、没有实际 owner/承诺/外发。另加完全相同职责但“款项已按计划到账”的负例，不应继续提出同一风险建议。
+- [x] fixture v1 沿用现有 `cases` 格式并扩展 `existing_context.projects` 的 context/evidence；v2 修正正式项目全名及可授权来源；v3 进一步使用可回读的项目登记行、AI Minutes action-item 元数据，并覆盖 native 发现的角色/任务、例行进展和无总负责人边界。具体建议案例内容为：项目负责人张三、商务职责王五；当前来源只有“付款日期未确定，影响本期现金安排”；预期已有项目、watch、建议王五确认排期、没有实际 owner/承诺/外发。另加完全相同职责但“款项已按计划到账”的负例，不应继续提出同一风险建议。
 - [x] 旧/新对照必须具有相同的原始职责/项目证据，不能只给 candidate 额外的人工分工结论。需要形成先前上下文时，对两边按同一顺序输入原始会议与当前消息；扩展现有 replay 为按 fixture 的 `source_inputs` 顺序调用原来的单次处理函数，各次保存实际结果。单元测试可直接 seed 新 context，native 业务对照不能以这种 seed 替代原文理解；旧能力不支持的新结果按明确的预期差异记录。
 - [x] `tests/test_task_project_centered_eval.py` 先用错误持久化结果测试 oracle 确实拒绝：错误总负责、建议伪装正式、漏掉第二项目、空 Task 卡片未真正保存、重复副本、外发 intent 增加。再给正确结果验证接受。读取 domain 行而非模型总结作为实际结果。
 - [x] 扩展只读检查的 context 指标：独立来源数、Signal 数、实际可见范围、完整/可见字符数；按项目列出识别、判断、上下文/任务/关注实际应用结果。原文项目未被识别的遗漏仍由固定人工预期集合检查，不声称程序能从 Agent 自己的输出证明零遗漏。
@@ -411,7 +411,7 @@ Task 7 执行记录：API 新独立 ProjectContext 回归先 5 RED 后 GREEN，�
 - [ ] 使用现有 replay 参数运行，每个候选库是已确认的数据库副本；命令形状由现有入口支持，真实路径在运行前填入验证记录：
 
 ```text
-python scripts/replay_task_attention.py --db <已验证副本的绝对路径> --fixtures tests/fixtures/task_project_centered_v1.json --case-id project-risk-without-task --code-root <冻结候选代码绝对路径>
+python scripts/replay_task_attention.py --db <已验证副本的绝对路径> --fixtures tests/fixtures/task_project_centered_v3.json --case-id project-risk-without-task --code-root <冻结候选代码绝对路径>
 python scripts/replay_task_attention.py --db <真实W39副本绝对路径> --input-id 27465 --code-root <冻结候选代码绝对路径>
 python scripts/inspect_task_attention.py --db <同一个真实W39副本绝对路径> --input-id 27465
 ```

@@ -509,9 +509,9 @@ def test_repeat_oracle_includes_new_source_signal_in_domain_snapshot(seeded_doma
 
 
 def test_fixed_cases_are_raw_sources_with_offline_only_expectations():
-    fixture = json.loads((Path(__file__).parent / "fixtures/task_project_centered_v2.json").read_text())
+    fixture = json.loads((Path(__file__).parent / "fixtures/task_project_centered_v3.json").read_text())
     evidence_contains = _tool().evidence_contains
-    assert fixture["version"] == 2
+    assert fixture["version"] == 3
     cases = fixture["cases"]
     by_id = {case["case_id"]: case for case in cases}
     assert len(cases) == len(by_id) == 19
