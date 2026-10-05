@@ -575,7 +575,17 @@ class TaskDecision(StrictTaskModel):
     business_relevance: Literal["unknown", "not_relevant", "relevant"] | None = None
     owner_user_id: str = ""
     owner_name: str = ""
-    owner_evidence: dict[str, Any] = Field(default_factory=dict)
+    owner_evidence: dict[str, Any] = Field(
+        default_factory=dict,
+        json_schema_extra={
+            "properties": {
+                "source_ref": {"type": "string"},
+                "excerpt": {"type": "string"},
+            },
+            "required": ["source_ref", "excerpt"],
+            "additionalProperties": False,
+        },
+    )
     owner_kind: Literal["individual", "team", "unknown"] | None = Field(
         default=None,
         description=(
@@ -802,7 +812,13 @@ class CompletionTodoChange(StrictTaskModel):
     action: Literal["close"]
     todo_id: int | None = Field(default=None, gt=0)
     business_task_id: int | None = Field(default=None, gt=0)
-    completion_evidence: dict[str, Any]
+    completion_evidence: dict[str, Any] = Field(
+        json_schema_extra={
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        }
+    )
 
     @model_validator(mode="after")
     def one_target(self) -> "CompletionTodoChange":
@@ -816,11 +832,25 @@ class CompletionFollowUpChange(StrictTaskModel):
     todo_id: int | None = Field(default=None, gt=0)
     action: Literal["suppress", "close", "reschedule", "reassign", "keep_open"]
     reason: str = ""
-    evidence_check: dict[str, Any] = Field(default_factory=dict)
+    evidence_check: dict[str, Any] = Field(
+        default_factory=dict,
+        json_schema_extra={
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    )
     next_due_at: str | None = None
     owner_user_id: str | None = None
     owner_name: str | None = None
-    owner_evidence: dict[str, Any] = Field(default_factory=dict)
+    owner_evidence: dict[str, Any] = Field(
+        default_factory=dict,
+        json_schema_extra={
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    )
 
 
 class TaskProjectAssessment(StrictTaskModel):
@@ -1029,6 +1059,34 @@ class TaskAgentDecision(StrictTaskModel):
                 "empty project_assessments requires a nonblank update_summary explaining that no relevant Project was found"
             )
         return self
+
+
+def task_agent_output_schema() -> dict[str, Any]:
+    """Return the Task Agent's complete contract in Codex strict-schema form."""
+    schema = TaskAgentDecision.model_json_schema()
+
+    def normalize(value: object) -> None:
+        if isinstance(value, dict):
+            if "$ref" in value:
+                reference = value["$ref"]
+                value.clear()
+                value["$ref"] = reference
+                return
+            properties = value.get("properties")
+            if value.get("type") == "object" and isinstance(properties, dict):
+                value["additionalProperties"] = False
+                value["required"] = list(properties)
+                for property_schema in properties.values():
+                    if isinstance(property_schema, dict):
+                        property_schema.pop("default", None)
+            for nested in value.values():
+                normalize(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                normalize(nested)
+
+    normalize(schema)
+    return schema
 
 
 class WorkProject(BaseModel):

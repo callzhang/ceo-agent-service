@@ -26,6 +26,7 @@ from app.task_models import (
     WorkItem,
     WorkItemSourceKind,
     WorkItemSourceType,
+    task_agent_output_schema,
 )
 from app.task_business_resolution import BusinessResolutionService
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
@@ -2439,7 +2440,7 @@ def test_task_agent_prompt_schema_is_generated_from_validation_model():
     schema_text = prompt.split("TaskAgentDecision Pydantic JSON schema:\n", 1)[1]
     prompt_schema, _ = json.JSONDecoder().raw_decode(schema_text.lstrip())
 
-    assert prompt_schema == TaskAgentDecision.model_json_schema()
+    assert prompt_schema == task_agent_output_schema()
 
 
 def test_task_agent_codex_runner_uses_routed_execution_contract():
@@ -2467,6 +2468,14 @@ def test_task_agent_codex_runner_uses_routed_execution_contract():
     assert decision.task_decisions[0].action == "skip"
     assert routed.calls[0]["workload_key"] == "9"
     assert routed.calls[0]["conversation_id"] is None
+    command_factory = routed.calls[0]["command_factory"]
+    assert command_factory.use_output_schema is True
+    assert command_factory.output_schema_path == (
+        Path(__file__).resolve().parents[1]
+        / "app"
+        / "schemas"
+        / "task_agent_decision.schema.json"
+    )
     assert routed.calls[0]["required_capabilities"] == frozenset(
         {
             "structured_output",

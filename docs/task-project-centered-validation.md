@@ -371,3 +371,49 @@ verification are complete, require the approved PR, same-version loaded Skill,
 standard `python -m app.deploy`, and actual PID/health/queue/Attention/History and
 page readback. No production checkout edits, direct SQL card creation, automatic
 assignment or whole-database business promotion belong to this release.
+
+## 2026-10-05 resumed completion pass
+
+The confirmed native output-contract defect was fixed: `TaskAgentCodexRunner`
+previously requested no Codex output schema despite advertising
+`structured_output`. The Task Agent now passes the checked strict schema through
+`--output-schema`; `task_agent_output_schema()` derives it from the Pydantic
+contract, requires every object property, removes unsupported `$ref` siblings,
+and narrows the legacy arbitrary evidence dictionaries to their known or empty
+wire shapes. The local parser and one same-session correction remain in place.
+Regression tests were added before the implementation and showed both missing
+schema selection and missing schema artifact as failures.
+
+Verification: `tests/test_task_agent.py` and
+`tests/test_work_tracking_skill.py` passed (**232 passed**); fixed evaluation
+oracle/inspector plus semantic-store coverage passed (**517 passed**); Ruff,
+`git diff --check`, schema parity and strict-object checks passed. A direct
+synthetic `codex exec --model gpt-5.5 --output-schema ...` request generated a
+valid `TaskAgentDecision`; its `null` default-list values also passed local
+Pydantic parsing. This proves the strict schema can be used by the CLI, not that
+the complete Task Agent workflow or business judgments pass.
+
+The normal isolated replay entrypoint was also retried on fresh synthetic DBs.
+It made no Project/Task/Attention writes and failed before any runtime attempt:
+`no_eligible_route:codex_oauth=paused:runtime_probe_failed` (empty
+`runtime_attempts`). Therefore fixed 19-case native candidate results remain
+unverified; the native gate is not passed. The failure is at runtime capability
+probe/route availability, not evidence that the corrected output schema was
+rejected. A successful direct CLI smoke request does not substitute for the
+production router probe.
+
+Read-only inspection of the preserved local W39 working copy
+`/private/tmp/project-centered-w39-final-20261005.sqlite3` found it is already on
+Store schema `2026-10-04.4`, with 259 Tasks, 20 Projects, 403 Signals, 83 shared
+source documents and 3 Attention items; `quick_check=ok`. Input 27465 is already
+`skipped` and has prior runs 10634/10662; its latest stored projection includes
+five Project registrations and three applied Attention proposals. This is a
+readback of an already processed/migrated copy, not a fresh W39 replay, a repeat
+idempotency test, or a frozen before/after comparison. The earlier note that this
+copy still had the source-body migration blocked is stale for its current state;
+the true pre-migration frozen baseline was not located or changed in this pass.
+
+No PR, push, production deploy, or live Task page verification was performed:
+the native route gate remains unavailable and the current W39 artifact cannot
+serve as the untouched baseline. Do not treat prior persisted Attention or this
+schema smoke request as release approval.

@@ -4,6 +4,7 @@ import re
 import sqlite3
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
@@ -40,6 +41,7 @@ from app.task_models import (
     TaskProjectAssessment,
     TaskProjectDecisionResult,
     TaskDecisionResult,
+    task_agent_output_schema,
 )
 from app.task_agent_session import TASK_AGENT_SESSION_SCOPE_ID
 from app.task_retrieval import (
@@ -82,6 +84,10 @@ from app.task_source_documents import (
     source_is_observed,
 )
 from app.project_context_service import ProjectContextService
+
+TASK_AGENT_DECISION_SCHEMA_PATH = (
+    Path(__file__).resolve().parent / "schemas" / "task_agent_decision.schema.json"
+)
 
 TASK_AGENT_AUDIT_EVENT_LIMIT = 200
 # Field errors quoted back to the model in one correction turn.
@@ -362,6 +368,8 @@ class TaskAgentCodexRunner:
                         "Return exactly one TaskAgentDecision JSON object.\n\n"
                         + BACKGROUND_AGENT_RUNTIME_BOUNDARY
                     ),
+                    output_schema_path=TASK_AGENT_DECISION_SCHEMA_PATH,
+                    use_output_schema=True,
                 ),
                 parser=_encode_task_agent_result,
                 result_codec=TASK_RESULT_CODEC,
@@ -505,7 +513,7 @@ def build_task_agent_prompt(
         current_time.strip() or datetime.now(timezone.utc).isoformat()
     )
     decision_schema = json.dumps(
-        TaskAgentDecision.model_json_schema(), ensure_ascii=False, indent=2
+        task_agent_output_schema(), ensure_ascii=False, indent=2
     )
     return f"""You are the CEO Agent Task/Project reader. Do not reply to the source.
 Follow the current CEO Work Tracking Skill and return one TaskAgentDecision envelope:

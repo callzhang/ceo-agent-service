@@ -345,6 +345,10 @@ TaskAgentDecision 必须明确返回三项无默认列表：
 项目资料/判断可以有零 Task，空 Task 不等于无业务结果；没有相关项目/线索的空 assessment
 仍需非空 update_summary。当前 parser 不接受 TaskDecision 中的旧 project_proposal、
 project_link_proposal、attention_proposal；历史 decision_json 原样读，不经当前 parser 升级。
+Codex CLI 路径通过 `--output-schema` 使用 `app/schemas/task_agent_decision.schema.json`，
+该文件由 `TaskAgentDecision.model_json_schema()` 生成并由测试校验一致；strict schema
+要求每个对象显式返回全部属性，省略值用其契约允许的 `null` 表示。服务仍运行本地 Pydantic
+语义校验，失败时最多在同一 session 修正一次；结构化输出不取代业务校验。
 
 ProjectSelector 使用既有 anchor_id 或零基 project_decision_index 二选一；后者指向顶层
 Project 决定，不是 Task 列表。Task 用 project 与 project_link_evidence 明确归属，复用真正已有

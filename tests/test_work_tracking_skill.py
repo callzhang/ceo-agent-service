@@ -1,3 +1,4 @@
+import json
 import inspect
 from pathlib import Path
 
@@ -5,7 +6,12 @@ import pytest
 from pydantic import ValidationError
 
 from app.task_agent import build_task_agent_prompt
-from app.task_models import TaskAgentDecision, TaskDecision, owner_identity_is_supported
+from app.task_models import (
+    TaskAgentDecision,
+    TaskDecision,
+    owner_identity_is_supported,
+    task_agent_output_schema,
+)
 
 from app.business_skills import bundled_business_skills_root
 
@@ -45,7 +51,7 @@ def test_task_agent_prompt_builder_contains_transport_not_business_policy():
     source = inspect.getsource(build_task_agent_prompt)
 
     assert "load_skill_text" in source
-    assert "TaskAgentDecision.model_json_schema" in source
+    assert "task_agent_output_schema" in source
     for duplicated_policy in (
         "流程性内容默认忽略",
         "owner_user_id 不能靠猜",
@@ -56,8 +62,25 @@ def test_task_agent_prompt_builder_contains_transport_not_business_policy():
         assert duplicated_policy not in source
 
 
-def test_task_agent_contract_has_no_checked_duplicate_schema():
-    assert not (ROOT / "app" / "schemas" / "task_agent_decision.schema.json").exists()
+def test_task_agent_output_schema_matches_the_pydantic_contract():
+    schema_path = ROOT / "app" / "schemas" / "task_agent_decision.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    assert schema == task_agent_output_schema()
+
+    def assert_strict_objects(value):
+        if isinstance(value, dict):
+            if value.get("type") == "object":
+                properties = value.get("properties", {})
+                assert value.get("additionalProperties") is False
+                assert value.get("required", []) == list(properties)
+            for nested in value.values():
+                assert_strict_objects(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                assert_strict_objects(nested)
+
+    assert_strict_objects(schema)
 
 
 def test_completion_operations_are_top_level_unified_decision_fields_and_skill_agrees():
