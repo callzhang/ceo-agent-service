@@ -1,5 +1,11 @@
 # Consumer / Audit / System Execution Validation
 
+## Current scope clarification from Derek
+
+Derek confirms that interview work and XiaoQing (小青) submissions are handled in his personal conversations. A read-only production inventory finds14 enabled/non-deleted scheduled tasks and no explicit XiaoQing references in their names,prompts,commands or Skill references. The active personnel-communication Skill mentions candidate evaluation and specialist composition,not a scheduled upload requirement. Background XiaoQing transcript/result upload and its service-owned OAuth client are therefore outside this service rollout; they are no longer a release blocker. Personal-conversation tools and native read capabilities are preserved. Earlier pending-scope notes below record historical checkpoints and are superseded by this clarification.
+
+PR still requires normal latest-main integration,its corresponding independent review/fixed evaluation and exact final-head Quality,then formal synchronized publication and live readback. Historical provider-risk and legacy15012 protections remain;this scope clarification neither executes business actions nor changes error/recovery policy.
+
 Status: implementation in progress, not deployed.
 
 Baseline ref: `a7d4738a3b6591abc4d8fc69236b5517b4f98004`. Frozen cases: `evals/consumer_audit_system_execution/v1.json`. Persisted-contract replay is separate from model/business evaluation and controlled live receipt verification.
