@@ -393,6 +393,20 @@ def evidence_contains(text, quote):
     return contains(value)
 
 
+def _assessment_evidence_matches(actual, *, required, alternatives):
+    def matches(requirement):
+        return any(
+            citation.get("source_ref") == requirement["source_ref"]
+            and requirement["source_excerpt"]
+            in citation.get("source_excerpt", "")
+            for citation in actual
+        )
+
+    return all(matches(requirement) for requirement in required) and (
+        not alternatives or any(matches(requirement) for requirement in alternatives)
+    )
+
+
 def readback(store, *, input_id, before, expected=None, project_before=None):
     capabilities = comparison_capabilities(store)
     after = read_domain(store)
@@ -664,15 +678,12 @@ def readback(store, *, input_id, before, expected=None, project_before=None):
                 if not isinstance(reason, str) or not reason.strip():
                     failures.append("project_assessment_reason_missing")
                 wanted_evidence = wanted_assessment["evidence"]
+                wanted_evidence_any = wanted_assessment.get("evidence_any", [])
                 actual_evidence = actual_assessment.get("evidence", [])
-                citations_valid = all(
-                    any(
-                        actual.get("source_ref") == required["source_ref"]
-                        and required["source_excerpt"]
-                        in actual.get("source_excerpt", "")
-                        for actual in actual_evidence
-                    )
-                    for required in wanted_evidence
+                citations_valid = _assessment_evidence_matches(
+                    actual_evidence,
+                    required=wanted_evidence,
+                    alternatives=wanted_evidence_any,
                 )
                 for evidence in actual_assessment.get("evidence", []):
                     signal_id = evidence.get("signal_id")
@@ -730,14 +741,10 @@ def readback(store, *, input_id, before, expected=None, project_before=None):
                     else:
                         receipt_valid = receipt_valid and anchor_id is None
                     receipt_evidence = receipt.get("evidence", [])
-                    receipt_valid = receipt_valid and all(
-                        any(
-                            actual.get("source_ref") == required["source_ref"]
-                            and required["source_excerpt"]
-                            in actual.get("source_excerpt", "")
-                            for actual in receipt_evidence
-                        )
-                        for required in wanted_evidence
+                    receipt_valid = receipt_valid and _assessment_evidence_matches(
+                        receipt_evidence,
+                        required=wanted_evidence,
+                        alternatives=wanted_evidence_any,
                     )
                     for evidence in receipt.get("evidence", []):
                         signal_id = evidence.get("signal_id")

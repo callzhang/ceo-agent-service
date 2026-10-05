@@ -189,6 +189,23 @@ def test_task_title_oracle_accepts_reviewed_synonym_alternatives(seeded_domain):
     assert "task_expectation_mismatch" not in failures
 
 
+def test_assessment_oracle_accepts_one_of_reviewed_source_citations():
+    match = _tool()._assessment_evidence_matches
+    expected = [
+        {"source_ref": "minutes:1", "source_excerpt": "两个独立交付物"},
+        {"source_ref": "minutes:1", "source_excerpt": "行动一：李四负责准备验收材料"},
+    ]
+    actual = [{
+        "source_ref": "minutes:1",
+        "source_excerpt": "会议确认这是两个独立交付物。",
+    }]
+
+    assert match(actual, required=[], alternatives=expected)
+    assert not match(actual, required=[], alternatives=[{
+        "source_ref": "minutes:1", "source_excerpt": "行动二：王五负责商务对账",
+    }])
+
+
 def test_oracle_rejects_two_official_projects_with_same_title(seeded_domain):
     store, _ = seeded_domain()
     with store._connect() as db:

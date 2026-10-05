@@ -52,6 +52,9 @@ to make business judgments.
    overall-owner candidates as responsibilities; that list contains only
    independently evidenced, distinct work duties. Preserve unchanged separate
    deliverable owners and their citations.
+   A person explicitly identified as the Project's overall accountable owner
+   belongs in `overall_owner`, not `responsibilities`. For example, “张三总负责
+   交付验收” identifies the overall role; keep “总” out of the person's name.
    Each person has a distinct responsibility and original evidence. Keep unchanged
    roles' and facts' historical references when updating a snapshot. Whenever new
    facts or roles are learned, read the saved context and return the complete current
@@ -89,6 +92,10 @@ to make business judgments.
    level. Missing ownership alone is not a material risk: require sourced delivery/
    business impact or a required Gate for 需关注. Any suggestion must be an
    independently actionable step beyond editing the Project record.
+   Before suggesting another next-step Task for a Project risk, check current
+   linked Tasks. If an existing actionable Task already addresses that risk,
+   use its existing ID as the supporting next step and do not add a duplicate
+   monitoring/evaluation suggestion.
    Never quote your inferred action or earlier suggestion as a human instruction.
 7. Later real human assignment promotes the same suggestion Task ID through the
    actual lifecycle; discovery origin and suggested rationale remain historical.

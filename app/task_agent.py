@@ -466,6 +466,8 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "- A display-only suggestion may infer a person from sourced responsibilities plus project facts, without actual owner/formal/date/assignment fields. Reuse the existing Task ID for later updates; do not turn suggestions into human commitments.\n"
         "- A bare responsibility clause (for example, a person being responsible for an area) is ProjectContext only, not a source Task or candidate. Create a Task only for an explicitly stated, independently completable deliverable/action, or a separate actionable suggestion required by an evidenced material Project risk.\n"
         "- When overall-owner evidence conflicts, keep overall_owner=null and record the competing claims and challenge as sourced facts. Do not move candidate overall owners into responsibilities; that list contains only independently evidenced, distinct work responsibilities. Preserve unchanged responsibilities such as a separate deliverable owner.\n"
+        "- A person explicitly identified as the Project's overall accountable owner belongs in overall_owner, not responsibilities. In Chinese, an explicit description such as 张三总负责交付验收 denotes that role; keep 总 out of the person's name.\n"
+        "- Before suggesting another next-step Task for a Project risk, check current linked Tasks. If an existing actionable Task already addresses that risk, use its existing Task ID as the supporting next step and do not add a duplicate monitoring/evaluation suggestion.\n"
         "- Any non-empty owner_name or owner_user_id requires owner_evidence. "
         "Normally it has source_ref and excerpt containing every named person. "
         "When authoritative memory or session context is explicitly bound to "
@@ -571,6 +573,9 @@ Apply the Skill before returning:
   competing overall-owner candidates as responsibilities; responsibilities are
   only independently evidenced, distinct work duties. Preserve other unchanged
   responsibilities such as a separately owned deliverable.
+  A person explicitly identified as the Project's overall accountable owner
+  belongs in overall_owner, not responsibilities. In Chinese, a description such
+  as “张三总负责交付验收” denotes that role; keep “总” out of the person's name.
   Keep unchanged roles' original citations; never replace them with the new message.
   In Chinese source wording, separate a person's name from a trailing rank/honorific
   such as "总"; store only the person's name and keep the role in responsibility.
@@ -605,6 +610,10 @@ Apply the Skill before returning:
   is not a material risk; use 需关注 only when source evidence shows a material
   delivery/business impact or required Gate. A suggestion must be an independently
   actionable step beyond clarifying the Project record itself.
+  Before suggesting another next-step Task for a Project risk, check current linked
+  Tasks. If an existing actionable Task already addresses that risk, use its existing
+  Task ID as the supporting next step and do not add a duplicate monitoring/evaluation
+  suggestion.
 - On later evidence reuse the existing Task ID, including an existing suggestion.
   Do not rely on source-link duplication or wording similarity as Task identity.
 - New Tasks need a nonblank title. Only update_fields changes a supplied title;
