@@ -553,6 +553,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     "conversation_runtime_sessions": ("contract_hash",),
     "task_agent_runs": ("status", "error", "finished_at", "updated_at"),
     "meeting_alignment_jobs": (
+        "delivery_claim_token",
         "calendar_summary_status",
         "calendar_summary_result_json",
     ),
@@ -3405,6 +3406,7 @@ class AutoReplyStore:
                     status text not null default 'waiting',
                     attempts integer not null default 0,
                     locked_at text,
+                    delivery_claim_token text not null default '',
                     available_at text not null default '',
                     error text not null default '',
                     decision_json text not null default '{}',
@@ -4786,6 +4788,7 @@ class AutoReplyStore:
             for column, definition in (
                 ("calendar_summary_status", "text not null default 'not_started'"),
                 ("calendar_summary_result_json", "text not null default '{}'"),
+                ("delivery_claim_token", "text not null default ''"),
             ):
                 if column not in meeting_alignment_columns:
                     db.execute(
@@ -17994,13 +17997,14 @@ class AutoReplyStore:
                 )
                 update meeting_alignment_jobs
                 set locked_at=current_timestamp,
+                    delivery_claim_token=?,
                     updated_at=current_timestamp
                 where id in (select id from candidates)
                   and status='ready_to_send'
                   and locked_at is null
                 returning *
                 """,
-                (now, limit),
+                (now, limit, uuid4().hex),
             ).fetchall()
             jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
             return sorted(jobs, key=lambda job: job.id)
@@ -18013,13 +18017,28 @@ class AutoReplyStore:
         with self._connect() as db:
             row = db.execute(
                 """update meeting_alignment_jobs
-                   set locked_at=current_timestamp, updated_at=current_timestamp
+                   set locked_at=current_timestamp, delivery_claim_token=?,
+                       updated_at=current_timestamp
                    where id=? and status='ready_to_send' and locked_at is null
                      and (available_at='' or datetime(available_at)<=datetime(?))
                    returning *""",
-                (job_id, now),
+                (uuid4().hex, job_id, now),
             ).fetchone()
             return self._meeting_alignment_job_from_row(row) if row else None
+
+    def release_ready_to_send_meeting_alignment_claims(
+        self, jobs: list[MeetingAlignmentJob]
+    ) -> None:
+        if not jobs:
+            return
+        with self._immediate_write_transaction() as db:
+            db.executemany(
+                """update meeting_alignment_jobs
+                   set locked_at=null, delivery_claim_token=''
+                   where id=? and status='ready_to_send' and locked_at=?
+                     and delivery_claim_token=? and delivery_claim_token!=''""",
+                [(job.id, job.locked_at, job.delivery_claim_token) for job in jobs],
+            )
 
     def schedule_ready_to_send_meeting_alignment_retry(
         self,

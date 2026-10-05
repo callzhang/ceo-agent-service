@@ -1413,6 +1413,18 @@ occupy the single meeting consumer and starve pending meetings. The dispatcher
 keyset scan and legacy claim path use the same ordering; eligibility, lease
 ownership, and external delivery guards are unchanged.
 
+Meeting delivery batches release still-ready claims on both normal completion
+and exceptional exit. Each acquisition persists a fresh `delivery_claim_token`;
+release compares job ID, original lock timestamp and nonempty token, so even a
+same-second successor cannot be unlocked by a stale batch. The additive column
+defaults to empty for pre-migration records; existing startup recovery releases
+interrupted old claims before fresh acquisition. Cleanup never changes receipts,
+retry deadlines, attempt counts or terminal status. If delivery and release both
+fail, a grouped exception records both causes instead of hiding the first.
+Persisted `sent` receipts remain authoritative: recovery resumes only calendar
+terminalization, not analysis or chat sending. Transcript-only meetings retain
+the existing explicit calendar-skip receipt because no original event exists.
+
 Meeting discovery may refresh a waiting recording, but once a job is queued,
 claimed, retrying, ready for delivery or terminal, discovery cannot replace its
 persisted source snapshot or participant evidence. Recovery refreshes failed

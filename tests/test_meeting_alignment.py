@@ -191,6 +191,181 @@ def test_internal_delivery_pass_never_claims_pending_analysis_jobs(
     assert delivered == [job.id]
 
 
+def test_delivery_terminal_write_failure_releases_claim_without_resending(
+    tmp_path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+    original = store.get_meeting_alignment_job(job_id)
+    store.update_meeting_alignment_job(
+        job_id, status="ready_to_send", calendar_summary_status="not_started"
+    )
+    update = store.update_meeting_alignment_job
+
+    def fail_terminal_write(job_id, **values):
+        if values.get("status") == "sent":
+            raise sqlite3.OperationalError("database is locked")
+        return update(job_id, **values)
+
+    monkeypatch.setattr(store, "update_meeting_alignment_job", fail_terminal_write)
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        deliver_ready_meeting_alignment_jobs(store, dws, now=NOW, limit=1)
+
+    interrupted = store.get_meeting_alignment_job(job_id)
+    assert interrupted.status == "ready_to_send"
+    assert interrupted.locked_at is None
+    assert interrupted.send_result_json == original.send_result_json
+    assert len(dws.send_calls) == 1
+
+    monkeypatch.setattr(store, "update_meeting_alignment_job", update)
+    assert deliver_ready_meeting_alignment_jobs(
+        store, dws, now=NOW + timedelta(minutes=1), limit=1
+    ) == {job_id}
+    assert store.get_meeting_alignment_job(job_id).status == "sent"
+    assert len(dws.send_calls) == 1
+    assert runner.calls == 1
+
+
+def test_delivery_exception_releases_unprocessed_batch_claims(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    ids = [
+        store.upsert_meeting_alignment_job(
+            meeting_id=f"minutes-{index}", title="Meeting", source_json="{}",
+            participants_json="[]", ended_at=NOW.isoformat(),
+            eligible_at=NOW.isoformat(), status="ready_to_send",
+        )
+        for index in range(2)
+    ]
+
+    def interrupt(*_args, **_kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(meeting_alignment, "_deliver_meeting_job", interrupt)
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        deliver_ready_meeting_alignment_jobs(store, object(), now=NOW, limit=2)
+
+    assert [store.get_meeting_alignment_job(i).locked_at for i in ids] == [None, None]
+    assert [j.id for j in store.claim_ready_to_send_meeting_alignment_jobs(
+        limit=2, now=NOW.isoformat()
+    )] == ids
+
+
+def test_delivery_cleanup_cannot_release_a_successor_claim(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="ready_to_send",
+    )
+
+    def successor_claim(*_args, **_kwargs):
+        with sqlite3.connect(store.path) as db:
+            db.execute(
+                "update meeting_alignment_jobs set locked_at=? where id=?",
+                ("2099-01-01 00:00:00", job_id),
+            )
+
+    monkeypatch.setattr(meeting_alignment, "_deliver_meeting_job", successor_claim)
+    deliver_ready_meeting_alignment_jobs(store, object(), now=NOW, limit=1)
+    assert store.get_meeting_alignment_job(job_id).locked_at == "2099-01-01 00:00:00"
+
+
+def test_delivery_cleanup_cannot_release_same_timestamp_successor(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="ready_to_send",
+    )
+    first = store.claim_ready_to_send_meeting_alignment_job(job_id, now=NOW.isoformat())
+    store.reset_ready_to_send_meeting_alignment_jobs()
+    second = store.claim_ready_to_send_meeting_alignment_job(job_id, now=NOW.isoformat())
+    with sqlite3.connect(store.path) as db:
+        db.execute("update meeting_alignment_jobs set locked_at=? where id=?",
+                   (first.locked_at, job_id))
+    store.release_ready_to_send_meeting_alignment_claims([first])
+    remaining = store.get_meeting_alignment_job(job_id)
+    assert remaining.locked_at == first.locked_at
+    assert remaining.delivery_claim_token == second.delivery_claim_token
+    assert first.delivery_claim_token != second.delivery_claim_token
+
+
+def test_delivery_and_cleanup_failure_preserve_both_errors(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="ready_to_send",
+    )
+
+    def delivery_failure(*_args, **_kwargs):
+        raise ValueError("original delivery failure")
+
+    def cleanup_failure(*_args, **_kwargs):
+        raise sqlite3.OperationalError("claim cleanup database is locked")
+
+    monkeypatch.setattr(meeting_alignment, "_deliver_meeting_job", delivery_failure)
+    monkeypatch.setattr(store, "release_ready_to_send_meeting_alignment_claims", cleanup_failure)
+    with pytest.raises(ExceptionGroup) as raised:
+        deliver_ready_meeting_alignment_jobs(store, object(), now=NOW, limit=1)
+    assert "original delivery failure" in str(raised.value)
+    assert "claim cleanup database is locked" in str(raised.value)
+    assert [type(e) for e in raised.value.exceptions] == [ValueError, sqlite3.OperationalError]
+
+
+def test_successful_delivery_cleanup_failure_propagates(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    def cleanup_failure(*_args, **_kwargs):
+        raise sqlite3.OperationalError("claim cleanup database is locked")
+
+    monkeypatch.setattr(store, "release_ready_to_send_meeting_alignment_claims", cleanup_failure)
+    with pytest.raises(sqlite3.OperationalError, match="claim cleanup database is locked"):
+        deliver_ready_meeting_alignment_jobs(store, object(), now=NOW, limit=1)
+
+
+def test_delivery_claim_token_migration_preserves_existing_receipt(tmp_path):
+    path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(path)
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="ready_to_send",
+    )
+    store.update_meeting_alignment_job(job_id, send_result_json='{"status":"sent"}')
+    with sqlite3.connect(path) as db:
+        db.execute("alter table meeting_alignment_jobs drop column delivery_claim_token")
+    legacy_path = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(path) as source, sqlite3.connect(legacy_path) as target:
+        source.backup(target)
+    migrated = AutoReplyStore(legacy_path)
+    job = migrated.get_meeting_alignment_job(job_id)
+    assert job.send_result_json == '{"status":"sent"}'
+    assert job.delivery_claim_token == ""
+    claimed = migrated.claim_ready_to_send_meeting_alignment_job(job_id, now=NOW.isoformat())
+    assert claimed.delivery_claim_token
+    assert claimed.send_result_json == job.send_result_json
+    migrated.release_ready_to_send_meeting_alignment_claims([claimed])
+    assert migrated.get_meeting_alignment_job(job_id).locked_at is None
+
+
+def test_delivery_cleanup_leaves_terminal_rows_unchanged(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="ready_to_send",
+    )
+    claim = store.claim_ready_to_send_meeting_alignment_job(job_id, now=NOW.isoformat())
+    store.update_meeting_alignment_job(job_id, status="sent", send_result_json='{"status":"sent"}')
+    before = store.get_meeting_alignment_job(job_id)
+    store.release_ready_to_send_meeting_alignment_claims([claim])
+    assert store.get_meeting_alignment_job(job_id) == before
+
+
 def test_disabled_feature_does_not_queue_new_meeting_replay(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     registry = FeatureRegistry(state_path=tmp_path / "skill-state.json")

@@ -535,6 +535,7 @@ class MeetingAlignmentJob(StrictModel):
     status: MeetingAlignmentQueueStatus
     attempts: int
     locked_at: str | None = None
+    delivery_claim_token: str = ""
     available_at: str
     error: str
     decision_json: str
