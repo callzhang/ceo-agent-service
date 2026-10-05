@@ -216,9 +216,34 @@ unset, promotion omits the suggestion field while preserving its saved history,
 and project-link evidence requires a selected Project. These clarify existing
 model-validator rules and do not weaken or bypass them. Regression coverage and
 the full Task Agent file again pass (**225 passed / 9.63s**); Ruff and
-`git diff --check` are clean. A native rerun of this latest wording is pending,
-and the project-title source/oracle contract remains unresolved. No complete
+`git diff --check` are clean. The rerun is documented in the next section; the
+project-title source/oracle contract remains unresolved. No complete
 fixed native comparison, W39 verification, PR, or deployment is claimed.
+
+## Second prompt clarification native rerun (2026-10-04)
+
+Commit `4cf23b9f` additionally clarified that create/candidate/skip decisions
+leave status and relevance unset, suggestion promotion omits the suggestion
+field, and Project link evidence requires a selected Project. The same 19 fixed
+candidate cases were run sequentially on fresh databases under
+`/tmp/project-centered-eval.NFdB25/candidate-contract2-*.sqlite3`, with the same
+source inputs, model/route, timeout, concurrency and candidate Skill hash.
+**2/19** passed (`single-report-two-projects`, `unconfirmed-project`); this is
+still a clear fixed-eval failure, not a release candidate. Title-oracle mismatch
+continues across cases whose source uses `甲客户一期交付项目`; the suite expects
+`甲客户一期交付`. Task lifecycle/assignment outputs also remain inaccurate or
+intermittently schema-invalid: this rerun again logged a status/relevance
+transition error, and the responsibility-conflict, independent-Task,
+same-source/version and completed-Task/risk cases did not pass. More prompt
+wording alone is not established as sufficient. The fixture/title contract needs
+an explicit resolution, and the remaining business-judgment failures need their
+own expected-vs-actual review before any further algorithm change.
+
+The third run used commit `4cf23b9f` and the same loaded Skill SHA-256
+`11c5df5b30aec5acd3df7e31be3bca740609db02147875ad1831d898d1d357c2`. The full
+`tests/test_task_agent.py` file passed (**225 passed / 9.63s**), Ruff and
+`git diff --check` were clean. The semantic/native gate remains failed; W39,
+independent review, PR, and release gates are still pending.
 
 ## Real W39 and release blockers
 
