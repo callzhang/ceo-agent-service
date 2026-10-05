@@ -10102,6 +10102,43 @@ def test_render_attempt_detail_shows_rerun_only_in_banner_actions(tmp_path: Path
     assert "rerun-card" not in html
 
 
+def test_render_attempt_detail_hides_rerun_for_provider_risk_refusal(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task)
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="audit-provider-risk-refusal",
+        owner="audit-provider-risk-refusal",
+    ).run
+    audit = store.fail_agent_run(
+        audit.id,
+        {"code": "agent_reported_failure", "source_code": "provider_risk_rejected"},
+        owner="audit-provider-risk-refusal",
+    )
+    attempt_id = _finalize_consumer_result_attempt(
+        store,
+        task,
+        audit,
+        task_status="failed",
+        send_status="failed",
+        send_error="agent_reported_failure",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert f'action="/attempts/{attempt_id}/rerun?return_to=/attempts/{attempt_id}"' not in html
+    assert '<button class="rerun" type="submit">重新处理</button>' not in html
+    assert "此入口不能重放历史候选" in html
+    assert "提交新候选并重新审核" in html
+
+
 def test_render_attempt_detail_returns_404_when_missing(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 

@@ -1271,6 +1271,7 @@ h1, h2, h3, p { margin-top: 0; }
 .attempt-conversation-title { display: flex; align-items: baseline; gap: 0; min-width: 0; font-weight: 700; white-space: nowrap; }
 .attempt-conversation-title strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .attempt-banner-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.attempt-banner-actions .attempt-rerun-blocked { flex: 1 0 100%; margin: 0; color: var(--ink-soft); font-size: .76rem; line-height: 1.4; text-align: left; overflow-wrap: anywhere; }
 .agent-log-button, .compact-button, .disabled-action {
   display: inline-flex;
   align-items: center;

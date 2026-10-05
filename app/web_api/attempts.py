@@ -26,7 +26,9 @@ def _permission_display(attempt: Any) -> str:
     return action or reason
 
 
-def _status_message(attempt: Any, attention: Any) -> tuple[str, bool]:
+def _status_message(
+    attempt: Any, attention: Any, *, rerun_block_reason: str = ""
+) -> tuple[str, bool]:
     status = str(getattr(attempt, "send_status", "") or "").strip().lower()
     if status == "sent":
         return "这条回复已发送，无需你操作。", False
@@ -37,6 +39,8 @@ def _status_message(attempt: Any, attention: Any) -> tuple[str, bool]:
     if status == "needs_human":
         return "这条事项等待你的决策。请阅读已核验事实后提交处理指令。", True
     if status == "failed":
+        if rerun_block_reason:
+            return rerun_block_reason, False
         return "这次处理没有完成，可重新处理当前事项。", False
     if attention is not None:
         return "系统正在处理这条事项。", False
@@ -448,6 +452,8 @@ def _action_links(
     sent_reply: Any,
     wechat_delivery: Any,
     rerun: RerunPresentation,
+    *,
+    rerun_block_reason: str = "",
 ) -> dict[str, Any]:
     from app.audit_web import _sent_reply_has_recall_target
 
@@ -483,9 +489,10 @@ def _action_links(
             delivery_action_url = f"/api/console/wechat/deliveries/{delivery_id}/retry"
     terminal = terminal and not delivery_action_url
     return {
-        "can_rerun": status == "failed",
+        "can_rerun": status == "failed" and not rerun_block_reason,
         "rerun_label": rerun.label,
         "rerun_confirmation": rerun.confirmation,
+        "rerun_block_reason": rerun_block_reason,
         "can_recall": _sent_reply_has_recall_target(sent_reply),
         "can_submit_feedback": True,
         "rerun_url": f"/api/console/history/{int(attempt.id)}/rerun",
@@ -655,6 +662,7 @@ def build_attempt_detail(
         _attempt_reason_text,
         _needs_human_decision_options,
         _quality_warnings,
+        _attempt_rerun_block_reason,
         _route_failure_recovery_state,
         reply_history_attention,
     )
@@ -736,13 +744,14 @@ def build_attempt_detail(
         task=reply_task,
         decision_options=_needs_human_decision_options(store, attempt),
     )
+    rerun_block_reason = _attempt_rerun_block_reason(attempt, agent_runs)
     runtime_attempts = _runtime_payload(agent_runs, store)
     agent_sessions = _agent_sessions(attempt, agent_runs)
     feedback_token = _feedback_token_for_sent_reply(sent_reply)
     feedback_events = store.list_feedback_events_for_tokens([feedback_token]).get(feedback_token, [])
     rerun = (attempt_rerun_presentation(store, reply_task, agent_runs)
              if attempt.send_status == "failed" else RerunPresentation())
-    status_message, requires_decision = _status_message(attempt, attention)
+    status_message, requires_decision = _status_message(attempt, attention, rerun_block_reason=rerun_block_reason)
     # A sent-reply ledger is direct evidence that a DingTalk response reached
     # the provider. Prefer it to the task projection (which can simply be
     # "done") so the person viewing the Attempt is not left guessing whether
@@ -805,7 +814,7 @@ def build_attempt_detail(
                 "skipped": "已按审核通过的停止方案结束，原因已记录。",
             }
             status_message = execution_messages.get(system_execution["status"], status_message)
-    if attempt.send_status == "failed" and rerun.explanation:
+    if attempt.send_status == "failed" and rerun.explanation and not rerun_block_reason:
         status_message = rerun.explanation
     try:
         audit_explanation = _attempt_reason_text(attempt)
@@ -943,7 +952,7 @@ def build_attempt_detail(
             "result": _stored_json(attempt.calendar_response_result_json, {}),
         },
         "actions": _action_links(
-            attempt, agent_sessions, reply_task, sent_reply, wechat_delivery, rerun
+            attempt, agent_sessions, reply_task, sent_reply, wechat_delivery, rerun, rerun_block_reason=rerun_block_reason
         ),
         "agent_sessions": agent_sessions,
         "runtime_attempts": runtime_attempts,

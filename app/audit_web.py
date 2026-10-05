@@ -9498,6 +9498,16 @@ def handle_rerun_attempt_post(
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
         return 404, {}, render_page("Attempt not found", "Attempt not found")
+    terminal_run = store.get_agent_run(attempt.agent_run_id) if attempt.agent_run_id else None
+    rerun_block_reason = _attempt_rerun_block_reason(
+        attempt, [terminal_run] if terminal_run is not None else []
+    )
+    if rerun_block_reason:
+        return (
+            409,
+            {},
+            render_page("Rerun unavailable", f"<p>{escape(rerun_block_reason)}</p>"),
+        )
     channel = attempt.channel or "dingtalk"
     existing_task = store.get_reply_task_for_message(
         attempt.conversation_id,
@@ -11255,6 +11265,7 @@ def _attempt_detail_body(
         )
     )
     orchestration_links = _orchestration_session_links(attempt.id, agent_runs)
+    rerun_block_reason = _attempt_rerun_block_reason(attempt, agent_runs)
     return _agent_detail_body(
         title_label="群名",
         title=attempt.conversation_title,
@@ -11267,6 +11278,7 @@ def _attempt_detail_body(
             sent_reply,
             reply_task=reply_task,
             rerun=rerun,
+            rerun_block_reason=rerun_block_reason,
         ),
         status_html=_attempt_status_card(
             attempt,
@@ -11274,6 +11286,7 @@ def _attempt_detail_body(
             attention,
             closed_after_review=closed_after_review,
             rerun=rerun,
+            rerun_block_reason=rerun_block_reason,
         ),
         fields=fields,
         pills_html=_attempt_action_pills(
@@ -11415,6 +11428,34 @@ def _agent_failure_reason_card(
     return _text_card("失败原因", reason)
 
 
+def _attempt_rerun_block_reason(
+    attempt: ReplyAttempt,
+    agent_runs: list[AgentRun],
+) -> str:
+    if attempt.send_status.strip().lower() != "failed":
+        return ""
+    terminal_run = next(
+        (
+            run
+            for run in agent_runs
+            if getattr(run, "id", None) is not None
+            and int(run.id) == int(attempt.agent_run_id or 0)
+        ),
+        None,
+    )
+    from app.agent_reported_error import (
+        PROVIDER_RISK_REJECTION_RERUN_BLOCK_REASON,
+        is_provider_risk_rejection,
+    )
+
+    if is_provider_risk_rejection(
+        terminal_run.structured_error_json if terminal_run is not None else "",
+        attempt_error=attempt.send_error,
+    ):
+        return PROVIDER_RISK_REJECTION_RERUN_BLOCK_REASON
+    return ""
+
+
 def _agent_failure_reason_text(
     attempt: ReplyAttempt,
     agent_runs: list[AgentRun],
@@ -11429,6 +11470,17 @@ def _agent_failure_reason_text(
         except json.JSONDecodeError:
             error = {}
         code = str(error.get("code") or "unknown") if isinstance(error, dict) else "unknown"
+        from app.agent_reported_error import is_provider_risk_rejection
+
+        risk_rejected = is_provider_risk_rejection(
+            run.structured_error_json,
+            attempt_error=(
+                attempt.send_error
+                if getattr(run, "id", None) is not None
+                and int(run.id) == int(attempt.agent_run_id or 0)
+                else ""
+            ),
+        )
         detail = str(error.get("detail") or "") if isinstance(error, dict) else ""
         # An Agent-reported failure (source="agent") never carries `detail` --
         # that field belongs to the technical/process failure path -- but its
@@ -11438,10 +11490,16 @@ def _agent_failure_reason_text(
         reported_summary = (
             str(error.get("reported_summary") or "") if isinstance(error, dict) else ""
         )
-        effect = "按普通失败流程重试或反馈"
+        effect = (
+            "历史候选不能直接重放；请通过正式流程提交新候选并重新审核"
+            if risk_rejected
+            else "按普通失败流程重试或反馈"
+        )
         safe_detail = detail.strip() or reported_summary.strip()
         if not safe_detail or safe_detail.startswith("处理未完成，失败代码："):
-            safe_detail = _failure_code_explanation(code)
+            safe_detail = _failure_code_explanation(
+                "provider_risk_rejected" if risk_rejected else code
+            )
         stage = {
             AgentRole.CONSUMER: "生成回复阶段",
             AgentRole.AUDIT: "执行审计阶段",
@@ -11459,6 +11517,8 @@ def _agent_failure_reason_text(
 
 
 def _failure_code_explanation(code: str) -> str:
+    if code == "provider_risk_rejected":
+        return "运行时拒绝了当前对外动作；当前入口不允许重放该历史候选。"
     if code == "provider_read_failed":
         return "业务数据读取失败；请查看来源和 provider 原始错误。"
     if code == "delivery_failed":
@@ -12232,6 +12292,14 @@ def _related_history_card(
         )
         rerun = (attempt_rerun_presentation(store, reply_task)
                  if attempt.send_status == "failed" else RerunPresentation())
+        terminal_run = (
+            store.get_agent_run(attempt.agent_run_id)
+            if store is not None and attempt.agent_run_id
+            else None
+        )
+        rerun_block_reason = _attempt_rerun_block_reason(
+            attempt, [terminal_run] if terminal_run is not None else []
+        )
         rows.append(
             "<tr>"
             f"<td>{_attempt_link(attempt)}</td>"
@@ -12239,7 +12307,7 @@ def _related_history_card(
             f"<td>{escape(attempt.trigger_sender)}</td>"
             f"<td>{_attempt_action_pills(attempt)}</td>"
             f"<td>{escape(_excerpt(attempt.trigger_text, 120))}</td>"
-            f"<td>{_attempt_row_actions(attempt, sent_reply, session_id=session_id, reply_task=reply_task, rerun=rerun)}</td>"
+            f"<td>{_attempt_row_actions(attempt, sent_reply, session_id=session_id, reply_task=reply_task, rerun=rerun, rerun_block_reason=rerun_block_reason)}</td>"
             "</tr>"
         )
     return (
@@ -12282,6 +12350,7 @@ def _attempt_row_actions(
     session_id: str = "",
     reply_task: ReplyTask | None = None,
     rerun: RerunPresentation = RerunPresentation(),
+    rerun_block_reason: str = "",
 ) -> str:
     return_to = f"/codex/{quote(session_id, safe='')}" if session_id else f"/attempts/{attempt.id}"
     return_to_query = quote(return_to, safe="/")
@@ -12313,7 +12382,12 @@ def _attempt_row_actions(
             f"onsubmit=\"return confirm('{escape(confirmation)}')\">"
             f"<button class=\"rerun\" type=\"submit\">{escape(rerun.label)}</button>"
             "</form>"
-            if attempt.send_status.strip().lower() == "failed"
+            if attempt.send_status.strip().lower() == "failed" and not rerun_block_reason
+            else ""
+        )
+        + (
+            f'<span class="disabled-action" title="{escape(rerun_block_reason)}">历史候选不可重放</span>'
+            if rerun_block_reason
             else ""
         )
         + recall_html
@@ -12378,6 +12452,7 @@ def _attempt_status_card(
     *,
     closed_after_review: bool = False,
     rerun: RerunPresentation | None = None,
+    rerun_block_reason: str = "",
 ) -> str:
     rerun = rerun or attempt_rerun_presentation(None, None, agent_runs or [])
     active_attempt = attempt
@@ -12409,6 +12484,8 @@ def _attempt_status_card(
         message = "该事项已核验结案；外部动作未自动执行，具体原因见下方审计说明。"
     elif active_attempt.send_status == "skipped":
         message = "这条事项已判定无需回复，无需你操作。"
+    elif active_attempt.send_status == "failed" and rerun_block_reason:
+        message = rerun_block_reason
     elif active_attempt.send_status == "failed" and rerun.explanation:
         message = rerun.explanation
     elif attention is not None:
@@ -12433,7 +12510,7 @@ def _attempt_status_card(
         f"<br><strong>需要你决策：</strong>{'是' if decision_required else '否'}"
         f"{decision_detail}</section>"
         + (_history_attention_html(attention, actions_html="")
-           if attention is not None and active_attempt.send_status == "failed" and rerun.explanation else "")
+           if attention is not None and active_attempt.send_status == "failed" and (rerun.explanation or rerun_block_reason) else "")
     )
 
 

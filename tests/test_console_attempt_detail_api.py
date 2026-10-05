@@ -283,6 +283,87 @@ def _finalize_consumer_result_attempt(store: AutoReplyStore, task, terminal_run)
     )
 
 
+def _failed_provider_risk_attempt(
+    store: AutoReplyStore, *, error: dict[str, object]
+):
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task, owner="risk-guard-consumer")
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="audit-risk-guard",
+        owner="risk-guard-audit",
+    ).run
+    audit = store.fail_agent_run(audit.id, error, owner="risk-guard-audit")
+    attempt_id = store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=audit.id,
+        task_status="failed",
+        task_error="provider_risk_rejected",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="The runtime refused this outbound action.",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="The runtime refused this outbound action.",
+        send_status="failed",
+        send_error="agent_reported_failure",
+        channel="dingtalk",
+    )
+    return task, audit, attempt_id
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        {"code": "provider_risk_rejected"},
+        {"code": "agent_reported_failure", "source_code": "provider_risk_rejected"},
+    ],
+)
+def test_provider_risk_rejection_disables_history_rerun_and_explains_why(
+    tmp_path: Path, error: dict[str, object]
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    _task, _run, attempt_id = _failed_provider_risk_attempt(store, error=error)
+
+    status, item = build_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert item is not None
+    assert item["actions"]["can_rerun"] is False
+    assert "此入口不能重放历史候选" in item["actions"]["rerun_block_reason"]
+    assert "此入口不能重放历史候选" in item["status"]["message"]
+    assert "提交新候选并重新审核" in item["failure_reason"]
+
+
+def test_provider_risk_rejection_is_blocked_at_the_rerun_handler(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task, _run, attempt_id = _failed_provider_risk_attempt(
+        store,
+        error={"code": "agent_reported_failure", "source_code": "provider_risk_rejected"},
+    )
+
+    status, _headers, body = handle_rerun_attempt_post(store, attempt_id)
+
+    unchanged_task = store.get_reply_task(task.id)
+    assert status == 409
+    assert "此入口不能重放历史候选" in body
+    assert unchanged_task is not None
+    assert unchanged_task.status == "failed"
+    assert unchanged_task.manual_rerun_attempt_id == 0
+
+
 class _FakeEmailStore:
     """The two email reads the Attempt DTO needs, with real row shapes."""
 
@@ -972,7 +1053,7 @@ def test_failed_attempt_rerun_presentation_uses_structured_historical_refusal(
         db.execute('update reply_attempts set agent_run_id=? where id=?', (run.id, attempt_id))
     before = store.get_agent_run(run.id)
     _, item = build_attempt_detail(store, attempt_id)
-    assert item['actions']['can_rerun'] is True
+    assert item['actions']['can_rerun'] is (not refused)
     assert item['actions']['rerun_url'] == f'/api/console/history/{attempt_id}/rerun'
     expected_label = '重新评估候选' if refused else '重新处理'
     assert item['actions']['rerun_label'] == expected_label
@@ -980,13 +1061,15 @@ def test_failed_attempt_rerun_presentation_uses_structured_historical_refusal(
         '确认重新评估候选？不会重放历史被拒执行。' if refused else '确认重新处理这条 Attempt？'
     )
     if refused:
-        assert '重新评估候选，不重放历史被拒执行' in item['status']['message']
+        assert '此入口不能重放历史候选' in item['status']['message']
+        assert item['actions']['rerun_block_reason'] == item['status']['message']
     else:
         assert item['status']['message'] == '这次处理没有完成，可重新处理当前事项。'
     status, html = render_attempt_detail(store, attempt_id)
     assert status == 200
-    assert f'>{expected_label}</button>' in html
-    assert ('重新评估候选，不重放历史被拒执行' in html) is refused
+    assert (f'>{expected_label}</button>' in html) is (not refused)
+    assert ('此入口不能重放历史候选' in html) is refused
+    assert ('历史候选不可重放' in html) is refused
     assert store.get_agent_run(run.id) == before
     assert store.get_reply_task(task.id).status == 'failed'
     with store._connect() as db:

@@ -14,6 +14,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright
 
@@ -123,18 +124,24 @@ def _submit_local_dingtalk_account(page) -> None:
     direct_login.click(timeout=LOCAL_SSO_TIMEOUT_MS)
 
     page.wait_for_timeout(LOCAL_SSO_DIALOG_DELAY_MS)
-    if _is_dingtalk_login_url(getattr(page, "url", "")):
+    corp = page.locator(LOCAL_SSO_CORP_ITEM).filter(
+        has_text=LOCAL_SSO_CORP_NAME
+    ).first
+    # The organization chooser shares the login URL but needs no native prompt.
+    if _is_dingtalk_login_url(getattr(page, "url", "")) and not corp.is_visible():
         _confirm_local_dingtalk_login()
 
     try:
-        corp = page.locator(LOCAL_SSO_CORP_ITEM).filter(
-            has_text=LOCAL_SSO_CORP_NAME
-        ).first
         corp.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
         corp.click(timeout=LOCAL_SSO_TIMEOUT_MS)
     except Exception:
         # A single-organization account navigates directly to Dingteam.
-        pass
+        redirected = urlsplit(getattr(page, "url", ""))
+        entry = urlsplit(browser.ENTRY_URL)
+        if (redirected.scheme, redirected.netloc, redirected.path) != (
+            entry.scheme, entry.netloc, entry.path
+        ):
+            raise
 
 
 def _attempt_local_dingtalk_sso(page) -> bool:
@@ -218,9 +225,7 @@ def _capture_stable_headless_headers() -> dict[str, str]:
                 def on_request(request):
                     if "/data/okr/" not in request.url or captured:
                         return
-                    for key, value in request.headers.items():
-                        if key.lower() in browser.AUTH_HEADER_KEYS:
-                            captured[browser._canonical(key)] = value
+                    browser._capture_candidate_headers(captured, request.headers)
 
                 context.on("request", on_request)
                 page = context.new_page()

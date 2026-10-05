@@ -7,9 +7,18 @@
 
 ## 运行角色
 
+微信 Reader Skill 的 `status`、`read-recent` 和 `produce-once` 都必须显式接收调用方提供的
+绝对服务数据库路径，并原样传给受控 IPC CLI。缺少 `--db` 时在启动 IPC 前拒绝执行，
+不能从工作树的 `data/` 推断生产账号就绪状态。该路径修正不改变 Sender、目标选择、
+外部回检、发送授权或历史投递状态。
+
 运行时发送工具拒绝 `provider_risk_rejected` 时，服务保留该错误代码并停止自动重试，
 不将其降级为通用可重试失败或改成 `needs_human`。恢复必须先取得知情授权或形成实质更安全的
 候选，再按原业务身份经过正式审核、外部回检及投递流程；不得换工具绕过拒绝。
+历史 Attempt 的“重新处理”入口也会识别 AgentRun 中的 `code` 或 `source_code` 拒绝，
+页面不提供原候选重放，直接 POST 返回冲突且不入队。详情明确说明限制；普通技术性失败仍保留
+原来的重试入口。新的实质不同候选或有明确范围的授权必须作为新的正式处理提交，不能复用这条
+历史按钮代替。
 
 失败 Reply task 的 Attention 保留当前执行代最新 run 的原始诊断：优先 `source_code`，
 否则 `code`，并展示来源及「Agent 说明」`reported_summary`。因此已保存的
@@ -469,7 +478,7 @@ candidate_executions 保存租约，candidate_action_attempts 在 provider 调�
 
 历史 code 或 source_code 为 provider_risk_rejected 的同一业务对象不能通过换工具、渠道或执行代自动重放。保留拒绝来源和原始历史记录。native 引用回复仍使用原目标消息和准备正文的正向回读；空的有限消息列表不证明未发送。
 
-风险拒绝记录的重新处理入口只作候选重新评估，不表示允许重放历史被拒执行。Attempt API 的 `rerun_label` / `rerun_confirmation` 与 React、原生 HTML 按钮说明来自同一业务对象的结构化历史 `code` / `source_code`，跨执行代保留；只认确切 `provider_risk_rejected`，不匹配正文、嵌套文字或其他对象。普通失败保留“重新处理”措辞；手动重新评估入口、排队规则及 System 的既有历史拒绝限制均不改变。
+当前 Attempt 的结构化运行结果 `code` 或 `source_code` 为 `provider_risk_rejected` 时，历史“重新处理”入口不可用，直接提交该入口也返回冲突且不入队；API、React 和原生 HTML 优先展示该原因。确需新的候选或执行范围时，应通过明确的本次任务和完整候选提交处理，不能用旧入口重放历史候选。对于后端允许重新处理的其他失败，`rerun_label` / `rerun_confirmation` 仍由同一业务对象的结构化历史提供；跨执行代的历史拒绝可使措辞显示“重新评估候选”，普通技术失败保留“重新处理”。只认确切的顶层结构化错误，不匹配正文、嵌套文字或其他对象；System 的既有历史拒绝限制和原始记录继续保留。
 
 Codex 角色使用原生 code_mode_only，并保留无文件/网络/模块导入接口的 V8 host，供具名 MCP 操作调用与计算；排除内建 functions namespace，同时关闭 shell、browser、image generation、委派、自动 Skill 安装和记忆写入。命令与补丁工具因此不暴露在角色 direct/nested 目录中，任务绑定读取和 Consumer 文档工具仍保留；这不是注销原生 registry 的 ApplyPatch handler。实际读取回执和目录检查验证角色接口范围，固定无工具合成业务对比只验证判断和契约，不证明生产工具可用或已发生业务效果。
 
@@ -896,6 +905,10 @@ Attempt 重扫全部微信投递历史。结构哨兵要求该索引存在，初
 退订页返回的固定外部拒绝类别即使附带 `;operation=...` 阶段信息，也保留失败历史、
 归为外部依赖故障而不计入待工程修复的 Attention；浏览器/会话自身错误仍计入 Attention。
 ## Chrome 登录态副本（系统服务）
+
+OKR 服务包装器与共享来源复用同一有效请求头收集器：首次请求头缺少令牌或令牌已过期时继续等待后续有效请求，不能用第一条不完整请求锁定整个刷新轮次。只有满足有效期与提前刷新窗口的令牌才进入缓存，实际 API 读取前仍校验有效期；不输出令牌或认证头。
+
+OKR 本机 SSO 在点击当前账号后先检查指定组织是否已可见；组织选择页仍使用 `login.dingtalk.com`，不能仅凭该域名就认定需要原生确认弹窗。指定组织已可见时直接选择原组织；尚未可见才进入既有原生叮当 OKR 确认路径。组织选择失败时，只有 URL 的协议、域名和路径与配置的 OKR 入口一致，才允许单组织流程省略选择；空白页、其他域名或同域其他页面不能被记为已跳转成功。此区分不改变账号、组织、权限或无头实时来源要求。
 
 需要登录的无头浏览器任务（退订链接、听记权限申请、Dingteam OKR）不各自重新登录：服务每天 `06:00`（`Asia/Shanghai`）运行“同步 Chrome 登录态”（`sync-chrome-cookies`，定时任务，`chrome-cookie-copy-daily-v1`），用 SQLite 备份接口把 `~/Library/Application Support/Google/Chrome/Default/Cookies` 复制到服务数据库旁的 `chrome-cookies/Default/Cookies`，再按明文 `host_key` 删掉 `CEO_CHROME_COOKIE_DENY_DOMAINS`（逗号分隔的域名，含子域名）里的银行、券商和支付类域名，其余全部保留供各任务复用；这份名单为空时命令拒绝执行。整个过程不解密任何 cookie，也不碰钥匙串。
 

@@ -48,6 +48,7 @@ const detail = {
   calendar: { event_id: "", response_status: "", result: {} },
   actions: {
     can_rerun: false,
+    rerun_block_reason: "",
     can_recall: false,
     can_submit_feedback: true,
     rerun_url: "/api/console/history/8448/rerun",
@@ -851,7 +852,7 @@ describe("AttemptDetailPage", () => {
     vi.restoreAllMocks();
   });
 
-  it("uses the reviewed-candidate rerun wording without changing the rerun command", async () => {
+  it("uses server-owned reevaluation wording only when the backend permits rerun", async () => {
     const user = userEvent.setup();
     vi.spyOn(window, "confirm").mockReturnValue(true);
     getAttemptDetail.mockResolvedValueOnce({
@@ -879,6 +880,35 @@ describe("AttemptDetailPage", () => {
     expect(window.confirm).toHaveBeenCalledWith("确认重新评估候选？不会重放历史被拒执行。");
     expect(command).toHaveBeenCalledWith("/api/console/history/8448/rerun");
     vi.restoreAllMocks();
+  });
+
+  it("does not offer rerun for an explicit runtime risk refusal", async () => {
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        status: {
+          ...detail.status,
+          raw: "failed",
+          message: "运行时已拒绝当前动作，历史候选不能直接重放。",
+        },
+        failure_reason: "需要提交实质不同的方案或明确授权。",
+        actions: {
+          ...detail.actions,
+          can_rerun: false,
+          rerun_block_reason: "运行时已拒绝当前动作，历史候选不能直接重放。",
+          terminal: false,
+          action_label: "需要处理",
+        },
+      },
+      meta: { snapshot_at: "2026-08-29T10:01:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Attempt #8448" })).toBeInTheDocument();
+    expect(
+      await within(screen.getByTestId("attempt-conversation-actions")).findByRole("status"),
+    ).toHaveTextContent(/历史候选不能直接重放/);
+    expect(screen.queryByRole("button", { name: "重新处理" })).not.toBeInTheDocument();
   });
 
   it("refreshes the Attempt after submitting a custom human decision", async () => {
