@@ -73,6 +73,13 @@ Skill rule: even when the responsibility names a distinct deliverable area,
 that rule is committed.
 Artifact: `/private/tmp/project-centered-v4-final-af893c10`.
 
+The Peer case was isolated and replayed once on `3e17adc2`: it passed with one
+source-origin candidate for Li Si's explicit payment-schedule action, Wang Wu's
+separate business-reconciliation responsibility stored only in ProjectContext,
+one active Attention card with exactly the relevant payment Task, and no second
+Task. This is targeted evidence; the full fixed 19-case replay at the revised
+candidate is still required.
+
 ### Focused v4 native follow-up (2026-10-05)
 
 The six-case native subset at candidate `ee02df12` completed **3/6** cases:
