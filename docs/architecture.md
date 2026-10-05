@@ -770,6 +770,9 @@ context=null 只补 Project↔Signal 关系；明确提供空分工快照才清�
 当前 Project 读取最新 context revision，不双存可失配的 current JSON；相同结构快照不追加版本。
 Agent 得到新事实时仍须返回完整的当前 ProjectContext 快照，带回先前有效职责、事实和出处；
 不能因本轮只讨论一项新风险，就把未变化资料从快照中丢掉。
+仅描述“某人负责某业务领域”的职责陈述只进入 ProjectContext，不单独生成 Task/candidate；
+Task 需要来源明确的、可独立完成的交付物或行动，或由已证实重大风险引出的独立建议下一步。
+总体负责人归属冲突时 overall_owner 留空，竞争主张与未确认移交记为有出处的事实，不能把候选总负责人改写成不同职责；独立负责人的真实交付职责仍保留。
 
 `business_source_documents` 保存不可变原文，Signal 通过真实 source_document_id 外键引用。
 只有来源类型/ref/时间、会话、作者 ID/姓名/类型和正文八项完全相同才共享正文；Signal ID、

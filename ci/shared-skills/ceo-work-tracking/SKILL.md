@@ -43,6 +43,15 @@ to make business judgments.
 4. `ProjectContext` has goal, scope, one `overall_owner` with the responsible
    result, other `responsibilities`, and source-backed facts. Unknown overall
    owner is null (待明确), not a concatenation of people or several overall owners.
+   A bare responsibility clause (a person being responsible for a business area)
+   is ProjectContext only, not a source Task or candidate. Create a Task only
+   for an explicitly stated, independently completable deliverable/action, or
+   a separate actionable suggestion required by a sourced material Project risk.
+   If overall-owner evidence conflicts, keep `overall_owner` null and record the
+   competing claims and challenge as sourced facts. Do not reclassify competing
+   overall-owner candidates as responsibilities; that list contains only
+   independently evidenced, distinct work duties. Preserve unchanged separate
+   deliverable owners and their citations.
    Each person has a distinct responsibility and original evidence. Keep unchanged
    roles' and facts' historical references when updating a snapshot. Whenever new
    facts or roles are learned, read the saved context and return the complete current

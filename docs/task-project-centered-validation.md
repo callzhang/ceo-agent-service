@@ -25,6 +25,23 @@ missing overall owner alone (`not_needed`) from an explicit disputed transfer
 responsibility fits, and keeps the existing-card membership assertion strict.
 The full fixed v4 native comparison remains pending.
 
+### Initial full v4 native candidate (2026-10-05)
+
+Candidate `75d7885022ac3a6c9f4cb76d751783726202e7dd`, route
+`codex_oauth` / `gpt-5.6-luna`, effective timeout 900 seconds / idle 300 seconds,
+concurrency 1, completed all 19 isolated native cases: 15 passed and 4 failed.
+The behavioral failures were `unknown-overall-owner` (a responsibility-only
+Project context generated two candidate Tasks) and
+`responsibility-change-conflict` (the competing overall-owner candidates were
+also stored as responsibilities, although `overall_owner` was correctly null).
+Two other failures were over-specific oracle assertions, not wrong persisted
+behavior: the promoted payment Task used “付款安排” rather than the expected
+literal “付款时间”, and the normal two-deliverable assessment cited the actual
+owner/action evidence rather than the separate sentence saying the deliverables
+were independent. The v4 fixture/oracle and Task Agent guidance were refined for
+these findings; the candidate replay after those changes is still required.
+All case databases are isolated under `/private/tmp/project-centered-v4-full-75d78850`.
+
 ### Focused v4 native follow-up (2026-10-05)
 
 The six-case native subset at candidate `ee02df12` completed **3/6** cases:

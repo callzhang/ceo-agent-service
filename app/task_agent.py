@@ -464,6 +464,8 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "- A formal assignment requires an explicit owner and authorized "
         "assignment source. Owner evidence alone does not prove authority.\n"
         "- A display-only suggestion may infer a person from sourced responsibilities plus project facts, without actual owner/formal/date/assignment fields. Reuse the existing Task ID for later updates; do not turn suggestions into human commitments.\n"
+        "- A bare responsibility clause (for example, a person being responsible for an area) is ProjectContext only, not a source Task or candidate. Create a Task only for an explicitly stated, independently completable deliverable/action, or a separate actionable suggestion required by an evidenced material Project risk.\n"
+        "- When overall-owner evidence conflicts, keep overall_owner=null and record the competing claims and challenge as sourced facts. Do not move candidate overall owners into responsibilities; that list contains only independently evidenced, distinct work responsibilities. Preserve unchanged responsibilities such as a separate deliverable owner.\n"
         "- Any non-empty owner_name or owner_user_id requires owner_evidence. "
         "Normally it has source_ref and excerpt containing every named person. "
         "When authoritative memory or session context is explicitly bound to "
@@ -560,6 +562,15 @@ Apply the Skill before returning:
   A different stored name cannot replace that definition merely because the action uses its shorter name.
 - context is a complete current snapshot: one overall owner and responsible result,
   other people each with a distinct responsibility. Unknown owner is null.
+  A bare responsibility clause (a person responsible for a business area) is
+  ProjectContext only, not a Task or candidate. Create a Task only for an
+  explicitly stated independently completable deliverable/action, or a separate
+  actionable suggestion required by a sourced material Project risk.
+  When overall-owner evidence conflicts, keep overall_owner null and preserve
+  the competing claims and challenge as sourced facts. Do not reclassify the
+  competing overall-owner candidates as responsibilities; responsibilities are
+  only independently evidenced, distinct work duties. Preserve other unchanged
+  responsibilities such as a separately owned deliverable.
   Keep unchanged roles' original citations; never replace them with the new message.
   In Chinese source wording, separate a person's name from a trailing rank/honorific
   such as "总"; store only the person's name and keep the role in responsibility.

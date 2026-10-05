@@ -457,6 +457,8 @@ def test_independent_project_prompt_and_skill_have_one_current_contract():
     assert "meeting action item is an actual assignment only when" in prompt
     assert "assignment_authorized=true" in prompt
     assert "A Project role or responsibility is not itself a Task" in prompt
+    assert "A bare responsibility clause (" in prompt
+    assert "Do not reclassify the competing overall-owner candidates as responsibilities" in prompt
     assert "Missing ownership alone is not a material risk" in prompt
     assert "trailing rank/honorific" in prompt
     assert "task_ids must be copied only from that card's actual stored member IDs" in prompt
@@ -1911,6 +1913,8 @@ def test_task_agent_source_authority_and_independent_project_output(
     assert "project_link_proposal" not in text
     assert "related_task_ids" not in text
     assert "Chats/emails" in text
+    assert "A bare responsibility clause" in text
+    assert "only independently evidenced, distinct work" in text
     assert (
         "one overall owner" in text
         if surface == "prompt"

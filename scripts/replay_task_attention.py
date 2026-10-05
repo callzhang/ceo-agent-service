@@ -307,12 +307,22 @@ def read_project_centered_expectations(store, before, expected):
     for wanted in expected.get("task_expectations", []):
         def matches(task: dict[str, object]) -> bool:
             suggestion = json.loads(task["suggestion_json"])
+            title_contains = wanted.get("title_contains", "")
+            title_contains_any = wanted.get("title_contains_any", [])
+            if "title_contains" in wanted:
+                title_matches = title_contains in task["title"]
+            elif "title_contains_any" in wanted:
+                title_matches = bool(title_contains_any) and any(
+                    phrase in task["title"] for phrase in title_contains_any
+                )
+            else:
+                title_matches = True
             fields = (
                 "origin", "stage", "owner_name", "commitment_status", "status",
             )
             return (
                 all(task[field] == wanted[field] for field in fields if field in wanted)
-                and wanted.get("title_contains", "") in task["title"]
+                and title_matches
                 and ("project_title" not in wanted
                      or wanted["project_title"] in links.get(int(task["id"]), set()))
                 and ("suggested_owner_name" not in wanted

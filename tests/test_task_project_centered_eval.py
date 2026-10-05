@@ -172,6 +172,23 @@ def test_oracle_accepts_correct_persisted_result(seeded_domain):
     assert evaluate_persisted_case(store, EXPECTED, before=domain_snapshot(store)) == ()
 
 
+def test_task_title_oracle_accepts_reviewed_synonym_alternatives(seeded_domain):
+    store, task_id = seeded_domain()
+    with store._connect() as db:
+        db.execute(
+            "update business_tasks set title=? where id=?",
+            ("确认甲客户一期交付付款安排及现金影响", task_id),
+        )
+    before = domain_snapshot(store)
+    expected = json.loads(json.dumps(EXPECTED, ensure_ascii=False))
+    expected["task_expectations"][0].pop("title_contains")
+    expected["task_expectations"][0]["title_contains_any"] = ["付款时间", "付款安排"]
+
+    failures = evaluate_persisted_case(store, expected, before=before)
+
+    assert "task_expectation_mismatch" not in failures
+
+
 def test_oracle_rejects_two_official_projects_with_same_title(seeded_domain):
     store, _ = seeded_domain()
     with store._connect() as db:
