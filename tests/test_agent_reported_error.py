@@ -1,6 +1,10 @@
 import pytest
 
-from app.agent_reported_error import AGENT_REPORTED_FAILURE, agent_error_payload
+from app.agent_reported_error import (
+    AGENT_REPORTED_FAILURE,
+    agent_error_payload,
+    is_provider_risk_rejection,
+)
 
 
 def test_a_known_code_gets_the_service_policy_whatever_the_turn_said():
@@ -83,3 +87,28 @@ def test_a_runtime_risk_rejection_never_enters_automatic_retry():
     assert payload["retryable"] is False
     assert payload["authorization_required"] is False
     assert payload["source_code"] == "PROVIDER_RISK_REJECTED"
+
+
+@pytest.mark.parametrize(
+    "error_json",
+    [
+        '{"code":"provider_risk_rejected"}',
+        '{"code":"agent_reported_failure","source_code":"provider_risk_rejected"}',
+        '{"code":"agent_reported_failure","source_code":"PROVIDER_RISK_REJECTED"}',
+    ],
+)
+def test_provider_risk_rejection_is_recognized_in_stored_agent_errors(error_json):
+    assert is_provider_risk_rejection(error_json)
+
+
+@pytest.mark.parametrize(
+    "error_json",
+    [
+        "",
+        "not json",
+        '{"code":"agent_reported_failure","source_code":"provider_read_failed"}',
+        '{"code":"codex_provider_overloaded"}',
+    ],
+)
+def test_other_or_malformed_agent_errors_are_not_provider_risk_rejections(error_json):
+    assert not is_provider_risk_rejection(error_json)

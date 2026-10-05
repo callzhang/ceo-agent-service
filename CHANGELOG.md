@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-05: A runtime `provider_risk_rejected` refusal can no longer be
+  replayed from a failed Attempt's manual rerun button or POST endpoint. The
+  detail page explains that the original candidate is blocked; normal failed
+  attempts keep their existing rerun behavior.
+
 - 2026-10-04: An absent organization chooser is accepted only after redirecting
   to the configured OKR application's origin and path, not any non-login URL.
   Regression coverage includes blank and unrelated pages, real JWT parsing and
