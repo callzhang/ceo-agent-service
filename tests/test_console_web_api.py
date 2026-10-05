@@ -1255,7 +1255,7 @@ def test_console_status_accepts_human_decision_evidence(monkeypatch, tmp_path: P
         audit_web_module,
         "_human_decision_attention_rows",
         lambda _store: [{
-            "category": "Rule decision",
+            "category": "本次事项选择",
             "id": "42",
             "status": "needs_human",
             "context": "Approval",

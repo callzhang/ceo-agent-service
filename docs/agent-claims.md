@@ -31,6 +31,7 @@ reverts committed work they did not author.
 ## Current claims
 
 
+
 | codex-ceo-feedback-ci-fixture | tests/test_feedback_processing_e2e.py, docs/runtime-mechanism.md (feedback regression fixture note only) | Parent heartbeat owns detached-PR Git fixture isolation; Consumer/Audit owner explicitly handed off the 11 related CI failures. Preserve real local main ancestry validation and do not mutate checkout refs. | 2026-10-04 |
 
 

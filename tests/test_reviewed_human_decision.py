@@ -89,7 +89,11 @@ def test_only_current_approved_option_is_actionable_and_wakes_same_generation(tm
     assert store.reconcile_invalid_needs_human_projections() == 0
     assert store.reconcile_valid_needs_human_projections() == 0
     assert store.get_reply_attempt(attempt_id).send_status == "needs_human"
-    assert [row["id"] for row in _human_decision_attention_rows(store)] == [str(attempt_id)]
+    attention_rows = _human_decision_attention_rows(store)
+    assert [row["id"] for row in attention_rows] == [str(attempt_id)]
+    assert attention_rows[0]["category"] == "本次事项选择"
+    assert attention_rows[0]["root_cause"] == "需要你选择本次事项的处理方案"
+    assert attention_rows[0]["detail"] == "Only Derek can choose this instance's reply"
     report = scan_hourly_quality(store.path)
     assert any(item.source == "reply_attempts" and item.code == "needs_human" for item in report.attention)
     status, _, _ = _submit(store, attempt_id, kind="select", candidate_id=candidate["id"],

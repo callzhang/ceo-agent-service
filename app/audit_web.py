@@ -3701,10 +3701,10 @@ def _human_decision_attention_rows(
             continue
         reason = str(candidate.get("needs_human_reason") or candidate.get("summary") or "")
         decisions.append({
-            "category": "Rule decision", "id": str(row["id"]),
+            "category": "本次事项选择", "id": str(row["id"]),
             "status": "needs_human", "context": str(row["conversation_title"] or ""),
             "summary": reason, "updated_at": str(row["updated_at"] or ""),
-            "error": "", "root_cause": "需要确定处理规则", "detail_label": "判断依据",
+            "error": "", "root_cause": "需要你选择本次事项的处理方案", "detail_label": "判断依据",
             "detail": reason, "detail_url": f"/attempts/{int(row['id'])}",
         })
     return decisions
