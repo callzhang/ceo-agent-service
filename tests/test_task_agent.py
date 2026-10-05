@@ -459,6 +459,8 @@ def test_independent_project_prompt_and_skill_have_one_current_contract():
     assert "Missing ownership alone is not a material risk" in prompt
     assert "trailing rank/honorific" in prompt
     assert "task_ids must be copied only from that card's actual stored member IDs" in prompt
+    assert "directly supports this specific Project assessment" in prompt
+    assert "completed or unrelated Project Tasks are not members" in prompt
     assert "explicit unresolved dispute over who" in prompt
     assert "Missing overall ownership without a stated impact or dispute" in prompt
 
@@ -2145,7 +2147,7 @@ def test_fresh_task_agent_loads_current_project_contract_from_selected_skill_roo
     skill = fresh_agent["WORK_TRACKING_SKILL_PATH"].read_text()
     prompt = fresh_agent["build_task_agent_prompt"](_work_item(), "无候选项目")
     assert skill in prompt
-    assert "version: 4" in prompt
+    assert "version: 5" in prompt
     assert "project_decisions" in prompt
     assert "Project can have zero Tasks" in prompt
     assert "project_proposal" not in prompt
@@ -2178,7 +2180,7 @@ def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill(
     assert "# Old Work Tracking Snapshot" not in prompt
     assert "Return update_project with todo_changes." not in prompt
     assert '"scheduled_task_run_id": 11' in prompt
-    assert "version: 4" in prompt
+    assert "version: 5" in prompt
     assert "native CLI manages compaction" in prompt
     assert (
         "current independent Project/Task/assessment envelope controls output" in prompt

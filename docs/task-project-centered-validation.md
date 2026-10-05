@@ -25,6 +25,25 @@ missing overall owner alone (`not_needed`) from an explicit disputed transfer
 responsibility fits, and keeps the existing-card membership assertion strict.
 The full fixed v4 native comparison remains pending.
 
+### Focused v4 native follow-up (2026-10-05)
+
+The six-case native subset at candidate `ee02df12` completed **3/6** cases:
+unknown overall owner, explicit responsibility-transfer conflict, and promotion
+of the same suggested Task ID passed. The same-reference version and peer-member
+cases failed before semantic comparison: both normal and result-correction
+attempts recorded `runtime_result_validation_failed` / “No TaskAgentDecision
+JSON found”; their stored result envelopes are empty. They are native runtime
+result failures, not semantic passes. The completed-Task case ran successfully
+but exposed both an oracle omission and an over-broad membership: actual state
+contained the formal completed deliverable and the payment-risk suggestion
+(two Tasks), while the Attention card also contained both. The corrected oracle
+expects both Tasks but only the payment-risk member, and the Task Agent prompt
+and shared Skill now explicitly exclude completed or unrelated Project Tasks
+from an assessment's supporting members. Focused prompt/evaluator tests passed
+(244 tests), Ruff and `git diff --check` passed. These changes still require a
+fresh native replay; the prior artifact is immutable and remains evidence of the
+earlier attempt.
+
 The immutable W39 source copy was read-only backed up to
 `/private/tmp/project-centered-w39-final-20261005.sqlite3` and opened using the
 current Store code. All 403 Signal bodies and identity fields matched the source

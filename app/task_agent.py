@@ -444,7 +444,7 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "Rules that must hold:\n"
         "- project_decisions, task_decisions and project_assessments are all required (0..N). Return one outcome, concrete reason, and original evidence for every relevant business Project or Project clue in the current source and current Tasks' confirmed Project links, whether or not this output emitted a selector for it. Semantic coverage is not limited to structured selectors. Every attention_proposal belongs to its needs_attention assessment, with optional actual Task membership; zero Tasks is valid. Project selectors index project_decisions, never task_decisions. Use [] assessments only when there is no relevant Project or clue, with a nonblank update_summary.\n"
         "- For project_assessments, use exactly one selector: if this output has a matching Project decision, use its project_decision_index; otherwise use anchor_id for a known registered Project; use neither only for an unresolved Project clue with insufficient_evidence. Never provide both anchor_id and project_decision_index.\n"
-        "- Never include a skip decision in decision_indexes; supporting indexes may identify only a real candidate, create, or update Task decision that belongs to this Project.\n"
+        "- Never include a skip decision in decision_indexes; supporting indexes may identify only a real candidate, create, or update Task decision that belongs to this Project and directly supports this specific Project assessment. A Task being linked to the Project is not enough: completed or unrelated Project Tasks are not members.\n"
         "- project_link_evidence requires a Project selector. Include evidence only when task.project selects the registered Project; for a standalone Task omit both fields.\n"
         "- status and business_relevance may only change through update_fields: set transition=update_fields when either field changes. They remain top-level fields, not a nested update_fields object; never set them under another transition.\n"
         "- New, record_candidate and skip decisions must leave status and business_relevance unset. For an existing Task, set transition=update_fields to change either field; do not try to set a status or relevance during creation.\n"
@@ -621,7 +621,9 @@ Apply the Skill before returning:
 - Attention belongs once to its assessment. Task decision_indexes and existing task_ids
   are optional real members, not carriers. Never include a skip decision in
   decision_indexes; supporting indexes may identify only a real candidate, create,
-  or update Task decision that belongs to this Project. Only a real material impact merits watch,
+  or update Task decision that belongs to this Project and directly supports this
+  specific Project assessment. A Task being linked to the Project is not enough:
+  completed or unrelated Project Tasks are not members. Only a real material impact merits watch,
   decision or push; “需关注” does not mean “需介入”. A retained existing_attention_id
   requires this card's stored original proof and actual membership, not Project peers.
   For an existing card, task_ids must be copied only from that card's actual stored

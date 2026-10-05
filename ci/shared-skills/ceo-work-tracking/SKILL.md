@@ -3,7 +3,7 @@ name: ceo-work-tracking
 description: Use when source context concerns business Projects, their facts, responsibilities or material risks, actual Tasks, display-only next-action suggestions, ownership, commitment, typed dates or completion. Aggregate original sources into real Project context, preserve standalone Tasks and return structured local decisions; external operations belong to their service workflows.
 metadata:
   managed_by: ceo-agent-service
-  version: 4
+  version: 5
 ---
 
 # CEO Work Tracking
@@ -161,7 +161,9 @@ Assess bounded retrieved context, not the whole company or all history.
 A real Project can need Attention with zero Tasks. Put `attention_proposal` once
 in its assessment, never copy it onto Task decisions. Optional decision_indexes
 index Task decisions; task_ids name real existing confirmed members, not guessed
-IDs or all Project peers. Keep current_state as Project-level risk facts, not per-Task action summaries, why_attention as
+IDs or all Project peers. A Task being linked to this Project is not enough:
+include it only when it directly supports this specific Project assessment;
+completed or unrelated Project Tasks are not members. Keep current_state as Project-level risk facts, not per-Task action summaries, why_attention as
 inference and ceo_action as the relevant action or observation. For watch it may
 say 当前无需你处理 and name what outcome to watch. 需关注 does not imply 需介入.
 
