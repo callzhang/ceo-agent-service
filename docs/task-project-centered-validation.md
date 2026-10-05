@@ -44,6 +44,17 @@ from an assessment's supporting members. Focused prompt/evaluator tests passed
 fresh native replay; the prior artifact is immutable and remains evidence of the
 earlier attempt.
 
+A fresh peer-member replay at `15e2699c` completed after the runtime's normal
+schema-correction attempt. It saved one payment follow-up suggestion with Li
+Si as suggested owner, retained Wang Wu's distinct business-reconciliation
+responsibility in ProjectContext, and the Attention card had exactly the one
+payment-risk member. The prior fixture had required a second Task for that
+independent responsibility; this contradicted the confirmed Project-first rule
+and the instruction not to enumerate every small work item. The revised oracle
+checks both distinct Project responsibilities and expects the single relevant
+Task. The same-reference case still fails native result validation. These
+targeted cases do not replace the complete 19-case fixed comparison.
+
 The immutable W39 source copy was read-only backed up to
 `/private/tmp/project-centered-w39-final-20261005.sqlite3` and opened using the
 current Store code. All 403 Signal bodies and identity fields matched the source
