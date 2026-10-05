@@ -179,6 +179,7 @@ class AuditAgentRunner:
                     args=(
                         "-m", "app.agent_cli", "--role", "audit",
                         "--task-id", str(task.id), "--db", str(self.store.path),
+                        "--execution-generation", task.execution_generation,
                     ),
                     cwd=str(SERVICE_ROOT),
                 ),

@@ -1131,6 +1131,7 @@ def _write_bound_report_document(
 
 def build_role_server(
     role: str, *, task_id: int | None = None, db_path: Path | None = None,
+    execution_generation: str | None = None,
 ) -> FastMCP:
     """Expose only the operations owned by one Agent role."""
     if role not in {"consumer", "audit"}:
@@ -1139,6 +1140,8 @@ def build_role_server(
         _current_task_generation(db_path, task_id)
         if task_id is not None and db_path is not None else None
     )
+    if execution_generation is not None and artifact_generation != execution_generation:
+        raise ValueError("task file generation changed")
     bound = FastMCP("agent_cli", instructions="Task-bound Agent reads and Consumer report documents")
     read = ToolAnnotations(readOnlyHint=True, destructiveHint=False,
                            idempotentHint=True, openWorldHint=True)
@@ -1572,5 +1575,7 @@ if __name__ == "__main__":
     parser.add_argument("--role", choices=("consumer", "audit"), required=True)
     parser.add_argument("--task-id", type=int, required=True)
     parser.add_argument("--db", type=Path, required=True)
+    parser.add_argument("--execution-generation", required=True)
     args = parser.parse_args()
-    build_role_server(args.role, task_id=args.task_id, db_path=args.db).run(transport="stdio")
+    build_role_server(args.role, task_id=args.task_id, db_path=args.db,
+                      execution_generation=args.execution_generation).run(transport="stdio")

@@ -90,9 +90,9 @@ ROLE_MCP_READ_TOOLS = {
     ),
 }
 
-# These native surfaces can bypass the task-bound MCP catalog. Consumer uses
-# the named ordinary artifact and report-document tools in that catalog;
-# registered reviewed system operations remain owned by SystemExecutor.
+# Native surfaces unavailable to Audit. Consumer additionally uses native
+# command execution in its task workspace, while registered reviewed system
+# operations remain owned by SystemExecutor.
 ROLE_DISABLED_NATIVE_FEATURES = (
     "shell_tool", "unified_exec", "unified_exec_tty", "shell_snapshot",
     "apps", "plugins", "remote_plugin", "hooks", "computer_use",
@@ -202,18 +202,21 @@ def make_role_agent_command(
     command: list[str],
     *,
     role: str,
+    task_workspace: str | None = None,
     controlled_cli: ControlledCliConfig | None = None,
 ) -> None:
     """Use native tool selection for a role-bound service turn."""
     if role not in {"consumer", "audit"}:
         raise ValueError("unsupported agent role")
+    if role == "consumer" and not task_workspace:
+        raise ValueError("Consumer task workspace is required")
     while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
         command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
     _remove_config_options(
         command,
         prefixes=(
             "approval_policy=", "approvals_reviewer=", "tools.enabled_tools=",
-            "sandbox_mode=",
+            "sandbox_mode=", "sandbox_workspace_write.", "default_permissions=",
             *(f"features.{feature}=" for feature in ROLE_DISABLED_NATIVE_FEATURES),
             "features.code_mode=", "features.code_mode_only=",
             "features.code_mode.excluded_tool_namespaces=",
@@ -222,17 +225,20 @@ def make_role_agent_command(
     )
     options = [
         *(option for feature in ROLE_DISABLED_NATIVE_FEATURES
-          if feature != "code_mode_host"
+          if feature != "code_mode_host" and not (
+              role == "consumer" and feature in {"shell_tool", "unified_exec"}
+          )
           for option in ("-c", f"features.{feature}=false")),
         # CodeModeOnly models need the native V8 host to call task-bound MCP
-        # tools. Excluding the built-in functions namespace removes shell and
-        # patch callbacks without removing those named MCP operations.
+        # tools. Audit excludes built-in execution callbacks; Consumer runs them
+        # in the native task workspace sandbox.
         "-c", "features.code_mode_host=true",
         "-c", "features.code_mode_only=true",
-        "-c", 'features.code_mode.excluded_tool_namespaces=["functions"]',
+        "-c", "features.code_mode.excluded_tool_namespaces="
+        + json.dumps([] if role == "consumer" else ["functions"]),
         "-c", 'features.code_mode.direct_only_tool_namespaces=[]',
         "-c",
-        'sandbox_mode="read-only"',
+        'sandbox_mode="workspace-write"' if role == "consumer" else 'sandbox_mode="read-only"',
         "-c",
         "mcp_servers.agent_cli.enabled_tools="
         + json.dumps(
@@ -243,6 +249,18 @@ def make_role_agent_command(
         "-c",
         'approval_policy="never"',
     ]
+    if role == "consumer":
+        options.extend([
+            "--skip-git-repo-check",
+            "-c", "features.shell_tool=true",
+            "-c", "features.unified_exec=true",
+            "-c", "sandbox_workspace_write.network_access=false",
+            "-c", "sandbox_workspace_write.writable_roots=[]",
+        ])
+        for flag in ("--cd", "-C"):
+            while flag in command:
+                index = command.index(flag)
+                del command[index:index + 2]
     configured_names = set(configured_transport_server_names(command))
     for name in sorted(configured_names):
         if name != "agent_cli":
@@ -279,14 +297,18 @@ def make_role_agent_command(
         command,
         options,
     )
+    if role == "consumer":
+        command[1:1] = ["--cd", task_workspace]
 
 
 def make_consumer_agent_command(
     command: list[str],
     *,
+    task_workspace: str,
     controlled_cli: ControlledCliConfig | None = None,
 ) -> None:
-    make_role_agent_command(command, role="consumer", controlled_cli=controlled_cli)
+    make_role_agent_command(command, role="consumer", task_workspace=task_workspace,
+                            controlled_cli=controlled_cli)
 
 
 def make_audit_agent_command(
@@ -318,7 +340,8 @@ def disable_automatic_review(command: list[str]) -> None:
 
 def _insert_command_options(command: list[str], options: list[str]) -> None:
     prompt_index = len(command) - 1
-    if command[1:3] == ["exec", "resume"]:
+    exec_index = command.index("exec")
+    if command[exec_index + 1:exec_index + 2] == ["resume"]:
         prompt_index -= 1
     command[prompt_index:prompt_index] = options
 

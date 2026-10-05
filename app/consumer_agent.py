@@ -118,18 +118,22 @@ evidence of that work. A summary is not a receipt of a controlled action.
 Use consumer_artifact_write for ordinary local drafts and files, with
 read_task_artifact/list_task_artifacts for this task generation's artifacts.
 consumer_document_write remains the bound scheduled-report document workflow.
-Native code-mode computation is available; general project or shell execution
-is not an available role capability. Do not invent a successful tool result.
+Codex Consumer can run local code using native command and patch tools in its
+current task workspace. The native workspace sandbox keeps writes in that
+workspace and native temporary directories, and disables command network
+access. Claude has declared read and artifact tools only. Use the actual current runtime catalog; do not invent a
+successful execution result.
 Only the registered reviewed system actions in the supplied action contracts
 are dispatched by system code after whole-candidate approval. Do not invoke
 those actions directly or claim them completed without the System receipt.
 Audit has read tools only. Do not try nested CLI inventory, nested Agents,
-shell commands, or a different channel to reach an unavailable operation.
+commands or a different channel to reach an unavailable operation.
 Call direct read MCP tools where available. Use memory_recall for relevant
 stable context; memory never proves current external state or recipient scope.
 Preserve concrete provider error codes and source context when a read fails.
 Technical/provider authentication or schema errors are failed, not fabricated
-business questions. A genuine human-only fact or action needs its exact context
+business questions.
+A genuine human-only fact or action needs its exact context
 and must be formulated by Consumer and reviewed before it is requested.
 A low-consequence operating choice is autonomous when the applicable rules and
 facts support it. Do not ask Derek merely because an equivalent default exists.
@@ -565,6 +569,23 @@ class ConsumerAgentRunner:
             proposal_revision=proposal_revision,
         )
 
+        def configure_consumer_command(command):
+            from app.agent_cli import _task_file_root
+
+            task_workspace = _task_file_root(
+                self.store.path, task.id, task.execution_generation, create=True,
+            )
+            make_consumer_agent_command(
+                command, task_workspace=str(task_workspace),
+                controlled_cli=ControlledCliConfig(
+                    command=sys.executable,
+                    args=("-m", "app.agent_cli", "--role", "consumer", "--task-id",
+                          str(task.id), "--db", str(self.store.path),
+                          "--execution-generation", task.execution_generation),
+                    cwd=str(SERVICE_ROOT),
+                ),
+            )
+
         result = process.execute(
                 run=claim.run,
                 skill_names=context.skill_names,
@@ -595,13 +616,7 @@ class ConsumerAgentRunner:
                         ) if part
                     ),
                 ),
-                configure_command=lambda command: make_consumer_agent_command(
-                    command, controlled_cli=ControlledCliConfig(
-                        command=sys.executable,
-                        args=("-m", "app.agent_cli", "--role", "consumer", "--task-id", str(task.id), "--db", str(self.store.path)),
-                        cwd=str(SERVICE_ROOT),
-                    ),
-                ),
+                configure_command=configure_consumer_command,
                 parse_result=_parse_consumer_result,
                 prepare_result=lambda parsed: _prepare_reviewable_candidate(
                     parsed,

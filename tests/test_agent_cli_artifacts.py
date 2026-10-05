@@ -156,3 +156,12 @@ def test_task_artifact_read_rejects_external_file_whose_escaped_content_exceeds_
     read = _tool("audit", "read_task_artifact", db)
     with pytest.raises(ValueError, match="too large"):
         read("large.md")
+
+
+def test_role_startup_cannot_rebind_an_old_claim_to_new_generation(tmp_path):
+    db = tmp_path / "service.sqlite3"
+    _task_db(db, generation="rotated")
+    with pytest.raises(ValueError, match="generation changed"):
+        build_role_server("consumer", task_id=7, db_path=db, execution_generation="original")
+    with pytest.raises(ValueError, match="generation changed"):
+        build_role_server("audit", task_id=7, db_path=db, execution_generation="original")

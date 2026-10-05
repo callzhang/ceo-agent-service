@@ -196,7 +196,7 @@ def test_review_only_run_preserves_session_and_uses_bound_read_cli(setup):
     args_setting = next(value for value in command if value.startswith("mcp_servers.agent_cli.args="))
     assert json.loads(args_setting.split("=", 1)[1]) == [
         "-m", "app.agent_cli", "--role", "audit", "--task-id", str(task.id),
-        "--db", str(store.path),
+        "--db", str(store.path), "--execution-generation", task.execution_generation,
     ]
     assert "send_approved_dingtalk_message" not in json.dumps(command)
     assert "unsubscribe_email" not in json.dumps(command)

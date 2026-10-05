@@ -879,7 +879,7 @@ Derek 2026-09-24：长期记忆由执行 Agent A 在结果里给出、系统写�
 
 ### Audit Agent B
 
-Audit 使用实际只读工具接口审核候选；既无受控发送、审批能力，也无命令执行工具。Consumer 的允许文档和报告能力由固定任务绑定操作接口提供。Codex 关闭 shell、browser、image generation、委派、自动 Skill 安装和记忆写入等原生入口，使用原生 code_mode_only 与具名 MCP enabled_tools。原生 V8 host 只承载工具调用与计算，不提供文件、网络或模块导入；从它的工具目录排除内建 functions namespace，因此命令和 ApplyPatch 不暴露给角色，而任务绑定 MCP 仍可调用。原生 registry 中 ApplyPatch handler 仍存在，不把目录排除描述为物理注销。Claude 使用受限内建读工具和角色 MCP；没有对应能力的 Friday 不能承担这两个角色。发布验证使用实际具名读取回执及工具目录，不以只读沙箱拒绝写入代替接口范围证明。
+Audit 使用实际只读工具接口审核候选，没有受控发送、审批或命令执行能力。Consumer 保留任务绑定的文档和报告操作；Codex Consumer 使用原生 shell、unified execution、补丁和 V8 host 在当前 task/generation 的 consumer-artifacts 目录执行普通本地代码。原生 workspace-write 沙箱允许任务目录及原生临时目录写入，命令网络关闭；MCP 进程仍从服务源码目录启动，受控发送、OA 等注册操作仍只由 System 执行。Audit 排除内建 functions namespace 并保留 read-only 沙箱。两种角色均不开放 browser、image generation、委派、自动 Skill 安装、记忆写入或未登记 MCP 操作。Claude 仍只有受限内建读取与角色 MCP 工件工具，没有 shell 代码执行；Friday 不能承担这两个角色。原生执行验证必须保留实际命令结果和文件回读，写出代码文件不等于执行代码。
 
 ## 会话与反馈周期
 
@@ -1280,3 +1280,5 @@ Attempt 详情的 system_execution 按 candidate、review、selection 绑定显�
 原生 OA detail 明确 success=false 时，来源读取边界保留 errcode/errorCode 及 errmsg/errorMessage，按提供方错误记录原 server/code/认证属性；不把 native 失败 envelope 当成空表单或通用 Codex 错误。Consumer 失败 run 保留原始脱敏说明，System 执行技术失败保留来源和原码，不派发或制造业务人工问题。
 
 Consumer/Audit stages (2026-10-04): immediate continuation is reserved for work whose inputs are established by the preceding verified action, such as approval followed by applicant notification. Material requests complete their own stage and wait for a later source update; their delivery receipt is not evidence that materials arrived. Audit uses the same complete production review instructions as the frozen model evaluation, and checks actual provider identities and complete effects rather than outcome labels alone.
+
+角色 MCP 启动参数携带原领取 run 的 execution_generation，启动时与当前任务校验；旧回合不能在 generation 更换后绑定到新一代工件，运行中的既有读写仍逐次检查当前 generation。

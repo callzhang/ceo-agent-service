@@ -1070,11 +1070,13 @@ class AgentTurnProcess(Generic[ResultT]):
                             ClaudeCommandPolicy.consumer(
                                 task_id=self.task.id,
                                 db_path=str(self.store.path),
+                                execution_generation=run.execution_generation,
                             )
                             if run.role is AgentRole.CONSUMER
                             else ClaudeCommandPolicy.audit(
                                 task_id=self.task.id,
                                 db_path=str(self.store.path),
+                                execution_generation=run.execution_generation,
                             )
                         ),
                     )
