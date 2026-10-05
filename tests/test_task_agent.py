@@ -2714,7 +2714,8 @@ def test_process_work_item_repairs_owner_citation_before_atomic_apply(
     )
 
     assert len(codex.calls) == 2
-    assert codex.calls[0] == codex.calls[1]
+    assert codex.calls[1]["workload_key"] == codex.calls[0]["workload_key"] + ":decision_repair.1"
+    assert codex.calls[0]["session_scope_id"] == codex.calls[1]["session_scope_id"]
     assert "owner identity" in codex.prompts[1]
     assert len(store.list_business_tasks()) == 1
     assert store.get_work_summary_input(input_id).status.value == "done"

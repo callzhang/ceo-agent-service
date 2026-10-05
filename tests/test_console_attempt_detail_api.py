@@ -11,6 +11,7 @@ from app.store import AgentRole, AutoReplyStore
 from app.web_api.attempts import (
     _consumer_result_payload as build_consumer_result_payload,
     _linked_consumer_run,
+    _runtime_payload,
     build_attempt_detail,
 )
 
@@ -34,6 +35,44 @@ AUDIT_EVENTS = [
         "output": '{"outcome": "skipped_no_reliable_entry"}',
     }
 ]
+
+
+@pytest.mark.parametrize("run_status", ["completed", "failed", "running"])
+def test_runtime_payload_preserves_business_status_separately(
+    tmp_path: Path, run_status: str
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="audit-result-status",
+        owner="audit-status-test",
+    ).run
+    runtime = store.claim_agent_runtime_attempt(
+        run.id, "codex_oauth", "codex_cli", "local_oauth", "test-model"
+    )
+    store.complete_agent_runtime_attempt(runtime.id, "", "", 0, 0)
+    if run_status == "failed":
+        run = store.fail_agent_run(
+            run.id, {"code": "provider_risk_rejected"}, owner="audit-status-test"
+        )
+    elif run_status == "completed":
+        run = store.complete_agent_run(
+            run.id, {"outcome": "returned"}, owner="audit-status-test"
+        )
+    before = store.list_agent_runtime_attempts(run.id)
+
+    payload = _runtime_payload([run], store)
+
+    assert payload[0]["status"] == "completed"
+    assert payload[0]["run_status"] == run_status
+    assert store.get_agent_run(run.id) == run
+    assert store.list_agent_runtime_attempts(run.id) == before
 
 
 def test_linked_consumer_run_falls_back_to_latest_consumer_sibling():
@@ -242,6 +281,87 @@ def _finalize_consumer_result_attempt(store: AutoReplyStore, task, terminal_run)
         send_error="",
         channel="dingtalk",
     )
+
+
+def _failed_provider_risk_attempt(
+    store: AutoReplyStore, *, error: dict[str, object]
+):
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task, owner="risk-guard-consumer")
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="audit-risk-guard",
+        owner="risk-guard-audit",
+    ).run
+    audit = store.fail_agent_run(audit.id, error, owner="risk-guard-audit")
+    attempt_id = store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=audit.id,
+        task_status="failed",
+        task_error="provider_risk_rejected",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="The runtime refused this outbound action.",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="The runtime refused this outbound action.",
+        send_status="failed",
+        send_error="agent_reported_failure",
+        channel="dingtalk",
+    )
+    return task, audit, attempt_id
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        {"code": "provider_risk_rejected"},
+        {"code": "agent_reported_failure", "source_code": "provider_risk_rejected"},
+    ],
+)
+def test_provider_risk_rejection_disables_history_rerun_and_explains_why(
+    tmp_path: Path, error: dict[str, object]
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    _task, _run, attempt_id = _failed_provider_risk_attempt(store, error=error)
+
+    status, item = build_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert item is not None
+    assert item["actions"]["can_rerun"] is False
+    assert "此入口不能重放历史候选" in item["actions"]["rerun_block_reason"]
+    assert "此入口不能重放历史候选" in item["status"]["message"]
+    assert "提交新候选并重新审核" in item["failure_reason"]
+
+
+def test_provider_risk_rejection_is_blocked_at_the_rerun_handler(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task, _run, attempt_id = _failed_provider_risk_attempt(
+        store,
+        error={"code": "agent_reported_failure", "source_code": "provider_risk_rejected"},
+    )
+
+    status, _headers, body = handle_rerun_attempt_post(store, attempt_id)
+
+    unchanged_task = store.get_reply_task(task.id)
+    assert status == 409
+    assert "此入口不能重放历史候选" in body
+    assert unchanged_task is not None
+    assert unchanged_task.status == "failed"
+    assert unchanged_task.manual_rerun_attempt_id == 0
 
 
 class _FakeEmailStore:
@@ -462,7 +582,7 @@ def test_email_attempt_carries_its_message_and_unsubscribe_receipt(tmp_path: Pat
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = _seed_email_attempt(store, with_agent_runs=False)
 
-    _, item = build_attempt_detail(store, attempt_id, email_store=_FakeEmailStore())
+    _, item = build_attempt_detail(store, attempt_id, email_store_factory=_FakeEmailStore)
 
     assert item is not None
     email = item["email"]
@@ -497,10 +617,91 @@ def test_non_email_attempt_has_no_email_context(tmp_path: Path):
         send_status="sent",
     )
 
-    _, item = build_attempt_detail(store, attempt_id, email_store=_FakeEmailStore())
+    _, item = build_attempt_detail(store, attempt_id, email_store_factory=_FakeEmailStore)
 
     assert item is not None
     assert item["email"] is None
+
+
+@pytest.mark.parametrize("channel", ["dingtalk", "wechat", None])
+def test_history_detail_does_not_initialize_unrelated_email_store(
+    tmp_path: Path, monkeypatch, channel
+):
+    from tests.test_console_web_api import _client
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = 999999
+    if channel is not None:
+        attempt_id = store.record_reply_attempt(
+            channel=channel,
+            conversation_id="context-test",
+            conversation_title="Context test",
+            trigger_message_id="message-test",
+            trigger_sender="Sender",
+            trigger_text="Status request",
+            action="send_reply",
+            sensitivity_kind="general",
+            send_status="failed",
+        )
+
+    def unrelated_email_store(_path):
+        raise AssertionError("non-email history must not scan email durable state")
+
+    with _client(tmp_path) as client:
+        monkeypatch.setattr("app.audit_web.EmailStore", unrelated_email_store)
+        response = client.get(f"/api/console/history/{attempt_id}")
+
+    assert response.status_code == (404 if channel is None else 200)
+    if channel is not None:
+        assert response.json()["item"]["email"] is None
+
+
+def test_email_history_detail_reads_fresh_context_on_each_request(
+    tmp_path: Path, monkeypatch
+):
+    from tests.test_console_web_api import _client
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = _seed_email_attempt(store, with_agent_runs=False)
+    reads = []
+
+    class FreshEmailStore(_FakeEmailStore):
+        def get_classification(self, classification_id):
+            result = super().get_classification(classification_id)
+            return {**result, "subject": f"Revision {len(reads)}"}
+
+    def email_store_factory(_path):
+        reads.append(_path)
+        return FreshEmailStore()
+
+    with _client(tmp_path) as client:
+        monkeypatch.setattr("app.audit_web.EmailStore", email_store_factory)
+        first = client.get(f"/api/console/history/{attempt_id}")
+        second = client.get(f"/api/console/history/{attempt_id}")
+
+    assert first.status_code == second.status_code == 200
+    assert len(reads) == 2
+    assert first.json()["item"]["email"]["subject"] == "Revision 1"
+    assert second.json()["item"]["email"]["subject"] == "Revision 2"
+    assert second.json()["item"]["email"]["unsubscribe"]["evidence"] == "page-not-operable"
+
+
+def test_email_history_detail_preserves_store_validation_failure(
+    tmp_path: Path, monkeypatch
+):
+    from app.email_store import EmailPersistenceCorruption
+    from tests.test_console_web_api import _client
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = _seed_email_attempt(store, with_agent_runs=False)
+
+    def invalid_email_store(_path):
+        raise EmailPersistenceCorruption("test-invalid-email-state")
+
+    with _client(tmp_path) as client:
+        monkeypatch.setattr("app.audit_web.EmailStore", invalid_email_store)
+        with pytest.raises(EmailPersistenceCorruption, match="test-invalid-email-state"):
+            client.get(f"/api/console/history/{attempt_id}")
 
 
 def test_codex_session_roles_resolve_both_transcripts_of_one_attempt(tmp_path: Path):

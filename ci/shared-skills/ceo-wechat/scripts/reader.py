@@ -33,10 +33,12 @@ def build_command(arguments: list[str]) -> list[str]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="CEO WeChat Skill reader")
     subcommands = parser.add_subparsers(dest="operation", required=True)
-    subcommands.add_parser("status")
+    status = subcommands.add_parser("status")
+    status.add_argument("--db", required=True)
     produce_once = subcommands.add_parser("produce-once")
     produce_once.add_argument("--db", required=True)
     read_recent = subcommands.add_parser("read-recent")
+    read_recent.add_argument("--db", required=True)
     read_recent.add_argument("--target-id", required=True)
     read_recent.add_argument("--type", choices=["direct", "group"], default="direct")
     read_recent.add_argument("--limit", type=int, default=100)
@@ -46,9 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    command = [args.operation]
-    if args.operation == "produce-once":
-        command.extend(["--db", args.db])
+    command = [args.operation, "--db", args.db]
     if args.operation == "read-recent":
         command.extend(["--target-id", args.target_id, "--type", args.type, "--limit", str(args.limit)])
         if args.include_text:

@@ -471,7 +471,8 @@ def test_registered_audited_unsubscribe_does_not_block_mcp_event_loop(
     assert result[1] == {"status": "done", "summary": "fake result"}
 
 
-def test_registered_reaction_write_is_accepted_when_dws_schema_is_incomplete():
+def test_registered_reaction_write_is_accepted_when_dws_schema_is_incomplete(monkeypatch):
+    monkeypatch.setattr(agent_cli.shutil, "which", lambda name: f"/test/bin/{name}")
     class Unclassified:
         @staticmethod
         def classify(_item):

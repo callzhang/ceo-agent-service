@@ -7833,6 +7833,7 @@ def test_agent_cron_dispatcher_dry_run_leaves_todo_outbox_unclaimed(
 
 
 def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_seed_scheduled_tasks_on_service_start", lambda *_: None)
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     store.enqueue_reply_task(
@@ -7881,6 +7882,7 @@ def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path, monkey
 def test_run_service_requeues_processing_work_summary_inputs_on_startup(
     tmp_path, monkeypatch
 ):
+    monkeypatch.setattr(cli, "_seed_scheduled_tasks_on_service_start", lambda *_: None)
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     item = WorkItem.model_validate(

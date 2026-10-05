@@ -111,6 +111,22 @@ def test_a_send_the_provider_accepted_has_evidence() -> None:
     assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
 
 
+def test_approved_message_tool_preserves_provider_execution_evidence() -> None:
+    response = {
+        "success": True,
+        "delivery_status": "sent",
+        "provider_result": {"success": True, "result": {"openTaskId": "approved-send"}},
+        "verification": {"state": "sent", "verified": True},
+    }
+    event = {"type": "item.completed", "item": {
+        "type": "mcp_tool_call", "server": "agent_cli",
+        "tool": "send_approved_dingtalk_message",
+        "result": {"content": [{"type": "text", "text": json.dumps(response)}]},
+    }}
+    driver, task = _driver(action=CHAT_SEND, tool_events=[event])
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
+
+
 @pytest.mark.parametrize("mismatch", [None, "parent", "operation", "revision", "generation", "later"])
 def test_result_correction_uses_only_prior_receipts_for_the_same_operation(mismatch):
     driver, task = _driver(action=CHAT_SEND, tool_events=[])

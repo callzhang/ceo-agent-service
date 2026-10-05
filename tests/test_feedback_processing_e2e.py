@@ -12,6 +12,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import app.config as app_config
 import app.web_api.registration as registration_module
 from app.audit_web import create_audit_app
 from app.store import AutoReplyStore
@@ -203,10 +204,11 @@ def _seed_processing_batch_for_resolution(
 def _main_receipt() -> dict[str, object]:
     commit_sha = subprocess.run(
         ["git", "rev-parse", "main"],
-        cwd=Path(__file__).resolve().parents[1],
+        cwd=app_config.repo_root(),
         capture_output=True,
         text=True,
         check=True,
+        timeout=5,
     ).stdout.strip()
     return _resolution_receipt(
         commit_sha,
@@ -214,6 +216,57 @@ def _main_receipt() -> dict[str, object]:
         before_pid=300,
         after_pid=301,
     )
+
+
+def _fixture_git(repository: Path, *arguments: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [
+            "git",
+            "-c", "user.name=Feedback Fixture",
+            "-c", "user.email=feedback-fixture@example.invalid",
+            "-c", "commit.gpgsign=false",
+            "-c", "core.hooksPath=/dev/null",
+            *arguments,
+        ],
+        cwd=repository,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=5,
+    )
+
+
+@pytest.fixture
+def feedback_repository(tmp_path: Path, monkeypatch) -> Path:
+    repository = tmp_path / "feedback-repository"
+    repository.mkdir()
+    _fixture_git(repository, "init", "--initial-branch=main", "--template=")
+    _fixture_git(repository, "commit", "--allow-empty", "-m", "Feedback baseline")
+    monkeypatch.setattr(app_config, "repo_root", lambda: repository)
+    return repository
+
+
+def test_main_receipt_is_independent_of_detached_checkout(
+    tmp_path: Path, monkeypatch, feedback_repository: Path,
+):
+    checkout = tmp_path / "pr-checkout"
+    checkout.mkdir()
+    _fixture_git(checkout, "init", "--initial-branch=review", "--template=")
+    _fixture_git(checkout, "commit", "--allow-empty", "-m", "Unmerged PR checkout")
+    _fixture_git(checkout, "checkout", "--detach")
+    assert subprocess.run(
+        ["git", "rev-parse", "--verify", "main"],
+        cwd=checkout, capture_output=True, check=False,
+    ).returncode != 0
+    monkeypatch.setitem(
+        globals(), "__file__", str(checkout / "tests" / "test_feedback_processing_e2e.py"),
+    )
+
+    receipt = _main_receipt()
+
+    assert receipt["commit_sha"] == _fixture_git(
+        feedback_repository, "rev-parse", "main",
+    ).stdout.strip()
 
 
 def _seed_feedback_noise(
@@ -315,6 +368,7 @@ def test_batch_detail_database_query_count_is_bounded_by_batch_not_total_feedbac
 
 def test_resolve_ignores_cached_refreshing_zero_and_uses_fresh_backlog(
     tmp_path: Path,
+    feedback_repository: Path,
 ):
     receipt = _main_receipt()
     with _registered_route_client(
@@ -341,7 +395,9 @@ def test_resolve_ignores_cached_refreshing_zero_and_uses_fresh_backlog(
     assert store.get_feedback_processing_batch("batch-fresh-backlog").status == "processing"
 
 
-def test_resolve_fails_closed_when_fresh_backlog_factory_raises(tmp_path: Path):
+def test_resolve_fails_closed_when_fresh_backlog_factory_raises(
+    tmp_path: Path, feedback_repository: Path,
+):
     receipt = _main_receipt()
 
     def unavailable_backlog():
@@ -368,7 +424,9 @@ def test_resolve_fails_closed_when_fresh_backlog_factory_raises(tmp_path: Path):
     assert store.get_feedback_processing_batch("batch-backlog-error").status == "processing"
 
 
-def test_resolve_does_not_call_cached_status_factory(tmp_path: Path):
+def test_resolve_does_not_call_cached_status_factory(
+    tmp_path: Path, feedback_repository: Path,
+):
     receipt = _main_receipt()
 
     def cached_status_failure():
@@ -414,6 +472,7 @@ def test_resolve_does_not_call_cached_status_factory(tmp_path: Path):
 def test_resolve_requires_strict_fresh_zero_backlog(
     tmp_path: Path,
     backlog: dict[str, object],
+    feedback_repository: Path,
 ):
     receipt = _main_receipt()
     client, store = _registered_route_client(
@@ -434,6 +493,38 @@ def test_resolve_requires_strict_fresh_zero_backlog(
     assert response.status_code == 409
     assert response.json()["code"] == "feedback_resolution_incomplete"
     assert store.get_feedback_processing_batch("batch-strict-backlog").status == "processing"
+
+
+@pytest.mark.parametrize("commit_kind", ["missing", "unmerged"])
+def test_resolve_preserves_real_git_commit_and_main_ancestry_checks(
+    tmp_path: Path, feedback_repository: Path, commit_kind: str,
+):
+    receipt = _main_receipt()
+    if commit_kind == "unmerged":
+        _fixture_git(feedback_repository, "checkout", "-b", "unmerged")
+        _fixture_git(feedback_repository, "commit", "--allow-empty", "-m", "Unmerged fix")
+        receipt["commit_sha"] = _fixture_git(feedback_repository, "rev-parse", "HEAD").stdout.strip()
+    else:
+        receipt["commit_sha"] = "0" * 40
+    client, store = _registered_route_client(
+        tmp_path,
+        feedback_backlog_factory=lambda: {"processing": 0, "failed": 0, "retryable": 0},
+    )
+    _seed_processing_batch_for_resolution(
+        store, batch_id="batch-unverified-commit", receipt=receipt,
+    )
+    with client:
+        response = client.post(
+            "/api/console/feedback/batches/batch-unverified-commit/resolve", json=receipt,
+        )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "feedback_resolution_incomplete"
+    assert response.json()["message"] == (
+        "resolution commit is not an ancestor of local main" if commit_kind == "unmerged"
+        else "resolution commit does not exist"
+    )
+    assert store.get_feedback_processing_batch("batch-unverified-commit").status == "processing"
 
 
 def test_attempt_8308_feedback_processing_requires_complete_receipts(

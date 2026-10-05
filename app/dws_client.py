@@ -4022,7 +4022,9 @@ class DwsClient:
         compact = " ".join(value.strip().split())
         if len(compact) <= limit:
             return compact
-        return f"{compact[:limit]}..."
+        head_length = limit // 2
+        tail_length = limit - head_length
+        return f"{compact[:head_length]}...{compact[-tail_length:]}"
 
     @classmethod
     def _safe_output_preview(cls, value: str) -> str:

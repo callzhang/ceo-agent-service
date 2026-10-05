@@ -709,7 +709,7 @@ def register_console_routes(
         status, payload = build_attempt_detail(
             store_factory(),
             attempt_id,
-            email_store=email_store_factory() if email_store_factory else None,
+            email_store_factory=email_store_factory,
         )
         if payload is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Attempt not found", "details": {}}, status_code=404)

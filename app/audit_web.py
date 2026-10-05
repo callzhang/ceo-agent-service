@@ -2987,6 +2987,19 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
             select
                 a.*,
                 case
+                    when a.channel='wechat' and lower(a.send_status)='failed'
+                     and exists (
+                        select 1 from wechat_deliveries d
+                        join reply_tasks t on t.id=d.reply_task_id
+                        where t.channel=a.channel and t.conversation_id=a.conversation_id
+                          and d.conversation_id=a.conversation_id
+                          and t.trigger_message_id=a.trigger_message_id
+                          and d.execution_generation=t.execution_generation
+                          and d.status in ('failed', 'send_unknown')
+                          and d.id=(select max(current_delivery.id) from wechat_deliveries current_delivery
+                                    where current_delivery.reply_task_id=t.id
+                                      and current_delivery.execution_generation=t.execution_generation)
+                     ) then 'failed'
                     when lower(a.send_status)='failed'
                      and trim(coalesce(a.resolved_at, ''))<>'' then 'recovered'
                     when lower(a.send_status) in ('failed', 'blocked')
@@ -3186,6 +3199,31 @@ def _clean_work_item_attention_summary(summary: str) -> str:
     return " ".join(lines) or " ".join((summary or "").split())
 
 
+def _reply_task_attention_diagnostics(raw: str, task_error: str) -> dict[str, str]:
+    """Read current-run diagnostics without treating Agent prose as provider evidence."""
+    try:
+        data = json.loads(raw or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return {"error": task_error}
+    if not isinstance(data, dict):
+        return {"error": task_error}
+    source_code = data.get("source_code")
+    code = data.get("code")
+    diagnostic = source_code if isinstance(source_code, str) and source_code.strip() else code
+    if not isinstance(diagnostic, str) or not diagnostic.strip():
+        return {"error": task_error}
+    source = data.get("source")
+    source = source.strip() if isinstance(source, str) else ""
+    summary = data.get("reported_summary")
+    summary = summary.strip() if isinstance(summary, str) else ""
+    description = f"运行诊断：{diagnostic}"
+    if source:
+        description += f"（来源：{source}）"
+    if summary:
+        description += f"；Agent 说明：{summary}"
+    return {"error_code": diagnostic, "error": description}
+
+
 def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) -> list[dict[str, str]]:
     specs = [
         (
@@ -3256,7 +3294,11 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                        reply_tasks.status,
                        coalesce(nullif(reply_tasks.conversation_title, ''), reply_tasks.conversation_id) as context,
                        coalesce(nullif(reply_tasks.trigger_text, ''), nullif(reply_tasks.conversation_title, ''), reply_tasks.trigger_message_id) as summary,
-                       reply_tasks.updated_at, reply_tasks.error
+                       reply_tasks.updated_at, reply_tasks.error,
+                       (select current_run.structured_error_json from agent_runs current_run
+                        where current_run.reply_task_id=reply_tasks.id
+                          and current_run.execution_generation=reply_tasks.execution_generation
+                        order by current_run.id desc limit 1) as current_run_error
                 from reply_tasks
                 left join business_object_tasks current_business_object
                   on current_business_object.business_object_key=reply_tasks.business_object_key
@@ -3309,7 +3351,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                         "context": str(row["context"] or ""),
                         "summary": str(row["summary"] or ""),
                         "updated_at": str(row["updated_at"] or ""),
-                        "error": str(row["error"] or ""),
+                        **_reply_task_attention_diagnostics(
+                            row["current_run_error"], str(row["error"] or "")),
                     }
                 )
         for category, table, status_column, context_column, summary_column, updated_column, error_column, statuses in specs:
@@ -5310,15 +5353,20 @@ def _history_chart_payload(
             projected_statuses.get(attempt.id, attempt.send_status)
         )
         if event_label == "Failed":
+            from app.attempt_projection import project_attempt_status
+
             task = store.get_reply_task_for_message(
                 attempt.conversation_id,
                 attempt.trigger_message_id,
                 channel=attempt.channel,
             )
-            if task is not None:
-                task_label = _history_lifecycle_label(task.status)
-                if task_label != "Failed":
-                    event_label = task_label
+            delivery = (
+                store.get_wechat_delivery_for_task(task.id)
+                if task is not None and attempt.channel == "wechat" else None
+            )
+            event_label = _history_lifecycle_label(
+                project_attempt_status(attempt, task, [], delivery=delivery)
+            )
         bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
     recovered_meeting_run_ids = store.recovered_meeting_alignment_run_ids_since(
         since_utc
@@ -9462,6 +9510,16 @@ def handle_rerun_attempt_post(
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
         return 404, {}, render_page("Attempt not found", "Attempt not found")
+    terminal_run = store.get_agent_run(attempt.agent_run_id) if attempt.agent_run_id else None
+    rerun_block_reason = _attempt_rerun_block_reason(
+        attempt, [terminal_run] if terminal_run is not None else []
+    )
+    if rerun_block_reason:
+        return (
+            409,
+            {},
+            render_page("Rerun unavailable", f"<p>{escape(rerun_block_reason)}</p>"),
+        )
     channel = attempt.channel or "dingtalk"
     existing_task = store.get_reply_task_for_message(
         attempt.conversation_id,
@@ -10093,23 +10151,9 @@ def create_audit_app(
         return _system_health_snapshot(audit_store, service)
 
     def render_settings_status_payload() -> dict[str, object]:
+        # The worker payload already reads all queue projections from one
+        # fresh snapshot. Re-reading here doubles the scans and mixes snapshots.
         payload = render_worker_status_payload()
-        # Queue totals may use the short-lived status snapshot, but Attention
-        # is an error surface and must agree with its dedicated endpoint on
-        # every refresh. Decisions are read separately so the service-error
-        # list remains distinct from actual rule questions.
-        attention_rows = _queue_attention_rows(audit_store)
-        human_decision_rows = _human_decision_attention_rows(audit_store)
-        summary = dict(payload.get("summary") or {})
-        # Keep feedback backlog totals bound to the same authoritative queue
-        # definitions used by the dedicated feedback endpoint.
-        fresh_summary = read_fresh_feedback_backlog()
-        summary.update(fresh_summary)
-        summary["attention"] = sum(
-            max(0, int(row.get("count") or 1))
-            for row in attention_rows
-            if isinstance(row, Mapping)
-        )
         connector_statuses = connector_status_cache.get_or_refresh(
             _connector_status_snapshots,
             lambda: {},
@@ -10134,9 +10178,6 @@ def create_audit_app(
         )
         return {
             **payload,
-            "attention_rows": attention_rows,
-            "human_decision_rows": human_decision_rows,
-            "summary": summary,
             "connectors": connector_statuses,
             "wechat": wechat_status,
             "system_health": system_health,
@@ -11276,6 +11317,7 @@ def _attempt_detail_body(
         )
     )
     orchestration_links = _orchestration_session_links(attempt.id, agent_runs)
+    rerun_block_reason = _attempt_rerun_block_reason(attempt, agent_runs)
     return _agent_detail_body(
         title_label="群名",
         title=attempt.conversation_title,
@@ -11287,12 +11329,14 @@ def _attempt_detail_body(
             attempt,
             sent_reply,
             reply_task=reply_task,
+            rerun_block_reason=rerun_block_reason,
         ),
         status_html=_attempt_status_card(
             attempt,
             agent_runs,
             attention,
             closed_after_review=closed_after_review,
+            rerun_block_reason=rerun_block_reason,
         ),
         fields=fields,
         pills_html=_attempt_action_pills(
@@ -11434,6 +11478,34 @@ def _agent_failure_reason_card(
     return _text_card("失败原因", reason)
 
 
+def _attempt_rerun_block_reason(
+    attempt: ReplyAttempt,
+    agent_runs: list[AgentRun],
+) -> str:
+    if attempt.send_status.strip().lower() != "failed":
+        return ""
+    terminal_run = next(
+        (
+            run
+            for run in agent_runs
+            if getattr(run, "id", None) is not None
+            and int(run.id) == int(attempt.agent_run_id or 0)
+        ),
+        None,
+    )
+    from app.agent_reported_error import (
+        PROVIDER_RISK_REJECTION_RERUN_BLOCK_REASON,
+        is_provider_risk_rejection,
+    )
+
+    if is_provider_risk_rejection(
+        terminal_run.structured_error_json if terminal_run is not None else "",
+        attempt_error=attempt.send_error,
+    ):
+        return PROVIDER_RISK_REJECTION_RERUN_BLOCK_REASON
+    return ""
+
+
 def _agent_failure_reason_text(
     attempt: ReplyAttempt,
     agent_runs: list[AgentRun],
@@ -11448,6 +11520,17 @@ def _agent_failure_reason_text(
         except json.JSONDecodeError:
             error = {}
         code = str(error.get("code") or "unknown") if isinstance(error, dict) else "unknown"
+        from app.agent_reported_error import is_provider_risk_rejection
+
+        risk_rejected = is_provider_risk_rejection(
+            run.structured_error_json,
+            attempt_error=(
+                attempt.send_error
+                if getattr(run, "id", None) is not None
+                and int(run.id) == int(attempt.agent_run_id or 0)
+                else ""
+            ),
+        )
         detail = str(error.get("detail") or "") if isinstance(error, dict) else ""
         # An Agent-reported failure (source="agent") never carries `detail` --
         # that field belongs to the technical/process failure path -- but its
@@ -11457,10 +11540,16 @@ def _agent_failure_reason_text(
         reported_summary = (
             str(error.get("reported_summary") or "") if isinstance(error, dict) else ""
         )
-        effect = "按普通失败流程重试或反馈"
+        effect = (
+            "历史候选不能直接重放；请通过正式流程提交新候选并重新审核"
+            if risk_rejected
+            else "按普通失败流程重试或反馈"
+        )
         safe_detail = detail.strip() or reported_summary.strip()
         if not safe_detail or safe_detail.startswith("处理未完成，失败代码："):
-            safe_detail = _failure_code_explanation(code)
+            safe_detail = _failure_code_explanation(
+                "provider_risk_rejected" if risk_rejected else code
+            )
         stage = {
             AgentRole.CONSUMER: "生成回复阶段",
             AgentRole.AUDIT: "执行审计阶段",
@@ -11478,6 +11567,8 @@ def _agent_failure_reason_text(
 
 
 def _failure_code_explanation(code: str) -> str:
+    if code == "provider_risk_rejected":
+        return "运行时拒绝了当前对外动作；当前入口不允许重放该历史候选。"
     if code == "provider_read_failed":
         return "业务数据读取失败；请查看来源和 provider 原始错误。"
     if code == "delivery_failed":
@@ -12259,6 +12350,14 @@ def _related_history_card(
             if store is not None
             else None
         )
+        terminal_run = (
+            store.get_agent_run(attempt.agent_run_id)
+            if store is not None and attempt.agent_run_id
+            else None
+        )
+        rerun_block_reason = _attempt_rerun_block_reason(
+            attempt, [terminal_run] if terminal_run is not None else []
+        )
         rows.append(
             "<tr>"
             f"<td>{_attempt_link(attempt)}</td>"
@@ -12266,7 +12365,7 @@ def _related_history_card(
             f"<td>{escape(attempt.trigger_sender)}</td>"
             f"<td>{_attempt_action_pills(attempt)}</td>"
             f"<td>{escape(_excerpt(attempt.trigger_text, 120))}</td>"
-            f"<td>{_attempt_row_actions(attempt, sent_reply, session_id=session_id, reply_task=reply_task)}</td>"
+            f"<td>{_attempt_row_actions(attempt, sent_reply, session_id=session_id, reply_task=reply_task, rerun_block_reason=rerun_block_reason)}</td>"
             "</tr>"
         )
     return (
@@ -12308,6 +12407,7 @@ def _attempt_row_actions(
     *,
     session_id: str = "",
     reply_task: ReplyTask | None = None,
+    rerun_block_reason: str = "",
 ) -> str:
     return_to = f"/codex/{quote(session_id, safe='')}" if session_id else f"/attempts/{attempt.id}"
     return_to_query = quote(return_to, safe="/")
@@ -12337,7 +12437,12 @@ def _attempt_row_actions(
             "onsubmit=\"return confirm('确认重新处理这条失败 attempt？可能会实际发送新回复或执行日历/OA动作。')\">"
             "<button class=\"rerun\" type=\"submit\">重新处理</button>"
             "</form>"
-            if attempt.send_status.strip().lower() == "failed"
+            if attempt.send_status.strip().lower() == "failed" and not rerun_block_reason
+            else ""
+        )
+        + (
+            f'<span class="disabled-action" title="{escape(rerun_block_reason)}">历史候选不可重放</span>'
+            if rerun_block_reason
             else ""
         )
         + recall_html
@@ -12401,6 +12506,7 @@ def _attempt_status_card(
     attention: HistoryAttention | None = None,
     *,
     closed_after_review: bool = False,
+    rerun_block_reason: str = "",
 ) -> str:
     active_attempt = attempt
     subject = next(
@@ -12442,6 +12548,8 @@ def _attempt_status_card(
         )
     elif active_attempt.send_status == "needs_human":
         message = "这条事项等待你的决策。请阅读下方已核验的事实，再提交具体处理指令。"
+    elif active_attempt.send_status == "failed" and rerun_block_reason:
+        message = rerun_block_reason
     elif active_attempt.send_status == "failed":
         message = "这次处理没有完成。可使用“重新处理”重新读取材料并执行当前规则。"
     else:

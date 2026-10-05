@@ -40,6 +40,45 @@ def test_paginated_chat_history_ids_are_not_send_receipts() -> None:
     assert provider_receipts([_command(json.dumps(history))]) == ()
 
 
+def test_transformed_chat_history_ids_are_not_send_receipts() -> None:
+    history = {
+        "success": True,
+        "result_preview": [{
+            "key": "conversationMessagesList",
+            "value": {"sample": {"messages": [
+                {"messageId": "msg-existing", "openMessageId": "msg-existing"},
+            ]}},
+        }],
+    }
+    assert provider_receipts([_command(json.dumps(history))]) == ()
+
+
+def test_receipt_names_in_business_content_are_not_send_receipts() -> None:
+    response = {
+        "success": True,
+        "result": {
+            "content": json.dumps({"result": {"openTaskId": "quoted-id"}}),
+        },
+    }
+    assert provider_receipts([_command(json.dumps(response))]) == ()
+
+
+def test_real_send_receipt_survives_adjacent_read_projections() -> None:
+    output = json.dumps({"preview": {"openMessageId": "old-id"}})
+    output += "\n" + json.dumps({"data": {"result": {"openTaskId": "new-id"}}})
+    assert provider_receipts([_command(output)]) == ("new-id",)
+
+
+def test_rejected_provider_result_is_not_a_send_receipt() -> None:
+    response = {"data": {"result": {"success": False, "openTaskId": "rejected-id"}}}
+    assert provider_receipts([_command(json.dumps(response))]) == ()
+
+
+def test_receipt_field_order_is_preserved_within_a_response() -> None:
+    response = {"result": {"openTaskId": "task-id", "openMessageId": "message-id"}}
+    assert provider_receipts([_command(json.dumps(response))]) == ("task-id", "message-id")
+
+
 def test_a_failed_command_is_not_treated_as_an_effect() -> None:
     """A non-zero exit has no provider acceptance to record."""
     output = json.dumps({"data": {"result": {"openTaskId": "not-accepted"}}})
@@ -147,6 +186,22 @@ def test_an_effect_routed_through_the_controlled_cli_is_recognised() -> None:
     )
     result = {"content": [{"type": "text", "text": provider}]}
     assert provider_receipts([_mcp_call(result)]) == ("G2WsAf7pzHQoDBXm=",)
+
+
+def test_approved_message_tool_provider_result_is_a_send_receipt() -> None:
+    response = {
+        "success": True,
+        "delivery_status": "sent",
+        "delivery_key": "delivery-1",
+        "action_identity": "reply-1",
+        "provider_result": {"success": True, "result": {"openTaskId": "approved-send"}},
+        "verification": {"state": "sent", "verified": True},
+    }
+    result = {"content": [{"type": "text", "text": json.dumps(response)}],
+              "structuredContent": response}
+    assert provider_receipts([
+        _mcp_call(result, tool="send_approved_dingtalk_message"),
+    ]) == ("approved-send",)
 
 
 def test_a_failed_tool_call_is_not_treated_as_an_effect() -> None:

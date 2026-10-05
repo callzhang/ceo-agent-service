@@ -9,6 +9,50 @@
 
 ## Unreleased
 
+- 2026-10-05: A runtime `provider_risk_rejected` refusal can no longer be
+  replayed from a failed Attempt's manual rerun button or POST endpoint. The
+  detail page explains that the original candidate is blocked; normal failed
+  attempts keep their existing rerun behavior.
+
+- 2026-10-04: An absent organization chooser is accepted only after redirecting
+  to the configured OKR application's origin and path, not any non-login URL.
+  Regression coverage includes blank and unrelated pages, real JWT parsing and
+  expiry boundaries, and valid headers arriving during the refresh wait loop.
+
+- 2026-10-04: The OKR service wrapper reuses the shared source's validated
+  request-header collector. An early expired or incomplete request no longer
+  prevents a later valid SSO token from being captured. Expired credentials
+  are still rejected before the live API read, without printing tokens.
+
+- 2026-10-04: OKR local SSO selects an already-visible target organization
+  without requiring a nonexistent native confirmation dialog. An organization
+  selection failure on the login page remains a failure; only a completed
+  redirect may omit that selection. The same account, organization and
+  headless source boundaries remain unchanged.
+
+- 2026-10-04: WeChat Reader Skill operations require and forward an explicit
+  service database path. Status and bounded reads can no longer silently inspect
+  a checkout-local database. Missing database arguments fail before IPC starts;
+  Sender behavior, delivery authorization and historical outcomes are unchanged.
+
+- 2026-10-04: Attempt processing steps distinguish the Agent run's business
+  status from its runtime call status. A returned model call no longer displays
+  a failed Audit run as a completed business step. Both original statuses are
+  preserved; Audit decisions and recovery eligibility remain unchanged.
+  Session-unavailable tests also provide the real AgentRun status contract and
+  verify that unavailable transcripts do not alter either execution status.
+
+- 2026-10-04: History detail initializes EmailStore only for an existing email
+  Attempt. Non-email and missing records no longer trigger full email-history
+  validation. Email context and unsubscribe receipts remain fresh per request,
+  and persistence validation failures still propagate.
+
+- 2026-10-04: Status reuses the worker payload's fresh read-only SQLite
+  snapshot for queue totals, Attention and human decisions. It no longer
+  scans each section twice or mixes snapshots within one response; subsequent
+  requests still read current state, and existing failure/recovery rules stay
+  unchanged.
+
 - 2026-10-02: Meeting group discovery requests the supported 100-item DWS
   search pages so large participant queries finish within the pagination budget.
   Incomplete provider results still block recipient selection.

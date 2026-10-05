@@ -349,8 +349,8 @@ export interface WorkerStatus {
   wechat: { reader: { enabled: boolean; status: string; error: string }; sender: { enabled: boolean; status: string; error: string }; preflight: { status: string; error: string }; account: { ready: boolean; account_id: string } };
   queues: Array<{ name: string; table: string; counts: Record<string, number>; pending: number; processing: number; failed: number; retryable: number; latest_updated_at: string; latest_error: string }>;
   dispatcher_queues: StatusDispatcherQueue[];
-  attention_rows: Array<{ category: string; id: string; status: string; context: string; summary: string; updated_at: string; error: string; root_cause?: string | null; detail_url?: string | null }>;
-  human_decision_rows?: Array<{ category: string; id: string; status: string; context: string; summary: string; updated_at: string; error: string; root_cause?: string | null; detail_url?: string | null }>;
+  attention_rows: Array<{ category: string; id: string; status: string; context: string; summary: string; updated_at: string; error: string; error_code?: string | null; root_cause?: string | null; detail_url?: string | null }>;
+  human_decision_rows?: Array<{ category: string; id: string; status: string; context: string; summary: string; updated_at: string; error: string; error_code?: string | null; root_cause?: string | null; detail_url?: string | null; detail_label: string; detail: string }>;
   database: { path: string };
   summary: { queue_count: number; pending: number; processing: number; failed: number; retryable: number; attention: number };
 }
@@ -1317,10 +1317,11 @@ function dispatcherQueueStatus(value: unknown): value is StatusDispatcherQueue {
     && (typeof row.oldest_available_at === "string" || row.oldest_available_at === null);
 }
 
-function attentionRow(value: unknown): boolean {
-  const row = exactRecord(value, ["category", "id", "status", "context", "summary", "updated_at", "error"], ["root_cause", "detail_url"]);
-  return row !== null && strings(row, ["category", "id", "status", "context", "summary", "updated_at", "error"])
-    && ["root_cause", "detail_url"].every((key) => !(key in row) || row[key] === null || typeof row[key] === "string");
+function attentionRow(value: unknown, detailFields: string[]): boolean {
+  const fields = ["category", "id", "status", "context", "summary", "updated_at", "error", ...detailFields];
+  const row = exactRecord(value, fields, ["error_code", "root_cause", "detail_url"]);
+  return row !== null && strings(row, fields)
+    && ["error_code", "root_cause", "detail_url"].every((key) => !(key in row) || row[key] === null || typeof row[key] === "string");
 }
 
 function workerStatus(value: unknown): value is WorkerStatus {
@@ -1339,8 +1340,9 @@ function workerStatus(value: unknown): value is WorkerStatus {
     && emailHealth(row.email) && meetingMemoryHealth(row.meeting_memory_health) && wechatStatus(row.wechat)
     && Array.isArray(row.queues) && row.queues.every(queueStatus)
     && Array.isArray(row.dispatcher_queues) && row.dispatcher_queues.every(dispatcherQueueStatus)
-    && Array.isArray(row.attention_rows) && row.attention_rows.every(attentionRow)
-    && (!Array.isArray(row.human_decision_rows) || row.human_decision_rows.every(attentionRow))
+    && Array.isArray(row.attention_rows) && row.attention_rows.every((item) => attentionRow(item, []))
+    && (!("human_decision_rows" in row) || (Array.isArray(row.human_decision_rows)
+      && row.human_decision_rows.every((item) => attentionRow(item, ["detail_label", "detail"]))))
     && database !== null && typeof database.path === "string"
     && summary !== null && counts(summary, ["queue_count", "pending", "processing", "failed", "retryable", "attention"]);
 }

@@ -52,11 +52,6 @@ reverts committed work they did not author.
 
 
 
-
-
-
-
-
 | codex-attention-multisource-browser-fixture | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: frontend/dev-mock/tasksMock.ts (synthetic Attention evidence fixtures only) | Reuse existing isolated Tasks mock preview to verify two-source detail, watch/decision labels, light/dark and narrow readability; synthetic UI evidence is not business or production verification. | 2026-10-02 |
 
 | codex-attention-multisource-console-eval | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: app/web_api/tasks.py (Attention detail only), frontend/src/api/console.ts (Attention detail contract only), frontend/src/pages/TasksPage.tsx and TaskAttentionDetailPage.tsx (watch labels and evidence only), corresponding focused API/UI tests, tests/test_inspect_task_attention.py, tests/fixtures/task_attention_multisource.json, scripts/replay_task_attention.py, docs/task-attention-phase1-validation.md, docs/architecture.md (Task/Attention only), implementation plan | Approved Tasks 6-8: display stored facts versus inference, fixed semantic comparison and exact-input database-copy replay; preserve earlier shipped Task-first claims, no other worktree edits or live mutation before verified release. | 2026-10-02 |

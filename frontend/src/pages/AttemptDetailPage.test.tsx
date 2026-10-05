@@ -48,6 +48,7 @@ const detail = {
   calendar: { event_id: "", response_status: "", result: {} },
   actions: {
     can_rerun: false,
+    rerun_block_reason: "",
     can_recall: false,
     can_submit_feedback: true,
     rerun_url: "/api/console/history/8448/rerun",
@@ -66,7 +67,7 @@ const detail = {
     { role: "consumer", label: "处理过程", session_id: "session-consumer", url: "/codex/session-consumer" },
     { role: "audit", label: "审计过程", session_id: "session-8448", url: "/codex/session-8448" },
   ],
-  runtime_attempts: [{ role: "consumer", session_url: "/codex/session-consumer", proposal_revision: 0, turn_attempt: 0, route: "consumer", runtime: "codex", credential_mode: "configured", model: "qwen", session_available: true, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 1, transcript_end: 2, effect_started_at: "" }],
+  runtime_attempts: [{ role: "consumer", session_url: "/codex/session-consumer", proposal_revision: 0, turn_attempt: 0, route: "consumer", runtime: "codex", credential_mode: "configured", model: "qwen", session_available: true, status: "completed", run_status: "completed", failure_code: "", failover_permitted: false, transcript_start: 1, transcript_end: 2, effect_started_at: "" }],
   created_at: "2026-08-29T10:00:00Z",
   updated_at: "2026-08-29T10:01:00Z",
 };
@@ -143,11 +144,11 @@ describe("AttemptDetailPage", () => {
       item: {
         ...detail,
         runtime_attempts: [
-          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "failed", failure_code: "service_restart_before_effect", failover_permitted: true, transcript_start: 0, transcript_end: 0, effect_started_at: "", run_id: 1, execution_generation: "generation-old", attempt_number: 1, created_at: "2026-08-24 04:11:51", finished_at: "2026-08-24 04:12:31" },
-          { role: "audit", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "failed", failure_code: "runtime_capability_missing", failover_permitted: true, transcript_start: 0, transcript_end: 0, effect_started_at: "", run_id: 2, execution_generation: "generation-old", attempt_number: 2, created_at: "2026-08-24 04:14:58", finished_at: "2026-08-24 04:15:02" },
-          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 3, execution_generation: "generation-new", attempt_number: 1, created_at: "2026-08-25 18:26:05", finished_at: "2026-08-25 18:27:42" },
-          { role: "audit", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 4, execution_generation: "generation-new", attempt_number: 1, created_at: "2026-08-25 18:27:51", finished_at: "2026-08-27 06:34:48" },
-          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 5, execution_generation: "generation-newest", attempt_number: 1, created_at: "2026-09-08 02:17:28", finished_at: "2026-09-08 02:18:12" },
+          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "failed", run_status: "failed", failure_code: "service_restart_before_effect", failover_permitted: true, transcript_start: 0, transcript_end: 0, effect_started_at: "", run_id: 1, execution_generation: "generation-old", attempt_number: 1, created_at: "2026-08-24 04:11:51", finished_at: "2026-08-24 04:12:31" },
+          { role: "audit", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "failed", run_status: "failed", failure_code: "runtime_capability_missing", failover_permitted: true, transcript_start: 0, transcript_end: 0, effect_started_at: "", run_id: 2, execution_generation: "generation-old", attempt_number: 2, created_at: "2026-08-24 04:14:58", finished_at: "2026-08-24 04:15:02" },
+          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", run_status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 3, execution_generation: "generation-new", attempt_number: 1, created_at: "2026-08-25 18:26:05", finished_at: "2026-08-25 18:27:42" },
+          { role: "audit", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", run_status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 4, execution_generation: "generation-new", attempt_number: 1, created_at: "2026-08-25 18:27:51", finished_at: "2026-08-27 06:34:48" },
+          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", run_status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 5, execution_generation: "generation-newest", attempt_number: 1, created_at: "2026-09-08 02:17:28", finished_at: "2026-09-08 02:18:12" },
         ],
       },
       meta: { snapshot_at: "2026-09-14T10:01:00Z" },
@@ -172,8 +173,8 @@ describe("AttemptDetailPage", () => {
       item: {
         ...detail,
         runtime_attempts: [
-          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 1, execution_generation: "same-batch", attempt_number: 1, created_at: "2026-09-16 08:43:08", finished_at: "2026-09-16 08:43:53" },
-          { role: "audit", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 2, execution_generation: "same-batch", attempt_number: 1, created_at: "2026-09-16 08:43:59", finished_at: "2026-09-16 08:47:17" },
+          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", run_status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 1, execution_generation: "same-batch", attempt_number: 1, created_at: "2026-09-16 08:43:08", finished_at: "2026-09-16 08:43:53" },
+          { role: "audit", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", run_status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 2, execution_generation: "same-batch", attempt_number: 1, created_at: "2026-09-16 08:43:59", finished_at: "2026-09-16 08:47:17" },
         ],
       },
       meta: { snapshot_at: "2026-09-16T08:47:17Z" },
@@ -186,6 +187,34 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText("方案生成 · 第 1 轮")).toBeInTheDocument();
     expect(screen.getByText("方案审核 · 第 1 轮")).toBeInTheDocument();
   });
+
+  it.each(["/attempts/8448", "/attempts/8448/execution/audit"])(
+    "keeps a returned runtime call distinct from a failed Audit result at %s",
+    async (path) => {
+      getAttemptDetail.mockResolvedValue({
+        item: {
+          ...detail,
+          status: { ...detail.status, raw: "failed" },
+          runtime_attempts: [{
+            ...detail.runtime_attempts[0],
+            role: "audit",
+            run_status: "failed",
+            status: "completed",
+          }],
+        },
+        meta: { snapshot_at: "2026-10-04T19:39:00Z" },
+      });
+      renderPage(path);
+
+      const title = await screen.findByText("方案审核 · 第 1 轮");
+      const entry = title.closest("article")!;
+      const result = within(entry).getByLabelText("业务运行状态");
+      const runtime = within(entry).getByLabelText("运行时调用状态");
+      expect(result).toHaveTextContent("失败");
+      expect(result).not.toHaveTextContent("已完成");
+      expect(runtime).toHaveTextContent("已完成");
+    },
+  );
 
   it("turns internal audit labels into a readable explanation", async () => {
     getAttemptDetail.mockResolvedValue({
@@ -818,6 +847,35 @@ describe("AttemptDetailPage", () => {
     await user.click(await screen.findByRole("button", { name: "重新处理" }));
     expect(command).toHaveBeenCalledWith("/api/console/history/8448/rerun");
     vi.restoreAllMocks();
+  });
+
+  it("does not offer rerun for an explicit runtime risk refusal", async () => {
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        status: {
+          ...detail.status,
+          raw: "failed",
+          message: "运行时已拒绝当前动作，历史候选不能直接重放。",
+        },
+        failure_reason: "需要提交实质不同的方案或明确授权。",
+        actions: {
+          ...detail.actions,
+          can_rerun: false,
+          rerun_block_reason: "运行时已拒绝当前动作，历史候选不能直接重放。",
+          terminal: false,
+          action_label: "需要处理",
+        },
+      },
+      meta: { snapshot_at: "2026-08-29T10:01:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Attempt #8448" })).toBeInTheDocument();
+    expect(
+      await within(screen.getByTestId("attempt-conversation-actions")).findByRole("status"),
+    ).toHaveTextContent(/历史候选不能直接重放/);
+    expect(screen.queryByRole("button", { name: "重新处理" })).not.toBeInTheDocument();
   });
 
   it("refreshes the Attempt after submitting a custom human decision", async () => {

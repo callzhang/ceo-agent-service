@@ -125,6 +125,7 @@ def test_runtime_payload_marks_a_missing_session_unavailable(monkeypatch):
     run = SimpleNamespace(
         id=12,
         role="consumer",
+        status="completed",
         execution_generation="current-generation",
         proposal_revision=0,
         turn_attempt=0,
@@ -154,3 +155,5 @@ def test_runtime_payload_marks_a_missing_session_unavailable(monkeypatch):
     payload = _runtime_payload([run], store)
 
     assert payload[0]["session_available"] is False
+    assert payload[0]["run_status"] == "completed"
+    assert payload[0]["status"] == "completed"

@@ -67,6 +67,7 @@ export interface AttemptRuntimeEntry {
   model: string;
   session_available: boolean;
   status: string;
+  run_status: string;
   failure_code: string;
   failover_permitted: boolean;
   transcript_start: number;
@@ -144,6 +145,7 @@ export interface AttemptDetail {
   calendar: { event_id: string; response_status: string; result: unknown };
   actions: {
     can_rerun: boolean;
+    rerun_block_reason: string;
     can_recall: boolean;
     can_submit_feedback: boolean;
     rerun_url: string;

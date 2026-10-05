@@ -162,6 +162,7 @@ class AttentionRow(StrictStatusModel):
     summary: str
     updated_at: str
     error: str
+    error_code: str | None = None
     root_cause: str | None = None
     detail_url: str | None = None
 

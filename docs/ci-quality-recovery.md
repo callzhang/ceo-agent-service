@@ -68,3 +68,44 @@ History-chart cache tests bind their warm-up event and call counter to their
 own SQLite path. A read for another app/database is explicitly interleaved
 between repeated requests; it must not be mistaken for rebuilding this app's
 cached chart. This prevents background warmers from contaminating the assertion.
+
+## Linux Readback Corrections
+
+The first remote run reduced 83 failures to five, while the local complete suite
+passed. The reaction fixture still depended on an installed `dws` executable;
+it now supplies a fake executable as well as the fake process runner. Queue
+startup recovery tests isolate scheduled-task seeding, which has its own
+coverage, rather than requiring the developer's installed operation Skills.
+
+OKR refresh locking uses `tempfile.gettempdir()` instead of macOS's
+`/private/tmp`; its regression redirects the temporary directory and verifies
+the actual lock file exists there.
+
+fastText 0.9.3 initializes its input matrix in ten native blocks, one per
+initialization thread. The adapter's single thread initialized only the first
+tenth, leaving hashed ngram rows untouched. The new regression reproduced this
+locally (5,006 initialized rows out of 50,005), independently of whether the
+allocator's remaining bytes happened to be zero or NaN. Training uses ten
+threads so every block is initialized, and the regression checks the complete
+matrix and finite predictions. The model remains a frozen candidate; this fix
+does not activate or promote a production classifier.
+
+Native implementation evidence:
+[DenseMatrix initialization](https://github.com/facebookresearch/fastText/blob/main/src/densematrix.cc)
+and [training matrix construction](https://github.com/facebookresearch/fastText/blob/main/src/fasttext.cc).
+
+After initialization was repaired, Linux exercised prediction and exposed the
+library's single-string `np.array(probabilities, copy=False)` incompatibility
+with NumPy 2. The adapter uses the public batch prediction API for its one
+input and unwraps the one result. This preserves labels, probabilities, and
+margin without modifying the library, pinning an obsolete NumPy, or catching
+and hiding prediction failures. A contract regression checks the batch input
+and the unchanged prediction output, in addition to real training coverage.
+
+The next Linux run passed all 9,867 backend tests and exposed frontend fixture
+portability issues: decision timestamps were asserted in the developer's
+timezone rather than the viewer's local timezone, and SSE tests inspected a
+connection before the passive effect created it. Timestamp assertions use the
+fixture's exact instant in the current viewer timezone. SSE assertions wait for
+the actual connection, and components are unmounted before global mocks are
+removed. The full frontend suite is also verified under `TZ=UTC`.

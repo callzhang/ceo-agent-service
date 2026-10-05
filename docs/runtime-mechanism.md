@@ -7,11 +7,47 @@
 
 ## 运行角色
 
+微信 Reader Skill 的 `status`、`read-recent` 和 `produce-once` 都必须显式接收调用方提供的
+绝对服务数据库路径，并原样传给受控 IPC CLI。缺少 `--db` 时在启动 IPC 前拒绝执行，
+不能从工作树的 `data/` 推断生产账号就绪状态。该路径修正不改变 Sender、目标选择、
+外部回检、发送授权或历史投递状态。
+
+运行时发送工具拒绝 `provider_risk_rejected` 时，服务保留该错误代码并停止自动重试，
+不将其降级为通用可重试失败或改成 `needs_human`。恢复必须先取得知情授权或形成实质更安全的
+候选，再按原业务身份经过正式审核、外部回检及投递流程；不得换工具绕过拒绝。
+历史 Attempt 的“重新处理”入口也会识别 AgentRun 中的 `code` 或 `source_code` 拒绝，
+页面不提供原候选重放，直接 POST 返回冲突且不入队。详情明确说明限制；普通技术性失败仍保留
+原来的重试入口。新的实质不同候选或有明确范围的授权必须作为新的正式处理提交，不能复用这条
+历史按钮代替。
+
+失败 Reply task 的 Attention 保留当前执行代最新 run 的原始诊断：优先 `source_code`，
+否则 `code`，并展示来源及「Agent 说明」`reported_summary`。因此已保存的
+`provider_risk_rejected` 不会只剩通用 `agent_reported_failure`；这些诊断不是外部效果证明。
+旧代或无法解析的诊断不替换任务错误；读取不修改状态或恢复边界。
+
+同一诊断生产器用于 Status API 时，后端 `AttentionRow` 与前端 Status 解码器均声明
+可选的字符串或 `null` 字段 `error_code`；无原始诊断的行不必提供它。未知字段与错误类型
+仍严格拒绝。真实任务/run 生成的 Attention 行必须能经过 `/api/console/status` 与前端
+解码，不能只验证生产器自身而让新增诊断导致 HTTP 500 或页面拒绝正常响应。
+人工决策行使用同一基础字段合同并要求字符串 `detail_label` / `detail`，不是普通
+Attention 行；前端保留其独立说明。提供 `human_decision_rows` 时必须是数组，不能把
+错误的对象、字符串或 `null` 当成“无人工决策”。
+
+Status 的每次请求从一份新的只读 SQLite 快照读取队列、Attention 和人工决策，
+同一请求各区块及 summary 复用这些结果，不再逐区块重复扫描或混用不同快照。
+下一次请求重新读取，不缓存业务队列状态。连接器、微信 IPC 及系统健康探测仍使用
+各自已有的短期后台缓存，不阻塞业务队列读取；此优化不修改失败或人工决策的判定。
+
 每个需要 Agent 处理的任务都经过两个职责不同的角色：
 
 Consumer 的未审核外部效果检测只把写入操作的 provider 回执视作副作用；
 群消息列表中的 `conversationMessagesList[*].messages[*].openMessageId` 是历史消息身份，
-不能据此判定 Consumer 发送了消息或阻止后续安全恢复。
+不能据此判定 Consumer 发送了消息或阻止后续安全恢复。检测只读取 provider 的
+`data` / `result` / `provider_result` 结果封装中的回执，MCP `content[*].text` 与
+`structuredContent` 先按传输封装解码；正式发送工具的 `provider_result.result.openTaskId`
+同样保留为执行证据，不递归
+业务正文、历史消息样本或其重新组织后的预览。拒绝结果不作为已接受的效果，真实
+发送结果继续保留回执的出现顺序并去重。这是诊断证据边界，不改变审核、发送授权或恢复规则。
 
 1. 执行 Agent 读取上下文和证据，形成候选结果或任务结果。
 2. 审核 Agent 独立检查执行结果，决定通过、反馈修改或升级人工处理。
@@ -22,6 +58,15 @@ Consumer 的未审核外部效果检测只把写入操作的 provider 回执视�
 workload 进入 `RoutedCodexExecution`，共用模型路由、会话、runtime attempt、失败切换和 CLI
 原生 `auto_review`；页面不启动自己的 Codex runtime，也不定义独立审批策略。
 旧版确认记录只读，不能从页面或 API 恢复执行。
+
+主页面事件订阅回归先用 React `act` 完成时间线及其副作用，再等待真实 EventSource
+订阅建立后注入事件；页面文字出现不代表订阅已经建立。合并刷新和切换任务取消刷新
+的断言保留，不靠延长超时或跳过断言处理测试竞态。
+
+Workbench 下载的路径替换回归以打开时的文件身份和实际成功关闭事件验证描述符生命周期，
+不在请求结束后用数字描述符是否可 `fstat` 判断泄漏；数字描述符可能已被并发线程复用。
+测试只替换 API 模块的 OS 访问代理，不修改共享 `os` 模块；遗漏流关闭的负向回归必须失败，
+且仍须验证路径被替换为符号链接后只返回原文件，不返回链接目标的内容。
 
 模型路由的名字：只有 `codex_oauth`、`claude_oauth`、`friday_runtime` 三条内置路由名字固定；其余
 路由（含名为 `codex_api`、`claude_api` 的）都是添加的线路，由 `CEO_RUNTIME_<名字>_*` 描述、可改名，
@@ -214,6 +259,8 @@ Consumer 与 Audit 之间自然流逝的时间不是候选事实冲突。当前�
 钉钉引用回复由服务使用 DWS `chat +messages-reply` 投递；该入口核验原消息、发送者与会话一致性，且适用于已确认的单聊会话。投递仍沿原业务对象的幂等键和回执核验，不因引用回复失败自动改发普通消息。
 
 会议总结的业务群候选由正文中的业务词与标题共同检索，排除听记摘要里的时间标签、图片链接等元数据。平台中立的共享群发现服务先按标题/摘要与群名筛选，再用完整日历名册的参会人覆盖率缩小候选；唯一或少量通过这两层筛选的群才读取近期消息并交给决策 Agent 做完整业务承接核验。当前运行时只有 DingTalk/DWS 适配器，Lark 和 Slack 需要各自 Provider 的认证、读取和外部读回验证后才能启用。发现服务不选择最终目标，也不把 Provider 故障降级成“找不到群”。没有标题命中时仍保留候选做实时名册检查，不能按搜索接口的原始返回顺序截断候选。排序优先考虑群名是否对应摘要主题，再参考讨论片段；词项交集只是检索线索，Agent 必须核对实际讨论、行动负责人和受众。参会人覆盖率只证明受众交集，不证明业务归属，不能单独强制选群。历史投递仍需本次实时成员覆盖达到门槛，且须与当前议题一致；此前已发送的总结不会因路由修复自动重发。
+
+候选群消息读取明确返回 DWS `code=1001`、业务原因「该群为保密群，无法获取消息记录」，且 `retryable_external_dependency=false` 时，适配器保留原始拒绝，不包装成瞬时错误。会议任务记录 `meeting_group_discovery` 失败并释放执行锁，不继续自动重试；权限或可读取的可信来源恢复后才走正式恢复。该拒绝既不是空消息结果，也不允许跳过该群而改投其他群或组织者。未知读取错误以及 provider 明确标记可重试的故障仍沿原有重试路径处理。
 
 对于源单聊的澄清动作，Consumer 必须在 action target 中提供已经通过实时读取确认的参与者 `open_dingtalk_id`。若该参与者字段以 `verified_participant_open_dingtalk_id` 表示，Audit 将其作为同一稳定接收人身份执行单聊发送；不会把 `conversation_id` 当作群聊目标。
 若单聊候选同时带有原会话的 `conversation_id` 和收件人的 `open_dingtalk_id`，发送入口在核对会话与原任务一致后只保留收件人目标，不把会话 ID 当作第二个互斥目标。DWS 的单聊写入口实际要求 `receiverUid`（userId），因此服务会用原始触发消息中与该 open ID 精确匹配的姓名和 open ID 解析 userId，再只把 userId 传给 DWS；解析不到唯一 userId 时在 provider 写入前失败，不猜姓名、不直接把 open ID 当作 receiverUid。群聊或不匹配会话不作此转换。
@@ -454,6 +501,12 @@ DingTalk 日程卡片改期可能原地覆盖卡片内容而不产生新消息 I
 通过 run 的 task、generation 和关联事件查询。Attempt 页面可以切换多个 Consumer
 或 Audit run，但不能编辑或覆盖旧 run。原始失败、session、runtime attempt、tool
 event 和 provider 结果仍然作为 append-only 事实保留。
+Attempt 详情的每条 runtime 记录分别提供 `status`（运行时调用状态）和 `run_status`
+（所属 Agent run 的业务运行状态），页面分别标注两者。模型调用返回 `completed` 不代表
+业务审核通过、外部动作成功或业务 run 完成；业务 run 仍可能是 `failed` 或 `running`。
+此处只投影已有状态，不改写历史记录、Audit 决策或恢复资格。
+Session 可用性测试同样按真实 `AgentRun` 提供业务 `status`；缺失 transcript
+只影响 `session_available`，不改变业务运行状态或运行时调用状态。
 Workers 的当前 attempt 队列统计会排除 `agent_run_id` 指向旧 execution generation
 的记录，即使同一业务对象更新了 trigger message；旧 attempt 仍可在历史详情中查看。
 
@@ -687,6 +740,10 @@ feedback-iteration decision scope 校验，而不是对所有修复一律要求 
 code 与 Skill/config 条件。`needs_human` 不接受 resolution receipt，项目保持 open。任一适用
 条件不满足时，整个批次保持 `processing`，不部分结案。关联、证据和结果必须通过 Feedback API
 持久化并回读一致。
+
+Feedback API 的 Git 回归使用独立临时仓库初始化 `main`，并将测试 API 与回执指向同一仓库。
+PR 的 detached checkout 或缺少本地 `main` 不应改变测试结果；测试不得修改开发/生产检出的
+分支，也不得用 `HEAD` 代替 main 祖先证明。真实的缺失提交、未合入 main 的提交仍必须拒绝结案。
 
 Feedback API 是现有本地后端边界内的操作接口，供 Workbench 和仓库 Agent 共用；它不对
 公网暴露，也不增加 feedback 专用鉴权或第二套 Agent 流程。
@@ -1067,12 +1124,27 @@ History 也显示定时触发（Derek 2026-09-25，类型「定时命令」/「�
 被跳过的触发，以及结果不交给 Agent 的服务命令（听记同步、听记权限申请、OKR 周报）的每次成功运行；把结果交给
 Agent 的生产命令成功时不进 History，它们排入的每一项各自是一条 History。邮件 provider 动作同样进 History
 （类型「邮件动作」），失败口径与 Attention 相同。
+
+微信 History 的任务完成与消息投递分别投影：同一任务、会话和当前执行代的最新投递为
+`failed` 或 `send_unknown` 时，失败 Attempt 继续在列表筛选、详情、状态计数和图表中显示
+`failed`，不能被候选任务的 `done` 掩盖。旧代、其他会话和已有后续成功投递的失败不覆盖
+当前状态；旧 pending Attempt 对应已完成任务仍显示 `done`。这些读取不改写历史记录或投递
+状态，也不派发重试。
+该投递优先规则只覆盖物理 `send_status=failed` 的 Attempt；非失败历史行继续按原任务投影，
+列表、详情、队列计数和图表不得各用不同的覆盖条件。
+最新投递按 `(reply_task_id, execution_generation, id)` 非唯一覆盖索引关联，避免对每条失败
+Attempt 重扫全部微信投递历史。结构哨兵要求该索引存在，初始化在旧投递表重建后补齐；
+只补索引，不改写回执、失败或发送状态。生产升级先完成并验证 SQLite 备份。
 听记权限扫描在打开后台后显式查询最近 30 天至次日的历史记录；后台默认只筛当天，
 空表不能直接归因为账号缺少管理权限。申请按持久化的 `requested_ids` 去重，
 只有听记页面读回已申请状态才计为成功。
 退订页返回的固定外部拒绝类别即使附带 `;operation=...` 阶段信息，也保留失败历史、
 归为外部依赖故障而不计入待工程修复的 Attention；浏览器/会话自身错误仍计入 Attention。
 ## Chrome 登录态副本（系统服务）
+
+OKR 服务包装器与共享来源复用同一有效请求头收集器：首次请求头缺少令牌或令牌已过期时继续等待后续有效请求，不能用第一条不完整请求锁定整个刷新轮次。只有满足有效期与提前刷新窗口的令牌才进入缓存，实际 API 读取前仍校验有效期；不输出令牌或认证头。
+
+OKR 本机 SSO 在点击当前账号后先检查指定组织是否已可见；组织选择页仍使用 `login.dingtalk.com`，不能仅凭该域名就认定需要原生确认弹窗。指定组织已可见时直接选择原组织；尚未可见才进入既有原生叮当 OKR 确认路径。组织选择失败时，只有 URL 的协议、域名和路径与配置的 OKR 入口一致，才允许单组织流程省略选择；空白页、其他域名或同域其他页面不能被记为已跳转成功。此区分不改变账号、组织、权限或无头实时来源要求。
 
 需要登录的无头浏览器任务（退订链接、听记权限申请、Dingteam OKR）不各自重新登录：服务每天 `06:00`（`Asia/Shanghai`）运行“同步 Chrome 登录态”（`sync-chrome-cookies`，定时任务，`chrome-cookie-copy-daily-v1`），用 SQLite 备份接口把 `~/Library/Application Support/Google/Chrome/Default/Cookies` 复制到服务数据库旁的 `chrome-cookies/Default/Cookies`，再按明文 `host_key` 删掉 `CEO_CHROME_COOKIE_DENY_DOMAINS`（逗号分隔的域名，含子域名）里的银行、券商和支付类域名，其余全部保留供各任务复用；这份名单为空时命令拒绝执行。整个过程不解密任何 cookie，也不碰钥匙串。
 
@@ -1374,6 +1446,15 @@ erase this delivery evidence. Pending or ambiguous verification produces no
 successful History projection. This records one message's actual effect, not
 completion of the whole proposal: the task and external-action completion
 ledger still require the existing Audit lifecycle and evidence checks.
+# External Command Failure Evidence
+
+External command failure previews retain both the beginning and the end of
+long output within the existing 400-character content budget. Python traceback
+frames must not displace the final exception code and cause. Structured provider
+errors still expose only the existing approved error fields; command argument
+redaction, retry policy and action authorization are unchanged. This improves
+future failure evidence and does not rewrite already-truncated historical runs.
+
 # Email SQLite Contention Diagnostics
 
 EmailStore and AutoReplyStore report connection contexts lasting at least one second, including
@@ -1384,6 +1465,13 @@ content. Correlate the caller with the operating system's WAL-lock owner and
 the affected run before changing transaction boundaries.
 Shared Store diagnostics retain up to eight caller frames so a context-manager
 wrapper cannot hide the business method that opened the connection.
+
+The Console history-detail handler passes an EmailStore factory, not an already
+initialized EmailStore, to the Attempt DTO builder. Only an existing
+email-channel Attempt opens that store for its classification and unsubscribe
+context. DingTalk, WeChat and missing Attempts do not scan email durable state.
+Each email detail request still initializes and validates the store and reads
+current receipts; initialization failures are not suppressed or cached.
 
 Direct provider-action claims hold BEGIN IMMEDIATE only over classifications
 with pending or failed actions, rather than materializing every processed
@@ -1428,6 +1516,18 @@ committed before validation succeeds. Exhaustion retains a real failed run and
 uses the existing work-summary retry policy; it never guesses an owner or
 changes a technical failure into `needs_human`. Memory-backed ownership still
 requires linked source provenance and an `episode_id`.
+
+Date source, actor and exact-precision validation uses the same pure validator
+before the domain transaction and during apply. Evidence errors enter the same
+bounded correction loop; unidentified source actors or invented dates remain
+invalid. Each semantic correction has a deterministic runtime operation key
+`<task_agent_run_id>:decision_repair.<round>`; the initial turn keeps its run ID.
+The router reuses a completed receipt only within that operation, so a changed
+correction prompt actually executes a new turn in the shared Task session.
+Corrections retain the original active Task run as their parent, not a Project;
+input reset, orphan recovery and expired-terminal recovery close their no-effect
+runtime attempts just as they close the initial turn. Existing memory and
+deadline backfill parent identities are unchanged.
 
 Both Cron-dispatched Work Summary consumption and the manual
 `process-work-items` command use the same renewable Task session lease. A

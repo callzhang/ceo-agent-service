@@ -1,6 +1,7 @@
 """Structured Attempt detail payloads for the React console."""
 
 import json
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 from urllib.parse import quote
@@ -24,7 +25,9 @@ def _permission_display(attempt: Any) -> str:
     return action or reason
 
 
-def _status_message(attempt: Any, attention: Any) -> tuple[str, bool]:
+def _status_message(
+    attempt: Any, attention: Any, *, rerun_block_reason: str = ""
+) -> tuple[str, bool]:
     status = str(getattr(attempt, "send_status", "") or "").strip().lower()
     if status == "sent":
         return "这条回复已发送，无需你操作。", False
@@ -35,6 +38,8 @@ def _status_message(attempt: Any, attention: Any) -> tuple[str, bool]:
     if status == "needs_human":
         return "这条事项等待你的决策。请阅读已核验事实后提交处理指令。", True
     if status == "failed":
+        if rerun_block_reason:
+            return rerun_block_reason, False
         return "这次处理没有完成，可重新处理当前事项。", False
     if attention is not None:
         return "系统正在处理这条事项。", False
@@ -142,6 +147,7 @@ def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
                         session_id and find_codex_session_path(session_id) is not None
                     ),
                     "status": normalize_display_value(getattr(item, "status", "")),
+                    "run_status": normalize_display_value(run.status),
                     "failure_code": normalize_display_value(getattr(item, "failure_code", "")),
                     "failover_permitted": bool(getattr(item, "failover_permitted", False)),
                     "transcript_start": int(getattr(item, "transcript_start", 0) or 0),
@@ -297,7 +303,7 @@ def _consumer_result_payload(
 
 
 def _email_payload(
-    attempt: Any, reply_task: Any, email_store: Any
+    attempt: Any, reply_task: Any, email_store_factory: Callable[[], Any] | None
 ) -> dict[str, Any] | None:
     """Return the email an email-channel Attempt acted on, and what it did.
 
@@ -340,8 +346,9 @@ def _email_payload(
         payload["candidate_source"] = normalize_display_value(
             parameters.get("candidate_source")
         )
-    if email_store is None:
+    if email_store_factory is None:
         return payload
+    email_store = email_store_factory()
     if classification_id.isdigit():
         classification = email_store.get_classification(int(classification_id))
         if classification is not None:
@@ -443,6 +450,8 @@ def _action_links(
     reply_task: Any,
     sent_reply: Any,
     wechat_delivery: Any,
+    *,
+    rerun_block_reason: str = "",
 ) -> dict[str, Any]:
     from app.audit_web import _sent_reply_has_recall_target
 
@@ -478,7 +487,8 @@ def _action_links(
             delivery_action_url = f"/api/console/wechat/deliveries/{delivery_id}/retry"
     terminal = terminal and not delivery_action_url
     return {
-        "can_rerun": status == "failed",
+        "can_rerun": status == "failed" and not rerun_block_reason,
+        "rerun_block_reason": rerun_block_reason,
         "can_recall": _sent_reply_has_recall_target(sent_reply),
         "can_submit_feedback": True,
         "rerun_url": f"/api/console/history/{int(attempt.id)}/rerun",
@@ -578,7 +588,7 @@ def _human_decision_payload(attempt: Any, terminal_run: Any) -> dict[str, Any] |
 
 
 def build_attempt_detail(
-    store: Any, attempt_id: int, *, email_store: Any = None
+    store: Any, attempt_id: int, *, email_store_factory: Callable[[], Any] | None = None
 ) -> tuple[int, dict[str, Any] | None]:
     """Build a rich, JSON-safe Attempt DTO without rendering HTML."""
     attempt = store.get_reply_attempt(attempt_id)
@@ -595,6 +605,7 @@ def build_attempt_detail(
         _attempt_reason_text,
         _needs_human_decision_options,
         _quality_warnings,
+        _attempt_rerun_block_reason,
         _route_failure_recovery_state,
         reply_history_attention,
     )
@@ -646,28 +657,31 @@ def build_attempt_detail(
     # cannot mask a later done/skipped result.
     from app.attempt_projection import project_attempt_status
 
-    attempt = attempt.model_copy(
-        update={
-            "send_status": project_attempt_status(
-                attempt, reply_task, current_agent_runs
-            )
-        }
-    )
     wechat_delivery = (
         store.get_wechat_delivery_for_task(reply_task.id)
         if reply_task is not None and str(attempt.channel or "") == "wechat"
         else None
+    )
+    attempt = attempt.model_copy(
+        update={
+            "send_status": project_attempt_status(
+                attempt, reply_task, current_agent_runs, delivery=wechat_delivery
+            )
+        }
     )
     attention = reply_history_attention(
         attempt,
         task=reply_task,
         decision_options=_needs_human_decision_options(attempt, agent_runs),
     )
+    rerun_block_reason = _attempt_rerun_block_reason(attempt, agent_runs)
     runtime_attempts = _runtime_payload(agent_runs, store)
     agent_sessions = _agent_sessions(attempt, agent_runs)
     feedback_token = _feedback_token_for_sent_reply(sent_reply)
     feedback_events = store.list_feedback_events_for_tokens([feedback_token]).get(feedback_token, [])
-    status_message, requires_decision = _status_message(attempt, attention)
+    status_message, requires_decision = _status_message(
+        attempt, attention, rerun_block_reason=rerun_block_reason
+    )
     # A sent-reply ledger is direct evidence that a DingTalk response reached
     # the provider. Prefer it to the task projection (which can simply be
     # "done") so the person viewing the Attempt is not left guessing whether
@@ -795,7 +809,7 @@ def build_attempt_detail(
                 or _attempt_detail_reply_text(attempt, sent_reply)
             ),
         },
-        "email": _email_payload(attempt, reply_task, email_store),
+        "email": _email_payload(attempt, reply_task, email_store_factory),
         "references": _references_payload(attempt),
         "feedback": {
             "reviewer_feedback": normalize_display_value(attempt.reviewer_feedback),
@@ -832,7 +846,12 @@ def build_attempt_detail(
             "result": _stored_json(attempt.calendar_response_result_json, {}),
         },
         "actions": _action_links(
-            attempt, agent_sessions, reply_task, sent_reply, wechat_delivery
+            attempt,
+            agent_sessions,
+            reply_task,
+            sent_reply,
+            wechat_delivery,
+            rerun_block_reason=rerun_block_reason,
         ),
         "agent_sessions": agent_sessions,
         "runtime_attempts": runtime_attempts,
