@@ -6,8 +6,9 @@ The approved design is `superpowers/specs/2026-10-04-project-centered-work-desig
 the implementation checklist is `superpowers/plans/2026-10-04-project-centered-work.md`.
 Tasks 1–7 are one release unit. Core integration is saved in `eeb69de9`; API/UI
 integration is saved in `707d41f2`. Neither commit has been deployed by this workflow.
-Task 8's deterministic evaluation scaffolding is being verified. Fixed native
-baseline/candidate comparison, real W39 validation, PR and release remain pending.
+Task 8's deterministic evaluation scaffolding is verified. The first fixed native
+baseline/candidate comparison ran on 2026-10-04 and did not pass; a candidate
+rerun after prompt clarification, real W39 validation, PR and release remain pending.
 Local tests and synthetic browser checks do not establish a live business effect.
 
 ## Fixed evidence and comparison procedure
@@ -113,9 +114,9 @@ Frozen SHA-256 values for this scaffold:
 
 The source-only digest is computed with
 `jq -cS '[.cases[]|{case_id,source_inputs,work_item}]'` followed by SHA-256.
-The review-stage fixture changes touched offline expectations only, before
-native execution. Each future native artifact must record its clean committed
-code revision and actual loaded Skill hash rather than assume these values.
+The review-stage fixture changes touched offline expectations only, before the
+first native execution. See the comparison addendum below; each native artifact
+records its clean committed code revision and actual loaded Skill hash.
 
 ## Post-main-merge candidate smoke (2026-10-04)
 
@@ -129,7 +130,7 @@ After the merge, the 15 directly affected Task/Project/evaluator/API test files
 passed (**1202 passed / 196.01s**); the two-file Task 8 evaluator/inspector
 check passed (**25 passed / 1.94s**). These verify deterministic behavior only.
 
-A one-case native candidate smoke used the planned `codex_oauth` /
+A one-case native candidate smoke initially used the planned `codex_oauth` /
 `gpt-5.6-luna` route, 900-second total / 300-second idle limits, concurrency 1,
 and the candidate's CI Skill root. The Codex CLI was present (`0.154.0`) and
 reported logged in, but no Task Agent turn reached the model: the production
@@ -138,9 +139,10 @@ construction identified the missing required environment variable
 `MEMORY_CONNECTOR_URL`; `CONNECTOR_API_KEY` is also absent from the local shell,
 the production `.env`, and the launchd plist. The replay recorded a failed run
 with no runtime attempts and no Project, Task, or Attention rows. This is a
-runtime-configuration failure, not a native semantic result. The fixed native
-baseline/candidate comparison therefore remains unrun; do not treat this smoke
-as a candidate pass or failure on the fixture expectation.
+runtime-configuration failure, not a native semantic result. At that point, the
+fixed native baseline/candidate comparison remained unrun; do not treat this
+configuration-blocked smoke as a candidate pass or failure. The subsequent full
+comparison and MCP configuration resolution are recorded below.
 
 The pre-existing W39 migration blocker is unchanged: the frozen database has
 the unrelated `meeting_alignment_runs` row 2298 → missing
@@ -153,6 +155,45 @@ Earlier implementation checks: 14 core files / 636 passed; multisource plus
 Project readback / 161 passed; API four files / 25 passed; frontend eight files /
 86 passed and production build passed. Browser checks used synthetic fixtures,
 light/dark and 1600/433/320 CSS-pixel widths, not production business data.
+
+## Native MCP configuration and first fixed comparison (2026-10-04)
+
+The earlier smoke's MCP-manifest blocker was resolved without copying credentials:
+the isolated replay process explicitly used the service's existing
+`data/config/service-mcp.json` through `CEO_SERVICE_MCP_CONFIG_PATH`. The manifest
+uses native CLI OAuth configuration for its connected MCP servers. A read-only
+preflight verified the manifest and the `codex_oauth` / `gpt-5.6-luna` route;
+no production database was opened or changed.
+
+The full 19-case fixture was then replayed sequentially on fresh isolated SQLite
+databases, using the same original inputs, model, route, timeout and concurrency
+for the pinned baseline (`da368453`) and candidate (`f45a7a7a`), with each side's
+own CI Skill root. The native database artifacts are retained under
+`/tmp/project-centered-eval.NFdB25` for readback. Baseline: **0/19** cases passed
+the new Project-centered contract; old-schema/missing-Project-storage failures
+were common and are expected limitations of that baseline, not isolated evidence
+of a semantic regression. Candidate before the prompt-contract clarification:
+**2/19** passed all current fixture assertions (`single-report-two-projects`,
+`unconfirmed-project`). This is not a release pass.
+
+The failed candidate cases exposed two separate issues. First, the fixture expects
+the short title `甲客户一期交付` even in source sentences that say
+`甲客户一期交付项目`, while the current prompt explicitly asks the Agent to
+preserve the authoritative source title; title-dependent context and assessment
+assertions then cascade-fail. The fixture/source naming contract needs review;
+the oracle was not changed after seeing the output. Second, native output
+validation repeatedly rejected assessment selectors containing both
+`anchor_id` and `project_decision_index`, Task updates that set status/relevance
+without `transition=update_fields`, and assessment support lists containing
+`skip` decisions. The Pydantic validators are intentional; the prompt previously
+did not state these exact constraints clearly enough.
+
+The Task Agent prompt and validation-repair prompt now state those existing
+contracts explicitly. Regression assertions were added and the full
+`tests/test_task_agent.py` file passed (**225 passed / 14.64s**), with Ruff and
+`git diff --check` clean. The 19-case candidate run against this clarified prompt
+is still pending; the earlier 2/19 result remains the only current native
+comparison evidence. The W39 foreign-key orphan blocker below is unchanged.
 
 ## Real W39 and release blockers
 

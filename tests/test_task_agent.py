@@ -443,6 +443,11 @@ def test_independent_project_prompt_and_skill_have_one_current_contract():
     assert "Project can have zero Tasks" in prompt
     assert "suggestion" in prompt
     assert "suggested_owner_name" in prompt
+    prompt = " ".join(prompt.split())
+    assert "For project_assessments, use exactly one selector" in prompt
+    assert "Never include a skip decision in decision_indexes" in prompt
+    assert "status and business_relevance may only change through update_fields" in prompt
+    assert "They remain top-level fields" in prompt
 
 
 def test_independent_project_process_marks_project_only_input_done(tmp_path):
@@ -1086,6 +1091,9 @@ def test_task_result_validation_repair_prompt_lists_field_errors_and_rules():
     assert "Any non-empty owner_name or owner_user_id requires owner_evidence" in prompt
     assert "memory_recall" in prompt
     assert "live directory read" in prompt
+    assert "For project_assessments, use exactly one selector" in prompt
+    assert "Never include a skip decision in decision_indexes" in prompt
+    assert "status and business_relevance may only change through update_fields" in prompt
     assert (
         "A source path may appear only in an evidence field whose key is "
         "exactly source or source_ref"

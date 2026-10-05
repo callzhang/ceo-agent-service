@@ -4,6 +4,7 @@
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
+| codex-native-project-eval-contract | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: app/task_agent.py (Task Agent protocol wording only), tests/test_task_agent.py, docs/task-project-centered-validation.md, docs/agent-claims.md | Diagnose and clarify the native TaskAgent output contract exposed by the 19-case Project-centered eval: mutually exclusive Project assessment selectors, valid supporting Task decisions, and status/relevance transitions; record fixed native results. No runtime validation, schema, production data, push, or deploy change. | 2026-10-04 |
 | codex-project-attention-assessment-plan | Isolated task-attention-multisource worktree: docs/superpowers/plans/2026-10-02-task-project-attention-assessment.md and approved spec metadata only | Record Derek's approval and the sequential implementation/evaluation steps. Parent core claim owns runtime files; delegate one writer at a time. | 2026-10-02 |
 | codex-task2b-stored-assessment-domain | Isolated /Users/derek/.codex/worktrees/task-attention-multisource/ceo-agent-service: app/task_agent.py; tests/test_task_agent.py; docs/architecture.md and docs/runtime-mechanism.md (Task/Attention stored-validation and applied-mapping paragraphs only); docs/agent-claims.md | Delegated Task 2b only: TDD regressions and stored Project/Task/card provenance validation plus actual applied decision identity mapping. No Task 3 receipts, native eval, deploy, or live data. | 2026-10-02 |
 
