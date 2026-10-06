@@ -42,5 +42,5 @@ Files: frontend/src/api/promptPreview.ts (new), frontend/src/pages/RuntimePrompt
 - [x] 独立 spec review 后再 code review，修复问题。用隔离 fixture 页面检查 light/dark、窄屏、长 prompt、历史/未知状态；不使用生产发送验收。
 - [x] 更新 docs/architecture.md 与 runtime-mechanism.md 的实际行为及 source/snapshot 限制，同提交保存获准 spec/plan。
 - [x] 执行精确相关 Python/前端测试与 lint；不在开发主树/生产跑全套。
-- [ ] 使用 PR 推送 reviewed commit，附验证范围；取得必要固定行为对照证据前不声称通用改善。
+- [x] 使用 PR 推送 reviewed commit，附验证范围；取得必要固定行为对照证据前不声称通用改善。
 - [ ] 按项目 `python -m app.deploy` 的空闲等待与健康机制发布已批准变更，核对 PID/healthz/queues/Attention/History 与 Settings 回读；若发布等待或证据不足，继续跟进并如实报告边界。
