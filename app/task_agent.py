@@ -454,6 +454,7 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "- Every current-source citation must be an exact contiguous quote from the immutable Work Item (a visible raw range or one decoded JSON string leaf), with the exact current source_ref and null signal_id. Project registration.source_excerpt must itself quote the current passage that defines that Project; never paraphrase it or quote a different source. Assess every Project separately when a source contains multiple Projects.\n"
         "- Historical Project/context/Attention evidence must use the exact quote and source_ref from the delivered original observed Signal. Do not reconstruct or paraphrase an earlier statement from a later summary. If the original quote is unavailable, omit that historical claim, use only verified current evidence, and state what cannot be confirmed.\n"
         "- For project_assessments, use exactly one selector: if this output has a matching Project decision, use its project_decision_index; otherwise use anchor_id for a known registered Project; use neither only for an unresolved Project clue with insufficient_evidence. Never provide both anchor_id and project_decision_index.\n"
+        "- Include one matching assessment for every project_decisions index: project_decisions[i] must have exactly one project_assessment whose project_decision_index is i (or whose anchor_id matches that existing Project). Do not omit a report row because another Project is also assessed.\n"
         "- Never include a skip decision in decision_indexes; supporting indexes may identify only a real candidate, create, or update Task decision that belongs to this Project and directly supports this specific Project assessment. A Task being linked to the Project is not enough: completed or unrelated Project Tasks are not members.\n"
         "- When retaining an existing_attention_id, copy supporting membership only from the actual current_project_attention card. If its delivered task_ids are empty, keep assessment.task_ids and decision_indexes empty; do not add a Task being completed or updated in this turn, or another same-Project Task, to that existing card.\n"
         "- project_link_evidence requires a Project selector. Include evidence only when task.project selects the registered Project; for a standalone Task omit both fields.\n"
@@ -470,12 +471,14 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "- For a display-only suggestion, keep owner_name/owner_user_id empty, owner_evidence empty, and owner_kind/owner_relation unset (null or omitted); also leave formal_basis, acceptance fields, dates, status and business_relevance unset. Put a proposed person only in suggestion.suggested_owner_name/user_id, backed by the cited Project responsibility.\n"
         "- Return every list-valued field as an array; use [] when empty, never null (including decision_indexes, task_ids, todo_changes, follow_up_changes and search_trace).\n"
         "- A concrete action and expected result stated by the current source is a source-origin Task, even if its metadata does not authorize a formal assignment. A named person responsible to verify a specific matter and report back is an action; a bare duty-area description such as 'responsible for reconciliation' is not. Preserve a clearly named responsible person as source-reported owner evidence without inferring acceptance; do not relabel that human-stated action as an Agent suggestion. Use suggestion only when the action itself is inferred and absent from the source.\n"
+        "- When a needs_attention Project has a material unresolved impact and a directly relevant saved Project responsibility, create one display-only candidate next-step Task for that role even when the current message states no assignment or explicit action. Infer a concrete action from the risk; do not say there is no action merely because the source does not spell out the next step. An existing Task suppresses that suggestion only if it addresses the same unresolved risk; a completed or unrelated Project deliverable does not.\n"
         "- A named person's assignment remaining unaccepted is not by itself a material Project risk when current evidence shows the work is progressing and no meaningful impact or dispute; preserve assigned_unaccepted without generating Attention solely for that status.\n"
         "- A bare responsibility clause (for example, a person being responsible for an area) is ProjectContext only, not a source Task or candidate. Create a Task only for an explicitly stated, independently completable deliverable/action, or a separate actionable suggestion required by an evidenced material Project risk.\n"
         "- The clause X负责Y by itself remains a Project responsibility when Y is only a duty area (for example, 王五负责商务对账). When Y names a specific independently completable action and result (for example, 李四负责核实客户付款排期并反馈), preserve it as a source-origin Task; lack of an authorized meeting action record makes it a candidate, not a formal assignment.\n"
         "- When overall-owner evidence conflicts, keep overall_owner=null and record the competing claims and challenge as sourced facts. State plainly in a Project fact that the owner remains in conflict; do not merely imply the conflict. Do not move candidate overall owners into responsibilities; that list contains only independently evidenced, distinct work responsibilities. Preserve unchanged responsibilities such as a separate deliverable owner.\n"
         "- A person explicitly identified as the Project's overall accountable owner belongs in overall_owner, not responsibilities. In Chinese, an explicit description such as 张三总负责交付验收 denotes that role; keep 总 out of the person's name.\n"
         "- Before suggesting another next-step Task for a Project risk, check current linked Tasks. If an existing actionable Task already addresses that risk, use its existing Task ID as the supporting next step and do not add a duplicate monitoring/evaluation suggestion.\n"
+        "- For project_link_evidence, when the Project title and Task action occur in different parts of the current source, cite one exact contiguous span from the title occurrence through the action and include the intervening source text verbatim; never splice nonadjacent excerpts into one quotation.\n"
         "- Any non-empty owner_name or owner_user_id requires owner_evidence. "
         "Normally it has source_ref and excerpt containing every named person. "
         "When authoritative memory or session context is explicitly bound to "
@@ -610,6 +613,10 @@ Apply the Skill before returning:
   for the matching Project decision in this output, or neither only for an unresolved
   Project clue with insufficient_evidence. Never provide both anchor_id and
   project_decision_index.
+  Include one matching assessment for every project_decisions index:
+  project_decisions[i] must have exactly one assessment with project_decision_index=i
+  (or an anchor_id matching that existing Project). Do not omit a report row
+  because another Project is also assessed.
 - Actual human work requires its assignment/commitment proof. For inferred next steps,
   use record_candidate or existing-ID update_fields with suggestion:
   suggested_owner_name/user_id plus responsibility_evidence and basis_evidence.
@@ -627,12 +634,22 @@ Apply the Skill before returning:
   without inventing a task, owner, monitoring item or deadline. Do not create a
   suggestion for routine progress, a settled/resolved fact, or an ambiguous clue
   that does not establish a material impact.
+  When a needs_attention Project has a material unresolved impact and a directly
+  relevant saved Project responsibility, create one display-only candidate next-step
+  Task for that role even when the current message states no assignment or explicit
+  action. Infer a concrete action from the risk. An existing Task suppresses this
+  suggestion only if it addresses the same unresolved risk; a completed or unrelated
+  Project deliverable does not.
   Return every list-valued field as a JSON array; use `[]` when empty and never
   `null` (including `decision_indexes`, `task_ids`, `todo_changes`,
   `follow_up_changes`, and `search_trace`).
   When the current source itself states a concrete action and expected result,
   record it as a source-origin Task; do not relabel that human-stated action as an
   Agent suggestion just because its metadata does not support a formal assignment.
+  For project_link_evidence, when the Project title and Task action occur in
+  different parts of the current source, cite one exact contiguous span from the
+  title occurrence through the action and include the intervening source text
+  verbatim; never splice nonadjacent excerpts into one quotation.
   A named person responsible to verify a specific matter and report back is an
   action; a bare duty-area description such as “responsible for reconciliation” is not.
   Preserve a clearly named responsible person as source-reported owner evidence

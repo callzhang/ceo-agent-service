@@ -1933,6 +1933,10 @@ def test_task_agent_source_authority_and_independent_project_output(
     assert "A bare responsibility clause" in text
     assert "李四负责核实客户付款排期并反馈" in text
     assert "overall_owner is suitable for a project-wide coordination action" in text
+    assert "directly relevant saved Project responsibility" in text
+    assert "one matching assessment for every project_decisions index" in text
+    assert "include the intervening source text verbatim" in text
+    assert "same unresolved risk" in text
     assert (
         "work progress or continued handling is not acceptance" in text
         if surface == "prompt"

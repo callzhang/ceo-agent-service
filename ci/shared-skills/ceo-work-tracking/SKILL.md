@@ -44,6 +44,10 @@ to make business judgments.
    assessment for each Project row; one Project's assessment does not cover
    another. A registration quote must be an exact contiguous excerpt from the
    immutable current source that defines that Project.
+   For `project_link_evidence`, when the Project title and Task action occur in
+   different parts of the source, cite one exact contiguous span from the title
+   through the action and include the intervening source text verbatim. Never
+   splice nonadjacent excerpts into one quotation.
 4. `ProjectContext` has goal, scope, one `overall_owner` with the responsible
    result, other `responsibilities`, and source-backed facts. Unknown overall
    owner is null (待明确), not a concatenation of people or several overall owners.
@@ -187,6 +191,10 @@ a parseable accepted due date is still required for a DingTalk TODO mirror.
 Every relevant Project/clue in the current source and current Tasks' confirmed
 Project links gets one assessment, whether or not this result emits a Project
 update. Exact duplicate titles and repeated anchors share one judgment.
+Include one matching assessment for every project_decisions index:
+every `project_decisions[i]` must have exactly one matching assessment with
+`project_decision_index: i` (or the matching existing `anchor_id`). Do not omit
+one report row because another Project is also assessed.
 Use [] only when no relevant Project/clue exists and explain it in update_summary.
 Assess bounded retrieved context, not the whole company or all history.
 
@@ -211,6 +219,12 @@ include it only when it directly supports this specific Project assessment;
 completed or unrelated Project Tasks are not members. Keep current_state as Project-level risk facts, not per-Task action summaries, why_attention as
 inference and ceo_action as the relevant action or observation. For watch it may
 say 当前无需你处理 and name what outcome to watch. 需关注 does not imply 需介入.
+When a Project needs Attention because of a material unresolved impact and a
+directly relevant saved Project responsibility exists, create one display-only
+candidate next-step Task for that role even if the current message does not spell
+out an assignment or action. Infer the concrete action from the risk. An existing
+Task suppresses this suggestion only if it addresses the same unresolved risk; a
+completed or unrelated Project deliverable does not.
 
 A retained existing_attention_id claims that card's original proof, not an update
 target. Cite at least one stored assessment_json.evidence triple unchanged and

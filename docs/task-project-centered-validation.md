@@ -538,3 +538,40 @@ native replay. Focused tests passed after the prompt/fixture changes, but the
 fixed semantic gate remains open. The earlier 05fa0c69 interpretation that
 forbade a project-wide suggestion without a saved specific responsibility was
 too narrow and is superseded by the clarified single-overall-owner rule above.
+
+### Full v4 replay on 3ae6e33a (2026-10-06)
+
+The 19-case serial native replay used fresh temporary SQLite databases and the
+same `codex_oauth` / `gpt-5.6-luna` route, 900-second total timeout, 300-second
+idle timeout, concurrency 1 and Skill hash recorded in each result. It passed
+15/19. The previously observed `existing-task-update`, `peer-not-auto-member`
+and `repeated-same-source` cases passed after the prompt/fixture changes.
+
+Four cases remain unresolved:
+
+- `role-based-unnamed-suggestion`: material payment-date/cash impact was assessed
+  and the saved Project role `王五负责商务回款` was preserved, but no display-only
+  candidate next step was emitted.
+- `single-report-two-projects`: the model emitted two Project decisions and
+  Tasks for both report rows, but after schema feedback emitted an assessment
+  only for the first Project; the correction turn failed the same strict contract.
+- `distinct-deliverables`: both independent source Tasks and Project evidence
+  were extracted, but the second Task's `project_link_evidence` spliced the
+  Project-definition sentence and later action sentence, omitting intervening
+  source text. The exact-source validator correctly rejected that output.
+- `completed-task-risk-persists`: the completed acceptance-material Task was
+  correctly excluded from the existing risk card's empty membership, but the
+  model emitted no new payment-date suggestion for the still-active Project risk.
+  The oracle's former expectation of one Attention member contradicted the
+  preserved empty-membership rule; it is corrected to zero while retaining the
+  separate candidate Task expectation.
+
+The candidate run is at `/private/tmp/project-centered-v11-full-3ae6e33a/results.jsonl`.
+Follow-up prompt/Skill rules and regression assertions now explicitly require a
+candidate when a material risk maps directly to a saved Project responsibility,
+one assessment for each Project decision index, and contiguous unsynthesized
+Project-link quotations. Focused prompt-contract tests pass. Those changes have
+not yet been validated by another native replay; do not treat 15/19 as passing.
+The clean W39 before-migration snapshot remains unavailable, so the data
+comparison/idempotency and release gates remain blocked independently of this
+semantic replay.
