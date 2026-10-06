@@ -192,7 +192,11 @@ Assess bounded retrieved context, not the whole company or all history.
   name the missing facts, do not invent a risk or an official Project.
 
 A real Project can need Attention with zero Tasks. Put `attention_proposal` once
-in its assessment, never copy it onto Task decisions. Optional decision_indexes
+in its assessment, never copy it onto Task decisions. Create a display-only Task
+suggestion only when a concrete next action is warranted and a saved, sourced
+Project responsibility supports the suggested person and duty. If no responsibility
+supports an actionable owner, keep the risk in Attention without inventing a task,
+owner, monitoring item or deadline. Optional decision_indexes
 index Task decisions; task_ids name real existing confirmed members, not guessed
 IDs or all Project peers. A Task being linked to this Project is not enough:
 include it only when it directly supports this specific Project assessment;

@@ -615,11 +615,13 @@ Apply the Skill before returning:
   typed dates and status remain unset for a pure suggestion. Keep `owner_kind` and
   `owner_relation` unset, with empty `owner_evidence`; put the proposed person only
   in `suggestion.suggested_owner_name/user_id`. It is display-only.
-  An unresolved material Project risk needs an actionable next step: create one
-  display-only Task suggestion linked to that Project and derive its suggested
-  person from the saved responsibility that best matches the work. Do not create
-  that suggestion for routine progress, a settled/resolved fact, or an ambiguous
-  clue that does not establish a material impact.
+  A Project risk may need Attention without a Task. Create a display-only Task
+  suggestion only when a concrete next action is warranted and a saved, sourced
+  Project responsibility supports the suggested person and relevant duty. If no
+  responsibility supports an actionable owner, keep the Project risk in Attention
+  without inventing a task, owner, monitoring item or deadline. Do not create a
+  suggestion for routine progress, a settled/resolved fact, or an ambiguous clue
+  that does not establish a material impact.
   Return every list-valued field as a JSON array; use `[]` when empty and never
   `null` (including `decision_indexes`, `task_ids`, `todo_changes`,
   `follow_up_changes`, and `search_trace`).

@@ -453,7 +453,8 @@ def test_independent_project_prompt_and_skill_have_one_current_contract():
     assert "When promoting a suggestion, omit the suggestion field" in prompt
     assert "requires that Project selector" in prompt
     assert "return the complete current ProjectContext whenever new facts or roles are learned" in prompt
-    assert "unresolved material Project risk needs an actionable next step" in prompt
+    assert "A Project risk may need Attention without a Task" in prompt
+    assert "saved, sourced Project responsibility supports the suggested person" in prompt
     assert "meeting action item is an actual assignment only when" in prompt
     assert "assignment_authorized=true" in prompt
     assert "A Project role or responsibility is not itself a Task" in prompt

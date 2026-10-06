@@ -8,9 +8,12 @@ The fixed fixture is now version 4: source titles follow the source's full forma
 name; source records carry the runtime's actual AI Minutes action-item or
 authorized-assignment metadata; and report cases include an exact registry row.
 Task Agent prompt and shared Skill now require a
-complete ProjectContext snapshot on new facts, an actionable display-only next
-step for material unresolved Project risks based on saved responsibilities, and
-no such suggestion for routine/settled/ambiguous evidence. Focused verification
+complete ProjectContext snapshot on new facts, one assessment per relevant
+Project (including each separate report row), exact current-source registration
+quotes, and no Attention solely because an assignee has not accepted while work
+is progressing. A material Project risk can be watched without a Task; a
+display-only next-step suggestion is allowed only when saved Project
+responsibilities support its concrete action and proposed owner. Focused verification
 passed **742 tests**, Ruff and `git diff --check`; a native smoke passed the
 role-based suggestion case. The full v2 native replay later scored **10/19**;
 its original artifact is retained under
@@ -24,6 +27,20 @@ missing overall owner alone (`not_needed`) from an explicit disputed transfer
 (`needs_attention`), accepts a material-risk display-only next step when a sourced
 responsibility fits, and keeps the existing-card membership assertion strict.
 The full fixed v4 native comparison remains pending.
+
+### 2026-10-05 native rerun on 89e401e0
+
+The candidate completed the native runtime-route probe and began the fixed v4
+suite on fresh temporary databases with `gpt-5.6-luna` via `codex_oauth`, a
+loaded CI Skill, 900-second total timeout, 300-second idle timeout, and
+concurrency 1. The first case completed but failed the frozen oracle: the Agent
+invented a source Task to confirm a payment date despite no saved Project duty
+or source action, then attached that Task to a zero-Task Attention case. This
+was not a runtime availability or schema failure. The prompt and Skill were
+clarified so Project risk may stand alone, and inferred Task suggestions require
+a saved, sourced Project responsibility that supports both the action and its
+proposed owner. A new clean-commit full 19-case run is required; no results from
+the earlier d2450fbf run or this stopped partial replay count for that candidate.
 
 ### Initial full v4 native candidate (2026-10-05)
 
