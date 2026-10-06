@@ -409,7 +409,8 @@ Task 7 执行记录：API 新独立 ProjectContext 回归先 5 RED 后 GREEN，�
 - [x] 旧/新对照必须具有相同的原始职责/项目证据，不能只给 candidate 额外的人工分工结论。需要形成先前上下文时，对两边按同一顺序输入原始会议与当前消息；扩展现有 replay 为按 fixture 的 `source_inputs` 顺序调用原来的单次处理函数，各次保存实际结果。单元测试可直接 seed 新 context，native 业务对照不能以这种 seed 替代原文理解；旧能力不支持的新结果按明确的预期差异记录。
 - [x] `tests/test_task_project_centered_eval.py` 先用错误持久化结果测试 oracle 确实拒绝：错误总负责、建议伪装正式、漏掉第二项目、空 Task 卡片未真正保存、重复副本、外发 intent 增加。再给正确结果验证接受。读取 domain 行而非模型总结作为实际结果。
 - [x] 扩展只读检查的 context 指标：独立来源数、Signal 数、实际可见范围、完整/可见字符数；按项目列出识别、判断、上下文/任务/关注实际应用结果。原文项目未被识别的遗漏仍由固定人工预期集合检查，不声称程序能从 Agent 自己的输出证明零遗漏。
-- [ ] 运行 `python -m pytest -q tests/test_task_project_centered_eval.py tests/test_inspect_task_attention.py`，预期 GREEN；冻结代码与 CI Skill 哈希，baseline/candidate 同样例、模型、路由、时间预算和并发。
+- [x] 运行 `python -m pytest -q tests/test_task_project_centered_eval.py tests/test_inspect_task_attention.py`，预期 GREEN；冻结当前候选代码、CI Skill 与 fixture 哈希。2026-10-06 在 `689869a6` 上通过 27 项；哈希记录见 `docs/task-project-centered-validation.md`。
+- [ ] 固定 baseline/candidate 同样例、模型、路由、时间预算和并发，完成修复后原生比较；这项不由离线单测或直接 CLI smoke 替代。
 - [ ] 使用现有 replay 参数运行，每个候选库是已确认的数据库副本；命令形状由现有入口支持，真实路径在运行前填入验证记录：
 
 ```text

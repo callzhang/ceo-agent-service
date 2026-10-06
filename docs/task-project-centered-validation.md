@@ -704,3 +704,33 @@ comparison against the missing pristine pre-migration snapshot: the source
 state was reconstructed from the retained migrated artifact. Keep that boundary
 explicit. The temporary 3.2 GB reconstructed copy was removed after recording
 the result; the retained W39 artifact and production database were not modified.
+
+### Current focused verification after assessment-receipt prompt fix (2026-10-06)
+
+At clean candidate `689869a6bb65bf510e83213925a506deb4374365`, the focused
+offline evaluator/diagnostic tests completed **27 passed**:
+`tests/test_task_project_centered_eval.py` and
+`tests/test_inspect_task_attention.py`. A separate rerun of the Task Agent,
+shared Skill, and evaluator contract tests completed **253 passed**; Ruff and
+`git diff --check` passed. These runs verify the prompt contract and evaluator
+locally, not the native model behavior.
+
+Frozen candidate artifacts:
+
+- `app/task_agent.py`: `4e1b1a34fa7b8002be7b036b706a2014421964ff695ffe38dbbcf4260f46f74d`
+- `ci/shared-skills/ceo-work-tracking/SKILL.md`:
+  `9b171396738f800dae398d356e9c8f4bf9695ef8e9cbf590981a66426aa2c9b8`
+- `tests/fixtures/task_project_centered_v4.json`:
+  `8ef185f96117fa71523a152d92d7fe9846aba4662d58a5a05d7887f11eccffef`
+
+The formal fixed native replay remains unverified. This shell cannot resolve
+the service MCP manifest because these non-production environment variables are
+not configured: `MEMORY_CONNECTOR_URL`, `CONNECTOR_API_KEY`,
+`MEMORY_CONNECTOR_AUTH_TYPE`, and `MEMORY_CONNECTOR_CONTENT_TYPE`. The routed
+probe failed before a Task Agent attempt; a direct CLI smoke is not equivalent.
+Do not inject production credentials or remove MCP from the candidate to claim a
+formal pass. Next steps remain: provide a safely initialized non-production
+service-MCP environment; run the full fixed 19-case replay; and only then finish
+the W39/business, PR, deployment and production-readback gates. CRM customer
+implementation also awaits Derek's review of the written addendum in the
+design specification.
