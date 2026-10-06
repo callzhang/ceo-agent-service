@@ -1251,6 +1251,15 @@ errors still expose only the existing approved error fields; command argument
 redaction, retry policy and action authorization are unchanged. This improves
 future failure evidence and does not rewrite already-truncated historical runs.
 
+### DingTalk Message Text
+
+The current DingTalk `im.message-list.v1` ledger permits a null `text` value.
+The message adapter projects that absence as an empty string, preserving the
+original message ID, conversation, sender and complete raw payload. It neither
+discards the message nor invents text or a delivery receipt. Nonstring values
+other than null still fail model validation. Meeting group discovery can read
+the remaining discussion evidence without treating absent text as evidence.
+
 # Email SQLite Contention Diagnostics
 
 EmailStore and AutoReplyStore report connection contexts lasting at least one second, including

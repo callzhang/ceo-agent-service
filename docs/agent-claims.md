@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+<!-- codex-dingtalk-null-content-20261006: isolated dingtalk-null-content worktree; app/dws_client.py (im.message-list.v1 text projection only), tests/test_dws_message_ledger_content.py, docs/runtime-mechanism.md, CHANGELOG.md. Preserve nullable provider text as an empty text projection with original identity/raw payload intact. No recipient, send, retry, policy, migration or message-body synthesis change. -->
+
 <!-- codex-daily-report-folder-receipt-20261006: isolated daily-report-folder-receipt worktree; app/agent_cli.py (_write_bound_report_document return payload only), tests/test_agent_cli_report_receipt.py, docs/runtime-mechanism.md, CHANGELOG.md. Return the already-resolved provider folder metadata so the daily-report delivery has its required URL. No URL synthesis, extra provider write, prompt/policy, lifecycle, retry or authorization change. -->
 
 <!-- codex-queue-failure-index-read-20261006: same isolated worktree; app/audit_web.py (Attention source ID selection and queue latest-error reads only), tests/test_attention_query_plan.py, docs/runtime-mechanism.md, CHANGELOG.md. Extend the measured covering-index fix to source queues and latest failure diagnostics; no schema, lifecycle, cache, retry or policy changes. -->

@@ -9,6 +9,12 @@
 
 ## Unreleased
 
+- 2026-10-06: DingTalk's current message ledger can return null text for a
+  message with no rendered body. Its text projection now stays empty while
+  retaining the original message identity and raw payload, so one textless
+  message no longer prevents reading an entire meeting candidate group.
+  Nontext values remain invalid; recipient and delivery rules are unchanged.
+
 - 2026-10-06: Daily report document receipts now include the exact folder
   metadata already resolved from the provider. This preserves the folder URL
   needed by the notification without synthesizing links, adding writes, or
