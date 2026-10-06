@@ -15243,6 +15243,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         *,
         expected_execution_generation: str,
         available_at: str = "",
+        refund_attempt: bool = True,
     ) -> None:
         if not expected_execution_generation.strip():
             raise ValueError("expected_execution_generation must be non-empty")
@@ -15251,14 +15252,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 """
                 update reply_tasks
                 set status='pending',
-                    attempts=max(attempts - 1, 0),
+                    attempts=max(attempts - ?, 0),
                     locked_at=null,
                     available_at=?,
                     error=?,
                     updated_at=current_timestamp
                 where id=? and status='processing' and execution_generation=?
                 """,
-                (available_at, error, task_id, expected_execution_generation),
+                (int(refund_attempt), available_at, error, task_id, expected_execution_generation),
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")

@@ -805,7 +805,7 @@ def test_retry_reclaims_same_execution_source(tmp_path):
             if calls == 1:
                 return SimpleNamespace(status="failed_retryable", final_run_id=0,
                     summary="retry", error=AgentError(code="temporary", retryable=True),
-                    audit_result=None, consumer_result=None, retry_after_seconds=0.0)
+                    audit_result=None, consumer_result=None, execution_result=None, retry_after_seconds=0.0)
             run_claim = store.claim_agent_run(
                 task.id, task.execution_generation, role=AgentRole.CONSUMER,
                 proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
@@ -824,7 +824,9 @@ def test_retry_reclaims_same_execution_source(tmp_path):
     envelope, guard = claim(adapter, int(execution_id), "first")
     consumer(envelope, guard)
     guard.complete(NOW)
-    envelope, guard = claim(adapter, int(execution_id), "second")
+    due = datetime.strptime(store.get_reply_task(int(execution_id)).available_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+    consumer._now = lambda: due
+    envelope, guard = claim(adapter, int(execution_id), "second", now=due)
     consumer(envelope, guard)
     assert store.get_reply_task(int(execution_id)).status == "done"
     assert store.get_scheduled_task_run(run.id).execution_id == execution_id
@@ -937,3 +939,100 @@ def test_a_scheduled_audit_that_keeps_failing_is_spaced_then_stops_failed(tmp_pa
     # The concrete cause the Agent gave stays readable on the Attempt.
     assert "proposal_already_executed" in attempts[0].audit_summary
     assert attempts[0].send_status == "failed"
+
+
+@pytest.mark.parametrize('provider_state', ['uncertain', 'confirmed_no_effect'])
+def test_scheduled_system_failures_use_three_persisted_attempts_without_reauthoring(tmp_path, provider_state):
+    from app.system_executor import SystemExecutor, ActionOutcome
+    store, scheduled_run, options = fixture(tmp_path)
+    task_id = int(dispatch(store, scheduled_run, options).execution_id)
+    proposed = proposal('Exact plan').model_copy(update={'proposal':proposal('Exact plan').proposal.model_copy(update={
+        'actions': (proposal('Exact plan').proposal.actions[0].model_copy(update={'capability':'test', 'operation':'notify', 'target':{'id':'exact-target'}, 'payload':{'content':'exact reviewed body'}}),)})})
+    class Handler:
+        sends = 0
+        reads = 0
+        def dispatch(self, action, **kwargs):
+            self.sends += 1
+            return ActionOutcome(provider_state, {'reason':'provider outcome'})
+        def reconcile(self, action, **kwargs):
+            self.reads += 1
+            return None
+    handler = Handler()
+    orchestrator = AgentOrchestrator(store=store, consumer=Consumer(store, proposed), audit=Audit(store, 'approve'),
+        system_executor=SystemExecutor(store, {('test','notify'):handler}, owner='system'))
+    clock = {'now':NOW}
+    consumer = ScheduledAgentConsumer(store=store, option_service=options, orchestrator_factory=lambda built:orchestrator, now=lambda:clock['now'])
+    adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda pid:False)
+    for attempt in range(1,4):
+        envelope, guard = claim(adapter, task_id, f'owner-{attempt}', now=clock['now'])
+        consumer(envelope, guard)
+        guard.complete(clock['now'])
+        task = store.get_reply_task(task_id)
+        assert task.attempts == attempt
+        if attempt < 3:
+            assert task.status == 'pending'
+            assert task.available_at
+            clock['now'] = datetime.strptime(task.available_at,'%Y-%m-%d %H:%M:%S').replace(tzinfo=UTC)
+        else:
+            assert task.status == 'failed'
+            assert adapter.claim(clock['now']+timedelta(days=1), owner='extra', owner_pid=42, lease=timedelta(minutes=5)) is None
+    assert len(store.list_agent_runs_for_task_generation(task_id,task.execution_generation)) == 2
+    candidate = store.current_reviewed_candidate(task_id,task.execution_generation)
+    execution = store.get_candidate_execution(candidate['id'])
+    action = store.list_candidate_action_attempts(execution['id'])[0]
+    assert action['status'] == provider_state
+    assert action['external_action_key']
+    assert handler.sends == (1 if provider_state=='uncertain' else 3)
+    assert handler.reads == (2 if provider_state=='uncertain' else 0)
+
+
+
+@pytest.mark.parametrize('authorization_wait', [False, True])
+def test_waiting_for_system_claim_is_spaced_without_consuming_failure_budget(tmp_path, authorization_wait):
+    from app.agent_orchestrator import OrchestrationResult
+    from app.agent_contracts import SystemExecutionResult
+    store, run, options = fixture(tmp_path)
+    task_id = int(dispatch(store, run, options).execution_id)
+    error = AgentError(code='source_authorization_required' if authorization_wait else 'execution_claim_unavailable', retryable=True, authorization_required=authorization_wait)
+    class Waiting:
+        def process(self, *args, **kwargs):
+            return OrchestrationResult(status='failed_retryable', final_run_id=0,
+                final_role=AgentRole.AUDIT, summary='another owner is executing', error=error,
+                feedback_cycles=0, execution_result=SystemExecutionResult(outcome='failed',summary='claim busy',error=error))
+    consumer = ScheduledAgentConsumer(store=store,option_service=options,orchestrator_factory=lambda built:Waiting(),now=lambda:NOW)
+    adapter = ScheduledExecutionQueueAdapter(store,owner_alive=lambda pid:False)
+    envelope, guard = claim(adapter,task_id,'waiting')
+    consumer(envelope,guard)
+    guard.complete(NOW)
+    task = store.get_reply_task(task_id)
+    assert task.status == 'pending' and task.attempts == 0
+    assert datetime.strptime(task.available_at,'%Y-%m-%d %H:%M:%S').replace(tzinfo=UTC) == NOW+timedelta(seconds=60)
+    assert adapter.claim(NOW,owner='early',owner_pid=42,lease=timedelta(minutes=5)) is None
+
+
+def test_scheduled_context_refresh_failures_stop_after_three_attempts(tmp_path):
+    store, run, options = fixture(tmp_path)
+    task_id = int(dispatch(store, run, options).execution_id)
+    orchestrator = AgentOrchestrator(store=store, consumer=Consumer(store, proposal('Exact plan')), audit=Audit(store, 'approve'))
+    class RefreshFailure:
+        def process(self, task, context, **kwargs):
+            def refresh():
+                raise RuntimeError('source unavailable CTX503')
+            return orchestrator.process(task, context, refresh_context=refresh)
+    clock = {'now':NOW}
+    consumer = ScheduledAgentConsumer(store=store, option_service=options, orchestrator_factory=lambda built:RefreshFailure(), now=lambda:clock['now'])
+    adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda pid:False)
+    for attempt in range(1,4):
+        envelope, guard = claim(adapter, task_id, f'owner-{attempt}', now=clock['now'])
+        consumer(envelope, guard)
+        guard.complete(clock['now'])
+        task = store.get_reply_task(task_id)
+        assert task.attempts == attempt
+        assert task.status == ('failed' if attempt == 3 else 'pending')
+        if attempt < 3:
+            clock['now'] = datetime.strptime(task.available_at,'%Y-%m-%d %H:%M:%S').replace(tzinfo=UTC)
+    assert store.list_agent_runs_for_task_generation(task_id,task.execution_generation) == []
+    assert adapter.claim(clock['now']+timedelta(days=1), owner='extra', owner_pid=42, lease=timedelta(minutes=5)) is None
+    attempts = store.list_reply_attempts_for_conversation(task.conversation_id)
+    assert attempts[0].send_status == 'failed'
+    assert 'CTX503' in attempts[0].audit_summary

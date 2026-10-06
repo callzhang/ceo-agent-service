@@ -2422,6 +2422,12 @@ class DingTalkAutoReplyWorker:
                     error,
                     expected_execution_generation=task.execution_generation,
                     available_at=available_at,
+                    refund_attempt=(
+                        provider_recovery
+                        or runtime_outage_wait
+                        or authorization_wait
+                        or active_recovery_wait
+                    ),
                 )
                 return False
             attempt_id = self.store.finalize_reply_task_without_run(

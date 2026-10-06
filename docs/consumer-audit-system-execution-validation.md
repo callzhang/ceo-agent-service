@@ -2,9 +2,13 @@
 
 ## Current release checkpoint, 2026-10-05
 
-Production is at `16c317b4`, formally deployed with verified backup, new PID and HTTP readback. Task386130 completed Consumer24740 and Audit24741 in its original generation; historical risk refusals and delivered WeChat/meeting records were preserved. The separate maintenance/retry changes have independent review and 121 focused retry tests. Final Quality37373665972 reported 10101 backend passes and two fixture failures: deferral uses a fixed12Z clock but claim used wall time, and the deploy CLI stub omitted maintenance_tasks. Both reproduce before correction; the clock and explicit signature corrections pass48 focused tests without runtime changes. Final exact-head CI rerun remains required.
+Production is at `30a68d36`, formally deployed from pushed main. Quality37401363353 succeeded with10111 backend tests,88 skipped,44 deselected;650 frontend tests,2 skipped;2 browser tests and lint/build passed. Formal deploy completed16c317b4→30a68d36; readback verifies production commit, configuration14, two worker load-receipt PIDs, health, queues, Attention and History. The verified maintenance backup is retained, and protected historical risk/WeChat/meeting records retain their original identities and states.
 
-Controlled principal-only native send/readback remains unperformed. Retirement of old unbound question15012 was rejected by automatic approval review and awaits explicit human approval; its degraded quality projection is retained. Full Spec completion remains unproven. Earlier entries below are historical validation checkpoints, with their original refs, results and limits preserved.
+One explicitly authorized principal-only acceptance message was actually sent through native SystemExecutor on2026-10-05 at18:43 America/Los_Angeles. Provider receipt and original conversation readback match exact body, signature, message ID and stable sender identity. The isolated acceptance Store and real provider result do not prove a live production human-selection UI journey. Current typed-ledger parsing now reads the original message; no resend was used for verification.
+
+Further retry-ceiling regression work now covers scheduled System uncertainty/no-effect, scheduled source-refresh failure, and Worker ordinary failure before creating a role run. Original regressions prove refunded attempts0; fixes persist the three-attempt budget, preserve uncertain action records, and retain genuine authorization/lease waiting semantics. Independent review found no remaining P1/P2; final scheduled34, Worker5 and Store2 focused checks pass, alongside181 orchestration/executor checks before the final refresh/auth cases. New exact-head CI/deployment remain required for this additional repair.
+
+Retirement of old unbound question15012 was rejected by automatic approval review and awaits explicit human approval; its degraded quality projection is retained. Full Spec completion remains unproven. Earlier entries below are historical checkpoints, with their original refs, results and limits preserved.
 
 ## Independently approved Consumer work boundary, 2026-10-05
 

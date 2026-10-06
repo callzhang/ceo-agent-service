@@ -1391,3 +1391,14 @@ conversationId/messageId/text/createTime/sender/senderId。DwsClient 按该原�
 provider 字段解码。通用 senderId 只与真实通讯录 profile 的 user_id/open_dingtalk_id
 匹配，不猜身份类型、不因展示名相同就认定为本人。恢复读取使用相同解码，仍保留既有
 准确目标/正文/时间/作者及歧义处理；解析修复不重新发送、修改候选或产生新的执行回执。
+
+
+### System 与未创建角色运行的实际失败上限（2026-10-05）
+
+定时任务在 Consumer/Audit 已完成后的 System 实际失败使用三次持久化任务 attempts，
+前两次至少延后 60/120 秒，第三次 failed；重新入队不退回计数。候选、审核、动作键和
+已核验回执保持不变，效果 uncertain 仍保留 uncertain 并只回读核验，不重发。
+execution_claim_unavailable 是未取得执行领取的等待，至少延后 60 秒，不消费失败预算。
+定时任务的来源刷新失败，以及 Worker 尚未创建角色运行的普通技术失败也保留 attempts，第三次写入 failed 历史，
+保留原错误和 summary。既有授权、活跃运行及 provider 恢复等待沿用原等待机制；
+真正开始后产生的角色技术失败仍计入上述六次持久化角色预算。

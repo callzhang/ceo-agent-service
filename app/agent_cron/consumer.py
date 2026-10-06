@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import json
 import logging
@@ -20,6 +21,8 @@ from app.agent_cron.options import scheduled_route_order
 from app.agent_cron.scheduler import EXECUTION_UNAVAILABLE
 from app.dispatcher.models import ClaimGuard, DispatchEnvelope
 from app.dws_client import is_transient_dependency_error
+from app.external_retry import retry_delay_seconds
+from app.worker import MAX_REPLY_TASK_ATTEMPTS
 from app.store import AutoReplyStore, ReplyTask
 
 
@@ -236,21 +239,34 @@ class ScheduledAgentConsumer:
         )
         guard.assert_current(self._now().astimezone(UTC))
         if result.status == "failed_retryable":
-            # Deferring hands the attempt back, so nothing else spaces or
-            # counts these passes: the orchestrator says how long to wait and
-            # ends the task failed once the role has failed too many turns.
-            available_at = ""
-            if result.retry_after_seconds > 0:
-                available_at = (
-                    self._now().astimezone(UTC)
-                    + timedelta(seconds=result.retry_after_seconds)
-                ).strftime("%Y-%m-%d %H:%M:%S")
-            self._store.defer_reply_task(
-                task.id, result.error.code or "agent_failed",
-                expected_execution_generation=task.execution_generation,
-                available_at=available_at,
-            )
-            return
+            execution_retry = (
+                (result.execution_result is not None
+                 and result.error.code != "execution_claim_unavailable")
+                or result.error.code == "agent_context_refresh_failed"
+            ) and not result.error.authorization_required
+            if execution_retry and task.attempts >= MAX_REPLY_TASK_ATTEMPTS:
+                # Leave uncertain action/receipt state intact; only automatic
+                # task retries stop. The original approval and plan remain.
+                result = replace(
+                    result, status="failed_terminal",
+                    error=result.error.model_copy(update={"retryable": False}),
+                    summary=f"{result.summary}; Task retry attempts exhausted ({task.attempts})",
+                )
+            else:
+                delay = max(60.0, result.retry_after_seconds)
+                if execution_retry:
+                    delay = max(delay, retry_delay_seconds(60, max(task.attempts - 1, 0)))
+                available_at = ""
+                if delay > 0:
+                    available_at = (
+                        self._now().astimezone(UTC) + timedelta(seconds=delay)
+                    ).strftime("%Y-%m-%d %H:%M:%S")
+                self._store.defer_reply_task(
+                    task.id, result.error.code or "agent_failed",
+                    expected_execution_generation=task.execution_generation,
+                    available_at=available_at, refund_attempt=not execution_retry,
+                )
+                return
         mapping = {
             "executed": ("done", "completed", ""),
             "no_action": ("done", "skipped", ""),
@@ -262,6 +278,18 @@ class ScheduledAgentConsumer:
         if result.status not in mapping:
             raise ValueError("invalid scheduled orchestration status")
         task_status, send_status, error = mapping[result.status]
+        if result.final_run_id == 0 and task_status == "failed":
+            self._store.finalize_reply_task_without_run(
+                task_id=task.id, expected_execution_generation=task.execution_generation,
+                task_status=task_status, task_error=error, available_at="",
+                conversation_id=task.conversation_id,
+                conversation_title=task.conversation_title,
+                trigger_message_id=task.trigger_message_id,
+                trigger_sender=task.trigger_sender, trigger_text=task.trigger_text,
+                codex_reason=result.summary, audit_summary=result.summary,
+                send_status=send_status, send_error=error, channel="scheduled",
+            )
+            return
         final_run = self._store.get_agent_run(result.final_run_id)
         if final_run is None:
             raise RuntimeError("scheduled orchestration final run was not persisted")
