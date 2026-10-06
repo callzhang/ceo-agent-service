@@ -3,6 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const getPromptPreview = vi.hoisted(() => vi.fn());
+vi.mock("../api/promptPreview", () => ({ getPromptPreview }));
+
 const getSettings = vi.hoisted(() => vi.fn());
 const saveSettings = vi.hoisted(() => vi.fn());
 const getStatus = vi.hoisted(() => vi.fn());
@@ -439,12 +442,15 @@ describe("SettingsPage", () => {
     expect(screen.getByText("{{principal}}", { selector: "mark" })).toBeInTheDocument();
   });
 
-  it("highlights runtime substitutions in rendered prompt previews", async () => {
+  it("uses complete runtime input in rendered prompt previews", async () => {
+    getPromptPreview.mockResolvedValueOnce({ item: { mode: "current", status: "available", role: "consumer", runtime_kind: "codex_cli", route_name: "primary", model: "model-a", rendered_at: "2026-10-05T18:00:00Z", task_id: null, run_id: null, attempts: [], runtime_attempt_id: null, execution_generation: null, proposal_revision: null, stage_index: null, submission_state: "preview", developer_instructions: "Complete developer input", task_prompt: "Reply to 磊哥 in Friday. Complete task input.", submitted_input: "", runtime_context: "Runtime tools and timezone", reason: "", scope: "unbound", routes: [{ name: "primary", runtime_kind: "codex_cli", model: "model-a" }] }, meta: { snapshot_at: "2026-10-05T18:00:00Z" } });
     getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { user_template: "Reply to {{principal}} in {{conversation}}." }, preview: { user: "Reply to 磊哥 in Friday." } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
     renderSettings("/settings?tab=prompts&prompt=user&view=preview");
 
-    expect(await screen.findByText("磊哥", { selector: "mark" })).toBeInTheDocument();
-    expect(screen.getByText("Friday", { selector: "mark" })).toBeInTheDocument();
+    expect(await screen.findByText("Reply to 磊哥 in Friday. Complete task input.")).toBeInTheDocument();
+    expect(screen.getByText("Complete developer input")).toBeInTheDocument();
+    expect(screen.getByText("Runtime tools and timezone")).toBeInTheDocument();
+    expect(saveSettings).not.toHaveBeenCalled();
   });
 
   it("edits the distilled work profile from Prompts and shows its runtime injection", async () => {

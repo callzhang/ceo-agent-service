@@ -1402,3 +1402,35 @@ execution_claim_unavailable 是未取得执行领取的等待，至少延后 60 
 定时任务的来源刷新失败，以及 Worker 尚未创建角色运行的普通技术失败也保留 attempts，第三次写入 failed 历史，
 保留原错误和 summary。既有授权、活跃运行及 provider 恢复等待沿用原等待机制；
 真正开始后产生的角色技术失败仍计入上述六次持久化角色预算。
+
+## Runtime Context 与 Settings 渲染输入
+
+后台 Consumer/Audit 在实际 route 和角色工具配置确定后追加动态 Runtime Context；fallback
+使用新 route 的模型、thinking、native cwd 和声明目录重新生成。目录来自最终 CLI allowlist 与
+role server 描述，仅证明本轮声明的入口，不证明连接/认证/读取成功。资料根目录与任务工件目录
+分开显示；Claude 的命令继承进程 cwd，Codex 优先显示明确 `--cd`，未知续会话目录如实标注。
+任务、执行代、stage/revision 和后台 scheduled_consumer 绑定来自原任务与真实 invocation，
+不按消息 channel、人员或关键词推断。稳定取证原则加入角色指令及契约 hash，动态时间不参与
+会话兼容 hash。普通 Consumer 工作、Audit 只读及 SystemExecutor 受控动作边界保持不变。
+
+日历任务先核实相关参与者时区与来源，按会议日期处理夏令时、跨日和不存在/重复的当地时间；
+已知工作时段、占用和偏好用于选候选。对方时区未知时保留待确认，先交付本人侧带明确时区的
+暂定窗口，不称双方均合适；已知时区也不证明对方空闲。结构化来源字段可投影到环境说明，
+文本事实由 Agent 按原材料理解，不把机器时区或钉钉时间戳解析规则当成参与者时区。
+
+每次 invocation 在现有事件流保存 `runtime.prompt`（准备输入）及适配器正常返回后的
+`runtime.prompt.invoked`（适配器调用记录）。前者可能出现在启动失败前，后者也不代表模型已
+接收或任务成功；两者不是工具进展、外部动作或 provider receipt。记录完整服务 developer/task
+输入、实际 route、run attempt、执行代、修订与来源上下文，并复用已有凭据脱敏。
+
+Settings 的 Prompts/Rendered preview 使用 `/api/console/settings/prompt-preview` 查看上述输入。
+当前预览标注「所选路线的配置预览」，使用当前角色规则和已保存的完整任务输入；无完整上下文
+的绑定任务显示不可用，不通过只保留原触发的重建冒充完整。历史预览只读既有事件，标明准备/
+调用状态、run/attempt/generation/revision/stage/时间；旧 run 缺输入时不重跑、不写回、不补造。
+页面范围限定为服务提交输入，CLI 自建系统/schema/history 不伪造为可见内容。预览不改变配置、
+队列或动作事实，不读取外部日历和业务资料；历史指定的 role/task/route 不匹配时明确返回 422。
+
+历史输入可按 `runtime_attempt_id` 选择同一 run 的每次路线尝试，逐次显示 prepared/invoked，
+后来的准备失败不会隐藏早先已调用的输入。当前预览重新渲染当前默认 Skill 目录，仅复用明确
+标记的 task override；任务正文仍标记保存来源。时区事实只投影 participant_id/timezone/
+source_ref/applies_on 的字符串字段，其他来源字段不进入环境段；快照复用结构化凭据脱敏。

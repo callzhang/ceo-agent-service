@@ -1308,3 +1308,36 @@ execution_claim_unavailable 是未取得执行领取的等待，至少延后 60 
 定时任务的来源刷新失败，以及 Worker 尚未创建角色运行的普通技术失败也保留 attempts，第三次写入 failed 历史，
 保留原错误和 summary。既有授权、活跃运行及 provider 恢复等待沿用原等待机制；
 真正开始后产生的角色技术失败仍计入上述六次持久化角色预算。
+
+## 运行环境与能力说明、Settings 完整输入预览
+
+Consumer/Audit 的稳定指令包含原请求交付、按需取证、部分事实先交付及参与者时区原则。
+稳定规则参与 Consumer 契约 hash；本轮时间与任务事实不因每次变化强制创建新 session。
+每次实际 route 与角色 CLI 配置完成后，运行时追加「运行环境与能力说明（Runtime Context）」：
+principal、task/generation/stage/revision、原业务对象与后台扫描来源、所选模型和 thinking、
+资料根目录、实际命令目录及声明工具目录。工具说明复用 role server 注册描述和最终 allowlist，
+不声明认证已经成功，不由个人安装能力推定后台权限。Claude 继承服务进程 cwd；Codex 使用
+显式 `--cd`，缺少明确目录的续会话标为未核实。Consumer 普通材料工作与系统注册且要求审核的
+动作保持既有边界；这项说明不新增审核、授权、路由或执行政策。
+
+日历任务按原请求和实际来源核实本人、对方及必要协调者时区，按会议日期处理夏令时、跨日和
+当地时间歧义，并考虑已知工作时段/偏好。结构化来源已经提供的时区、来源和适用日期可进入
+环境事实；文字材料仍由 Agent 理解，不通过姓名或关键词分支提取。机器时区、公司所在地和
+钉钉源时间戳解析规则不证明对方所在地；未知时区与未知忙闲分别标注。
+
+`Settings → Prompts → Rendered preview` 显示完整服务输入，支持 Consumer/Audit、所选配置路线、
+当前配置预览与历史 run。当前预览使用同一 developer/Skill/环境组装逻辑；无任务显示未绑定，
+绑定任务仅复用已保存的完整该角色任务正文，并标记来源 run/时间。不用省略材料、反馈和回执的
+原触发重建结果冒充完整输入；旧任务缺记录时显示不可用。历史模式读取当时保存内容，保留
+run/runtime attempt/generation/revision/stage/route/model/time，不使用当前 Settings 改写历史。
+用户指定的历史角色、任务或路线不匹配时返回 422。页面预览只读，不读取外部业务源或运行任务。
+
+输入使用现有 `agent_run_events` 保存：`runtime.prompt` 是准备提交的服务输入；
+`runtime.prompt.invoked` 只记录运行适配器返回，不能证明模型接收、业务完成或外部效果。
+凭据使用已有脱敏函数处理并显示标记。服务输入范围不包括 CLI 自行生成的系统提示、原生工具
+schema 或完整会话历史；未保存的旧 run 不重跑补齐。没有新增数据库、迁移或独立审核台账。
+
+历史输入可按 `runtime_attempt_id` 选择同一 run 的每次路线尝试，逐次显示 prepared/invoked，
+后来的准备失败不会隐藏早先已调用的输入。当前预览重新渲染当前默认 Skill 目录，仅复用明确
+标记的 task override；任务正文仍标记保存来源。时区事实只投影 participant_id/timezone/
+source_ref/applies_on 的字符串字段，其他来源字段不进入环境段；快照复用结构化凭据脱敏。

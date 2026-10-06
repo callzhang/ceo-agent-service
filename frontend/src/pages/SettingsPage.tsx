@@ -13,6 +13,7 @@ import { StatusBadge } from "../components/status/StatusBadge";
 import { AttentionPanel } from "./AttentionPage";
 import { StatusPanel } from "./StatusPage";
 import { ManagedSkillsPanel } from "../components/settings/ManagedSkillsPanel";
+import { RuntimePromptPreview } from "./RuntimePromptPreview";
 import { McpPanel } from "../components/settings/McpPanel";
 
 type RecordValue = Record<string, unknown>;
@@ -119,7 +120,7 @@ function PromptPanel({ payload, prompt, view, draft, setDraft, saveState, saveEr
   return <SettingsCard>
     <div className="settings-card-heading"><div><h2>Prompts</h2><p className="muted">{label} · {isProfile ? "在新的 Consumer 或 Audit 运行中追加到 Developer Prompt。" : "模板由服务端读取，预览使用当前运行时上下文。"}</p></div><span className="settings-path">{path}</span></div>
     <div className="settings-pill-row" role="tablist" aria-label="Prompt sections"><Link role="tab" aria-selected={prompt === "developer"} className={prompt === "developer" ? "active" : ""} to="/settings?tab=prompts&prompt=developer&view=template">Developer Prompt</Link><Link role="tab" aria-selected={prompt === "user"} className={prompt === "user" ? "active" : ""} to="/settings?tab=prompts&prompt=user&view=template">User Prompt</Link><Link role="tab" aria-selected={isProfile} className={isProfile ? "active" : ""} to="/settings?tab=prompts&prompt=profile&view=template">Distilled work profile</Link></div>
-    <div className="prompt-editor-shell" id="prompt-panel" role="tabpanel" aria-label={view === "template" ? "Template" : "Rendered preview"}>{view === "template" ? <form onSubmit={(event) => event.preventDefault()}><div className="prompt-editor-toolbar">{viewTabs}</div><TokenEditor id="prompt-template" label="Template" value={value} onChange={(next) => setDraft({ ...draft, [templateKey]: next })} autoResize /><p className="muted prompt-runtime-note">{isProfile ? "保存后仅影响后续新建运行。" : <>运行时注入变量：<code>{"{{principal}}"}</code> <code>{"{{conversation}}"}</code>。这些变量不需要手动填写。</>}</p><SaveBar state={saveState} error={saveError} /></form> : <><div className="prompt-editor-toolbar">{viewTabs}</div><pre className="prompt-preview">{preview ? (isProfile ? preview : highlightRenderedPreview(value, preview)) : "未提供预览"}</pre></>}</div>
+    <div className="prompt-editor-shell" id="prompt-panel" role="tabpanel" aria-label={view === "template" ? "Template" : "Rendered preview"}>{view === "template" ? <form onSubmit={(event) => event.preventDefault()}><div className="prompt-editor-toolbar">{viewTabs}</div><TokenEditor id="prompt-template" label="Template" value={value} onChange={(next) => setDraft({ ...draft, [templateKey]: next })} autoResize /><p className="muted prompt-runtime-note">{isProfile ? "保存后仅影响后续新建运行。" : <>运行时注入变量：<code>{"{{principal}}"}</code> <code>{"{{conversation}}"}</code>。这些变量不需要手动填写。</>}</p><SaveBar state={saveState} error={saveError} /></form> : <><div className="prompt-editor-toolbar">{viewTabs}</div>{isProfile ? <pre className="prompt-preview">{preview || "未提供预览"}</pre> : <RuntimePromptPreview />}</>}</div>
   </SettingsCard>;
 }
 

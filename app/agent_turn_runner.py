@@ -704,6 +704,7 @@ class AgentTurnProcess(Generic[ResultT]):
         conversation_contract_hash: str = "",
         force_new_session: bool = False,
         skill_names: tuple[str, ...] = (),
+        invocation_facts: dict[str, object] | None = None,
     ) -> AgentTurnRunResult[ResultT]:
         required_capabilities = required_capabilities | {ROLE_BOUND_AGENT_TOOLS}
         line_count = 0
@@ -1115,6 +1116,33 @@ class AgentTurnProcess(Generic[ResultT]):
                     command_env = self.codex_adapter.build_env(route)
                 if command_env is not None:
                     command_env.update(self.execution_mode_environment)
+                from app.runtime_prompt_context import render_runtime_context, runtime_prompt_snapshot
+
+                rendered_at = datetime.now().astimezone().isoformat()
+                context_facts = {**(invocation_facts or {}), "proposal_revision": run.proposal_revision}
+                runtime_context = render_runtime_context(
+                    role=run.role.value, route=route, command=command, task=self.task,
+                    current_time=rendered_at, invocation_facts=context_facts,
+                )
+                submitted_developer_instructions = developer_instructions + "\n\n" + runtime_context
+                if route.runtime_kind is RuntimeKind.CODEX_CLI:
+                    command = [
+                        "developer_instructions=" + json.dumps(submitted_developer_instructions)
+                        if value.startswith("developer_instructions=") else value
+                        for value in command
+                    ]
+                executor_prompt = (
+                    _claude_input_contract(prompt=prompt, developer_instructions=submitted_developer_instructions)
+                    if route.runtime_kind is RuntimeKind.CLAUDE_CLI else prompt
+                )
+                snapshot = runtime_prompt_snapshot(
+                    role=run.role.value, route=route, runtime_attempt_id=active_attempt.id,
+                    task=self.task, developer_instructions=submitted_developer_instructions,
+                    task_prompt=prompt, runtime_context=runtime_context, current_time=rendered_at,
+                    invocation_facts=context_facts,
+                )
+                snapshot["proposal_revision"] = run.proposal_revision
+                self.store.append_agent_run_event(run.id, snapshot, owner=self.owner)
                 try:
                     if route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME:
                         friday_result = self.friday_adapter.execute(
@@ -1155,6 +1183,8 @@ class AgentTurnProcess(Generic[ResultT]):
                             idle_timeout_seconds=IDLE_TIMEOUT_SECONDS,
                             on_stdout_line=persist_line,
                         )
+                        self.store.append_agent_run_event(run.id, {"type": "runtime.prompt.invoked",
+                            "runtime_attempt_id": active_attempt.id}, owner=self.owner)
                 except FridayRuntimeError as exc:
                     friday_failure = _runtime_failure_from_friday_error(exc)
                     if exc.thread_id:

@@ -26,6 +26,7 @@ from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.reviewed_candidates import candidate_digest
+from app.runtime_prompt_context import explicit_participant_timezones
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
 
@@ -137,7 +138,7 @@ class AuditAgentRunner:
         )
         from app.consumer_agent import audit_developer_instructions
 
-        developer_instructions = audit_developer_instructions(rendered_rules)
+        developer_instructions = audit_developer_instructions(rendered_rules, runtime_context="")
         if self.skill_protocol_override:
             developer_instructions += "\n\n" + self.skill_protocol_override
         process = AgentTurnProcess[AuditAgentResult](
@@ -168,6 +169,9 @@ class AuditAgentRunner:
 
         return process.execute(
             run=run,
+            invocation_facts={"stage_index": context.task.stage_index, "skill_protocol": self.skill_protocol_override or "",
+                              "skill_protocol_source": "task_override" if self.skill_protocol_override is not None else "runtime_catalog",
+                              "participant_timezones": explicit_participant_timezones(context.task.trigger_raw_payload)},
             skill_names=context.task.skill_names,
             prompt=prompt,
             session_id=run.codex_session_id or None,
