@@ -1122,11 +1122,14 @@ def _write_bound_report_document(
         dws.fetch_report_document_full(found["nodeId"])
         if kind == "weekly" else dws.read_doc(found["nodeId"])
     )
-    return {
+    receipt = {
         "operation": operation, "node_id": found["nodeId"], "title": title,
         "provider_result": result, "readback": readback,
         "saved_version": version if kind == "weekly" and operation == "updated" else None,
     }
+    if kind == "daily":
+        receipt["folder"] = folder
+    return receipt
 
 
 def build_role_server(

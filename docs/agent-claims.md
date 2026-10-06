@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+<!-- codex-daily-report-folder-receipt-20261006: isolated daily-report-folder-receipt worktree; app/agent_cli.py (_write_bound_report_document return payload only), tests/test_agent_cli_report_receipt.py, docs/runtime-mechanism.md, CHANGELOG.md. Return the already-resolved provider folder metadata so the daily-report delivery has its required URL. No URL synthesis, extra provider write, prompt/policy, lifecycle, retry or authorization change. -->
+
 <!-- codex-queue-failure-index-read-20261006: same isolated worktree; app/audit_web.py (Attention source ID selection and queue latest-error reads only), tests/test_attention_query_plan.py, docs/runtime-mechanism.md, CHANGELOG.md. Extend the measured covering-index fix to source queues and latest failure diagnostics; no schema, lifecycle, cache, retry or policy changes. -->
 
 <!-- codex-attention-index-read-20261006: isolated attention-index-read worktree; app/audit_web.py (_queue_attention_rows reply-task selection only), tests/test_attention_query_plan.py, docs/runtime-mechanism.md, CHANGELOG.md. Read failed IDs through the existing covering status index before loading payloads; preserve case-insensitive matching, current-object/recovery exclusions and fresh snapshots. No schema, status, retry, cache or authorization change. -->
