@@ -1124,6 +1124,8 @@ def test_task_result_validation_repair_prompt_lists_field_errors_and_rules():
     assert "including every separate Project row in a multi-Project report" in prompt
     assert "Project registration.source_excerpt must itself quote the current passage" in prompt
     assert "not by itself a material Project risk" in prompt
+    assert "Historical Project/context/Attention evidence must use the exact quote and source_ref" in prompt
+    assert "If its delivered task_ids are empty, keep assessment.task_ids and decision_indexes empty" in prompt
     assert "Never include a skip decision in decision_indexes" in prompt
     assert "status and business_relevance may only change through update_fields" in prompt
     assert "New, record_candidate and skip decisions must leave status and business_relevance unset" in prompt
@@ -1928,6 +1930,12 @@ def test_task_agent_source_authority_and_independent_project_output(
     assert "related_task_ids" not in text
     assert "Chats/emails" in text
     assert "A bare responsibility clause" in text
+    assert "Do not reconstruct an earlier quotation from a later summary" in text
+    assert (
+        "keep task_ids and decision_indexes empty" in text
+        if surface == "prompt"
+        else "keep both `task_ids` and `decision_indexes` empty" in text
+    )
     assert "only independently evidenced, distinct work" in text
     assert "X负责Y" in text
     assert "A person explicitly identified as the Project's overall accountable owner" in text

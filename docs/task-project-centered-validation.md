@@ -489,3 +489,28 @@ No PR, push, production deploy, or live Task page verification was performed:
 the native route gate remains unavailable and the current W39 artifact cannot
 serve as the untouched baseline. Do not treat prior persisted Attention or this
 schema smoke request as release approval.
+
+### Fixed v4 full replay on 05fa0c69
+
+The complete serial native replay used 19 fresh databases, the configured
+`codex_oauth` route with `gpt-5.6-luna`, the CI Skill SHA-256 recorded in each
+result, 900-second total timeout, 300-second idle timeout and concurrency 1.
+Fourteen cases passed. Five failed: two oracle mismatches
+(`meeting-chat-no-report`, whose frozen expectation incorrectly required a Task
+for routine planned progress; `peer-not-auto-member`, whose required fact phrase
+did not match the source wording), two evidence-boundary failures (split but
+individually valid citations in `same-project-three-sources`, and an invented
+historical quote in `suggestion-promoted-same-id`), and one existing-card
+membership rejection in the completed-Task/persistent-risk case. That final case
+must keep the existing card's empty member list; no new payment Task is justified
+without saved responsibility evidence.
+
+The frozen oracle now keeps routine planned progress at zero Tasks, allows
+multiple exact supporting excerpts for one assessment, matches the original
+wording of the peer update, and does not expect a payment-follow-up Task absent
+a saved responsibility. Prompt/Skill guidance now explicitly forbids adding a
+Task updated in the current turn to an existing Attention card whose delivered
+membership is empty, and forbids reconstructing historical quotations from
+later summaries. Focused tests passed after these changes; a complete clean-
+commit 19-case replay is still required. The 05fa0c69 result is diagnostic, not
+the final gate.

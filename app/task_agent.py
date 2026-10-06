@@ -452,8 +452,10 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "Rules that must hold:\n"
         "- project_decisions, task_decisions and project_assessments are all required (0..N). Return exactly one assessment for every relevant business Project or Project clue in the current source and current Tasks' confirmed Project links, including every separate Project row in a multi-Project report, whether or not this output emitted a selector for it. Return one outcome, concrete reason, and original evidence for each. Semantic coverage is not limited to structured selectors. Every attention_proposal belongs to its needs_attention assessment, with optional actual Task membership; zero Tasks is valid. Project selectors index project_decisions, never task_decisions. Use [] assessments only when there is no relevant Project or clue, with a nonblank update_summary.\n"
         "- Every current-source citation must be an exact contiguous quote from the immutable Work Item (a visible raw range or one decoded JSON string leaf), with the exact current source_ref and null signal_id. Project registration.source_excerpt must itself quote the current passage that defines that Project; never paraphrase it or quote a different source. Assess every Project separately when a source contains multiple Projects.\n"
+        "- Historical Project/context/Attention evidence must use the exact quote and source_ref from the delivered original observed Signal. Do not reconstruct or paraphrase an earlier statement from a later summary. If the original quote is unavailable, omit that historical claim, use only verified current evidence, and state what cannot be confirmed.\n"
         "- For project_assessments, use exactly one selector: if this output has a matching Project decision, use its project_decision_index; otherwise use anchor_id for a known registered Project; use neither only for an unresolved Project clue with insufficient_evidence. Never provide both anchor_id and project_decision_index.\n"
         "- Never include a skip decision in decision_indexes; supporting indexes may identify only a real candidate, create, or update Task decision that belongs to this Project and directly supports this specific Project assessment. A Task being linked to the Project is not enough: completed or unrelated Project Tasks are not members.\n"
+        "- When retaining an existing_attention_id, copy supporting membership only from the actual current_project_attention card. If its delivered task_ids are empty, keep assessment.task_ids and decision_indexes empty; do not add a Task being completed or updated in this turn, or another same-Project Task, to that existing card.\n"
         "- project_link_evidence requires a Project selector. Include evidence only when task.project selects the registered Project; for a standalone Task omit both fields.\n"
         "- status and business_relevance may only change through update_fields: set transition=update_fields when either field changes. They remain top-level fields, not a nested update_fields object; never set them under another transition.\n"
         "- New, record_candidate and skip decisions must leave status and business_relevance unset. For an existing Task, set transition=update_fields to change either field; do not try to set a status or relevance during creation.\n"
@@ -691,7 +693,9 @@ Apply the Skill before returning:
   requires this card's stored original proof and actual membership, not Project peers.
   For an existing card, task_ids must be copied only from that card's actual stored
   member IDs delivered in current_project_attention; never add a peer Task solely
-  because it belongs to the same Project. An explicit unresolved dispute over who
+  because it belongs to the same Project. If the delivered member list is empty,
+  keep task_ids and decision_indexes empty, including when a linked Task is completed
+  or updated in this turn. An explicit unresolved dispute over who
   holds the Project's overall accountable role (such as a claimed transfer that the
   prior owner says was not confirmed) is needs_attention even before operational
   impact is separately quantified; record the conflict in ProjectContext and do not
@@ -712,6 +716,8 @@ Apply the Skill before returning:
   historical proof uses real positive observed Signal IDs, matching references/quotes,
   not session or Memory provenance. historical_comparison needs current and original
   historical proof; if originals are unavailable, state uncertainty, not invented history.
+  Do not reconstruct an earlier quotation from a later summary. If the exact historical
+  quote is not available in the original Signal, omit that claim and say what cannot be confirmed.
 - Project registration.source_excerpt must itself be an exact contiguous quote
   from the immutable current Work Item that defines the Project; do not substitute
   a responsibility sentence, paraphrase, or quote from another source. When a

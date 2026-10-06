@@ -209,7 +209,10 @@ target. Cite at least one stored assessment_json.evidence triple unchanged and
 use actual current_project_attention membership, not other Project Tasks. For new
 risk/membership use this assessment's proposal; its Project key reuses the card.
 For an existing card, copy `task_ids` only from its actual stored member IDs in
-`current_project_attention`; never add a same-Project peer Task. An explicit,
+`current_project_attention`; never add a same-Project peer Task. Unrelated
+current-turn Task updates do not add membership to that card. If the
+delivered card has no member IDs, keep both `task_ids` and `decision_indexes`
+empty, including when another linked Task is completed or updated this turn. An
 unresolved dispute over who holds the overall Project accountability (for example,
 a claimed transfer that the prior owner says was not confirmed) is 需关注 even
 before a separate operational impact is quantified. Record the conflict in
@@ -240,6 +243,9 @@ Current Project proof uses null signal_id and the current source_ref.
 Historical Project/context/suggestion/Attention proof requires a real positive
 observed Signal ID, matching reference and exact quote, not memory_provenance or
 session_provenance. Never prove original facts with your own summary or suggestion.
+Do not reconstruct an earlier quotation from a later summary. If the exact
+original excerpt is unavailable, omit that historical claim, rely only on
+verified current evidence, and state what cannot be confirmed.
 current_observation asserts current facts; historical_comparison requires current
 null-ID and positive original historical proof. When current text compares earlier
 facts and originals are delivered, verify against them. A current retelling of
