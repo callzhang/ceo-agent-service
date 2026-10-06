@@ -638,3 +638,35 @@ sandbox failure but not the timeout. The owner-conflict rule therefore remains
 without a fresh native semantic result. The complete fixed v4 replay, frozen
 pre-migration W39 comparison, idempotency replay, PR, deployment, and production
 readback remain open.
+
+### Full v4 replay on `5ced17fd` and assessment-support follow-up (2026-10-06)
+
+The 19-case native replay used fresh SQLite databases, the `codex_oauth` /
+`gpt-5.6-luna` route, 900-second total timeout, 300-second idle timeout, and
+concurrency 1. It completed **18/19**. Only `existing-task-update` failed with
+`project_assessment_receipt_mismatch`: the turn updated the formal Project-linked
+Task for the exact acceptance-material work described by its `not_needed`
+progress assessment, but returned empty `decision_indexes` and `task_ids`, so the
+persisted assessment receipt did not link the updated work. The other 18 cases
+passed. Results are at
+`/private/tmp/project-centered-v20-full-5ced17fd/results.jsonl`.
+
+The follow-up prompt/Skill and architecture/runtime contract now explicitly say
+to include a Task decision when it updates the same concrete Project work as the
+assessment (including `not_needed` progress), while excluding unrelated Project
+peers. Regression prompt test was confirmed RED before the prompt update. After
+the update, `tests/test_task_agent.py` plus
+`tests/test_work_tracking_skill.py` passed 232 tests, and
+`tests/test_task_project_centered_eval.py` passed 21 tests; JSON fixture parsing
+and `git diff --check` passed.
+
+A fresh native rerun of the repaired case is not yet verified. Launching the
+standalone replay from this task's current shell failed before model execution:
+the production service MCP manifest could not resolve `MEMORY_CONNECTOR_URL`,
+and the Codex OAuth capability probe therefore reported `runtime_probe_failed`
+with no Task Agent runtime attempt. The direct CLI smoke itself works, but it is
+not a substitute for the routed replay. Do not mark the prompt repair as native
+verified or use the 18/19 baseline as a passing fixed evaluation. The next
+verification needs the same initialized service-MCP environment as the full
+replay, followed by the complete fixed v4 replay. W39 migration equivalence,
+idempotency, PR, deployment and production readback also remain open.

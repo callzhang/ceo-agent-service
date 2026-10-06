@@ -474,6 +474,7 @@ def test_independent_project_prompt_and_skill_have_one_current_contract():
     assert "trailing rank/honorific" in prompt
     assert "task_ids must be copied only from that card's actual stored member IDs" in prompt
     assert "directly supports this specific Project assessment" in prompt
+    assert "When a Task decision updates the same concrete Project work described by the assessment" in prompt
     assert "completed or unrelated Project Tasks are not members" in prompt
     assert "explicit unresolved dispute over who" in prompt
     assert "Missing overall ownership without a stated impact or dispute" in prompt

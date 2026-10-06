@@ -455,7 +455,7 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "- Historical Project/context/Attention evidence must use the exact quote and source_ref from the delivered original observed Signal. Do not reconstruct or paraphrase an earlier statement from a later summary. If the original quote is unavailable, omit that historical claim, use only verified current evidence, and state what cannot be confirmed.\n"
         "- For project_assessments, use exactly one selector: if this output has a matching Project decision, use its project_decision_index; otherwise use anchor_id for a known registered Project; use neither only for an unresolved Project clue with insufficient_evidence. Never provide both anchor_id and project_decision_index.\n"
         "- Include one matching assessment for every project_decisions index: project_decisions[i] must have exactly one project_assessment whose project_decision_index is i (or whose anchor_id matches that existing Project). Do not omit a report row because another Project is also assessed.\n"
-        "- Never include a skip decision in decision_indexes; supporting indexes may identify only a real candidate, create, or update Task decision that belongs to this Project and directly supports this specific Project assessment. A Task being linked to the Project is not enough: completed or unrelated Project Tasks are not members.\n"
+        "- Never include a skip decision in decision_indexes; supporting indexes may identify only a real candidate, create, or update Task decision that belongs to this Project and directly supports this specific Project assessment. When a Task decision updates the same concrete Project work described by the assessment, include that decision index as support, including for a not_needed progress assessment. An existing Task belongs in task_ids only when it directly supports the assessment. A Task being linked to the Project is not enough: completed or unrelated Project Tasks are not members.\n"
         "- When retaining an existing_attention_id, copy supporting membership only from the actual current_project_attention card. If its delivered task_ids are empty, keep assessment.task_ids and decision_indexes empty; do not add any Task to that existing card, even a same-risk candidate suggested on an earlier turn. This keeps the stored Attention membership unchanged; the Task may still remain a separate Project-linked candidate.\n"
         "- project_link_evidence requires a Project selector. Include evidence only when task.project selects the registered Project; for a standalone Task omit both fields.\n"
         "- status and business_relevance may only change through update_fields: set transition=update_fields when either field changes. They remain top-level fields, not a nested update_fields object; never set them under another transition.\n"
@@ -717,7 +717,11 @@ Apply the Skill before returning:
   are optional real members, not carriers. Never include a skip decision in
   decision_indexes; supporting indexes may identify only a real candidate, create,
   or update Task decision that belongs to this Project and directly supports this
-  specific Project assessment. A Task being linked to the Project is not enough:
+  specific Project assessment. When a Task decision updates the same concrete
+  Project work described by the assessment, include that decision index as support,
+  including for a not_needed progress assessment. An existing Task belongs in
+  task_ids only when it directly supports the assessment. A Task being linked to
+  the Project is not enough:
   completed or unrelated Project Tasks are not members. Only a real material impact merits watch,
   decision or push; “需关注” does not mean “需介入”. A retained existing_attention_id
   requires this card's stored original proof and actual membership, not Project peers.

@@ -46,6 +46,7 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
+| codex-project-centered-assessment-task-links | Isolated /Users/derek/.codex/worktrees/project-centered-resume/ceo-agent-service: app/task_agent.py (Task-to-assessment support guidance only), ci/shared-skills/ceo-work-tracking/SKILL.md, tests/test_task_agent.py, docs/architecture.md and docs/runtime-mechanism.md (assessment support-member contract only), docs/agent-claims.md | Repair native fixed-eval finding: an updated Task on the exact assessed Project work must be explicitly linked as supporting assessment evidence; unrelated Project peers remain excluded. | 2026-10-06 |
 | codex-project-customer-design | Isolated /Users/derek/.codex/worktrees/project-centered-resume/ceo-agent-service: docs/superpowers/specs/2026-10-04-project-centered-work-design.md, docs/agent-claims.md | Record Derek's approved optional CRM customer relationship for Projects; no customer code until the written spec is reviewed. | 2026-10-06 |
 
 

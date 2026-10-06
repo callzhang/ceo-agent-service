@@ -218,7 +218,11 @@ role supports an actionable owner, keep the risk in Attention without inventing 
 owner, monitoring item or deadline. Optional decision_indexes
 index Task decisions; task_ids name real existing confirmed members, not guessed
 IDs or all Project peers. A Task being linked to this Project is not enough:
-include it only when it directly supports this specific Project assessment;
+include it only when it directly supports this specific Project assessment.
+When a Task decision updates the same concrete Project work described by the
+assessment, include that decision index as support, including for a not_needed
+progress assessment. An existing Task belongs in task_ids only when it directly
+supports the assessment;
 completed or unrelated Project Tasks are not members. Keep current_state as Project-level risk facts, not per-Task action summaries, why_attention as
 inference and ceo_action as the relevant action or observation. For watch it may
 say 当前无需你处理 and name what outcome to watch. 需关注 does not imply 需介入.

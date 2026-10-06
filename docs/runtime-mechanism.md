@@ -376,7 +376,7 @@ Task 关系用已有 related_task_id 和相对当前实际 Task 的 direction，
 
 每个 assessment 针对一个实际 Project 或身份待明确的线索。one Project/精确标题 一轮一项；
 覆盖所有已输出项目决定、Task Project selector 及当前引用 Task 的 confirmed 正式项目。
-支持 Task 决定用 decision_indexes，已有 Task 用 task_ids；两者可空，不伪造支持成员。
+支持 Task 决定用 decision_indexes，已有 Task 用 task_ids；两者可空，不伪造支持成员。若 Task 决定更新的正是本次评估中的同一具体工作（包括正常进展的 not_needed 评估），应将该决定列为支撑；已有 Task 也只有直接支撑评估时才列入。仅关联到同一 Project 不够，完成或无关 Task 不是成员。
 未登记线索保留原名与原文，outcome=insufficient_evidence，不借标题猜 ID。
 真实正常进展可 not_needed，没有风险或没有 Task 本身不等于证据不足。
 needs_attention 需实际已核验卡片或 assessment 自己的 attention_proposal；负面结果不生成或关闭卡片。
