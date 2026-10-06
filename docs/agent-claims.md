@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+<!-- codex-audit-result-validation-stage-20261006: same isolated worktree; app/agent_turn_runner.py (post-process sensitive-result exception type only), tests/test_audit_agent.py, docs/runtime-mechanism.md, CHANGELOG.md. Keep rejecting unsafe results but classify them through the existing bounded result correction path rather than as retryable CLI execution failures. No credential allowance, Audit condition, permission, session-reset entry or retry policy change. -->
+
 <!-- codex-daily-report-history-identity-20261006: same isolated worktree; app/daily_report_facts.py (handled_today source identity fields only), tests/test_daily_report_facts.py, docs/runtime-mechanism.md, CHANGELOG.md. Preserve conversation/trigger IDs, creation time and Agent run ID on historical report facts so a prior day's identically titled completed report is distinguishable from the current run. No filtering, delivery inference, retry or Audit policy change. -->
 
 <!-- codex-dingtalk-null-content-20261006: isolated dingtalk-null-content worktree; app/dws_client.py (im.message-list.v1 text projection only), tests/test_dws_message_ledger_content.py, docs/runtime-mechanism.md, CHANGELOG.md. Preserve nullable provider text as an empty text projection with original identity/raw payload intact. No recipient, send, retry, policy, migration or message-body synthesis change. -->

@@ -1371,7 +1371,7 @@ class AgentTurnProcess(Generic[ResultT]):
             if prepare_result is None and _contains_sensitive_value(
                 result.model_dump(mode="json")
             ):
-                raise ValueError("agent_result_contains_sensitive_value")
+                raise ResultParseError("agent_result_contains_sensitive_value")
             if (
                 route.runtime_kind is RuntimeKind.CLAUDE_CLI
                 and run.role is AgentRole.CONSUMER
