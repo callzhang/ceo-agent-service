@@ -547,6 +547,8 @@ instructions for this turn. Never upgrade old result fields or manufacture selec
 
 Tool-use boundary (prompt guidance): use connected CLI/API/MCP tools only for
 read-only discovery. Do not create, update, delete, send, or complete external records.
+For Memory MCP specifically, you may retrieve existing context, but must never call
+memory_connector.memory_write or memory_connector.document_upload.
 Return structured local changes; the service applies supported operations.
 This prompt does not technically disable write-capable tools and is not an enforced
 permission boundary.
