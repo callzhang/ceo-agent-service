@@ -1937,6 +1937,7 @@ def test_task_agent_source_authority_and_independent_project_output(
     assert "one matching assessment for every project_decisions index" in text
     assert "include the intervening source text verbatim" in text
     assert "same unresolved risk" in text
+    assert "State explicitly in a Project fact: 总体负责人存在冲突" in text
     assert (
         "same-risk candidate was suggested on an earlier turn" in text
         if surface == "prompt"

@@ -597,3 +597,19 @@ with the corrected oracle and the full 19-case replay have not yet run on this
 revision. Targeted run artifacts are retained in
 `/private/tmp/project-centered-v12-targeted-f6a3714d/results.jsonl` and
 `/private/tmp/project-centered-v12-risk-retry-f6a3714d/results.jsonl`.
+
+### Full v4 replay on `ad65d0bb` (2026-10-06)
+
+The final candidate full run used 19 fresh databases, the unchanged
+`codex_oauth` / `gpt-5.6-luna` route, 900-second total timeout, 300-second idle
+timeout and concurrency 1. It passed 18/19. The completed-risk case, including
+the corrected one-member oracle, passed. The sole failure was
+`responsibility-change-conflict`: overall_owner correctly remained null and both
+competing claims were preserved, but the new Project fact said the transfer had
+not reached consistent confirmation / still needed verification, without
+explicitly saying “总体负责人存在冲突”. The confirmed contract and frozen oracle
+require that conflict to be stated plainly in a Project fact. The prompt and Skill
+now include the exact semantic requirement and prohibit using only the softer
+phrases. The full run is recorded at
+`/private/tmp/project-centered-v15-full-ad65d0bb/results.jsonl`; a fresh native
+rerun on the corrected final candidate is still required.

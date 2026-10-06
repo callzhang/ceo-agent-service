@@ -68,6 +68,9 @@ to make business judgments.
    independently evidenced, distinct work duties. State plainly in a Project fact
    that the owner remains in conflict. Preserve unchanged separate deliverable
    owners and their citations.
+   State explicitly in a Project fact: 总体负责人存在冲突，仍待确认. Do not
+   substitute only “尚未形成一致确认” or “仍需核实”; preserve the competing
+   source claims as separate evidence.
    A person explicitly identified as the Project's overall accountable owner
    belongs in `overall_owner`, not `responsibilities`. For example, “张三总负责
    交付验收” identifies the overall role; keep “总” out of the person's name.

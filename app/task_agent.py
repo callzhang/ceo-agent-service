@@ -476,6 +476,7 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "- A bare responsibility clause (for example, a person being responsible for an area) is ProjectContext only, not a source Task or candidate. Create a Task only for an explicitly stated, independently completable deliverable/action, or a separate actionable suggestion required by an evidenced material Project risk.\n"
         "- The clause X负责Y by itself remains a Project responsibility when Y is only a duty area (for example, 王五负责商务对账). When Y names a specific independently completable action and result (for example, 李四负责核实客户付款排期并反馈), preserve it as a source-origin Task; lack of an authorized meeting action record makes it a candidate, not a formal assignment.\n"
         "- When overall-owner evidence conflicts, keep overall_owner=null and record the competing claims and challenge as sourced facts. State plainly in a Project fact that the owner remains in conflict; do not merely imply the conflict. Do not move candidate overall owners into responsibilities; that list contains only independently evidenced, distinct work responsibilities. Preserve unchanged responsibilities such as a separate deliverable owner.\n"
+        "- State explicitly in a Project fact: 总体负责人存在冲突，仍待确认. Evidence that only says a transfer is not confirmed or must be verified is not enough; preserve the competing source claims as separate evidence.\n"
         "- A person explicitly identified as the Project's overall accountable owner belongs in overall_owner, not responsibilities. In Chinese, an explicit description such as 张三总负责交付验收 denotes that role; keep 总 out of the person's name.\n"
         "- Before suggesting another next-step Task for a Project risk, check current linked Tasks. If an existing actionable Task already addresses that risk, use its existing Task ID as the supporting next step and do not add a duplicate monitoring/evaluation suggestion.\n"
         "- For project_link_evidence, when the Project title and Task action occur in different parts of the current source, cite one exact contiguous span from the title occurrence through the action and include the intervening source text verbatim; never splice nonadjacent excerpts into one quotation.\n"
@@ -591,6 +592,9 @@ Apply the Skill before returning:
   competing overall-owner candidates as responsibilities; responsibilities are
   only independently evidenced, distinct work duties. Preserve other unchanged
   responsibilities such as a separately owned deliverable.
+  State explicitly in a Project fact: 总体负责人存在冲突，仍待确认. Do not
+  replace this with only “尚未形成一致确认” or “仍需核实”; preserve the
+  competing source claims as separate evidence.
   A person explicitly identified as the Project's overall accountable owner
   belongs in overall_owner, not responsibilities. In Chinese, a description such
   as “张三总负责交付验收” denotes that role; keep “总” out of the person's name.
