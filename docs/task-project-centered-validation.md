@@ -670,3 +670,16 @@ verified or use the 18/19 baseline as a passing fixed evaluation. The next
 verification needs the same initialized service-MCP environment as the full
 replay, followed by the complete fixed v4 replay. W39 migration equivalence,
 idempotency, PR, deployment and production readback also remain open.
+
+### Read-only production-schema baseline check (2026-10-06)
+
+A read-only SQLite online backup of the production database at
+`/Users/derek/Services/ceo-agent-service/data/auto-reply.sqlite3` verified as
+schema `2026-09-25.1`, `quick_check=ok`, zero foreign-key violations, and no
+`source_document_id` column. The Business Task migration tables had no records
+(`business_task_signals`, `business_tasks`, `business_task_evidence`,
+`business_task_events`, `business_task_anchor_links`, and `business_projects`
+all contained zero rows). This confirms the production file is an older-schema
+database but cannot establish real-record migration equivalence or substitute
+for the missing W39 snapshot. The temporary backup was deleted after the
+readback; production was not modified.
