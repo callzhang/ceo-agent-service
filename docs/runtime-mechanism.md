@@ -1458,3 +1458,5 @@ Prompts 的 Developer/User/Profile 各自保留 Template 与 Rendered preview �
 不再占用 Developer/User 模板的 Rendered preview；该页没有 Template 或保存操作。
 
 Prompts 内容标题随当前查看方式显示「模板」或「渲染结果」，与所选 Developer/User/Profile 页签对应；完整运行输入仍位于独立只读「运行输入」页签。
+
+Prompts 页在各页签之前说明 Developer/User 对话模板、工作人格、Audit Rules 与运行输入的用途，并分别列出对话入口和后台 Consumer/Audit 的上下文组装顺序。后台角色使用代码生成指令，工作人格与 Runtime Context 追加在 Developer 输入中；角色任务上下文另作 Task 输入。

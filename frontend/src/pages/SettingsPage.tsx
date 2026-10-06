@@ -109,9 +109,32 @@ function InfoPanel({ payload }: { payload: RecordValue }) {
   </SettingsCard>;
 }
 
+function PromptOverview() {
+  return <section aria-label="提示词作用与上下文顺序">
+    <h3>提示词作用与上下文顺序</h3>
+    <div className="settings-table-wrap"><table className="settings-table">
+      <thead><tr><th>提示词 / 内容</th><th>作用与使用位置</th></tr></thead>
+      <tbody>
+        <tr><td>Developer Prompt</td><td>对话模板入口的通用行为规则；渲染后作为 Developer 指令，随后追加该入口的输出结构约定。</td></tr>
+        <tr><td>User Prompt</td><td>对话模板入口的本轮消息模板；按模板位置填入当前消息、会话历史、人员、文档与附件等材料。</td></tr>
+        <tr><td>Distilled work profile</td><td>工作人格与长期偏好；追加到后台 Consumer 和 Audit 的 Developer 指令中。</td></tr>
+        <tr><td>Audit Rules</td><td>后台 Audit 的独立审核规则；在 Settings → Audit Rules 编辑，置于 Audit 角色指令开头。</td></tr>
+        <tr><td>运行输入 / Runtime Context</td><td>只读查看服务提交的 Developer 与 Task 输入。Runtime Context 说明本轮角色、模型、工具、时间及时区等运行事实，最后追加到后台 Developer 指令。</td></tr>
+      </tbody>
+    </table></div>
+    <p>不同入口分别组装上下文；后台 Consumer/Audit 使用代码生成的角色指令，不直接套用这里的 Developer/User 模板。</p>
+    <ol>
+      <li><strong>对话模板入口：</strong>Developer 模板渲染 → 输出结构约定；User 模板按变量位置渲染为本轮输入。</li>
+      <li><strong>后台 Consumer：</strong>角色规则、行动与输出约定 → 能力说明与共享规则 → 质量要求与 Consumer 规则 → Skill 协议 → 工作人格 → Runtime Context；Task 输入包含本轮任务、材料、反馈及续接内容。</li>
+      <li><strong>后台 Audit：</strong>Audit Rules → 角色规则、行动与输出约定 → 能力说明与共享规则 → 质量要求与 Audit 规则 → 工作人格 → 本轮额外 Skill 协议（如有）→ Runtime Context；Task 输入包含待审候选、任务证据及修正内容。</li>
+    </ol>
+    <p className="muted">上述顺序表示内容在各输入中的拼接位置；Developer 与 Task 分别提交给运行路线。CLI 自带的系统提示、工具定义和会话历史不包含在此预览中。Template 查看原文，Rendered preview 查看已保存模板的渲染结果；完整后台输入请打开“运行输入”。</p>
+  </section>;
+}
+
 function PromptPanel({ payload, prompt, view, draft, setDraft, saveState, saveError }: { payload: RecordValue; prompt: PromptKind; view: "template" | "preview"; draft: RecordValue; setDraft: (value: RecordValue) => void; saveState: "idle" | "saving" | "saved" | "error"; saveError: string }) {
   const sectionTabs = <div className="settings-pill-row" role="tablist" aria-label="Prompt sections">{([['developer', 'Developer Prompt'], ['user', 'User Prompt'], ['profile', 'Distilled work profile'], ['runtime', '运行输入']] as const).map(([key, title]) => <Link key={key} role="tab" aria-selected={prompt === key} className={prompt === key ? "active" : ""} to={`/settings?tab=prompts&prompt=${key}&view=${key === 'runtime' ? 'preview' : 'template'}`}>{title}</Link>)}</div>;
-  if (prompt === "runtime") return <SettingsCard><h2>Prompts</h2><p className="muted">后台 Consumer/Audit 的完整运行输入，由角色规则、Skill、工作人格、任务上下文和 Runtime Context 共同组装。此页只读；Developer/User 模板的变量替换结果请在各自的 Rendered preview 查看。</p>{sectionTabs}<div id="prompt-panel" role="tabpanel" aria-label="运行输入"><RuntimePromptPreview /></div></SettingsCard>;
+  if (prompt === "runtime") return <SettingsCard><h2>Prompts</h2><p className="muted">后台 Consumer/Audit 的完整运行输入，由角色规则、Skill、工作人格、任务上下文和 Runtime Context 共同组装。此页只读；Developer/User 模板的变量替换结果请在各自的 Rendered preview 查看。</p><PromptOverview />{sectionTabs}<div id="prompt-panel" role="tabpanel" aria-label="运行输入"><RuntimePromptPreview /></div></SettingsCard>;
   const isProfile = prompt === "profile";
   const templateKey = isProfile ? "profile" : `${prompt}_template`;
   const rawTemplate = draft[templateKey] ?? fieldsOf(payload)[templateKey];
@@ -122,6 +145,7 @@ function PromptPanel({ payload, prompt, view, draft, setDraft, saveState, saveEr
   const viewTabs = <div className="settings-pill-row settings-view-row" role="tablist" aria-label="Prompt view"><Link role="tab" aria-selected={view === "template"} className={view === "template" ? "active" : ""} to={`/settings?tab=prompts&prompt=${prompt}&view=template`}>Template</Link><Link role="tab" aria-selected={view === "preview"} className={view === "preview" ? "active" : ""} to={`/settings?tab=prompts&prompt=${prompt}&view=preview`}>Rendered preview</Link></div>;
   return <SettingsCard>
     <div className="settings-card-heading"><div><h2>Prompts</h2><p className="muted">{label} · {view === "template" ? "模板" : "渲染结果"}</p><p className="muted">{isProfile ? "在新的 Consumer 或 Audit 运行中追加到 Developer Prompt。" : "Rendered preview 展示这份已保存模板的变量替换结果。后台完整输入见“运行输入”。"}</p></div><span className="settings-path">{path}</span></div>
+    <PromptOverview />
     {sectionTabs}
     <div className="prompt-editor-shell" id="prompt-panel" role="tabpanel" aria-label={view === "template" ? "Template" : "Rendered preview"}>{view === "template" ? <form onSubmit={(event) => event.preventDefault()}><div className="prompt-editor-toolbar">{viewTabs}</div><TokenEditor id="prompt-template" label="Template" value={value} onChange={(next) => setDraft({ ...draft, [templateKey]: next })} autoResize /><p className="muted prompt-runtime-note">{isProfile ? "保存后仅影响后续新建运行。" : <>运行时注入变量：<code>{"{{principal}}"}</code> <code>{"{{conversation}}"}</code>。这些变量不需要手动填写。</>}</p><SaveBar state={saveState} error={saveError} /></form> : <><div className="prompt-editor-toolbar">{viewTabs}</div><p className="muted">预览使用已保存的模板；未保存的改动不会进入预览。</p><pre className="prompt-preview">{isProfile ? preview || "未提供预览" : highlightRenderedPreview(displayValue(fieldsOf(payload)[templateKey]), preview) || "未提供预览"}</pre></>}</div>
   </SettingsCard>;
