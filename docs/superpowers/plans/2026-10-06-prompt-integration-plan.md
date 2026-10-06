@@ -2,7 +2,7 @@
 
 > **For agentic workers:** 本文是供 Derek 决策的整合方案和分阶段计划，尚未批准实施。获批后使用 executing-plans 逐阶段执行；不可把建议当成当前运行事实。Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Settings 中每个可编辑 prompt 有明确的运行消费者；编辑、渲染预览、实际提交及历史输入使用同一组装规则，并保留当前 Consumer/Audit/System 的职责与会话契约。
+**Goal:** 精简实际提交的 prompt，保留并补齐同一对话对象的已有 session 复用；Settings 中每个可编辑 prompt 有明确的运行消费者；编辑、渲染预览、实际提交及历史输入使用同一组装规则，并保留当前 Consumer/Audit/System 的职责与会话契约。
 
 **Architecture:** 沿用 Consumer Agent A → Audit Agent B → System Executor。服务契约、可配置工作原则、工作人格、任务上下文与运行事实各有一个来源；由小型纯组装函数组合，而不是把旧对话模板直接叠到新角色协议上。运行器和预览复用组装函数，实际提交仍经过现有 AgentTurnProcess 与 native CLI adapters。
 
@@ -226,3 +226,59 @@ npm --prefix frontend run build
 不建议批准：直接追加旧模板、把旧聊天变量硬映射为所有业务任务、把所有模型调用改成同一prompt、借整合新增审核或重置会话。
 
 本计划自检：全部三种页面配置的消费者已指定；scheduled/feedback/stage/receipts/两种CLI/历史缺输入/示例来源/自定义迁移/会话不重置/特殊入口均有任务或明确排除项。仍需 Derek 决定目标配置职责，然后再写基于该决定的精确实现代码与测试步骤。
+
+
+## 10. Prompt 精简：新增明确验收目标
+
+Derek 追加要求：prompt 必须精简，整合不能继续把各来源全文叠加。本轮读取生产已保存 runtime.prompt 作为样本，没有调用模型或执行业务：
+
+| 角色/样本 | Developer 字符 | Task 字符 | 合计 | 其中 Runtime Context | invocation Skill 协议 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Consumer run24804 / attempt21623 | 73,231 | 36,356 | 109,587 | 4,994 | 14,638 |
+| Audit run24805 / attempt21624 | 48,307 | 67,418 | 115,725 | 4,463 | 0 |
+
+字符数不是 token 计费。此环境未安装 tokenizer，没有制造 token 估算；样本只计服务 Developer/Task，不计原生 CLI system/tools/history，也不是所有任务的分布。实施阶段冻结不少于20个跨任务类型的真实脱敏输入样本，分别统计 static Developer、dynamic Task、native历史和provider usage（如果运行时可提供）。
+
+样本 Consumer Developer 内另有10,543字符的完整 Pydantic wire schema、6,123字符的 System Action Contracts；已保存 Work profile 为16,324字符。这些是主要精简候选，不能把4,994字符的环境说明当成唯一原因。
+
+### 精简顺序
+
+1. 先去掉重复角色规则、重复 Audit Rules 和重复原理说明；每一份规则保留唯一权威来源。各项去重分别固定比较，不一次删除多种约束。
+2. Skill 目录仅保留选择所需的名称、短用途及原生读取入口；操作细节让 Agent 按需读具体 Skill。使用既有任务 Skill 引用和完整可发现目录，不按业务关键词裁剪能力，也不复制所有 Skill 正文进上下文。
+3. 把长期工作人格精炼成实际执行要点，原完整资料保留为来源文档。精炼版需要逐条审阅，不能每轮重新调用模型摘要，也不能只按字符截断。人格中的现行职责、证据要求和关键业务偏好不可丢失。
+4. Runtime Context 保留本轮角色、route/model/thinking、目录、时间/时区和工具入口；缩短重复工具说明。参数及操作细节由本轮原生 tool schema/Skill 提供，不能宣称未知能力或认证成功。
+5. 验证 native structured-output schema 是否已进入模型输入后，比较 Developer 内完整 schema 的重复注入方案；字段语义与严格输出模型仍保留单一代码来源，不通过改变 parser 放宽输出。
+6. Task 优先去掉重复 serialization 和相同来源的重复块，不截断当前事实、候选、stage、feedback、prior receipts。历史摘要/增量传入属于另一项语义变化，须证明确切事实仍可读取，再纳入固定比较。
+
+### 目标与测量
+
+- 默认 Developer/User 模板应是短原则/组织模板，不再复制整个角色协议。
+- 第一轮以相同配置/相同用例的静态 Developer 字符数降低30%以上作为设计目标，力争50%；这是待验收目标，不是已实现收益，也不对动态业务材料设粗暴总字符上限。
+- 报告字符数、真实/参考 tokenizer信息、provider usage（如果可得）、first-turn和resume-turn耗时、tool读取增加、反馈轮次及质量失败。没有provider数据时明确缺失。
+- 结构合同、事实完整性、候选质量及Audit独立判断不能因精简变差；若某项精简降低质量，保留最小必要信息并记录对照，不用“更短”单独证明更优。
+- 精简纳入阶段2的固定评价；阶段1逐字输入一致性与阶段2精简变化分开验收。自然session累积的长历史不与新prompt长度混淆。
+
+## 11. 同一对话对象 session 复用：优先复用现有机制
+
+Derek 明确要求同一个对话对象复用已有session。代码与生产记录显示Consumer已经具备基础逻辑，本计划不建立第二套session映射：
+
+- `ConsumerAgentRunner._consumer_route_sessions` 使用既有持久化 `conversation_id + route_name` 查询session；不是按姓名/群标题或本次task id创建会话。
+- `AgentTurnProcess` 保存native session id及route映射；Codex用原生exec resume，Claude在成功路径原子保存自己的session。
+- 现有反馈、强制重处理/新execution generation和contract hash变化继续resume；文档明确hash不是新session身份边界。
+- Audit在本次审核run的重试使用自己的session，`persist_conversation_session=False`；不能把Consumer session直接交给Audit，否则会破坏角色独立性。
+- 本次最近100个completed Consumer run中，有11组“同conversation、同session、不同task”记录。这证明已有复用样本，不证明每个入口和每次fallback都完整覆盖。
+
+### 计划追加任务
+
+- [ ] 冻结复用回归：同conversation连续两个不同task；不同conversation隔离；新generation/feedback/模板或Skill变化保持session；进程重启从库恢复。
+- [ ] route切换后分别查原route持久session；返回原route仍resume该route的旧session，不把Codex/Claude session id跨runtime互传。
+- [ ] 核对来源到conversation_id的稳定映射：消息、定时、OA/邮件任务若没有同一真实对话对象，不由收件人显示名猜测合并。新增语义映射必须单独列出，不以全局一个session替代。
+- [ ] 审计启动失败、session不存在/不可访问、认证上下文失效、fallback与恢复链：仅在已有明确新session条件下创建，并保留lineage及原因；正常配置变化不清空历史。
+- [ ] 核对既有SQLite conversation lock和lease：同conversation顺序执行，不同conversation保留并发；不增加全局进程锁。
+- [ ] 若发现未持久化、查错route或新task绕开已有映射的具体失败，再在原复用路径最小修复并补回归；没有失败证据就沿用现有代码。
+- [ ] 在既有runtime attempt/历史字段中验证“本次新建还是resume、来源session、route、结果session与原因”，优先使用已有事件，避免新session数据库。
+- [ ] 验证resume后的输入仍包含本轮触发、修订、来源与变化，不能因Agent记得旧事实而把当前任务省略。
+
+复用session与精简prompt分别测量。resume保留上下文和可能的缓存收益，但不保证provider只处理增量或token成本下降；还可能累积更长历史。本计划不新增按token阈值强制重置session、自动剪裁事实或自建compaction策略。原生compaction能力及可用指标先验证，再决定是否需要独立优化。
+
+新增验收用例的现有测试位置：`tests/test_consumer_agent.py`、`tests/test_agent_turn_runner.py`、`tests/test_agent_runtime_router.py`与现有Claude adapter/Store session持久化测试。部署后读回同conversation的自然连续task及session lineage，不为验收自动发送测试消息或重放历史动作。
