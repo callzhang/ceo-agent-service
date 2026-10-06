@@ -2332,6 +2332,66 @@ def test_consumer_preserves_full_calendar_material_source(store, task, context):
     assert candidate_digest(changed_result) != original_digest
 
 
+@pytest.mark.parametrize("serialized", [False, True])
+def test_consumer_source_callbacks_do_not_require_principal_signature_or_labels(
+    store, task, context, monkeypatch, serialized,
+):
+    from app.feedback_spike import build_callback_url
+
+    base = "https://feedback.example.com"
+    monkeypatch.setenv("CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", base)
+    up = build_callback_url(base, feedback_token="spike_1780000000_deadbeef", rating="up")
+    down = build_callback_url(base, feedback_token="spike_1780000000_deadbeef", rating="down")
+    historical = f"A different participant's notice.\n[Positive]({up}) | [Negative]({down})"
+    source = json.dumps({"text": historical}) if serialized else historical
+    context = replace(context, trigger_text=historical, messages=(AgentContextMessage(
+        message_id="other-participant", sender="Other participant", text=source,
+        create_time="2026-10-06T00:00:00Z",
+    ),))
+    result = ConsumerAgentRunner(
+        store=store, workspace=Path("/workspace"), executor=CapturingExecutor(_result_jsonl()),
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    assert result.result.outcome == "no_action"
+    [binding] = result.result.source_bindings
+    assert binding.value["trigger_text"] == historical
+    assert binding.value["messages"][0]["text"] == source
+    from app.feedback_spike import sanitize_configured_feedback_links
+
+    with pytest.raises(ValueError, match="feedback_callback_pair_invalid"):
+        sanitize_configured_feedback_links(historical, vercel_base_url=base)
+
+
+@pytest.mark.parametrize("change", ["mixed_tokens", "mixed_attempts", "duplicate_rating",
+                                    "extra_query", "extra_url", "outside_credential"])
+def test_participant_callback_format_cannot_bypass_source_security(
+    store, task, context, monkeypatch, change,
+):
+    from app.feedback_spike import build_callback_url
+
+    base = "https://feedback.example.com"
+    monkeypatch.setenv("CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", base)
+    up = build_callback_url(base, feedback_token="spike_1780000000_deadbeef", rating="up", attempt_id=1)
+    down = build_callback_url(base, feedback_token="spike_1780000000_deadbeef", rating="down", attempt_id=1)
+    if change == "mixed_tokens":
+        down = down.replace("deadbeef", "feedcafe")
+    elif change == "mixed_attempts":
+        down = down.replace("attempt_id=1", "attempt_id=2")
+    elif change == "duplicate_rating":
+        down = down.replace("rating=down", "rating=up")
+    elif change == "extra_query":
+        down += "&access_token=secret"
+    source = f"Participant notice.\n[Positive]({up}) | [Negative]({down})"
+    if change == "extra_url":
+        source += f"\nUnpaired URL: {up}"
+    elif change == "outside_credential":
+        source += "\nAuthorization: Bearer abcdef1234567890"
+    context = replace(context, trigger_text=source)
+    with pytest.raises(ValueError):
+        ConsumerAgentRunner(
+            store=store, workspace=Path("/workspace"), executor=CapturingExecutor(_result_jsonl()),
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+
 @pytest.mark.parametrize("failure", ["credential", "depth", "codec_size"])
 def test_captured_sources_keep_security_and_resource_bounds(
     store, task, context, failure,

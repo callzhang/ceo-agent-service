@@ -9,6 +9,12 @@
 
 ## Unreleased
 
+- 2026-10-06: Captured participant feedback links are checked by their exact
+  configured URL and pair data rather than the principal's outgoing signature
+  and labels. Markdown/JSON source parsing leaves canonical snapshots intact;
+  foreign hosts, malformed tokens, mismatched pairs, extra URLs/parameters and
+  other credentials remain rejected. Outbound rendering stays strict.
+
 - 2026-10-06: Captured provider sources no longer inherit Agent-authored
   short-field limits. Full calendar cards remain unchanged in source bindings
   and candidate digests; credential, callback, nesting and total codec limits

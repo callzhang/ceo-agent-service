@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse
 
+from markdown_it import MarkdownIt
+
 from app.codex_decision import append_signature
 from app.dws_client import DwsClient
 from app.leak_check import contains_forbidden_leak
@@ -226,11 +228,11 @@ def sanitize_configured_feedback_links(
 def sanitize_source_feedback_links(
     value: object, *, vercel_base_url: str, depth: int = 0,
 ) -> object:
-    """Inspect captured history using the same pair contract after rendering.
+    """Inspect source callback data, independently of outbound presentation.
 
-    Normalize only the paragraph whitespace before the native feedback suffix,
-    and decode source JSON containers for inspection. The caller keeps the raw
-    snapshot; outgoing text continues to use the strict original parser.
+    Captured participants can use different signatures and link labels. Only
+    the configured URL/pair data is removed in this validation copy; canonical
+    sources and the strict current-outgoing parser are unchanged.
     """
     if depth > 12:
         raise ValueError("runtime_result_reference_depth_invalid")
@@ -242,17 +244,36 @@ def sanitize_source_feedback_links(
                 depth=depth + 1) for item in value]
     if not isinstance(value, str) or FEEDBACK_CALLBACK_PATH not in value:
         return value
-    suffix_marker = f"反馈：[{FEEDBACK_UP_LINK_LABEL}]("
-    body, marker, suffix = value.rpartition(suffix_marker)
-    inspected = body.rstrip() + "\n\n" + marker + suffix if marker else value
-    pair = _configured_feedback_link_pair(inspected, vercel_base_url=vercel_base_url,
-                                          link_prefix="反馈：")
-    if pair is not None:
-        return pair.body + "\n\n[service-generated feedback callbacks]"
     if value.lstrip().startswith(("{", "[")):
-        return sanitize_source_feedback_links(json.loads(value),
-                vercel_base_url=vercel_base_url, depth=depth + 1)
-    return sanitize_configured_feedback_links(inspected, vercel_base_url=vercel_base_url)
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            decoded = None
+        if isinstance(decoded, (dict, list)):
+            return sanitize_source_feedback_links(decoded,
+                    vercel_base_url=vercel_base_url, depth=depth + 1)
+    urls = [child.attrGet("href") for token in MarkdownIt().parse(value)
+            for child in (token.children or []) if child.type == "link_open"
+            and FEEDBACK_CALLBACK_PATH in (child.attrGet("href") or "")]
+    if len(urls) != 2:
+        raise ValueError("feedback_callback_pair_invalid")
+    expected_base = urlparse(normalize_vercel_base_url(vercel_base_url))
+    expected_path = f"{expected_base.path.rstrip('/')}{FEEDBACK_CALLBACK_PATH}"
+    queries = [_configured_callback_query(url, expected_base=expected_base,
+               expected_path=expected_path, expected_rating=rating)
+               for url, rating in zip(urls, ("up", "down"), strict=True)]
+    up, down = queries
+    if (up is None or down is None
+            or {key: item for key, item in up.items() if key != "rating"}
+            != {key: item for key, item in down.items() if key != "rating"}
+            or not _is_generated_feedback_token(up["feedback_token"])):
+        raise ValueError("feedback_callback_pair_invalid")
+    inspected = value
+    for url in urls:
+        inspected = inspected.replace(url, "[service-generated feedback callback]", 1)
+    if FEEDBACK_CALLBACK_PATH in inspected:
+        raise ValueError("feedback_callback_pair_invalid")
+    return inspected
 
 
 def _configured_feedback_link_pair(

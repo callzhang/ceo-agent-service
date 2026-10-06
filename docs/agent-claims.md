@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+<!-- codex-source-callback-format-20261006: app/feedback_spike.py (captured-source parser only), tests/test_consumer_agent.py, docs/runtime-mechanism.md, CHANGELOG.md; participant source must not inherit principal outbound signature/labels; retain configured URL/query/token/pair and credential checks, immutable sources, strict outbound parser and all risk/authorization guards. -->
+
 <!-- codex-source-snapshot-validation-20261006: app/agent_turn_runner.py (source value versus authored short-field validation only), tests/test_consumer_agent.py, docs/runtime-mechanism.md, CHANGELOG.md; production full calendar source reference incorrectly rejected; no change to callback/credential/depth/codec security, digest, source readback or authorization. -->
 
 <!-- codex-ceo-scheduled-rerun-20261002: app/audit_web.py (rerun payload validation only), tests/test_audit_web.py, docs/runtime-mechanism.md; preserve scheduled execution context instead of synthesizing DingTalk input; 320 focused tests passed. -->
