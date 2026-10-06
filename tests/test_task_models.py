@@ -99,6 +99,18 @@ def test_project_customer_label_cannot_be_inferred_without_evidence():
         TaskAgentDecision.model_validate(payload)
 
 
+def test_project_customer_citation_must_also_be_in_project_evidence():
+    payload = _independent_project_result()
+    project = payload["project_decisions"][0]
+    project["crm_customer_label"] = "甲客户"
+    project["crm_customer_evidence"] = {
+        "source_ref": "meeting:42",
+        "source_excerpt": "会议决定启动甲客户验收项目",
+    }
+    with pytest.raises(ValidationError, match="also support the Project decision"):
+        TaskAgentDecision.model_validate(payload)
+
+
 def test_independent_project_selector_indexes_projects_not_tasks():
     payload = _independent_project_result()
     payload["task_decisions"] = [

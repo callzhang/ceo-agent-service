@@ -40,7 +40,8 @@ to make business judgments.
    Do not infer aliases or identity from rank or topical similarity. A complete
    source-stated customer prefix may be emitted only as `crm_customer_label`
    when it is clearly separate from the Project work (for example, “甲客户” +
-   “一期交付项目”); cite the exact source text. The service performs the
+   “一期交付项目”); cite the exact source text as `crm_customer_evidence` and
+   repeat that identical citation in the Project's `evidence` list. The service performs the
    read-only CRM exact match. A title prefix alone never proves a CRM identity.
    The Project title remains unchanged and Tasks never store a copied customer.
    CRM name-resolution output is only a candidate list, never proof of exact or

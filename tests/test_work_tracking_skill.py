@@ -47,6 +47,15 @@ def test_work_tracking_skill_owns_judgment_and_delegates_only_mechanics():
         assert forbidden not in text
 
 
+def test_candidate_skill_repeats_crm_customer_citation_in_project_evidence():
+    text = (ROOT / "ci/shared-skills/ceo-work-tracking/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "repeat that identical citation in the Project's `evidence` list" in " ".join(
+        text.split()
+    )
+
+
 def test_task_agent_prompt_builder_contains_transport_not_business_policy():
     source = inspect.getsource(build_task_agent_prompt)
 

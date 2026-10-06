@@ -586,6 +586,7 @@ Apply the Skill before returning:
   A Project may have an optional CRM customer. Only set crm_customer_label with
   crm_customer_evidence when the source explicitly names the customer; a clear
   complete customer prefix plus distinct Project work may be cited as the label.
+  When set, include that exact same citation in the Project's evidence list.
   Do not put a customer ID or display name into the Project title, and do not
   copy a customer onto Tasks. The service performs a read-only CRM name
   resolution. Every result is an unconfirmed candidate, including a single

@@ -1933,6 +1933,7 @@ def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract(monkeyp
     assert "Do not create, update, delete, send, or complete external records" in prompt
     assert "must never call memory_connector.memory_write" in prompt
     assert "memory_connector.document_upload" not in prompt
+    assert "include that exact same citation in the Project's evidence list" in prompt
     assert "routine milestones and next steps are Project facts, not Task candidates" in prompt
     assert "Project title contains only the entity name, not its status or action" in prompt
     assert "current_project_attention.assessment_json.evidence" in prompt
