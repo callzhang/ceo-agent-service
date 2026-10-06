@@ -613,3 +613,28 @@ now include the exact semantic requirement and prohibit using only the softer
 phrases. The full run is recorded at
 `/private/tmp/project-centered-v15-full-ad65d0bb/results.jsonl`; a fresh native
 rerun on the corrected final candidate is still required.
+
+### Final candidate local and native follow-up (`388effc7`, 2026-10-06)
+
+The final owner-conflict wording is committed as
+`388effc734534ed79f8d7a608cedb4e2115fde2e`; the CI Skill SHA-256 is
+`4749583bbd0f82695b34dfaaa2066863ce3e87a920398136c3c5e89b8708bbe5`.
+Focused local verification passed: `tests/test_task_agent.py`,
+`tests/test_task_project_centered_eval.py`, and `tests/test_work_tracking_skill.py`
+reported 253 passed; `tests/test_task_semantic_store.py`,
+`tests/test_task_project_centered_eval.py`, and
+`tests/test_inspect_task_attention.py` reported 519 passed. Ruff, fixture JSON
+parsing, and `git diff --check` also passed.
+
+A fresh isolated native run of `responsibility-change-conflict` used the pinned
+`codex_oauth` / `gpt-5.6-luna` route and a new temporary database at
+`/private/tmp/project-centered-v18-owner-388effc7/owner.sqlite3`. It did not
+produce a Task Agent decision: the only runtime attempt ended after the configured
+15-minute limit with `codex_total_timeout`. This is an unavailable semantic
+result, not a pass and not a semantic failure. Earlier in-sandbox attempts also
+failed before model execution because Codex could not write its own `~/.codex`
+state; allowing the native CLI to access its normal home resolved that specific
+sandbox failure but not the timeout. The owner-conflict rule therefore remains
+without a fresh native semantic result. The complete fixed v4 replay, frozen
+pre-migration W39 comparison, idempotency replay, PR, deployment, and production
+readback remain open.

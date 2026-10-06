@@ -428,7 +428,7 @@ Task 8 脚手架记录（2026-10-04）：版本 1 固定 19 个案例，原始�
 
 **Files:** 本计划、`docs/task-project-centered-validation.md`、行为文档及发布所需受控 Skill 文件；不在生产 checkout 编辑代码或运行测试。
 
-- [ ] 检查所有当前生产入口、prompt、模型字段、CI Skill、API/UI：不再把 ProjectProposal/AttentionProposal 放在 TaskDecision，不再以“没有 Task”拒绝项目风险，不再从 Task owner 推断总负责人；旧 run 和旧 spec 保持历史身份，不作为当前规则执行。精确查找旧字段名后逐处分类，不按全文替换误伤历史材料。
+- [x] 检查当前生产入口、prompt、模型字段、CI Skill、API/UI 中的 Project/Attention 输出位置：`ProjectProposal` 仅作为 `ProjectDecision.registration`，`TaskAttentionProposal` 仅作为顶层 `TaskProjectAssessment.attention_proposal`，二者都不在 `TaskDecision` 内；Task Agent 输入分别为 `project_decisions`、`task_decisions`、`project_assessments`。当前 parser 拒绝旧 TaskDecision 项目/关注字段，旧 run 和历史 spec 保留原始身份。无 Task 的项目风险、单一负责人和职责分离规则均已在 prompt/Skill/行为文档表达。此项为代码契约审计，不代表原生评测、真实 W39、迁移或发布通过。
 - [ ] 独立代码审查和固定 eval 比较完成后，以 PR 合并本次产品行为变化。PR 描述明确旧/新取舍与真实 W39 结果；创建 PR 后附加到当前任务。不以单元测试通过替代业务评测，不直接绕过产品变更的 PR 要求。
 - [ ] 发布前核实原有回复、会议、已领取工作和外部动作的既有可恢复性；不趁此新增安全/审计机制。列出将补充上下文的明确项目/输入及备份位置，先在副本证明结构迁移前后 Signal/Task/历史等价。未知旧记录仍留历史，禁止全库自动升级为项目或候选。
 - [ ] 推送并合并后使用 `python -m app.deploy`，让标准流程等待空闲、备份、推进生产 checkout、构建与重启；不手动 kill/kickstart、不编辑生产目录。代码部署与实际加载 Skill 的发布必须同版本衔接；服务开始处理新输入前核验契约哈希和实际 Skill，不能长期留下新代码配旧规则。
