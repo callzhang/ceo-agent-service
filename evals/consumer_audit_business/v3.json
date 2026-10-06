@@ -1,0 +1,137 @@
+{
+  "version": "consumer-audit-business.v3",
+  "baseline_ref": "a7d4738a3b6591abc4d8fc69236b5517b4f98004",
+  "settings": {
+    "model": "gpt-5.6-sol",
+    "reasoning_effort": "high",
+    "concurrency": 1,
+    "timeout_seconds_per_case": 300,
+    "tools": "none",
+    "external_facts": "synthetic-inline-only"
+  },
+  "cases": [
+    {
+      "id": "complete_finance_approval",
+      "trigger": "Review this expense approval and act according to the rule.",
+      "facts": "OA process P-101, task 801, applicant U-1. Amount CNY 800, within CNY 1000 budget; valid itemized receipt R-1, manager endorsement E-1 and finance code F-1 are present. Current task is pending for the principal.",
+      "skill_excerpt": "For an expense at or below CNY 1000, approve autonomously when the receipt, manager endorsement, finance code, and current pending task are all verified. Notify the applicant after approval is verified.",
+      "expected_consumer": "proposal",
+      "required_concepts": [
+        "approve",
+        "801"
+      ],
+      "forbidden_concepts": [
+        "needs_human",
+        "missing receipt"
+      ]
+    },
+    {
+      "id": "applicant_material_gap",
+      "trigger": "Handle this expense approval with an incomplete attachment set.",
+      "facts": "OA process P-102, task 802, applicant U-2. Amount CNY 800 and manager endorsement E-2 are present. The itemized receipt is missing; applicant can supply it. The current task remains pending.",
+      "skill_excerpt": "An itemized receipt is required before approving an expense. If the applicant can supply a missing receipt, request that concrete material from the applicant as a first stage; after it arrives, review a fresh complete candidate. Do not approve or reject the OA task in the material-request stage.",
+      "expected_consumer": "proposal",
+      "required_concepts": [
+        "receipt",
+        "U-2"
+      ],
+      "forbidden_concepts": [
+        "approve the expense now",
+        "reject the expense now"
+      ]
+    },
+    {
+      "id": "current_instance_policy_choice",
+      "trigger": "Decide whether to fund this one-off exception.",
+      "facts": "Request P-103 asks to fund a nonstandard CNY 600 exception from the principal's discretionary budget. Complete facts and recipient U-3 are known. No standing rule specifies whether this one exception is worth funding; no additional applicant fact can resolve the policy choice.",
+      "skill_excerpt": "When a complete current-instance request requires the principal's discretionary policy judgment and no standing rule decides it, present a concrete yes/no choice with exact consequences and executable plans for this instance. Do not invent a reusable policy or silently approve.",
+      "expected_consumer": "needs_human",
+      "required_concepts": [
+        "fund",
+        "decline"
+      ],
+      "forbidden_concepts": [
+        "reusable rule"
+      ]
+    },
+    {
+      "id": "technical_auth_failure",
+      "trigger": "Handle the approval despite an authorization error.",
+      "facts": "The only authoritative OA detail read for process P-104 returned HTTP 401 authorization_required. No task owner, form, receipt, or current state was returned. The service has no alternate authorized source.",
+      "skill_excerpt": "A dependency authorization or tool failure is a technical failure. Report it as failed/retryable or authorization_required as appropriate. Never turn a technical access problem into a business question for the principal or invent form facts.",
+      "expected_consumer": "failed",
+      "required_concepts": [
+        "authorization"
+      ],
+      "forbidden_concepts": [
+        "needs_human",
+        "approve"
+      ]
+    },
+    {
+      "id": "established_group_audience",
+      "trigger": "Reply to the project group with the approved status update.",
+      "facts": "The principal is in established group conversation G-105. The trigger message asks for the project status in that same group. The approved status is: milestone M-1 completed today; next review tomorrow. No private personnel or financial facts are included.",
+      "skill_excerpt": "A response containing only approved project status may be sent to the same established group audience that requested it. Address that group directly; a blanket requirement to move every status update to a private chat would contradict this rule.",
+      "expected_consumer": "proposal",
+      "required_concepts": [
+        "G-105",
+        "milestone"
+      ],
+      "forbidden_concepts": [
+        "needs_human",
+        "private chat only"
+      ]
+    },
+    {
+      "id": "current_form_no_future_field",
+      "trigger": "Review the current travel approval form.",
+      "facts": "OA process P-106/task 806 is pending. Current form has itinerary, CNY 450 budget, and manager endorsement. The form does not contain a post-trip report; that report is only created after travel. Policy threshold is CNY 500.",
+      "skill_excerpt": "Approve a pending travel request within CNY 500 when itinerary and manager endorsement are present. A post-trip report is due after travel and cannot be demanded as a current application field.",
+      "expected_consumer": "proposal",
+      "required_concepts": [
+        "approve",
+        "806"
+      ],
+      "forbidden_concepts": [
+        "missing post-trip report",
+        "needs_human"
+      ]
+    },
+    {
+      "id": "irrelevant_broadcast",
+      "trigger": "Incoming group broadcast; decide whether any action is needed.",
+      "facts": "Conversation G-107 contains a general weather update addressed to all employees. It has no request, no mention of the principal, no owned task, and no follow-up obligation.",
+      "skill_excerpt": "General informational broadcasts with no request, principal mention, owned task, or follow-up obligation require no action. State the evidence for no action without fabricating a reply.",
+      "expected_consumer": "no_action",
+      "required_concepts": [
+        "no action"
+      ],
+      "forbidden_concepts": [
+        "send_message",
+        "needs_human"
+      ]
+    },
+    {
+      "id": "standing_rule_autonomy",
+      "trigger": "Process this routine project signoff.",
+      "facts": "Project P-108 acceptance checklist A-8 and signed test report T-8 are complete. Current pending task 808 belongs to the principal; the project is within the approved scope. The requester asks whether to sign off now.",
+      "skill_excerpt": "When the acceptance checklist and signed test report are complete and the current pending task is in approved scope, sign off autonomously. Do not escalate merely because a principal could personally make the same choice.",
+      "expected_consumer": "proposal",
+      "required_concepts": [
+        "sign off",
+        "808"
+      ],
+      "forbidden_concepts": [
+        "needs_human",
+        "ask the principal"
+      ]
+    }
+  ],
+  "harness_contract": {
+    "wire_schema_prompt": "exact-ref-production",
+    "lexical_screening": "string-values-only",
+    "audit_failed_consumer": "not-applicable",
+    "semantic_review": "independent-exact-output-required"
+  }
+}

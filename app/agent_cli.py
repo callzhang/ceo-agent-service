@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+import argparse
 import hashlib
 import errno
+import importlib
 import json
 import os
 import shutil
+import sqlite3
 import stat
 import subprocess
+import sys
 import tempfile
 import zipfile
 from collections.abc import Callable, Sequence
+from contextlib import closing
 from dataclasses import dataclass, replace
 from pathlib import Path
+from urllib.parse import quote
 from xml.etree import ElementTree
 
 from mcp.server.fastmcp import FastMCP
@@ -58,6 +64,8 @@ SPREADSHEET_MATERIAL_ROOTS = (
     Path(tempfile.gettempdir()).resolve(),
 )
 TEXT_MATERIAL_ROOTS = SPREADSHEET_MATERIAL_ROOTS
+MAX_TASK_FILE_BYTES = MAX_CLI_OUTPUT_BYTES
+_TASK_ARTIFACT_TEMP_PREFIX = ".task-artifact-"
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,194 +133,6 @@ def execute_reviewed_write(
         classifier=classifier,
         process_runner=process_runner,
     )
-
-
-def send_approved_dingtalk_message(
-    db_path: Path,
-    task_id: int,
-    action_identity: str,
-    *,
-    dws_client=None,
-) -> dict[str, object]:
-    """Send one prepared message from the proposal under the active Audit run."""
-    from app.agent_contracts import (
-        DINGTALK_MESSAGE_CHANNELS,
-        ConsumerAgentResult,
-        dingtalk_chat_delivery,
-    )
-    from app.consumer_agent import structured_dingtalk_outgoing_text_key
-    from app.dingtalk_models import DingTalkConversation, DingTalkMessage
-    from app.dws_client import DwsClient
-    from app.external_action_identity import expected_external_action
-    from app.service_message_sender import (
-        ServiceMessageSender,
-        agent_message_delivery_key,
-    )
-    from app.store import AgentRole, AutoReplyStore
-
-    identity = action_identity.strip()
-    if isinstance(task_id, bool) or task_id <= 0 or not identity:
-        raise AgentReadOnlyViolationError("dingtalk_message_action_invalid")
-    store = AutoReplyStore(db_path)
-    task = store.get_reply_task(task_id)
-    if task is None or task.channel not in DINGTALK_MESSAGE_CHANNELS:
-        raise AgentReadOnlyViolationError("dingtalk_message_task_invalid")
-    running_audits = [
-        run
-        for run in store.list_agent_runs_for_task_generation(
-            task.id, task.execution_generation
-        )
-        if run.role is AgentRole.AUDIT and run.status == "running"
-    ]
-    if len(running_audits) != 1:
-        raise AgentReadOnlyViolationError("dingtalk_message_audit_run_invalid")
-    audit_run = running_audits[0]
-    if audit_run.parent_agent_run_id is None:
-        raise AgentReadOnlyViolationError("dingtalk_message_proposal_invalid")
-    consumer_run = store.get_agent_run(audit_run.parent_agent_run_id)
-    if (
-        consumer_run is None
-        or consumer_run.role is not AgentRole.CONSUMER
-        or consumer_run.status != "completed"
-    ):
-        raise AgentReadOnlyViolationError("dingtalk_message_proposal_invalid")
-    try:
-        consumer_result = ConsumerAgentResult.model_validate_json(
-            consumer_run.final_result_json
-        )
-    except ValueError as exc:
-        raise AgentReadOnlyViolationError("dingtalk_message_proposal_invalid") from exc
-    proposal = consumer_result.proposal
-    actions = (
-        [action for action in proposal.actions if action.action_identity == identity]
-        if proposal is not None
-        else []
-    )
-    if len(actions) != 1:
-        raise AgentReadOnlyViolationError("dingtalk_message_action_invalid")
-    action = actions[0]
-    if structured_dingtalk_outgoing_text_key(action) is None:
-        raise AgentReadOnlyViolationError("dingtalk_message_action_unsupported")
-    delivery_key = agent_message_delivery_key(
-        business_object_key=task.business_object_key,
-        action_identity=action.action_identity,
-        execution_generation=task.execution_generation,
-        proposal_revision=audit_run.proposal_revision,
-    )
-    prepared = store.get_outbound_postfix("dingtalk", delivery_key)
-    if prepared is None:
-        raise AgentReadOnlyViolationError("dingtalk_message_prepared_body_missing")
-    target = action.target
-    conversation_id = str(target.get("conversation_id") or "").strip() or None
-    open_dingtalk_id = str(
-        target.get("open_dingtalk_id")
-        or target.get("recipient_open_dingtalk_id")
-        or target.get("sender_open_dingtalk_id")
-        or ""
-    ).strip()
-    user_id = str(target.get("user_id") or "").strip()
-    if not conversation_id and not open_dingtalk_id and not user_id:
-        raise AgentReadOnlyViolationError("dingtalk_message_target_missing")
-    if (
-        task.single_chat
-        and conversation_id == task.conversation_id
-        and open_dingtalk_id
-        and not user_id
-    ):
-        conversation_id = None
-    dws = dws_client or DwsClient()
-    # DWS accepts an openDingTalkId for reads and mentions, but its single-chat
-    # send endpoint requires receiverUid (the user's userId).  A direct
-    # message trigger is the one place where the service has both a verified
-    # recipient open ID and the recipient's display name, so resolve that exact
-    # participant through the contact API instead of guessing by name or
-    # forwarding an unsupported open ID to the provider.
-    if open_dingtalk_id and not user_id:
-        try:
-            trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
-        except ValueError:
-            trigger = None
-        if (
-            trigger is not None
-            and trigger.sender_open_dingtalk_id == open_dingtalk_id
-        ):
-            if trigger.sender_user_id:
-                user_id = trigger.sender_user_id.strip()
-            else:
-                resolve_sender = getattr(dws, "resolve_message_sender", None)
-                if callable(resolve_sender):
-                    user_id = str(resolve_sender(trigger) or "").strip()
-        if not user_id:
-            raise AgentReadOnlyViolationError(
-                "dingtalk_message_recipient_user_id_unresolved"
-            )
-    sender = ServiceMessageSender(store=store, dingtalk=dws)
-    if dingtalk_chat_delivery(action.operation) == "reply":
-        message_id = str(
-            target.get("message_id") or target.get("source_message_id") or ""
-        ).strip()
-        if (
-            conversation_id != task.conversation_id
-            or message_id != task.trigger_message_id
-        ):
-            raise AgentReadOnlyViolationError("dingtalk_message_reply_target_invalid")
-        try:
-            trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
-        except ValueError as exc:
-            raise AgentReadOnlyViolationError(
-                "dingtalk_message_reply_target_invalid"
-            ) from exc
-        if (
-            trigger.open_conversation_id != task.conversation_id
-            or trigger.open_message_id != task.trigger_message_id
-            or not str(trigger.sender_open_dingtalk_id or "").strip()
-        ):
-            raise AgentReadOnlyViolationError("dingtalk_message_reply_target_invalid")
-        conversation = DingTalkConversation(
-            open_conversation_id=task.conversation_id,
-            title=task.conversation_title,
-            single_chat=task.single_chat,
-            unread_point=0,
-        )
-        receipt = sender.send_dingtalk_reply_to_trigger_prepared(
-            prepared,
-            conversation=conversation,
-            trigger=trigger,
-        )
-    else:
-        receipt = sender.send_dingtalk_prepared(
-            prepared,
-            conversation_id=conversation_id,
-            open_dingtalk_id=(open_dingtalk_id or None) if not user_id else None,
-            user_id=user_id or None,
-        )
-    provider_result = receipt.provider_result
-    if not isinstance(provider_result, dict):
-        raise RuntimeError("dingtalk_message_provider_result_invalid")
-    verification = dws.verify_message_send_result(provider_result)
-    if verification.get("state") != "sent":
-        raise RuntimeError(
-            "dingtalk_message_delivery_" + str(verification.get("state") or "ambiguous")
-        )
-    expected = expected_external_action(
-        action, business_object_key=task.business_object_key
-    )
-    store.record_agent_message_delivery(
-        agent_run_id=audit_run.id,
-        external_action_key=str(expected["external_action_key"]),
-        conversation_id=task.conversation_id,
-        trigger_message_id=task.trigger_message_id,
-        reply_text=prepared.final_body,
-        provider_result={"provider_result": provider_result, "verification": verification},
-    )
-    return {
-        "success": True,
-        "delivery_status": "sent",
-        "delivery_key": delivery_key,
-        "action_identity": action.action_identity,
-        "provider_result": provider_result,
-        "verification": verification,
-    }
 
 
 def _json_digest(value: object) -> str:
@@ -965,45 +785,12 @@ def _execute_reviewed(
 server = FastMCP(
     "agent_cli",
     instructions=(
-        "Provide task-bound service operations and bounded local-material readers. "
-        "Normal Consumer and Audit commands run through the Codex runtime directly."
+        "Read bounded local materials. Service Agent turns use a required "
+        "--role and task-bound server catalog."
     ),
 )
 
 
-@server.tool(
-    name="send_approved_dingtalk_message",
-    annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=True,
-    ),
-)
-async def send_approved_dingtalk_message_tool(
-    task_id: int,
-    action_identity: str,
-) -> dict[str, object]:
-    """Send the exact prepared DingTalk action currently approved by Audit."""
-    from app.config import worker_db_path
-
-    return await asyncio.to_thread(
-        send_approved_dingtalk_message,
-        worker_db_path(),
-        task_id,
-        action_identity,
-    )
-
-
-@server.tool(
-    name="execute_audited_email_unsubscribe",
-    annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=True,
-        idempotentHint=True,
-        openWorldHint=True,
-    ),
-)
 async def execute_audited_email_unsubscribe_tool(
     task_id: int,
     execution_generation: str,
@@ -1035,15 +822,6 @@ async def execute_audited_email_unsubscribe_tool(
     )
 
 
-@server.tool(
-    name="unsubscribe_email",
-    annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=True,
-    ),
-)
 async def unsubscribe_email_tool(task_id: int) -> dict[str, object]:
     """Unsubscribe this email task and return the page's own evidence.
 
@@ -1115,5 +893,692 @@ def read_spreadsheet_tool(
     return read_spreadsheet(path, max_rows=max_rows, max_columns=max_columns)
 
 
+def _task_file_component(value: str) -> bool:
+    return (
+        isinstance(value, str) and bool(value) and value not in {".", ".."}
+        and Path(value).name == value and "/" not in value
+        and "\\" not in value and "\x00" not in value
+    )
+
+
+def _current_task_generation(db_path: Path | None, task_id: int | None) -> str:
+    """Read the binding without initializing or migrating the live Store."""
+    if db_path is None or type(task_id) is not int or task_id <= 0:
+        raise ValueError("task file binding is missing")
+    database = Path(db_path).resolve()
+    try:
+        with closing(sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True)) as connection:
+            row = connection.execute(
+                "select execution_generation from reply_tasks where id=?", (task_id,)
+            ).fetchone()
+    except sqlite3.Error as exc:
+        raise ValueError("task file binding is unavailable") from exc
+    if row is None or not _task_file_component(row[0]):
+        raise ValueError("task file generation is unavailable")
+    return row[0]
+
+
+def _task_file_root(
+    db_path: Path | None, task_id: int | None, generation: str | None, *, create: bool,
+) -> Path:
+    from app.config import repo_root, workspace_path
+
+    if generation is None:
+        raise ValueError("task file binding is missing")
+    if _current_task_generation(db_path, task_id) != generation:
+        raise ValueError("task file generation changed")
+    root = workspace_path().resolve()
+    if root.is_relative_to(repo_root().resolve()):
+        raise ValueError("task file workspace overlaps service source")
+    if create:
+        root.mkdir(parents=True, exist_ok=True)
+    for component in ("consumer-artifacts", str(task_id), generation):
+        root = root / component
+        if root.is_symlink():
+            raise ValueError("task file directory is linked")
+        if create:
+            root.mkdir(exist_ok=True)
+    return root
+
+
+def _task_file_path(root: Path, name: str) -> Path:
+    if (
+        not _task_file_component(name) or len(name) > 255
+        or name.startswith(_TASK_ARTIFACT_TEMP_PREFIX)
+    ):
+        raise ValueError("task file name is invalid")
+    path = root / name
+    if path.is_symlink():
+        raise ValueError("task file is linked")
+    return path
+
+
+def _read_task_file(root: Path, name: str) -> dict[str, str]:
+    path = _task_file_path(root, name)
+    if not path.is_file():
+        raise ValueError("task file is unavailable")
+    data = path.read_bytes()
+    if len(data) > MAX_TASK_FILE_BYTES:
+        raise ValueError("task file is too large")
+    item = {"name": name, "content": data.decode("utf-8"),
+            "sha256": hashlib.sha256(data).hexdigest()}
+    if len(json.dumps(item).encode("utf-8")) > MAX_CLI_OUTPUT_BYTES:
+        raise ValueError("task file readback is too large")
+    return item
+
+
+def _bound_report(db_path: Path | None, task_id: int | None):
+    from app.store import AutoReplyStore
+
+    if db_path is None or type(task_id) is not int or task_id <= 0:
+        raise AgentReadOnlyViolationError("agent_cli_task_binding_missing")
+    store = AutoReplyStore(db_path)
+    task = store.get_reply_task(task_id)
+    if task is None or task.channel != "scheduled":
+        raise AgentReadOnlyViolationError("agent_cli_report_task_invalid")
+    run = store.get_scheduled_task_run_for_reply_execution(task_id)
+    if run is None:
+        raise AgentReadOnlyViolationError("agent_cli_report_run_missing")
+    skill_names = {ref.skill_name for ref in run.snapshot.skill_refs}
+    if "ceo-daily-report" in skill_names:
+        return store, run, "daily"
+    if "ceo-weekly-report" in skill_names:
+        return store, run, "weekly"
+    raise AgentReadOnlyViolationError("agent_cli_report_skill_missing")
+
+
+def _weekly_skill_module(name: str):
+    """Import one installed, fixed weekly-report script as a Python module."""
+    skill_root = Path.home() / ".agents" / "skills" / "ceo-weekly-report"
+    if not (skill_root / "scripts" / f"{name}.py").is_file():
+        raise AgentReadOnlyViolationError("weekly_report_script_unavailable")
+    skill_path = str(skill_root)
+    if skill_path not in sys.path:
+        sys.path.insert(0, skill_path)
+    module = importlib.import_module(f"scripts.{name}")
+    if not Path(module.__file__).resolve().is_relative_to(skill_root.resolve()):
+        raise AgentReadOnlyViolationError("weekly_report_script_mismatch")
+    return module
+
+
+def _write_bound_report_document(
+    *, db_path: Path | None, task_id: int | None, content: str,
+    expected_revision: int | None,
+) -> dict[str, object]:
+    """Write only the report document resolved from this scheduled run."""
+    from app.config import workspace_path
+    from app.daily_report_facts import report_window_for_run
+    from app.dws_client import DwsClient
+    from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY
+    from app.weekly_report_materials import (
+        MANAGEMENT_WIKI_NAME,
+        _at_most_one, _data_list, _nodes, _single,
+        collect_weekly_report_materials,
+    )
+
+    store, run, kind = _bound_report(db_path, task_id)
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("report document content is required")
+    if len(content.encode("utf-8")) > 2 * 1024 * 1024:
+        raise ValueError("report document content is too large")
+    dws = DwsClient()
+    if kind == "weekly":
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise ValueError("weekly report JSONML is invalid") from exc
+        if not isinstance(parsed, list):
+            raise ValueError("weekly report JSONML must be an array")
+        errors = _weekly_skill_module("jsonml_check").check_document(parsed)
+        if errors:
+            raise ValueError("weekly report JSONML invalid: " + "; ".join(errors))
+        native_parse = dws.validate_report_jsonml(content)
+        assessment = native_parse.get("assessment")
+        if assessment is None and isinstance(native_parse.get("data"), dict):
+            assessment = native_parse["data"].get("assessment")
+        if assessment != "passed":
+            raise ValueError("weekly report document parser did not pass")
+    if kind == "daily":
+        report_date = report_window_for_run(store, run.id).report_date
+        title = f"CEO 每日总结 {report_date.isoformat()}"
+        workspace_id = _single(
+            [
+                item for item in _data_list(dws.run_json([
+                    dws.dws_bin, "wiki", "+space-list", "--type", "orgWikiSpace",
+                    "--limit", "50", "--page-all", "--format", "json",
+                ]), "spaces")
+                if item.get("name") == MANAGEMENT_WIKI_NAME
+            ],
+            "CEO management wiki",
+        )["workspaceId"]
+        folder = _at_most_one(
+            [node for node in _nodes(dws, workspace_id, parent_id=None)
+             if node.get("name") == "CEO 每日总结"],
+            "CEO daily report folder",
+        )
+        if folder is None:
+            dws.run_json([
+                dws.dws_bin, "wiki", "+node-create", "--workspace", workspace_id,
+                "--name", "CEO 每日总结", "--type", "folder", "--format", "json",
+            ])
+            folder = _single(
+                [node for node in _nodes(dws, workspace_id, parent_id=None)
+                 if node.get("name") == "CEO 每日总结"],
+                "CEO daily report folder",
+            )
+        folder_id = folder["nodeId"]
+        doc_format = "markdown"
+    else:
+        materials = collect_weekly_report_materials(
+            store, dws, workspace_path() / MINUTES_ARCHIVE_DIRECTORY,
+            run.scheduled_for,
+        )
+        docs = materials["documents"]
+        title = docs["target"]["title"]
+        folder_id = docs["target"]["year_page_id"]
+        workspace_id = docs["workspace_id"]
+        if not folder_id:
+            dws.run_json([
+                dws.dws_bin, "wiki", "+node-create", "--workspace", workspace_id,
+                "--folder", docs["meeting_folder_id"],
+                "--name", docs["target"]["year_page_name"],
+                "--type", "adoc", "--format", "json",
+            ])
+            folder_id = _single(
+                [node for node in _nodes(dws, workspace_id, parent_id=docs["meeting_folder_id"])
+                 if node.get("name") == docs["target"]["year_page_name"]],
+                "meeting year page",
+            )["nodeId"]
+        doc_format = "jsonml"
+
+    found = _at_most_one(
+        [node for node in _nodes(dws, workspace_id, parent_id=folder_id)
+         if node.get("name") == title],
+        "current report document",
+    )
+    if found is None:
+        result = dws.create_report_document(
+            name=title, content=content, doc_format=doc_format,
+            folder_id=folder_id,
+        )
+        found = _single(
+            [node for node in _nodes(dws, workspace_id, parent_id=folder_id)
+             if node.get("name") == title],
+            "created report document",
+        )
+        operation = "created"
+    else:
+        version = None
+        if kind == "weekly":
+            if type(expected_revision) is not int or expected_revision < 0:
+                raise ValueError("weekly report requires expected revision")
+            version = dws.save_report_document_version(found["nodeId"])
+        result = dws.overwrite_report_document(
+            node_id=found["nodeId"], content=content, doc_format=doc_format,
+            expected_revision=expected_revision,
+        )
+        operation = "updated"
+    readback = (
+        dws.fetch_report_document_full(found["nodeId"])
+        if kind == "weekly" else dws.read_doc(found["nodeId"])
+    )
+    receipt = {
+        "operation": operation, "node_id": found["nodeId"], "title": title,
+        "provider_result": result, "readback": readback,
+        "saved_version": version if kind == "weekly" and operation == "updated" else None,
+    }
+    if kind == "daily":
+        receipt["folder"] = folder
+    return receipt
+
+
+def build_role_server(
+    role: str, *, task_id: int | None = None, db_path: Path | None = None,
+    execution_generation: str | None = None,
+) -> FastMCP:
+    """Expose only the operations owned by one Agent role."""
+    if role not in {"consumer", "audit"}:
+        raise ValueError("unsupported agent role")
+    artifact_generation = (
+        _current_task_generation(db_path, task_id)
+        if task_id is not None and db_path is not None else None
+    )
+    if execution_generation is not None and artifact_generation != execution_generation:
+        raise ValueError("task file generation changed")
+    bound = FastMCP("agent_cli", instructions="Task-bound Agent reads and Consumer report documents")
+    read = ToolAnnotations(readOnlyHint=True, destructiveHint=False,
+                           idempotentHint=True, openWorldHint=True)
+    write = ToolAnnotations(readOnlyHint=False, destructiveHint=False,
+                            idempotentHint=False, openWorldHint=True)
+    bound.add_tool(read_skill_tool, name="read_skill", annotations=read)
+    bound.add_tool(read_text_file_tool, name="read_text_file", annotations=read)
+    bound.add_tool(read_spreadsheet_tool, name="read_spreadsheet", annotations=read)
+
+    def read_task_artifact(name: str) -> dict[str, str]:
+        """Read a text artifact from this task's current execution generation."""
+        return _read_task_file(
+            _task_file_root(db_path, task_id, artifact_generation, create=False), name
+        )
+
+    def list_task_artifacts() -> dict[str, object]:
+        """List text artifacts from this task's current execution generation."""
+        root = _task_file_root(db_path, task_id, artifact_generation, create=False)
+        if not root.is_dir():
+            return {"files": []}
+        files = []
+        for path in sorted(root.iterdir()):
+            if (path.is_file() and not path.is_symlink()
+                    and not path.name.startswith(_TASK_ARTIFACT_TEMP_PREFIX)):
+                if path.stat().st_size > MAX_TASK_FILE_BYTES:
+                    raise ValueError("task file is too large")
+                digest = hashlib.sha256()
+                with path.open("rb") as source:
+                    for chunk in iter(lambda: source.read(65536), b""):
+                        digest.update(chunk)
+                files.append({"name": path.name, "sha256": digest.hexdigest()})
+                if len(json.dumps({"files": files}).encode("utf-8")) > MAX_CLI_OUTPUT_BYTES:
+                    raise ValueError("task file listing is too large")
+        return {"files": files}
+
+    bound.add_tool(read_task_artifact, name="read_task_artifact", annotations=read)
+    bound.add_tool(list_task_artifacts, name="list_task_artifacts", annotations=read)
+
+    def read_dingtalk_document(node_id: str) -> dict[str, object]:
+        """Read a DingTalk document and its current content."""
+        from app.dws_client import DwsClient
+        return DwsClient().read_doc(node_id)
+
+    def read_dingtalk_document_full(node_id: str) -> dict[str, object]:
+        """Read a DingTalk document's full JSONML and editing revision."""
+        from app.dws_client import DwsClient
+        return DwsClient().fetch_report_document_full(node_id)
+
+    def read_dingtalk_document_info(node_id: str) -> dict[str, object]:
+        """Read an exact document node's title, type, and owner metadata."""
+        from app.dws_client import DwsClient
+        return DwsClient().doc_info(node_id)
+
+    def read_dingtalk_document_permissions(node_id: str) -> dict[str, object]:
+        """Read an exact document's current collaborators and roles."""
+        from app.dws_client import DwsClient
+        if not node_id.strip():
+            raise ValueError("document node is required")
+        dws = DwsClient()
+        return dws.run_json([
+            dws.dws_bin, "doc", "permission", "list", "--node", node_id,
+            "--limit", "50", "--format", "json",
+        ])
+
+    def read_dingtalk_drive_info(node_id: str, space_id: str = "") -> dict[str, object]:
+        """Read an exact drive file's metadata before deciding how to open it."""
+        from app.dws_client import DwsClient
+        if not node_id.strip():
+            raise ValueError("drive node is required")
+        dws = DwsClient()
+        command = [dws.dws_bin, "drive", "+info", "--node", node_id]
+        if space_id.strip():
+            command.extend(("--space-id", space_id))
+        return dws.run_json(command + ["--format", "json"])
+
+    def list_dingtalk_sheets(node_id: str) -> dict[str, object]:
+        """List workbook sheets by stable sheet ID."""
+        from app.dws_client import DwsClient
+        if not node_id.strip():
+            raise ValueError("sheet node is required")
+        dws = DwsClient()
+        return dws.run_json([
+            dws.dws_bin, "sheet", "list", "--node", node_id, "--format", "json",
+        ])
+
+    def read_dingtalk_sheet_info(node_id: str, sheet_id: str) -> dict[str, object]:
+        """Read one sheet's bounds and merged-cell metadata."""
+        from app.dws_client import DwsClient
+        if not node_id.strip() or not sheet_id.strip():
+            raise ValueError("sheet node and ID are required")
+        dws = DwsClient()
+        return dws.run_json([
+            dws.dws_bin, "sheet", "info", "--node", node_id,
+            "--sheet-id", sheet_id, "--format", "json",
+        ])
+
+    def read_dingtalk_sheet_range(
+        node_id: str, sheet_id: str, cell_range: str,
+    ) -> dict[str, object]:
+        """Read an explicit A1 workbook range, bounded by the DWS read API."""
+        from app.dws_client import DwsClient
+        if not node_id.strip() or not sheet_id.strip() or not cell_range.strip():
+            raise ValueError("sheet node, ID, and range are required")
+        dws = DwsClient()
+        return dws.run_json([
+            dws.dws_bin, "sheet", "range", "read", "--node", node_id,
+            "--sheet-id", sheet_id, "--range", cell_range, "--format", "json",
+        ])
+
+    def read_dingtalk_oa(process_instance_id: str) -> dict[str, object]:
+        """Read the live DingTalk OA process and its current facts."""
+        from app.dws_client import DwsClient
+        return DwsClient().read_oa_approval_detail(process_instance_id)
+
+    def list_dingtalk_pending_oa(page: int = 1) -> dict[str, object]:
+        """Read one unfiltered page of the principal's live OA pending list."""
+        from app.dws_client import DwsClient
+        if type(page) is not int or page < 1:
+            raise ValueError("OA pending-list page is invalid")
+        dws = DwsClient()
+        return dws.run_json([
+            dws.dws_bin, "oa", "approval", "list-pending", "--page", str(page),
+            "--limit", "20", "--format", "json",
+        ])
+
+    def read_dingtalk_oa_records(process_instance_id: str) -> dict[str, object]:
+        """Read one OA process's recorded actions."""
+        from app.dws_client import DwsClient
+        return DwsClient().read_oa_approval_records(process_instance_id)
+
+    def read_dingtalk_oa_tasks(process_instance_id: str) -> dict[str, object]:
+        """Read one OA process's current tasks and owners."""
+        from app.dws_client import DwsClient
+        return DwsClient().read_oa_approval_tasks(process_instance_id)
+
+    def read_dingtalk_oa_revert_activities(oa_task_id: str) -> dict[str, object]:
+        """Read legal return destinations for one exact OA task."""
+        from app.dws_client import DwsClient
+        return DwsClient().read_oa_revert_activities(oa_task_id)
+
+    def read_dingtalk_calendar_event(event_id: str) -> dict[str, object]:
+        """Read one live DingTalk calendar event."""
+        from app.dws_client import DwsClient
+        event = DwsClient().get_calendar_event(event_id)
+        return {"event": event.model_dump(mode="json") if event else None}
+
+    def list_dingtalk_calendar_events(start: str, end: str) -> dict[str, object]:
+        """Read the principal's events over an explicit time window."""
+        from app.dws_client import DwsClient
+        events = DwsClient().list_calendar_events(start, end)
+        return {"events": [item.model_dump(mode="json") for item in events]}
+
+    def search_dingtalk_contacts(query: str) -> dict[str, object]:
+        """Find current organization users by name or stable identifier."""
+        from app.dws_client import DwsClient
+        if not query.strip():
+            raise ValueError("contact query is required")
+        profiles = DwsClient().search_user_profiles(query)
+        return {"users": [item.model_dump(mode="json") for item in profiles]}
+
+    def search_dingtalk_documents(query: str, page_size: int = 10) -> dict[str, object]:
+        """Find DingTalk documents by title before reading an exact node."""
+        from app.dws_client import DwsClient
+        if not query.strip() or type(page_size) is not int or not 1 <= page_size <= 20:
+            raise ValueError("document search query or page size is invalid")
+        matches = DwsClient().search_documents(query, page_size)
+        return {"documents": [item.model_dump(mode="json") for item in matches]}
+
+    def read_dingtalk_messages(
+        conversation_id: str, title: str = "", single_chat: bool = False,
+        limit: int = 50,
+    ) -> dict[str, object]:
+        """Read recent messages of an identified DingTalk conversation."""
+        from app.dingtalk_models import DingTalkConversation
+        from app.dws_client import DwsClient
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("message read limit is invalid")
+        conversation = DingTalkConversation(
+            open_conversation_id=conversation_id, title=title,
+            single_chat=single_chat, unread_point=0,
+        )
+        messages = DwsClient().read_recent_messages(conversation, limit=limit)
+        return {"messages": [item.model_dump(mode="json") for item in messages]}
+
+    def search_dingtalk_messages(
+        query: str, start: str, end: str, limit: int = 100,
+    ) -> dict[str, object]:
+        """Search messages by exact keyword in an explicit time window."""
+        from app.dws_client import DwsClient
+        if not query.strip() or not start.strip() or not end.strip():
+            raise ValueError("message search query and window are required")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("message search limit is invalid")
+        messages = DwsClient().search_messages(query, start, end, limit)
+        return {"messages": [item.model_dump(mode="json") for item in messages]}
+
+    def read_dingtalk_thread_replies(message_id: str) -> dict[str, object]:
+        """Read the full bounded reply thread for one exact root message."""
+        from app.dws_client import DwsClient
+        if not message_id.strip():
+            raise ValueError("thread root message ID is required")
+        dws = DwsClient()
+        return dws.run_json([
+            dws.dws_bin, "chat", "+thread-replies", "--message-id", message_id,
+            "--page-all", "--page-limit", "100", "--order", "asc",
+            "--format", "json",
+        ])
+
+    def search_dingtalk_conversations(query: str) -> dict[str, object]:
+        """Find an existing DingTalk conversation by title."""
+        from app.dws_client import DwsClient
+        if not query.strip():
+            raise ValueError("conversation query is required")
+        matches = DwsClient().search_conversations(query)
+        return {"conversations": [item.model_dump(mode="json") for item in matches]}
+
+    def list_dingtalk_minutes(
+        query: str = "", start: str = "", end: str = "", scope: str = "all",
+    ) -> dict[str, object]:
+        """Search accessible AI minutes by title or time range."""
+        from app.dws_client import DwsClient
+        if not (query.strip() or start.strip() or end.strip()):
+            raise ValueError("minutes query or window is required")
+        if scope not in {"all", "mine", "shared"}:
+            raise ValueError("minutes scope is invalid")
+        dws = DwsClient()
+        command = [dws.dws_bin, "minutes", "+search", "--scope", scope]
+        for flag, value in (("--query", query), ("--start", start), ("--end", end)):
+            if value.strip():
+                command.extend((flag, value))
+        command.extend(("--page-all", "--page-limit", "100", "--format", "json"))
+        return dws.run_json(command)
+
+    def read_dingtalk_minutes(task_uuid: str) -> dict[str, object]:
+        """Read AI minutes details, summary, and the complete transcript."""
+        from app.dws_client import DwsClient
+        if not task_uuid.strip():
+            raise ValueError("minutes task UUID is required")
+        dws = DwsClient()
+        return {
+            "info": dws.get_minutes_info(task_uuid),
+            "summary": dws.get_minutes_summary(task_uuid),
+            "transcript": dws.get_all_minutes_transcription(task_uuid),
+        }
+
+    def recent_dingtalk_conversations(
+        start: str, end: str,
+    ) -> dict[str, object]:
+        """List conversations active in a bounded report time window."""
+        from app.dws_client import DwsClient
+        if not start.strip() or not end.strip():
+            raise ValueError("conversation window is required")
+        dws = DwsClient()
+        return dws.run_json([
+            dws.dws_bin, "chat", "+recent-conversations", "--start", start,
+            "--end", end, "--page-limit", "50", "--format", "json",
+        ])
+
+    def read_dingtalk_messages_in_window(
+        conversation_id: str, start: str, end: str,
+    ) -> dict[str, object]:
+        """Read one identified group's messages over the report window."""
+        from app.dws_client import DwsClient
+        if not conversation_id.strip() or not start.strip() or not end.strip():
+            raise ValueError("group conversation and window are required")
+        dws = DwsClient()
+        return dws.run_json([
+            dws.dws_bin, "chat", "+chat-messages", "--group", conversation_id,
+            "--start", start, "--end", end, "--order", "asc", "--page-all",
+            "--page-limit", "50", "--max-items", "1000", "--format", "json",
+        ])
+
+    def daily_report_facts() -> dict[str, object]:
+        """Read the fixed service facts for this scheduled daily report."""
+        from app.daily_report_facts import collect_daily_report_facts, report_window_for_run
+        from app.email_store import EmailStore
+        store, run, kind = _bound_report(db_path, task_id)
+        if kind != "daily":
+            raise AgentReadOnlyViolationError("daily_report_task_required")
+        return collect_daily_report_facts(
+            store, EmailStore(db_path), report_window_for_run(store, run.id)
+        )
+
+    def weekly_report_materials() -> dict[str, object]:
+        """Read the fixed inputs for this scheduled CEO weekly report."""
+        from app.config import workspace_path
+        from app.dws_client import DwsClient
+        from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY
+        from app.weekly_report_materials import collect_weekly_report_materials
+        store, run, kind = _bound_report(db_path, task_id)
+        if kind != "weekly":
+            raise AgentReadOnlyViolationError("weekly_report_task_required")
+        return collect_weekly_report_materials(
+            store, DwsClient(), workspace_path() / MINUTES_ARCHIVE_DIRECTORY,
+            run.scheduled_for,
+        )
+
+    def read_weekly_report_archive(path: str) -> dict[str, object]:
+        """Read one transcript named in this run's meeting archive index."""
+        from app.config import workspace_path
+        from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY
+        from app.weekly_report_materials import minutes_index, weekly_window
+        store, run, kind = _bound_report(db_path, task_id)
+        if kind != "weekly":
+            raise AgentReadOnlyViolationError("weekly_report_task_required")
+        archive_dir = workspace_path() / MINUTES_ARCHIVE_DIRECTORY
+        allowed = {
+            item["archive_path"]
+            for item in minutes_index(store, archive_dir, weekly_window(run.scheduled_for))
+            if item["archive_path"]
+        }
+        if path not in allowed:
+            raise AgentReadOnlyViolationError("weekly_report_archive_not_in_run")
+        material = Path(path)
+        if not material.is_file() or material.stat().st_size > MAX_TEXT_MATERIAL_BYTES:
+            raise AgentReadOnlyViolationError("weekly_report_archive_unavailable")
+        return {"path": path, "content": material.read_text(encoding="utf-8")}
+
+    for name, tool in (
+        ("read_dingtalk_document", read_dingtalk_document),
+        ("read_dingtalk_document_full", read_dingtalk_document_full),
+        ("read_dingtalk_document_info", read_dingtalk_document_info),
+        ("read_dingtalk_document_permissions", read_dingtalk_document_permissions),
+        ("read_dingtalk_drive_info", read_dingtalk_drive_info),
+        ("list_dingtalk_sheets", list_dingtalk_sheets),
+        ("read_dingtalk_sheet_info", read_dingtalk_sheet_info),
+        ("read_dingtalk_sheet_range", read_dingtalk_sheet_range),
+        ("read_dingtalk_oa", read_dingtalk_oa),
+        ("list_dingtalk_pending_oa", list_dingtalk_pending_oa),
+        ("read_dingtalk_oa_records", read_dingtalk_oa_records),
+        ("read_dingtalk_oa_tasks", read_dingtalk_oa_tasks),
+        ("read_dingtalk_oa_revert_activities", read_dingtalk_oa_revert_activities),
+        ("read_dingtalk_calendar_event", read_dingtalk_calendar_event),
+        ("list_dingtalk_calendar_events", list_dingtalk_calendar_events),
+        ("search_dingtalk_contacts", search_dingtalk_contacts),
+        ("search_dingtalk_documents", search_dingtalk_documents),
+        ("read_dingtalk_messages", read_dingtalk_messages),
+        ("search_dingtalk_messages", search_dingtalk_messages),
+        ("read_dingtalk_thread_replies", read_dingtalk_thread_replies),
+        ("search_dingtalk_conversations", search_dingtalk_conversations),
+        ("list_dingtalk_minutes", list_dingtalk_minutes),
+        ("read_dingtalk_minutes", read_dingtalk_minutes),
+        ("recent_dingtalk_conversations", recent_dingtalk_conversations),
+        ("read_dingtalk_messages_in_window", read_dingtalk_messages_in_window),
+        ("daily_report_facts", daily_report_facts),
+        ("weekly_report_materials", weekly_report_materials),
+        ("read_weekly_report_archive", read_weekly_report_archive),
+    ):
+        bound.add_tool(tool, name=name, annotations=read)
+
+    if role == "consumer":
+        def consumer_artifact_write(name: str, content: str) -> dict[str, str]:
+            """Write a text artifact only in this task's current workspace generation."""
+            if not isinstance(content, str) or len(content.encode("utf-8")) > MAX_TASK_FILE_BYTES:
+                raise ValueError("task file content is invalid or too large")
+            root = _task_file_root(db_path, task_id, artifact_generation, create=True)
+            path = _task_file_path(root, name)
+            if len(json.dumps({"name": name, "content": content,
+                               "sha256": "0" * 64}).encode("utf-8")) > MAX_CLI_OUTPUT_BYTES:
+                raise ValueError("task file readback is too large")
+            descriptor, temporary = tempfile.mkstemp(prefix=_TASK_ARTIFACT_TEMP_PREFIX, dir=root)
+            try:
+                with os.fdopen(descriptor, "wb") as output:
+                    output.write(content.encode("utf-8"))
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.replace(temporary, path)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+            return _read_task_file(root, name)
+
+        bound.add_tool(consumer_artifact_write, name="consumer_artifact_write", annotations=write)
+
+        def validate_weekly_report(
+            manifest: dict, report: dict, previous_issues: list[dict],
+        ) -> dict[str, object]:
+            """Validate a scheduled CEO weekly report using its installed Skill."""
+            _store, _run, kind = _bound_report(db_path, task_id)
+            if kind != "weekly":
+                raise AgentReadOnlyViolationError("weekly_report_task_required")
+            return _weekly_skill_module("validate_run").validate_run(
+                manifest, report, previous_issues
+            )
+
+        def render_weekly_report(
+            report: dict, before: list,
+        ) -> dict[str, object]:
+            """Render and validate weekly report JSONML and its full draft."""
+            from app.dws_client import DwsClient
+            _store, _run, kind = _bound_report(db_path, task_id)
+            if kind != "weekly":
+                raise AgentReadOnlyViolationError("weekly_report_task_required")
+            renderer = _weekly_skill_module("render_dingtalk_jsonml")
+            checker = _weekly_skill_module("jsonml_check")
+            target_after = renderer.render_meeting_document(before, report)
+            draft = renderer.render_draft(report)
+            errors = checker.check_document(target_after) + checker.check_document(draft)
+            if errors:
+                raise ValueError("weekly report JSONML invalid: " + "; ".join(errors))
+            native_parse = DwsClient().validate_report_jsonml(
+                json.dumps(target_after, ensure_ascii=False)
+            )
+            return {
+                "target_after": target_after,
+                "draft": draft,
+                "native_parse": native_parse,
+            }
+
+        def consumer_document_write(
+            content: str, expected_revision: int | None = None,
+        ) -> dict[str, object]:
+            """Publish this scheduled CEO report to its service-resolved document."""
+            if artifact_generation is None:
+                raise ValueError("task file binding is missing")
+            if _current_task_generation(db_path, task_id) != artifact_generation:
+                raise ValueError("task file generation changed")
+            return _write_bound_report_document(
+                db_path=db_path, task_id=task_id, content=content,
+                expected_revision=expected_revision,
+            )
+
+        bound.add_tool(validate_weekly_report, name="validate_weekly_report", annotations=read)
+        bound.add_tool(render_weekly_report, name="render_weekly_report", annotations=read)
+        bound.add_tool(consumer_document_write, name="consumer_document_write", annotations=write)
+    return bound
+
+
 if __name__ == "__main__":
-    server.run(transport="stdio")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--role", choices=("consumer", "audit"), required=True)
+    parser.add_argument("--task-id", type=int, required=True)
+    parser.add_argument("--db", type=Path, required=True)
+    parser.add_argument("--execution-generation", required=True)
+    args = parser.parse_args()
+    build_role_server(args.role, task_id=args.task_id, db_path=args.db,
+                      execution_generation=args.execution_generation).run(transport="stdio")

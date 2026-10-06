@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from app.agent_contracts import AuditFeedback, ConsumerProposal
+from app.agent_contracts import AuditFeedback, ConsumerAgentResult
 from app.email_classifier_contracts import EmailAttachmentMetadata
 from app.agent_result import AgentError
 
@@ -100,6 +100,10 @@ class AgentTaskContext:
     consumer_prompt: str = ""
     skill_protocol_override: str | None = None
     skill_names: tuple[str, ...] = ()
+    stage_index: int = 0
+    predecessor_review_id: int | None = None
+    prior_human_decisions: tuple[dict[str, object], ...] = ()
+    business_state_changes: tuple[dict[str, object], ...] = ()
 
     @property
     def unresolved_image_count(self) -> int:
@@ -124,6 +128,7 @@ class AgentTaskContext:
         sections = [
             _CONSUMER_AGENT_RULES,
             self.render_business_context(current_time=current_time),
+            "### Execution stage\n" + _json({"stage_index": self.stage_index, "predecessor_review_id": self.predecessor_review_id}) + "\nEcho these stage bindings unchanged. A later stage forms a new complete candidate from verified prior receipts.",
         ]
         if feedback is not None:
             sections.append(
@@ -281,6 +286,18 @@ class AgentTaskContext:
                     ]
                 )
             )
+        if self.prior_human_decisions:
+            sections.append(
+                "Prior human answers and new facts (historical evidence, not current execution authorization)\n"
+                + _json(list(self.prior_human_decisions))
+                + "\nPreserve the exact answer as evidence. Reassess the current facts and prepare a new complete candidate for Audit; do not dispatch the old branch on this evidence alone."
+            )
+        if self.business_state_changes:
+            sections.append(
+                "Current deterministic business-state changes\n"
+                + _json(list(self.business_state_changes))
+                + "\nUse these live facts to prepare a new complete candidate. They do not authorize any old or new external action."
+            )
         if self.manual_rerun is not None:
             sections.append(
                 "Manual rerun instruction\n"
@@ -314,7 +331,8 @@ class AuditTurnContext:
     task: AgentTaskContext
     proposal_revision: int
     operation_id: str
-    proposal: ConsumerProposal
+    candidate: ConsumerAgentResult
+    candidate_digest: str
     audit_rules: str
 
     def render(self, *, current_time: str | None = None) -> str:
@@ -329,12 +347,13 @@ class AuditTurnContext:
                     {
                         "proposal_revision": self.proposal_revision,
                         "operation_id": self.operation_id,
-                        "proposal": self.proposal.model_dump(mode="json"),
+                        "candidate_digest": self.candidate_digest,
+                        "candidate": self.candidate.model_dump(mode="json"),
                     }
                 ),
             )
         )
-        return f"{_AUDIT_AGENT_RULES}\n\n## Context Facts\n{context_facts}"
+        return f"{_AUDIT_AGENT_RULES}\n\n## Audit Rules\n{self.audit_rules}\n\n## Context Facts\n{context_facts}"
 
 
 def _json(value: object) -> str:
@@ -375,18 +394,18 @@ _CONSUMER_AGENT_RULES = """## Application Result Contract
 4. [meaning_preservation] Audit feedback must preserve the candidate's business intent while asking for a concrete regenerated result.
 5. [terminal_outcomes] Use only the declared terminal outcomes; a failed attempt is failed or retried by the runtime.
 6. [action_identity] Every proposed action has a stable action_identity. Reuse it across feedback revisions and retries when the action represents the same intended external outcome for the same business object. Use a new identity when the intended outcome, recipient, or purpose changes. Identities must be unique within one proposal.
-7. [oa_rule_coverage] For their own facts and material, the actual OA applicant is authoritative. When an applicant supplies requested material or corrects a related factual status, use that assertion to re-read the current OA; do not let a stale or conflicting source-system view by itself override it. It cannot create, replace, or close a rule, exception, authorization, or action mapping. For a scheduled Stardust finance OA, the `stardust-oa-finance-review` card matching the live `processCode` is the sole authority for the template action. If no complete applicable card covers the matter, rule coverage cannot be reported as 100% and an automatic action is unavailable. When an applicant-resolvable material gap and a policy gap coexist, comment the applicant on the exact material and independently return `needs_human` for the policy gap; a later applicant reply cannot close that policy gap. Do not introduce a new factual requirement unless an explicitly mandatory OA form field is absent; after any comment or action, re-read the live OA.
+7. [oa_rule_coverage] For their own facts and material, the actual OA applicant is authoritative. When an applicant supplies requested material or corrects a related factual status, use that assertion to re-read the current OA; do not let a stale or conflicting source-system view by itself override it. It cannot create, replace, or close a rule, exception, authorization, or action mapping. For a scheduled Stardust finance OA, the `stardust-oa-finance-review` card matching the live `processCode` is the sole authority for the template action. If no complete applicable card covers the matter, rule coverage cannot be reported as 100% and an automatic action is unavailable. When an applicant-resolvable material gap and a policy gap coexist, propose a complete material-request stage, then form a new independently reviewed current-instance decision candidate after the requested material actually arrives; the request receipt alone does not establish material completeness. Use continue_after_execution=false for a material request that must wait for an external reply; a later applicant reply cannot close that policy gap. Do not introduce a new factual requirement unless an explicitly mandatory OA form field is absent; after any comment or action, re-read the live OA.
 8. [oa_pending_ownership] Before skipping an OA task as not assigned to the principal, read the current pending approvals without start/end filters and inspect result.values across all pages. Compare the exact processInstanceId and taskId, then compare the task's userId with dws auth status.user_id. A date-filtered empty list is not evidence that an older still-pending process is unassigned. If the list and task owner conflict, do not skip; report the discrepancy and keep the approval unchanged."""
 
 
 _AUDIT_AGENT_RULES = """## Application Result Contract
-1. [role_boundary] Consumer Agent A forms the candidate; Audit Agent B reviews it.
-2. [output_contracts] Return exactly one valid structured result matching the supplied schema.
-3. [supported_facts] Use the supplied context and do not invent unsupported facts or targets.
-4. [feedback] Return feedback_provided with concrete rule, observation, and requested_revision when Consumer must regenerate its result.
-5. [terminal_outcomes] Use only the declared terminal outcomes; a failed attempt is failed or retried by the runtime.
-6. [action_identity] Preserve every accepted action_identity exactly. It identifies the intended external outcome across feedback revisions and retries; never replace it merely because the run or revision changed.
-7. [oa_rule_coverage] For their own facts and material, the actual OA applicant is authoritative. An applicant statement can satisfy a requested material correction after the current OA is re-read, but cannot create, replace, or close a rule, exception, authorization, or action mapping. For a scheduled Stardust finance OA, verify that the `stardust-oa-finance-review` card matching the live `processCode` is the sole authority for the template action. Without a complete applicable card, rule coverage cannot be reported as 100% and Audit must not accept an automatic action. When material and policy gaps coexist, verify that Consumer comments the applicant on the exact material and independently returns `needs_human` for the policy gap; a later applicant reply cannot close that policy gap. Do not introduce a new factual requirement unless an explicitly mandatory OA form field is absent; after any comment or action, re-read the live OA.
-8. [oa_pending_ownership] Independently verify any OA skip based on ownership: read pending approvals without start/end filters, inspect result.values across all pages for the exact processInstanceId and taskId, and compare the live task userId with dws auth status.user_id. Date-filtered empty lists do not prove an older pending approval is unassigned. A matching userId belongs to the current principal; reject a skip that says otherwise. If sources disagree, request correction rather than marking the task skipped.
-9. [calendar_conflicts] For a calendar invitation, use the invitation start time in the principal's local timezone. If it starts after 23:00 and overlaps any active occupied event, decline the new invitation directly and tell its inviter that a conflicting local-night commitment prevents attendance. An active personal blocked or sleep hold is a hard boundary and must be honored; never accept or tentatively accept a meeting over it. When the overlap is between two meetings outside that local-night rule, compare their purpose, urgency, required participants, ownership, and the principal's required contribution. If the existing meeting is more important, keep it, decline the new invitation, and send the new inviter the concrete conflict reason. If the new meeting is more important, accept it, decline the existing meeting, and send the existing inviter the concrete conflict reason. If importance cannot be determined, do not choose silently: tell the new inviter about the conflict and ask them to coordinate with the existing inviter or provide the missing importance reason, then make a second decision.
-10. [proposal_revision] Echo the Candidate revision's proposal_revision unchanged in your result. It names the candidate you reviewed, never the revision you are requesting; the service binds the value from the run, so a different number is ignored, not honoured."""
+1. Consumer forms the whole candidate. Audit reads and judges it without executing actions, sending messages, editing documents, or rewriting any option. Return exactly one structured review: approve, return, reject, or failed. Failed is a technical outcome, not a business judgment.
+2. Bind the result to the exact candidate_digest and proposal_revision supplied below. Return or reject must give concrete feedback with the rule, observation, and requested revision. Audit never originates a human question or an alternative action plan.
+3. Review the whole action plan or all branches of a human request. Check business appropriateness, sourced facts, audience, timing, target, exact payload, action order, applicable rules and prior-stage receipts. An approved human request authorizes only publication of the question; no branch executes until the person selects it.
+4. For every needs_human candidate check all seven conditions: (a) does this instance really need Derek, (b) can existing code, business Skill, memory, session context or read tools settle it, (c) should the applicant or source owner supply missing material, (d) is this a business choice rather than a technical/provider/authentication/schema/runtime/retry failure, (e) is the context and reason concrete enough, (f) are options feasible and meaningfully different with honest tradeoffs, and (g) is every directly executable option complete, current-instance-bound and supported by facts and rules. An open-ended requested_input is a fact request and must not be treated as an executable option.
+5. Preserve action_identity and exact candidate content. A return may request evidence while the actions stay the same; a reject means the proposed content is unsuitable. Do not turn provider confirmation, a missing route, or runtime failure into a human business question.
+6. An OA applicant is authoritative for their own facts and supplied material after the current OA is re-read; the applicant cannot create or replace a governing rule, exception, authorization or action mapping. Verify exact current-instance ownership before accepting an OA skip. Apply the relevant finance review card and other business Skills as evidence, not as a reason to invent a new requirement.
+7. For calendar conflicts, compare the current invitation and occupied events in the principal's local time. Honor active personal blocked or sleep holds, and require a sourced importance comparison or a request for the missing reason when two meetings conflict.
+8. For an internal group reply, read the prior messages in the same conversation ID and check the actual recipients. Compare the proposed disclosure with what was already disclosed to those recipients; an existing memory or relationship alone does not prove audience scope. Do not require a new human decision for the same audience and already disclosed facts. A new recipient or undisclosed detail requires a narrower proposal or a concrete current-instance boundary question.
+9. Verify provider identity from the source facts, not from a similarly named business object. A Project ID is not evidence of an OA process_instance_id. Read the exact provider object when identity is missing; return a target correction if the plan invents a mapping, or failed if the required dependency cannot be read. Review complete effects, not just the outcome label: a notification alone does not fund an expense or execute a budget transaction. A material-request receipt proves delivery of the request, not arrival of the material; reject immediate continuation that depends on a future applicant reply. Approval-followed-by-notification may continue immediately from a verified approval.
+10. Reject a candidate that requires a field absent from the current OA form or imports a later business stage as though it were already mandatory. Before approving an OA reject, inspect the applicable `dingtalk-oa-approval` decision table and the live revert-activities for the exact task. A request to supply material is a return or a comment under that table, not a rejection merely because the current form lacks evidence. Verify that any terminal OA decision has the required reason and current target before system execution; Audit itself never invokes the provider command."""

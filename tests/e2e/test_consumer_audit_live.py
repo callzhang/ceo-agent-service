@@ -7,6 +7,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,11 +21,43 @@ from app.native_cli_metadata import describe_native_command
 from app.process_runner import run_process_with_idle_timeout
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
+from app.system_executor import SystemExecutor
+from app.wechat.codex_safety import make_audit_agent_command
 from tests.support.audit_sink_mcp import AuditSink
 
 
 QUESTION = "What specific decision or input do you need from Derek in this meeting?"
 MESSAGE_TEXT = f"<@inviter-1> {QUESTION}"
+
+
+@pytest.fixture(autouse=True)
+def _configured_read_transport(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("MEMORY_CONNECTOR_URL", "https://memory.example.test/mcp")
+    monkeypatch.setenv("CONNECTOR_API_KEY", "synthetic-test-key")
+    monkeypatch.setenv("MEMORY_CONNECTOR_AUTH_TYPE", "synthetic-test-auth")
+    monkeypatch.setenv("MEMORY_CONNECTOR_CONTENT_TYPE", "application/json")
+
+
+class RecordingSystemDws:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str | None, str, dict[str, object]]] = []
+        self.responses: list[tuple[str, str]] = []
+        self.calendar_status = "needs_action"
+
+    def send_message(self, conversation_id, text, **kwargs):
+        self.sent.append((conversation_id, text, kwargs))
+        return {"success": True, "message_id": "question-1"}
+
+    def verify_message_send_result(self, result):
+        return {"state": "sent", "message_id": result["message_id"]}
+
+    def respond_calendar_event(self, event_id: str, response: str):
+        self.responses.append((event_id, response))
+        self.calendar_status = response
+        return {"success": True}
+
+    def get_calendar_event(self, event_id: str):
+        return SimpleNamespace(event_id=event_id, self_response_status=self.calendar_status)
 SHARED_SKILL = """---
 name: dingtalk-shared
 description: Representative shared DWS operation fixture.
@@ -96,6 +129,13 @@ def _allow_isolated_test_workspace(command: list[str]) -> list[str]:
 def _json_section(prompt: str, heading: str):
     start = prompt.index(heading) + len(heading)
     value, _end = json.JSONDecoder().raw_decode(prompt[start:].lstrip())
+    if heading == "Candidate revision\n":
+        return {
+            **value["candidate"],
+            "operation_id": value["operation_id"],
+            "proposal_revision": value["proposal_revision"],
+            "candidate_digest": value["candidate_digest"],
+        }
     return value
 
 
@@ -194,24 +234,18 @@ def _consumer_result_record(proposal: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _audit_result_record(operation_id: str) -> dict[str, object]:
-    external_result = {
-        "operation_id": operation_id,
-        "live_result_reference": {
-            "conversation_id": "cid-1",
-            "message_id": "question-1",
-        },
-    }
+def _audit_result_record(candidate: dict[str, object]) -> dict[str, object]:
     wire = {
-        "outcome": "executed",
+        "outcome": "approve",
         "risk": "low",
         "confidence": 1.0,
         "rule_coverage": 1.0,
         "information_completeness": 1.0,
-        "summary": "The source-group clarification was sent and verified.",
-        "proposal_revision": 0,
+        "summary": "The candidate and source evidence were reviewed.",
+        "proposal_revision": candidate["proposal_revision"],
+        "candidate_digest": candidate["candidate_digest"],
+        "evidence_refs": [],
         "feedback": None,
-        "external_result": external_result,
         "error_code": "",
         "error_retryable": False,
         "error_authorization_required": False,
@@ -298,24 +332,10 @@ class CalendarRunnerContractExecutor:
                 {
                     "description": "Ask the verified inviter in the source group.",
                     "action_identity": "clarify-meeting-input",
-                    "capability": "agent_cli.dws",
-                    "operation": "chat message send",
-                    "target": {"group": "cid-1"},
-                    "payload": {
-                        "argv": [
-                            "dws",
-                            "chat",
-                            "message",
-                            "send",
-                            "--group",
-                            "cid-1",
-                            "--at-open-dingtalk-ids",
-                            "inviter-1",
-                            "--text",
-                            MESSAGE_TEXT,
-                            "--yes",
-                        ]
-                    },
+                    "capability": "dingtalk-chat",
+                    "operation": "send_group_message",
+                    "target": {"conversation_id": "cid-1"},
+                    "payload": {"content": MESSAGE_TEXT},
                 }
             ],
             "sourced_facts": [
@@ -334,45 +354,13 @@ class CalendarRunnerContractExecutor:
 
     def _audit_records(self, prompt: str) -> list[dict[str, object]]:
         candidate = _json_section(prompt, "Candidate revision\n")
-        argv = candidate["proposal"]["actions"][0]["payload"]["argv"]
-        assert candidate["proposal"]["actions"][0]["target"] == {"group": "cid-1"}
-        assert "--user" not in argv
-        verify_argv = [
-            "dws",
-            "chat",
-            "message",
-            "list",
-            "--group",
-            "cid-1",
-            "--time",
-            "2026-08-11",
-        ]
+        action = candidate["proposal"]["actions"][0]
+        assert action["target"] == {"conversation_id": "cid-1"}
+        assert action["payload"]["content"].startswith(MESSAGE_TEXT)
         return [
             *self._skill_records("audit"),
             *self._event_records("audit"),
-            *_reviewed_records(
-                "audit-question-write",
-                argv,
-                write=True,
-                stdout=json.dumps({"success": True, "message_id": "question-1"}),
-            ),
-            *_reviewed_records(
-                "audit-question-verify",
-                verify_argv,
-                stdout=json.dumps(
-                    {
-                        "messages": [
-                            {
-                                "message_id": "question-1",
-                                "conversation_id": "cid-1",
-                                "mentioned_open_dingtalk_ids": ["inviter-1"],
-                                "text": MESSAGE_TEXT,
-                            }
-                        ]
-                    }
-                ),
-            ),
-            _audit_result_record(candidate["operation_id"]),
+            _audit_result_record(candidate),
         ]
 
 
@@ -417,15 +405,10 @@ class SilentMaterialCalendarExecutor(CalendarRunnerContractExecutor):
                 {
                     "description": "Accept after reviewing the linked brief.",
                     "action_identity": "accept-calendar-invitation",
-                    "capability": "agent_cli.dws",
-                    "operation": "calendar event respond",
+                    "capability": "dingtalk-calendar",
+                    "operation": "respond_calendar_event",
                     "target": {"event_id": "event-1"},
-                    "payload": {
-                        "argv": [
-                            "dws", "calendar", "event", "respond",
-                            "--id", "event-1", "--status", "accepted", "--yes",
-                        ],
-                    },
+                    "payload": {"response_status": "accepted"},
                 }
             ],
             "sourced_facts": [
@@ -449,24 +432,13 @@ class SilentMaterialCalendarExecutor(CalendarRunnerContractExecutor):
         assert candidate["proposal"]["objective"] == (
             "Process the linked material and accept the invitation."
         )
+        assert action["operation"] == "respond_calendar_event"
+        assert action["payload"] == {"response_status": "accepted"}
         return [
             *self._skill_records("audit"),
             *self._event_records("audit"),
             *self._material_records("audit"),
-            *_reviewed_records(
-                "audit-calendar-write",
-                action["payload"]["argv"],
-                write=True,
-                stdout=json.dumps({"success": True, "event_id": "event-1"}),
-            ),
-            *_reviewed_records(
-                "audit-calendar-verify",
-                ["dws", "calendar", "event", "get", "--id", "event-1", "--format", "json"],
-                stdout=json.dumps(
-                    {"event_id": "event-1", "self_response": "accepted"}
-                ),
-            ),
-            _audit_result_record(candidate["operation_id"]),
+            _audit_result_record(candidate),
         ]
 
 
@@ -551,8 +523,10 @@ def test_deterministic_native_runner_calendar_clarification_contract(
         trigger_raw_payload={"eventId": "event-1"},
     )
     executor = CalendarRunnerContractExecutor(skill_paths)
+    system_dws = RecordingSystemDws()
     orchestrator = AgentOrchestrator(
         store=store,
+        system_executor=SystemExecutor(store, dws=system_dws),
         consumer=ConsumerAgentRunner(
             store=store,
             workspace=tmp_path,
@@ -580,7 +554,12 @@ def test_deterministic_native_runner_calendar_clarification_contract(
     )
     assert result.final_role is AgentRole.AUDIT
     assert result.audit_result is not None
-    assert result.audit_result.outcome.value == "executed"
+    assert result.audit_result.outcome.value == "approve"
+    assert result.execution_result is not None
+    assert result.execution_result.outcome == "executed"
+    assert len(system_dws.sent) == 1
+    assert system_dws.sent[0][0] == "cid-1"
+    assert system_dws.sent[0][1].startswith(MESSAGE_TEXT)
     assert len(executor.commands) == 2
     assert all("--output-schema" not in command for command in executor.commands)
     assert "tools.enabled_tools" not in " ".join(executor.commands[0])
@@ -598,6 +577,10 @@ def test_deterministic_native_runner_calendar_clarification_contract(
     assert _persisted_skill_receipts(runs[1]) == {}
 
     assert runs[1].tool_events
+    assert all(
+        event.get("item", {}).get("tool") != "execute_reviewed_write"
+        for event in runs[1].tool_events
+    )
 
 
 def test_deterministic_silent_meeting_reads_material_then_accepts(
@@ -659,8 +642,10 @@ def test_deterministic_silent_meeting_reads_material_then_accepts(
         trigger_raw_payload={"eventId": "event-1"},
     )
     executor = SilentMaterialCalendarExecutor(skill_paths)
+    system_dws = RecordingSystemDws()
     result = AgentOrchestrator(
         store=store,
+        system_executor=SystemExecutor(store, dws=system_dws),
         consumer=ConsumerAgentRunner(
             store=store,
             workspace=tmp_path,
@@ -689,6 +674,11 @@ def test_deterministic_silent_meeting_reads_material_then_accepts(
         task.id, task.execution_generation
     )
     assert [run.status for run in runs] == ["completed", "completed"]
+    assert result.audit_result is not None and result.audit_result.outcome.value == "approve"
+    assert result.execution_result is not None and result.execution_result.outcome == "executed"
+    assert system_dws.responses == [("event-1", "accepted")]
+    assert system_dws.calendar_status == "accepted"
+    assert system_dws.sent == []
     assert all("Raw material references and exact read commands" in prompt for prompt in executor.prompts[:1])
     assert "Candidate revision" in executor.prompts[1]
 
@@ -698,7 +688,7 @@ def test_deterministic_silent_meeting_reads_material_then_accepts(
     not _enabled(),
     reason="set CEO_LIVE_CONSUMER_AUDIT_E2E=1 to run native Consumer/Audit controlled-sink E2E",
 )
-def test_native_consumer_reuses_session_and_audit_writes_controlled_sink_once(tmp_path: Path):
+def test_native_consumer_resumes_and_role_bound_audit_cannot_write_sink(tmp_path: Path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     repository_root = Path(__file__).resolve().parents[2]
@@ -745,9 +735,9 @@ def test_native_consumer_reuses_session_and_audit_writes_controlled_sink_once(tm
         prompt=audit_prompt,
         session_id=None,
         use_output_schema=False,
-        approval_policy="on-failure",
-        developer_instructions="You are Audit Agent B. Use only the supplied audit_sink MCP tool.",
-        use_approval_bypass=True,
+        approval_policy="never",
+        developer_instructions="You are Audit Agent B. Review only; do not perform external actions.",
+        use_approval_bypass=False,
         preserve_native_model_config=True,
     ))
     insert_at = audit_command.index("--cd")
@@ -762,8 +752,9 @@ def test_native_consumer_reuses_session_and_audit_writes_controlled_sink_once(tm
         "-c", _config_string("mcp_servers.audit_sink.cwd", str(repository_root)),
         "-c", 'mcp_servers.audit_sink.enabled_tools=["read_state","write_state"]',
     ]
+    make_audit_agent_command(audit_command)
     audit = _run(audit_command, audit_prompt)
     assert audit.returncode == 0, audit.stderr
     assert _session_id(audit.stdout) != session_id
-    assert sink.row_count(operation_id) == 1, audit.stdout + audit.stderr
-    assert sink.read_state(operation_id) is not None
+    assert sink.row_count(operation_id) == 0, audit.stdout + audit.stderr
+    assert sink.read_state(operation_id) is None

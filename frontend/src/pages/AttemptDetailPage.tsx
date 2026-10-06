@@ -16,6 +16,31 @@ function ReviewBlock({ title, value, className = "", lines = 5 }: { title: strin
   return <section className={`attempt-review-block ${className}`}><h2>{title}</h2><SummaryText value={displayValue(value)} lines={lines} /></section>;
 }
 
+const executionStatusLabels: Record<string, string> = {
+  pending: "等待执行", running: "执行中", dispatched: "已提交，等待核验",
+  retry: "等待恢复", uncertain: "外部结果待核验", failed: "执行失败",
+  verified: "已核验完成", confirmed_no_effect: "已确认未产生外部结果",
+  done: "全部动作已核验完成", skipped: "已停止",
+};
+
+function SystemExecutionProgress({ detail }: { detail: AttemptDetail }) {
+  const execution = detail.system_execution;
+  if (!execution) return null;
+  return <section className="console-card attempt-detail-section" aria-label="系统执行进度">
+    <h2>系统执行进度</h2>
+    <p>{execution.is_current ? "当前方案" : "历史方案"} · 第 {execution.stage_index + 1} 阶段 · {executionStatusLabels[execution.status] || execution.status}</p>
+    <p>已核验 {execution.verified_actions} / {execution.total_actions} 项动作</p>
+    {execution.summary && <p>{execution.summary}</p>}
+    {Boolean(execution.error.code || execution.error.source_code) && <details><summary>执行问题详情</summary><pre>{JSON.stringify(execution.error, null, 2)}</pre></details>}
+    <ol>{execution.actions.map((action) => <li key={action.action_index}>
+      <strong>{action.description || action.operation}</strong>
+      <p>{executionStatusLabels[action.status] || action.status}</p>
+      {Object.keys(action.result).length > 0 && !action.receipt && <details><summary>动作核验详情</summary><pre>{JSON.stringify(action.result, null, 2)}</pre></details>}
+      {action.receipt && <details><summary>已核验回执</summary><p>{action.receipt.external_action_key}</p><pre>{JSON.stringify(action.receipt.provider_result, null, 2)}</pre></details>}
+    </li>)}</ol>
+  </section>;
+}
+
 type AuditParts = {
   reviewerFeedback: string;
   originalAmbiguity: string;
@@ -447,7 +472,6 @@ export function AttemptDetailPage() {
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [message, setMessage] = useState("");
   const [customDecision, setCustomDecision] = useState("");
-  const [skillUpdateRequested, setSkillUpdateRequested] = useState(false);
   const [decisionSubmitting, setDecisionSubmitting] = useState(false);
 
   useEffect(() => {
@@ -478,11 +502,11 @@ export function AttemptDetailPage() {
     }
   };
 
-  const runDecision = async (url: string, instruction: string) => {
+  const runDecision = async (url: string, payload: Record<string, unknown>) => {
     setDecisionSubmitting(true);
     setMessage("正在提交人工决策…");
     try {
-      const result = await command(url, { instruction, feedback_scope: "one_time", skill_update_requested: skillUpdateRequested });
+      const result = await command(url, payload);
       const refreshed = await getAttemptDetail(attemptId);
       setDetail(refreshed.item);
       setSnapshot(refreshed.meta.snapshot_at);
@@ -515,7 +539,7 @@ export function AttemptDetailPage() {
           {detail.actions.consumer_url && <Link className="agent-log-button" to={detail.actions.consumer_url} title="查看 Agent 如何形成这次处理方案">查看处理过程</Link>}
           {detail.actions.audit_url && <Link className="agent-log-button" to={detail.actions.audit_url} title="查看 Agent 如何核验方案、边界和实际结果">查看审计过程</Link>}
           {detail.actions.agent_url && <Link className="agent-log-button" to={detail.actions.agent_url} title="查看关联的 Agent 会话">查看 Agent session</Link>}
-          {detail.actions.can_rerun && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认重新处理这条 Attempt？")) void runAction(detail.actions.rerun_url, "重跑已提交"); }}>重新处理</button>}
+          {detail.actions.can_rerun && <button type="button" className="danger-button" onClick={() => { if (window.confirm(detail.actions.rerun_confirmation)) void runAction(detail.actions.rerun_url, "重跑已提交"); }}>{detail.actions.rerun_label}</button>}
           {detail.actions.can_recall && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认撤回已发送消息？")) void runAction(detail.actions.recall_url, "撤回已提交"); }}>撤回发送</button>}
           {!detail.agent_execution_record && <span className="muted">未记录 Agent 过程</span>}
           {detail.actions.terminal && <span className="disabled-action">无需操作</span>}
@@ -532,11 +556,25 @@ export function AttemptDetailPage() {
           {detail.recovery_state && <DetailSection title="后续路由恢复" value="关联任务已完成；原始失败记录仍保留，后续处理没有重写该审计事实。" />}
           {(detail.oa.process_instance_id || detail.oa.task_id || detail.oa.action || detail.oa.remark) && <DetailSection title="OA 信息" value={[detail.oa.process_instance_id, detail.oa.task_id, detail.oa.action, detail.oa.remark].filter(Boolean).join("\n")} />}
           {(detail.calendar.event_id || detail.calendar.response_status) && <DetailSection title="日历信息" value={[detail.calendar.event_id, detail.calendar.response_status, displayValue(detail.calendar.result)].filter(Boolean).join("\n")} />}
+          <SystemExecutionProgress detail={detail} />
           {detail.quality_warnings.length > 0 && <section className="console-card attempt-quality-warning"><h2>Audit quality warnings</h2><ul>{detail.quality_warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></section>}
           <ProcessingPanel detail={detail} />
         </div>
         <aside className="attempt-review-side" aria-label="反馈与人工处理">
-          {detail.status.requires_decision && <><HumanDecisionBasis detail={detail} /><section className="console-card attempt-decision-card"><h2>可选处理方式</h2><p>提交后会在同一事项中创建新修订；勾选 Skill 规则后，这条反馈也会用于更新 Skill。</p>{detail.decision_options.map((option, index) => <button className="attempt-decision-option" type="button" disabled={decisionSubmitting} key={option.instruction} onClick={() => { if (window.confirm(`确认选择“${option.label}”？`)) void runDecision(option.url, option.instruction); }}><strong>{index + 1}. {option.label}</strong><span>{option.consequence}</span></button>)}<label htmlFor="attempt-custom-decision">补充处理要求</label><label className="attempt-skill-toggle" htmlFor="attempt-skill-update"><input id="attempt-skill-update" type="checkbox" checked={skillUpdateRequested} onChange={(event) => setSkillUpdateRequested(event.target.checked)} /> 同时把这条反馈沉淀为 Skill 规则</label><textarea id="attempt-custom-decision" value={customDecision} placeholder="说明你希望系统以后如何处理这一类情况" onChange={(event) => setCustomDecision(event.target.value)} /><button type="button" className="primary-button" disabled={!customDecision.trim() || decisionSubmitting} onClick={() => { if (window.confirm("确认提交这条处理要求？")) void runDecision(detail.decision_options[0]?.url || `/api/console/history/${detail.id}/human-decision`, customDecision.trim()); }}>{decisionSubmitting ? "提交中…" : "提交处理要求"}</button></section></>}
+          {detail.human_decision && <HumanDecisionBasis detail={detail} />}
+          {detail.human_decision?.selection && <section className="console-card attempt-decision-card"><h2>已选择方案</h2><p>{detail.human_decision.selection.option_key} · {detail.human_decision.selection.status}；执行结果以回执为准。</p></section>}
+          {detail.status.requires_decision && detail.human_decision && <section className="console-card attempt-decision-card">
+            <h2>本次处理方式</h2>
+            <p>请选择已审核的当前事项方案。选定后系统会执行对应分支并核验结果。</p>
+            {detail.decision_options.map((option, index) => <button className="attempt-decision-option" type="button" disabled={decisionSubmitting} key={option.key} onClick={() => void runDecision(option.url, { kind: "select", candidate_id: detail.human_decision?.candidate_id, candidate_digest: detail.human_decision?.candidate_digest, review_id: detail.human_decision?.review_id, option_key: option.key })}>
+              <strong>{index + 1}. {option.label}</strong><span>{option.consequence}</span>
+              {option.plan && <small>执行：{option.plan.actions.map((action) => action.description).join("；")}</small>}
+              {option.terminal_outcome === "skipped" && <small>停止原因：{option.reason}</small>}
+            </button>)}
+            <label htmlFor="attempt-custom-decision">{detail.human_decision.requested_input || "补充新事实或处理要求"}</label>
+            <textarea id="attempt-custom-decision" value={customDecision} placeholder="说明这次事项的新事实或要求" onChange={(event) => setCustomDecision(event.target.value)} />
+            <button type="button" className="primary-button" disabled={!customDecision.trim() || decisionSubmitting} onClick={() => void runDecision(`/api/console/history/${detail.id}/human-decision`, { kind: "supplement", candidate_id: detail.human_decision?.candidate_id, candidate_digest: detail.human_decision?.candidate_digest, review_id: detail.human_decision?.review_id, instruction: customDecision.trim() })}>{decisionSubmitting ? "提交中…" : "提交补充信息"}</button>
+          </section>}
           <MetadataGrid rows={[...detail.metadata, ...(detail.revision_count ? [{ label: "revisions", value: `${detail.revision_count} revisions` }] : [])]} consumerResult={detail.consumer_result} />
           <FeedbackPanel detail={detail} onSaved={setMessage} />
           {message && <p className="attempt-action-message" role="status" aria-live="polite">{message}</p>}

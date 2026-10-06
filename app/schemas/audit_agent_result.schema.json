@@ -44,29 +44,6 @@
       "title": "AgentError",
       "type": "object"
     },
-    "AuditExternalResult": {
-      "additionalProperties": false,
-      "properties": {
-        "operation_id": {
-          "minLength": 1,
-          "title": "Operation Id",
-          "type": "string"
-        },
-        "live_result_reference": {
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          },
-          "title": "Live Result Reference",
-          "type": "object"
-        }
-      },
-      "required": [
-        "operation_id",
-        "live_result_reference"
-      ],
-      "title": "AuditExternalResult",
-      "type": "object"
-    },
     "AuditFeedback": {
       "additionalProperties": false,
       "properties": {
@@ -96,243 +73,13 @@
     },
     "AuditOutcome": {
       "enum": [
-        "executed",
-        "feedback_provided",
-        "needs_human",
-        "dry_run",
+        "approve",
+        "return",
+        "reject",
         "failed"
       ],
       "title": "AuditOutcome",
       "type": "string"
-    },
-    "AuthorizationPlan": {
-      "additionalProperties": false,
-      "description": "One bounded, externally effective action awaiting a human decision.",
-      "properties": {
-        "summary": {
-          "minLength": 1,
-          "title": "Summary",
-          "type": "string"
-        },
-        "primary_action": {
-          "$ref": "#/$defs/ProposedAction"
-        },
-        "follow_up_actions": {
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/ProposedAction"
-          },
-          "title": "Follow Up Actions",
-          "type": "array"
-        },
-        "side_effects": {
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "title": "Side Effects",
-          "type": "array"
-        },
-        "will_not_do": {
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "title": "Will Not Do",
-          "type": "array"
-        },
-        "readback": {
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "title": "Readback",
-          "type": "array"
-        }
-      },
-      "required": [
-        "summary",
-        "primary_action",
-        "side_effects",
-        "will_not_do",
-        "readback"
-      ],
-      "title": "AuthorizationPlan",
-      "type": "object"
-    },
-    "DecisionBasis": {
-      "additionalProperties": false,
-      "description": "The compact evidence chain a person needs to assess an escalation.",
-      "properties": {
-        "verified_facts": {
-          "items": {
-            "$ref": "#/$defs/ProposalFact"
-          },
-          "minItems": 1,
-          "title": "Verified Facts",
-          "type": "array"
-        },
-        "rule_evidence": {
-          "items": {
-            "$ref": "#/$defs/ProposalFact"
-          },
-          "minItems": 1,
-          "title": "Rule Evidence",
-          "type": "array"
-        },
-        "quality_explanation": {
-          "minLength": 1,
-          "title": "Quality Explanation",
-          "type": "string"
-        },
-        "no_external_action_evidence": {
-          "items": {
-            "$ref": "#/$defs/ProposalFact"
-          },
-          "minItems": 1,
-          "title": "No External Action Evidence",
-          "type": "array"
-        },
-        "conclusion": {
-          "minLength": 1,
-          "title": "Conclusion",
-          "type": "string"
-        }
-      },
-      "required": [
-        "verified_facts",
-        "rule_evidence",
-        "quality_explanation",
-        "no_external_action_evidence",
-        "conclusion"
-      ],
-      "title": "DecisionBasis",
-      "type": "object"
-    },
-    "DecisionOption": {
-      "additionalProperties": false,
-      "description": "One actionable rule choice for a reusable task class.",
-      "properties": {
-        "key": {
-          "minLength": 1,
-          "title": "Key",
-          "type": "string"
-        },
-        "label": {
-          "minLength": 1,
-          "title": "Label",
-          "type": "string"
-        },
-        "instruction": {
-          "minLength": 1,
-          "title": "Instruction",
-          "type": "string"
-        },
-        "consequence": {
-          "minLength": 1,
-          "title": "Consequence",
-          "type": "string"
-        },
-        "applies_to": {
-          "const": "task_class",
-          "title": "Applies To",
-          "type": "string"
-        }
-      },
-      "required": [
-        "key",
-        "label",
-        "instruction",
-        "consequence",
-        "applies_to"
-      ],
-      "title": "DecisionOption",
-      "type": "object"
-    },
-    "JsonValue": {},
-    "ProposalFact": {
-      "additionalProperties": false,
-      "properties": {
-        "assertion": {
-          "minLength": 1,
-          "title": "Assertion",
-          "type": "string"
-        },
-        "references": {
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "title": "References",
-          "type": "array"
-        }
-      },
-      "required": [
-        "assertion",
-        "references"
-      ],
-      "title": "ProposalFact",
-      "type": "object"
-    },
-    "ProposedAction": {
-      "additionalProperties": false,
-      "properties": {
-        "description": {
-          "minLength": 1,
-          "title": "Description",
-          "type": "string"
-        },
-        "action_identity": {
-          "minLength": 1,
-          "title": "Action Identity",
-          "type": "string"
-        },
-        "capability": {
-          "minLength": 1,
-          "title": "Capability",
-          "type": "string"
-        },
-        "operation": {
-          "minLength": 1,
-          "title": "Operation",
-          "type": "string"
-        },
-        "target": {
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          },
-          "minProperties": 1,
-          "title": "Target",
-          "type": "object"
-        },
-        "payload": {
-          "additionalProperties": {
-            "$ref": "#/$defs/JsonValue"
-          },
-          "title": "Payload",
-          "type": "object"
-        },
-        "effect": {
-          "default": "external",
-          "description": "external when performing this action changes something outside the service and a provider must accept it; none when it changes nothing -- a verification, or a state already in place. An action that carries a message body is always external.",
-          "enum": [
-            "external",
-            "none"
-          ],
-          "title": "Effect",
-          "type": "string"
-        }
-      },
-      "required": [
-        "description",
-        "action_identity",
-        "capability",
-        "operation",
-        "target",
-        "payload"
-      ],
-      "title": "ProposedAction",
-      "type": "object"
     },
     "RiskLevel": {
       "description": "Estimated consequence if the proposed result is acted on incorrectly.",
@@ -346,52 +93,36 @@
     }
   },
   "additionalProperties": false,
-  "anyOf": [
+  "oneOf": [
     {
       "properties": {
         "outcome": {
-          "const": "executed"
+          "const": "approve"
         },
         "feedback": {
           "type": "null"
-        },
-        "external_result": {
-          "type": "object"
-        },
-        "decision_options": {
-          "maxItems": 0,
-          "type": "array"
         }
-      },
-      "required": [
-        "outcome",
-        "feedback",
-        "external_result"
-      ],
-      "type": "object"
+      }
     },
     {
       "properties": {
         "outcome": {
-          "const": "feedback_provided"
+          "const": "return"
         },
         "feedback": {
           "type": "object"
-        },
-        "external_result": {
-          "type": "null"
-        },
-        "decision_options": {
-          "maxItems": 0,
-          "type": "array"
         }
-      },
-      "required": [
-        "outcome",
-        "feedback",
-        "external_result"
-      ],
-      "type": "object"
+      }
+    },
+    {
+      "properties": {
+        "outcome": {
+          "const": "reject"
+        },
+        "feedback": {
+          "type": "object"
+        }
+      }
     },
     {
       "properties": {
@@ -400,78 +131,8 @@
         },
         "feedback": {
           "type": "null"
-        },
-        "external_result": {
-          "type": "null"
-        },
-        "decision_options": {
-          "maxItems": 0,
-          "type": "array"
         }
-      },
-      "required": [
-        "outcome",
-        "feedback",
-        "external_result"
-      ],
-      "type": "object"
-    },
-    {
-      "properties": {
-        "outcome": {
-          "const": "needs_human"
-        },
-        "feedback": {
-          "type": "null"
-        },
-        "external_result": {
-          "type": "null"
-        },
-        "decision_options": {
-          "maxItems": 4,
-          "minItems": 2,
-          "type": "array"
-        },
-        "needs_human_reason": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "decision_basis": {
-          "type": "object"
-        }
-      },
-      "required": [
-        "outcome",
-        "feedback",
-        "external_result",
-        "decision_options",
-        "needs_human_reason",
-        "decision_basis"
-      ],
-      "type": "object"
-    },
-    {
-      "properties": {
-        "outcome": {
-          "const": "dry_run"
-        },
-        "feedback": {
-          "type": "null"
-        },
-        "external_result": {
-          "type": "null"
-        },
-        "decision_options": {
-          "maxItems": 0,
-          "type": "array"
-        }
-      },
-      "required": [
-        "outcome",
-        "feedback",
-        "external_result"
-      ],
-      "type": "object"
+      }
     }
   ],
   "properties": {
@@ -488,6 +149,19 @@
       "title": "Proposal Revision",
       "type": "integer"
     },
+    "candidate_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Candidate Digest",
+      "type": "string"
+    },
+    "evidence_refs": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Refs",
+      "type": "array"
+    },
     "feedback": {
       "anyOf": [
         {
@@ -497,24 +171,6 @@
           "type": "null"
         }
       ]
-    },
-    "external_result": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/AuditExternalResult"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "decision_options": {
-      "default": [],
-      "items": {
-        "$ref": "#/$defs/DecisionOption"
-      },
-      "title": "Decision Options",
-      "type": "array"
     },
     "error": {
       "$ref": "#/$defs/AgentError"
@@ -539,48 +195,14 @@
       "minimum": 0.0,
       "title": "Information Completeness",
       "type": "number"
-    },
-    "needs_human_reason": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Needs Human Reason"
-    },
-    "decision_basis": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/DecisionBasis"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null
-    },
-    "authorization_plan": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/AuthorizationPlan"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null
     }
   },
   "required": [
     "outcome",
     "summary",
     "proposal_revision",
+    "candidate_digest",
     "feedback",
-    "external_result",
     "error",
     "risk",
     "confidence",

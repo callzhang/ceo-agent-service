@@ -41,8 +41,6 @@ UNRESOLVED_UNSUBSCRIBE_RECHECKS = 5
 UNRESOLVED_UNSUBSCRIBE_SELECTION_ERROR = "email_unsubscribe_candidate_unresolved"
 # A route that declines to place the audited unsubscribe call is retried this
 # many times before the refusal is treated as a capability the service lacks.
-ROUTE_REFUSED_UNSUBSCRIBE_RETRIES = 5
-ROUTE_REFUSED_UNSUBSCRIBE_ERROR = "email_unsubscribe_route_refused"
 # A browser fault the page itself caused - a timeout, a session that would not
 # open - is retried across this many fresh generations. The per-generation
 # role budget is an orchestration detail: spending it says nothing about
@@ -1571,7 +1569,7 @@ def _unresolved_selection_rechecks(task_error: str) -> int:
 def _transient_browser_retry_count(task_error: str, code: str) -> int:
     """How many generations this task has already spent on the same page fault.
 
-    Rides in the task's own error for the same reason _route_refusal_count
+    Rides in the task's own error because deferral returns the task budget.
     does: a deferral hands the attempt budget back, so task.attempts cancels
     itself out and can bound nothing.
     """
@@ -1585,22 +1583,6 @@ def _transient_browser_retry_count(task_error: str, code: str) -> int:
     except ValueError:
         return 0
 
-
-def _route_refusal_count(task_error: str) -> int:
-    """How many times a route has already refused to place this task's call.
-
-    Same reason as _unresolved_selection_rechecks: the count rides in the
-    task's own error because the attempt budget is deliberately returned on a
-    deferral and therefore cannot bound anything.
-    """
-    prefix = f"{ROUTE_REFUSED_UNSUBSCRIBE_ERROR}:"
-    if not task_error.startswith(prefix):
-        return 0
-    count, _, _ = task_error[len(prefix) :].partition(":")
-    try:
-        return max(int(count), 0)
-    except ValueError:
-        return 0
 
 
 def _recover_orphaned_unsubscribe_claims(email_store: object, task_store: object) -> int:
@@ -2882,10 +2864,8 @@ def _build_agent_orchestrator(
     )
     from app.audit_agent import AuditAgentRunner
     from app.consumer_agent import ConsumerAgentRunner
-    from app.email_store import EmailStore
-    from app.email_unsubscribe_continuation import (
-        EmailUnsubscribeContinuationDriver,
-    )
+    from app.system_executor import SystemExecutor
+    from app.dws_client import DwsClient
 
     workspace = Path(settings.workspace)
     # The capability registry is per process and every service child starts
@@ -2911,21 +2891,15 @@ def _build_agent_orchestrator(
         "friday_adapter": runtime.friday_adapter,
         "refresh_runtime_capabilities": runtime.refresh_runtime_capabilities,
     }
-    domain_continuation = EmailUnsubscribeContinuationDriver(
-        EmailStore(Path(settings.db_path))
-    )
     return AgentOrchestrator(
         store=store,
         consumer=ConsumerAgentRunner(
+            source_client=DwsClient(),
             **shared,
             runtime_skill_snapshot=runtime_skill_snapshot,
         ),
-        audit=AuditAgentRunner(
-            **shared,
-            dry_run=bool(settings.dry_run),
-            domain_continuation=domain_continuation,
-        ),
-        domain_continuation=domain_continuation,
+        audit=AuditAgentRunner(**shared),
+        system_executor=SystemExecutor(store=store, dws=DwsClient(), dry_run=bool(settings.dry_run)),
     )
 
 
@@ -3190,16 +3164,15 @@ def _load_email_task_context(
 
 
 def _decision_options_json(result: object) -> str:
-    """Persist only a structured decision returned by Consumer or Audit."""
+    """Persist complete Consumer question options; Audit reviews cannot supply choices."""
     for candidate in (
-        getattr(result, "audit_result", None),
         getattr(result, "consumer_result", None),
         result,
     ):
         options = getattr(candidate, "decision_options", None)
         if not options:
             continue
-        serialized: list[dict[str, str]] = []
+        serialized: list[dict[str, object]] = []
         for option in options:
             if hasattr(option, "model_dump"):
                 payload = option.model_dump(mode="json")
@@ -3213,184 +3186,33 @@ def _decision_options_json(result: object) -> str:
             ):
                 serialized = []
                 break
-            serialized.append(
-                {
-                    field: str(payload[field])
-                    for field in ("key", "label", "instruction", "consequence")
-                }
-            )
+            serialized.append(payload)
         if 2 <= len(serialized) <= 4:
             return json.dumps(serialized, ensure_ascii=False, sort_keys=True)
     return "[]"
 
 
-def _is_retryable_browser_failure(result: object) -> bool:
-    """Say whether this failure was the page's doing rather than the task's.
-
-    The orchestrator flattens `retryable` to False whenever a role spends its
-    per-generation turn budget, so the result cannot be asked. The code can:
-    a timeout or an unopenable profile may simply not happen next time, while
-    every other browser code describes a page a rerun would read identically.
-    """
-
-    from app.email_unsubscribe import TRANSIENT_BROWSER_ERROR_CODES
-
-    error = getattr(result, "error", None)
-    code = str(getattr(error, "code", "") or "")
-    # The ladder writes "<code>:<n>" back onto the task, and the next
-    # generation's failure arrives as the bare code again; both must match.
-    return code.partition(":")[0] in TRANSIENT_BROWSER_ERROR_CODES
-
-
-def _finalize_email_task(
-    store: object,
-    task: object,
-    result: object,
-    *,
-    direct_unsubscribe_runner: Callable[[int], Mapping[str, object]] | None = None,
-) -> None:
-    from app.email_unsubscribe_audit import (
-        AuditedUnsubscribeTerminalState,
-        audited_unsubscribe_route_refusal,
-        audited_unsubscribe_skip_receipt,
-    )
-
+def _finalize_email_task(store: object, task: object, result: object) -> None:
+    """Project reviewed execution; independent unsubscribe owns its own recovery."""
     status_map = {
         "executed": ("done", "completed"),
         "no_action": ("done", "skipped"),
-        "needs_human": ("done", "needs_human"),
+        "needs_human": ("needs_human", "needs_human"),
+        "skipped": ("skipped", "skipped"),
         "dry_run": ("done", "dry_run"),
         "failed_retryable": ("pending", "failed"),
-        "unknown": ("pending", "failed"),
         "failed_terminal": ("failed", "failed"),
     }
-    try:
-        task_status, send_status = status_map[result.status]
-    except KeyError as exc:
-        raise ValueError("invalid email orchestration status") from exc
+    task_status, send_status = status_map[result.status]
     human_decision_options_json = _decision_options_json(result)
-    # Authorization is a human decision only when the result carries the
-    # structured options required by the shared result contract. A bare flag
-    # from a failed runtime turn is a technical failure, not a decision.
-    if (
-        result.error.authorization_required
-        and result.error.code == "authorization_required"
-    ):
-        if human_decision_options_json != "[]":
-            task_status, send_status = "done", "needs_human"
-        else:
-            task_status, send_status = "failed", "failed"
     error = str(result.error.code or "")
-    # A browser step without a receipt used to stop the task and ask a person
-    # which of two ways to do nothing they preferred. Unsubscribing is
-    # idempotent -- the provider does not mind hearing it twice, and the page
-    # says so when it has already happened -- so the durable step proves
-    # nothing that warrants a question. The receipt is the fence; without one,
-    # the right move is to run it again.
-    run = store.get_agent_run(result.final_run_id) if result.final_run_id else None
-    # A receipt records the browser action, while the Agent run records whether
-    # Consumer/Audit completed its own work. They are separate facts. A failed
-    # Audit run cannot become a successful task merely because its browser call
-    # left a receipt; a fresh generation must finish with a successful terminal
-    # run before the task can be closed.
-    skip = (
-        None
-        if run is None or send_status == "needs_human"
-        else audited_unsubscribe_skip_receipt(run)
-    )
-    receipt_reconciliation_required = skip is not None and run.status != "completed"
-    if skip is not None and run.status == "completed":
-        outcome, terminal_state = skip
-        if terminal_state is AuditedUnsubscribeTerminalState.HANDOFF:
-            task_status, send_status = status_map["needs_human"]
-            error = outcome.value
-        else:
-            task_status, send_status = status_map["no_action"]
-            error = ""
-    elif run is not None and send_status != "needs_human":
-        # The same reasoning one step earlier. When the route refused to place
-        # the call at all, the audited tool never ran, so there is no receipt
-        # to read and the Audit model's invented error code is all that is
-        # left - and it reads like a decision to refuse the unsubscribe when
-        # nothing decided anything. Production runs the same task-bound,
-        # receipt-persisting operation directly; the historical retry ladder
-        # remains only for callers that did not supply that service runner.
-        refusal = audited_unsubscribe_route_refusal(run)
-        if refusal:
-            _LOGGER.info(
-                "email task %s: route refused the audited unsubscribe call: %s",
-                task.id,
-                refusal,
-            )
-            direct_result = (
-                None
-                if direct_unsubscribe_runner is None
-                else direct_unsubscribe_runner(task.id)
-            )
-            if direct_result is not None:
-                direct_status = str(direct_result.get("status") or "")
-                direct_outcome = str(direct_result.get("outcome") or "")
-                if direct_status == "done":
-                    if direct_outcome == "done":
-                        task_status, send_status = status_map["executed"]
-                    else:
-                        task_status, send_status = status_map["no_action"]
-                    error = ""
-                else:
-                    direct_error = direct_result.get("error")
-                    direct_error_code = (
-                        str(direct_error.get("code") or "")
-                        if isinstance(direct_error, Mapping)
-                        else ""
-                    )
-                    task_status, send_status = status_map["failed_terminal"]
-                    error = direct_error_code or direct_outcome or refusal
-            # Counted in the task's own error, not in task.attempts: a
-            # deferral hands the attempt budget back by design, so claim's +1
-            # and defer_reply_task's -1 cancel and attempts never advances.
-            # Keying the ladder on it left every refused task looping forever
-            # instead of ever reaching a person.
-            elif (
-                refusals := _route_refusal_count(
-                    str(getattr(task, "error", "") or "")
-                )
-                + 1
-            ) < ROUTE_REFUSED_UNSUBSCRIBE_RETRIES:
-                task_status, send_status = status_map["failed_retryable"]
-                error = f"{ROUTE_REFUSED_UNSUBSCRIBE_ERROR}:{refusals}"
-            else:
-                # This used to become needs_human with three options. Two
-                # things were wrong with that. The console refuses a decision
-                # on any non-DingTalk attempt (app/audit_web.py:9683), so the
-                # options were unclickable; and the premise was wrong -- the
-                # refusal tracked the shape of the tool being offered, not the
-                # task, and stopped entirely once the tool took one argument
-                # and declared itself idempotent. A route that will not place
-                # the call after the whole ladder is spent is a plain failure,
-                # and it belongs where failures are visible.
-                task_status, send_status = status_map["failed_terminal"]
-                error = ROUTE_REFUSED_UNSUBSCRIBE_ERROR
-        elif _is_retryable_browser_failure(result):
-            # A page that timed out or a session that would not open says
-            # nothing about the next generation. The per-generation role
-            # budget is spent, the task is not.
-            code = str(result.error.code or "")
-            spent = _transient_browser_retry_count(
-                str(getattr(task, "error", "") or ""),
-                code,
-            ) + 1
-            if spent < TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES:
-                task_status, send_status = status_map["failed_retryable"]
-                error = f"{code}:{spent}"
-            else:
-                task_status, send_status = status_map["failed_terminal"]
-                error = code
-    if receipt_reconciliation_required:
-        # A receipt makes a fresh Audit run read-only, so it is safe to repair
-        # the failed generation immediately. The task first records the failed
-        # run through the common finalizer below, then the Store rotates to a
-        # clean generation with the same business/action identity.
-        task_status, send_status = status_map["failed_terminal"]
+    if result.error.authorization_required:
+        task_status, send_status = "failed", "failed"
+        human_decision_options_json = "[]"
+    if task_status == "needs_human":
+        current = store.current_reviewed_candidate(task.id, task.execution_generation)
+        if current is None or current["id"] != result.candidate_id or current["review_id"] != result.review_id:
+            raise ValueError("email human question has no current approved review")
     if task_status == "pending":
         # A deferred orchestration (runtime not ready, provider recovery, lease
         # race) keeps the task and retries it later, exactly like the DingTalk
@@ -3414,6 +3236,7 @@ def _finalize_email_task(
             available_at=available_at,
         )
         return
+    run = store.get_agent_run(result.final_run_id) if result.final_run_id else None
     if run is None:
         raise RuntimeError("email orchestration final run was not persisted")
     store.finalize_orchestrated_reply_task(
@@ -3439,13 +3262,6 @@ def _finalize_email_task(
         send_error=error,
         channel="email",
     )
-    if receipt_reconciliation_required:
-        store.retry_failed_reply_task(
-            task.id,
-            run.id,
-            reason="receipt_reconciliation_requires_successful_run",
-            recovery_code="email_unsubscribe_receipt_reconciliation",
-        )
 
 
 def _email_worker_health_recorder(
@@ -4219,10 +4035,6 @@ def build_email_worker_dependencies(
             finalize_task=partial(
                 _finalize_email_task,
                 task_store,
-                direct_unsubscribe_runner=partial(
-                    run_email_unsubscribe,
-                    Path(settings.db_path),
-                ),
             ),
             direct_unsubscribe_runner=partial(
                 run_email_unsubscribe, Path(settings.db_path)

@@ -692,18 +692,20 @@ def test_quality_gate_excludes_resolved_needs_human_attempt(tmp_path):
     )
 
 
-def test_quality_gate_reports_needs_human_projection_when_queue_task_is_done(tmp_path):
+def test_quality_gate_rejects_unreviewed_legacy_human_projection_when_queue_task_is_done(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     _insert_needs_human_projection(store, result=_structured_needs_human_result())
 
     report = scan_hourly_quality(store.path, now=NOW)
 
-    assert ("reply_attempts", "needs_human", 1) in {
+    assert ("reply_attempts", "needs_human", 1) not in {
         (item.source, item.code, item.count) for item in report.attention
     }
-    # The quality gate intentionally keeps a done-task needs_human projection
-    # actionable, while the queue helper excludes a trigger owned by a done
-    # current business object from its unresolved-work count.
+    assert ("reply_attempts", "invalid_needs_human_result", 1) in {
+        (item.source, item.code, item.count) for item in report.violations
+    }
+    # A raw legacy result remains in History but is not a current approved
+    # candidate, and the done current business object is not unresolved work.
     assert store.count_current_unresolved_problem_attempts() == 0
 
 
@@ -810,14 +812,14 @@ def test_quality_gate_rejects_audit_revision_failure_as_human_decision(tmp_path)
     )
 
 
-def test_quality_gate_requires_structured_high_risk_low_confidence_options(tmp_path):
+def test_quality_gate_requires_approved_review_even_with_structured_high_risk_options(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     _insert_needs_human_projection(store, result=_structured_needs_human_result())
 
     report = scan_hourly_quality(store.path, now=NOW)
 
-    assert ("reply_attempts", "needs_human", 1) in {
-        (item.source, item.code, item.count) for item in report.attention
+    assert ("reply_attempts", "invalid_needs_human_result", 1) in {
+        (item.source, item.code, item.count) for item in report.violations
     }
 
 
@@ -847,7 +849,7 @@ def test_quality_gate_does_not_report_low_risk_or_confident_needs_human_projecti
         assert not any(item.code == "needs_human" for item in report.attention)
 
 
-def test_quality_gate_low_risk_low_rule_coverage_still_requires_human(tmp_path):
+def test_quality_gate_low_rule_coverage_does_not_replace_approved_review(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     _insert_needs_human_projection(
         store,
@@ -856,8 +858,8 @@ def test_quality_gate_low_risk_low_rule_coverage_still_requires_human(tmp_path):
 
     report = scan_hourly_quality(store.path, now=NOW)
 
-    assert ("reply_attempts", "needs_human", 1) in {
-        (item.source, item.code, item.count) for item in report.attention
+    assert ("reply_attempts", "invalid_needs_human_result", 1) in {
+        (item.source, item.code, item.count) for item in report.violations
     }
 
 
@@ -887,15 +889,15 @@ def test_quality_gate_rejects_autonomous_outcome_even_when_information_is_incomp
     assert any(item.code == "invalid_needs_human_result" for item in report.violations)
 
 
-def test_quality_gate_reports_low_rule_coverage_but_incomplete_information_is_ask_back(tmp_path):
+def test_quality_gate_never_activates_unreviewed_quality_threshold_questions(tmp_path):
     complete = AutoReplyStore(tmp_path / "complete.sqlite3")
     _insert_needs_human_projection(
         complete,
         result=_structured_needs_human_result(rule_coverage=0.4),
     )
     assert any(
-        item.code == "needs_human"
-        for item in scan_hourly_quality(complete.path, now=NOW).attention
+        item.code == "invalid_needs_human_result"
+        for item in scan_hourly_quality(complete.path, now=NOW).violations
     )
 
     incomplete = AutoReplyStore(tmp_path / "incomplete.sqlite3")

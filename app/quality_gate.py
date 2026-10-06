@@ -17,10 +17,6 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from app.agent_cron.scheduler import SCHEDULED_CAPABILITY_UNAVAILABLE_KINDS
-from app.decision_quality import (
-    StoredNeedsHumanProjection,
-    classify_stored_needs_human_projection,
-)
 from app.leak_check import contains_credential, contains_local_runtime_leak
 from app.store import SERVICE_HEALTH_STATE_PREFIX
 
@@ -478,9 +474,19 @@ def _check_structured_needs_human(
         + """
             select a.send_status, a.reviewed_at, a.agent_run_id,
                    a.send_error, a.human_decision_options_json,
-                   r.final_result_json
+                   c.candidate_json as reviewed_candidate_json,
+                   choice.id as selection_id
             from latest a
-            left join agent_runs r on r.id=a.agent_run_id
+            left join candidate_reviews review on review.audit_run_id=a.agent_run_id
+              and review.decision='approve'
+            left join review_candidates c on c.id=review.candidate_id
+              and c.invalidated_at='' and c.candidate_digest=review.candidate_digest
+              and c.id=(select max(newest.id) from review_candidates newest
+                  where newest.task_id=c.task_id and newest.execution_generation=c.execution_generation)
+              and exists(select 1 from reply_tasks task where task.id=c.task_id
+                  and task.execution_generation=c.execution_generation
+                  and task.status='needs_human')
+            left join candidate_selections choice on choice.candidate_id=c.id
             where a.ordinal=1 and lower(a.send_status)='needs_human'
               and a.reviewed_at is null
               and trim(coalesce(a.resolved_at, ''))=''
@@ -507,10 +513,11 @@ def _check_structured_needs_human(
     actionable = 0
     invalid = 0
     for row in rows:
-        classification = classify_stored_needs_human_projection(
-            row["final_result_json"]
-        )
-        if classification is StoredNeedsHumanProjection.NEEDS_HUMAN:
+        try:
+            candidate = json.loads(row["reviewed_candidate_json"] or "")
+        except (TypeError, json.JSONDecodeError):
+            candidate = {}
+        if candidate.get("outcome") == "needs_human" and row["selection_id"] is None:
             actionable += 1
         else:
             invalid += 1

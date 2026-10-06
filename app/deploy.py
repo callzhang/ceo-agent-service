@@ -15,12 +15,17 @@ already moved and stops.
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
+import plistlib
 import stat
 from uuid import uuid4
 
-from app.config import PRODUCTION_CHECKOUT_MESSAGE, service_root, worker_db_path
+from app.config import PRODUCTION_CHECKOUT_MESSAGE, read_env_file, service_root, worker_db_path
+from app.consumer_system_release import prepare_consumer_system_contracts
+from app.deploy_maintenance import check_maintenance, prepare_maintenance, stop_for_maintenance
 from app.repository_updater import (
+    ExistingSchemaUpgradeStateStore,
     RepositoryUpdater,
     UpgradePreconditionError,
     UpgradeOperation,
@@ -112,15 +117,27 @@ def unlock_source_tree(root: Path) -> None:
         _chmod_tree(root / relative, writable=True)
 
 
-def deploy(root: Path, database_path: Path) -> str:
-    from app.store import AutoReplyStore
+def _production_audit_rules_path(root: Path) -> Path:
+    """Resolve the worker's Audit rules path from its own environment."""
+    configured = read_env_file(root / ".env").get("CEO_AUDIT_RULES_TEMPLATE_PATH", "")
+    plist = Path.home() / "Library/LaunchAgents/com.ceo-agent-service.main.plist"
+    if plist.exists():
+        launch_environment = plistlib.loads(plist.read_bytes()).get("EnvironmentVariables", {})
+        configured = launch_environment.get("CEO_AUDIT_RULES_TEMPLATE_PATH", configured)
+    path = Path(os.path.expandvars(configured)).expanduser() if configured else root / "data/prompts/audit_rules.md"
+    return path if path.is_absolute() else root / path
 
+
+def deploy(
+    root: Path, database_path: Path, *, publish_contracts: bool = False,
+    maintenance_tasks: tuple[int, ...] = (),
+) -> str:
     ensure_production_guards(root)
     repository = GitRepository(root)
     repository.fetch(REMOTE)
     current = repository.resolve_ref(f"refs/heads/{BRANCH}")
     target = repository.resolve_ref(f"refs/remotes/{REMOTE}/{BRANCH}")
-    if current == target:
+    if current == target and not publish_contracts:
         return f"already current at {current[:8]}"
     records = repository.status_records()
     if records:
@@ -149,18 +166,53 @@ def deploy(root: Path, database_path: Path) -> str:
     changed = repository._run(
         ["diff", "--name-only", current, target], category="deploy_changed_paths"
     ).stdout.decode().split()
+    stopped = False
+
+    def stop_once() -> None:
+        nonlocal stopped
+        if not stopped:
+            _default_stop()
+            stopped = True
+
+    def start() -> None:
+        nonlocal stopped
+        _default_start()
+        stopped = False
+
+    def quiet() -> None:
+        if maintenance_tasks:
+            processes = check_maintenance(database_path, maintenance_tasks)
+            processes = stop_for_maintenance(processes, stop_once)
+            try:
+                prepare_maintenance(database_path, maintenance_tasks, operation.operation_id, processes)
+                wait_until_quiet(database_path)
+            except Exception:
+                start()
+                raise
+        else:
+            wait_until_quiet(database_path)
+
     updater = RepositoryUpdater(
         root,
-        AutoReplyStore(database_path),
+        ExistingSchemaUpgradeStateStore(database_path),
         remote=REMOTE,
         branch=BRANCH,
         database_path=database_path,
-        wait_for_quiet=lambda: wait_until_quiet(database_path),
-        stop=_default_stop,
-        restart=_default_start,
+        wait_for_quiet=quiet,
+        stop=stop_once,
+        restart=start,
         dependency_sync=lambda: build_frontend(root, changed),
         verification=lambda: verify_imports(root),
         health=wait_for_health,
+        publication=(
+            (lambda: prepare_consumer_system_contracts(
+                root=root,
+                database_path=database_path,
+                operation_id=operation.operation_id,
+                audit_rules_path=_production_audit_rules_path(root),
+            ))
+            if publish_contracts else None
+        ),
     )
     # Unlocked for exactly the checkout + build + verify window; the source
     # tree is locked again in `finally` whether this succeeds, rolls back, or
@@ -176,7 +228,8 @@ def deploy(root: Path, database_path: Path) -> str:
         raise SystemExit(f"nothing was deployed: {exc}") from None
     finally:
         lock_source_tree(root)
-    return f"deployed {current[:8]} -> {result.installed_commit[:8]}"
+    message = f"deployed {current[:8]} -> {result.installed_commit[:8]}"
+    return f"{message}; {result.error}" if result.error else message
 
 
 def restart_only(database_path: Path, *, restart=_default_restart) -> str:
@@ -203,11 +256,26 @@ def main() -> int:
         action="store_true",
         help="restart on the current code (a setting changed), instead of deploying a commit",
     )
+    parser.add_argument(
+        "--publish-consumer-system-contracts",
+        action="store_true",
+        help="publish the reviewed Consumer/Audit Skill and Audit-rule files in the quiet deploy window",
+    )
+    parser.add_argument("--maintenance-task", type=int, action="append", default=[],
+                        help="explicitly authorized recoverable reply task interrupted for maintenance; repeat per task")
     args = parser.parse_args()
+    if args.restart and args.maintenance_task:
+        parser.error("maintenance requires a commit deployment")
+    if args.restart and args.publish_consumer_system_contracts:
+        parser.error("--restart cannot publish Consumer/Audit contracts")
     if args.restart:
         print(restart_only(args.db or worker_db_path()), flush=True)
         return 0
-    print(deploy(args.root or service_root(), args.db or worker_db_path()), flush=True)
+    print(deploy(
+        args.root or service_root(), args.db or worker_db_path(),
+        publish_contracts=args.publish_consumer_system_contracts,
+        maintenance_tasks=tuple(args.maintenance_task),
+    ), flush=True)
     return 0
 
 

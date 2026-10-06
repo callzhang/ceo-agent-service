@@ -1,7 +1,10 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const getPromptPreview = vi.hoisted(() => vi.fn());
+vi.mock("../api/promptPreview", () => ({ getPromptPreview }));
 
 const getSettings = vi.hoisted(() => vi.fn());
 const saveSettings = vi.hoisted(() => vi.fn());
@@ -439,12 +442,85 @@ describe("SettingsPage", () => {
     expect(screen.getByText("{{principal}}", { selector: "mark" })).toBeInTheDocument();
   });
 
-  it("highlights runtime substitutions in rendered prompt previews", async () => {
-    getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { user_template: "Reply to {{principal}} in {{conversation}}." }, preview: { user: "Reply to 磊哥 in Friday." } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
-    renderSettings("/settings?tab=prompts&prompt=user&view=preview");
+  it.each([
+    ["developer", "template", "Developer Prompt · 模板"],
+    ["developer", "preview", "Developer Prompt · 渲染结果"],
+    ["user", "template", "User Prompt · 模板"],
+    ["user", "preview", "User Prompt · 渲染结果"],
+  ])("labels %s %s with the current view", async (kind, view, title) => {
+    getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { developer_template: "Developer", user_template: "User" }, preview: { developer: "Developer", user: "User" } }, meta: {} });
+    renderSettings(`/settings?tab=prompts&prompt=${kind}&view=${view}`);
+    expect(await screen.findByText(title, { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText(/完整指令/)).not.toBeInTheDocument();
+  });
 
-    expect(await screen.findByText("磊哥", { selector: "mark" })).toBeInTheDocument();
-    expect(screen.getByText("Friday", { selector: "mark" })).toBeInTheDocument();
+  it.each(["developer", "runtime"])("explains prompt purposes and assembly before the %s tabs", async (kind) => {
+    getPromptPreview.mockReturnValueOnce(new Promise(() => {}));
+    getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { developer_template: "Developer" }, preview: { developer: "Developer" } }, meta: {} });
+    renderSettings(`/settings?tab=prompts&prompt=${kind}`);
+    const overview = await screen.findByRole("region", { name: "提示词作用与上下文顺序" });
+    expect(overview).toHaveTextContent("后台 Consumer");
+    expect(overview).toHaveTextContent("后台 Audit");
+    expect(overview).toHaveTextContent("Audit Rules");
+    expect(overview).toHaveTextContent("Runtime Context");
+    expect(overview.compareDocumentPosition(screen.getByRole("tablist", { name: "Prompt sections" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows complete runtime input only on its separate tab", async () => {
+    getPromptPreview.mockResolvedValueOnce({ item: { mode: "current", status: "available", role: "consumer", runtime_kind: "codex_cli", route_name: "primary", model: "model-a", rendered_at: "2026-10-05T18:00:00Z", task_id: null, run_id: null, attempts: [], runtime_attempt_id: null, execution_generation: null, proposal_revision: null, stage_index: null, submission_state: "preview", developer_instructions: "Complete developer input", task_prompt: "Reply to 磊哥 in Friday. Complete task input.", submitted_input: "", runtime_context: "Runtime tools and timezone", reason: "", scope: "unbound", routes: [{ name: "primary", runtime_kind: "codex_cli", model: "model-a" }] }, meta: { snapshot_at: "2026-10-05T18:00:00Z" } });
+    getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { user_template: "Reply to {{principal}} in {{conversation}}." }, preview: { user: "Reply to 磊哥 in Friday." } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    renderSettings("/settings?tab=prompts&prompt=runtime");
+
+    expect(await screen.findByText("Reply to 磊哥 in Friday. Complete task input.")).toBeInTheDocument();
+    expect(screen.getByText("Complete developer input")).toBeInTheDocument();
+    expect(screen.getByText("Runtime tools and timezone")).toBeInTheDocument();
+    expect(saveSettings).not.toHaveBeenCalled();
+    expect(screen.queryByRole("tablist", { name: "Prompt view" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "保存" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "运行输入" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it.each(["developer", "user"])("renders the selected %s template rather than another runtime input", async (kind) => {
+    getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { developer_template: "Developer {{principal}}", user_template: "User {{principal}}" }, preview: { developer: "Developer 磊哥", user: "User 磊哥" } }, meta: { snapshot_at: "now" } });
+    renderSettings(`/settings?tab=prompts&prompt=${kind}&view=preview`);
+    expect(await screen.findByRole("tabpanel", { name: "Rendered preview" })).toHaveTextContent(`${kind === "developer" ? "Developer" : "User"} 磊哥`);
+    expect(screen.getByText("磊哥", { selector: "mark" })).toBeInTheDocument();
+    expect(getPromptPreview).not.toHaveBeenCalled();
+    expect(screen.queryByRole("region", { name: "完整运行输入预览" })).not.toBeInTheDocument();
+  });
+
+  it("refreshes saved template rendering after save before switching to preview", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { developer_template: "Old {{principal}}" }, preview: { developer: "Old 磊哥" } }, meta: { snapshot_at: "before" } });
+    renderSettings("/settings?tab=prompts&prompt=developer&view=template");
+    const editor = await screen.findByRole("textbox", { name: "Template" });
+    await user.clear(editor); await user.type(editor, "New {{principal}}");
+    saveSettings.mockResolvedValueOnce({ ok: true });
+    getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { developer_template: "New {{principal}}" }, preview: { developer: "New 磊哥" } }, meta: { snapshot_at: "after" } });
+    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
+    await waitFor(() => expect(getSettings).toHaveBeenCalledTimes(2));
+    await user.click(screen.getByRole("tab", { name: "Rendered preview" }));
+    expect(await screen.findByRole("tabpanel", { name: "Rendered preview" })).toHaveTextContent("New 磊哥");
+    expect(screen.queryByText("Old 磊哥")).not.toBeInTheDocument();
+  });
+
+  it("ignores a delayed save refresh after changing Settings sections", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { developer_template: "Old" }, preview: { developer: "Old" } }, meta: {} });
+    renderSettings("/settings?tab=prompts&prompt=developer&view=template");
+    await screen.findByRole("textbox", { name: "Template" });
+    let resolveRefresh!: (value: any) => void;
+    saveSettings.mockResolvedValueOnce({ ok: true });
+    getSettings.mockImplementationOnce(() => new Promise((resolve) => { resolveRefresh = resolve; }));
+    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
+    await waitFor(() => expect(getSettings).toHaveBeenCalledTimes(2));
+    getSettings.mockResolvedValueOnce({ item: { section: "audit-rules", fields: { template: "Audit rules" }, preview: { consumer: "Consumer rules" } }, meta: {} });
+    await user.click(screen.getByRole("link", { name: "Audit Rules" }));
+    await user.click(screen.getByRole("tab", { name: "Consumer" }));
+    await user.click(screen.getByRole("tab", { name: "Rendered preview" }));
+    expect(await screen.findByRole("tabpanel", { name: "Consumer rendered preview" })).toHaveTextContent("Consumer rules");
+    await act(async () => { resolveRefresh({ item: { section: "prompts", fields: { developer_template: "New" }, preview: { developer: "New" } }, meta: {} }); });
+    await waitFor(() => expect(screen.getByRole("tabpanel", { name: "Consumer rendered preview" })).toHaveTextContent("Consumer rules"));
   });
 
   it("edits the distilled work profile from Prompts and shows its runtime injection", async () => {

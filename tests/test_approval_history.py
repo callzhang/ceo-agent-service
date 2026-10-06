@@ -7,14 +7,16 @@ import app.approval_history as approval_history_module
 from app.agent_contracts import (
     AgentError,
     AuditAgentResult,
-    AuditExternalResult,
-    AuditOutcome,
     ConsumerAgentResult,
     ConsumerOutcome,
     ConsumerProposal,
     ProposedAction,
 )
 from app.approval_history import ApprovalHistoryResult, resolve_approval_history_result
+from app.historical_agent_results import (
+    HistoricalAuditExecutionResult,
+    HistoricalAuditExternalResult,
+)
 from app.store import AgentRole, AgentRun, ReplyAttempt
 
 
@@ -150,23 +152,17 @@ def _consumer_command(
 def _confirmed_audit(
     operation_id: str = "operation-2",
     live_process: str | None = None,
-) -> AuditAgentResult:
-    return AuditAgentResult(
-        outcome=AuditOutcome.EXECUTED,
+) -> HistoricalAuditExecutionResult:
+    return HistoricalAuditExecutionResult(
+        outcome="executed",
         summary="audit summary",
         proposal_revision=0,
-        feedback=None,
-        external_result=AuditExternalResult(
+        external_result=HistoricalAuditExternalResult(
             operation_id=operation_id,
             live_result_reference=(
                 {"process_instance_id": live_process} if live_process is not None else {}
             ),
         ),
-        error=AgentError(),
-        risk="low",
-        confidence=1.0,
-        rule_coverage=1.0,
-        information_completeness=1.0,
     )
 
 
@@ -354,6 +350,19 @@ def test_structured_consumer_no_action_returns_no_action():
 def test_proposal_without_audit_confirmation_is_unknown():
     consumer = _run(1, AgentRole.CONSUMER, _consumer())
     assert resolve_approval_history_result(_attempt(send_status="closed"), [consumer]) is ApprovalHistoryResult.UNKNOWN
+
+
+def test_new_audit_approval_without_execution_receipt_is_processing() -> None:
+    consumer = _run(1, AgentRole.CONSUMER, _consumer())
+    review = AuditAgentResult(
+        outcome="approve", summary="The proposal is acceptable",
+        proposal_revision=0, candidate_digest="a" * 64,
+        feedback=None, error=AgentError(), risk="low", confidence=1.0,
+        rule_coverage=1.0, information_completeness=1.0,
+    )
+    audit = _run(2, AgentRole.AUDIT, review, parent_agent_run_id=consumer.id)
+
+    assert resolve_approval_history_result(_attempt(send_status="processing"), [consumer, audit]) is ApprovalHistoryResult.PROCESSING
 
 
 def test_confirmed_audit_result_uses_typed_result_without_side_effect_projection():

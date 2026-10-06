@@ -7229,7 +7229,7 @@ def test_history_failed_item_shows_reason_effect_and_actions_inline(tmp_path: Pa
     assert "外部副作用：</strong>外部动作是否完成由当前结果和业务系统状态决定" in html
     assert f'action="/attempts/{attempt_id}/rerun?return_to=/history"' in html
     assert ">重试当前任务</button>" in html
-    assert ">暂不处理</button>" in html
+    assert f'<a href="/attempts/{attempt_id}">暂不处理</a>' in html
     assert ">人工处理</a>" in html
     assert ">技术详情</a>" in html
     assert "你需要做什么：</strong>请选择一种处理方式" in html
@@ -7266,7 +7266,7 @@ def test_history_failed_attempts_do_not_hide_each_other(tmp_path: Path):
     html = render_attempt_list(store, include_chart=False)
 
     assert html.count(">重试当前任务</button>") == 2
-    assert html.count(">暂不处理</button>") == 2
+    assert html.count(">暂不处理</a>") == 2
     assert f"#{old_id}" in html
     assert latest_id
     assert "接管，无需操作" not in html
@@ -7317,7 +7317,7 @@ def test_history_retrying_item_shows_persisted_plan_without_human_choices(
     assert ">技术详情</a>" in html
 
 
-def test_history_needs_human_item_shows_agent_choices_inline(tmp_path: Path):
+def test_history_needs_human_item_does_not_activate_unreviewed_legacy_choices(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
         conversation_id="cid-choice-history",
@@ -7424,22 +7424,22 @@ def test_history_needs_human_item_shows_agent_choices_inline(tmp_path: Path):
 
     html = render_attempt_list(store, include_chart=False)
 
-    assert "1. 同意当前方案" in html
-    assert "2. 要求补充材料" in html
-    assert f'action="/attempts/{attempt_id}/human-decision?return_to=/history"' in html
+    assert "1. 同意当前方案" not in html
+    assert "2. 要求补充材料" not in html
+    assert f'action="/attempts/{attempt_id}/human-decision?return_to=/history"' not in html
     with store._connect() as db:
         db.execute(
             "update reply_attempts set reviewed_at='2026-08-11 05:00:01' where id=?",
             (attempt_id,),
         )
     decisions = audit_web_module._human_decision_attention_rows(store)
-    assert [row["id"] for row in decisions] == [str(attempt_id)]
+    assert decisions == []
 
 
-def test_rule_decision_attention_uses_attempt_linked_run_not_unrelated_latest_run(
+def test_rule_decision_attention_excludes_superseded_unreviewed_attempt(
     tmp_path: Path,
 ):
-    """A later audit turn must not hide the current Attempt's rule decision."""
+    """A raw Consumer question cannot remain actionable after generation rotation."""
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = _consumer_result_task(store)
     consumer_claim = store.claim_agent_run(
@@ -7537,7 +7537,7 @@ def test_rule_decision_attention_uses_attempt_linked_run_not_unrelated_latest_ru
 
     decisions = audit_web_module._human_decision_attention_rows(store)
 
-    assert [row["id"] for row in decisions] == [str(attempt_id)]
+    assert decisions == []
 
 
 def test_attempt_detail_uses_same_attention_reason_and_effect_as_history(
@@ -10318,9 +10318,9 @@ def test_history_human_decision_rejects_failed_attempt_without_typed_decision(
 
     source = store.get_reply_attempt(source_id)
     unchanged_task = store.get_reply_task(task.id)
-    assert status == 409
+    assert status == 400
     assert headers == {}
-    assert "没有可追踪的结构化管理决策" in body
+    assert "人工决策请求字段无效" in body
     assert source is not None and source.send_status == "failed"
     assert unchanged_task is not None and unchanged_task.status == "failed"
 
@@ -10373,7 +10373,7 @@ def test_history_human_decision_rejects_unknown_external_effect(tmp_path: Path):
         return_to="/",
     )
 
-    assert status == 409
+    assert status == 400
     assert store.get_reply_attempt(source_id).send_status == "failed"
 
 
@@ -10805,9 +10805,9 @@ def test_needs_human_decision_rejects_untraceable_projection(
 
     source = store.get_reply_attempt(attempt_id)
     task = store.get_reply_task_for_message("cid-1", "msg-1")
-    assert status == 409
+    assert status == 400
     assert headers == {}
-    assert "没有可追踪的结构化管理决策" in body
+    assert "人工决策请求字段无效" in body
     assert source is not None
     assert source.send_status == "needs_human"
     assert source.reviewer_feedback == ""
@@ -10833,7 +10833,7 @@ def test_needs_human_decision_rejects_untraceable_projection(
     assert "需要你选择" not in html
 
 
-def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
+def test_needs_human_detail_does_not_render_unreviewed_agent_choices(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-choice",
@@ -10922,14 +10922,7 @@ def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
 
     html = audit_web_module._needs_human_decision_card(attempt, [run])
 
-    # The page presents policy-gap choices by ordinal position; the wire key
-    # remains the hidden instruction value used by the form.
-    assert "1. 同意当前方案" in html
-    assert "2. 要求补充材料" in html
-    assert "会执行已审计的外部动作。" in html
-    assert 'name="instruction" value="同意已核验方案并发布。"' in html
-    assert "这是无法由服务自动消除的管理分歧" in html
-    assert "两个管理决策都会改变外部状态。" not in html
+    assert html == ""
 
 
 def test_oa_manual_rerun_hides_old_human_choices_on_attempt_page(tmp_path: Path):
@@ -11888,3 +11881,41 @@ def test_service_component_catalog_lists_runtime_attempt_reclaim(tmp_path: Path)
         for component in audit_web_module._service_component_snapshots(store)
     ]
     assert "runtime-attempt-reclaim" in names
+
+
+@pytest.mark.parametrize('source_code', ['provider_risk_rejected', 'provider_rejected_risk'])
+def test_failed_reply_attention_uses_current_generation_agent_diagnostics(tmp_path, source_code):
+    from tests.test_reviewed_orchestration import setup
+    store, task, _ = setup(tmp_path)
+    run = store.claim_agent_run(task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None, operation_id='diagnostic', owner='test').run
+    store.fail_agent_run(run.id, {'code':'agent_reported_failure','source':'agent','source_code':source_code,
+        'reported_summary':'运行工具调用被拒绝；尚未取得外部执行回执。','retryable':False}, owner='test')
+    store.fail_reply_task(task.id, 'agent_reported_failure', expected_execution_generation=task.execution_generation)
+    before = store.get_reply_task(task.id)
+    rows = audit_web_module._queue_attention_rows(store)
+    [row] = [r for r in rows if r['category'] == 'Reply task']
+    assert row['error_code'] == source_code
+    assert 'agent' in row['error']
+    assert 'Agent 说明' in row['error']
+    assert '尚未取得外部执行回执' in row['error']
+    assert len([r for r in rows if r['category']=='Reply task']) == 1
+    assert store.get_reply_task(task.id) == before
+
+
+@pytest.mark.parametrize('old_generation,bad_json', [(True,False),(False,True)])
+def test_failed_reply_attention_does_not_use_stale_or_malformed_run(tmp_path, old_generation, bad_json):
+    from tests.test_reviewed_orchestration import setup
+    store, task, _ = setup(tmp_path)
+    run = store.claim_agent_run(task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None, operation_id='', owner='test').run
+    store.fail_agent_run(run.id, {'code':'agent_reported_failure','source':'agent','source_code':'foreign_diagnostic','retryable':False}, owner='test')
+    with store._connect() as db:
+        if old_generation:
+            db.execute("update agent_runs set execution_generation='old' where id=?", (run.id,))
+        if bad_json:
+            db.execute("update agent_runs set structured_error_json='invalid-json' where id=?", (run.id,))
+    store.fail_reply_task(task.id, 'task_fallback_error', expected_execution_generation=task.execution_generation)
+    [row] = [r for r in audit_web_module._queue_attention_rows(store) if r['category']=='Reply task']
+    assert row['error'] == 'task_fallback_error'
+    assert row.get('error_code', '') in ('','task_fallback_error')

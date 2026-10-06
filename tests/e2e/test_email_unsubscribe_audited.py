@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import builtins
 from collections.abc import Mapping
 from contextlib import contextmanager
@@ -19,10 +18,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-import app.agent_cli as agent_cli
-from app.agent_orchestrator import AgentOrchestrator
-from app.audit_agent import AuditAgentRunner
-from app.consumer_agent import ConsumerAgentRunner
+from app.email_worker import run_email_unsubscribe
 from app.email_browser_profile import (
     EmailBrowserProfile,
     launch_persistent_email_context,
@@ -44,17 +40,13 @@ from app.email_task_adapter import (
 from app.email_unsubscribe import (
     PlaywrightUnsubscribeBrowser,
     extract_unsubscribe_entries,
-    UnsubscribeOperationKind,
     browser_unsubscribe_entries,
 )
 from app.email_unsubscribe_direct import (
     DirectEmailUnsubscribeOperation,
     run_unsubscribe_in_dedicated_profile,
 )
-from app.email_unsubscribe_continuation import EmailUnsubscribeContinuationDriver
-from app.email_worker import _finalize_email_task, run_email_agent_task_loop
-from app.process_runner import ProcessRunResult
-from app.store import AgentRole, AutoReplyStore
+from app.store import AutoReplyStore
 
 
 ACCOUNT_ID = "account-a"
@@ -161,256 +153,6 @@ def _loopback_unsubscribe_server():
         thread.join(timeout=5)
         assert not shutdown.is_alive()
         assert not thread.is_alive()
-
-
-def _json_section(prompt: str, heading: str) -> object:
-    start = prompt.index(heading) + len(heading)
-    value, _end = json.JSONDecoder().raw_decode(prompt[start:].lstrip())
-    return value
-
-
-def _agent_message_record(payload: Mapping[str, object]) -> str:
-    return json.dumps(
-        {
-            "type": "item.completed",
-            "item": {
-                "type": "agent_message",
-                "text": json.dumps(dict(payload), sort_keys=True),
-            },
-        },
-        sort_keys=True,
-    )
-
-
-class _AuditedTurnExecutor:
-    """Script only Agent judgment; persist and execute through real boundaries."""
-
-    def __init__(
-        self,
-        *,
-        task_store: AutoReplyStore,
-        task_id: int,
-        task_payload: Mapping[str, object],
-        expected_attachment_metadata: Mapping[str, object],
-    ) -> None:
-        self.task_store = task_store
-        self.task_id = task_id
-        self.task_payload = dict(task_payload)
-        self.expected_attachment_metadata = dict(expected_attachment_metadata)
-        self.consumer_proposals: list[dict[str, object]] = []
-        self.audit_invocations: list[dict[str, object]] = []
-        self.commands: list[list[str]] = []
-        self.consumer_prompts: list[str] = []
-        self.audit_prompts: list[str] = []
-        self.continuation_receipts: list[dict[str, object]] = []
-        self.audit_failures: list[str] = []
-
-    def __call__(
-        self,
-        command: list[str],
-        *,
-        prompt: str,
-        on_stdout_line,
-        **_kwargs: object,
-    ) -> ProcessRunResult:
-        self.commands.append(list(command))
-        audit_turn = "Candidate revision\n" in prompt
-        if audit_turn:
-            self.audit_prompts.append(prompt)
-            try:
-                output = self._audit_output(prompt)
-            except Exception as exc:
-                self.audit_failures.append(repr(exc))
-                raise
-        else:
-            self.consumer_prompts.append(prompt)
-            output = self._consumer_output(prompt)
-        lines = [
-            json.dumps(
-                {
-                    "type": "thread.started",
-                    "thread_id": (
-                        f"audited-email-audit-{len(self.audit_invocations)}"
-                        if audit_turn
-                        else "audited-email-consumer"
-                    ),
-                }
-            ),
-            _agent_message_record(output),
-        ]
-        stdout = "\n".join(lines)
-        for line in lines:
-            on_stdout_line(line)
-        return ProcessRunResult(0, stdout, "")
-
-    def _consumer_output(self, prompt: str) -> dict[str, object]:
-        trigger = _json_section(prompt, "Original trigger\n")
-        assert isinstance(trigger, dict)
-        task_payload = trigger["raw_payload"]
-        assert task_payload == self.task_payload
-        assert isinstance(task_payload, dict)
-        materials = _json_section(
-            prompt,
-            "Raw material references and exact read commands\n",
-        )
-        assert materials == [
-            {
-                "kind": "attachment_metadata",
-                "reference": json.dumps(
-                    self.expected_attachment_metadata,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ),
-                "source_message_id": MESSAGE_IDENTITY,
-                "read_commands": [],
-            }
-        ]
-        if not self.consumer_proposals:
-            assert "Safe prior execution receipts\n" not in prompt
-            operations = [
-                {
-                    "operation_reference": OPEN_OPERATION_REFERENCE,
-                    "kind": UnsubscribeOperationKind.OPEN_ENTRY.value,
-                    "target_reference": task_payload["unsubscribe_entries"][0][
-                        "reference"
-                    ],
-                }
-            ]
-        else:
-            receipts = _json_section(prompt, "Safe prior execution receipts\n")
-            assert isinstance(receipts, list)
-            [receipt] = [
-                item
-                for item in receipts
-                if isinstance(item, dict)
-                and item.get("operation") == "unsubscribe_continuation"
-            ]
-            assert receipt["completed"] is False
-            assert str(receipt["receipt_id"]).startswith(
-                "email-unsubscribe-continuation:"
-            )
-            continuation = json.loads(str(receipt["summary"]))
-            self.continuation_receipts.append(continuation)
-            accepted_prefix = list(continuation["accepted_operations"])
-            [control] = continuation["controls"]
-            assert continuation["instruction"] == (
-                "Audit accepted the durable prefix; propose exactly one next "
-                "operation from the listed opaque controls."
-            )
-            operations = accepted_prefix + [
-                {
-                    "operation_reference": CONFIRM_OPERATION_REFERENCE,
-                    "kind": UnsubscribeOperationKind.SUBMIT_FORM.value,
-                    "target_reference": control["reference"],
-                }
-            ]
-        action = {
-            "description": "Execute exactly one audited unsubscribe operation",
-            "action_identity": task_payload["action_identity"],
-            "capability": "email_browser",
-            "operation": "unsubscribe",
-            "target": {
-                "action_identity": task_payload["action_identity"],
-                "account_id": task_payload["account_id"],
-                "stable_message_identity": task_payload["stable_message_identity"],
-                "thread_identity": task_payload["thread_identity"],
-                "entry_reference": task_payload["unsubscribe_entries"][0]["reference"],
-            },
-            "payload": {"operations": operations},
-        }
-        self.consumer_proposals.append(action)
-        return {
-            "outcome": "proposal",
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-            "summary": "Prepared one bounded unsubscribe operation.",
-            "proposal": {
-                "objective": "Stop this confirmed newsletter subscription.",
-                "actions": [action],
-                "sourced_facts": [
-                    {
-                        "assertion": "The immutable ActionPlan authorizes unsubscribe.",
-                        "references": [str(self.task_payload["action_plan_id"])],
-                    }
-                ],
-                "authored_judgment": "One reversible provider step is justified.",
-            },
-            "decision_options": [],
-            "durable_memories": [],
-            "error_code": "",
-            "error_retryable": False,
-            "error_authorization_required": False,
-        }
-
-    def _audit_output(self, prompt: str) -> dict[str, object]:
-        candidate = _json_section(prompt, "Candidate revision\n")
-        assert isinstance(candidate, dict)
-        proposal = candidate["proposal"]
-        assert isinstance(proposal, dict)
-        [accepted_action] = proposal["actions"]
-        operation_id = str(candidate["operation_id"])
-        running = [
-            run
-            for run in self.task_store.list_agent_runs_for_task_generation(
-                self.task_id,
-                self.task_store.get_reply_task(self.task_id).execution_generation,
-            )
-            if run.role is AgentRole.AUDIT and run.status == "running"
-        ]
-        audit_run = max(running, key=lambda run: run.id)
-        task = self.task_store.get_reply_task(self.task_id)
-        assert task is not None
-        # The whole call: one argument the model cannot forge.
-        capability_arguments = json.loads(
-            json.dumps({"task_id": task.id}, sort_keys=True)
-        )
-        mcp_result = asyncio.run(
-            agent_cli.server.call_tool(
-                "unsubscribe_email",
-                capability_arguments,
-            )
-        )
-        assert isinstance(mcp_result, tuple) and len(mcp_result) == 2
-        mcp_content, result = mcp_result
-        assert mcp_content
-        assert isinstance(result, dict)
-        self.audit_invocations.append(
-            {
-                "run_id": audit_run.id,
-                "capability": "unsubscribe_email",
-                "arguments": capability_arguments,
-                "mcp_content": mcp_content,
-                "accepted_action": accepted_action,
-                "result": result,
-            }
-        )
-        if result["status"] not in {"awaiting_audit", "done"}:
-            raise AssertionError(json.dumps(result, sort_keys=True))
-        return {
-            "outcome": "executed",
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-            "summary": str(result["summary"]),
-            "proposal_revision": int(candidate["proposal_revision"]),
-            "feedback": None,
-            "external_result": {
-                "operation_id": operation_id,
-                "live_result_reference": {
-                    "audit_run_id": audit_run.id,
-                    "receipt_id": str(result.get("receipt_id") or ""),
-                    "status": str(result["status"]),
-                },
-            },
-            "decision_options": [],
-            "error_code": "",
-            "error_retryable": False,
-            "error_authorization_required": False,
-        }
 
 
 def _persist_confirmed_subscription(
@@ -637,7 +379,7 @@ def _install_external_io_fences(
     return forbidden_calls, allowed_socket_calls, blocked_socket_calls
 
 
-def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
+def test_direct_email_worker_unsubscribes_two_page_flow_and_preserves_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -769,46 +511,8 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
             "app.email_worker.build_direct_email_unsubscribe_operation",
             build_fixture_operation,
         )
-        executor = _AuditedTurnExecutor(
-            task_store=task_store,
-            task_id=route.task.id,
-            task_payload=payload,
-            expected_attachment_metadata=attachment_metadata.model_dump(mode="json"),
-        )
-        orchestrator = AgentOrchestrator(
-            store=task_store,
-            consumer=ConsumerAgentRunner(
-                store=task_store,
-                workspace=tmp_path,
-                executor=executor,
-                owner="audited-email-e2e-consumer",
-                codex_session_exists=lambda _session_id: True,
-            ),
-            audit=AuditAgentRunner(
-                store=task_store,
-                workspace=tmp_path,
-                executor=executor,
-                owner="audited-email-e2e-audit",
-            ),
-            domain_continuation=EmailUnsubscribeContinuationDriver(email_store),
-        )
-
-        def load_context(_task):
-            [current] = adapter.ensure_action_plan_tasks(plan, task_input)
-            return current.context
-
-        run_email_agent_task_loop(
-            task_store,
-            orchestrator,
-            load_task_context=load_context,
-            finalize_task=lambda task, result: _finalize_email_task(
-                task_store,
-                task,
-                result,
-            ),
-            sleep=lambda _seconds: None,
-            max_cycles=1,
-        )
+        result = run_email_unsubscribe(database, route.task.id)
+        assert result["status"] == "done", result
 
     task = task_store.get_reply_task(route.task.id)
     assert task is not None
@@ -816,57 +520,7 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
     assert json.loads(task.trigger_message_json)["lifecycle_version"] == (
         "email_unsubscribe_audited_v2"
     )
-    runs = task_store.list_agent_runs_for_task_generation(
-        task.id,
-        task.execution_generation,
-    )
-    assert task.status == "done", (
-        task.error,
-        [
-            (
-                run.role.value,
-                run.status,
-                run.structured_error_json,
-                run.final_result_json,
-            )
-            for run in runs
-        ],
-        executor.audit_invocations,
-        executor.audit_failures,
-        forbidden_io_calls,
-        allowed_socket_calls,
-        blocked_socket_calls,
-        browser_requests,
-        blocked_browser_requests,
-        browser_launches,
-        _UnsubscribeHandler.requests,
-    )
-    # The second page used to cost a second Consumer/Audit round through a
-    # durable continuation. One call now walks both pages.
-    assert [run.role for run in runs].count(AgentRole.CONSUMER) == 1
-    assert [run.role for run in runs].count(AgentRole.AUDIT) == 1
-    assert all(run.status == "completed" for run in runs)
-    assert len(executor.audit_invocations) == 1
-    assert [(run.role.value, run.proposal_revision) for run in runs] == [
-        ("consumer", 0),
-        ("audit", 0),
-    ]
-    consumer_run, audit_run = runs
-    assert consumer_run.parent_agent_run_id is None
-    assert audit_run.parent_agent_run_id == consumer_run.id
-    assert all(run.reply_task_id == task.id for run in runs)
-    assert all(run.execution_generation == task.execution_generation for run in runs)
-    assert [invocation["run_id"] for invocation in executor.audit_invocations] == [
-        audit_run.id
-    ]
-    assert [invocation["capability"] for invocation in executor.audit_invocations] == [
-        "unsubscribe_email"
-    ]
     assert operation_builds == [database]
-    assert executor.continuation_receipts == []
-    assert [invocation["arguments"] for invocation in executor.audit_invocations] == [
-        {"task_id": task.id}
-    ]
 
     steps = email_store.list_email_unsubscribe_steps(str(payload["action_identity"]))
     assert [step["operation"] for step in steps] == ["open_entry", "submit_form"]
@@ -874,7 +528,7 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
     assert receipt is not None
     assert receipt["result_text"] == "You have been unsubscribed"
     # A real headless browser navigated this exact private URL through the
-    # `unsubscribe_email` tool's actual lifecycle (DirectEmailUnsubscribeOperation,
+    # The service email worker's actual lifecycle (DirectEmailUnsubscribeOperation,
     # not the legacy audited executor) - this is the coverage that would have
     # caught entry_url being wired into the wrong `_persist`.
     assert receipt["entry_url"] == f"{origin}/manage?token=loopback-private"
@@ -900,20 +554,6 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
     assert (
         payload["unsubscribe_entries"][0]["reference"]
         == expected_binding["entry_reference"]
-    )
-    expected_target_binding = {
-        key: expected_binding[key]
-        for key in (
-            "action_identity",
-            "account_id",
-            "stable_message_identity",
-            "thread_identity",
-            "entry_reference",
-        )
-    }
-    assert all(
-        proposal["target"] == expected_target_binding
-        for proposal in executor.consumer_proposals
     )
     claim = email_store.get_email_unsubscribe_claim(str(payload["action_identity"]))
     assert claim is not None
@@ -1000,18 +640,3 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
     assert blocked_browser_requests == []
     assert browser_requests
     assert set(browser_requests) == {allowed_browser_destination}
-    serialized_prompts = "\n".join(executor.consumer_prompts)
-    assert attachment_metadata.filename in serialized_prompts
-    assert attachment_metadata.mime_type in serialized_prompts
-    assert str(attachment_metadata.size_bytes) in serialized_prompts
-    assert str(sentinel_path.resolve()) not in serialized_prompts
-    assert sentinel_content.decode("utf-8") not in serialized_prompts
-    assert all(
-        "unsubscribe_email" not in json.dumps(command)
-        for command in executor.commands[0::2]
-    )
-    assert all(
-        "mcp_servers.agent_cli.command" in json.dumps(command)
-        for command in executor.commands[1::2]
-    )
-    assert all("unsubscribe_email" in prompt for prompt in executor.audit_prompts)

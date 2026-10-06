@@ -1018,3 +1018,76 @@ def test_attempt_detail_api_keeps_old_metrics_while_current_generation_is_pendin
         "current_run": {"id": running.id, "status": "running"},
         "from_run_id": consumer.id,
     }
+
+
+@pytest.mark.parametrize('error,refused', [
+    ({'code': 'provider_risk_rejected', 'retryable': False}, True),
+    ({'code': 'agent_reported_failure', 'source_code': 'provider_risk_rejected'}, True),
+    ({'code': 'source_read_failed', 'detail': 'provider_risk_rejected'}, False),
+    ({'code': 'source_read_failed', 'nested': {'code': 'provider_risk_rejected'}}, False),
+    (['provider_risk_rejected'], False),
+    ('malformed-json', False),
+])
+def test_failed_attempt_rerun_presentation_uses_structured_historical_refusal(
+    tmp_path: Path, error, refused: bool,
+):
+    from app.audit_web import render_attempt_detail
+    store = AutoReplyStore(tmp_path / 'worker.sqlite3')
+    task = _consumer_result_task(store)
+    run = store.claim_agent_run(task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id='refusal-display', owner='test').run
+    # A later failed generation must still describe the original refusal.
+    raw = error if error == 'malformed-json' else json.dumps(error)
+    with store._connect() as db:
+        db.execute("update agent_runs set status='failed', execution_generation='old-generation', "
+                   "structured_error_json=? where id=?", (raw, run.id))
+        db.execute("update reply_tasks set status='failed', error='agent_reported_failure' where id=?", (task.id,))
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id, conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text, action='send_reply', sensitivity_kind='normal',
+        send_status='failed', channel='dingtalk',
+    )
+    with store._connect() as db:
+        db.execute('update reply_attempts set agent_run_id=? where id=?', (run.id, attempt_id))
+    before = store.get_agent_run(run.id)
+    _, item = build_attempt_detail(store, attempt_id)
+    assert item['actions']['can_rerun'] is (not refused)
+    assert item['actions']['rerun_url'] == f'/api/console/history/{attempt_id}/rerun'
+    expected_label = '重新评估候选' if refused else '重新处理'
+    assert item['actions']['rerun_label'] == expected_label
+    assert item['actions']['rerun_confirmation'] == (
+        '确认重新评估候选？不会重放历史被拒执行。' if refused else '确认重新处理这条 Attempt？'
+    )
+    if refused:
+        assert '此入口不能重放历史候选' in item['status']['message']
+        assert item['actions']['rerun_block_reason'] == item['status']['message']
+    else:
+        assert item['status']['message'] == '这次处理没有完成，可重新处理当前事项。'
+    status, html = render_attempt_detail(store, attempt_id)
+    assert status == 200
+    assert (f'>{expected_label}</button>' in html) is (not refused)
+    assert ('此入口不能重放历史候选' in html) is refused
+    assert ('历史候选不可重放' in html) is refused
+    assert store.get_agent_run(run.id) == before
+    assert store.get_reply_task(task.id).status == 'failed'
+    with store._connect() as db:
+        assert db.execute('select count(*) from candidate_executions').fetchone()[0] == 0
+
+
+def test_failed_attempt_does_not_inherit_another_business_objects_refusal(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / 'worker.sqlite3')
+    task = _consumer_result_task(store)
+    run = store.claim_agent_run(task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id='other-object', owner='test').run
+    store.fail_agent_run(run.id, {'code': 'provider_risk_rejected'}, owner='test')
+    # Create an unrelated failed Attempt with no risk-bearing business object.
+    other = store.record_reply_attempt(conversation_id='other', conversation_title='Other',
+        trigger_message_id='other-message', trigger_sender='Avery', trigger_text='provider_risk_rejected',
+        action='send_reply', sensitivity_kind='normal', send_status='failed', channel='dingtalk')
+    _, item = build_attempt_detail(store, other)
+    assert item['actions']['rerun_label'] == '重新处理'
+    assert item['actions']['can_rerun'] is True
+    assert '不重放历史被拒执行' not in item['status']['message']

@@ -1255,7 +1255,7 @@ def test_console_status_accepts_human_decision_evidence(monkeypatch, tmp_path: P
         audit_web_module,
         "_human_decision_attention_rows",
         lambda _store: [{
-            "category": "Rule decision",
+            "category": "本次事项选择",
             "id": "42",
             "status": "needs_human",
             "context": "Approval",
@@ -3369,3 +3369,113 @@ def test_console_history_puts_what_waits_on_derek_first(tmp_path: Path):
     items = response.json()["items"]
     assert items[0]["status"] == "needs_human"
     assert [item["status"] for item in items[1:]] == ["sent", "sent", "sent"]
+
+
+@pytest.mark.parametrize("delivery_status,delivery_generation,delivery_conversation,expected_failed", [
+    ("failed", "initial", "melody", True),
+    ("send_unknown", "initial", "melody", True),
+    ("failed", "old-generation", "melody", False),
+    ("failed", "initial", "another-object", False),
+])
+def test_current_wechat_delivery_failure_remains_in_history_after_candidate_done(
+    tmp_path: Path, delivery_status: str, delivery_generation: str,
+    delivery_conversation: str, expected_failed: bool,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="melody", conversation_title="Morgan",
+        single_chat=True, trigger_message_id="message-1",
+        trigger_create_time="2026-10-04 13:05:00", trigger_sender="Morgan",
+        trigger_text="Can you help later?",
+    )
+    task = store.get_reply_task_for_message("melody", "message-1", channel="wechat")
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=task.id, account_id="acct-1", target_type="direct",
+        target_id="melody", conversation_id="melody", reply_text="Yes.",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="melody", conversation_title="Morgan",
+        trigger_message_id="message-1", trigger_sender="Morgan",
+        trigger_text="Can you help later?", action="send_reply",
+        sensitivity_kind="normal", send_status="failed", channel="wechat",
+    )
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='done' where id=?", (task.id,))
+        db.execute(
+            "update wechat_deliveries set status=?, error='wechat_ui_not_ready', "
+            "pre_action_failure=1, execution_generation=?, conversation_id=? where id=?",
+            (delivery_status, delivery_generation, delivery_conversation, delivery_id),
+        )
+        before = tuple(db.execute(
+            "select status, error from wechat_deliveries where id=?", (delivery_id,)
+        ).fetchone())
+    with _client(tmp_path) as client:
+        response = client.get("/api/console/history?status=failed")
+        assert response.status_code == 200
+        assert response.json()["meta"]["total"] == int(expected_failed)
+        assert (str(attempt_id) in {str(item["id"]) for item in response.json()["items"]}) == expected_failed
+        detail = client.get(f"/api/console/history/{attempt_id}")
+        assert detail.status_code == 200
+        assert detail.json()["item"]["status"]["raw"] == ("failed" if expected_failed else "done")
+    with store._connect() as db:
+        assert tuple(db.execute(
+            "select status, error from wechat_deliveries where id=?", (delivery_id,)
+        ).fetchone()) == before
+    assert store.get_reply_task(task.id).status == "done"
+    assert store.get_reply_attempt(attempt_id).send_status == "failed"
+
+
+def test_principal_superseded_wechat_delivery_is_terminal_in_detail_and_retry_api(tmp_path, monkeypatch):
+    from tests.wechat.test_store import _seed_exhausted_target_open_failure, _wechat_delivery_and_attempt_state
+
+    store, delivery_id, attempt_id, generation = _seed_exhausted_target_open_failure(tmp_path)
+    store.replace_wechat_reply_scopes("acct-1", [WechatReplyScope(
+        account_id="acct-1", target_type="direct", target_id="u1", conversation_id="u1",
+        display_name="Alex", trigger_mode="every_inbound_text", binding_status="verified",
+    )])
+    store.skip_exhausted_stale_wechat_delivery(
+        delivery_id, expected_execution_generation=generation,
+        reason="stale_pre_action_retry_exhausted; superseded_by_principal_reply:synthetic-reply",
+        inactive_before="2026-07-30 10:10:00",
+    )
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='done' where id=1")
+    before = _wechat_delivery_and_attempt_state(store, delivery_id)
+    sends = []
+    monkeypatch.setattr("app.wechat.service.build_sender", lambda: SimpleNamespace())
+    monkeypatch.setattr("app.wechat.accessibility.WechatSender.send", lambda self, delivery, scope: sends.append(delivery.id) or SimpleNamespace(status="sent"))
+    with _client(tmp_path, spa_enabled=True) as client:
+        detail = client.get(f"/api/console/history/{attempt_id}")
+        response = client.post(f"/api/console/wechat/deliveries/{delivery_id}/retry")
+    item = detail.json()["item"]
+    assert item["status"]["raw"] == "skipped"
+    assert "已在后续消息中亲自回复" in item["status"]["message"]
+    assert "无需重试" in item["status"]["message"]
+    assert item["actions"]["delivery_action_url"] == ""
+    assert item["actions"]["can_rerun"] is False
+    assert item["actions"]["terminal"] is True
+    assert response.status_code == 409
+    assert sends == []
+    assert _wechat_delivery_and_attempt_state(store, delivery_id) == before
+    assert store.get_reply_task(1).status == "done"
+
+
+@pytest.mark.parametrize("generation,conversation", [("new-generation", "u1"), ("initial", "other")])
+def test_old_principal_supersession_does_not_describe_current_pending_task(tmp_path, generation, conversation):
+    from tests.wechat.test_store import _seed_exhausted_target_open_failure, _wechat_delivery_and_attempt_state
+
+    store, delivery_id, attempt_id, old_generation = _seed_exhausted_target_open_failure(tmp_path)
+    store.skip_exhausted_stale_wechat_delivery(
+        delivery_id, expected_execution_generation=old_generation,
+        reason="stale_pre_action_retry_exhausted; superseded_by_principal_reply:synthetic-reply",
+        inactive_before="2026-07-30 10:10:00",
+    )
+    with store._connect() as db:
+        db.execute("update reply_tasks set execution_generation=?,status='pending' where id=1", (generation,))
+        db.execute("update wechat_deliveries set conversation_id=? where id=?", (conversation, delivery_id))
+    before = _wechat_delivery_and_attempt_state(store, delivery_id)
+    with _client(tmp_path) as client:
+        item = client.get(f"/api/console/history/{attempt_id}").json()["item"]
+    assert item["status"]["raw"] == "pending"
+    assert "已在后续消息中亲自回复" not in item["status"]["message"]
+    assert _wechat_delivery_and_attempt_state(store, delivery_id) == before

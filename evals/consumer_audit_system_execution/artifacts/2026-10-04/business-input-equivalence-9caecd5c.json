@@ -1,0 +1,25 @@
+{
+  "actual_native_evaluated_ref": "09974b7368b8236766903eb54b4facf608314f09",
+  "compared_final_runtime_ref": "9caecd5c3c5ed3f4606707a6b8d49344dbe359f1",
+  "source_identity_equal": true,
+  "consumed_instructions_and_wire_schemas_equal": true,
+  "files_equal": {
+    "app/consumer_agent.py": true,
+    "app/audit_agent.py": true,
+    "app/agent_contracts.py": true,
+    "app/agent_wire_contracts.py": true,
+    "app/audit_rules.py": true,
+    "app/schemas/consumer_agent_result.schema.json": true,
+    "app/schemas/audit_agent_result.schema.json": true,
+    "docs/system-action-contracts.md": true,
+    "scripts/eval_consumer_audit_business.py": true,
+    "evals/consumer_audit_business/v3.json": true,
+    "app/agent_cli.py": true
+  },
+  "identity": {
+    "head": null,
+    "dirty": null,
+    "source_fingerprint_sha256": "3e166a66397bf53f262fa6325e098410de068a1386414817f33fe132f460bc34"
+  },
+  "limits": "Input equivalence preserves actual evaluated SHA; not new model turns, release execution or live provider proof."
+}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 import sqlite3
 
 from pydantic import ValidationError
@@ -159,6 +160,12 @@ ROWS = {
             "title": "US launch",
             "registry_source": "portfolio-registry",
             "created_at": STAMP,
+            "crm_customer_id": "",
+            "crm_customer_name": "",
+            "crm_customer_lookup_status": "not_requested",
+            "crm_customer_candidates": [],
+            "crm_customer_label": "",
+            "crm_customer_evidence": None,
         },
     ),
     "business_project_candidates": (
@@ -281,8 +288,8 @@ def store(tmp_path):
 
 
 def insert_row(db, table, values):
+    values = dict(values)
     if table == "business_task_signals":
-        values = dict(values)
         identity_key = source_document_key(**{
             field: values[field] for field in (
                 "source_type", "source_ref", "source_time", "conversation_id",
@@ -294,6 +301,14 @@ def insert_row(db, table, values):
             "id": values["source_document_id"], "identity_key": identity_key,
             "body": body, "created_at": values["created_at"],
         })
+    elif table == "business_projects":
+        values["crm_customer_candidates_json"] = json.dumps(
+            values.pop("crm_customer_candidates"), ensure_ascii=False
+        )
+        evidence = values.pop("crm_customer_evidence")
+        values["crm_customer_evidence_json"] = json.dumps(
+            evidence or {}, ensure_ascii=False
+        )
     db.execute(
         f"insert into {table} ({', '.join(values)}) values ({', '.join('?' for _ in values)})",
         tuple(values.values()),
@@ -307,7 +322,16 @@ def read_record_row(db, table):
             "join business_source_documents document on document.id=signal.source_document_id "
             "order by signal.id limit 1"
         ).fetchone()
-    return db.execute(f"select * from {table} limit 1").fetchone()
+    row = db.execute(f"select * from {table} limit 1").fetchone()
+    if table != "business_projects":
+        return row
+    values = dict(row)
+    values["crm_customer_candidates"] = json.loads(
+        values.pop("crm_customer_candidates_json")
+    )
+    evidence = json.loads(values.pop("crm_customer_evidence_json"))
+    values["crm_customer_evidence"] = evidence or None
+    return values
 
 
 def seed_references(db):
@@ -510,6 +534,10 @@ def test_schema_manifest_and_complete_record_columns(store, table):
     expected = set(ROWS[table][1])
     if table == "business_task_signals":
         expected.remove("evidence_text")
+    elif table == "business_projects":
+        expected.remove("crm_customer_candidates")
+        expected.remove("crm_customer_evidence")
+        expected.update({"crm_customer_candidates_json", "crm_customer_evidence_json"})
     with store._connect() as db:
         actual = {row["name"] for row in db.execute(f"pragma table_info({table})")}
     assert actual == expected

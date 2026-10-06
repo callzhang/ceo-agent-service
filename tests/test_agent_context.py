@@ -14,7 +14,7 @@ from app.agent_context import (
     email_attachment_metadata_materials,
 )
 from app.email_classifier_contracts import EmailAttachmentMetadata
-from app.agent_contracts import ConsumerProposal
+from app.agent_contracts import ConsumerAgentResult, ConsumerProposal
 from app.consumer_agent import (
     AUDIT_DYNAMIC_SKILL_BODY,
     CONSUMER_DYNAMIC_SKILL_BODY,
@@ -26,18 +26,26 @@ from app.developer_prompt import (
 from tests.prompt_structure import validate_prompt_structure
 
 
-def test_role_boundary_invariant_is_complete_across_all_core_prompts():
-    expected_runtime = (
-        "1. [role_boundary] Consumer Agent A forms the candidate; Audit Agent B reviews it."
-    )
+def _candidate(proposal: ConsumerProposal) -> ConsumerAgentResult:
+    return ConsumerAgentResult.model_validate({
+        "outcome": "proposal",
+        "summary": "Prepared a complete candidate.",
+        "proposal": proposal.model_dump(mode="json"),
+        "decision_options": [],
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+    })
 
-    assert _CONSUMER_AGENT_RULES.splitlines()[1] == expected_runtime
-    assert _AUDIT_AGENT_RULES.splitlines()[1] == expected_runtime
+
+def test_role_boundary_invariant_is_complete_across_all_core_prompts():
+    assert "Consumer Agent A forms the candidate; Audit Agent B reviews it" in _CONSUMER_AGENT_RULES
+    assert "Audit reads and judges it without executing actions" in _AUDIT_AGENT_RULES
     assert "personal blocked or sleep hold" in _AUDIT_AGENT_RULES
-    assert "If the existing meeting is more important" in _AUDIT_AGENT_RULES
-    assert "If the new meeting is more important" in _AUDIT_AGENT_RULES
-    assert "If importance cannot be determined" in _AUDIT_AGENT_RULES
-    assert "starts after 23:00" in _AUDIT_AGENT_RULES
+    assert "sourced importance comparison" in _AUDIT_AGENT_RULES
+    assert "request for the missing reason" in _AUDIT_AGENT_RULES
     assert "Consumer Agent A gathers facts and proposes a typed candidate" in (
         SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
     )
@@ -57,9 +65,9 @@ def test_audit_core_prompt_contains_only_runtime_invariants():
     text = _core_prompt(_AUDIT_AGENT_RULES, AUDIT_DYNAMIC_SKILL_BODY)
     assert text.startswith("## Application Result Contract\n")
     assert "## Dynamic Skill" in text
-    assert "result.values" in text
-    assert "dws auth status.user_id" in text
-    assert "without start/end filters" in text
+    assert "candidate_digest" in text
+    assert "without executing actions" in text
+    assert "current-instance ownership" in text
 
 
 @pytest.mark.parametrize(
@@ -305,6 +313,41 @@ def test_context_renders_reference_and_command_without_resolved_body():
     assert "评论已提交" in rendered
 
 
+def test_context_renders_prior_human_answer_as_evidence_without_reauthorizing():
+    context = AgentTaskContext(**{
+        **_context().__dict__,
+        "prior_human_decisions": ({
+            "kind": "selection", "candidate_id": 14, "review_id": 25,
+            "candidate_digest": "abc", "option_key": "stop",
+            "selected_branch": {"terminal_outcome": "skipped", "reason": "Already resolved"},
+            "invalidation_reason": "business_state_changed",
+        },),
+    })
+
+    rendered = context.render()
+    assert "Prior human answers and new facts" in rendered
+    assert '"option_key": "stop"' in rendered
+    assert '"invalidation_reason": "business_state_changed"' in rendered
+    assert "historical evidence, not current execution authorization" in rendered
+
+
+def test_context_renders_deterministic_business_state_change_as_new_fact():
+    context = AgentTaskContext(**{
+        **_context().__dict__,
+        "business_state_changes": ({
+            "source_candidate_id": 14,
+            "code": "business_state_changed",
+            "live_result_reference": {"evidence": ["oa:task:updated"]},
+        },),
+    })
+
+    rendered = context.render()
+    assert "Current deterministic business-state changes" in rendered
+    assert '"source_candidate_id": 14' in rendered
+    assert '"oa:task:updated"' in rendered
+    assert "new complete candidate" in rendered
+
+
 def test_context_marks_trigger_as_authoritative_over_recent_context():
     rendered = _context(trigger_text="我今天需要休息一天").render()
 
@@ -395,7 +438,7 @@ def test_context_gives_each_agent_turn_an_explicit_execution_time():
         task=context,
         proposal_revision=0,
         operation_id="op-time-sensitive",
-        proposal=ConsumerProposal.model_validate(
+        candidate=_candidate(ConsumerProposal.model_validate(
             {
                 "objective": "Clarify whether the immediate plan is still active.",
                 "actions": [
@@ -427,7 +470,8 @@ def test_context_gives_each_agent_turn_an_explicit_execution_time():
                 ],
                 "authored_judgment": "Ask a timing clarification.",
             }
-        ),
+        )),
+        candidate_digest="a" * 64,
         audit_rules="Reject stale time-sensitive actions.",
     ).render(current_time="2026-07-28 14:16:00 +0800")
 
@@ -686,20 +730,22 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
         task=task,
         proposal_revision=2,
         operation_id="op-2",
-        proposal=proposal,
+        candidate=_candidate(proposal),
+        candidate_digest="b" * 64,
         audit_rules="Only publish supported facts.",
     ).render()
 
-    assert "Audit Agent B" in rendered
+    assert "Audit reads and judges it" in rendered
     assert '"proposal_revision": 2' in rendered
     assert '"operation_id": "op-2"' in rendered
     assert "请补充材料。" in rendered
     assert "dws oa approval detail --instance-id pid-1 --format json" in rendered
-    assert "1. [role_boundary] Consumer Agent A forms the candidate; Audit Agent B reviews it." in rendered
+    assert "Audit reads and judges it without executing actions" in rendered
+    assert '"candidate_digest": "' + "b" * 64 + '"' in rendered
     assert "Candidate revision" in rendered
     assert "group-send candidate" not in rendered
     assert "OA factual gap" not in rendered
     assert "exact OA comment and applicant notification" not in rendered
     assert "Effective Audit Rules" not in rendered
-    assert "Only publish supported facts." not in rendered
+    assert "Only publish supported facts." in rendered
     _assert_no_service_oa_resolution_fields(rendered)

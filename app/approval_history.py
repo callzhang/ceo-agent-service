@@ -7,12 +7,11 @@ from enum import StrEnum
 from pydantic import ValidationError
 
 from app.agent_contracts import (
-    AuditAgentResult,
-    AuditOutcome,
     ConsumerAgentResult,
     ConsumerOutcome,
     ProposedAction,
 )
+from app.historical_agent_results import HistoricalAuditExecutionResult
 from app.legacy_receipt import legacy_receipt_has_explicit_failure
 from app.native_cli_metadata import describe_native_command, native_command_argv
 from app.store import AgentRole, AgentRun, ReplyAttempt
@@ -226,7 +225,7 @@ def _confirmed_structured_results(
             continue
         if (
             _normalize(run.status) != "completed"
-            or audit.outcome is not AuditOutcome.EXECUTED
+            or audit.outcome != "executed"
             or run.parent_agent_run_id not in consumer_results
         ):
             continue
@@ -254,27 +253,15 @@ def _confirmed_structured_results(
     return results
 
 
-def _parse_persisted_audit_result(raw: str) -> AuditAgentResult:
+def _parse_persisted_audit_result(raw: str) -> HistoricalAuditExecutionResult:
     """Read historical audit rows without widening the current wire contract."""
-    try:
-        return AuditAgentResult.model_validate_json(raw)
-    except ValidationError:
-        payload = json.loads(raw)
-        if not isinstance(payload, dict):
-            raise
-        historical_only = {"reconciliation", "side_effect_state"}
-        if not historical_only.intersection(payload):
-            raise
-        normalized = {
-            key: value for key, value in payload.items() if key not in historical_only
-        }
-        return AuditAgentResult.model_validate(normalized)
+    return HistoricalAuditExecutionResult.model_validate_json(raw)
 
 
 def _structured_action_result(
     attempt: ReplyAttempt,
     action: ProposedAction,
-    audit: AuditAgentResult,
+    audit: HistoricalAuditExecutionResult,
 ) -> ApprovalHistoryResult | None:
     descriptor = describe_native_command(
         {"type": "command_execution", **action.payload}

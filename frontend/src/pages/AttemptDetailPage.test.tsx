@@ -52,6 +52,8 @@ const detail = {
     can_recall: false,
     can_submit_feedback: true,
     rerun_url: "/api/console/history/8448/rerun",
+    rerun_label: "重新处理",
+    rerun_confirmation: "确认重新处理这条 Attempt？",
     recall_url: "/api/console/history/8448/recall",
     feedback_url: "/api/console/history/8448/feedback",
     consumer_url: "/attempts/8448/execution/consumer",
@@ -845,6 +847,37 @@ describe("AttemptDetailPage", () => {
     renderPage();
 
     await user.click(await screen.findByRole("button", { name: "重新处理" }));
+    expect(window.confirm).toHaveBeenCalledWith("确认重新处理这条 Attempt？");
+    expect(command).toHaveBeenCalledWith("/api/console/history/8448/rerun");
+    vi.restoreAllMocks();
+  });
+
+  it("uses server-owned reevaluation wording only when the backend permits rerun", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        status: {
+          ...detail.status,
+          raw: "failed",
+          message: "重新评估候选，不重放历史被拒执行",
+        },
+        actions: {
+          ...detail.actions,
+          can_rerun: true,
+          terminal: false,
+          rerun_label: "重新评估候选",
+          rerun_confirmation: "确认重新评估候选？不会重放历史被拒执行。",
+        },
+      },
+      meta: { snapshot_at: "2026-08-29T10:01:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByText("重新评估候选，不重放历史被拒执行")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "重新评估候选" }));
+    expect(window.confirm).toHaveBeenCalledWith("确认重新评估候选？不会重放历史被拒执行。");
     expect(command).toHaveBeenCalledWith("/api/console/history/8448/rerun");
     vi.restoreAllMocks();
   });
@@ -884,10 +917,17 @@ describe("AttemptDetailPage", () => {
     const decisionDetail = {
       ...detail,
       status: { ...detail.status, raw: "needs_human", requires_decision: true },
+      human_decision: {
+        candidate_id: 31, candidate_digest: "reviewed-digest", review_id: 41,
+        reason: "需要选定已审核的处理方式", requested_input: "补充新事实或处理要求",
+        basis: { verified_facts: [], rule_evidence: [], quality_explanation: "", no_external_action_evidence: [], conclusion: "" },
+        authorization_plan: null, selection: null,
+      },
       decision_options: [{
+        key: "notify_applicant",
         label: "授权通知申请人",
-        instruction: "向申请人发送审核结论。",
         consequence: "会向实际申请人发送一条钉钉消息。",
+        plan: { actions: [{ description: "向申请人发送审核结论" }] },
         url: "/api/console/history/8448/human-decision",
       }],
     };
@@ -896,19 +936,69 @@ describe("AttemptDetailPage", () => {
     command.mockResolvedValueOnce({ ok: true, message: "人工决策已提交", meta: { updated_at: "" } });
     renderPage();
 
-    const instruction = await screen.findByLabelText("补充处理要求");
-    expect(screen.getByRole("button", { name: "提交处理要求" })).toBeDisabled();
+    const instruction = await screen.findByLabelText("补充新事实或处理要求");
+    expect(screen.getByRole("button", { name: "提交补充信息" })).toBeDisabled();
     await user.type(instruction, "保留审批已执行事实，不向申请人发送额外通知。");
-    await user.click(screen.getByRole("button", { name: "提交处理要求" }));
+    await user.click(screen.getByRole("button", { name: "提交补充信息" }));
 
     expect(command).toHaveBeenCalledWith(
       "/api/console/history/8448/human-decision",
-      { instruction: "保留审批已执行事实，不向申请人发送额外通知。", feedback_scope: "one_time", skill_update_requested: false },
+      { kind: "supplement", candidate_id: 31, candidate_digest: "reviewed-digest", review_id: 41, instruction: "保留审批已执行事实，不向申请人发送额外通知。" },
     );
     expect(await screen.findByText("人工决策已提交")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "可选处理方式" })).not.toBeInTheDocument();
     expect(getAttemptDetail).toHaveBeenCalledTimes(2);
     vi.restoreAllMocks();
+  });
+
+  it("separates a selected plan's partial execution from verified receipts", async () => {
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        status: { ...detail.status, raw: "failed", message: "审核方案没有全部核验完成。" },
+        system_execution: {
+          candidate_id: 31, review_id: 41, stage_index: 1, is_current: true,
+          execution_id: 51, status: "uncertain", summary: "通知尚未核验",
+          error: { code: "external_action_uncertain" }, verified_actions: 1, total_actions: 2,
+          actions: [
+            { action_index: 0, action_identity: "oa", description: "通过审批", operation: "approve",
+              status: "verified", result: {}, receipt: { external_action_key: "oa-receipt", provider_result: { task_id: "original-oa-node" } } },
+            { action_index: 1, action_identity: "notify", description: "通知申请人", operation: "send_direct_message",
+              status: "uncertain", result: { reason: "provider_exception", source_code: "TIMEOUT" }, receipt: null },
+          ],
+        },
+      },
+      meta: { snapshot_at: "2026-10-04T10:02:00Z" },
+    });
+    renderPage();
+    const progress = await screen.findByRole("region", { name: "系统执行进度" });
+    expect(within(progress).getByText("已核验 1 / 2 项动作")).toBeInTheDocument();
+    expect(within(progress).getByText("外部结果待核验")).toBeInTheDocument();
+    expect(within(progress).getByText("通过审批")).toBeInTheDocument();
+    expect(within(progress).getByText("通知申请人")).toBeInTheDocument();
+    expect(within(progress).getByText("oa-receipt")).toBeInTheDocument();
+    expect(within(progress).getByText(/original-oa-node/)).toBeInTheDocument();
+    expect(within(progress).getByText(/TIMEOUT/)).toBeInTheDocument();
+    expect(within(progress).getAllByText("已核验回执")).toHaveLength(1);
+  });
+
+  it("does not describe an empty execution error as a problem after verified completion", async () => {
+    getAttemptDetail.mockResolvedValueOnce({
+      item: { ...detail, system_execution: {
+        candidate_id: 31, review_id: 41, stage_index: 0, is_current: false,
+        execution_id: 51, status: "done", summary: "All actions verified",
+        error: { code: "", retryable: false, authorization_required: false },
+        verified_actions: 1, total_actions: 1,
+        actions: [{ action_index: 0, action_identity: "notify", description: "通知申请人",
+          operation: "send_direct_message", status: "verified", result: {},
+          receipt: { external_action_key: "send-receipt", provider_result: { message_id: "original-message" } } }],
+      } }, meta: { snapshot_at: "2026-10-04T10:02:00Z" },
+    });
+    renderPage();
+    const progress = await screen.findByRole("region", { name: "系统执行进度" });
+    expect(within(progress).getByText(/历史方案/)).toBeInTheDocument();
+    expect(within(progress).getByText(/全部动作已核验完成/)).toBeInTheDocument();
+    expect(within(progress).queryByText("执行问题详情")).not.toBeInTheDocument();
   });
 
   it("shows a dedicated retry action for an expired WeChat delivery", async () => {

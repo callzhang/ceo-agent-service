@@ -84,6 +84,16 @@ def external_actions(runs: Sequence[Any], *, store: Any = None) -> list[dict[str
     from app.outbound_text_authority import delivered_shell_send_commands
 
     found: list[dict[str, str]] = []
+    for receipt in _verified_system_receipts(runs, store=store):
+        operation = str(receipt.get("operation") or "external action").strip()
+        action_key = str(receipt.get("external_action_key") or "").strip()
+        if not action_key:
+            continue
+        found.append({
+            "what": f"{operation} ({action_key})",
+            "at": str(receipt.get("updated_at") or ""),
+            "recorded_by": "system",
+        })
     for run in runs:
         events = list(getattr(run, "tool_events", None) or [])
         if not events:
@@ -104,6 +114,33 @@ def external_actions(runs: Sequence[Any], *, store: Any = None) -> list[dict[str
                 found.append(
                     {"what": str(identifier), "at": at, "recorded_by": "service"}
                 )
+    return found
+
+
+def _verified_system_receipts(runs: Sequence[Any], *, store: Any) -> list[dict[str, Any]]:
+    """Only durable, generation-matched System Executor action receipts."""
+    list_receipts = getattr(store, "list_verified_candidate_actions", None)
+    if not callable(list_receipts):
+        return []
+    generations: dict[int, set[str]] = {}
+    for run in runs:
+        task_id = getattr(run, "reply_task_id", None)
+        generation = str(getattr(run, "execution_generation", "") or "")
+        if type(task_id) is int and task_id > 0 and generation:
+            generations.setdefault(task_id, set()).add(generation)
+    found: list[dict[str, Any]] = []
+    for task_id, allowed_generations in generations.items():
+        try:
+            rows = list_receipts(task_id)
+        except Exception:  # noqa: BLE001 - historical page remains readable
+            continue
+        for row in rows:
+            if (
+                isinstance(row, dict)
+                and row.get("execution_generation") in allowed_generations
+                and str(row.get("external_action_key") or "").strip()
+            ):
+                found.append(row)
     return found
 
 
@@ -174,7 +211,21 @@ def deciding_scores(runs: Sequence[Any], *, acting_run_id: int | None = None) ->
 
 
 def acting_run_id(runs: Sequence[Any], *, store: Any = None) -> int | None:
-    """The first turn whose work reached the outside world."""
+    """The proposal run behind the first verified action, if available."""
+
+    for receipt in _verified_system_receipts(runs, store=store):
+        candidate_id = receipt.get("candidate_id")
+        get_candidate = getattr(store, "get_review_candidate", None)
+        if not callable(get_candidate) or type(candidate_id) is not int:
+            break
+        try:
+            candidate = get_candidate(candidate_id)
+        except Exception:  # noqa: BLE001 - continue to legacy turn evidence
+            break
+        if isinstance(candidate, dict):
+            consumer_run_id = candidate.get("consumer_run_id")
+            if any(getattr(run, "id", None) == consumer_run_id for run in runs):
+                return consumer_run_id
 
     from app.outbound_text_authority import delivered_shell_send_commands
 

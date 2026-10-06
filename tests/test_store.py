@@ -6459,8 +6459,8 @@ def test_reconcile_failed_agent_message_accepts_send_and_readback_in_same_run(
     assert attempt.send_status == "completed"
 
 
-def test_reconcile_authorization_needs_human_projection_to_failed(tmp_path: Path):
-    """A fabricated action authorization choice closes as a technical failure."""
+def test_reconcile_preserves_legacy_authorization_projection(tmp_path: Path):
+    """An unreviewed old choice remains recorded but is not made actionable."""
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     task = store.get_reply_task(task_id)
@@ -6515,166 +6515,20 @@ def test_reconcile_authorization_needs_human_projection_to_failed(tmp_path: Path
             "update reply_tasks set status='needs_human' where id=?", (task.id,)
         )
 
-    assert store.reconcile_invalid_needs_human_projections() == 1
+    assert store.reconcile_invalid_needs_human_projections() == 0
     attempt = store.get_reply_attempt(attempt_id)
     assert attempt is not None
-    assert attempt.send_status == "failed"
-    assert attempt.send_error == "invalid_needs_human_projection"
-    assert attempt.human_decision_options_json == "[]"
-    assert store.get_reply_task(task.id).status == "failed"
+    assert attempt.send_status == "needs_human"
+    assert store.get_reply_task(task.id).status == "needs_human"
 
-    # A restart/recovery pass must not revive the same invalid projection as
-    # a fresh pending task after the first reconciliation has already failed
-    # it.
+    # A later queue transition is not rewritten from this unreviewed legacy row.
     with store._connect() as db:
         db.execute(
             "update reply_tasks set status='pending', error='orphaned_before_agent_start' where id=?",
             (task.id,),
         )
-    assert store.reconcile_invalid_needs_human_projections() == 1
-    assert store.get_reply_task(task.id).status == "failed"
-
-
-def test_latest_scoped_authorization_run_restores_needs_human_projection(
-    tmp_path: Path,
-) -> None:
-    store = AutoReplyStore(tmp_path / "scoped-authorization.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    task = store.get_reply_task(task_id)
-    assert task is not None
-    attempt_id = store.record_reply_attempt(
-        conversation_id=task.conversation_id,
-        conversation_title=task.conversation_title,
-        trigger_message_id=task.trigger_message_id,
-        trigger_sender=task.trigger_sender,
-        trigger_text=task.trigger_text,
-        action="agent_run",
-        sensitivity_kind="general",
-        send_status="failed",
-        channel=task.channel,
-        oa_process_instance_id="process-authorization",
-        oa_task_id="task-authorization",
-    )
-    result = {
-        "outcome": "needs_human",
-        "summary": "Return the current OA task to its supervisor.",
-        "proposal": None,
-        "risk": "high",
-        "confidence": 0.2,
-        "rule_coverage": 1.0,
-        "information_completeness": 1.0,
-        # The OA workflow's own choices (dingtalk-oa-approval): Derek confirms
-        # and the Agent re-runs the current item under that choice (`one_time`),
-        # optionally also recording the rule so the class is handled from then
-        # on (`skill_update`). They are choices about how this class of task is
-        # handled, never a button that executes the instance itself.
-        "decision_options": [
-            {
-                "key": "one_time",
-                "label": "Authorize this return once",
-                "instruction": "Authorize the Agent to return the current OA task to its supervisor as planned.",
-                "consequence": "The Agent returns this OA task; the rule for later ones is unchanged.",
-                "applies_to": "task_class",
-            },
-            {
-                "key": "skill_update",
-                "label": "Record the rule for this class",
-                "instruction": "Add the authorization boundary for this class of OA return to the OA Skill.",
-                "consequence": "Later OA returns of this class follow the recorded rule.",
-                "applies_to": "task_class",
-            },
-        ],
-        "error": {
-            "code": "authorization_required",
-            "retryable": False,
-            "authorization_required": True,
-        },
-        "needs_human_reason": "The high-risk OA action needs one specific authorization.",
-        "decision_basis": {
-            "verified_facts": [
-                {"assertion": "The OA task is still running.", "references": ["oa:task-authorization"]}
-            ],
-            "rule_evidence": [
-                {"assertion": "The high-risk rule requires specific authorization.", "references": ["skill:oa#risk"]}
-            ],
-            "quality_explanation": "The material and rule are complete; authorization is a separate boundary.",
-            "no_external_action_evidence": [
-                {"assertion": "No provider receipt exists for the plan.", "references": ["attempt:current"]}
-            ],
-            "conclusion": "Only this OA action needs authorization.",
-        },
-        "authorization_plan": {
-            "summary": "Return the current OA task to its supervisor.",
-            "primary_action": {
-                "description": "Return the current OA task to its supervisor.",
-                "action_identity": "return-current-oa-task",
-                "capability": "agent_cli.dws",
-                "operation": "oa approval revert-task",
-                "target": {
-                    "oa_process_instance_id": "process-authorization",
-                    "oa_task_id": "task-authorization",
-                },
-                "payload": {},
-                "effect": "external",
-            },
-            "follow_up_actions": [],
-            "side_effects": ["The current OA task is returned to its supervisor."],
-            "will_not_do": ["The OA is not approved or rejected."],
-            "readback": ["Read the OA history after the action."],
-        },
-    }
-    from app.agent_contracts import ConsumerAgentResult
-
-    ConsumerAgentResult.model_validate(result)
-    with store._connect() as db:
-        run = db.execute(
-            """insert into agent_runs (
-                reply_task_id, execution_generation, role, status, final_result_json
-            ) values (?, ?, 'consumer', 'completed', ?)""",
-            (task.id, task.execution_generation, json.dumps(result)),
-        )
-        db.execute(
-            "update reply_attempts set agent_run_id=?, send_error=? where id=?",
-            (run.lastrowid, "authorization_required", attempt_id),
-        )
-        db.execute(
-            "update reply_tasks set status='failed', error=? where id=?",
-            ("authorization_required", task.id),
-        )
-
-    assert store.reconcile_valid_needs_human_projections() == 1
-    attempt = store.get_reply_attempt(attempt_id)
-    assert attempt is not None
-    assert attempt.send_status == "needs_human"
-    assert attempt.send_error == ""
-    assert json.loads(attempt.human_decision_options_json) == result["decision_options"]
-    assert attempt.codex_reason == result["summary"]
-    assert store.get_reply_task(task.id).status == "needs_human"
-    assert store.reconcile_valid_needs_human_projections() == 0
-
-    mismatched = json.loads(json.dumps(result))
-    mismatched["authorization_plan"]["primary_action"]["target"][
-        "oa_task_id"
-    ] = "another-task"
-    with store._connect() as db:
-        db.execute(
-            "update agent_runs set final_result_json=? where id=?",
-            (json.dumps(mismatched), run.lastrowid),
-        )
-        db.execute(
-            "update reply_attempts set send_status='failed', send_error='stale' where id=?",
-            (attempt_id,),
-        )
-        db.execute(
-            "update reply_tasks set status='failed', error='stale' where id=?",
-            (task.id,),
-        )
-
-    assert store.reconcile_valid_needs_human_projections() == 0
-    attempt = store.get_reply_attempt(attempt_id)
-    assert attempt is not None
-    assert attempt.send_status == "failed"
-
+    assert store.reconcile_invalid_needs_human_projections() == 0
+    assert store.get_reply_task(task.id).status == "pending"
 
 
 
@@ -13052,10 +12906,10 @@ def test_a_shell_send_failure_stays_failed_not_needs_human(tmp_path: Path):
     assert store.get_reply_task(task.id).status == "failed"
 
 
-def test_reconcile_invalid_current_needs_human_projection_to_failed(
+def test_reconcile_preserves_invalid_legacy_needs_human_projection(
     tmp_path: Path,
 ) -> None:
-    """A current provider error cannot remain a human decision projection."""
+    """A provider error remains in History without turning into a decision."""
     store = AutoReplyStore(tmp_path / "invalid-human-projection.sqlite3")
     store.enqueue_reply_task(
         conversation_id="cid-1", conversation_title="Group", single_chat=False,
@@ -13104,17 +12958,16 @@ def test_reconcile_invalid_current_needs_human_projection_to_failed(
         attempt.id != attempt_id
         for attempt in store.list_current_unresolved_problem_attempts()
     )
-    assert store.reconcile_invalid_needs_human_projections() == 1
+    assert store.reconcile_invalid_needs_human_projections() == 0
     attempt = store.get_reply_attempt(attempt_id)
     assert attempt is not None
-    assert attempt.send_status == "failed"
+    assert attempt.send_status == "needs_human"
     assert attempt.send_error == "provider_receipt_missing"
-    assert attempt.human_decision_options_json == "[]"
-    assert store.get_reply_task(task.id).status == "failed"
+    assert store.get_reply_task(task.id).status == "needs_human"
     assert store.reconcile_invalid_needs_human_projections() == 0
 
 
-def test_reconcile_failed_attempt_closes_stale_technical_needs_human_task(
+def test_reconcile_preserves_failed_attempt_and_stale_task_for_investigation(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -13157,9 +13010,9 @@ def test_reconcile_failed_attempt_closes_stale_technical_needs_human_task(
             (task.id,),
         )
 
-    assert store.reconcile_invalid_needs_human_projections() == 1
+    assert store.reconcile_invalid_needs_human_projections() == 0
     assert store.get_reply_attempt(attempt_id).send_status == "failed"
-    assert store.get_reply_task(task.id).status == "failed"
+    assert store.get_reply_task(task.id).status == "needs_human"
     assert store.get_reply_task(task.id).error == "codex_result_invalid"
 
 

@@ -862,15 +862,17 @@ def register_console_routes(
     @app.post("/api/console/history/{attempt_id}/human-decision")
     async def console_history_human_decision(attempt_id: int, request: Request):
         payload = await json_object(request)
-        instruction = str(payload.get("instruction") or "").strip()
-        feedback_scope = str(payload.get("feedback_scope") or "one_time").strip()
-        skill_update_requested = bool(payload.get("skill_update_requested", False))
+        kind = payload.get("kind")
+        allowed = (
+            {"kind", "candidate_id", "review_id", "candidate_digest", "option_key"}
+            if kind == "select" else
+            {"kind", "candidate_id", "review_id", "candidate_digest", "instruction"}
+            if kind == "supplement" else set()
+        )
+        if not allowed or not set(payload).issubset(allowed):
+            return JSONResponse({"ok": False, "code": "decision_invalid", "message": "人工决策请求字段无效", "details": {}}, status_code=400)
         from app.audit_web import handle_needs_human_decision_post
-        form = urlencode({
-            "instruction": instruction,
-            "feedback_scope": feedback_scope,
-            "skill_update_requested": "1" if skill_update_requested else "",
-        }).encode("utf-8")
+        form = urlencode({key: str(value) for key, value in payload.items()}).encode("utf-8")
         status, _headers, body = handle_needs_human_decision_post(
             store_factory(), attempt_id, form, return_to="/history"
         )
@@ -1897,6 +1899,41 @@ def register_console_routes(
                 status_code=400,
             )
         return command_result(item=mcp_settings_payload(), message="MCP 清单已保存")
+
+    @app.get("/api/console/settings/prompt-preview")
+    def console_prompt_preview(
+        role: str | None = None, route_name: str = "",
+        task_id: int | None = Query(default=None, gt=0),
+        run_id: int | None = Query(default=None, gt=0),
+        runtime_attempt_id: int | None = Query(default=None, gt=0),
+    ):
+        import os
+        from app.agent_runtime_config import load_runtime_config
+        from app.prompt_preview import current_prompt_preview, historical_prompt_preview
+
+        if role is not None and role not in ("consumer", "audit"):
+            raise HTTPException(status_code=422, detail="角色必须为 Consumer 或 Audit")
+        try:
+            if run_id is not None:
+                payload = historical_prompt_preview(store_factory(), run_id=run_id, runtime_attempt_id=runtime_attempt_id)
+                if role is not None and payload["role"] != role:
+                    raise ValueError("所选角色与历史 run 不匹配")
+                if task_id is not None and payload["task_id"] != task_id:
+                    raise ValueError("所选任务与历史 run 不匹配")
+                if route_name and payload["route_name"] != route_name:
+                    raise ValueError("所选路线与历史 run 不匹配")
+                if payload["route_name"]:
+                    payload["routes"] = [{"name": payload["route_name"], "runtime_kind": payload["runtime_kind"], "model": payload["model"]}]
+            else:
+                if runtime_attempt_id is not None:
+                    raise ValueError("运行尝试必须与历史 run 一起选择")
+                payload = current_prompt_preview(store_factory(), role=role or "consumer",
+                    config=load_runtime_config(os.environ), route_name=route_name, task_id=task_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return item_envelope(payload)
 
     @app.get("/api/console/settings/{section}")
     def console_settings(section: str):

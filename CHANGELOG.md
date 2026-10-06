@@ -9,6 +9,53 @@
 
 ## Unreleased
 
+- 2026-10-06: Daily report document receipts now include the exact folder
+  metadata already resolved from the provider. This preserves the folder URL
+  needed by the notification without synthesizing links, adding writes, or
+  changing Audit, delivery, or weekly-report receipts.
+
+- 2026-10-06: Queue failure diagnostics and the other Attention sources also
+  select failed row IDs before loading payloads. Latest nonblank errors,
+  case-insensitive matching, ordering, limits and fresh recovery visibility
+  retain their existing semantics without new indexes or migrations.
+
+- 2026-10-06: Attention selects failed Reply task IDs through the existing
+  covering status index before reading message payloads. Case-insensitive
+  status matching, recovery/current-object exclusions and fresh read-only
+  snapshots are unchanged; no schema migration or business-state cache.
+
+- 2026-10-06: Captured participant feedback links are checked by their exact
+  configured URL and pair data rather than the principal's outgoing signature
+  and labels. Markdown/JSON source parsing leaves canonical snapshots intact;
+  foreign hosts, malformed tokens, mismatched pairs, extra URLs/parameters and
+  other credentials remain rejected. Outbound rendering stays strict.
+
+- 2026-10-06: Captured provider sources no longer inherit Agent-authored
+  short-field limits. Full calendar cards remain unchanged in source bindings
+  and candidate digests; credential, callback, nesting and total codec limits
+  remain enforced, as do authored reference bounds.
+
+- 2026-10-05: Consumer result inspection now distinguishes captured historical
+  feedback rendering and serialized provider containers from current outgoing
+  text. Original source snapshots remain bound to the candidate and reread;
+  the existing strict callback and credential checks remain active. Invalid
+  captured callbacks are recorded as nonretryable service result failures
+  instead of repeatable CLI process failures.
+
+- 2026-10-05: Obsolete task-class questions now have an explicit single-attempt
+  retirement command with read-only preview and retained provenance. Original
+  results and statuses remain historical; retired questions consistently show
+  skipped in detail, History and queues and cannot be rerun. Current malformed
+  questions still fail the unchanged quality gate.
+
+- 2026-10-05: Interrupted meeting delivery releases its own unfinished batch
+  claims without changing persisted send receipts. A durable UUID claim token
+  prevents same-second successor claims from being released by an old owner.
+  Delivery and cleanup failures are both retained in the recorded exception;
+  confirmed sends resume only their unfinished calendar stage.
+  Ownership is persisted in a separate claim table, preserving the strict job
+  row shape required by the previous release during code rollback.
+
 - 2026-10-05: A runtime `provider_risk_rejected` refusal can no longer be
   replayed from a failed Attempt's manual rerun button or POST endpoint. The
   detail page explains that the original candidate is blocked; normal failed

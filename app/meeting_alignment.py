@@ -679,15 +679,28 @@ def deliver_ready_meeting_alignment_jobs(
     jobs = store.claim_ready_to_send_meeting_alignment_jobs(
         limit=limit, now=now.isoformat()
     )
-    for job in jobs:
-        _deliver_meeting_job(
-            store,
-            dws,
-            job,
-            now=now,
-            retry_delay=retry_delay,
-            max_attempts=max_attempts,
-        )
+    try:
+        for job in jobs:
+            _deliver_meeting_job(
+                store,
+                dws,
+                job,
+                now=now,
+                retry_delay=retry_delay,
+                max_attempts=max_attempts,
+            )
+    except BaseException as delivery_error:
+        try:
+            store.release_ready_to_send_meeting_alignment_claims(jobs)
+        except BaseException as cleanup_error:
+            raise BaseExceptionGroup(
+                f"Delivery failed: {delivery_error}; claim cleanup failed: {cleanup_error}",
+                [delivery_error, cleanup_error],
+            ) from None
+        raise
+    else:
+        # Saved effects remain authoritative when an interrupted stage resumes.
+        store.release_ready_to_send_meeting_alignment_claims(jobs)
     return {job.id for job in jobs}
 
 

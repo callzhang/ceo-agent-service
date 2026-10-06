@@ -167,16 +167,15 @@ def test_successor_claim_route_pause_stays_retryable():
 def _audit_result(proposal_revision: int) -> AuditAgentResult:
     return AuditAgentResult.model_validate(
         {
-            "outcome": "feedback_provided",
+            "outcome": "return",
             "summary": "缺少冲突处理动作",
             "proposal_revision": proposal_revision,
+            "candidate_digest": "a" * 64,
             "feedback": {
                 "rule": "Rule 15 (calendar_conflicts)",
                 "observation": "两个会议在 14:00-14:30 重叠",
                 "requested_revision": "拒绝 HR 例会并通知发起人",
             },
-            "external_result": None,
-            "decision_options": [],
             "error": {
                 "code": "",
                 "retryable": False,

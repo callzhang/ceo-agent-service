@@ -80,9 +80,7 @@ from app.email_unsubscribe import (
     _validated_restored_audit_session,
 )
 
-from app.business_skills import bundled_business_skills_root
-
-SKILLS_ROOT = bundled_business_skills_root()
+SKILLS_ROOT = Path(__file__).resolve().parents[1] / "ci" / "shared-skills"
 
 
 def test_connected_mailbox_otp_requires_exact_recipient_site_context_and_window() -> None:
@@ -1803,7 +1801,7 @@ def test_mail_review_skill_keeps_review_boundaries_and_adds_unsubscribe_rules() 
     for unsubscribe_rule in (
         "does not require per-message confirmation",
         "propose the exact ordered browser operations",
-        "Audit Agent B must review those exact operations before any external write",
+        "Audit must review those exact operations before the System Executor performs any external write",
         "reconcile the current page, provider state, safe prior receipt, and confirmation mail before another write",
         "Never place a full unsubscribe URL or query token in the proposal, step journal, History, status, or error",
         "For `captcha_handoff`, attempt ordinary interaction with the rendered challenge",
@@ -1811,7 +1809,7 @@ def test_mail_review_skill_keeps_review_boundaries_and_adds_unsubscribe_rules() 
         "initial proposal contains exactly `OPEN_ENTRY`",
         "returns a typed continuation",
         "strict append-only extension of the persisted prefix",
-        "Execute only the newly accepted operation and never replay the prefix",
+        "The System Executor performs only the newly approved operation and never replays the prefix",
         "The value may be consumed only once",
         "minimize Python references without claiming physical memory zeroization",
         "`RECONCILE_HANDOFF`",

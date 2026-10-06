@@ -13,6 +13,7 @@ from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.agent_orchestrator import AgentOrchestrator, MAX_CONTENT_FEEDBACK_CYCLES
 from app.agent_turn_runner import AgentTurnRunResult
 from app.store import AgentRole, AutoReplyStore
+from app.system_executor import ActionOutcome, SystemExecutor
 from tests.support.audit_sink_mcp import AuditSink
 
 
@@ -41,7 +42,7 @@ def _operation_name(case: EvalCase) -> str:
 
 def _consumer_result(case: EvalCase) -> ConsumerAgentResult:
     proposal = None
-    decision_options: list[dict[str, str]] = []
+    decision_options: list[dict[str, object]] = []
     if case.consumer_outcome == "proposal":
         proposal = {
             "objective": case.trigger,
@@ -67,14 +68,27 @@ def _consumer_result(case: EvalCase) -> ConsumerAgentResult:
                 "label": "Proceed with the first supported management choice",
                 "instruction": "Execute the first evidence-supported management choice.",
                 "consequence": "The agent will execute and verify that choice.",
-                "applies_to": "task_class",
+                "plan": {
+                    "objective": case.trigger,
+                    "actions": [{
+                        "action_identity": f"eval:{case.id}:choice-a",
+                        "description": case.candidate,
+                        "capability": "audit_sink",
+                        "operation": _operation_name(case),
+                        "target": {"case_id": case.id},
+                        "payload": {"candidate": case.candidate},
+                    }],
+                    "sourced_facts": [],
+                    "authored_judgment": case.reason,
+                },
             },
             {
                 "key": "B",
                 "label": "Proceed with the second supported management choice",
                 "instruction": "Execute the second evidence-supported management choice.",
                 "consequence": "The agent will execute and verify the alternative.",
-                "applies_to": "task_class",
+                "terminal_outcome": "skipped",
+                "reason": "Do not execute this option.",
             },
         ]
     return ConsumerAgentResult.model_validate(
@@ -94,36 +108,29 @@ def _consumer_result(case: EvalCase) -> ConsumerAgentResult:
             "error": {"code": "", "retryable": False, "authorization_required": False},
             "risk": "high" if case.consumer_outcome == "needs_human" else "low",
             "confidence": 0.1 if case.consumer_outcome == "needs_human" else 1.0,
-            # A needs_human outcome must classify as NEEDS_HUMAN, which the
-            # high-risk/low-confidence gate already gives. Dropping information
-            # completeness below 0.5 would classify it ASK_BACK instead.
             "rule_coverage": 1.0,
             "information_completeness": 1.0,
         }
     )
 
 
-def _audit_result(case: EvalCase, operation_id: str) -> AuditAgentResult:
+def _audit_result(case: EvalCase, context: AuditTurnContext) -> AuditAgentResult:
+    outcome = {"executed": "approve", "revision_required": "return",
+               "needs_human": "approve"}[case.audit_outcome]
     payload: dict[str, object] = {
-        "outcome": case.audit_outcome,
+        "outcome": outcome,
         "summary": case.reason,
-        "proposal_revision": 0,
+        "proposal_revision": context.proposal_revision,
+        "candidate_digest": context.candidate_digest,
+        "evidence_refs": [],
         "feedback": None,
-        "external_result": None,
         "error": {"code": "", "retryable": False, "authorization_required": False},
         "risk": "high" if case.audit_outcome == "needs_human" else "low",
         "confidence": 0.1 if case.audit_outcome == "needs_human" else 1.0,
         "rule_coverage": 1.0,
         "information_completeness": 1.0,
     }
-    if case.audit_outcome == "executed":
-        payload.update(
-            external_result={
-                "operation_id": operation_id,
-                "live_result_reference": {"operation_id": operation_id},
-            },
-        )
-    elif case.audit_outcome == "revision_required":
+    if case.audit_outcome == "revision_required":
         payload["feedback"] = {
             "rule": "authority boundary",
             "observation": case.reason,
@@ -189,15 +196,7 @@ class FixtureAudit:
         self.store.set_agent_run_session(claim.run.id, session_id, owner="fixture-audit")
         if self.case.requires_oa_live_detail:
             self.live_oa_detail_reads.append(context.operation_id)
-        if self.case.allows_write:
-            record = self.sink.write_state(
-                context.operation_id,
-                {"case_id": self.case.id, "candidate": self.case.candidate},
-            )
-            assert record.operation_id == context.operation_id
-            if self.case.requires_applicant_notification:
-                self.applicant_notifications.append(context.operation_id)
-        result = _audit_result(self.case, context.operation_id)
+        result = _audit_result(self.case, context)
         self.store.complete_agent_run(
             claim.run.id,
             result.model_dump(mode="json"),
@@ -211,6 +210,26 @@ class FixtureAudit:
 
     def execute_recovery(self, task, context, *, run):
         raise AssertionError("fixture eval does not execute recovery")
+
+
+class FixtureSystemHandler:
+    def __init__(self, case: EvalCase, sink: AuditSink) -> None:
+        self.case, self.sink = case, sink
+        self.action_keys: list[str] = []
+        self.applicant_notifications: list[str] = []
+
+    def dispatch(self, action, *, action_key, candidate):
+        assert action.target == {"case_id": self.case.id}
+        record = self.sink.write_state(
+            action_key, {"case_id": self.case.id, "candidate": self.case.candidate},
+        )
+        self.action_keys.append(action_key)
+        if self.case.requires_applicant_notification:
+            self.applicant_notifications.append(action_key)
+        return ActionOutcome("verified", {"operation_id": record.operation_id})
+
+    def reconcile(self, action, *, action_key, candidate):
+        return None
 
 
 def _task_context(store: AutoReplyStore, case: EvalCase):
@@ -267,25 +286,29 @@ def test_eval_cases_traverse_orchestration_with_exactly_the_expected_write(case:
     task, context = _task_context(store, case)
     consumer = FixtureConsumer(store, case)
     audit = FixtureAudit(store, case, sink)
+    handler = FixtureSystemHandler(case, sink)
+    executor = SystemExecutor(store, {("audit_sink", _operation_name(case)): handler}, owner="eval-executor")
 
-    result = AgentOrchestrator(store=store, consumer=consumer, audit=audit).process(
+    result = AgentOrchestrator(store=store, consumer=consumer, audit=audit,
+                               system_executor=executor).process(
         task, context, refresh_context=lambda: context
     )
 
     if case.consumer_outcome == "needs_human":
         assert result.status == "needs_human"
-        assert audit.session_ids == []
-        assert sink.row_count(f"agent-task:{task.id}:{task.execution_generation}:proposal:0") == 0
+        assert len(audit.session_ids) == 1
+        assert handler.action_keys == []
         return
     if case.consumer_outcome == "no_action":
         assert result.status == "no_action"
-        assert audit.session_ids == []
-        assert sink.row_count(f"agent-task:{task.id}:{task.execution_generation}:proposal:0") == 0
+        assert len(audit.session_ids) == 1
+        assert handler.action_keys == []
         return
     if case.audit_outcome == "executed":
         assert result.status == "executed"
         assert result.final_role is AgentRole.AUDIT
-        assert sink.row_count(f"agent-task:{task.id}:{task.execution_generation}:proposal:0") == 1
+        assert len(handler.action_keys) == 1
+        assert sink.row_count(handler.action_keys[0]) == 1
         assert consumer.session_ids == ["consumer-session"]
         assert len(audit.session_ids) == 1
         assert audit.session_ids[0] != consumer.session_ids[0]
@@ -294,8 +317,8 @@ def test_eval_cases_traverse_orchestration_with_exactly_the_expected_write(case:
             if case.requires_oa_live_detail
             else []
         )
-        assert audit.applicant_notifications == (
-            [f"agent-task:{task.id}:{task.execution_generation}:proposal:0"]
+        assert handler.applicant_notifications == (
+            handler.action_keys
             if case.requires_applicant_notification
             else []
         )
@@ -305,7 +328,7 @@ def test_eval_cases_traverse_orchestration_with_exactly_the_expected_write(case:
     assert result.status == "failed_terminal"
     assert result.error.code == "audit_revision_exhausted"
     assert result.feedback_cycles == MAX_CONTENT_FEEDBACK_CYCLES + 1
-    assert sink.row_count(f"agent-task:{task.id}:{task.execution_generation}:proposal:0") == 0
+    assert handler.action_keys == []
     expected_oa_reads = (
         [
             f"agent-task:{task.id}:{task.execution_generation}:proposal:{revision}"
@@ -315,7 +338,7 @@ def test_eval_cases_traverse_orchestration_with_exactly_the_expected_write(case:
         else []
     )
     assert audit.live_oa_detail_reads == expected_oa_reads
-    assert audit.applicant_notifications == []
+    assert handler.applicant_notifications == []
 
 
 def test_controlled_sink_keeps_first_write_for_exact_operation_id(tmp_path: Path):

@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -105,6 +106,25 @@ def adapter(tmp_path, config, monkeypatch):
 @pytest.fixture
 def normalizer(adapter):
     return adapter.new_event_normalizer()
+
+
+def test_role_command_uses_only_task_bound_agent_cli(adapter, route):
+    command = adapter.build_command(
+        route=route, session_id=None, max_turns=5,
+        policy=ClaudeCommandPolicy.consumer(task_id=17, db_path="/tmp/role.sqlite3", execution_generation="claim-generation"),
+    )
+    assert "--restricted" in command
+    assert command[command.index("--tools") + 1] == "Read,Glob,Grep"
+    mcp_config = json.loads(command[command.index("--mcp-config") + 1])
+    assert set(mcp_config["mcpServers"]) == {"agent_cli"}
+    assert mcp_config["mcpServers"]["agent_cli"] == {
+        "type": "stdio", "command": sys.executable,
+        "args": [
+            "-m", "app.agent_cli", "--role", "consumer",
+            "--task-id", "17", "--db", "/tmp/role.sqlite3",
+            "--execution-generation", "claim-generation",
+        ],
+    }
 
 
 def test_normal_command_delegates_tool_review_to_claude_runtime(

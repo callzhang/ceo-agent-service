@@ -126,22 +126,22 @@ def test_result_rejects_classification_inconsistent_with_incomplete_information(
         )
 
 
-def test_stored_needs_human_projection_requires_the_full_typed_rule_decision():
-    valid = _rule_gap_result()
+def test_stored_needs_human_projection_rejects_legacy_rule_scope_options():
+    legacy = _rule_gap_result()
 
     assert (
-        classify_stored_needs_human_projection(valid)
-        is StoredNeedsHumanProjection.NEEDS_HUMAN
+        classify_stored_needs_human_projection(legacy)
+        is StoredNeedsHumanProjection.INVALID
     )
     assert (
         classify_stored_needs_human_projection(
-            {**valid, "confidence": 0.9}
+            {**legacy, "confidence": 0.9}
         )
         is StoredNeedsHumanProjection.INVALID
     )
     assert (
         classify_stored_needs_human_projection(
-            {key: value for key, value in valid.items() if key != "decision_basis"}
+            {key: value for key, value in legacy.items() if key != "decision_basis"}
         )
         is StoredNeedsHumanProjection.INVALID
     )
@@ -211,8 +211,8 @@ def test_stored_needs_human_projection_rejects_authorization_error():
     )
 
 
-def test_stored_needs_human_projection_authorization_plan_obeys_quality_gate():
-    """A bounded authorization plan is not an extra needs_human route."""
+def test_stored_needs_human_projection_rejects_legacy_authorization_plan():
+    """An old one-step authorization plan cannot stand in for a reviewed option."""
     result = {
         **_rule_gap_result(),
         "error": {
@@ -244,7 +244,7 @@ def test_stored_needs_human_projection_authorization_plan_obeys_quality_gate():
 
     assert (
         classify_stored_needs_human_projection(result)
-        is StoredNeedsHumanProjection.NEEDS_HUMAN
+        is StoredNeedsHumanProjection.INVALID
     )
     assert (
         classify_stored_needs_human_projection({**result, "confidence": 0.9})

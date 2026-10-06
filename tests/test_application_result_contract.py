@@ -1,29 +1,35 @@
 from __future__ import annotations
 
+import pytest
+
 from app.agent_contracts import AuditAgentResult
 from app.agent_result import AgentError
 from app.workbench.store import _begin_immediate_with_retry
 
 
-def test_audit_feedback_is_a_first_class_structured_outcome() -> None:
+@pytest.mark.parametrize("outcome", ("return", "reject"))
+def test_audit_feedback_is_a_first_class_structured_outcome(outcome: str) -> None:
     result = AuditAgentResult(
-        outcome="feedback_provided",
+        outcome=outcome,
         summary="候选需要补充信息",
         proposal_revision=3,
+        candidate_digest="a" * 64,
         feedback={
             "rule": "结果必须可执行",
             "observation": "缺少必要字段",
             "requested_revision": "补齐字段后重新输出",
         },
-        external_result=None,
         error=AgentError(),
         risk="low",
         confidence=1.0,
         rule_coverage=1.0,
         information_completeness=1.0,
     )
-    assert result.outcome.value == "feedback_provided"
+    assert result.outcome.value == outcome
     assert result.feedback is not None
+    assert result.feedback.requested_revision == "补齐字段后重新输出"
+    assert result.candidate_digest == "a" * 64
+    assert "external_result" not in result.model_dump(mode="json")
 
 
 def test_workbench_begin_immediate_retries_transient_lock() -> None:

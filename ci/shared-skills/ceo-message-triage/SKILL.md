@@ -80,4 +80,4 @@ Use the canonical Consumer Agent result contract without adding workflow-specifi
 An `@all` broadcast with no principal action follows
 `broadcast_without_principal_action`: return no action.
 
-Consumer A remains read-only and proposes any reply, clarification, or reaction. Audit B independently loads the same business and operation Skills, checks their exact receipts and current conversation state, and alone executes an approved effect.
+Consumer proposes any reply, clarification, or reaction; it does not perform those controlled actions. Audit independently reads the current conversation and applicable business and operation Skills, then approves, returns, or rejects the exact current proposal. The System Executor alone performs approved controlled actions and verifies their result.

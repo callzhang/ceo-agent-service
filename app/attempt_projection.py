@@ -4,8 +4,22 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.wechat.models import principal_reply_supersession
+
 
 _TERMINAL_TASK_STATES = {"done", "skipped", "needs_human"}
+
+
+def current_wechat_delivery_matches(attempt: Any, task: Any, delivery: Any) -> bool:
+    """Require the exact owning task, execution generation and conversation."""
+    return task is not None and (
+        str(getattr(attempt, "channel", "") or "") == "wechat"
+        and delivery is not None
+        and int(getattr(delivery, "task_id", 0) or 0) == int(task.id)
+        and str(getattr(delivery, "execution_generation", "") or "") == str(getattr(task, "execution_generation", "") or "").strip()
+        and str(getattr(delivery, "conversation_id", "") or "")
+        == str(getattr(attempt, "conversation_id", "") or "")
+    )
 
 
 def project_attempt_status(
@@ -19,21 +33,18 @@ def project_attempt_status(
     reported as the stale pending state of an older attempt row.
     """
     fallback = str(getattr(attempt, "send_status", "") or "").strip() or "failed"
+    if fallback == "needs_human" and str(getattr(attempt, "resolved_at", "") or "").strip():
+        return "skipped"
     if task is None:
         return fallback
     task_status = str(getattr(task, "status", "") or "").strip()
     generation = str(getattr(task, "execution_generation", "") or "").strip()
-    if (
-        fallback == "failed"
-        and str(getattr(attempt, "channel", "") or "") == "wechat"
-        and delivery is not None
-        and int(getattr(delivery, "task_id", 0) or 0) == int(task.id)
-        and str(getattr(delivery, "execution_generation", "") or "") == generation
-        and str(getattr(delivery, "conversation_id", "") or "")
-        == str(getattr(attempt, "conversation_id", "") or "")
-        and str(getattr(delivery, "status", "") or "") in {"failed", "send_unknown"}
-    ):
-        return "failed"
+    if current_wechat_delivery_matches(attempt, task, delivery):
+        delivery_status = str(getattr(delivery, "status", "") or "")
+        if fallback == "failed" and delivery_status in {"failed", "send_unknown"}:
+            return "failed"
+        if delivery_status == "skipped" and principal_reply_supersession(str(getattr(delivery, "error", "") or "")):
+            return "skipped"
     current_runs = [
         run
         for run in runs

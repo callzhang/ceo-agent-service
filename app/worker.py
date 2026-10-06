@@ -23,8 +23,9 @@ from app.agent_context import (
     MaterialReference,
     PriorReceipt,
 )
-from app.agent_contracts import AuditAgentResult, AuditOutcome, ConsumerAgentResult, DecisionOption
+from app.agent_contracts import AuditAgentResult, AuditOutcome, ConsumerAgentResult
 from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
+from app.system_executor import SystemExecutor
 from app.agent_runtime_contracts import RuntimeFailureClass
 from app.audit_agent import AuditAgentRunner
 from app.channel_gate import (
@@ -35,10 +36,7 @@ from app.channel_gate import (
     default_channel_gates,
     start_lark_auth_login,
 )
-from app.agent_effect_guard import PROVIDER_RECEIPT_FIELDS, provider_receipts
 from app.consumer_agent import ConsumerAgentRunner
-from app.dingtalk_send_evidence import DingTalkSendEvidenceDriver
-from app.external_action_identity import expected_external_action
 from app.config import (
     agent_mention_aliases,
     broadcast_mention_aliases,
@@ -122,7 +120,8 @@ if TYPE_CHECKING:
 ORCHESTRATION_ATTEMPT_STATUS = {
     "executed": ("completed", "done"),
     "no_action": ("skipped", "done"),
-    "needs_human": ("needs_human", "done"),
+    "needs_human": ("needs_human", "needs_human"),
+    "skipped": ("skipped", "skipped"),
     "dry_run": ("dry_run", "done"),
     "failed_retryable": ("failed", "pending"),
     "failed_terminal": ("failed", "failed"),
@@ -599,6 +598,7 @@ class DingTalkAutoReplyWorker:
         self.agent_orchestrator = AgentOrchestrator(
             store=self.store,
             consumer=ConsumerAgentRunner(
+                source_client=self.dws,
                 store=self.store,
                 workspace=Path(workspace),
                 codex_bin=codex_bin,
@@ -640,9 +640,8 @@ class DingTalkAutoReplyWorker:
                     if runtime is not None
                     else None
                 ),
-                dry_run=self.dry_run,
-                domain_continuation=DingTalkSendEvidenceDriver(self.store),
             ),
+            system_executor=SystemExecutor(store=self.store, dws=self.dws, dry_run=self.dry_run),
         )
         return self.agent_orchestrator
 
@@ -2375,11 +2374,6 @@ class DingTalkAutoReplyWorker:
         task: ReplyTask,
         result: OrchestrationResult,
     ) -> bool:
-        oa_work = (
-            task.conversation_title == "审批待办"
-            or bool(task.oa_url)
-            or bool(DINGTALK_APPROVAL_LINK_PATTERN.search(task.trigger_text))
-        )
         error_code = result.error.code
         if _continues_codex_capacity_wait(task, error_code):
             error_code = CODEX_PROVIDER_CAPACITY_EXHAUSTED
@@ -2428,6 +2422,12 @@ class DingTalkAutoReplyWorker:
                     error,
                     expected_execution_generation=task.execution_generation,
                     available_at=available_at,
+                    refund_attempt=(
+                        provider_recovery
+                        or runtime_outage_wait
+                        or authorization_wait
+                        or active_recovery_wait
+                    ),
                 )
                 return False
             attempt_id = self.store.finalize_reply_task_without_run(
@@ -2455,21 +2455,7 @@ class DingTalkAutoReplyWorker:
             )
             return False
 
-        # OA work is an executable skill workflow.  A model-level handoff such
-        # as management_confirmation_required is not a valid terminal result
-        # for an assigned approval task; return it through the ordinary retry
-        # path so the next turn can continue the skill and verify the OA
-        # terminal state.
-        oa_handoff = (
-            result.status == "needs_human"
-            and oa_work
-            and result.error.code
-            in {
-                "management_confirmation_required",
-                "management_authorization_missing",
-            }
-        )
-        mapped_status = "failed_retryable" if oa_handoff else result.status
+        mapped_status = result.status
         try:
             send_status, task_status = ORCHESTRATION_ATTEMPT_STATUS[mapped_status]
         except KeyError as exc:
@@ -2484,9 +2470,7 @@ class DingTalkAutoReplyWorker:
         ):
             task_status = "failed"
         send_error = error_code
-        if oa_handoff:
-            send_error = "oa_skill_workflow_incomplete"
-        elif result.status == "needs_human":
+        if result.status == "needs_human":
             send_error = send_error or "needs_human"
         elif result.status in {"failed_retryable", "failed_terminal"}:
             send_error = send_error or "agent_failed"
@@ -2516,54 +2500,16 @@ class DingTalkAutoReplyWorker:
             raise RuntimeError("orchestration final run was not persisted")
         if result.status not in {"failed_retryable", "failed_terminal"}:
             self.store.clear_codex_capacity_pause()
-        # Persist a DingTalk message projection only for a send the provider
-        # actually acknowledged.  The typed Audit result names the effect; the
-        # receipt in the run's own event stream is what establishes that one
-        # happened.  This still does not re-audit the business action: it keeps
-        # a delivered message visible in History.
-        sent_reply = self._sent_reply_projection_from_result(
-            task, result, run, self.store
-        )
-        if sent_reply is not None:
-            self.store.record_completed_agent_message_delivery(
-                agent_run_id=run.id,
-                external_action_key=sent_reply.external_action_key,
-                business_object_key=task.business_object_key,
-                action_identity=sent_reply.action_identity,
-                operation=sent_reply.operation,
-                target_identifiers=sent_reply.target_identifiers,
-                conversation_id=task.conversation_id,
-                trigger_message_id=task.trigger_message_id,
-                reply_text=sent_reply.reply_text,
-                provider_result=sent_reply.provider_result,
-            )
-        decision_options: tuple[DecisionOption, ...] = (
-            result.consumer_result.decision_options
-            if result.consumer_result is not None
-            else (
-                result.audit_result.decision_options
-                if result.audit_result is not None
-                else ()
-            )
-        )
-        if result.status == "needs_human" and not decision_options:
-            # A service error or exhausted feedback loop is not a human
-            # decision.  Only a typed Consumer/Audit rule gap can publish the
-            # executable choices required by the shared quality contract.
-            task_status = "failed"
-            send_status = "failed"
-            send_error = "invalid_needs_human_result"
-        # A proposal that also escalated: the Attempt is the question, so it
-        # points at the Consumer run that asked it. The executing Audit run
-        # stays the source of the tool events and the delivery record.
+        # Domain execution already persisted verified delivery and History
+        # receipts. An Audit approval is never projected as a sent message.
+        decision_options = result.consumer_result.decision_options if result.consumer_result is not None else ()
+        if result.status == "needs_human":
+            current = self.store.current_reviewed_candidate(task.id, task.execution_generation)
+            if current is None or current["id"] != result.candidate_id or current["review_id"] != result.review_id:
+                task_status = "failed"
+                send_status = "failed"
+                send_error = "invalid_needs_human_result"
         decision_run_id = run.id
-        if (
-            result.status == "needs_human"
-            and result.consumer_result is not None
-            and result.consumer_result.escalates
-            and run.parent_agent_run_id is not None
-        ):
-            decision_run_id = run.parent_agent_run_id
         attempt_id = self.store.finalize_orchestrated_reply_task(
             task_id=task.id,
             expected_execution_generation=task.execution_generation,
@@ -2632,12 +2578,8 @@ class DingTalkAutoReplyWorker:
 
         if task.channel != "dingtalk":
             return
-        audit_result = result.audit_result
-        if (
-            audit_result is None
-            or audit_result.external_result is None
-            or not provider_receipts(audit_run.tool_events)
-        ):
+        execution = result.execution_result
+        if execution is None or execution.outcome != "executed" or execution.external_result is None:
             return
         attempt = self.store.get_reply_attempt(attempt_id)
         if attempt is None or not attempt.oa_process_instance_id.strip():
@@ -2714,171 +2656,49 @@ class DingTalkAutoReplyWorker:
                 task=SimpleNamespace(channel=attempt.channel),
                 attempt_id=attempt.id,
                 result=SimpleNamespace(
-                    audit_result=SimpleNamespace(external_result=object()),
+                    execution_result=SimpleNamespace(outcome="executed", external_result=object()),
                     summary=attempt.oa_remark or attempt.audit_summary,
                 ),
                 audit_run=audit_run,
             )
 
-    @staticmethod
-    def _sent_reply_projection_from_result(
-        task: ReplyTask,
-        result: OrchestrationResult,
-        audit_run: AgentRun,
-        store: AutoReplyStore | None = None,
-    ) -> AgentMessageDeliveryProjection | None:
-        if task.channel != "dingtalk":
-            return None
-        # Keyed on what Audit did, not the task's end state: a proposal that
-        # also escalates ends needs_human after its message was delivered.
-        audit_result = result.audit_result
-        if (
-            audit_result is None
-            or audit_result.outcome is not AuditOutcome.EXECUTED
-            or audit_result.external_result is None
-        ):
-            return None
-        # The ledger records what a provider did.  The reference below is
-        # written by the turn making the claim, and the delivery key in it was
-        # handed to that turn in its own prompt, so it is a label for the
-        # effect, never the proof that one happened.  That proof is the receipt
-        # the provider returned, which only the runtime could have recorded.
-        if not provider_receipts(audit_run.tool_events):
-            return None
-        reference = audit_result.external_result.live_result_reference
-        send_status = str(
-            reference.get("delivery_status")
-            or reference.get("deliveryStatus")
-            or reference.get("sendStatus")
-            or reference.get("send_status")
-            or ""
-        ).strip().lower()
-        # A send identity is whatever the provider handed back to identify the
-        # effect, which is the same set the evidence guard recognises as a
-        # receipt.  Keeping a second list here let the two halves disagree: a
-        # `dws chat +dm` returns only an `openTaskId`, so a real delivery was
-        # read as no delivery and left no ledger row -- and an unrecorded
-        # delivery is what makes the next attempt send the message again.
-        stable_message_id = str(
-            reference.get("sent_message_id")
-            or reference.get("sentMessageId")
-            or reference.get("message_id")
-            or reference.get("messageId")
-            or next(
-                (
-                    reference[field]
-                    for field in PROVIDER_RECEIPT_FIELDS
-                    if isinstance(reference.get(field), str) and reference[field].strip()
-                ),
-                "",
-            )
-            or ""
-        ).strip()
-        if send_status not in {"success", "sent"} and not stable_message_id:
-            return None
-        consumer_result = result.consumer_result
-        if consumer_result is None:
-            # An audit-terminated orchestration carries only the Audit result,
-            # so the accepted proposal is read from this run's own parent. That
-            # is the run's own lineage, not a rebuild of a past delivery.
-            consumer_result = _accepted_consumer_result(store, audit_run)
-        if consumer_result is None:
-            return None
-        proposal = consumer_result.proposal
-        if proposal is None:
-            return None
-        action_identity = str(reference.get("action_identity") or "").strip()
-        if action_identity:
-            matching_actions = [
-                (index, action)
-                for index, action in enumerate(proposal.actions)
-                if action.action_identity == action_identity
-            ]
-            if len(matching_actions) != 1:
-                return None
-            action_index, action = matching_actions[0]
-        else:
-            # A provider result with a stable sent-message identity is enough
-            # to prove delivery. When the proposal contains exactly one
-            # action, its persisted identity is the only possible owner of
-            # that result; recover it instead of dropping the History
-            # projection because the Audit model omitted a redundant field.
-            if len(proposal.actions) != 1:
-                return None
-            action_index, action = 0, proposal.actions[0]
-            action_identity = action.action_identity
-        expected = expected_external_action(
-            action,
-            action_index=action_index,
-            business_object_key=task.business_object_key,
-        )
-        external_key = expected.get("external_action_key")
-        operation = expected.get("operation")
-        target_identifiers = expected.get("target_identifiers")
-        if (
-            not isinstance(external_key, str)
-            or not external_key
-            or not isinstance(operation, str)
-            or not operation
-            or not isinstance(target_identifiers, dict)
-        ):
-            return None
-        readback = reference.get("readback")
-        reply_text = ""
-        if isinstance(readback, dict):
-            reply_text = str(
-                readback.get("text") or readback.get("content") or ""
-            ).strip()
-        if not reply_text:
-            payload = action.payload
-            candidate = (
-                payload.get("content")
-                or payload.get("text")
-                or payload.get("reply_text")
-            )
-            if isinstance(candidate, str):
-                reply_text = candidate.strip()
-        if not reply_text:
-            return None
-        return AgentMessageDeliveryProjection(
-            external_action_key=external_key,
-            action_identity=action_identity,
-            operation=operation,
-            target_identifiers=target_identifiers,
-            reply_text=reply_text,
-            provider_result=dict(reference),
-        )
-
-
-    @staticmethod
-
-    @staticmethod
     def _orchestration_oa_metadata(
-        task: ReplyTask,
-        result: OrchestrationResult,
+        self, task: ReplyTask, result: OrchestrationResult,
     ) -> dict[str, str]:
-        audit_result = result.audit_result
-        if audit_result is None or audit_result.external_result is None:
+        execution = result.execution_result
+        if execution is None or execution.external_result is None:
             return {}
-        reference = audit_result.external_result.live_result_reference
-        process_instance_id = str(reference.get("process_instance_id") or "").strip()
-        if not process_instance_id:
+        candidate = self.store.get_review_candidate(result.candidate_id) if result.candidate_id else None
+        if candidate is None:
             return {}
-        action_result = reference.get("result")
-        if not isinstance(action_result, dict):
-            action_result = reference
-        return {
-            "oa_process_instance_id": process_instance_id,
-            "oa_task_id": str(reference.get("task_id") or "").strip(),
-            "oa_url": task.oa_url,
-            "oa_action": str(reference.get("action") or "").strip(),
-            "oa_remark": str(reference.get("remark") or "").strip(),
-            "oa_action_result_json": json.dumps(
-                action_result,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ),
-        }
+        data = ConsumerAgentResult.model_validate_json(candidate["candidate_json"])
+        current = self.store.current_reviewed_candidate(task.id, task.execution_generation)
+        plan = data.proposal
+        if current and current["selection_id"]:
+            branch = json.loads(current["branch_json"])
+            plan = next((option.plan for option in data.decision_options if option.key == branch["key"]), None)
+        if plan is None:
+            return {}
+        receipts = {row["action_identity"]: row for row in self.store.list_verified_candidate_actions(task.id)}
+        for action in plan.actions:
+            if action.capability != "dingtalk-oa" or action.operation not in ("approve", "reject", "revert_task", "redirect_task", "comment"):
+                continue
+            receipt = receipts.get(action.action_identity)
+            if receipt is None:
+                continue
+            target = json.loads(receipt["target_identifiers_json"])
+            process_id = str(target.get("process_instance_id") or "").strip()
+            if not process_id:
+                continue
+            return {
+                "oa_process_instance_id": process_id,
+                "oa_task_id": str(target.get("task_id") or ""),
+                "oa_url": task.oa_url,
+                "oa_action": action.operation,
+                "oa_remark": str(action.payload.get("remark") or ""),
+                "oa_action_result_json": receipt["provider_result_json"],
+            }
+        return {}
 
     def _build_agent_task_context(
         self,
@@ -2941,7 +2761,7 @@ class DingTalkAutoReplyWorker:
                             run.final_result_json
                         )
                         if (
-                            audit_result.outcome is AuditOutcome.FEEDBACK_PROVIDED
+                            audit_result.outcome in (AuditOutcome.RETURN, AuditOutcome.REJECT)
                             and audit_result.feedback is not None
                         ):
                             prior_audit_feedback.append(audit_result.feedback)
@@ -3484,6 +3304,14 @@ class DingTalkAutoReplyWorker:
         return process_instance_id, task_id
 
     def _agent_prior_receipts(self, task: ReplyTask) -> tuple[PriorReceipt, ...]:
+        verified = self.store.list_verified_candidate_actions(task.id)
+        if verified:
+            return tuple(PriorReceipt(
+                receipt_id=row["external_action_key"], operation=row["operation"],
+                summary=json.dumps({"stage_index":row["stage_index"], "action_identity":row["action_identity"],
+                    "target":json.loads(row["target_identifiers_json"]), "result":json.loads(row["provider_result_json"])},ensure_ascii=False),
+                completed=True,
+            ) for row in verified)
         process_instance_id = self._oa_process_instance_id_from_url(task.oa_url)
         if not process_instance_id and task.business_object_key.startswith("oa:"):
             process_instance_id = task.business_object_key[3:].rsplit(":", 1)[0]

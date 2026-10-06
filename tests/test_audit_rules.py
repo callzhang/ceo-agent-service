@@ -291,7 +291,7 @@ def test_atomic_save_preserves_valid_file_when_replace_fails(
     assert list(tmp_path.glob("*.tmp")) == []
 
 
-def test_both_roles_are_reminded_to_write_what_is_durable() -> None:
+def test_only_consumer_is_reminded_to_write_what_is_durable() -> None:
     """Reading was instructed from the start; writing never was.
 
     Over the fourteen days to 2026-09-19 the agents called `memory_recall` 174
@@ -304,10 +304,9 @@ def test_both_roles_are_reminded_to_write_what_is_durable() -> None:
     from app.store import AgentRole
 
     reminder = memory_write_reminder()
-    for role in (AgentRole.CONSUMER, AgentRole.AUDIT):
-        rendered = render_audit_rules(role)
-        assert reminder in rendered
-        assert rendered.rstrip().endswith(reminder)
+    assert reminder in render_audit_rules(AgentRole.CONSUMER)
+    assert reminder not in render_audit_rules(AgentRole.AUDIT)
+    assert render_audit_rules(AgentRole.CONSUMER).rstrip().endswith(reminder)
     assert "finish normally and write nothing" in reminder
 
 

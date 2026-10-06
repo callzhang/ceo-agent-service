@@ -91,8 +91,8 @@ confirmation. Consumer A must select only a reliable entry associated with the
 current subscription. Its initial proposal contains exactly `OPEN_ENTRY`, or one
 authenticated `POST_ONE_CLICK`; controls on an ordinary page are not guessed or
 precomputed. At each continuation, propose the exact ordered browser operations
-consisting of the durable prefix plus one new operation. Audit Agent B must
-review those exact operations before any external write; neither agent may
+consisting of the durable prefix plus one new operation. Audit must
+review those exact operations before the System Executor performs any external write; neither agent may
 replace them with an unreviewed navigation, form
 submission, or confirmation click.
 
@@ -100,12 +100,12 @@ When readback after an accepted operation finds another required control, stop
 before using it. The runtime persists the executed audited prefix, redacted
 observation, opaque control references, fixed control kinds and intents, and the
 unchanged exact-origin policy references, then returns a typed continuation.
-Consumer A may use only that continuation to propose one next operation. The
+Consumer may use only that continuation to propose one next operation. The
 next accepted effect must be a strict append-only extension of the persisted
 prefix with the same action, plan, classification, account, message, thread,
-entry, and network policy. Audit reviews that extension automatically under the
-normal feedback/revision lifecycle; no user confirmation is added. Execute only
-the newly accepted operation and never replay the prefix. Repeat this
+entry, and network policy. Audit reviews that extension under the
+normal feedback/revision lifecycle; no user confirmation is added. The System Executor performs only
+the newly approved operation and never replays the prefix. Repeat this
 `awaiting_audit` cycle until exact terminal evidence is read back.
 
 Treat RFC one-click as authenticated one-click only when typed provider evidence
@@ -182,10 +182,10 @@ Every reply requires explicit reply authorization.
   proposed. `auto_reply` is disabled and cannot be proposed or sent.
   Classification confirmation, category text, an older plan, or prior
   conversation is not authorization for another mail action.
-- Consumer A proposes only the authorized action; it never sends or unsubscribes
-  directly. Audit Agent B reviews the proposal under the existing
-  feedback/revision lifecycle. Only Audit may execute an accepted action and
-  verify exact readback.
+- Consumer proposes only the authorized action; it never sends or unsubscribes
+  directly. Audit reviews the exact proposal under the existing
+  feedback/revision lifecycle. Only the System Executor may perform an approved
+  controlled action and verify exact readback.
 - If the complete current thread shows an equivalent reply already sent, use
   canonical `no_action` for the mail effect and report the verified state only
   when the current conversation needs it.

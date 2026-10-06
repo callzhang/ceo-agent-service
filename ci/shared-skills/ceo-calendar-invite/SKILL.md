@@ -8,7 +8,7 @@ metadata:
 
 # CEO Calendar Invite
 
-Decide from the live invitation, schedule context, attendance value, and requested contribution. Calendar responses and factual clarification questions are Consumer proposals for Audit B to execute and verify.
+Decide from the live invitation, schedule context, attendance value, and requested contribution. Calendar responses and factual clarification questions are Consumer proposals for Audit to review. The System Executor performs and verifies an approved controlled action.
 
 ## Load And Read
 
@@ -63,7 +63,7 @@ For a silent meeting or asynchronous review, read and process every linked mater
 
 ## Audit B
 
-Before execution, Audit B rereads the live event state and the applicable Skills. Suppress only an already-applied exact response or an already-sent exact clarification. A different response or corrected question is new work and requires the normal review, execution, and live verification.
+Before approval, Audit rereads the live event state and the applicable Skills. Return an already-applied exact response or an already-sent exact clarification for correction; a different response or corrected question is new work and requires a new review. The System Executor checks current state before execution and verifies the live result.
 
 A clarification sent before the invitation's latest update is stale unless its
 exact time, conflict, requested contribution, and question still match the live

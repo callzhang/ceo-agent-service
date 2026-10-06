@@ -21,6 +21,8 @@
     "brightdata",
     "crm_connector",
     "cua_repl",
-    "fundflow"
+    "fundflow",
+    "node_repl",
+    "plaud"
   ]
 }

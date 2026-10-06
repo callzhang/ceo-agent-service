@@ -1338,3 +1338,16 @@ def test_dingtalk_pending_replacement_leaves_wechat_pending_tasks_untouched(tmp_
         item["trigger_message_id"]
         for item in store.list_reply_task_inputs(dingtalk_task.id)
     } == {"old", "quoted", "replace-old", "replacement"}
+
+
+def test_principal_superseded_delivery_cannot_requeue_expired_candidate(tmp_path):
+    store, delivery_id, _, generation = _seed_exhausted_target_open_failure(tmp_path)
+    store.skip_exhausted_stale_wechat_delivery(
+        delivery_id, expected_execution_generation=generation,
+        reason="stale_pre_action_retry_exhausted; superseded_by_principal_reply:synthetic-reply",
+        inactive_before="2026-07-30 10:10:00",
+    )
+    before = _wechat_delivery_and_attempt_state(store, delivery_id)
+    with pytest.raises(AgentRunLeaseLostError, match="superseded"):
+        store.requeue_expired_wechat_delivery_for_user(delivery_id)
+    assert _wechat_delivery_and_attempt_state(store, delivery_id) == before

@@ -543,24 +543,25 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
         now: datetime,
         error: str,
     ) -> None:
-        """Return a source to the queue when its handler failed before a run.
-
-        The dispatcher lease and the business queue row are one recovery unit.
-        Releasing only ``dispatcher_claim_leases`` leaves ``reply_tasks`` in
-        ``processing`` and lets the live process reclaim the same task forever.
-        """
+        """Count handler failures against the task budget, with bounded backoff."""
+        from app.external_retry import retry_delay_seconds
+        from app.worker import MAX_REPLY_TASK_ATTEMPTS
         _validate_release(self.name, envelope, owner, now)
         now_text = _sqlite_time(now)
+        terminal = envelope.attempt >= MAX_REPLY_TASK_ATTEMPTS
+        available_at = '' if terminal else _sqlite_time(
+            now + timedelta(seconds=retry_delay_seconds(60, max(envelope.attempt - 1, 0)))
+        )
         with self.store._immediate_write_transaction() as db:
             _release_lease(db, envelope=envelope, owner=owner, now=now_text)
             cursor = db.execute(
                 """
                 update reply_tasks
-                set status='pending', attempts=max(attempts-1, 0),
-                    locked_at=null, available_at='', error=?, updated_at=?
+                set status=?,
+                    locked_at=null, available_at=?, error=?, updated_at=?
                 where id=? and status='processing'
                 """,
-                (error[:2000], now_text, int(envelope.source_id)),
+                ('failed' if terminal else 'pending', available_at, error[:2000], now_text, int(envelope.source_id)),
             )
             if cursor.rowcount != 1:
                 raise ValueError("reply dispatch handler error source is no longer owned")

@@ -26,9 +26,11 @@ from app.agent_effects import (
     _is_signed_url,
 )
 from app.agent_result import ResultParseError
+from app.reviewed_sources import ReviewedSourceReadError
 from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
 from app.agent_runtime_contracts import (
     CredentialMode,
+    ROLE_BOUND_AGENT_TOOLS,
     RuntimeFailureClass,
     RuntimeKind,
     RuntimeRoute,
@@ -68,7 +70,7 @@ from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter, FridayRuntimeError
 from app.agent_runtime_router import _runtime_failure_from_friday_error
 from app.config import feedback_spike_vercel_base_url
-from app.feedback_spike import sanitize_configured_feedback_links
+from app.feedback_spike import sanitize_configured_feedback_links, sanitize_source_feedback_links
 from app.runtime_fallback import plan_runtime_fallback
 from app.leak_check import (
     contains_credential,
@@ -198,78 +200,9 @@ def _project_runtime_domain_result(
         field="summary",
         limit=_RUNTIME_RESULT_SUMMARY_MAX_CHARS,
     )
-    if isinstance(result, ConsumerAgentResult):
-        # Consumer proposals are already strict typed business values. Project
-        # fields explicitly so future model additions cannot silently enter the
-        # durable recovery envelope.
-        proposal = None
-        if result.proposal is not None:
-            proposal = {
-                "objective": result.proposal.objective,
-                "actions": [
-                    {
-                        "description": action.description,
-                        "action_identity": action.action_identity,
-                        "capability": action.capability,
-                        "operation": action.operation,
-                        "target": action.target,
-                        "payload": action.payload,
-                    }
-                    for action in result.proposal.actions
-                ],
-                "sourced_facts": [
-                    {
-                        "assertion": fact.assertion,
-                        "references": list(fact.references),
-                    }
-                    for fact in result.proposal.sourced_facts
-                ],
-                "authored_judgment": result.proposal.authored_judgment,
-            }
-        return {
-            "outcome": result.outcome.value,
-            "summary": summary,
-            "risk": result.risk.value,
-            "confidence": result.confidence,
-            "rule_coverage": result.rule_coverage,
-            "information_completeness": result.information_completeness,
-            "proposal": proposal,
-            "decision_options": [
-                option.model_dump(mode="json") for option in result.decision_options
-            ],
-            "error": result.error.model_dump(mode="json"),
-        }
-    external_result = None
-    if result.external_result is not None:
-        external_result = {
-            "operation_id": _bounded_runtime_result_text(
-                result.external_result.operation_id,
-                field="operation_id",
-                limit=512,
-            ),
-            "live_result_reference": _project_runtime_external_reference(
-                result.external_result.live_result_reference
-            ),
-        }
-    return {
-        "outcome": result.outcome.value,
-        "summary": summary,
-        "risk": result.risk.value,
-        "confidence": result.confidence,
-        "rule_coverage": result.rule_coverage,
-        "information_completeness": result.information_completeness,
-        "proposal_revision": result.proposal_revision,
-        "feedback": (
-            result.feedback.model_dump(mode="json")
-            if result.feedback is not None
-            else None
-        ),
-        "external_result": external_result,
-        "decision_options": [
-            option.model_dump(mode="json") for option in result.decision_options
-        ],
-        "error": result.error.model_dump(mode="json"),
-    }
+    projected = result.model_dump(mode="json")
+    projected["summary"] = summary
+    return projected
 
 
 def _reject_runtime_document_fields(value: object) -> None:
@@ -771,7 +704,9 @@ class AgentTurnProcess(Generic[ResultT]):
         conversation_contract_hash: str = "",
         force_new_session: bool = False,
         skill_names: tuple[str, ...] = (),
+        invocation_facts: dict[str, object] | None = None,
     ) -> AgentTurnRunResult[ResultT]:
+        required_capabilities = required_capabilities | {ROLE_BOUND_AGENT_TOOLS}
         line_count = 0
         saw_json = False
         primary_turn_started = False
@@ -1132,6 +1067,19 @@ class AgentTurnProcess(Generic[ResultT]):
                         session_id=route_session_id,
                         max_turns=CLAUDE_MAX_TURNS_PER_INVOCATION,
                         reasoning_effort=self.reasoning_effort or None,
+                        policy=(
+                            ClaudeCommandPolicy.consumer(
+                                task_id=self.task.id,
+                                db_path=str(self.store.path),
+                                execution_generation=run.execution_generation,
+                            )
+                            if run.role is AgentRole.CONSUMER
+                            else ClaudeCommandPolicy.audit(
+                                task_id=self.task.id,
+                                db_path=str(self.store.path),
+                                execution_generation=run.execution_generation,
+                            )
+                        ),
                     )
                     claude_normalizer = claude_adapter.new_event_normalizer(
                         expected_session_id=route_session_id,
@@ -1168,6 +1116,33 @@ class AgentTurnProcess(Generic[ResultT]):
                     command_env = self.codex_adapter.build_env(route)
                 if command_env is not None:
                     command_env.update(self.execution_mode_environment)
+                from app.runtime_prompt_context import render_runtime_context, runtime_prompt_snapshot
+
+                rendered_at = datetime.now().astimezone().isoformat()
+                context_facts = {**(invocation_facts or {}), "proposal_revision": run.proposal_revision}
+                runtime_context = render_runtime_context(
+                    role=run.role.value, route=route, command=command, task=self.task,
+                    current_time=rendered_at, invocation_facts=context_facts,
+                )
+                submitted_developer_instructions = developer_instructions + "\n\n" + runtime_context
+                if route.runtime_kind is RuntimeKind.CODEX_CLI:
+                    command = [
+                        "developer_instructions=" + json.dumps(submitted_developer_instructions)
+                        if value.startswith("developer_instructions=") else value
+                        for value in command
+                    ]
+                executor_prompt = (
+                    _claude_input_contract(prompt=prompt, developer_instructions=submitted_developer_instructions)
+                    if route.runtime_kind is RuntimeKind.CLAUDE_CLI else prompt
+                )
+                snapshot = runtime_prompt_snapshot(
+                    role=run.role.value, route=route, runtime_attempt_id=active_attempt.id,
+                    task=self.task, developer_instructions=submitted_developer_instructions,
+                    task_prompt=prompt, runtime_context=runtime_context, current_time=rendered_at,
+                    invocation_facts=context_facts,
+                )
+                snapshot["proposal_revision"] = run.proposal_revision
+                self.store.append_agent_run_event(run.id, snapshot, owner=self.owner)
                 try:
                     if route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME:
                         friday_result = self.friday_adapter.execute(
@@ -1208,6 +1183,8 @@ class AgentTurnProcess(Generic[ResultT]):
                             idle_timeout_seconds=IDLE_TIMEOUT_SECONDS,
                             on_stdout_line=persist_line,
                         )
+                        self.store.append_agent_run_event(run.id, {"type": "runtime.prompt.invoked",
+                            "runtime_attempt_id": active_attempt.id}, owner=self.owner)
                 except FridayRuntimeError as exc:
                     friday_failure = _runtime_failure_from_friday_error(exc)
                     if exc.thread_id:
@@ -1435,6 +1412,14 @@ class AgentTurnProcess(Generic[ResultT]):
             pass
         except CompletedRuntimeResultBlockedError:
             raise
+        except RuntimeResultValidationError as exc:
+            self._fail_runtime_attempt_unclassified(active_attempt, exc)
+            self._fail_running(
+                run, exc.code, detail=_runtime_failure_detail(exc.__cause__ or exc),
+                stage="result", source="service", source_code=exc.code,
+                retryable=False,
+            )
+            raise
         except RuntimeRouteUnavailableError as exc:
             self._fail_running(
                 run,
@@ -1484,6 +1469,22 @@ class AgentTurnProcess(Generic[ResultT]):
                 source="runtime",
                 source_code=exc.failure_code or exc.code,
                 session_continuable=True,
+            )
+            raise
+        except ReviewedSourceReadError as exc:
+            if active_attempt is not None:
+                pending_attempt = self.store.get_agent_runtime_attempt(active_attempt.id)
+                if pending_attempt is not None and pending_attempt.status in {"starting", "running"}:
+                    self.store.fail_agent_runtime_attempt(
+                        pending_attempt.id,
+                        RuntimeFailureClass.AUTHENTICATION.value if exc.error.authorization_required
+                        else RuntimeFailureClass.PROCESS.value,
+                        exc.error.source_code, exc.error.retryable,
+                    )
+            self.store.fail_agent_run(
+                run.id,
+                {**exc.error.model_dump(mode="json"), "detail": _runtime_failure_detail(exc)},
+                owner=self.owner,
             )
             raise
         except Exception as exc:
@@ -1723,6 +1724,11 @@ class AgentTurnProcess(Generic[ResultT]):
         persisted = self.store.get_agent_runtime_attempt(attempt.id)
         if persisted is None or persisted.status not in {"starting", "running"}:
             return
+        if isinstance(exc, RuntimeResultValidationError):
+            self.store.fail_agent_runtime_attempt(
+                attempt.id, RuntimeFailureClass.RESULT.value, exc.code, False,
+            )
+            return
         if isinstance(exc, ResultParseError):
             failure_code = _agent_process_error_code(exc)
             self.store.fail_agent_runtime_attempt(
@@ -1812,6 +1818,7 @@ class AgentTurnProcess(Generic[ResultT]):
         source: str = "",
         source_code: str = "",
         session_continuable: bool = False,
+        retryable: bool | None = None,
     ) -> None:
         persisted = self.store.get_agent_run(run.id)
         if persisted is not None and persisted.status == "running":
@@ -1820,7 +1827,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 run.id,
                 {
                     "code": code,
-                    "retryable": not terminal_auth_failure,
+                    "retryable": not terminal_auth_failure if retryable is None else retryable,
                     "authorization_required": False,
                     **({"detail": detail} if detail else {}),
                     **({"stage": stage} if stage else {}),
@@ -1983,19 +1990,21 @@ _RUNTIME_REFERENCE_TEXT_LIMITS = {
 }
 
 
-def _validate_runtime_reference_text_bounds(value: object, *, depth: int = 0) -> None:
+def _validate_runtime_reference_text_bounds(
+    value: object, *, depth: int = 0, authored: bool = True,
+) -> None:
     if depth > 12:
         raise ValueError("runtime_result_reference_depth_invalid")
     if isinstance(value, dict):
         for key, item in value.items():
             normalized = _normalized_key(str(key))
             limit = _RUNTIME_REFERENCE_TEXT_LIMITS.get(normalized)
-            if limit is not None and isinstance(item, str) and len(item) > limit:
+            if authored and limit is not None and isinstance(item, str) and len(item) > limit:
                 raise ValueError("runtime_result_reference_text_too_large")
-            _validate_runtime_reference_text_bounds(item, depth=depth + 1)
+            _validate_runtime_reference_text_bounds(item, depth=depth + 1, authored=authored)
     elif isinstance(value, list | tuple):
         for item in value:
-            _validate_runtime_reference_text_bounds(item, depth=depth + 1)
+            _validate_runtime_reference_text_bounds(item, depth=depth + 1, authored=authored)
 
 
 def _validate_runtime_reference_domain_result(
@@ -2005,17 +2014,44 @@ def _validate_runtime_reference_domain_result(
 ) -> None:
     domain_result = _project_runtime_domain_result(result)
     if allow_configured_feedback_links:
-        domain_result = cast(
-            dict[str, object],
-            sanitize_configured_feedback_links(
-                domain_result,
-                vercel_base_url=feedback_spike_vercel_base_url(),
-            ),
-        )
+        # Sources are service-captured provider reads, not current outgoing
+        # text. Inspect every field without imposing outbound paragraph layout
+        # on historical rendering or serialized provider containers.
+        for binding in domain_result.get("source_bindings", []):
+            try:
+                binding["value"] = sanitize_source_feedback_links(
+                    binding["value"], vercel_base_url=feedback_spike_vercel_base_url(),
+                )
+            except ValueError as exc:
+                raise RuntimeResultValidationError("runtime_result_source_invalid") from exc
+        try:
+            domain_result = cast(
+                dict[str, object],
+                sanitize_configured_feedback_links(
+                    domain_result,
+                    vercel_base_url=feedback_spike_vercel_base_url(),
+                ),
+            )
+        except ValueError as exc:
+            # This validates the authored result, so use the same bounded
+            # correction path as its wire/parser failures. A bare ValueError
+            # escapes orchestration after failure persistence and requeues
+            # the task before the existing retry ceiling can be reached.
+            raise ResultParseError(str(exc)) from exc
     _redact_local_runtime_values(domain_result)
     # Local paths can be accidentally echoed while describing source material.
     # Redact the serialized domain fields before enforcing the result boundary.
-    _validate_runtime_reference_text_bounds(domain_result)
+    # Provider snapshots can contain full cards/documents under keys also used
+    # by authored judgments. Keep their depth/codec/security limits, not the
+    # Agent's short-field limits, without changing the persisted source value.
+    authored_result = dict(domain_result)
+    source_bindings = authored_result.pop("source_bindings", [])
+    _validate_runtime_reference_text_bounds(authored_result)
+    for binding in source_bindings:
+        _validate_runtime_reference_text_bounds(
+            {key: value for key, value in binding.items() if key != "value"}, depth=2,
+        )
+        _validate_runtime_reference_text_bounds(binding["value"], depth=3, authored=False)
     sensitive_projection = domain_result
     if _contains_sensitive_value(sensitive_projection):
         raise ValueError("agent_result_contains_sensitive_value")

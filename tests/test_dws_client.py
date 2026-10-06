@@ -6811,3 +6811,27 @@ def test_the_push_title_of_a_markdown_message_has_no_markdown_markers():
     title = command[command.index("--title") + 1]
     assert "**" not in title and "##" not in title and "- " not in title
     assert title.startswith("结论 先出方案")
+
+
+@pytest.mark.parametrize('stable_sender', ['principal', 'open-principal'])
+def test_parse_current_typed_message_ledger_preserves_exact_original_object(stable_sender):
+    from app.dws_client import DwsUserProfile
+    row = {'conversationId':'original-cid','messageId':'original-message',
+           'sender':'Principal','senderId':stable_sender,
+           'createTime':'2026-10-06 09:43:12','text':'Exact approved test body'}
+    payload = {'contractVersion':'im.message-list.v1','messages':[row],
+               'count':1,'complete':True,'hasMore':False,'failures':[]}
+    messages = DwsClient.parse_messages(payload, conversation_title='Self', single_chat=True)
+    assert len(messages) == 1
+    message = messages[0]
+    assert message.open_conversation_id == 'original-cid'
+    assert message.open_message_id == 'original-message'
+    assert message.content == row['text']
+    assert message.raw_payload == row
+    client = DwsClient()
+    client.get_current_user_id = lambda: 'principal'
+    client.search_user_profiles = lambda name: [DwsUserProfile(user_id='principal', name='Principal', open_dingtalk_id='open-principal')]
+    assert client.is_current_user_message(message)
+    unknown = message.model_copy(update={'raw_payload':dict(row, senderId='someone-else')})
+    with pytest.raises(DwsError, match='unique DingTalk sender'):
+        client.is_current_user_message(unknown)

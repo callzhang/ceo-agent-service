@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
-from app.agent_context import AgentTaskContext, AuditTurnContext
+from app.agent_context import AgentTaskContext, AuditTurnContext, PriorReceipt
 from app.agent_contracts import (
     AuditAgentResult,
     AuditFeedback,
@@ -13,108 +13,20 @@ from app.agent_contracts import (
     ConsumerAgentResult,
     ConsumerOutcome,
     ConsumerProposal,
+    SystemExecutionResult,
 )
 from app.agent_result import AgentError, ResultParseError
 from app.agent_turn_runner import AgentTurnRunResult
 from app.codex_capacity import is_codex_provider_recovery_code
-from app.config import principal_display_name
 from app.external_retry import retry_delay_seconds
-from app.email_unsubscribe_continuation import (
-    DomainContinuationConsumptionDecision,
-    DomainContinuationConsumptionState,
-    DomainContinuationDecision,
-    DomainContinuationDriver,
-    DomainContinuationState,
-    domain_continuation_receipt_binding,
-)
+from app.reviewed_candidates import rejected_content_changed
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 
 MAX_TURNS_PER_PROCESS = 32
 MAX_CONTENT_FEEDBACK_CYCLES = 3
 MAX_ROLE_ATTEMPTS_PER_PROCESS = 2
-# A role that fails this many turns in a row on one proposal revision stops
-# retrying and ends the task failed. It is the same bound the DingTalk worker
-# already has through its task attempts: three passes of
-# MAX_ROLE_ATTEMPTS_PER_PROCESS turns (worker.MAX_REPLY_TASK_ATTEMPTS = 3). A
-# caller that hands the attempt back on deferral (scheduled executions, email
-# tasks) has no such counter, so the bound is counted from the persisted runs.
 MAX_CONSECUTIVE_FAILED_TURNS = MAX_ROLE_ATTEMPTS_PER_PROCESS * 3
-_DOMAIN_SNAPSHOT_INVALID = object()
-
-
-def _bounded_fact_finding_feedback(
-    result: ConsumerAgentResult,
-) -> AuditFeedback | None:
-    """Ask Consumer to materialize its own safe fact-finding option as a proposal."""
-    if result.outcome is not ConsumerOutcome.NEEDS_HUMAN:
-        return None
-    fact_markers = (
-        "询问",
-        "确认",
-        "调研",
-        "核实",
-        "fact-finding",
-        "fact finding",
-        "inquir",
-        "gather",
-    )
-    boundary_markers = (
-        "不构成采购",
-        "不构成预算",
-        "不构成合作",
-        "不代表公司作出采购",
-        "不代表公司作出预算",
-        "不代表公司作出合作",
-        "不作出采购",
-        "不作出预算",
-        "不作出合作",
-        "不得确认采购",
-        "不得确认报价",
-        "不得确认订单",
-        "不得确认预算",
-        "不得确认合作",
-        "不得下单",
-        "不得付款",
-        "no purchase",
-        "no budget",
-        "no partnership",
-        "without.*commit",
-    )
-    commitment_terms = (
-        "采购",
-        "预算",
-        "合作",
-        "下单",
-        "付款",
-        "承诺",
-        "purchase",
-        "budget",
-        "partnership",
-        "commit",
-    )
-    for option in result.decision_options:
-        text = " ".join((option.label, option.instruction, option.consequence)).lower()
-        has_boundary = any(marker.lower() in text for marker in boundary_markers) or (
-            "不得" in text and any(term.lower() in text for term in commitment_terms)
-        )
-        if any(marker.lower() in text for marker in fact_markers) and has_boundary:
-            return AuditFeedback(
-                rule=(
-                    "A decision option already defines a bounded fact-finding inquiry "
-                    "with no purchase, budget, or partnership commitment."
-                ),
-                observation=(
-                    "The candidate's own option states the facts to gather and the "
-                    "prohibition on committing or spending."
-                ),
-                requested_revision=(
-                    "Regenerate the same task as an executable proposal for that "
-                    "bounded inquiry. Put the risk boundary in the outgoing message "
-                    f"itself; do not ask {principal_display_name()} to choose between options and do not "
-                    "authorize a quote, order, agreement, or spend."
-                ),
-            )
-    return None
+MAX_EXECUTION_STAGES = 16
 
 
 class ConsumerRunner(Protocol):
@@ -140,6 +52,12 @@ class AuditRunner(Protocol):
     ) -> AgentTurnRunResult[AuditAgentResult]: ...
 
 
+class CandidateExecutor(Protocol):
+    def execute(
+        self, task: ReplyTask, candidate_id: int, review_id: int, *, context: AgentTaskContext
+    ) -> SystemExecutionResult: ...
+
+
 @dataclass(frozen=True)
 class OrchestrationResult:
     status: str
@@ -151,10 +69,10 @@ class OrchestrationResult:
     feedback: AuditFeedback | None = None
     consumer_result: ConsumerAgentResult | None = None
     audit_result: AuditAgentResult | None = None
-    # Seconds a retryable result asks the caller to wait before the next pass;
-    # 0 leaves the timing to the caller. Only a role that spent its turns on a
-    # failure it could not explain sets it.
     retry_after_seconds: float = 0.0
+    execution_result: SystemExecutionResult | None = None
+    candidate_id: int | None = None
+    review_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -163,9 +81,8 @@ class _NextConsumer:
     parent_run_id: int | None
     feedback: AuditFeedback | None
     deferred_error_code: str = ""
-    domain_continuation: bool = False
-    required_receipt_id: str = ""
-    required_receipt_binding: str = ""
+    stage_index: int = 0
+    predecessor_review_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -173,8 +90,21 @@ class _NextAudit:
     proposal_revision: int
     turn_attempt: int
     parent_run_id: int
-    proposal: ConsumerProposal | None
+    candidate: ConsumerAgentResult
+    candidate_id: int
+    candidate_digest: str
     deferred_error_code: str = ""
+
+
+@dataclass(frozen=True)
+class _NextExecution:
+    consumer_run: AgentRun
+    audit_run: AgentRun
+    consumer_result: ConsumerAgentResult
+    audit_result: AuditAgentResult
+    candidate_id: int
+    review_id: int
+    feedback_cycles: int
 
 
 @dataclass(frozen=True)
@@ -183,6 +113,7 @@ class _Deferred:
     code: str
     feedback_cycles: int
     detail: str = ""
+    source_error: AgentError | None = None
 
 
 def _enrich_oa_applicant_target(
@@ -220,18 +151,22 @@ def _enrich_oa_applicant_target(
 
 
 class AgentOrchestrator:
+    """Resume persisted whole-candidate reviews and execute only their bound plans."""
+
     def __init__(
         self,
         *,
         store: AutoReplyStore,
         consumer: ConsumerRunner,
         audit: AuditRunner,
-        domain_continuation: DomainContinuationDriver | None = None,
-    ) -> None:
-        self.store = store
-        self.consumer = consumer
-        self.audit = audit
-        self.domain_continuation = domain_continuation
+        system_executor: CandidateExecutor | None = None,
+    ):
+        self.store, self.consumer, self.audit, self.system_executor = (
+            store,
+            consumer,
+            audit,
+            system_executor,
+        )
 
     def process(
         self,
@@ -240,117 +175,114 @@ class AgentOrchestrator:
         *,
         refresh_context: Callable[[], AgentTaskContext],
     ) -> OrchestrationResult:
-        if context.task_id != task.id:
-            raise ValueError("agent context task does not match reply task")
-        role_attempts: dict[tuple[AgentRole, int, str], int] = {}
+        _validate_refreshed_task_context(task, context)
+        attempts: dict[tuple[AgentRole, int], int] = {}
         for _ in range(MAX_TURNS_PER_PROCESS):
             state = self._derive_state(task)
             if isinstance(state, OrchestrationResult):
                 return state
             if isinstance(state, _Deferred):
                 return self._deferred_result(state)
+            if isinstance(state, _NextExecution):
+                try:
+                    current_context = refresh_context()
+                    _validate_refreshed_task_context(task, current_context)
+                except Exception as exc:
+                    return self._deferred_result(_Deferred(state.audit_run,
+                        "agent_context_refresh_failed", state.feedback_cycles,
+                        _context_refresh_failure_detail(exc), _context_refresh_error(exc)))
+                if self.system_executor is None:
+                    return self._candidate_terminal(
+                        state,
+                        "failed_terminal",
+                        AgentError(code="system_executor_unavailable", retryable=False),
+                    )
+                executed = self.system_executor.execute(
+                    task, state.candidate_id, state.review_id, context=current_context
+                )
+                if executed.error.code == "business_state_changed":
+                    state = self._business_revision(state)
+                elif (
+                    executed.outcome != "executed"
+                    or not state.consumer_result.continue_after_execution
+                ):
+                    status = (
+                        _failure_status(executed.error)
+                        if executed.outcome == "failed"
+                        else executed.outcome
+                    )
+                    return self._candidate_terminal(
+                        state, status, executed.error, executed
+                    )
+                elif state.consumer_result.stage_index + 1 >= MAX_EXECUTION_STAGES:
+                    return self._candidate_terminal(
+                        state,
+                        "failed_terminal",
+                        AgentError(
+                            code="execution_stage_limit_reached", retryable=False
+                        ),
+                        executed,
+                    )
+                else:
+                    state = _NextConsumer(
+                        state.consumer_run.proposal_revision + 1,
+                        state.audit_run.id,
+                        None,
+                        stage_index=state.consumer_result.stage_index + 1,
+                        predecessor_review_id=state.review_id,
+                    )
+            role = (
+                AgentRole.CONSUMER
+                if isinstance(state, _NextConsumer)
+                else AgentRole.AUDIT
+            )
+            key = (role, state.proposal_revision)
+            bound = 1 if state.deferred_error_code else MAX_ROLE_ATTEMPTS_PER_PROCESS
+            if attempts.get(key, 0) >= bound:
+                return self._retry_exhausted_result(
+                    task, role=role, proposal_revision=state.proposal_revision
+                )
+            attempts[key] = attempts.get(key, 0) + 1
+            try:
+                fresh = refresh_context()
+                _validate_refreshed_task_context(task, fresh)
+                fresh = self._with_persisted_evidence(task, fresh, state)
+            except Exception as exc:
+                return self._deferred_result(
+                    _Deferred(
+                        None,
+                        "agent_context_refresh_failed",
+                        self._feedback_cycles(task),
+                        _context_refresh_failure_detail(exc),
+                        _context_refresh_error(exc),
+                    )
+                )
             try:
                 if isinstance(state, _NextConsumer):
-                    attempt_key = (AgentRole.CONSUMER, state.proposal_revision, "run")
-                    max_attempts = (
-                        1 if state.deferred_error_code else MAX_ROLE_ATTEMPTS_PER_PROCESS
+                    fresh = replace(
+                        fresh,
+                        stage_index=state.stage_index,
+                        predecessor_review_id=state.predecessor_review_id,
                     )
-                    if role_attempts.get(attempt_key, 0) >= max_attempts:
-                        if not state.deferred_error_code:
-                            return self._retry_exhausted_result(
-                                task,
-                                role=AgentRole.CONSUMER,
-                                proposal_revision=state.proposal_revision,
-                            )
-                        return self._deferred_result(
-                            _Deferred(
-                                run=None,
-                                code=state.deferred_error_code or "consumer_retry_deferred",
-                                feedback_cycles=self._feedback_cycles(task),
-                            )
-                        )
-                    role_attempts[attempt_key] = role_attempts.get(attempt_key, 0) + 1
-                    consumer_context = context
-                    if state.domain_continuation:
-                        try:
-                            consumer_context = refresh_context()
-                            _validate_refreshed_task_context(task, consumer_context)
-                            _validate_domain_continuation_context(
-                                consumer_context,
-                                state.required_receipt_id,
-                                state.required_receipt_binding,
-                            )
-                        except Exception as exc:
-                            return self._deferred_result(
-                                _Deferred(
-                                    run=None,
-                                    code="agent_context_refresh_failed",
-                                    feedback_cycles=self._feedback_cycles(task),
-                                    detail=_context_refresh_failure_detail(exc),
-                                )
-                            )
                     self.consumer.run(
                         task,
-                        consumer_context,
+                        fresh,
                         proposal_revision=state.proposal_revision,
                         parent_agent_run_id=state.parent_run_id,
                         feedback=state.feedback,
                     )
                 else:
-                    # Audit receives the Consumer proposal and returns one
-                    # typed result.  The former recovery phases were driven by
-                    # the application side-effect state machine and are no
-                    # longer part of orchestration.
-                    attempt_key = (AgentRole.AUDIT, state.proposal_revision, "run")
-                    max_attempts = (
-                        1 if state.deferred_error_code else MAX_ROLE_ATTEMPTS_PER_PROCESS
-                    )
-                    if role_attempts.get(attempt_key, 0) >= max_attempts:
-                        if not state.deferred_error_code:
-                            return self._retry_exhausted_result(
-                                task,
-                                role=AgentRole.AUDIT,
-                                proposal_revision=state.proposal_revision,
-                            )
-                        return self._deferred_result(
-                            _Deferred(
-                                run=None,
-                                code=state.deferred_error_code or "audit_retry_deferred",
-                                feedback_cycles=self._feedback_cycles(task),
-                            )
-                        )
-                    role_attempts[attempt_key] = role_attempts.get(attempt_key, 0) + 1
-                    assert state.proposal is not None
-                    try:
-                        audit_task_context = refresh_context()
-                        if audit_task_context.task_id != task.id:
-                            raise ValueError(
-                                "refreshed agent context does not match reply task"
-                            )
-                    except Exception as exc:
-                        return self._deferred_result(
-                            _Deferred(
-                                run=None,
-                                code="agent_context_refresh_failed",
-                                feedback_cycles=self._feedback_cycles(task),
-                                detail=_context_refresh_failure_detail(exc),
-                            )
-                        )
-                    proposal = _enrich_oa_applicant_target(
-                        state.proposal,
-                        audit_task_context,
-                    )
-                    audit_context = AuditTurnContext(
-                        task=audit_task_context,
-                        proposal_revision=state.proposal_revision,
-                        operation_id=_operation_id(task, state.proposal_revision),
-                        proposal=proposal,
-                        audit_rules="",
-                    )
                     self._validate_audit_parent(task, state)
                     self.audit.run(
                         task,
-                        audit_context,
+                        AuditTurnContext(
+                            task=fresh,
+                            proposal_revision=state.proposal_revision,
+                            operation_id=_operation_id(task, state.proposal_revision),
+                            candidate=state.candidate,
+                            candidate_digest=state.candidate_digest,
+                            audit_rules="",
+                        ),
                         turn_attempt=state.turn_attempt,
                         parent_agent_run_id=state.parent_run_id,
                     )
@@ -359,42 +291,23 @@ class AgentOrchestrator:
                     "agent_run_unavailable",
                     "audit_consumer_parent_invalid",
                     "codex_session_locked",
-                    # The turn runner discarded its unstarted run because
-                    # every route is paused or unprobed; defer without a run.
                     "runtime_provider_unreachable",
                 }:
                     return self._deferred_result(
-                        _Deferred(
-                            run=None,
-                            code=str(exc),
-                            feedback_cycles=self._feedback_cycles(task),
-                        )
+                        _Deferred(None, str(exc), self._feedback_cycles(task))
                     )
-                next_state = self._derive_state(task)
-                if isinstance(
-                    next_state,
-                    (_NextConsumer, _NextAudit),
+                # The runner persists its classified failure before raising; derive
+                # the next bounded technical attempt from that durable run.
+                if not self.store.list_agent_runs_for_task_generation(
+                    task.id, task.execution_generation
                 ):
-                    continue
-                if isinstance(next_state, _Deferred):
-                    return self._deferred_result(next_state)
-                return next_state
+                    raise
         return self._deferred_result(
-            _Deferred(
-                run=None,
-                code="agent_turn_limit_reached",
-                feedback_cycles=self._feedback_cycles(task),
-            )
+            _Deferred(None, "agent_turn_limit_reached", self._feedback_cycles(task))
         )
 
     def _validate_audit_parent(self, task: ReplyTask, state: _NextAudit) -> None:
-        """Require an Audit turn to point at its exact completed Consumer result."""
-
-        parent = (
-            self.store.get_agent_run(state.parent_run_id)
-            if state.parent_run_id is not None
-            else None
-        )
+        parent = self.store.get_agent_run(state.parent_run_id)
         if (
             parent is None
             or parent.reply_task_id != task.id
@@ -405,913 +318,418 @@ class AgentOrchestrator:
         ):
             raise RuntimeError("audit_consumer_parent_invalid")
 
-    def _derive_state(
-        self,
-        task: ReplyTask,
-    ) -> OrchestrationResult | _NextConsumer | _NextAudit | _Deferred:
+    def _derive_state(self, task: ReplyTask):
         runs = self.store.list_agent_runs_for_task_generation(
-            task.id,
-            task.execution_generation,
+            task.id, task.execution_generation
         )
-        runs_by_id = {run.id: run for run in runs}
-        feedback_cycles = self._feedback_cycles_by_runs(runs)
-        domain_snapshot = self._load_domain_continuation_snapshot(task)
-        by_revision: dict[int, list[AgentRun]] = {}
-        for run in runs:
-            by_revision.setdefault(run.proposal_revision, []).append(run)
-        if feedback_cycles > MAX_CONTENT_FEEDBACK_CYCLES:
-            latest_feedback_run = next(
-                (
-                    run
-                    for run in reversed(runs)
-                    if run.role is AgentRole.AUDIT
-                    and run.status == "completed"
-                    and self._is_completed_feedback_run(run)
-                ),
-                None,
-            )
-            if latest_feedback_run is not None:
-                return self._feedback_exhausted(
-                    latest_feedback_run,
-                    feedback_cycles,
-                )
-        highest_materialized_revision = max(
-            (run.proposal_revision for run in runs if run.role is AgentRole.CONSUMER),
-            default=0,
+        consumers = sorted(
+            (r for r in runs if r.role is AgentRole.CONSUMER),
+            key=lambda r: (r.proposal_revision, r.turn_attempt, r.id),
         )
-
-        revisions = range(highest_materialized_revision + 2)
-        for revision in revisions:
-            revision_runs = by_revision.get(revision, [])
-            consumer_turns = sorted(
-                (run for run in revision_runs if run.role is AgentRole.CONSUMER),
-                key=lambda run: (run.turn_attempt, run.id),
-            )
-            consumer = consumer_turns[-1] if consumer_turns else None
-            if consumer is None:
-                if revision == 0:
-                    return _NextConsumer(0, None, None)
-                previous_audit = self._latest_completed_audit(
-                    by_revision,
-                    revision - 1,
-                )
-                if previous_audit is None:
-                    return _Deferred(None, "agent_turn_state_incomplete", revision - 1)
-                previous_result = _audit_result(previous_audit)
-                if previous_result.outcome is AuditOutcome.FEEDBACK_PROVIDED:
-                    if previous_result.feedback is None:
-                        return _Deferred(
-                            previous_audit,
-                            "agent_feedback_missing",
-                            feedback_cycles,
-                        )
-                    return _NextConsumer(
-                        revision,
-                        previous_audit.id,
-                        previous_result.feedback,
-                    )
-                if previous_result.outcome is AuditOutcome.EXECUTED:
-                    continuation = self._domain_continuation_state(
-                        task,
-                        previous_audit,
-                        previous_result,
-                        domain_snapshot,
-                    )
-                    if continuation.state is DomainContinuationState.CONTINUE:
-                        return _NextConsumer(
-                            revision,
-                            previous_audit.id,
-                            None,
-                            domain_continuation=True,
-                            required_receipt_id=continuation.required_receipt_id,
-                            required_receipt_binding=(
-                                continuation.required_receipt_binding
-                            ),
-                        )
-                    if continuation.state is DomainContinuationState.LIMIT_REACHED:
-                        return self._domain_continuation_limit_reached(
-                            previous_audit, feedback_cycles
-                        )
-                    if continuation.state is DomainContinuationState.INVALID:
-                        return self._domain_continuation_invalid(
-                            previous_audit, feedback_cycles
-                        )
-                    if continuation.state is DomainContinuationState.UNAVAILABLE:
-                        return self._domain_continuation_unavailable(
-                            previous_audit, feedback_cycles
-                        )
-                    return _audit_terminal(
-                        "executed",
-                        previous_audit,
-                        previous_result,
-                        feedback_cycles,
-                    )
-                return _audit_terminal(
-                    previous_result.outcome.value,
-                    previous_audit,
-                    previous_result,
-                    feedback_cycles,
-                )
-            audits = sorted(
-                (run for run in revision_runs if run.role is AgentRole.AUDIT),
-                key=lambda run: (run.turn_attempt, run.id),
-            )
-            consumer_state = self._consumer_state(
-                task,
-                consumer,
-                feedback_cycles,
-                runs_by_id=runs_by_id,
-                domain_snapshot=domain_snapshot,
-            )
-            # A route/process failure can leave a durable proposal from an
-            # earlier Consumer run in the same revision. Reuse that proposal
-            # and continue with Audit instead of regenerating Consumer output.
-            if consumer.status == "failed" and _run_error(consumer).code in {
-                "runtime_execution_failed",
-                "codex_process_failed",
-                "service_restart_interrupted",
-                "provider_read_failed",
-            }:
-                prior = [
-                    run for run in consumer_turns[:-1] if run.status == "completed"
-                ]
-                for candidate in reversed(prior):
-                    candidate_state = self._consumer_state(
-                        task,
-                        candidate,
-                        feedback_cycles,
-                        runs_by_id=runs_by_id,
-                        domain_snapshot=domain_snapshot,
-                    )
-                    if (
-                        isinstance(candidate_state, ConsumerAgentResult)
-                        and candidate_state.proposal is not None
-                    ):
-                        consumer = candidate
-                        consumer_state = candidate_state
-                        break
-            if revision > 0:
-                parent_state = self._validate_consumer_revision_parent(
-                    task,
-                    consumer,
-                    child_audits=tuple(
-                        audit
-                        for audit in audits
-                        if audit.parent_agent_run_id == consumer.id
-                    ),
-                    feedback_cycles=feedback_cycles,
-                    runs_by_id=runs_by_id,
-                    domain_snapshot=domain_snapshot,
-                )
-                if parent_state is not None:
-                    return parent_state
-            if not isinstance(consumer_state, ConsumerAgentResult):
-                return consumer_state
-            if consumer_state.outcome is ConsumerOutcome.NO_ACTION:
-                return _consumer_terminal(
-                    "no_action",
-                    consumer,
-                    consumer_state,
-                    feedback_cycles,
-                )
-            if consumer_state.outcome is ConsumerOutcome.NEEDS_HUMAN:
-                bounded_feedback = _bounded_fact_finding_feedback(consumer_state)
-                if bounded_feedback is not None:
-                    return _NextConsumer(revision, None, bounded_feedback)
-                return _consumer_terminal(
-                    "needs_human",
-                    consumer,
-                    consumer_state,
-                    feedback_cycles,
-                )
-            if consumer_state.outcome is ConsumerOutcome.FAILED:
-                return _consumer_terminal(
-                    _failure_status(consumer_state.error),
-                    consumer,
-                    consumer_state,
-                    feedback_cycles,
-                )
-            assert consumer_state.proposal is not None
-
-            if not audits:
-                return _NextAudit(
-                    revision,
-                    0,
-                    consumer.id,
-                    consumer_state.proposal,
-                )
-            latest = audits[-1]
-            audit_state = self._audit_state(
-                task,
-                latest,
-                feedback_cycles,
-            )
-            if isinstance(audit_state, _NextAudit):
-                return _NextAudit(
-                    revision,
-                    audit_state.turn_attempt,
-                    consumer.id,
-                    consumer_state.proposal,
-                    audit_state.deferred_error_code,
-                )
-            if not isinstance(audit_state, AuditAgentResult):
-                return audit_state
-            if audit_state.outcome is AuditOutcome.EXECUTED:
-                if revision < highest_materialized_revision:
-                    continue
-                continuation = self._domain_continuation_state(
-                    task,
-                    latest,
-                    audit_state,
-                    domain_snapshot,
-                )
-                if continuation.state is DomainContinuationState.CONTINUE:
-                    return _NextConsumer(
-                        revision + 1,
-                        latest.id,
-                        None,
-                        domain_continuation=True,
-                        required_receipt_id=continuation.required_receipt_id,
-                        required_receipt_binding=(
-                            continuation.required_receipt_binding
-                        ),
-                    )
-                if continuation.state is DomainContinuationState.LIMIT_REACHED:
-                    return self._domain_continuation_limit_reached(
-                        latest, feedback_cycles
-                    )
-                if continuation.state is DomainContinuationState.INVALID:
-                    return self._domain_continuation_invalid(latest, feedback_cycles)
-                if continuation.state is DomainContinuationState.UNAVAILABLE:
-                    return self._domain_continuation_unavailable(
-                        latest, feedback_cycles
-                    )
-                if consumer_state.escalates:
-                    # The action ran; the question it could not settle is
-                    # still Derek's. Same end state as any generation that
-                    # completed an external action and still needs him.
-                    return OrchestrationResult(
-                        status="needs_human",
-                        final_run_id=latest.id,
-                        final_role=AgentRole.AUDIT,
-                        summary=(
-                            f"{audit_state.summary}\n\n"
-                            f"{consumer_state.needs_human_reason}"
-                        ),
-                        error=audit_state.error,
-                        feedback_cycles=feedback_cycles,
-                        consumer_result=consumer_state,
-                        audit_result=audit_state,
-                    )
-                return _audit_terminal(
-                    "executed",
-                    latest,
-                    audit_state,
-                    feedback_cycles,
-                )
-            if audit_state.outcome is AuditOutcome.NEEDS_HUMAN:
-                # A normal Audit turn can occasionally emit the recovery-only
-                # sentinel after a malformed/partial model response even though
-                # no recovery is being performed. That is not a real management
-                # decision. Give Audit one bounded fresh attempt before exposing
-                # needs_human; the per-process role-attempt cap prevents loops.
-                return _audit_terminal(
-                    "needs_human",
-                    latest,
-                    audit_state,
-                    feedback_cycles,
-                )
-            if audit_state.outcome is AuditOutcome.DRY_RUN:
-                return _audit_terminal(
-                    "dry_run",
-                    latest,
-                    audit_state,
-                    feedback_cycles,
-                )
-            if audit_state.outcome is AuditOutcome.FAILED:
-                return _audit_terminal(
-                    _failure_status(audit_state.error),
-                    latest,
-                    audit_state,
-                    feedback_cycles,
-                )
-            if audit_state.outcome is AuditOutcome.FEEDBACK_PROVIDED:
-                if revision < highest_materialized_revision:
-                    continue
-                if audit_state.feedback is None:
-                    return _Deferred(
-                        latest,
-                        "agent_feedback_missing",
-                        feedback_cycles,
-                    )
-                return _NextConsumer(
-                    revision + 1,
-                    latest.id,
-                    audit_state.feedback,
-                )
-        return _Deferred(None, "agent_turn_state_incomplete", 0)
-
-    def _consumer_state(
-        self,
-        task: ReplyTask,
-        run: AgentRun,
-        feedback_cycles: int,
-        *,
-        runs_by_id: dict[int, AgentRun] | None = None,
-        domain_snapshot: object | None = None,
-    ) -> ConsumerAgentResult | _NextConsumer | _Deferred | OrchestrationResult:
-        if run.status == "completed":
+        if not consumers:
+            return _NextConsumer(0, None, None)
+        consumer = consumers[-1]
+        # A later technical turn cannot erase the durable complete candidate
+        # in this exact revision and parent lineage. Its failure remains history.
+        for prior in reversed(consumers):
+            if (prior.proposal_revision, prior.parent_agent_run_id) != (
+                consumer.proposal_revision, consumer.parent_agent_run_id
+            ) or prior.status != "completed":
+                continue
             try:
-                return _consumer_result(run)
-            except (ResultParseError, ValueError):
-                return _NextConsumer(
-                    run.proposal_revision,
-                    run.parent_agent_run_id,
-                    self._retry_feedback(run, runs_by_id=runs_by_id),
-                )
-        error = _run_error(run)
-        if run.status == "failed" and error.authorization_required and error.retryable:
-            if task.error == error.code:
-                feedback = self._retry_feedback(run, runs_by_id=runs_by_id)
-                return self._next_consumer_retry(
-                    task,
-                    run,
-                    feedback,
-                    feedback_cycles,
-                    deferred_error_code=error.code or "authorization_required",
-                    runs_by_id=runs_by_id,
-                    domain_snapshot=domain_snapshot,
-                )
-            return _Deferred(
-                run,
-                error.code or "authorization_required",
-                feedback_cycles,
+                completed = _consumer_result(prior)
+            except ValueError:
+                continue
+            if completed.outcome is not ConsumerOutcome.FAILED:
+                consumer = prior
+                break
+        cycles = self._feedback_cycles_by_runs(runs)
+        technical = self._technical_state(task, consumer, cycles)
+        if technical is not None:
+            if isinstance(technical, _Deferred):
+                return technical
+            if technical.status != "failed_retryable":
+                return technical
+            parent = (
+                self.store.get_agent_run(consumer.parent_agent_run_id)
+                if consumer.parent_agent_run_id
+                else None
             )
-        if run.status == "failed" and error.retryable:
-            if error.code in {
-                "runtime_execution_failed",
-                "runtime_provider_unreachable",
-                "runtime_provider_auth_failed",
-            }:
-                if _retryable_route_error_can_resume(task, error):
-                    feedback = self._retry_feedback(run, runs_by_id=runs_by_id)
-                    return self._next_consumer_retry(
-                        task,
-                        run,
-                        feedback,
-                        feedback_cycles,
-                        deferred_error_code=error.code,
-                        runs_by_id=runs_by_id,
-                        domain_snapshot=domain_snapshot,
-                    )
-                return _Deferred(run, error.code, feedback_cycles)
-            if is_codex_provider_recovery_code(error.code):
-                if task.error == error.code:
-                    feedback = self._retry_feedback(run, runs_by_id=runs_by_id)
-                    return self._next_consumer_retry(
-                        task,
-                        run,
-                        feedback,
-                        feedback_cycles,
-                        deferred_error_code=error.code,
-                        runs_by_id=runs_by_id,
-                        domain_snapshot=domain_snapshot,
-                    )
-                return _Deferred(run, error.code, feedback_cycles)
-            feedback = self._retry_feedback(run, runs_by_id=runs_by_id)
-            return self._next_consumer_retry(
-                task,
-                run,
+            feedback = (
+                _audit_result(parent).feedback
+                if parent and parent.status == "completed"
+                else None
+            )
+            # Technical attempts stay in the same revision and use its original
+            # parent; they do not spend a content feedback cycle.
+            return _NextConsumer(
+                consumer.proposal_revision,
+                consumer.parent_agent_run_id,
                 feedback,
-                feedback_cycles,
-                runs_by_id=runs_by_id,
-                domain_snapshot=domain_snapshot,
+                technical.error.code if _is_waiting_failure(technical.error) else "",
+                **self._stage_for_parent(parent),
             )
-        if run.status == "running":
-            if self.store.agent_run_lease_is_active(run.id):
-                return _Deferred(run, "agent_run_active", feedback_cycles)
-            self.store.fail_expired_agent_run(
-                run.id,
-                {"code": "consumer_lease_expired", "retryable": True},
-                expected_execution_generation=task.execution_generation,
+        try:
+            result = _consumer_result(consumer)
+        except ValueError:
+            return _NextConsumer(
+                consumer.proposal_revision, consumer.parent_agent_run_id, None
             )
-            feedback = self._retry_feedback(run, runs_by_id=runs_by_id)
-            return self._next_consumer_retry(
-                task,
-                run,
-                feedback,
-                feedback_cycles,
-                runs_by_id=runs_by_id,
-                domain_snapshot=domain_snapshot,
+        if result.outcome is ConsumerOutcome.FAILED:
+            return self._run_terminal(
+                consumer, _failure_status(result.error), result.error, cycles, result
             )
-        result = ConsumerAgentResult(
-            outcome=ConsumerOutcome.FAILED,
-            summary=error.code or "Consumer Agent failed.",
-            proposal=None,
-            risk="high",
-            confidence=0.0,
-            rule_coverage=1.0,
-            information_completeness=1.0,
-            error=error,
-        )
-        return _consumer_terminal(_failure_status(error), run, result, feedback_cycles)
-
-    def _audit_state(
-        self,
-        task: ReplyTask,
-        run: AgentRun,
-        feedback_cycles: int,
-    ) -> AuditAgentResult | _NextAudit | _Deferred | OrchestrationResult:
-        if run.status == "completed":
-            try:
-                return _audit_result(run)
-            except (ResultParseError, ValueError):
-                return _NextAudit(
-                    run.proposal_revision,
-                    run.turn_attempt + 1,
-                    run.parent_agent_run_id or 0,
-                    None,
-                )
-        error = _run_error(run)
-        if run.status == "failed" and error.authorization_required and error.retryable:
-            if task.error == error.code:
-                return _NextAudit(
-                    run.proposal_revision,
-                    run.turn_attempt + 1,
-                    run.parent_agent_run_id or 0,
-                    None,
-                    error.code or "authorization_required",
-                )
-            return _Deferred(
-                run,
-                error.code or "authorization_required",
-                feedback_cycles,
-            )
-        if run.status == "failed" and error.retryable:
-            if error.code in {
-                "runtime_execution_failed",
-                "runtime_provider_unreachable",
-                "runtime_provider_auth_failed",
-            }:
-                if _retryable_route_error_can_resume(task, error):
-                    return _NextAudit(
-                        run.proposal_revision,
-                        run.turn_attempt + 1,
-                        run.parent_agent_run_id or 0,
-                        None,
-                        deferred_error_code=error.code,
-                    )
-                return _Deferred(run, error.code, feedback_cycles)
-            if is_codex_provider_recovery_code(error.code):
-                if task.error == error.code:
-                    return _NextAudit(
-                        run.proposal_revision,
-                        run.turn_attempt + 1,
-                        run.parent_agent_run_id or 0,
-                        None,
-                        deferred_error_code=error.code,
-                    )
-                return _Deferred(run, error.code, feedback_cycles)
-            return _NextAudit(
-                run.proposal_revision,
-                run.turn_attempt + 1,
-                run.parent_agent_run_id or 0,
-                None,
-            )
-        if run.status == "running":
-            if self.store.agent_run_lease_is_active(run.id):
-                return _Deferred(run, "agent_run_active", feedback_cycles)
-            self.store.fail_expired_agent_run(
-                run.id,
-                {"code": "audit_lease_expired", "retryable": True},
-                expected_execution_generation=task.execution_generation,
-            )
-            return _NextAudit(
-                run.proposal_revision,
-                run.turn_attempt + 1,
-                run.parent_agent_run_id or 0,
-                None,
-            )
-        result = _failed_audit_result(run, error)
-        return _audit_terminal(_failure_status(error), run, result, feedback_cycles)
-
-    def _retry_feedback(
-        self,
-        run: AgentRun,
-        *,
-        runs_by_id: dict[int, AgentRun] | None = None,
-    ) -> AuditFeedback | None:
-        if run.proposal_revision == 0 or run.parent_agent_run_id is None:
-            return None
         parent = (
-            runs_by_id.get(run.parent_agent_run_id)
-            if runs_by_id is not None
-            else self.store.get_agent_run(run.parent_agent_run_id)
-        )
-        if (
-            parent is None
-            or parent.role is not AgentRole.AUDIT
-            or parent.status != "completed"
-        ):
-            return None
-        result = _audit_result(parent)
-        if result.outcome is not AuditOutcome.FEEDBACK_PROVIDED:
-            return None
-        return result.feedback
-
-    @staticmethod
-    def _latest_completed_audit(
-        by_revision: dict[int, list[AgentRun]],
-        revision: int,
-    ) -> AgentRun | None:
-        audits = sorted(
-            (
-                run
-                for run in by_revision.get(revision, [])
-                if run.role is AgentRole.AUDIT and run.status == "completed"
-            ),
-            key=lambda run: (run.turn_attempt, run.id),
-        )
-        if not audits:
-            return None
-        return audits[-1]
-
-    def _domain_continuation_state(
-        self,
-        task: ReplyTask,
-        audit_run: AgentRun,
-        audit_result: AuditAgentResult,
-        domain_snapshot: object | None = None,
-    ) -> DomainContinuationDecision:
-        if self.domain_continuation is None:
-            return DomainContinuationDecision(DomainContinuationState.TERMINAL)
-        if domain_snapshot is _DOMAIN_SNAPSHOT_INVALID:
-            return DomainContinuationDecision(DomainContinuationState.INVALID)
-        try:
-            decision = self.domain_continuation.continuation_state(
-                task,
-                audit_run=audit_run,
-                audit_result=audit_result,
-                snapshot=domain_snapshot,
-            )
-        except Exception:
-            return DomainContinuationDecision(DomainContinuationState.INVALID)
-        if not isinstance(decision, DomainContinuationDecision):
-            return DomainContinuationDecision(DomainContinuationState.INVALID)
-        if not isinstance(decision.state, DomainContinuationState):
-            return DomainContinuationDecision(DomainContinuationState.INVALID)
-        if (
-            decision.state is DomainContinuationState.CONTINUE
-            and (
-                not decision.required_receipt_id
-                or not decision.required_receipt_binding
-            )
-        ):
-            return DomainContinuationDecision(DomainContinuationState.INVALID)
-        return decision
-
-    def _validate_consumer_revision_parent(
-        self,
-        task: ReplyTask,
-        consumer_run: AgentRun,
-        *,
-        child_audits: tuple[AgentRun, ...] = (),
-        feedback_cycles: int,
-        runs_by_id: dict[int, AgentRun],
-        domain_snapshot: object | None,
-    ) -> OrchestrationResult | _Deferred | None:
-        parent_id = consumer_run.parent_agent_run_id
-        parent = runs_by_id.get(parent_id) if parent_id is not None else None
-        if (
-            parent is None
-            or parent.reply_task_id != task.id
-            or parent.execution_generation != task.execution_generation
-            or parent.role is not AgentRole.AUDIT
-            or parent.status != "completed"
-            or parent.proposal_revision != consumer_run.proposal_revision - 1
-        ):
-            return _Deferred(
-                consumer_run,
-                "agent_turn_state_incomplete",
-                feedback_cycles,
-            )
-        try:
-            parent_result = _audit_result(parent)
-        except (ResultParseError, ValueError):
-            return _Deferred(
-                parent,
-                "agent_turn_state_incomplete",
-                feedback_cycles,
-            )
-        if (
-            parent_result.outcome is AuditOutcome.FEEDBACK_PROVIDED
-            and parent_result.feedback is not None
-        ):
-            return None
-        if parent_result.outcome is AuditOutcome.EXECUTED:
-            # Generic user/operator feedback may materialize a corrected
-            # revision after a terminal Audit result. Domain continuations
-            # have a stricter receipt-bound contract and must still be
-            # accepted explicitly by their configured driver.
-            if self.domain_continuation is None:
-                return None
-            consumption = self._domain_continuation_consumption_state(
-                task,
-                parent,
-                parent_result,
-                child_audits,
-                domain_snapshot,
-            )
-            if consumption.state is DomainContinuationConsumptionState.CONSUMED:
-                return None
-            if consumption.state is DomainContinuationConsumptionState.UNAVAILABLE:
-                return self._domain_continuation_unavailable(
-                    parent, feedback_cycles
-                )
-            if consumption.state is DomainContinuationConsumptionState.INVALID:
-                return self._domain_continuation_invalid(
-                    consumer_run, feedback_cycles
-                )
-            continuation = self._domain_continuation_state(
-                task,
-                parent,
-                parent_result,
-                domain_snapshot,
-            )
-            if continuation.state is DomainContinuationState.CONTINUE:
-                return None
-            if continuation.state is DomainContinuationState.LIMIT_REACHED:
-                return self._domain_continuation_limit_reached(
-                    parent, feedback_cycles
-                )
-            if continuation.state is DomainContinuationState.UNAVAILABLE:
-                return self._domain_continuation_unavailable(
-                    parent, feedback_cycles
-                )
-            return self._domain_continuation_invalid(consumer_run, feedback_cycles)
-        return _Deferred(
-            parent,
-            "agent_turn_state_incomplete",
-            feedback_cycles,
-        )
-
-    def _domain_continuation_consumption_state(
-        self,
-        task: ReplyTask,
-        parent_audit_run: AgentRun,
-        parent_audit_result: AuditAgentResult,
-        child_audits: tuple[AgentRun, ...],
-        domain_snapshot: object | None = None,
-    ) -> DomainContinuationConsumptionDecision:
-        if self.domain_continuation is None:
-            return DomainContinuationConsumptionDecision(
-                DomainContinuationConsumptionState.NOT_CONSUMED
-            )
-        if domain_snapshot is _DOMAIN_SNAPSHOT_INVALID:
-            return DomainContinuationConsumptionDecision(
-                DomainContinuationConsumptionState.INVALID
-            )
-        for child in sorted(child_audits, key=lambda run: (run.turn_attempt, run.id)):
-            child_result: AuditAgentResult | None = None
-            if child.status == "completed":
-                try:
-                    child_result = _audit_result(child)
-                except (ResultParseError, ValueError):
-                    child_result = None
-            try:
-                decision = self.domain_continuation.consumption_state(
-                    task,
-                    parent_audit_run=parent_audit_run,
-                    parent_audit_result=parent_audit_result,
-                    child_audit_run=child,
-                    child_audit_result=child_result,
-                    snapshot=domain_snapshot,
-                )
-            except Exception:
-                return DomainContinuationConsumptionDecision(
-                    DomainContinuationConsumptionState.INVALID
-                )
-            if not isinstance(decision, DomainContinuationConsumptionDecision):
-                return DomainContinuationConsumptionDecision(
-                    DomainContinuationConsumptionState.INVALID
-                )
-            if not isinstance(
-                decision.state,
-                DomainContinuationConsumptionState,
-            ):
-                return DomainContinuationConsumptionDecision(
-                    DomainContinuationConsumptionState.INVALID
-                )
-            if decision.state is DomainContinuationConsumptionState.UNAVAILABLE:
-                return decision
-            if decision.state is DomainContinuationConsumptionState.INVALID:
-                return decision
-            if decision.state is DomainContinuationConsumptionState.CONSUMED:
-                return decision
-        return DomainContinuationConsumptionDecision(
-            DomainContinuationConsumptionState.NOT_CONSUMED
-        )
-
-    def _load_domain_continuation_snapshot(self, task: ReplyTask) -> object | None:
-        if self.domain_continuation is None:
-            return None
-        try:
-            return self.domain_continuation.load_snapshot(task)
-        except Exception:
-            return _DOMAIN_SNAPSHOT_INVALID
-
-    def _consumer_parent_continuation(
-        self,
-        task: ReplyTask,
-        consumer_run: AgentRun,
-        *,
-        runs_by_id: dict[int, AgentRun] | None = None,
-        domain_snapshot: object | None = None,
-    ) -> tuple[AgentRun, DomainContinuationDecision] | None:
-        parent_id = consumer_run.parent_agent_run_id
-        parent = (
-            runs_by_id.get(parent_id)
-            if runs_by_id is not None and parent_id is not None
-            else self.store.get_agent_run(parent_id)
-            if parent_id is not None
+            self.store.get_agent_run(consumer.parent_agent_run_id)
+            if consumer.parent_agent_run_id
             else None
         )
-        if (
-            parent is None
-            or parent.reply_task_id != task.id
-            or parent.execution_generation != task.execution_generation
-            or parent.role is not AgentRole.AUDIT
-            or parent.status != "completed"
-        ):
-            return None
-        try:
-            parent_result = _audit_result(parent)
-        except (ResultParseError, ValueError):
-            return None
-        if parent_result.outcome is not AuditOutcome.EXECUTED:
-            return None
-        return parent, self._domain_continuation_state(
-            task,
-            parent,
-            parent_result,
-            domain_snapshot,
-        )
-
-    def _next_consumer_retry(
-        self,
-        task: ReplyTask,
-        run: AgentRun,
-        feedback: AuditFeedback | None,
-        feedback_cycles: int,
-        *,
-        deferred_error_code: str = "",
-        runs_by_id: dict[int, AgentRun] | None = None,
-        domain_snapshot: object | None = None,
-    ) -> _NextConsumer | _Deferred | OrchestrationResult:
-        if run.proposal_revision == 0 or feedback is not None:
-            return _NextConsumer(
-                run.proposal_revision,
-                run.parent_agent_run_id,
-                feedback,
-                deferred_error_code,
-            )
-        continuation = self._consumer_parent_continuation(
-            task,
-            run,
-            runs_by_id=runs_by_id,
-            domain_snapshot=domain_snapshot,
-        )
-        if continuation is None:
-            return _Deferred(run, "agent_feedback_missing", feedback_cycles)
-        parent, decision = continuation
-        if decision.state is DomainContinuationState.UNAVAILABLE:
-            return self._domain_continuation_unavailable(parent, feedback_cycles)
-        if decision.state is DomainContinuationState.LIMIT_REACHED:
-            return self._domain_continuation_limit_reached(parent, feedback_cycles)
-        if decision.state is not DomainContinuationState.CONTINUE:
-            return self._domain_continuation_invalid(run, feedback_cycles)
-        return _NextConsumer(
-            run.proposal_revision,
-            run.parent_agent_run_id,
-            feedback,
-            deferred_error_code,
-            domain_continuation=True,
-            required_receipt_id=decision.required_receipt_id,
-            required_receipt_binding=decision.required_receipt_binding,
-        )
-
-    def _domain_continuation_invalid(
-        self,
-        run: AgentRun,
-        feedback_cycles: int | None = None,
-    ) -> OrchestrationResult:
-        return OrchestrationResult(
-            status="failed_terminal",
-            final_run_id=run.id,
-            final_role=run.role,
-            summary="domain_continuation_state_invalid",
-            error=AgentError(
-                code="domain_continuation_state_invalid",
-                retryable=False,
-            ),
-            feedback_cycles=(
-                feedback_cycles
-                if feedback_cycles is not None
-                else self._feedback_cycles_by_runs(
-                    self.store.list_agent_runs_for_task_generation(
-                        run.reply_task_id,
-                        run.execution_generation,
-                    )
+        if parent:
+            previous = _audit_result(parent)
+            expected_stage = self._stage_for_parent(parent)
+            if (
+                result.stage_index != expected_stage["stage_index"]
+                or result.predecessor_review_id
+                != expected_stage["predecessor_review_id"]
+            ):
+                return self._run_terminal(
+                    consumer,
+                    "failed_terminal",
+                    AgentError(code="candidate_stage_lineage_invalid", retryable=False),
+                    cycles,
+                    result,
                 )
+            if previous.outcome is AuditOutcome.REJECT:
+                original = _consumer_result(
+                    self.store.get_agent_run(parent.parent_agent_run_id)
+                )
+                if not rejected_content_changed(original, result):
+                    return self._run_terminal(
+                        consumer,
+                        "failed_terminal",
+                        AgentError(
+                            code="rejected_candidate_unchanged", retryable=False
+                        ),
+                        cycles,
+                        result,
+                    )
+        elif result.stage_index != 0 or result.predecessor_review_id is not None:
+            return self._run_terminal(
+                consumer,
+                "failed_terminal",
+                AgentError(code="candidate_stage_lineage_invalid", retryable=False),
+                cycles,
+                result,
+            )
+        candidate = self.store.persist_review_candidate(task, consumer, result)
+        audits = sorted(
+            (
+                r
+                for r in runs
+                if r.role is AgentRole.AUDIT and r.parent_agent_run_id == consumer.id
             ),
+            key=lambda r: (r.turn_attempt, r.id),
+        )
+        if not audits:
+            return _NextAudit(
+                consumer.proposal_revision,
+                0,
+                consumer.id,
+                result,
+                candidate["id"],
+                candidate["candidate_digest"],
+            )
+        audit = audits[-1]
+        technical = self._technical_state(task, audit, cycles)
+        if technical is not None:
+            if (
+                isinstance(technical, _Deferred)
+                or technical.status != "failed_retryable"
+            ):
+                return technical
+            return _NextAudit(
+                consumer.proposal_revision,
+                audit.turn_attempt + 1,
+                consumer.id,
+                result,
+                candidate["id"],
+                candidate["candidate_digest"],
+                technical.error.code if _is_waiting_failure(technical.error) else "",
+            )
+        try:
+            review_result = _audit_result(audit)
+        except ValueError:
+            return _NextAudit(
+                consumer.proposal_revision,
+                audit.turn_attempt + 1,
+                consumer.id,
+                result,
+                candidate["id"],
+                candidate["candidate_digest"],
+            )
+        if review_result.outcome is AuditOutcome.FAILED:
+            return self._run_terminal(
+                audit,
+                _failure_status(review_result.error),
+                review_result.error,
+                cycles,
+                result,
+                review_result,
+            )
+        if (
+            review_result.proposal_revision != consumer.proposal_revision
+            or review_result.candidate_digest != candidate["candidate_digest"]
+        ):
+            return self._run_terminal(
+                audit,
+                "failed_terminal",
+                AgentError(code="candidate_review_binding_invalid", retryable=False),
+                cycles,
+                result,
+                review_result,
+            )
+        prior_review = self.store.get_candidate_review_for_audit_run(audit.id)
+        if candidate["invalidated_at"]:
+            execution = self.store.get_candidate_execution(candidate["id"])
+            if execution and execution["result_json"]:
+                result_after_execution = SystemExecutionResult.model_validate_json(execution["result_json"])
+                if result_after_execution.error.code == "business_state_changed" and prior_review:
+                    return self._business_revision(_NextExecution(consumer, audit, result, review_result, candidate["id"], prior_review["id"], cycles))
+            return self._run_terminal(audit, "failed_terminal", AgentError(code="review_candidate_invalidated", retryable=False), cycles, result, review_result)
+        review = self.store.record_candidate_review(
+            candidate["id"], audit.id, review_result
+        )
+        stage_cycles = self._feedback_cycles_by_runs(
+            runs, stage_index=result.stage_index
+        )
+        if review_result.outcome in (AuditOutcome.RETURN, AuditOutcome.REJECT):
+            if stage_cycles > MAX_CONTENT_FEEDBACK_CYCLES:
+                return self._run_terminal(
+                    audit,
+                    "failed_terminal",
+                    AgentError(code="audit_revision_exhausted", retryable=False),
+                    cycles,
+                    result,
+                    review_result,
+                )
+            return _NextConsumer(
+                consumer.proposal_revision + 1,
+                audit.id,
+                review_result.feedback,
+                stage_index=result.stage_index,
+                predecessor_review_id=result.predecessor_review_id,
+            )
+        current = self.store.current_reviewed_candidate(
+            task.id, task.execution_generation
+        )
+        if current is None:
+            # A supplement is preserved and the standard user-input rerun path
+            # creates a new generation; this old candidate cannot execute.
+            return self._run_terminal(
+                audit,
+                "failed_terminal",
+                AgentError(code="review_candidate_invalidated", retryable=False),
+                cycles,
+                result,
+                review_result,
+            )
+        state = _NextExecution(
+            consumer,
+            audit,
+            result,
+            review_result,
+            candidate["id"],
+            review["id"],
+            cycles,
+        )
+        if (
+            result.outcome is ConsumerOutcome.NEEDS_HUMAN
+            and not current["selection_id"]
+        ):
+            return self._candidate_terminal(state, "needs_human", review_result.error)
+        if result.outcome is ConsumerOutcome.NO_ACTION:
+            return self._candidate_terminal(state, "no_action", review_result.error)
+        execution = self.store.get_candidate_execution(candidate["id"])
+        if execution and execution["status"] in (
+            "done",
+            "skipped",
+            "failed",
+        ):
+            executed = SystemExecutionResult.model_validate_json(
+                execution["result_json"]
+            )
+            if executed.outcome == "executed" and result.continue_after_execution:
+                if result.stage_index + 1 >= MAX_EXECUTION_STAGES:
+                    return self._candidate_terminal(
+                        state,
+                        "failed_terminal",
+                        AgentError(
+                            code="execution_stage_limit_reached", retryable=False
+                        ),
+                        executed,
+                    )
+                return _NextConsumer(
+                    consumer.proposal_revision + 1,
+                    audit.id,
+                    None,
+                    stage_index=result.stage_index + 1,
+                    predecessor_review_id=review["id"],
+                )
+            status = (
+                _failure_status(executed.error)
+                if executed.outcome == "failed"
+                else executed.outcome
+            )
+            return self._candidate_terminal(state, status, executed.error, executed)
+        return state
+
+    def _with_persisted_evidence(self, task, context, state):
+        receipts = {receipt.receipt_id: receipt for receipt in context.prior_receipts}
+        for row in self.store.list_verified_candidate_actions(task.id):
+            receipts[row["external_action_key"]] = PriorReceipt(
+                receipt_id=row["external_action_key"], operation=row["operation"],
+                summary=json.dumps({"stage_index": row["stage_index"],
+                    "action_identity": row["action_identity"],
+                    "target": json.loads(row["target_identifiers_json"]),
+                    "result": json.loads(row["provider_result_json"])}, ensure_ascii=False),
+                completed=True,
+            )
+        changes = context.business_state_changes
+        parent_id = state.parent_run_id
+        review = self.store.get_candidate_review_for_audit_run(parent_id) if parent_id else None
+        execution = self.store.get_candidate_execution(review["candidate_id"]) if review else None
+        if execution and execution["result_json"]:
+            result = SystemExecutionResult.model_validate_json(execution["result_json"])
+            if result.error.code == "business_state_changed" and result.external_result:
+                changes = (*changes, result.external_result.live_result_reference)
+        return replace(context,
+            prior_receipts=tuple(receipts.values()),
+            prior_human_decisions=tuple(self.store.list_human_decision_evidence(task.id)),
+            business_state_changes=changes,
         )
 
     @staticmethod
-    def _domain_continuation_limit_reached(
-        run: AgentRun,
-        feedback_cycles: int,
-    ) -> OrchestrationResult:
-        return OrchestrationResult(
-            status="failed_terminal",
-            final_run_id=run.id,
-            final_role=run.role,
-            summary="domain_continuation_limit_reached",
-            error=AgentError(
-                code="domain_continuation_limit_reached",
-                retryable=False,
-            ),
-            feedback_cycles=feedback_cycles,
+    def _business_revision(state: _NextExecution) -> _NextConsumer:
+        return _NextConsumer(
+            state.consumer_run.proposal_revision + 1,
+            state.audit_run.id,
+            None,
+            stage_index=state.consumer_result.stage_index,
+            predecessor_review_id=state.consumer_result.predecessor_review_id,
         )
 
-    def _domain_continuation_unavailable(
-        self,
-        run: AgentRun,
-        feedback_cycles: int | None = None,
-    ) -> OrchestrationResult:
-        return OrchestrationResult(
-            status="failed_retryable",
-            final_run_id=run.id,
-            final_role=run.role,
-            summary="domain_continuation_state_unavailable",
-            error=AgentError(
-                code="domain_continuation_state_unavailable",
-                retryable=True,
-            ),
-            feedback_cycles=(
-                feedback_cycles
-                if feedback_cycles is not None
-                else self._feedback_cycles_by_runs(
-                    self.store.list_agent_runs_for_task_generation(
-                        run.reply_task_id,
-                        run.execution_generation,
-                    )
+    def _stage_for_parent(self, parent: AgentRun | None) -> dict[str, object]:
+        if parent is None:
+            return {"stage_index": 0, "predecessor_review_id": None}
+        previous_candidate = _consumer_result(
+            self.store.get_agent_run(parent.parent_agent_run_id)
+        )
+        review = self.store.get_candidate_review_for_audit_run(parent.id)
+        execution = self.store.get_candidate_execution(review["candidate_id"]) if review else None
+        if (_audit_result(parent).outcome is AuditOutcome.APPROVE
+            and previous_candidate.continue_after_execution
+            and execution and execution["status"] == "done"):
+            review_id = review["id"]
+            return {
+                "stage_index": previous_candidate.stage_index + 1,
+                "predecessor_review_id": review_id,
+            }
+        return {
+            "stage_index": previous_candidate.stage_index,
+            "predecessor_review_id": previous_candidate.predecessor_review_id,
+        }
+
+    def _technical_state(self, task: ReplyTask, run: AgentRun, cycles: int):
+        if run.status == "completed":
+            return None
+        if run.status == "running":
+            if self.store.agent_run_lease_is_active(run.id):
+                return _Deferred(run, "agent_run_active", cycles)
+            self.store.fail_expired_agent_run(
+                run.id,
+                {"code": f"{run.role.value}_lease_expired", "retryable": True},
+                expected_execution_generation=task.execution_generation,
+            )
+            run = self.store.get_agent_run(run.id)
+        error = _run_error(run)
+        if error.code == "provider_risk_rejected" or error.source_code == "provider_risk_rejected":
+            return self._run_terminal(run, "failed_terminal", error.model_copy(update={"retryable":False}), cycles)
+        if error.retryable and not error.authorization_required:
+            runs = self.store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
+            failed_turns = _consecutive_failed_turns([
+                prior for prior in runs
+                if prior.role is run.role and prior.proposal_revision == run.proposal_revision
+            ])
+            if failed_turns >= MAX_CONSECUTIVE_FAILED_TURNS:
+                return self._retry_exhausted_result(
+                    task, role=run.role, proposal_revision=run.proposal_revision,
                 )
-            ),
+        if (
+            error.retryable
+            and _is_waiting_failure(error)
+            and not _retryable_route_error_can_resume(task, error)
+        ):
+            return _Deferred(run, error.code, cycles)
+        return self._run_terminal(run, _failure_status(error), error, cycles)
+
+    @staticmethod
+    def _run_terminal(run, status, error, cycles, consumer=None, audit=None):
+        source = error.source_code or error.code
+        summary = audit.summary if audit else consumer.summary if consumer else source
+        if error.code:
+            summary = f"{source}: {summary}" if source != summary else summary
+        return OrchestrationResult(
+            status,
+            run.id,
+            run.role,
+            summary,
+            error,
+            cycles,
+            consumer_result=consumer,
+            audit_result=audit,
+            feedback=audit.feedback if audit else None,
         )
 
-    def _feedback_cycles(self, task: ReplyTask) -> int:
+    @staticmethod
+    def _candidate_terminal(state, status, error, execution=None):
+        return OrchestrationResult(
+            status,
+            state.audit_run.id,
+            AgentRole.AUDIT,
+            execution.summary if execution else state.consumer_result.summary,
+            error,
+            state.feedback_cycles,
+            consumer_result=state.consumer_result,
+            audit_result=state.audit_result,
+            execution_result=execution,
+            candidate_id=state.candidate_id,
+            review_id=state.review_id,
+        )
+
+    def _feedback_cycles(self, task):
         return self._feedback_cycles_by_runs(
             self.store.list_agent_runs_for_task_generation(
-                task.id,
-                task.execution_generation,
+                task.id, task.execution_generation
             )
         )
 
     @staticmethod
-    def _is_completed_feedback_run(run: AgentRun) -> bool:
-        try:
-            return _audit_result(run).outcome is AuditOutcome.FEEDBACK_PROVIDED
-        except (ResultParseError, ValueError):
-            return False
-
-    @staticmethod
-    def _feedback_exhausted(
-        run: AgentRun,
-        feedback_cycles: int,
-    ) -> OrchestrationResult:
-        error = AgentError(
-            code="audit_revision_exhausted",
-            retryable=False,
-        )
-        return _audit_terminal(
-            "failed_terminal",
-            run,
-            _failed_audit_result(run, error),
-            feedback_cycles,
-        )
-
-    @staticmethod
-    def _feedback_cycles_by_runs(runs: list[AgentRun]) -> int:
+    def _feedback_cycles_by_runs(runs, stage_index=None):
         count = 0
+        by_id = {r.id: r for r in runs}
         for run in runs:
             if run.role is not AgentRole.AUDIT or run.status != "completed":
                 continue
             try:
-                result = _audit_result(run)
-            except (ResultParseError, ValueError):
+                review = _audit_result(run)
+                parent = by_id.get(run.parent_agent_run_id)
+                if review.outcome in (AuditOutcome.RETURN, AuditOutcome.REJECT) and (
+                    stage_index is None
+                    or (parent and _consumer_result(parent).stage_index == stage_index)
+                ):
+                    count += 1
+            except ValueError:
                 continue
-            if result.outcome is AuditOutcome.FEEDBACK_PROVIDED:
-                count += 1
         return count
 
     def _retry_exhausted_result(
@@ -1410,15 +828,14 @@ class AgentOrchestrator:
         summary = state.detail or state.code
         if state.code == "confirmation_required":
             summary = (
-                "外部提供方拒绝执行：需要运行时确认；这不是业务决策，"
-                "未执行外部动作。"
+                "外部提供方拒绝执行：需要运行时确认；这不是业务决策，未执行外部动作。"
             )
         return OrchestrationResult(
-            status="failed_retryable",
+            status=_failure_status(state.source_error) if state.source_error else "failed_retryable",
             final_run_id=run.id if run is not None else 0,
             final_role=run.role if run is not None else AgentRole.CONSUMER,
             summary=summary,
-            error=AgentError(
+            error=state.source_error or AgentError(
                 code=state.code,
                 retryable=True,
             ),
@@ -1427,65 +844,32 @@ class AgentOrchestrator:
 
 
 def _validate_refreshed_task_context(
-    task: ReplyTask,
-    context: AgentTaskContext,
+    task: ReplyTask, context: AgentTaskContext
 ) -> None:
-    if not isinstance(context, AgentTaskContext):
-        raise TypeError("refreshed agent context has the wrong type")
-    expected = (
-        task.id,
-        task.channel,
-        task.conversation_id,
-        task.trigger_message_id,
-    )
-    actual = (
+    if not isinstance(context, AgentTaskContext) or (
         context.task_id,
         context.channel,
         context.conversation_id,
         context.trigger_message_id,
-    )
-    if actual != expected:
+    ) != (task.id, task.channel, task.conversation_id, task.trigger_message_id):
         raise ValueError("refreshed agent context does not match reply task")
 
 
-def _validate_domain_continuation_context(
-    context: AgentTaskContext,
-    required_receipt_id: str,
-    required_receipt_binding: str,
-) -> None:
-    receipts = tuple(
-        receipt
-        for receipt in context.prior_receipts
-        if receipt.operation == "unsubscribe_continuation"
+def _context_refresh_error(exc: Exception) -> AgentError:
+    from app.dws_client import DwsError
+    return AgentError(
+        code="agent_context_refresh_failed",
+        retryable=exc.retryable_external_dependency if isinstance(exc, DwsError) else True,
+        authorization_required=isinstance(exc, DwsError) and (exc.needs_authorization or exc.needs_login),
+        stage="context_refresh",
+        source=str(getattr(exc, "server_key", "") or type(exc).__name__),
+        source_code=str(getattr(exc, "code", "") or ""),
     )
-    if (
-        len(receipts) != 1
-        or not required_receipt_id
-        or not required_receipt_binding
-        or receipts[0].receipt_id != required_receipt_id
-        or domain_continuation_receipt_binding(receipts[0])
-        != required_receipt_binding
-    ):
-        raise ValueError("refreshed domain continuation receipt is invalid")
 
 
 def _context_refresh_failure_detail(exc: Exception) -> str:
-    """Return a stable retry explanation without exposing DWS arguments or data."""
-    code = str(getattr(exc, "code", "") or "").strip()
-    normalized = str(exc).casefold()
-    if code:
-        return f"agent_context_refresh_failed: DingTalk read unavailable ({code})"
-    if "not_authenticated" in normalized or "not authenticated" in normalized:
-        return "agent_context_refresh_failed: DingTalk login is unavailable"
-    if "permission" in normalized or "forbidden" in normalized:
-        return "agent_context_refresh_failed: DingTalk read permission is unavailable"
-    if "timeout" in normalized or "timed out" in normalized:
-        return "agent_context_refresh_failed: DingTalk read timed out"
-    if "database is locked" in normalized or "database is busy" in normalized:
-        return "agent_context_refresh_failed: local task database is busy"
-    if "conversation_context_refresh_forbidden" in normalized:
-        return "agent_context_refresh_failed: current conversation cannot be refreshed"
-    return "agent_context_refresh_failed: context source is temporarily unavailable"
+    from app.agent_turn_runner import _runtime_failure_detail
+    return f"agent_context_refresh_failed: {_runtime_failure_detail(exc)}"
 
 
 def _operation_id(task: ReplyTask, revision: int) -> str:
@@ -1541,7 +925,7 @@ def _consecutive_failed_turns(role_runs: list[AgentRun]) -> int:
         role_runs, key=lambda item: (item.turn_attempt, item.id), reverse=True
     )
     for run in newest_first:
-        if run.status != "failed" or _is_waiting_failure(_run_error(run)):
+        if run.status != "failed":
             break
         count += 1
     return count
@@ -1576,57 +960,3 @@ def _consumer_result(run: AgentRun) -> ConsumerAgentResult:
 def _audit_result(run: AgentRun) -> AuditAgentResult:
     payload = json.loads(run.final_result_json)
     return AuditAgentResult.model_validate(payload)
-
-
-def _consumer_terminal(
-    status: str,
-    run: AgentRun,
-    result: ConsumerAgentResult,
-    feedback_cycles: int,
-) -> OrchestrationResult:
-    return OrchestrationResult(
-        status=status,
-        final_run_id=run.id,
-        final_role=AgentRole.CONSUMER,
-        summary=result.summary,
-        error=result.error,
-        feedback_cycles=feedback_cycles,
-        consumer_result=result,
-    )
-
-
-def _audit_terminal(
-    status: str,
-    run: AgentRun,
-    result: AuditAgentResult,
-    feedback_cycles: int,
-) -> OrchestrationResult:
-    return OrchestrationResult(
-        status=status,
-        final_run_id=run.id,
-        final_role=AgentRole.AUDIT,
-        summary=result.summary,
-        error=result.error,
-        feedback_cycles=feedback_cycles,
-        feedback=result.feedback,
-        audit_result=result,
-    )
-
-
-def _failed_audit_result(
-    run: AgentRun,
-    error: AgentError,
-) -> AuditAgentResult:
-    return AuditAgentResult(
-        outcome=AuditOutcome.FAILED,
-        summary=error.code or "Audit Agent failed.",
-        proposal_revision=run.proposal_revision,
-        feedback=None,
-        external_result=None,
-        decision_options=(),
-        risk="high",
-        confidence=0.0,
-        rule_coverage=1.0,
-        information_completeness=1.0,
-        error=error,
-    )

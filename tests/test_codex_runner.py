@@ -964,9 +964,12 @@ def test_codex_developer_instructions_uses_template_variable_values():
 
     assert (
         "1. [role_boundary] Role Boundary: Consumer Agent A gathers facts and "
-        "proposes a typed candidate; Audit Agent B applies the operation Skill "
-        "and executes an accepted candidate."
+        "proposes a typed candidate, including current-instance human questions."
     ) in instructions
+    assert "Audit Agent B reviews the whole candidate without executing its controlled actions." in instructions
+    assert "System code executes the exact persisted approved plan or selected reviewed option." in instructions
+    assert "executes an accepted candidate" not in instructions
+    assert "feedback_provided" not in instructions
 
 
 def test_codex_decision_schema_file_exists():

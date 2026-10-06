@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.agent_contracts import AuditAgentResult, AuditOutcome, ConsumerAgentResult
+from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.agent_cron.commands import (
     SERVICE_COMMAND_EXECUTION_KIND,
     ServiceCommandRegistry,
@@ -170,24 +170,16 @@ def error_rows(store):
         ).fetchall()]
 
 
-def audit(outcome, revision):
+def audit(outcome, revision, digest):
     return AuditAgentResult.model_validate({
         "outcome": outcome, "summary": outcome, "proposal_revision": revision,
+        "candidate_digest": digest,
         "feedback": ({"rule": "evidence", "observation": "revise",
                       "requested_revision": "replace"}
-                     if outcome == "feedback_provided" else None),
-        "external_result": ({"operation_id": "placeholder",
-                             "live_result_reference": {"status": "done"}}
-                            if outcome == "executed" else None),
+                     if outcome in {"return", "reject"} else None),
         "error": {"code": "", "retryable": False},
-        # needs_human must classify as NEEDS_HUMAN, which the decision quality
-        # gate reaches through high risk plus low confidence.  Leaving
-        # information_completeness low instead would classify it as ASK_BACK.
-        **({"risk": "high", "confidence": 0.1,
-            "rule_coverage": 1.0, "information_completeness": 1.0}
-           if outcome == "needs_human" else
-           {"risk": "low", "confidence": 1.0,
-            "rule_coverage": 1.0, "information_completeness": 1.0}),
+        "risk": "low", "confidence": 1.0,
+        "rule_coverage": 1.0, "information_completeness": 1.0,
     })
 
 
@@ -202,6 +194,15 @@ def proposal(label):
                                   "target": {"group": "cron"},
                                   "payload": {"argv": ["dws", "chat", "message", "send"]}}]},
         "error": {"code": "", "retryable": False},
+        "risk": "low", "confidence": 1.0,
+        "rule_coverage": 1.0, "information_completeness": 1.0,
+    })
+
+
+def no_action(label):
+    return ConsumerAgentResult.model_validate({
+        "outcome": "no_action", "summary": label, "proposal": None,
+        "decision_options": [], "error": {"code": "", "retryable": False},
         "risk": "low", "confidence": 1.0,
         "rule_coverage": 1.0, "information_completeness": 1.0,
     })
@@ -229,10 +230,7 @@ class Audit:
             parent_agent_run_id=parent_agent_run_id, operation_id=context.operation_id,
             owner="audit",
         )
-        result = self.results.popleft()
-        if result.outcome is AuditOutcome.EXECUTED:
-            result = result.model_copy(update={"external_result": result.external_result.model_copy(
-                update={"operation_id": context.operation_id})})
+        result = audit(self.results.popleft(), context.proposal_revision, context.candidate_digest)
         self.store.complete_agent_run(claimed.run.id, result.model_dump(mode="json"), owner="audit")
         return AgentTurnRunResult(claimed.run.id, result, 0, 1)
 
@@ -324,8 +322,8 @@ def test_scheduled_orchestrator_starts_on_the_saved_route_and_keeps_the_fallback
         ]
 
 
-def test_scheduled_audit_checks_execution_evidence(tmp_path):
-    from app.dingtalk_send_evidence import DingTalkSendEvidenceDriver
+def test_scheduled_audit_is_read_only_and_system_executor_owns_actions(tmp_path):
+    from app.system_executor import SystemExecutor
 
     store, run, options = fixture(tmp_path)
     built = ScheduledAgentContextBuilder(options).build(run, reply_task_id=7)
@@ -334,7 +332,8 @@ def test_scheduled_audit_checks_execution_evidence(tmp_path):
         runtime_config=load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "codex_oauth"}),
     )
 
-    assert isinstance(orchestrator.audit.domain_continuation, DingTalkSendEvidenceDriver)
+    assert isinstance(orchestrator.system_executor, SystemExecutor)
+    assert not hasattr(orchestrator.audit, "domain_continuation")
 
 
 def test_trigger_dispatches_once_and_generic_reply_adapter_excludes_it(tmp_path):
@@ -645,16 +644,15 @@ def test_execution_uses_persisted_preflight_context_after_current_options_change
         def process(self, task, context, *, refresh_context):
             observed.append((context.trigger_text, refresh_context().trigger_text))
             claimed = store.claim_agent_run(
-                task.id, task.execution_generation, role=AgentRole.AUDIT,
+                task.id, task.execution_generation, role=AgentRole.CONSUMER,
                 proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
-                operation_id="persisted-context", owner="fake",
+                operation_id="", owner="fake",
             ).run
-            result = audit("executed", 0)
-            result = result.model_copy(update={"external_result": result.external_result.model_copy(
-                update={"operation_id": "persisted-context"})})
+            result = proposal("persisted context")
             store.complete_agent_run(claimed.id, result.model_dump(mode="json"), owner="fake")
             return SimpleNamespace(status="executed", final_run_id=claimed.id,
-                summary="done", error=AgentError(code="", retryable=False), audit_result=result)
+                summary="done", error=AgentError(code="", retryable=False),
+                consumer_result=result, audit_result=None)
 
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
     envelope, guard = claim(adapter, task_id, "execution")
@@ -764,7 +762,7 @@ def test_provider_failure_only_fails_execution_fact(tmp_path):
     store.fail_agent_run(claimed.id, error.model_dump(mode="json"), owner="fake")
     result = SimpleNamespace(
         status="failed_terminal", final_run_id=claimed.id, summary="provider failed",
-        error=error, audit_result=None,
+        error=error, audit_result=None, consumer_result=None,
     )
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
     envelope, guard = claim(adapter, task_id, "execution")
@@ -807,17 +805,17 @@ def test_retry_reclaims_same_execution_source(tmp_path):
             if calls == 1:
                 return SimpleNamespace(status="failed_retryable", final_run_id=0,
                     summary="retry", error=AgentError(code="temporary", retryable=True),
-                    audit_result=None, retry_after_seconds=0.0)
+                    audit_result=None, consumer_result=None, execution_result=None, retry_after_seconds=0.0)
             run_claim = store.claim_agent_run(
-                task.id, task.execution_generation, role=AgentRole.AUDIT,
+                task.id, task.execution_generation, role=AgentRole.CONSUMER,
                 proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
-                operation_id="stable-operation", owner="fake",
+                operation_id="", owner="fake",
             ).run
-            result = audit("executed", 0).model_copy(update={"external_result":
-                audit("executed", 0).external_result.model_copy(update={"operation_id": "stable-operation"})})
+            result = proposal("done")
             store.complete_agent_run(run_claim.id, result.model_dump(mode="json"), owner="fake")
             return SimpleNamespace(status="executed", final_run_id=run_claim.id,
-                summary="done", error=AgentError(code="", retryable=False), audit_result=result)
+                summary="done", error=AgentError(code="", retryable=False),
+                consumer_result=result, audit_result=None)
     consumer = ScheduledAgentConsumer(
         store=store, option_service=options,
         orchestrator_factory=lambda _built: Orchestrator(), now=lambda: NOW,
@@ -826,7 +824,9 @@ def test_retry_reclaims_same_execution_source(tmp_path):
     envelope, guard = claim(adapter, int(execution_id), "first")
     consumer(envelope, guard)
     guard.complete(NOW)
-    envelope, guard = claim(adapter, int(execution_id), "second")
+    due = datetime.strptime(store.get_reply_task(int(execution_id)).available_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+    consumer._now = lambda: due
+    envelope, guard = claim(adapter, int(execution_id), "second", now=due)
     consumer(envelope, guard)
     assert store.get_reply_task(int(execution_id)).status == "done"
     assert store.get_scheduled_task_run(run.id).execution_id == execution_id
@@ -836,8 +836,8 @@ def test_real_orchestrator_preserves_feedback_revision_chain(tmp_path):
     store, run, options = fixture(tmp_path)
     execution_id = int(dispatch(store, run, options).execution_id)
     orchestrator = AgentOrchestrator(
-        store=store, consumer=Consumer(store, proposal("R0"), proposal("R1")),
-        audit=Audit(store, audit("feedback_provided", 0), audit("executed", 1)),
+        store=store, consumer=Consumer(store, proposal("R0"), no_action("R1")),
+        audit=Audit(store, "return", "approve"),
     )
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
     envelope, guard = claim(adapter, execution_id, "execution")
@@ -851,9 +851,8 @@ def test_real_orchestrator_preserves_feedback_revision_chain(tmp_path):
         ("consumer", 0), ("audit", 0), ("consumer", 1), ("audit", 1)
     ]
     assert [r.parent_agent_run_id for r in runs] == [None, runs[0].id, runs[1].id, runs[2].id]
-    identities = [json.loads(r.final_result_json)["proposal"]["actions"][0]["action_identity"]
-                  for r in (runs[0], runs[2])]
-    assert identities == ["stable-action", "stable-action"]
+    assert json.loads(runs[0].final_result_json)["proposal"]["actions"][0]["action_identity"] == "stable-action"
+    assert json.loads(runs[2].final_result_json)["outcome"] == "no_action"
     assert task.status == "done"
     assert store.get_scheduled_task_run(run.id).dispatch_status == "dispatched"
 
@@ -881,8 +880,9 @@ class FailingAudit:
         )
         result = AuditAgentResult.model_validate({
             "outcome": "failed", "summary": "already executed",
-            "proposal_revision": context.proposal_revision, "feedback": None,
-            "external_result": None, "error": error.model_dump(mode="json"),
+            "proposal_revision": context.proposal_revision,
+            "candidate_digest": context.candidate_digest,
+            "feedback": None, "error": error.model_dump(mode="json"),
             "risk": "high", "confidence": 0.0,
             "rule_coverage": 1.0, "information_completeness": 1.0,
         })
@@ -939,3 +939,100 @@ def test_a_scheduled_audit_that_keeps_failing_is_spaced_then_stops_failed(tmp_pa
     # The concrete cause the Agent gave stays readable on the Attempt.
     assert "proposal_already_executed" in attempts[0].audit_summary
     assert attempts[0].send_status == "failed"
+
+
+@pytest.mark.parametrize('provider_state', ['uncertain', 'confirmed_no_effect'])
+def test_scheduled_system_failures_use_three_persisted_attempts_without_reauthoring(tmp_path, provider_state):
+    from app.system_executor import SystemExecutor, ActionOutcome
+    store, scheduled_run, options = fixture(tmp_path)
+    task_id = int(dispatch(store, scheduled_run, options).execution_id)
+    proposed = proposal('Exact plan').model_copy(update={'proposal':proposal('Exact plan').proposal.model_copy(update={
+        'actions': (proposal('Exact plan').proposal.actions[0].model_copy(update={'capability':'test', 'operation':'notify', 'target':{'id':'exact-target'}, 'payload':{'content':'exact reviewed body'}}),)})})
+    class Handler:
+        sends = 0
+        reads = 0
+        def dispatch(self, action, **kwargs):
+            self.sends += 1
+            return ActionOutcome(provider_state, {'reason':'provider outcome'})
+        def reconcile(self, action, **kwargs):
+            self.reads += 1
+            return None
+    handler = Handler()
+    orchestrator = AgentOrchestrator(store=store, consumer=Consumer(store, proposed), audit=Audit(store, 'approve'),
+        system_executor=SystemExecutor(store, {('test','notify'):handler}, owner='system'))
+    clock = {'now':NOW}
+    consumer = ScheduledAgentConsumer(store=store, option_service=options, orchestrator_factory=lambda built:orchestrator, now=lambda:clock['now'])
+    adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda pid:False)
+    for attempt in range(1,4):
+        envelope, guard = claim(adapter, task_id, f'owner-{attempt}', now=clock['now'])
+        consumer(envelope, guard)
+        guard.complete(clock['now'])
+        task = store.get_reply_task(task_id)
+        assert task.attempts == attempt
+        if attempt < 3:
+            assert task.status == 'pending'
+            assert task.available_at
+            clock['now'] = datetime.strptime(task.available_at,'%Y-%m-%d %H:%M:%S').replace(tzinfo=UTC)
+        else:
+            assert task.status == 'failed'
+            assert adapter.claim(clock['now']+timedelta(days=1), owner='extra', owner_pid=42, lease=timedelta(minutes=5)) is None
+    assert len(store.list_agent_runs_for_task_generation(task_id,task.execution_generation)) == 2
+    candidate = store.current_reviewed_candidate(task_id,task.execution_generation)
+    execution = store.get_candidate_execution(candidate['id'])
+    action = store.list_candidate_action_attempts(execution['id'])[0]
+    assert action['status'] == provider_state
+    assert action['external_action_key']
+    assert handler.sends == (1 if provider_state=='uncertain' else 3)
+    assert handler.reads == (2 if provider_state=='uncertain' else 0)
+
+
+
+@pytest.mark.parametrize('authorization_wait', [False, True])
+def test_waiting_for_system_claim_is_spaced_without_consuming_failure_budget(tmp_path, authorization_wait):
+    from app.agent_orchestrator import OrchestrationResult
+    from app.agent_contracts import SystemExecutionResult
+    store, run, options = fixture(tmp_path)
+    task_id = int(dispatch(store, run, options).execution_id)
+    error = AgentError(code='source_authorization_required' if authorization_wait else 'execution_claim_unavailable', retryable=True, authorization_required=authorization_wait)
+    class Waiting:
+        def process(self, *args, **kwargs):
+            return OrchestrationResult(status='failed_retryable', final_run_id=0,
+                final_role=AgentRole.AUDIT, summary='another owner is executing', error=error,
+                feedback_cycles=0, execution_result=SystemExecutionResult(outcome='failed',summary='claim busy',error=error))
+    consumer = ScheduledAgentConsumer(store=store,option_service=options,orchestrator_factory=lambda built:Waiting(),now=lambda:NOW)
+    adapter = ScheduledExecutionQueueAdapter(store,owner_alive=lambda pid:False)
+    envelope, guard = claim(adapter,task_id,'waiting')
+    consumer(envelope,guard)
+    guard.complete(NOW)
+    task = store.get_reply_task(task_id)
+    assert task.status == 'pending' and task.attempts == 0
+    assert datetime.strptime(task.available_at,'%Y-%m-%d %H:%M:%S').replace(tzinfo=UTC) == NOW+timedelta(seconds=60)
+    assert adapter.claim(NOW,owner='early',owner_pid=42,lease=timedelta(minutes=5)) is None
+
+
+def test_scheduled_context_refresh_failures_stop_after_three_attempts(tmp_path):
+    store, run, options = fixture(tmp_path)
+    task_id = int(dispatch(store, run, options).execution_id)
+    orchestrator = AgentOrchestrator(store=store, consumer=Consumer(store, proposal('Exact plan')), audit=Audit(store, 'approve'))
+    class RefreshFailure:
+        def process(self, task, context, **kwargs):
+            def refresh():
+                raise RuntimeError('source unavailable CTX503')
+            return orchestrator.process(task, context, refresh_context=refresh)
+    clock = {'now':NOW}
+    consumer = ScheduledAgentConsumer(store=store, option_service=options, orchestrator_factory=lambda built:RefreshFailure(), now=lambda:clock['now'])
+    adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda pid:False)
+    for attempt in range(1,4):
+        envelope, guard = claim(adapter, task_id, f'owner-{attempt}', now=clock['now'])
+        consumer(envelope, guard)
+        guard.complete(clock['now'])
+        task = store.get_reply_task(task_id)
+        assert task.attempts == attempt
+        assert task.status == ('failed' if attempt == 3 else 'pending')
+        if attempt < 3:
+            clock['now'] = datetime.strptime(task.available_at,'%Y-%m-%d %H:%M:%S').replace(tzinfo=UTC)
+    assert store.list_agent_runs_for_task_generation(task_id,task.execution_generation) == []
+    assert adapter.claim(clock['now']+timedelta(days=1), owner='extra', owner_pid=42, lease=timedelta(minutes=5)) is None
+    attempts = store.list_reply_attempts_for_conversation(task.conversation_id)
+    assert attempts[0].send_status == 'failed'
+    assert 'CTX503' in attempts[0].audit_summary
