@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-06: Daily report document receipts now include the exact folder
+  metadata already resolved from the provider. This preserves the folder URL
+  needed by the notification without synthesizing links, adding writes, or
+  changing Audit, delivery, or weekly-report receipts.
+
 - 2026-10-06: Queue failure diagnostics and the other Attention sources also
   select failed row IDs before loading payloads. Latest nonblank errors,
   case-insensitive matching, ordering, limits and fresh recovery visibility
