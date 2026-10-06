@@ -1938,6 +1938,11 @@ def test_task_agent_source_authority_and_independent_project_output(
     assert "include the intervening source text verbatim" in text
     assert "same unresolved risk" in text
     assert (
+        "same-risk candidate was suggested on an earlier turn" in text
+        if surface == "prompt"
+        else "same-risk candidate suggested on an earlier turn" in text
+    )
+    assert (
         "work progress or continued handling is not acceptance" in text
         if surface == "prompt"
         else "Work progress, continued handling or receiving materials does not prove acceptance" in text

@@ -575,3 +575,23 @@ not yet been validated by another native replay; do not treat 15/19 as passing.
 The clean W39 before-migration snapshot remains unavailable, so the data
 comparison/idempotency and release gates remain blocked independently of this
 semantic replay.
+
+### Targeted v4 rerun on `f6a3714d` (2026-10-06)
+
+The three semantic/contract follow-up cases passed on fresh native runs:
+`role-based-unnamed-suggestion`, `single-report-two-projects`, and
+`distinct-deliverables` all passed with code revision `f6a3714d` and loaded Skill
+SHA-256 `72a5d26dbdb0a26afefff352f928728a651482c5dccff1ef75ed9b9787938055`.
+
+`completed-task-risk-persists` first ended in `codex_idle_timeout`; one fresh
+retry produced the expected separate Project-linked candidate Task for the still
+unresolved payment risk, but also incorrectly added that candidate to the existing
+Attention card whose delivered member list was empty. Only the exact-membership
+assertion failed. The fixture requires zero Attention members while still
+requiring the separate candidate Task; task membership in the assessment is also
+zero. Prompt and Skill rules explicitly prohibit expanding an empty card with
+even a same-risk candidate from an earlier turn. This final correction is not yet
+natively verified, and the full 19-case replay has not been rerun on this
+revision. Targeted run artifacts are retained in
+`/private/tmp/project-centered-v12-targeted-f6a3714d/results.jsonl` and
+`/private/tmp/project-centered-v12-risk-retry-f6a3714d/results.jsonl`.

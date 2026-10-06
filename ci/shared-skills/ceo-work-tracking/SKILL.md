@@ -234,7 +234,9 @@ For an existing card, copy `task_ids` only from its actual stored member IDs in
 `current_project_attention`; never add a same-Project peer Task. Unrelated
 current-turn Task updates do not add membership to that card. If the
 delivered card has no member IDs, keep both `task_ids` and `decision_indexes`
-empty, including when another linked Task is completed or updated this turn. An
+empty, including when another linked Task is completed or updated this turn. Do
+not add to the card even a same-risk candidate suggested on an earlier turn; that
+candidate remains a separate Project-linked Task. An
 unresolved dispute over who holds the overall Project accountability (for example,
 a claimed transfer that the prior owner says was not confirmed) is 需关注 even
 before a separate operational impact is quantified. Record the conflict in

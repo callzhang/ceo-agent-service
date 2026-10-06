@@ -456,7 +456,7 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "- For project_assessments, use exactly one selector: if this output has a matching Project decision, use its project_decision_index; otherwise use anchor_id for a known registered Project; use neither only for an unresolved Project clue with insufficient_evidence. Never provide both anchor_id and project_decision_index.\n"
         "- Include one matching assessment for every project_decisions index: project_decisions[i] must have exactly one project_assessment whose project_decision_index is i (or whose anchor_id matches that existing Project). Do not omit a report row because another Project is also assessed.\n"
         "- Never include a skip decision in decision_indexes; supporting indexes may identify only a real candidate, create, or update Task decision that belongs to this Project and directly supports this specific Project assessment. A Task being linked to the Project is not enough: completed or unrelated Project Tasks are not members.\n"
-        "- When retaining an existing_attention_id, copy supporting membership only from the actual current_project_attention card. If its delivered task_ids are empty, keep assessment.task_ids and decision_indexes empty; do not add a Task being completed or updated in this turn, or another same-Project Task, to that existing card.\n"
+        "- When retaining an existing_attention_id, copy supporting membership only from the actual current_project_attention card. If its delivered task_ids are empty, keep assessment.task_ids and decision_indexes empty; do not add any Task to that existing card, even a same-risk candidate suggested on an earlier turn. This keeps the stored Attention membership unchanged; the Task may still remain a separate Project-linked candidate.\n"
         "- project_link_evidence requires a Project selector. Include evidence only when task.project selects the registered Project; for a standalone Task omit both fields.\n"
         "- status and business_relevance may only change through update_fields: set transition=update_fields when either field changes. They remain top-level fields, not a nested update_fields object; never set them under another transition.\n"
         "- New, record_candidate and skip decisions must leave status and business_relevance unset. For an existing Task, set transition=update_fields to change either field; do not try to set a status or relevance during creation.\n"
@@ -721,7 +721,10 @@ Apply the Skill before returning:
   member IDs delivered in current_project_attention; never add a peer Task solely
   because it belongs to the same Project. If the delivered member list is empty,
   keep task_ids and decision_indexes empty, including when a linked Task is completed
-  or updated in this turn. An explicit unresolved dispute over who
+  or updated in this turn, or when a same-risk candidate was suggested on an earlier
+  turn. This preserves the stored Attention membership; that candidate remains a
+  separate Project-linked Task and is not added to the existing card. An explicit
+  unresolved dispute over who
   holds the Project's overall accountable role (such as a claimed transfer that the
   prior owner says was not confirmed) is needs_attention even before operational
   impact is separately quantified; record the conflict in ProjectContext and do not
