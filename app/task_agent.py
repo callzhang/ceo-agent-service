@@ -463,10 +463,12 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "(evidence_origin says whether it is the current Work Item, an earlier session turn, or memory provenance).\n"
         "- A formal assignment requires an explicit owner and authorized "
         "assignment source. Owner evidence alone does not prove authority.\n"
-        "- A display-only suggestion may infer a person from sourced responsibilities plus project facts, without actual owner/formal/date/assignment fields. Reuse the existing Task ID for later updates; do not turn suggestions into human commitments.\n"
+        "- For a display-only suggestion, keep owner_name/owner_user_id empty, owner_evidence empty, and owner_kind/owner_relation unset (null or omitted); also leave formal_basis, acceptance fields, dates, status and business_relevance unset. Put a proposed person only in suggestion.suggested_owner_name/user_id, backed by the cited Project responsibility.\n"
+        "- Return every list-valued field as an array; use [] when empty, never null (including decision_indexes, task_ids, todo_changes, follow_up_changes and search_trace).\n"
+        "- A concrete action and expected result stated by the current source is a source-origin Task, even if its metadata does not authorize a formal assignment. Preserve a clearly named responsible person as source-reported owner evidence without inferring acceptance; do not relabel that human-stated action as an Agent suggestion. Use suggestion only when the action itself is inferred and absent from the source.\n"
         "- A bare responsibility clause (for example, a person being responsible for an area) is ProjectContext only, not a source Task or candidate. Create a Task only for an explicitly stated, independently completable deliverable/action, or a separate actionable suggestion required by an evidenced material Project risk.\n"
         "- The clause X负责Y by itself remains a Project responsibility, even if Y is a distinct business deliverable (for example, 王五负责商务对账). Create a source Task only when the source also states a concrete action/expected result or provides a real action-item record; do not turn a duty-area description into a task.\n"
-        "- When overall-owner evidence conflicts, keep overall_owner=null and record the competing claims and challenge as sourced facts. Do not move candidate overall owners into responsibilities; that list contains only independently evidenced, distinct work responsibilities. Preserve unchanged responsibilities such as a separate deliverable owner.\n"
+        "- When overall-owner evidence conflicts, keep overall_owner=null and record the competing claims and challenge as sourced facts. State plainly in a Project fact that the owner remains in conflict; do not merely imply the conflict. Do not move candidate overall owners into responsibilities; that list contains only independently evidenced, distinct work responsibilities. Preserve unchanged responsibilities such as a separate deliverable owner.\n"
         "- A person explicitly identified as the Project's overall accountable owner belongs in overall_owner, not responsibilities. In Chinese, an explicit description such as 张三总负责交付验收 denotes that role; keep 总 out of the person's name.\n"
         "- Before suggesting another next-step Task for a Project risk, check current linked Tasks. If an existing actionable Task already addresses that risk, use its existing Task ID as the supporting next step and do not add a duplicate monitoring/evaluation suggestion.\n"
         "- Any non-empty owner_name or owner_user_id requires owner_evidence. "
@@ -585,6 +587,9 @@ Apply the Skill before returning:
   Keep unchanged roles' original citations; never replace them with the new message.
   In Chinese source wording, separate a person's name from a trailing rank/honorific
   such as "总"; store only the person's name and keep the role in responsibility.
+  If overall-owner evidence is explicitly disputed, state the unresolved conflict
+  directly in a Project fact, preserve each competing claim's original evidence,
+  and keep `overall_owner` null.
   Read the saved ProjectContext together with this source and return the complete
   current ProjectContext whenever new facts or roles are learned. Retain unchanged
   facts/roles with their original citations and add or update only what this source
@@ -603,12 +608,23 @@ Apply the Skill before returning:
   suggested_owner_name/user_id plus responsibility_evidence and basis_evidence.
   A proposed person may be absent from this message when sourced Project/org roles
   establish the relevant duty. Actual owner fields, assignment metadata, formal basis,
-  typed dates and status remain unset for a pure suggestion. It is display-only.
+  typed dates and status remain unset for a pure suggestion. Keep `owner_kind` and
+  `owner_relation` unset, with empty `owner_evidence`; put the proposed person only
+  in `suggestion.suggested_owner_name/user_id`. It is display-only.
   An unresolved material Project risk needs an actionable next step: create one
   display-only Task suggestion linked to that Project and derive its suggested
   person from the saved responsibility that best matches the work. Do not create
   that suggestion for routine progress, a settled/resolved fact, or an ambiguous
   clue that does not establish a material impact.
+  Return every list-valued field as a JSON array; use `[]` when empty and never
+  `null` (including `decision_indexes`, `task_ids`, `todo_changes`,
+  `follow_up_changes`, and `search_trace`).
+  When the current source itself states a concrete action and expected result,
+  record it as a source-origin Task; do not relabel that human-stated action as an
+  Agent suggestion just because its metadata does not support a formal assignment.
+  Preserve a clearly named responsible person as source-reported owner evidence
+  without inferring acceptance. Use `suggestion` only when the action itself is
+  inferred by the Agent and is absent as an action from the source.
   A Project role or responsibility is not itself a Task, and ordinary milestones
   or routine next steps are Project facts, not candidates. Do not create a Task
   just to fill a missing/contested Project owner or other ProjectContext field;
@@ -636,6 +652,11 @@ Apply the Skill before returning:
   When promoting a suggestion, omit the suggestion field; the saved Task keeps its
   existing suggestion history. A suggestion field is valid only when recording or
   updating a candidate.
+  For any Agent-generated suggestion, leave `owner_name`/`owner_user_id` empty,
+  `owner_evidence` empty, and `owner_kind`/`owner_relation` unset; also leave
+  formal basis, acceptance, dates, status and relevance unset. A proposed person
+  belongs only in suggestion.suggested_owner_name/user_id. Return all list-valued
+  fields as JSON arrays, using `[]` when empty and never `null`.
   For AI Minutes read complete meeting_summary, transcript_excerpts and action items.
   The assigned person is not automatically the speaker; owner proof quotes the
   actual sentence with speaker label included when present. A generic speaker

@@ -462,6 +462,10 @@ def test_independent_project_prompt_and_skill_have_one_current_contract():
     assert "explicitly identified as the Project's overall accountable owner belongs in overall_owner" in prompt
     assert "an existing actionable Task already addresses that risk" in prompt
     assert "X负责Y by itself remains a Project responsibility" in prompt
+    assert "`owner_kind` and `owner_relation` unset" in prompt
+    assert "Return every list-valued field as a JSON array" in prompt
+    assert "current source itself states a concrete action and expected result" in prompt
+    assert "state the unresolved conflict directly in a Project fact" in prompt
     assert "Missing ownership alone is not a material risk" in prompt
     assert "trailing rank/honorific" in prompt
     assert "task_ids must be copied only from that card's actual stored member IDs" in prompt
@@ -1923,6 +1927,10 @@ def test_task_agent_source_authority_and_independent_project_output(
     assert "If an existing actionable Task already addresses that risk" in text
     assert "X负责Y" in text
     assert "a distinct business deliverable" in text
+    assert "concrete action and expected result" in text
+    assert "owner_kind" in text and "owner_relation" in text
+    assert "Return every list-valued field as a JSON array" in text
+    assert "Project fact" in text and "conflict" in text
     assert (
         "one overall owner" in text
         if surface == "prompt"

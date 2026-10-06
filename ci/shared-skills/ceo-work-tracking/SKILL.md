@@ -54,8 +54,9 @@ to make business judgments.
    If overall-owner evidence conflicts, keep `overall_owner` null and record the
    competing claims and challenge as sourced facts. Do not reclassify competing
    overall-owner candidates as responsibilities; that list contains only
-   independently evidenced, distinct work duties. Preserve unchanged separate
-   deliverable owners and their citations.
+   independently evidenced, distinct work duties. State plainly in a Project fact
+   that the owner remains in conflict. Preserve unchanged separate deliverable
+   owners and their citations.
    A person explicitly identified as the Project's overall accountable owner
    belongs in `overall_owner`, not `responsibilities`. For example, “张三总负责
    交付验收” identifies the overall role; keep “总” out of the person's name.
@@ -77,15 +78,23 @@ to make business judgments.
    - Actual Task: a source-backed independently completable deliverable/action.
      Its assignee, authority, acceptance and dates are factual source claims.
      An ownerless or ambiguous human action stays a source-origin candidate.
+     When the source itself states the concrete action and expected result, keep
+     it source-origin even if metadata is insufficient for formal assignment;
+     preserve a clearly named responsible person as source-reported owner evidence
+     without inferring acceptance. Do not relabel that human-stated action as an
+     Agent suggestion.
    - Display-only suggestion: infer a useful next action from Project facts plus
      sourced Project roles or organizational responsibilities. Use `suggestion`
      with `reason`, `suggested_owner_name/user_id`, `responsibility_evidence`
      and `basis_evidence`. The proposed person need not occur in the current
      message if original role evidence establishes the duty.
-   Suggestions do not assert human assignment/acceptance or author an actual
-   deadline. Keep actual owner fields, owner assignment metadata, formal basis,
-   typed dates, status and relevance changes unset. Record a candidate or update
-   its existing ID; do not send TODOs, notifications or follow-ups.
+     Suggestions do not assert human assignment/acceptance or author an actual
+     deadline. Keep actual owner fields, owner assignment metadata, formal basis,
+     typed dates, status and relevance changes unset; also keep `owner_kind` and
+     `owner_relation` unset, with empty actual-owner evidence. Put a proposed person
+     only in `suggested_owner_name/user_id` and cite the Project responsibility.
+     Record a candidate or update its existing ID; do not send TODOs, notifications
+     or follow-ups.
    An unresolved material Project risk should have an actionable next step: create
    one Project-linked display-only suggestion and derive its suggested person from
    the saved responsibility that best matches the work. Do not create one merely
@@ -203,6 +212,10 @@ A not_needed judgment, zero Tasks or one Task's completion does not resolve a
 Project risk. Do not invent a Task update, next_check, owner or deadline to make
 Attention possible. Routine progress, relevance, acceptance, labels or date
 proximity alone are not a material trigger.
+
+Return every list-valued field as a JSON array; use `[]` when empty and never
+`null` (including `decision_indexes`, `task_ids`, `todo_changes`,
+`follow_up_changes` and `search_trace`).
 
 ## Original evidence and shared session
 
