@@ -1344,6 +1344,12 @@ The general anchor registration conflict checks remain unchanged.
 
 ### 已审核来源、执行进度与失败展示
 
+服务捕获的 source_bindings.value 是原始来源数据，不是 Agent 自己写的短引用字段。
+日历卡片等来源可能把完整 JSON 放在 reference 中，不套用候选 reference 的
+512 字符上限；来源仍接受严格反馈链接、凭据、嵌套深度与整个结果编码大小检查。
+绑定元数据与候选字段仍执行原短字段限制。检查仅使用投影副本，不截断或修改
+原来源、candidate digest 或派发前同对象回读比较。
+
 Consumer 完成候选准备时，把原 trigger、消息/材料和计划涉及的 OA 原表单或文档源事实保存为 source_bindings，参与 candidate digest。System Executor 在每个尚未核验动作派发之前重新读取相同原对象，包括首次执行、同次后续动作和恢复部分执行。OA 已完成动作造成的 task 状态/操作记录变化由具名处理器核验，不作为原表单变化；真实表单、文档或上下文变化使该 review 失效，保留已核验动作回执和原人工回答，在同阶段形成新的完整候选并重审。来源读取失败属于可重试技术失败，不执行旧分支。
 
 来源快照中的历史反馈正文仅在结果检查副本中规范化反馈后缀前的段落空白，并对真正的序列化来源容器递归检查，再沿用同一严格的签名、当前配置 host/path/query、生成 token 和上下链接配对验证。普通方括号或花括号开头的完整正文先按真实反馈结构识别，不按前缀推断它是 JSON。当前待发送正文仍要求原始严格格式；原 source_bindings、候选 digest、持久化结果与发送前来源回读比较不变，其他来源字段继续接受原有敏感值、深度和大小检查。确定性的来源结果验证失败记录 runtime_result_source_invalid、stage=result、source=service、retryable=false、session_continuable=false；不归为 CLI/provider 失败并反复恢复同一会话。
