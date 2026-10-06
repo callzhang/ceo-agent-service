@@ -332,3 +332,39 @@ def test_important_emails_are_the_mail_flagged_important_inside_the_day(
         "【特批申请】ALE 项目试产专家返修成本申请"
     ]
     assert facts["coverage"]["important_emails"] == 1
+
+
+def test_handled_reports_preserve_identity_when_titles_and_prompts_match(tmp_path):
+    store = AutoReplyStore(tmp_path / "report-identities.sqlite3")
+    expected = {}
+    for run_id, status, created_at in (
+        (101, "completed", INSIDE_EARLY),
+        (102, "failed", INSIDE_LATE),
+    ):
+        conversation_id = f"scheduled-task-run:{run_id}"
+        trigger_id = f"report-trigger-{run_id}"
+        attempt_id = store.record_reply_attempt(
+            channel="scheduled",
+            conversation_id=conversation_id,
+            conversation_title="Daily report",
+            trigger_message_id=trigger_id,
+            trigger_sender="Agent Cron",
+            trigger_text="Publish the scheduled daily report",
+            action="agent_run",
+            sensitivity_kind="general",
+            send_status=status,
+            audit_summary="All approved actions verified" if status == "completed" else "",
+        )
+        _set(store, "reply_attempts", attempt_id, created_at=created_at)
+        expected[attempt_id] = (conversation_id, trigger_id, created_at, None)
+
+    facts = collect_daily_report_facts(store, EmailStore(store.path), DAY)
+
+    assert {
+        item["attempt_id"]: (
+            item["conversation_id"], item["trigger_message_id"],
+            item["created_at"], item["agent_run_id"],
+        )
+        for item in facts["handled_today"]
+    } == expected
+    assert facts["coverage"]["handled_today"] == 2

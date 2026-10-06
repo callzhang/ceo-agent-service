@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-06: Daily report history facts retain each attempt's conversation
+  and trigger IDs, creation time and Agent run ID. Identically titled reports
+  from different scheduled runs no longer lose their original source identity
+  in the fact payload. Windows, statuses, counts and Audit rules are unchanged.
+
 - 2026-10-06: DingTalk's current message ledger can return null text for a
   message with no rendered body. Its text projection now stays empty while
   retaining the original message identity and raw payload, so one textless

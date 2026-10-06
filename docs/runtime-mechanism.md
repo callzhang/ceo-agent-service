@@ -1251,6 +1251,15 @@ errors still expose only the existing approved error fields; command argument
 redaction, retry policy and action authorization are unchanged. This improves
 future failure evidence and does not rewrite already-truncated historical runs.
 
+### Daily Report Source Identity
+
+Daily report `handled_today` facts retain their original conversation ID,
+trigger message ID, creation timestamp and Agent run ID alongside the display
+title and summary. Reports from previous scheduled runs can share those display
+fields; their completed status is evidence for that historical source only,
+not the current report's publication or notification. The collector remains
+read-only and does not infer or modify delivery state.
+
 ### DingTalk Message Text
 
 The current DingTalk `im.message-list.v1` ledger permits a null `text` value.

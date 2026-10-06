@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+<!-- codex-daily-report-history-identity-20261006: same isolated worktree; app/daily_report_facts.py (handled_today source identity fields only), tests/test_daily_report_facts.py, docs/runtime-mechanism.md, CHANGELOG.md. Preserve conversation/trigger IDs, creation time and Agent run ID on historical report facts so a prior day's identically titled completed report is distinguishable from the current run. No filtering, delivery inference, retry or Audit policy change. -->
+
 <!-- codex-dingtalk-null-content-20261006: isolated dingtalk-null-content worktree; app/dws_client.py (im.message-list.v1 text projection only), tests/test_dws_message_ledger_content.py, docs/runtime-mechanism.md, CHANGELOG.md. Preserve nullable provider text as an empty text projection with original identity/raw payload intact. No recipient, send, retry, policy, migration or message-body synthesis change. -->
 
 <!-- codex-daily-report-folder-receipt-20261006: isolated daily-report-folder-receipt worktree; app/agent_cli.py (_write_bound_report_document return payload only), tests/test_agent_cli_report_receipt.py, docs/runtime-mechanism.md, CHANGELOG.md. Return the already-resolved provider folder metadata so the daily-report delivery has its required URL. No URL synthesis, extra provider write, prompt/policy, lifecycle, retry or authorization change. -->
