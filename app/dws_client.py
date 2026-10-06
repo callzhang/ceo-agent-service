@@ -4644,7 +4644,8 @@ class DwsClient:
                     conversation_title=conversation_title, single_chat=single_chat,
                     sender_name=row["sender"], sender_user_id=row.get("senderUserId"),
                     sender_open_dingtalk_id=row.get("senderOpenDingTalkId"),
-                    create_time=row["createTime"], content=row["text"],
+                    create_time=row["createTime"],
+                    content="" if row["text"] is None else row["text"],
                     message_type=DwsClient._message_type(row),
                     mentioned_user_ids=DwsClient._mentioned_user_ids(row), raw_payload=row,
                 ))
