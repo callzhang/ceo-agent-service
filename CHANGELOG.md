@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-06: Queue failure diagnostics and the other Attention sources also
+  select failed row IDs before loading payloads. Latest nonblank errors,
+  case-insensitive matching, ordering, limits and fresh recovery visibility
+  retain their existing semantics without new indexes or migrations.
+
 - 2026-10-06: Attention selects failed Reply task IDs through the existing
   covering status index before reading message payloads. Case-insensitive
   status matching, recovery/current-object exclusions and fresh read-only

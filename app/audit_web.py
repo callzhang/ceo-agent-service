@@ -2672,7 +2672,9 @@ def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
         f"""
         select tasks.error
         {current_projection}
-          and lower(tasks.status) in ('failed', 'error')
+          and tasks.id in (
+              select id from reply_tasks where lower(status) in ('failed', 'error')
+          )
         order by tasks.updated_at desc, tasks.id desc
         limit 1
         """
@@ -3379,7 +3381,10 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                        {summary_column} as summary, {updated_column} as updated_at,
                        {error_column} as error
                 from {table}
-                where lower({status_column}) in ({status_placeholders})
+                where id in (
+                    select id from {table}
+                    where lower({status_column}) in ({status_placeholders})
+                )
                   {current_generation_filter}
                 order by
                     case lower({status_column})
@@ -3791,7 +3796,9 @@ def _queue_latest_error(
         f"""
         select {error_column} as value
         from {table}
-        where lower({status_column})='failed' and trim(coalesce({error_column}, ''))<>''
+        where rowid in (
+            select rowid from {table} where lower({status_column})='failed'
+        ) and trim(coalesce({error_column}, ''))<>''
         order by {order_sql}
         limit 1
         """

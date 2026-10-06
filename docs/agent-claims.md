@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+<!-- codex-queue-failure-index-read-20261006: same isolated worktree; app/audit_web.py (Attention source ID selection and queue latest-error reads only), tests/test_attention_query_plan.py, docs/runtime-mechanism.md, CHANGELOG.md. Extend the measured covering-index fix to source queues and latest failure diagnostics; no schema, lifecycle, cache, retry or policy changes. -->
+
 <!-- codex-attention-index-read-20261006: isolated attention-index-read worktree; app/audit_web.py (_queue_attention_rows reply-task selection only), tests/test_attention_query_plan.py, docs/runtime-mechanism.md, CHANGELOG.md. Read failed IDs through the existing covering status index before loading payloads; preserve case-insensitive matching, current-object/recovery exclusions and fresh snapshots. No schema, status, retry, cache or authorization change. -->
 
 <!-- codex-source-callback-format-20261006: app/feedback_spike.py (captured-source parser only), tests/test_consumer_agent.py, docs/runtime-mechanism.md, CHANGELOG.md; participant source must not inherit principal outbound signature/labels; retain configured URL/query/token/pair and credential checks, immutable sources, strict outbound parser and all risk/authorization guards. -->

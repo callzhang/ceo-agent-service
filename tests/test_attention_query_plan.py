@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.audit_web import _queue_attention_rows
+from app.audit_web import _queue_attention_rows, _queue_latest_error, _reply_task_queue_snapshot
 from app.store import AutoReplyStore
 
 
@@ -78,3 +78,64 @@ def test_indexed_attention_applies_order_and_limit_after_failed_selection(tmp_pa
         with store.read_snapshot():
             rows = _queue_attention_rows(store, limit=limit)
         assert [row["id"] for row in rows] == [str(task.id) for task in expected]
+
+
+@pytest.mark.parametrize("surface", ["work_attention", "work_error", "reply_error"])
+def test_failure_diagnostics_do_not_scan_queue_payloads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, surface: str
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    _failed_task(store, "FaIlEd")
+    statements: list[str] = []
+    original_open = store._open_connection
+
+    def traced_connection():
+        db = original_open()
+        db.set_trace_callback(statements.append)
+        return db
+
+    monkeypatch.setattr(store, "_open_connection", traced_connection)
+    with store.read_snapshot():
+        if surface == "work_attention":
+            _queue_attention_rows(store)
+            needle = "select id, status as status, case when lower(source_type)"
+            table = "work_summary_inputs"
+        else:
+            with store._connect() as db:
+                if surface == "work_error":
+                    assert _queue_latest_error(db, "work_summary_inputs", "status", "error") == ""
+                    needle = "select error as value"
+                    table = "work_summary_inputs"
+                else:
+                    assert _reply_task_queue_snapshot(db)["latest_error"] == "service failure"
+                    needle = "select tasks.error"
+                    table = "tasks"
+    query = next(sql for sql in statements if needle in sql)
+    with store._connect() as db:
+        plan = [row[3] for row in db.execute("explain query plan " + query)]
+    assert any(f"SEARCH {table} USING INTEGER PRIMARY KEY" in step for step in plan), plan
+    assert not any(step.startswith(f"SCAN {table}") and "COVERING" not in step for step in plan), plan
+
+
+@pytest.mark.parametrize("status", ["failed", "FaIlEd"])
+def test_work_failure_reads_keep_nonblank_error_order_and_fresh_recovery(
+    tmp_path: Path, status: str
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    failed = store.enqueue_work_summary_input("test", "first", '{"summary":"First item"}')
+    blank = store.enqueue_work_summary_input("test", "second", '{"summary":"Blank error item"}')
+    store.mark_work_summary_input_failed(failed, "work failure")
+    store.mark_work_summary_input_failed(blank, "  ")
+    with store._connect() as db:
+        db.execute("update work_summary_inputs set status=?, updated_at='2026-10-06T00:00:00Z'", (status,))
+    with store.read_snapshot():
+        rows = _queue_attention_rows(store, limit=1)
+        assert [row["id"] for row in rows] == [str(blank)]
+        with store._connect() as db:
+            assert _queue_latest_error(db, "work_summary_inputs", "status", "error") == "work failure"
+    store.mark_work_summary_input_done(failed)
+    store.mark_work_summary_input_done(blank)
+    with store.read_snapshot():
+        assert _queue_attention_rows(store) == []
+        with store._connect() as db:
+            assert _queue_latest_error(db, "work_summary_inputs", "status", "error") == ""
