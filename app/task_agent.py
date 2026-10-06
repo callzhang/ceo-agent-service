@@ -456,7 +456,7 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "- For project_assessments, use exactly one selector: if this output has a matching Project decision, use its project_decision_index; otherwise use anchor_id for a known registered Project; use neither only for an unresolved Project clue with insufficient_evidence. Never provide both anchor_id and project_decision_index.\n"
         "- Include one matching assessment for every project_decisions index: project_decisions[i] must have exactly one project_assessment whose project_decision_index is i (or whose anchor_id matches that existing Project). Do not omit a report row because another Project is also assessed.\n"
         "- Never include a skip decision in decision_indexes; supporting indexes may identify only a real candidate, create, or update Task decision that belongs to this Project and directly supports this specific Project assessment. When a Task decision updates the same concrete Project work described by the assessment, include that decision index as support, including for a not_needed progress assessment. An existing Task belongs in task_ids only when it directly supports the assessment. A Task being linked to the Project is not enough: completed or unrelated Project Tasks are not members.\n"
-        "- When retaining an existing_attention_id, copy supporting membership only from the actual current_project_attention card. If its delivered task_ids are empty, keep assessment.task_ids and decision_indexes empty; do not add any Task to that existing card, even a same-risk candidate suggested on an earlier turn. This keeps the stored Attention membership unchanged; the Task may still remain a separate Project-linked candidate.\n"
+        "- When retaining an existing_attention_id, cite an exact stored evidence item from current_project_attention.assessment_json.evidence with the same signal_id, source_ref and source_excerpt; new current evidence must not replace the card's stored original proof. Copy supporting membership only from the actual current_project_attention card. If its delivered task_ids are empty, keep assessment.task_ids and decision_indexes empty; do not add any Task to that existing card, even a same-risk candidate suggested on an earlier turn. This keeps the stored Attention membership unchanged; the Task may still remain a separate Project-linked candidate.\n"
         "- project_link_evidence requires a Project selector. Include evidence only when task.project selects the registered Project; for a standalone Task omit both fields.\n"
         "- status and business_relevance may only change through update_fields: set transition=update_fields when either field changes. They remain top-level fields, not a nested update_fields object; never set them under another transition.\n"
         "- New, record_candidate and skip decisions must leave status and business_relevance unset. For an existing Task, set transition=update_fields to change either field; do not try to set a status or relevance during creation.\n"
@@ -470,7 +470,7 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "- For an existing Task update, keep commitment_status unchanged unless the named owner explicitly accepts, disputes, completes or cancels it in the source. Work progress, continued handling, receiving materials or updating the Project does not prove acceptance. Set acceptance polarity only with apply_acceptance and verified owner/reply evidence; otherwise omit acceptance fields.\n"
         "- For a display-only suggestion, keep owner_name/owner_user_id empty, owner_evidence empty, and owner_kind/owner_relation unset (null or omitted); also leave formal_basis, acceptance fields, dates, status and business_relevance unset. Put a proposed person only in suggestion.suggested_owner_name/user_id, backed by the cited Project responsibility.\n"
         "- Return every list-valued field as an array; use [] when empty, never null (including decision_indexes, task_ids, todo_changes, follow_up_changes and search_trace).\n"
-        "- A concrete action and expected result stated by the current source is a source-origin Task, even if its metadata does not authorize a formal assignment. A named person responsible to verify a specific matter and report back is an action; a bare duty-area description such as 'responsible for reconciliation' is not. Preserve a clearly named responsible person as source-reported owner evidence without inferring acceptance; do not relabel that human-stated action as an Agent suggestion. Use suggestion only when the action itself is inferred and absent from the source.\n"
+        "- A concrete action and expected result stated by the current source is normally a source-origin Task, even if its metadata does not authorize a formal assignment. Exception: routine milestones and next steps in the normal Project sequence remain Project facts, not Task candidates, even when phrased as actions. A named person responsible to verify a specific, independently tracked matter and report back is an action; a bare duty-area description such as 'responsible for reconciliation' is not. Preserve a clearly named responsible person as source-reported owner evidence without inferring acceptance; do not relabel that human-stated action as an Agent suggestion. Use suggestion only when the action itself is inferred and absent from the source.\n"
         "- When a needs_attention Project has a material unresolved impact and a directly relevant saved Project responsibility, create one display-only candidate next-step Task for that role even when the current message states no assignment or explicit action. Infer a concrete action from the risk; do not say there is no action merely because the source does not spell out the next step. An existing Task suppresses that suggestion only if it addresses the same unresolved risk; a completed or unrelated Project deliverable does not.\n"
         "- A named person's assignment remaining unaccepted is not by itself a material Project risk when current evidence shows the work is progressing and no meaningful impact or dispute; preserve assigned_unaccepted without generating Attention solely for that status.\n"
         "- A bare responsibility clause (for example, a person being responsible for an area) is ProjectContext only, not a source Task or candidate. Create a Task only for an explicitly stated, independently completable deliverable/action, or a separate actionable suggestion required by an evidenced material Project risk.\n"
@@ -574,6 +574,9 @@ Apply the Skill before returning:
   meeting decision, or updates an existing active anchor. Preserve exact source
   title, reference and reporting period. Chats/emails can supplement known Project
   facts, not create official identity by topical similarity.
+  Project title contains only the entity name, not its status or action. For
+  example, in “甲客户一期交付项目正式启动”, keep “甲客户一期交付项目” as the
+  title and store “正式启动” as a fact when relevant.
   For reports containing multiple Projects, assess each Project separately;
   do not let one Project's decision or assessment cover another report row.
   Adopt the exact current authoritative Project definition with registration to register or reuse.
@@ -650,8 +653,10 @@ Apply the Skill before returning:
   `null` (including `decision_indexes`, `task_ids`, `todo_changes`,
   `follow_up_changes`, and `search_trace`).
   When the current source itself states a concrete action and expected result,
-  record it as a source-origin Task; do not relabel that human-stated action as an
-  Agent suggestion just because its metadata does not support a formal assignment.
+  normally record it as a source-origin Task; do not relabel that human-stated action
+  as an Agent suggestion just because its metadata does not support a formal assignment.
+  Exception: routine milestones and next steps in the normal Project sequence are
+  Project facts, not Task candidates, even when phrased as actions.
   For project_link_evidence, when the Project title and Task action occur in
   different parts of the current source, cite one exact contiguous span from the
   title occurrence through the action and include the intervening source text
@@ -726,7 +731,10 @@ Apply the Skill before returning:
   the Project is not enough:
   completed or unrelated Project Tasks are not members. Only a real material impact merits watch,
   decision or push; “需关注” does not mean “需介入”. A retained existing_attention_id
-  requires this card's stored original proof and actual membership, not Project peers.
+  requires an exact citation from this card's stored
+  `current_project_attention.assessment_json.evidence` (same `signal_id`, `source_ref`
+  and `source_excerpt`); newer evidence may supplement but cannot replace that proof.
+  It also requires actual membership, not Project peers.
   For an existing card, task_ids must be copied only from that card's actual stored
   member IDs delivered in current_project_attention; never add a peer Task solely
   because it belongs to the same Project. If the delivered member list is empty,

@@ -29,7 +29,10 @@ to make business judgments.
    small Task, todo bundle or similarity cluster. Register only a confirmed
    report Project registry entry or explicit meeting Project decision; quote the
    defining passage in `registration.source_excerpt` and set its real authority.
-   Preserve the exact source-defined title, reference and report period.
+   Preserve the exact source-defined title, reference and report period. A Project
+   title contains only the entity name, not a status or action attached in the
+   same clause. For example, in “甲客户一期交付项目正式启动”, keep
+   “甲客户一期交付项目” as the title and store “正式启动” as a fact when relevant.
    Adopt the exact current authoritative Project definition with registration to register or reuse.
    A different stored name cannot replace that definition merely because the action uses its shorter name.
    Task/action sections are not Project registries. Chats/emails may supplement

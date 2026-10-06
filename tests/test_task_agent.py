@@ -1891,6 +1891,10 @@ def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract(monkeyp
     assert "Do not create, update, delete, send, or complete external records" in prompt
     assert "must never call memory_connector.memory_write" in prompt
     assert "memory_connector.document_upload" in prompt
+    assert "routine milestones and next steps are Project facts, not Task candidates" in prompt
+    assert "Project title contains only the entity name, not its status or action" in prompt
+    assert "current_project_attention.assessment_json.evidence" in prompt
+    assert "newer evidence may supplement but cannot replace that proof" in prompt
     assert "not an enforced" in prompt
     assert "not original observed evidence or human acceptance" in prompt
     assert "source-derived typed deadlines" in prompt
