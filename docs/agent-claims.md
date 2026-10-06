@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+<!-- codex-attention-index-read-20261006: isolated attention-index-read worktree; app/audit_web.py (_queue_attention_rows reply-task selection only), tests/test_attention_query_plan.py, docs/runtime-mechanism.md, CHANGELOG.md. Read failed IDs through the existing covering status index before loading payloads; preserve case-insensitive matching, current-object/recovery exclusions and fresh snapshots. No schema, status, retry, cache or authorization change. -->
+
 <!-- codex-source-callback-format-20261006: app/feedback_spike.py (captured-source parser only), tests/test_consumer_agent.py, docs/runtime-mechanism.md, CHANGELOG.md; participant source must not inherit principal outbound signature/labels; retain configured URL/query/token/pair and credential checks, immutable sources, strict outbound parser and all risk/authorization guards. -->
 
 <!-- codex-source-snapshot-validation-20261006: app/agent_turn_runner.py (source value versus authored short-field validation only), tests/test_consumer_agent.py, docs/runtime-mechanism.md, CHANGELOG.md; production full calendar source reference incorrectly rejected; no change to callback/credential/depth/codec security, digest, source readback or authorization. -->

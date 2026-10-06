@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-06: Attention selects failed Reply task IDs through the existing
+  covering status index before reading message payloads. Case-insensitive
+  status matching, recovery/current-object exclusions and fresh read-only
+  snapshots are unchanged; no schema migration or business-state cache.
+
 - 2026-10-06: Captured participant feedback links are checked by their exact
   configured URL and pair data rather than the principal's outgoing signature
   and labels. Markdown/JSON source parsing leaves canonical snapshots intact;

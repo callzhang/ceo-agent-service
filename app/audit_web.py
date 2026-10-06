@@ -3300,7 +3300,11 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 from reply_tasks
                 left join business_object_tasks current_business_object
                   on current_business_object.business_object_key=reply_tasks.business_object_key
-                where lower(reply_tasks.status) = 'failed'
+                -- Select IDs through the compact status index before reading
+                -- message payloads; lower(status) alone scans the whole table.
+                where reply_tasks.id in (
+                    select id from reply_tasks where lower(status) = 'failed'
+                )
                   and (
                     current_business_object.reply_task_id is null
                     or current_business_object.reply_task_id=reply_tasks.id
