@@ -12,7 +12,7 @@
 
 ## 状态、边界与依赖
 
-设计于 2026-10-04 获 Derek 确认：`../specs/2026-10-04-project-centered-work-design.md`。开发对话负责全部 Task 1–9：Task 1–4 的代码、局部回归及独立需求/质量审查通过，Task 5/6 核心集成已完成：14 文件 636 passed、完整多来源与 Project 读回 161 passed，独立最终复核 PASS。Task 5 正向 Project 关注回归依赖 Task 6 去掉旧 Task carrier 限制，故这两步作为同一当前契约集成验证；没有中间部署。Task 3 的两个 TODO 基线失败已通过 Task 6 的直接成员更新修正，Task 3 指定四文件 172 passed，TODO completion/sync 两文件 59 passed。真实 W39 副本迁移仍被既有会议外键问题阻塞；Task 7 API/页面实现与局部测试、构建、独立复核和合成浏览器检查通过；Task 8 原生同案例评测及 Task 9 发布未完成。复用旧业务测试通过记录不能替代本次 native 或生产效果。
+设计于 2026-10-04 获 Derek 确认：`../specs/2026-10-04-project-centered-work-design.md`。开发对话负责全部 Task 1–9：Task 1–4 的代码、局部回归及独立需求/质量审查通过，Task 5/6 核心集成已完成：14 文件 636 passed、完整多来源与 Project 读回 161 passed，独立最终复核 PASS。Task 5 正向 Project 关注回归依赖 Task 6 去掉旧 Task carrier 限制，故这两步作为同一当前契约集成验证；没有中间部署。Task 3 的两个 TODO 基线失败已通过 Task 6 的直接成员更新修正，Task 3 指定四文件 172 passed，TODO completion/sync 两文件 59 passed。原始冻结 W39 迁移前快照仍不可用；保留的 W39 后迁移产物反向重建后，当前迁移函数已在 403 Signals、259 Tasks 上完成往返和幂等验证，并保留其 1 条既有会议外键；这不替代原始快照对照。Task 7 API/页面实现与局部测试、构建、独立复核和合成浏览器检查通过；Task 8 原生同案例评测及 Task 9 发布未完成。复用旧业务测试通过记录不能替代本次 native 或生产效果。
 
 2026-10-06 最新门禁：全新 v4 原生固定集在 `5ced17fd` 上通过 18/19，`existing-task-update` 因其具体进展 Task 未挂到 `not_needed` Project assessment 而失败；修复已本地提交 `e732b4d7`，聚焦单测通过，但因当前 replay shell 未加载 service MCP 的 `MEMORY_CONNECTOR_URL`，修复后的 native 单案与全量固定集仍未验证。生产库只读备份检查显示 schema `2026-09-25.1`、结构完整，但六张 Business Task/Project 表均无记录，不能作为 W39 数据迁移验收语料。详情见 `docs/task-project-centered-validation.md`。
 

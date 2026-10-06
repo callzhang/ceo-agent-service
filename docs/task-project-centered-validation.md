@@ -683,3 +683,24 @@ all contained zero rows). This confirms the production file is an older-schema
 database but cannot establish real-record migration equivalence or substitute
 for the missing W39 snapshot. The temporary backup was deleted after the
 readback; production was not modified.
+
+### W39-derived source-body migration round trip (2026-10-06)
+
+The retained post-migration W39 artifact at
+`/private/tmp/project-centered-w39-final-20261005.sqlite3` had 403 Signals, 83
+shared source documents, 259 Tasks, 443 Task evidence rows, 443 Task events, 40
+Project links and 20 Projects. Because its original pre-migration file was not
+available, a new temporary copy was reverse-reconstructed into the immediately
+pre-source-document Signal table shape, restoring each Signal body from its
+saved shared document, then the current
+`AutoReplyStore._migrate_business_task_source_documents` function was executed.
+
+The migration preserved all 403 public Signal rows and the listed Task/Project
+evidence, event and link rows; it recreated 83 distinct source documents. The
+single pre-existing foreign-key violation (meeting alignment run 2298 referring
+to a missing job) was unchanged. A second migration invocation was idempotent.
+This is useful W39-volume, W39-data migration-function evidence, but it is not a
+comparison against the missing pristine pre-migration snapshot: the source
+state was reconstructed from the retained migrated artifact. Keep that boundary
+explicit. The temporary 3.2 GB reconstructed copy was removed after recording
+the result; the retained W39 artifact and production database were not modified.
