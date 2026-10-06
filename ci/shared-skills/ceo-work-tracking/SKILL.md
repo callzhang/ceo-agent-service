@@ -209,8 +209,18 @@ Project links gets one assessment, whether or not this result emits a Project
 update. Exact duplicate titles and repeated anchors share one judgment.
 Include one matching assessment for every project_decisions index:
 every `project_decisions[i]` must have exactly one matching assessment with
-`project_decision_index: i` (or the matching existing `anchor_id`). Do not omit
-one report row because another Project is also assessed.
+`project_decision_index: i`. Do not use `anchor_id` when a matching
+`project_decisions` entry exists. Do not omit one report row because another
+Project is also assessed.
+Selector shapes are exclusive: a new or re-registered Project uses `registration`
+only: omit `anchor_id`; a known existing Project uses `anchor_id` only: omit
+`registration`. If a matching Project decision is in this output, its assessment
+cites the decision index only: omit `anchor_id`; use an existing `anchor_id` only
+when there is no matching decision in this output.
+Every assessment has current null-ID evidence: at least one exact current-source
+quote with `signal_id: null` and the current `source_ref`, even for
+`historical_comparison`; that basis additionally requires verified positive-ID
+original evidence.
 Use [] only when no relevant Project/clue exists and explain it in update_summary.
 Assess bounded retrieved context, not the whole company or all history.
 
@@ -244,7 +254,10 @@ directly relevant saved Project responsibility exists, create one display-only
 candidate next-step Task for that role even if the current message does not spell
 out an assignment or action. Infer the concrete action from the risk. An existing
 Task suppresses this suggestion only if it addresses the same unresolved risk; a
-completed or unrelated Project deliverable does not.
+completed or unrelated Project deliverable does not. Prefer one suggestion for one
+material Project risk: do not create separate candidates for substeps or for each
+role involved. Create multiple suggestions only when current evidence identifies
+separately completable actions with distinct outcomes.
 
 A retained existing_attention_id claims that card's original proof, not an update
 target. Cite at least one stored assessment_json.evidence triple unchanged and

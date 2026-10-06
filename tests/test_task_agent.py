@@ -2095,6 +2095,18 @@ def test_task_agent_existing_project_link_contract_is_distinct_from_registration
         if surface == "skill"
         else "Task.project uses anchor_id or project_decision_index" in text
     )
+    assert "new or re-registered Project" in text
+    assert "omit" in text and "anchor_id" in text
+    assert "cites the decision index only" in text
+    assert "current null-ID evidence" in text
+    assert "Prefer one suggestion for one material Project risk" in text
+    assert (
+        "Do not use `anchor_id` when a matching `project_decisions` entry exists"
+        in text
+        if surface == "skill"
+        else "Do not use anchor_id when a matching project_decisions entry exists"
+        in text
+    )
 
 
 @pytest.mark.parametrize("action", ["record_candidate", "update_task"])

@@ -455,8 +455,10 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "- project_decisions, task_decisions and project_assessments are all required (0..N). Return exactly one assessment for every relevant business Project or Project clue in the current source and current Tasks' confirmed Project links, including every separate Project row in a multi-Project report, whether or not this output emitted a selector for it. Return one outcome, concrete reason, and original evidence for each. Semantic coverage is not limited to structured selectors. Every attention_proposal belongs to its needs_attention assessment, with optional actual Task membership; zero Tasks is valid. Project selectors index project_decisions, never task_decisions. Use [] assessments only when there is no relevant Project or clue, with a nonblank update_summary.\n"
         "- Every current-source citation must be an exact contiguous quote from the immutable Work Item (a visible raw range or one decoded JSON string leaf), with the exact current source_ref and null signal_id. Project registration.source_excerpt must itself quote the current passage that defines that Project; never paraphrase it or quote a different source. Assess every Project separately when a source contains multiple Projects.\n"
         "- Historical Project/context/Attention evidence must use the exact quote and source_ref from the delivered original observed Signal. Do not reconstruct or paraphrase an earlier statement from a later summary. If the original quote is unavailable, omit that historical claim, use only verified current evidence, and state what cannot be confirmed.\n"
+        "- Project selector shape is exclusive: a new or re-registered Project uses registration only: omit anchor_id; a known existing Project uses anchor_id only: omit registration. For its assessment, if project_decisions contains that Project, use project_decision_index only: omit anchor_id. Use anchor_id only when assessing a known Project with no matching decision in this output.\n"
+        "- Every project_assessment must include at least one exact current-source evidence quote with signal_id=null and the current source_ref, even when assessment_basis is historical_comparison; that basis additionally requires verified positive-ID original evidence.\n"
         "- For project_assessments, use exactly one selector: if this output has a matching Project decision, use its project_decision_index; otherwise use anchor_id for a known registered Project; use neither only for an unresolved Project clue with insufficient_evidence. Never provide both anchor_id and project_decision_index.\n"
-        "- Include one matching assessment for every project_decisions index: project_decisions[i] must have exactly one project_assessment whose project_decision_index is i (or whose anchor_id matches that existing Project). Do not omit a report row because another Project is also assessed.\n"
+        "- Include one matching assessment for every project_decisions index: project_decisions[i] must have exactly one project_assessment with project_decision_index=i. Do not use anchor_id for an assessment when a matching project_decisions entry exists. Do not omit a report row because another Project is also assessed.\n"
         "- Never include a skip decision in decision_indexes; supporting indexes may identify only a real candidate, create, or update Task decision that belongs to this Project and directly supports this specific Project assessment. When a Task decision updates the same concrete Project work described by the assessment, include that decision index as support, including for a not_needed progress assessment. An existing Task belongs in task_ids only when it directly supports the assessment. A Task being linked to the Project is not enough: completed or unrelated Project Tasks are not members.\n"
         "- When retaining an existing_attention_id, cite an exact stored evidence item from current_project_attention.assessment_json.evidence with the same signal_id, source_ref and source_excerpt; new current evidence must not replace the card's stored original proof. Copy supporting membership only from the actual current_project_attention card. If its delivered task_ids are empty, keep assessment.task_ids and decision_indexes empty; do not add any Task to that existing card, even a same-risk candidate suggested on an earlier turn. This keeps the stored Attention membership unchanged; the Task may still remain a separate Project-linked candidate.\n"
         "- project_link_evidence requires a Project selector. Include evidence only when task.project selects the registered Project; for a standalone Task omit both fields.\n"
@@ -632,10 +634,20 @@ Apply the Skill before returning:
   for the matching Project decision in this output, or neither only for an unresolved
   Project clue with insufficient_evidence. Never provide both anchor_id and
   project_decision_index.
+  Selector shapes are exclusive: a new or re-registered Project uses `registration`
+  only: omit `anchor_id`; a known existing Project uses `anchor_id` only: omit
+  `registration`. If a matching Project decision is in this output, its assessment
+  cites the decision index only: omit `anchor_id`; use an existing `anchor_id` only
+  when there is no matching decision in this output.
+  Every assessment has current null-ID evidence: at least one exact current-source
+  quote with `signal_id: null` and the current `source_ref`, even for
+  `historical_comparison`; that basis additionally requires verified positive-ID
+  original evidence.
   Include one matching assessment for every project_decisions index:
-  project_decisions[i] must have exactly one assessment with project_decision_index=i
-  (or an anchor_id matching that existing Project). Do not omit a report row
-  because another Project is also assessed.
+  project_decisions[i] must have exactly one assessment with
+  project_decision_index=i. Do not use anchor_id when a matching
+  project_decisions entry exists. Do not omit a report row because another
+  Project is also assessed.
 - Actual human work requires its assignment/commitment proof. For inferred next steps,
   use record_candidate or existing-ID update_fields with suggestion:
   suggested_owner_name/user_id plus responsibility_evidence and basis_evidence.
@@ -658,7 +670,10 @@ Apply the Skill before returning:
   Task for that role even when the current message states no assignment or explicit
   action. Infer a concrete action from the risk. An existing Task suppresses this
   suggestion only if it addresses the same unresolved risk; a completed or unrelated
-  Project deliverable does not.
+  Project deliverable does not. Prefer one suggestion for one material Project risk:
+  do not create separate candidates for substeps or for each role involved. Create
+  multiple suggestions only when current evidence identifies separately completable
+  actions with distinct outcomes.
   Return every list-valued field as a JSON array; use `[]` when empty and never
   `null` (including `decision_indexes`, `task_ids`, `todo_changes`,
   `follow_up_changes`, and `search_trace`).

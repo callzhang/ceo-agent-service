@@ -1,5 +1,55 @@
 # Project-centered work validation
 
+## 2026-10-06 latest prompt, fixed-eval and W39 readback
+
+Derek confirmed the Task Agent restriction must remain prompt-only: the prompt
+prohibits `memory_connector.memory_write`; there is no tool allowlist or
+CLI/MCP interception, and `document_upload` is not prohibited. The candidate
+prompt and shared Skill also state exclusive Project selector shapes, require
+every Project assessment to cite current null-ID evidence, and prefer one
+display-only Task suggestion for one material Project risk unless the source
+contains multiple distinct independently completable actions. This is intended
+to avoid expanding each Project responsibility into separate inferred TODOs.
+
+Task Agent and Skill tests passed **234 tests**; the focused fixed-eval contract
+tests passed **21 tests**; Ruff and `git diff --check` passed. The latest
+19-case serial v4 native run under `/private/tmp/project-centered-v4-final-rerun2-20261006`
+passed 18/19. Its only failing assertion was the promoted same-ID Task title:
+the saved Task was formal, owned by the named human, `assigned_unaccepted`, and
+linked to the same Project, but said “付款排期” where the fixture allowed only
+“付款时间” or “付款安排”. The source itself uses “付款排期”. Adding that
+source-supported synonym to the fixture expectation and reading the saved
+database back against the updated frozen oracle passed with no remaining
+failures. The previously failing `same-project-three-sources`,
+`peer-not-auto-member`, and `completed-task-risk-persists` cases also passed on
+fresh isolated reruns; the latter preserved the completed acceptance Task and
+created a separate payment-risk candidate. Native outputs are model-variable,
+so the one-batch score and reruns are both retained rather than described as a
+single 19/19 batch.
+
+The W39 input `work_summary_inputs.id=27465` was replayed on a fresh SQLite
+backup at `/private/tmp/project-centered-w39-final-replay-20261006.sqlite3`,
+not on the retained source or production DB. It completed after one superseded
+runtime attempt and one successful `codex_oauth` / `gpt-5.6-luna` attempt. The
+persisted output contains five Project assessments (three `needs_attention`,
+two `not_needed`), all five cited by `project_decision_index`; it updated three
+existing Projects and evaluated two exact source-defined report registry rows.
+One row reused an existing Project identity; the previously unresolved
+`Einride POC` row created one new Project using an exact current registry-row
+excerpt. Project count changed 20→21; the existing Task count
+remained 259 with no changed/created Tasks; Attention remained three cards with
+no changes; evidence validation passed and no duplicate card was created. This
+is a bounded real-source replay on a copy, not a production mutation or a proof
+of exhaustive cross-source project coverage. CRM lookup remains read-only;
+there is still no positive confirmed CRM-customer link readback.
+
+The CRM implementation is still isolated and unreleased. No push, merge, deploy,
+or production behavior change has happened. Remaining release gates are final
+diff/claims review, the PR/merge, deployment, and post-deploy process/health/
+queue/Attention/History readback. See the later dated sections for historical
+experiments; where those sections say a native or W39 run is pending, they
+describe an earlier checkpoint and are superseded by this section.
+
 ## 2026-10-06 CRM customer-association continuation (unreleased)
 
 The isolated implementation branch now contains Project CRM columns/migration,
@@ -26,8 +76,8 @@ including a single candidate from Task Agent evidence, remain unlinked until a
 person confirms. The current live adapter smoke returns `NO_MATCH` for a
 synthetic query; the resolved candidate envelope is covered with a fake-process
 contract test. This validates the no-match path and parser shape, not a complete
-positive customer-link readback. CRM release remains gated on final native eval,
-push/deploy, and post-deploy service readback.
+positive customer-link readback. CRM release still requires a positive bounded
+lookup/confirmation UI readback, push/deploy, and post-deploy service readback.
 
 During CLI discovery, one `query-by-fields` read with an omitted search filter
 returned the CLI's default first page of 20 CRM records. It was not persisted or
