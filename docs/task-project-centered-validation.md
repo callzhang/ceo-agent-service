@@ -304,12 +304,14 @@ fixed native baseline/candidate comparison remained unrun; do not treat this
 configuration-blocked smoke as a candidate pass or failure. The subsequent full
 comparison and MCP configuration resolution are recorded below.
 
-The pre-existing W39 migration blocker is unchanged: the frozen database has
-the unrelated `meeting_alignment_runs` row 2298 → missing
-`meeting_alignment_jobs` row 4908 foreign-key reference, so Task 1's complete
-real-copy migration and Task 8's real W39 replay/readback remain blocked. No
-orphan was repaired or bypassed, and no production semantic import/apply,
-push, PR, or deploy was performed. Task 9 remains unstarted.
+The frozen W39 database had the unrelated `meeting_alignment_runs` row 2298 →
+missing `meeting_alignment_jobs` row 4908 foreign-key reference, which blocked
+opening that exact frozen copy for a complete migration and replay. A later
+W39-derived migration-function round trip is recorded below; it does not replace
+the missing pristine pre-migration comparison. The real W39 semantic
+replay/readback remains blocked. No orphan was repaired or bypassed, and no
+production semantic import/apply, push, PR, or deploy was performed at this
+stage. Task 9 remains unstarted.
 
 Earlier implementation checks: 14 core files / 636 passed; multisource plus
 Project readback / 161 passed; API four files / 25 passed; frontend eight files /
@@ -668,8 +670,10 @@ with no Task Agent runtime attempt. The direct CLI smoke itself works, but it is
 not a substitute for the routed replay. Do not mark the prompt repair as native
 verified or use the 18/19 baseline as a passing fixed evaluation. The next
 verification needs the same initialized service-MCP environment as the full
-replay, followed by the complete fixed v4 replay. W39 migration equivalence,
-idempotency, PR, deployment and production readback also remain open.
+replay, followed by the complete fixed v4 replay. The migration function's
+idempotency passed on a W39-derived reconstruction, but equivalence against the
+pristine pre-migration W39 database remains unverified. PR, deployment and
+production readback also remain open.
 
 ### Read-only production-schema baseline check (2026-10-06)
 
