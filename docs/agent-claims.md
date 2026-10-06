@@ -44,6 +44,10 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| Owner | Files | What | Since |
+| --- | --- | --- | --- |
+| codex-project-customer-design | Isolated /Users/derek/.codex/worktrees/project-centered-resume/ceo-agent-service: docs/superpowers/specs/2026-10-04-project-centered-work-design.md, docs/agent-claims.md | Record Derek's approved optional CRM customer relationship for Projects; no customer code until the written spec is reviewed. | 2026-10-06 |
+
 
 
 
