@@ -40,6 +40,10 @@ to make business judgments.
    only adds proof; otherwise return the complete current snapshot, not a partial
    patch. Project can have zero Tasks. Never create or update a Task just to carry
    Project facts, risk evidence, owner information or Attention.
+   For a report containing multiple Projects, create a separate decision and
+   assessment for each Project row; one Project's assessment does not cover
+   another. A registration quote must be an exact contiguous excerpt from the
+   immutable current source that defines that Project.
 4. `ProjectContext` has goal, scope, one `overall_owner` with the responsible
    result, other `responsibilities`, and source-backed facts. Unknown overall
    owner is null (待明确), not a concatenation of people or several overall owners.
@@ -208,6 +212,10 @@ before a separate operational impact is quantified. Record the conflict in
 ProjectContext, without creating a Task just to resolve that field. A missing
 overall owner without a stated impact or dispute is not a material risk; when the
 other Project evidence is normal and complete, classify it as not_needed.
+An assigned person not yet accepting is not a material risk by itself when
+current evidence shows the work is progressing and no meaningful impact or
+accountability dispute; preserve assigned_unaccepted without Attention solely
+for that status.
 A not_needed judgment, zero Tasks or one Task's completion does not resolve a
 Project risk. Do not invent a Task update, next_check, owner or deadline to make
 Attention possible. Routine progress, relevance, acceptance, labels or date

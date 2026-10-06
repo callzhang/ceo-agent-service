@@ -458,6 +458,9 @@ def test_independent_project_prompt_and_skill_have_one_current_contract():
     assert "assignment_authorized=true" in prompt
     assert "A Project role or responsibility is not itself a Task" in prompt
     assert "A bare responsibility clause (" in prompt
+    assert "For reports containing multiple Projects, assess each Project separately" in prompt
+    assert "Project registration.source_excerpt must itself be an exact contiguous quote" in prompt
+    assert "Unaccepted status alone is not a material Project risk" in prompt
     assert "Do not reclassify the competing overall-owner candidates as responsibilities" in prompt
     assert "explicitly identified as the Project's overall accountable owner belongs in overall_owner" in prompt
     assert "an existing actionable Task already addresses that risk" in prompt
@@ -1117,6 +1120,9 @@ def test_task_result_validation_repair_prompt_lists_field_errors_and_rules():
     assert "memory_recall" in prompt
     assert "live directory read" in prompt
     assert "For project_assessments, use exactly one selector" in prompt
+    assert "including every separate Project row in a multi-Project report" in prompt
+    assert "Project registration.source_excerpt must itself quote the current passage" in prompt
+    assert "not by itself a material Project risk" in prompt
     assert "Never include a skip decision in decision_indexes" in prompt
     assert "status and business_relevance may only change through update_fields" in prompt
     assert "New, record_candidate and skip decisions must leave status and business_relevance unset" in prompt

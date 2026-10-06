@@ -450,7 +450,8 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "JSON object.\n\n"
         f"Problems in the previous output:\n{detail}\n\n"
         "Rules that must hold:\n"
-        "- project_decisions, task_decisions and project_assessments are all required (0..N). Return one outcome, concrete reason, and original evidence for every relevant business Project or Project clue in the current source and current Tasks' confirmed Project links, whether or not this output emitted a selector for it. Semantic coverage is not limited to structured selectors. Every attention_proposal belongs to its needs_attention assessment, with optional actual Task membership; zero Tasks is valid. Project selectors index project_decisions, never task_decisions. Use [] assessments only when there is no relevant Project or clue, with a nonblank update_summary.\n"
+        "- project_decisions, task_decisions and project_assessments are all required (0..N). Return exactly one assessment for every relevant business Project or Project clue in the current source and current Tasks' confirmed Project links, including every separate Project row in a multi-Project report, whether or not this output emitted a selector for it. Return one outcome, concrete reason, and original evidence for each. Semantic coverage is not limited to structured selectors. Every attention_proposal belongs to its needs_attention assessment, with optional actual Task membership; zero Tasks is valid. Project selectors index project_decisions, never task_decisions. Use [] assessments only when there is no relevant Project or clue, with a nonblank update_summary.\n"
+        "- Every current-source citation must be an exact contiguous quote from the immutable Work Item (a visible raw range or one decoded JSON string leaf), with the exact current source_ref and null signal_id. Project registration.source_excerpt must itself quote the current passage that defines that Project; never paraphrase it or quote a different source. Assess every Project separately when a source contains multiple Projects.\n"
         "- For project_assessments, use exactly one selector: if this output has a matching Project decision, use its project_decision_index; otherwise use anchor_id for a known registered Project; use neither only for an unresolved Project clue with insufficient_evidence. Never provide both anchor_id and project_decision_index.\n"
         "- Never include a skip decision in decision_indexes; supporting indexes may identify only a real candidate, create, or update Task decision that belongs to this Project and directly supports this specific Project assessment. A Task being linked to the Project is not enough: completed or unrelated Project Tasks are not members.\n"
         "- project_link_evidence requires a Project selector. Include evidence only when task.project selects the registered Project; for a standalone Task omit both fields.\n"
@@ -466,6 +467,7 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "- For a display-only suggestion, keep owner_name/owner_user_id empty, owner_evidence empty, and owner_kind/owner_relation unset (null or omitted); also leave formal_basis, acceptance fields, dates, status and business_relevance unset. Put a proposed person only in suggestion.suggested_owner_name/user_id, backed by the cited Project responsibility.\n"
         "- Return every list-valued field as an array; use [] when empty, never null (including decision_indexes, task_ids, todo_changes, follow_up_changes and search_trace).\n"
         "- A concrete action and expected result stated by the current source is a source-origin Task, even if its metadata does not authorize a formal assignment. Preserve a clearly named responsible person as source-reported owner evidence without inferring acceptance; do not relabel that human-stated action as an Agent suggestion. Use suggestion only when the action itself is inferred and absent from the source.\n"
+        "- A named person's assignment remaining unaccepted is not by itself a material Project risk when current evidence shows the work is progressing and no meaningful impact or dispute; preserve assigned_unaccepted without generating Attention solely for that status.\n"
         "- A bare responsibility clause (for example, a person being responsible for an area) is ProjectContext only, not a source Task or candidate. Create a Task only for an explicitly stated, independently completable deliverable/action, or a separate actionable suggestion required by an evidenced material Project risk.\n"
         "- The clause X负责Y by itself remains a Project responsibility, even if Y is a distinct business deliverable (for example, 王五负责商务对账). Create a source Task only when the source also states a concrete action/expected result or provides a real action-item record; do not turn a duty-area description into a task.\n"
         "- When overall-owner evidence conflicts, keep overall_owner=null and record the competing claims and challenge as sourced facts. State plainly in a Project fact that the owner remains in conflict; do not merely imply the conflict. Do not move candidate overall owners into responsibilities; that list contains only independently evidenced, distinct work responsibilities. Preserve unchanged responsibilities such as a separate deliverable owner.\n"
@@ -563,6 +565,8 @@ Apply the Skill before returning:
   meeting decision, or updates an existing active anchor. Preserve exact source
   title, reference and reporting period. Chats/emails can supplement known Project
   facts, not create official identity by topical similarity.
+  For reports containing multiple Projects, assess each Project separately;
+  do not let one Project's decision or assessment cover another report row.
   Adopt the exact current authoritative Project definition with registration to register or reuse.
   A different stored name cannot replace that definition merely because the action uses its shorter name.
 - context is a complete current snapshot: one overall owner and responsible result,
@@ -642,7 +646,9 @@ Apply the Skill before returning:
   promotion/acceptance/merge preserve the stored title. Explicit assignment is
   assigned_unaccepted, not accepted. apply_acceptance needs identified owner proof,
   cited assignment Signal and verified reply_to_source_ref; “收到” or TODO existence
-  is not acceptance. Similar deliverables are linked/clustered, not identity-merged.
+  is not acceptance. Unaccepted status alone is not a material Project risk when
+  current evidence shows progress with no meaningful impact or unresolved dispute.
+  Similar deliverables are linked/clustered, not identity-merged.
   status and business_relevance may only change through update_fields: set
   transition=update_fields when either field changes. They remain top-level fields,
   not a nested update_fields object; never set them under another transition.
@@ -704,6 +710,11 @@ Apply the Skill before returning:
   historical proof uses real positive observed Signal IDs, matching references/quotes,
   not session or Memory provenance. historical_comparison needs current and original
   historical proof; if originals are unavailable, state uncertainty, not invented history.
+- Project registration.source_excerpt must itself be an exact contiguous quote
+  from the immutable current Work Item that defines the Project; do not substitute
+  a responsibility sentence, paraphrase, or quote from another source. When a
+  report contains multiple Projects, cite each Project's defining row and assess
+  each Project separately.
 - Keep created/assigned/requested/external/committed/estimated/check dates distinct.
   Date evidence must be literal current-source wording and a trusted actor.
   AI Minutes has no trusted speaker-to-identity date mapping: do not emit source-derived

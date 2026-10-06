@@ -57,7 +57,7 @@
       ],
       "work_item":{"source":{"type":"reply_attempt","ref":"eval:no-report:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付的验收材料已按计划收齐，下一步按原排期提交客户确认。"},
       "existing_context":{"projects":[],"tasks":[],"attention":[]},
-      "expected":{"project_titles":["甲客户一期交付"],"attention_projects":[],"task_count":0,"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:no-report:meeting","eval:no-report:chat"],"project_contexts":{"甲客户一期交付":{"overall_owner":"张三","responsibilities":[],"fact_text_contains":["验收材料"]}},"project_assessments":[{"project_title":"甲客户一期交付","outcome":"not_needed","evidence":[{"source_ref":"eval:no-report:chat","source_excerpt":"验收材料已按计划收齐"}],"application_status":"recorded","task_count":0,"attention_required":false}]}
+      "expected":{"project_titles":["甲客户一期交付"],"attention_projects":[],"task_count":1,"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:no-report:meeting","eval:no-report:chat"],"project_contexts":{"甲客户一期交付":{"overall_owner":"张三","responsibilities":[],"fact_text_contains":["验收材料"]}},"project_assessments":[{"project_title":"甲客户一期交付","outcome":"not_needed","evidence":[{"source_ref":"eval:no-report:chat","source_excerpt":"验收材料已按计划收齐"}],"application_status":"recorded","task_count":1,"attention_required":false}]}
     },
     {
       "case_id":"routine-progress",
@@ -130,7 +130,7 @@
       ],
       "work_item":{"source":{"type":"reply_attempt","ref":"eval:update:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付的验收材料任务仍由李四负责；已补充客户要求的签章页，原提交事项继续推进。"},
       "existing_context":{"projects":[],"tasks":[],"attention":[]},
-      "expected":{"project_titles":["甲客户一期交付项目"],"attention_projects":["甲客户一期交付项目"],"task_count":1,"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:update:meeting#todos-sha256=update-v2","eval:update:chat"],"task_expectations":[{"title_contains":"验收材料","project_title":"甲客户一期交付项目","origin":"source","stage":"formal","owner_name":"李四","commitment_status":"assigned_unaccepted"}],"project_assessments":[{"project_title":"甲客户一期交付项目","outcome":"needs_attention","evidence":[{"source_ref":"eval:update:chat","source_excerpt":"原提交事项继续推进"},{"source_ref":"eval:update:meeting#todos-sha256=update-v2","source_excerpt":"李四尚未接受"}],"allowed_application_statuses":["applied","existing"],"task_count":1,"attention_required":true}]}
+      "expected":{"project_titles":["甲客户一期交付项目"],"attention_projects":[],"task_count":1,"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:update:meeting#todos-sha256=update-v2","eval:update:chat"],"task_expectations":[{"title_contains":"验收材料","project_title":"甲客户一期交付项目","origin":"source","stage":"formal","owner_name":"李四","commitment_status":"assigned_unaccepted"}],"project_assessments":[{"project_title":"甲客户一期交付项目","outcome":"not_needed","evidence":[{"source_ref":"eval:update:chat","source_excerpt":"原提交事项继续推进"}],"application_status":"recorded","task_count":1,"attention_required":false}]}
     },
     {
       "case_id":"distinct-deliverables",
