@@ -738,3 +738,14 @@ service-MCP environment; run the full fixed 19-case replay; and only then finish
 the W39/business, PR, deployment and production-readback gates. CRM customer
 implementation also awaits Derek's review of the written addendum in the
 design specification.
+
+### CRM customer object schema readback (2026-10-06)
+
+After `sharecrm auth status` reported `tokenStatus=normal`, the authorized CLI's
+read-only `data describe get` for `AccountObj` confirmed the customer object's
+stable ID field is `_id` and its customer display-name field is `name`
+(`客户名称`). `UDSText1__c` is labeled `客户注册全称`, a distinct business field.
+No customer records were queried and no CRM writes were performed. The design
+addendum now names these exact schema fields; implementation remains gated on
+Derek reviewing that written addendum. This does not change the unrelated native
+evaluation, W39 migration, PR, deployment, or production-readback gates above.
