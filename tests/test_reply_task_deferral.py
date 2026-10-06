@@ -60,7 +60,7 @@ def test_preview_read_only_and_apply_resume_preserve_task_and_run(tmp_path):
     receipt = apply_ready(path, task_id, backup)
     assert receipt['status'] == 'paused'
     assert apply_ready(path, task_id, backup)['id'] == receipt['id']
-    assert AutoReplyStore(path).claim_reply_tasks(1) == []
+    assert AutoReplyStore(path).claim_reply_tasks(1, now=NOW.strftime('%Y-%m-%d %H:%M:%S')) == []
     with sqlite3.connect(path) as db:
         task = db.execute('select status, attempts, execution_generation, input_version, error, available_at from reply_tasks where id=?', (task_id,)).fetchone()
         assert task[:5] == before
@@ -71,7 +71,7 @@ def test_preview_read_only_and_apply_resume_preserve_task_and_run(tmp_path):
     assert resume_deferral(path, task_id, receipt_id=receipt['id'], request_id='resume-one', now=NOW)['id'] == receipt['id']
     with sqlite3.connect(path) as db:
         assert db.execute('select available_at from reply_tasks where id=?', (task_id,)).fetchone()[0] == ''
-    assert AutoReplyStore(path).claim_reply_tasks(1)[0].id == task_id
+    assert AutoReplyStore(path).claim_reply_tasks(1, now=NOW.strftime('%Y-%m-%d %H:%M:%S'))[0].id == task_id
 
 
 def test_cli_defaults_to_read_only_preview(tmp_path, capsys):

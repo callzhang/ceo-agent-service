@@ -1,5 +1,11 @@
 # Consumer / Audit / System Execution Validation
 
+## Current release checkpoint, 2026-10-05
+
+Production is at `16c317b4`, formally deployed with verified backup, new PID and HTTP readback. Task386130 completed Consumer24740 and Audit24741 in its original generation; historical risk refusals and delivered WeChat/meeting records were preserved. The separate maintenance/retry changes have independent review and 121 focused retry tests. Final Quality37373665972 reported 10101 backend passes and two fixture failures: deferral uses a fixed12Z clock but claim used wall time, and the deploy CLI stub omitted maintenance_tasks. Both reproduce before correction; the clock and explicit signature corrections pass48 focused tests without runtime changes. Final exact-head CI rerun remains required.
+
+Controlled principal-only native send/readback remains unperformed. Retirement of old unbound question15012 was rejected by automatic approval review and awaits explicit human approval; its degraded quality projection is retained. Full Spec completion remains unproven. Earlier entries below are historical validation checkpoints, with their original refs, results and limits preserved.
+
 ## Independently approved Consumer work boundary, 2026-10-05
 
 Separate deployment-reachability implementation: `app.reply_task_deferral`
