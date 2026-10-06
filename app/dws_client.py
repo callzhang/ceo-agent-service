@@ -3679,6 +3679,10 @@ class DwsClient:
                 for profile in profiles
                 if profile.open_dingtalk_id == message.sender_open_dingtalk_id
             ]
+        elif message.raw_payload.get("senderId"):
+            stable_id = message.raw_payload["senderId"]
+            matches = [profile for profile in profiles
+                       if stable_id == profile.user_id or stable_id == profile.open_dingtalk_id]
         else:
             matches = [profile for profile in profiles if profile.name == message.sender_name]
         if len(matches) != 1:
@@ -3690,7 +3694,7 @@ class DwsClient:
     def is_current_user_message(self, message: DingTalkMessage) -> bool:
         if message.sender_user_id:
             return message.sender_user_id == self.get_current_user_id()
-        if not message.sender_open_dingtalk_id:
+        if not message.sender_open_dingtalk_id and not message.raw_payload.get("senderId"):
             return False
         return self.resolve_message_sender(message) == self.get_current_user_id()
 
@@ -4627,6 +4631,24 @@ class DwsClient:
     def parse_messages(
         payload: dict[str, Any], conversation_title: str, single_chat: bool
     ) -> list[DingTalkMessage]:
+        if payload.get("contractVersion") == "im.message-list.v1":
+            parsed = []
+            for row in payload["messages"]:
+                if not isinstance(row, dict) or any(key not in row for key in (
+                    "conversationId", "messageId", "sender", "createTime", "text",
+                )):
+                    continue
+                parsed.append(DingTalkMessage(
+                    open_conversation_id=row["conversationId"],
+                    open_message_id=row["messageId"],
+                    conversation_title=conversation_title, single_chat=single_chat,
+                    sender_name=row["sender"], sender_user_id=row.get("senderUserId"),
+                    sender_open_dingtalk_id=row.get("senderOpenDingTalkId"),
+                    create_time=row["createTime"], content=row["text"],
+                    message_type=DwsClient._message_type(row),
+                    mentioned_user_ids=DwsClient._mentioned_user_ids(row), raw_payload=row,
+                ))
+            return parsed
         result = payload.get("result", {})
         messages = result.get("messages", [])
         if not messages and isinstance(result.get("conversationMessagesList"), list):

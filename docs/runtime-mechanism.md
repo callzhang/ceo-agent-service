@@ -1382,3 +1382,12 @@ Derek 要求 retry 有上限。ReplyQueueAdapter 的 handler 异常计入既有�
 普通主动 release 仍是未执行业务的调度释放，不消费异常预算。Consumer/Audit 的已持久化
 技术失败独立受每角色、同执行代、同修订连续六次上限约束，调用前检查，拒绝第七次调用；
 底层 code/source_code 保留，预算耗尽不伪造 needs_human 或业务完成。
+
+### 原生消息 ledger 读回（2026-10-05）
+
+`chat +chat-messages` 的当前 `im.message-list.v1` 返回顶层 messages，记录字段为
+conversationId/messageId/text/createTime/sender/senderId。DwsClient 按该原生契约解码，
+保留原消息及会话身份和 raw_payload；原生 atomic 查询的 result.messages 继续按其自身
+provider 字段解码。通用 senderId 只与真实通讯录 profile 的 user_id/open_dingtalk_id
+匹配，不猜身份类型、不因展示名相同就认定为本人。恢复读取使用相同解码，仍保留既有
+准确目标/正文/时间/作者及歧义处理；解析修复不重新发送、修改候选或产生新的执行回执。

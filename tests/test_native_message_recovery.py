@@ -4,15 +4,16 @@ from datetime import UTC, datetime
 import pytest
 
 from app.agent_contracts import ConsumerAgentResult
-from app.dws_client import DwsClient
+from app.dws_client import DwsClient, DwsUserProfile
 from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.store import AgentRole, AutoReplyStore
 from app.system_executor import SystemExecutor
 
 
 class InterruptedNativeClient(DwsClient):
-    def __init__(self):
+    def __init__(self, typed_ledger=False):
         super().__init__()
+        self.typed_ledger = typed_ledger
         self.commands = []
         self.messages = []
         self.visible = False
@@ -34,9 +35,18 @@ class InterruptedNativeClient(DwsClient):
             raise RuntimeError('simulated interruption after provider acceptance')
         assert command[1:3] == ['chat', 'message']
         assert command[3] in ('list', 'list-direct')
+        if self.typed_ledger:
+            rows = [{'conversationId':m['openConversationId'], 'messageId':m['openMessageId'],
+                     'sender':m['sender'], 'senderId':m['senderUserId'],
+                     'createTime':m['createTime'], 'text':m['content']} for m in self.messages] if self.visible else []
+            return {'contractVersion':'im.message-list.v1','messages':rows,'complete':True}
         return {'result': {'messages': self.messages if self.visible else []}}
 
+    def search_user_profiles(self, name):
+        return [DwsUserProfile(user_id='principal', name='Principal')]
 
+
+@pytest.mark.parametrize('typed_ledger', [False, True])
 @pytest.mark.parametrize('legacy_timestamp', [False, True])
 @pytest.mark.parametrize('operation,target,read_target', [
     ('send_group_message', {'conversation_id': 'target-cid'}, ['--group', 'target-cid']),
@@ -45,7 +55,7 @@ class InterruptedNativeClient(DwsClient):
      ['--open-dingtalk-id', 'exact-open']),
 ])
 def test_native_missing_receipt_reads_exact_target_after_restart_without_resend(
-    tmp_path, operation, target, read_target, legacy_timestamp,
+    tmp_path, operation, target, read_target, legacy_timestamp, typed_ledger,
 ):
     path = tmp_path / 'native-recovery.sqlite3'
     store = AutoReplyStore(path)
@@ -58,7 +68,7 @@ def test_native_missing_receipt_reads_exact_target_after_restart_without_resend(
     key = agent_message_delivery_key(business_object_key=task.business_object_key,
         action_identity='notice', execution_generation=task.execution_generation,
         proposal_revision=0)
-    client = InterruptedNativeClient()
+    client = InterruptedNativeClient(typed_ledger)
     prepared = ServiceMessageSender(store=store, dingtalk=client).prepare(
         channel='dingtalk', delivery_key=key, body='Exact reviewed notice',
         feedback_base_url='',
