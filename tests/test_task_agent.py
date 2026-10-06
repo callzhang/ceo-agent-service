@@ -465,7 +465,7 @@ def test_independent_project_prompt_and_skill_have_one_current_contract():
     assert "Do not reclassify the competing overall-owner candidates as responsibilities" in prompt
     assert "explicitly identified as the Project's overall accountable owner belongs in overall_owner" in prompt
     assert "an existing actionable Task already addresses that risk" in prompt
-    assert "X负责Y by itself remains a Project responsibility" in prompt
+    assert "The clause X负责Y remains a Project responsibility when Y is only a duty area" in prompt
     assert "`owner_kind` and `owner_relation` unset" in prompt
     assert "Return every list-valued field as a JSON array" in prompt
     assert "current source itself states a concrete action and expected result" in prompt
@@ -1126,6 +1126,7 @@ def test_task_result_validation_repair_prompt_lists_field_errors_and_rules():
     assert "not by itself a material Project risk" in prompt
     assert "Historical Project/context/Attention evidence must use the exact quote and source_ref" in prompt
     assert "If its delivered task_ids are empty, keep assessment.task_ids and decision_indexes empty" in prompt
+    assert "keep commitment_status unchanged unless the named owner explicitly accepts" in prompt
     assert "Never include a skip decision in decision_indexes" in prompt
     assert "status and business_relevance may only change through update_fields" in prompt
     assert "New, record_candidate and skip decisions must leave status and business_relevance unset" in prompt
@@ -1930,6 +1931,13 @@ def test_task_agent_source_authority_and_independent_project_output(
     assert "related_task_ids" not in text
     assert "Chats/emails" in text
     assert "A bare responsibility clause" in text
+    assert "李四负责核实客户付款排期并反馈" in text
+    assert "overall_owner is suitable for a project-wide coordination action" in text
+    assert (
+        "work progress or continued handling is not acceptance" in text
+        if surface == "prompt"
+        else "Work progress, continued handling or receiving materials does not prove acceptance" in text
+    )
     assert "Do not reconstruct an earlier quotation from a later summary" in text
     assert (
         "keep task_ids and decision_indexes empty" in text
@@ -1941,7 +1949,11 @@ def test_task_agent_source_authority_and_independent_project_output(
     assert "A person explicitly identified as the Project's overall accountable owner" in text
     assert "If an existing actionable Task already addresses that risk" in text
     assert "X负责Y" in text
-    assert "a distinct business deliverable" in text
+    assert (
+        "only a duty area" in text
+        if surface == "prompt"
+        else "a duty-area description" in text
+    )
     assert "concrete action and expected result" in text
     assert "owner_kind" in text and "owner_relation" in text
     assert "Return every list-valued field as a JSON array" in text

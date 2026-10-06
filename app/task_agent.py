@@ -466,12 +466,13 @@ def _task_result_validation_repair_prompt(raw_output: str) -> str:
         "(evidence_origin says whether it is the current Work Item, an earlier session turn, or memory provenance).\n"
         "- A formal assignment requires an explicit owner and authorized "
         "assignment source. Owner evidence alone does not prove authority.\n"
+        "- For an existing Task update, keep commitment_status unchanged unless the named owner explicitly accepts, disputes, completes or cancels it in the source. Work progress, continued handling, receiving materials or updating the Project does not prove acceptance. Set acceptance polarity only with apply_acceptance and verified owner/reply evidence; otherwise omit acceptance fields.\n"
         "- For a display-only suggestion, keep owner_name/owner_user_id empty, owner_evidence empty, and owner_kind/owner_relation unset (null or omitted); also leave formal_basis, acceptance fields, dates, status and business_relevance unset. Put a proposed person only in suggestion.suggested_owner_name/user_id, backed by the cited Project responsibility.\n"
         "- Return every list-valued field as an array; use [] when empty, never null (including decision_indexes, task_ids, todo_changes, follow_up_changes and search_trace).\n"
-        "- A concrete action and expected result stated by the current source is a source-origin Task, even if its metadata does not authorize a formal assignment. Preserve a clearly named responsible person as source-reported owner evidence without inferring acceptance; do not relabel that human-stated action as an Agent suggestion. Use suggestion only when the action itself is inferred and absent from the source.\n"
+        "- A concrete action and expected result stated by the current source is a source-origin Task, even if its metadata does not authorize a formal assignment. A named person responsible to verify a specific matter and report back is an action; a bare duty-area description such as 'responsible for reconciliation' is not. Preserve a clearly named responsible person as source-reported owner evidence without inferring acceptance; do not relabel that human-stated action as an Agent suggestion. Use suggestion only when the action itself is inferred and absent from the source.\n"
         "- A named person's assignment remaining unaccepted is not by itself a material Project risk when current evidence shows the work is progressing and no meaningful impact or dispute; preserve assigned_unaccepted without generating Attention solely for that status.\n"
         "- A bare responsibility clause (for example, a person being responsible for an area) is ProjectContext only, not a source Task or candidate. Create a Task only for an explicitly stated, independently completable deliverable/action, or a separate actionable suggestion required by an evidenced material Project risk.\n"
-        "- The clause X负责Y by itself remains a Project responsibility, even if Y is a distinct business deliverable (for example, 王五负责商务对账). Create a source Task only when the source also states a concrete action/expected result or provides a real action-item record; do not turn a duty-area description into a task.\n"
+        "- The clause X负责Y by itself remains a Project responsibility when Y is only a duty area (for example, 王五负责商务对账). When Y names a specific independently completable action and result (for example, 李四负责核实客户付款排期并反馈), preserve it as a source-origin Task; lack of an authorized meeting action record makes it a candidate, not a formal assignment.\n"
         "- When overall-owner evidence conflicts, keep overall_owner=null and record the competing claims and challenge as sourced facts. State plainly in a Project fact that the owner remains in conflict; do not merely imply the conflict. Do not move candidate overall owners into responsibilities; that list contains only independently evidenced, distinct work responsibilities. Preserve unchanged responsibilities such as a separate deliverable owner.\n"
         "- A person explicitly identified as the Project's overall accountable owner belongs in overall_owner, not responsibilities. In Chinese, an explicit description such as 张三总负责交付验收 denotes that role; keep 总 out of the person's name.\n"
         "- Before suggesting another next-step Task for a Project risk, check current linked Tasks. If an existing actionable Task already addresses that risk, use its existing Task ID as the supporting next step and do not add a duplicate monitoring/evaluation suggestion.\n"
@@ -577,11 +578,11 @@ Apply the Skill before returning:
   ProjectContext only, not a Task or candidate. Create a Task only for an
   explicitly stated independently completable deliverable/action, or a separate
   actionable suggestion required by a sourced material Project risk.
-  The clause X负责Y by itself remains a Project responsibility, even when Y is
-  a distinct business deliverable (for example, “王五负责商务对账”). Create a
-  source Task only when the source also states a concrete action/expected result
-  or provides a real action-item record; do not turn a duty-area description into
-  a Task.
+  The clause X负责Y remains a Project responsibility when Y is only a duty area
+  (for example, “王五负责商务对账”). When Y names a specific independently
+  completable action and result (for example, “李四负责核实客户付款排期并反馈”),
+  preserve it as a source-origin Task; without an authorized meeting action record,
+  it is a candidate, not a formal assignment.
   When overall-owner evidence conflicts, keep overall_owner null and preserve
   the competing claims and challenge as sourced facts. Do not reclassify the
   competing overall-owner candidates as responsibilities; responsibilities are
@@ -613,14 +614,16 @@ Apply the Skill before returning:
   use record_candidate or existing-ID update_fields with suggestion:
   suggested_owner_name/user_id plus responsibility_evidence and basis_evidence.
   A proposed person may be absent from this message when sourced Project/org roles
-  establish the relevant duty. Actual owner fields, assignment metadata, formal basis,
+  establish the relevant duty. The saved single overall_owner may be the proposed
+  owner for a project-wide coordination action. Actual owner fields, assignment metadata, formal basis,
   typed dates and status remain unset for a pure suggestion. Keep `owner_kind` and
   `owner_relation` unset, with empty `owner_evidence`; put the proposed person only
   in `suggestion.suggested_owner_name/user_id`. It is display-only.
   A Project risk may need Attention without a Task. Create a display-only Task
   suggestion only when a concrete next action is warranted and a saved, sourced
-  Project responsibility supports the suggested person and relevant duty. If no
-  responsibility supports an actionable owner, keep the Project risk in Attention
+  Project responsibility supports the suggested person and relevant duty, or the
+  single overall_owner is suitable for a project-wide coordination action. If no
+  Project role supports an actionable owner, keep the Project risk in Attention
   without inventing a task, owner, monitoring item or deadline. Do not create a
   suggestion for routine progress, a settled/resolved fact, or an ambiguous clue
   that does not establish a material impact.
@@ -630,6 +633,8 @@ Apply the Skill before returning:
   When the current source itself states a concrete action and expected result,
   record it as a source-origin Task; do not relabel that human-stated action as an
   Agent suggestion just because its metadata does not support a formal assignment.
+  A named person responsible to verify a specific matter and report back is an
+  action; a bare duty-area description such as “responsible for reconciliation” is not.
   Preserve a clearly named responsible person as source-reported owner evidence
   without inferring acceptance. Use `suggestion` only when the action itself is
   inferred by the Agent and is absent as an action from the source.
@@ -652,6 +657,10 @@ Apply the Skill before returning:
   cited assignment Signal and verified reply_to_source_ref; “收到” or TODO existence
   is not acceptance. Unaccepted status alone is not a material Project risk when
   current evidence shows progress with no meaningful impact or unresolved dispute.
+  For an existing Task update, leave commitment_status unchanged unless the named
+  owner explicitly accepts, disputes, completes or cancels it in the source; work
+  progress or continued handling is not acceptance. Set acceptance polarity only
+  through apply_acceptance with verified owner and reply evidence.
   Similar deliverables are linked/clustered, not identity-merged.
   status and business_relevance may only change through update_fields: set
   transition=update_fields when either field changes. They remain top-level fields,

@@ -55,6 +55,9 @@ to make business judgments.
    a distinct business deliverable (for example, 王五负责商务对账). Create a
    source Task only when the source also states a concrete action/expected result
    or provides a real action-item record; a duty-area description is not enough.
+   A specific action such as “李四负责核实客户付款排期并反馈” is executable
+   and remains a source-origin Task; without an authorized meeting action record,
+   keep it a candidate. This differs from a bare duty such as “王五负责商务对账”.
    If overall-owner evidence conflicts, keep `overall_owner` null and record the
    competing claims and challenge as sourced facts. Do not reclassify competing
    overall-owner candidates as responsibilities; that list contains only
@@ -156,6 +159,10 @@ can apply_acceptance; cite the assignment Signal and verified reply_to_source_re
 “收到” alone is receipt, not acceptance. External TODO existence or Agent/service
 messages do not prove a human commitment. Generic updates cannot select commitment
 status. Ambiguous replies do not choose a Task by rank.
+For existing Task updates, leave commitment_status unchanged unless the named
+owner explicitly accepts, disputes, completes or cancels it. Work progress,
+continued handling or receiving materials does not prove acceptance. Do not set
+acceptance polarity except through apply_acceptance with verified owner/reply proof.
 
 Keep date meanings explicit and source-backed:
 - created_at: when the system recorded the Task;
@@ -194,8 +201,9 @@ Assess bounded retrieved context, not the whole company or all history.
 A real Project can need Attention with zero Tasks. Put `attention_proposal` once
 in its assessment, never copy it onto Task decisions. Create a display-only Task
 suggestion only when a concrete next action is warranted and a saved, sourced
-Project responsibility supports the suggested person and duty. If no responsibility
-supports an actionable owner, keep the risk in Attention without inventing a task,
+Project responsibility supports the suggested person and duty, or the single
+overall_owner is suitable for a project-wide coordination action. If no Project
+role supports an actionable owner, keep the risk in Attention without inventing a task,
 owner, monitoring item or deadline. Optional decision_indexes
 index Task decisions; task_ids name real existing confirmed members, not guessed
 IDs or all Project peers. A Task being linked to this Project is not enough:

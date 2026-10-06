@@ -514,3 +514,27 @@ membership is empty, and forbids reconstructing historical quotations from
 later summaries. Focused tests passed after these changes; a complete clean-
 commit 19-case replay is still required. The 05fa0c69 result is diagnostic, not
 the final gate.
+
+### Full v4 replay on 8afb72c1 (2026-10-05)
+
+The next 19-case native replay passed 15/19. Four cases remained red:
+`existing-task-update` returned an invalid update/acceptance combination;
+`repeated-same-source` ended in a Codex idle timeout (transport failure, not a
+semantic result); `peer-not-auto-member` omitted the concrete verify-and-report
+action stated in the source; and `completed-task-risk-persists` failed to keep
+the project-level risk assessment and its suggested next step coherent.
+
+The follow-up prompt and Skill now distinguish a specific verify-and-report
+action from a bare duty-area responsibility, state that progress is not owner
+acceptance, and permit the saved single Project overall owner as a display-only
+coordinator suggestion for a project-wide risk when appropriate. The peer-case
+oracle now checks the source's stable “payment uncertainty” phrase. The
+completed-task case again expects the concrete payment-date follow-up suggestion
+to the overall owner; this is a proposed next step, not a formal assignment.
+These changes are covered by prompt/Skill regression assertions and the fixture.
+
+The four-case failures have not yet been demonstrated resolved by a fresh full
+native replay. Focused tests passed after the prompt/fixture changes, but the
+fixed semantic gate remains open. The earlier 05fa0c69 interpretation that
+forbade a project-wide suggestion without a saved specific responsibility was
+too narrow and is superseded by the clarified single-overall-owner rule above.
