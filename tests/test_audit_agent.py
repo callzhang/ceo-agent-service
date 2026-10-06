@@ -248,4 +248,7 @@ def test_actual_audit_runner_uses_production_review_instructions(setup):
     command = executor.commands[0]
     setting = next(value for value in command if value.startswith("developer_instructions="))
     actual = json.loads(setting.split("=", 1)[1])
-    assert actual == audit_developer_instructions(render_audit_rules(AgentRole.AUDIT))
+    [snapshot] = [event for event in _store.list_agent_runs_for_task_generation(task.id, task.execution_generation)[-1].tool_events if event.get("type") == "runtime.prompt"]
+    assert actual == audit_developer_instructions(render_audit_rules(AgentRole.AUDIT), runtime_context="") + "\n\n" + snapshot["runtime_context"]
+    assert actual == snapshot["developer_instructions"]
+    assert "只读审核" in snapshot["runtime_context"]

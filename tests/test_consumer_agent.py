@@ -1428,6 +1428,14 @@ def test_consumer_read_events_can_fail_over_within_same_run(
     persisted_run = store.get_agent_run(result.run_id)
     assert persisted_run is not None
     assert persisted_run.codex_session_id == "session-a"
+    snapshots = [event for event in persisted_run.tool_events if event.get("type") == "runtime.prompt"]
+    assert [event["runtime_attempt_id"] for event in snapshots] == [attempt.id for attempt in attempts]
+    assert [event["route_name"] for event in snapshots] == ["codex_oauth", "codex_api"]
+    for snapshot, command in zip(snapshots, executor.commands, strict=True):
+        submitted = next(value for value in command if value.startswith("developer_instructions="))
+        assert json.loads(submitted.partition("=")[2]) == snapshot["developer_instructions"]
+        assert f"route：{snapshot['route_name']}" in snapshot["runtime_context"]
+        assert "fallback-test-key" not in json.dumps(snapshot)
     assert "OPENAI_API_KEY" not in executor.environments[0]
     assert executor.environments[1]["OPENAI_API_KEY"] == "fallback-test-key"
     assert [

@@ -595,14 +595,22 @@ def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path):
         "claude-test",
     ]
     assert submitted_prompts[:2] == ["Read-only decision", "Read-only decision"]
+    saved_run = store.get_agent_run(claim.run.id)
+    prompt_snapshots = [event for event in saved_run.tool_events if event.get("type") == "runtime.prompt"]
+    assert [event["runtime_attempt_id"] for event in prompt_snapshots] == [attempt.id for attempt in attempts]
+    assert [event["route_name"] for event in prompt_snapshots] == [attempt.route_name for attempt in attempts]
+    claude_input = prompt_snapshots[2]
+    assert claude_input["runtime_kind"] == "claude_cli"
+    assert "route：claude_api" in claude_input["runtime_context"]
+    assert claude_input["developer_instructions"] == "Return the exact schema.\n\n" + claude_input["runtime_context"]
     assert submitted_prompts[2] == (
         "<developer-instructions>\n"
-        "Return the exact schema.\n"
-        "</developer-instructions>\n"
-        "<task>\n"
-        "Read-only decision\n"
-        "</task>"
+        + claude_input["developer_instructions"]
+        + "\n</developer-instructions>\n<task>\nRead-only decision\n</task>"
     )
+    assert claude_input["submitted_input"] == submitted_prompts[2]
+    assert all("test-openai-secret" not in json.dumps(event) and "test-anthropic-secret" not in json.dumps(event)
+               for event in prompt_snapshots)
     assert "Return the exact schema." not in commands[2]
     assert store.get_conversation_runtime_session(
         task.conversation_id,

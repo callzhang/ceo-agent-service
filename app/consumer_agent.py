@@ -48,6 +48,7 @@ from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.config import principal_display_name
 from app.prompt import runtime_context_instruction, work_profile_instruction
+from app.runtime_prompt_context import RUNTIME_WORK_PRINCIPLES, explicit_participant_timezones
 from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.store import AgentRole, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import ControlledCliConfig, make_consumer_agent_command
@@ -173,6 +174,7 @@ def consumer_wire_contract_hash(
         "role_boundary": CONSUMER_ROLE_BOUNDARY,
         "system_action_contracts": system_action_contracts_text(),
         "agent_capability_instructions": AGENT_CAPABILITY_INSTRUCTIONS,
+        "runtime_work_principles": RUNTIME_WORK_PRINCIPLES,
         # The runtime Skill tree is the single source the Agent reads; the
         # snapshot below records which revisions were in force, it is not the
         # content the Agent is served.
@@ -591,9 +593,13 @@ class ConsumerAgentRunner:
                 ),
             )
 
+        selected_skill_protocol = context_skill_protocol if context_skill_protocol is not None else default_consumer_skill_protocol()
         result = process.execute(
                 run=claim.run,
                 skill_names=context.skill_names,
+                invocation_facts={"stage_index": context.stage_index, "skill_protocol": selected_skill_protocol,
+                                  "skill_protocol_source": "task_override" if context_skill_protocol is not None else "runtime_catalog",
+                                  "participant_timezones": explicit_participant_timezones(context.trigger_raw_payload)},
                 prompt="## Runtime Invariants\nPreserve typed proposal contracts and session boundaries. The proposal must match the supplied JSON Schema exactly.\n\n"
                 + (
                     "## Scheduled Consumer Prompt\n"
@@ -608,18 +614,8 @@ class ConsumerAgentRunner:
                 ) + continuation_prompt,
                 session_id=session_id,
                 developer_instructions=consumer_developer_instructions(
-                    skill_protocol="\n\n".join(
-                        part for part in (
-                            context_skill_protocol
-                            if context_skill_protocol is not None
-                            else render_business_skill_protocol(
-                                installed_runtime_skills(
-                                    names=BUNDLED_BUSINESS_SKILL_NAMES
-                                )
-                                + default_skill_catalog()
-                            ),
-                        ) if part
-                    ),
+                    runtime_context="",
+                    skill_protocol=selected_skill_protocol,
                 ),
                 configure_command=configure_consumer_command,
                 parse_result=_parse_consumer_result,
@@ -776,6 +772,8 @@ def consumer_developer_instructions(
     audit_rules: str | None = None,
     *,
     skill_protocol: str = "",
+    runtime_context: str | None = None,
+    work_profile: str | None = None,
 ) -> str:
     # Retain the legacy argument for caller compatibility, but never expose
     # Audit's independent review policy to the Consumer.
@@ -797,10 +795,16 @@ def consumer_developer_instructions(
             DECISION_QUALITY_GATE_INSTRUCTIONS,
             _CONSUMER_AGENT_RULES,
             skill_protocol,
-            runtime_context_instruction(),
-            work_profile_instruction(),
+            runtime_context_instruction() if runtime_context is None else runtime_context,
+            work_profile_instruction() if work_profile is None else work_profile,
         )
         if part
+    )
+
+
+def default_consumer_skill_protocol() -> str:
+    return render_business_skill_protocol(
+        installed_runtime_skills(names=BUNDLED_BUSINESS_SKILL_NAMES) + default_skill_catalog()
     )
 
 
@@ -849,6 +853,7 @@ def _is_parent_mcp_inventory_failure(code: str) -> bool:
 
 def audit_developer_instructions(
     audit_rules: str,
+    *, runtime_context: str | None = None, work_profile: str | None = None,
 ) -> str:
     """Render the Audit contract; provider policy belongs to the runtime."""
     core = _developer_instructions(
@@ -877,8 +882,8 @@ def audit_developer_instructions(
             DECISION_QUALITY_GATE_INSTRUCTIONS,
             _AUDIT_AGENT_RULES,
             AUDIT_RESPONSE_COMPLETENESS_INSTRUCTION,
-            runtime_context_instruction(),
-            work_profile_instruction(),
+            runtime_context_instruction() if runtime_context is None else runtime_context,
+            work_profile_instruction() if work_profile is None else work_profile,
         )
     )
 
@@ -905,6 +910,7 @@ def _developer_instructions(
             "7. [external_secrecy] External Secrecy: do not expose secrets.\n"
             "8. [dependency_auth] Dependency Authentication: verify dependency evidence.",
             f"## Dynamic Skill\n{skill_instruction}",
+            RUNTIME_WORK_PRINCIPLES,
             "## System Action Contracts\n" + system_action_contracts_text(),
             f"## Pydantic Wire Contract\n{_schema_json(wire_model)}",
         )

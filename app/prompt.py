@@ -47,12 +47,12 @@ class MaterialReferenceContext:
     read_command: str = ""
 
 
-def work_profile_instruction() -> str:
+def work_profile_instruction(*, create_missing: bool = True) -> str:
     path = work_profile_path()
-    if not path.exists():
+    if not path.exists() and create_missing:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(DEFAULT_WORK_PROFILE_TEXT, encoding="utf-8")
-    profile = path.read_text(encoding="utf-8").strip()
+    profile = path.read_text(encoding="utf-8").strip() if path.exists() else DEFAULT_WORK_PROFILE_TEXT.strip()
     if not profile:
         return ""
     principal = principal_display_name()

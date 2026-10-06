@@ -34,6 +34,10 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-runtime-context-eval | Isolated /Users/derek/.codex/worktrees/runtime-context-settings/ceo-agent-service: new evals/runtime_context/* and scripts/eval_runtime_context.py only | Frozen synthetic native CLI comparison for original calendar-window request, with read-only fixture MCP and independent semantic review; v1/v2 evidence retained with unresolved DST error. | done 2026-10-05 |
+
+| codex-runtime-context-settings | Isolated /Users/derek/.codex/worktrees/runtime-context-settings/ceo-agent-service: app/runtime_prompt_context.py (new), app/prompt_preview.py (new), app/prompt.py (context/profile read-only render only), app/consumer_agent.py (context replacement/hash only), app/audit_agent.py (context assembly only), app/audit_rules.py (read-only render only), app/agent_turn_runner.py (final input snapshot only), app/web_api/registration.py (prompt preview routes only), frontend/src/pages/SettingsPage.tsx (prompt preview only) and new preview component/API, related focused tests, tests/test_agent_turn_store.py (Claude fallback input expectation only), docs/architecture.md and docs/runtime-mechanism.md (runtime context/Settings only), docs/runtime-context-validation.md, approved spec and plan | Derek approved development of Runtime Context merged into current inputs, visible complete rendered prompts in Settings, participant timezone principles; local verification and independent reviews passed, PR #15; final CI Claude fallback expectation corrected and independently reviewed; no new audit/authorization/routing policy or business replay. | done 2026-10-05 |
+
 
 
 

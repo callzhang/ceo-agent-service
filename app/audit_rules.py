@@ -147,15 +147,15 @@ def audit_rules_template_path() -> Path:
     return Path(os.path.expandvars(configured)).expanduser()
 
 
-def read_audit_rules_template(path: Path | None = None) -> str:
+def read_audit_rules_template(path: Path | None = None, *, create_missing: bool = True) -> str:
     template_path = path or audit_rules_template_path()
-    if not template_path.exists():
+    if not template_path.exists() and create_missing:
         template_path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(
             template_path,
             SEED_AUDIT_RULES_TEMPLATE.read_text(encoding="utf-8"),
         )
-    text = template_path.read_text(encoding="utf-8")
+    text = (template_path if template_path.exists() else SEED_AUDIT_RULES_TEMPLATE).read_text(encoding="utf-8")
     validate_audit_rules_text(text)
     return text
 
@@ -168,8 +168,8 @@ def write_audit_rules_template(text: str, path: Path | None = None) -> Path:
     return template_path
 
 
-def render_audit_rules(role: AgentRole, path: Path | None = None) -> str:
-    body = _render_audit_variables(read_audit_rules_template(path))
+def render_audit_rules(role: AgentRole, path: Path | None = None, *, create_missing: bool = True) -> str:
+    body = _render_audit_variables(read_audit_rules_template(path, create_missing=create_missing))
     custom = body if body.strip() else EMPTY_AUDIT_RULES
     wrapper = (
         CONSUMER_RULE_WRAPPER
