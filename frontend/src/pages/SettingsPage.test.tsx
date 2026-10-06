@@ -442,6 +442,18 @@ describe("SettingsPage", () => {
     expect(screen.getByText("{{principal}}", { selector: "mark" })).toBeInTheDocument();
   });
 
+  it.each([
+    ["developer", "template", "Developer Prompt · 模板"],
+    ["developer", "preview", "Developer Prompt · 渲染结果"],
+    ["user", "template", "User Prompt · 模板"],
+    ["user", "preview", "User Prompt · 渲染结果"],
+  ])("labels %s %s with the current view", async (kind, view, title) => {
+    getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { developer_template: "Developer", user_template: "User" }, preview: { developer: "Developer", user: "User" } }, meta: {} });
+    renderSettings(`/settings?tab=prompts&prompt=${kind}&view=${view}`);
+    expect(await screen.findByText(title, { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText(/完整指令/)).not.toBeInTheDocument();
+  });
+
   it("shows complete runtime input only on its separate tab", async () => {
     getPromptPreview.mockResolvedValueOnce({ item: { mode: "current", status: "available", role: "consumer", runtime_kind: "codex_cli", route_name: "primary", model: "model-a", rendered_at: "2026-10-05T18:00:00Z", task_id: null, run_id: null, attempts: [], runtime_attempt_id: null, execution_generation: null, proposal_revision: null, stage_index: null, submission_state: "preview", developer_instructions: "Complete developer input", task_prompt: "Reply to 磊哥 in Friday. Complete task input.", submitted_input: "", runtime_context: "Runtime tools and timezone", reason: "", scope: "unbound", routes: [{ name: "primary", runtime_kind: "codex_cli", model: "model-a" }] }, meta: { snapshot_at: "2026-10-05T18:00:00Z" } });
     getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { user_template: "Reply to {{principal}} in {{conversation}}." }, preview: { user: "Reply to 磊哥 in Friday." } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });

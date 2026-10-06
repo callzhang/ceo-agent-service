@@ -1451,3 +1451,5 @@ Prompts 的 Developer/User/Profile 各自保留 Template 与 Rendered preview �
 同一份已保存模板，未保存草稿不进入预览。保存成功后重新读取服务器模板及渲染结果，避免继续
 显示旧预览。后台 Consumer/Audit 的多段完整输入放在独立只读「运行输入」页签（prompt=runtime），
 不再占用 Developer/User 模板的 Rendered preview；该页没有 Template 或保存操作。
+
+Prompts 内容标题随当前查看方式显示「模板」或「渲染结果」，与所选 Developer/User/Profile 页签对应；完整运行输入仍位于独立只读「运行输入」页签。
