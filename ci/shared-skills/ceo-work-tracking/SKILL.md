@@ -37,7 +37,16 @@ to make business judgments.
    A different stored name cannot replace that definition merely because the action uses its shorter name.
    Task/action sections are not Project registries. Chats/emails may supplement
    known Project facts but do not by themselves create official Project identity.
-   Do not infer aliases or identity from title prefixes, rank or topical similarity.
+   Do not infer aliases or identity from rank or topical similarity. A complete
+   source-stated customer prefix may be emitted only as `crm_customer_label`
+   when it is clearly separate from the Project work (for example, “甲客户” +
+   “一期交付项目”); cite the exact source text. The service performs the
+   read-only CRM exact match. A title prefix alone never proves a CRM identity.
+   The Project title remains unchanged and Tasks never store a copied customer.
+   CRM name-resolution output is only a candidate list, never proof of exact or
+   exhaustive uniqueness. Every returned customer, including a single result,
+   requires explicit user confirmation before linking. No match and CRM lookup
+   failure remain distinct and never create a CRM record.
 3. `project_decisions` independently registers a Project or updates its existing
    active `anchor_id`. Its evidence is nonempty original proof. `context=null`
    only adds proof; otherwise return the complete current snapshot, not a partial

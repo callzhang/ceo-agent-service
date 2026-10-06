@@ -1,5 +1,39 @@
 # Project-centered work validation
 
+## 2026-10-06 CRM customer-association continuation (unreleased)
+
+The isolated implementation branch now contains Project CRM columns/migration,
+source-evidence validation and Task Agent lookup wiring, local explicit
+confirm/clear APIs, Task customer projection through confirmed Projects, customer
+grouping, and Project detail/list UI. These changes are not committed, pushed,
+deployed, or live. Focused backend CRM/API/store tests pass (23); the broader
+Task Agent/model/Skill/API set passes **375 tests**. Frontend API/page tests pass
+(**69**) and the production frontend build succeeds. Ruff and `git diff --check`
+pass. Task Agent Memory write restriction is prompt-only and names only
+`memory_connector.memory_write`; no tool allowlist, CLI/MCP interception, or
+`document_upload` restriction was added.
+
+The actual production `sharecrm` session currently reports `tokenStatus=normal`.
+Live AccountObj describe confirms the fields `_id`, `name`,
+`field_customer_alias__c`, and `UDSText1__c`. A read-only SQL list query confirms
+the CLI response uses `queryMeta.page` (including `returnedCount` and
+`appliedLimit`), not the older documented flat metadata shape. A name-filtered
+`query-by-sql` request is rejected by the installed CLI/service with a field
+filter error. The implementation therefore uses the officially exposed
+`query-by-name` resolver restricted to AccountObj. It returns structured
+candidate IDs/names, but does not prove exhaustive exact uniqueness. All results,
+including a single candidate from Task Agent evidence, remain unlinked until a
+person confirms. The current live adapter smoke returns `NO_MATCH` for a
+synthetic query; the resolved candidate envelope is covered with a fake-process
+contract test. This validates the no-match path and parser shape, not a complete
+positive customer-link readback. CRM release remains gated on final native eval,
+push/deploy, and post-deploy service readback.
+
+During CLI discovery, one `query-by-fields` read with an omitted search filter
+returned the CLI's default first page of 20 CRM records. It was not persisted or
+used; no further broad reads were made. Future discovery must supply a verified
+restrictive filter before executing that command.
+
 ## Scope and completion level
 
 2026-10-05 continuation: Derek confirmed the exact source Project title and the

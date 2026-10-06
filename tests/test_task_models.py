@@ -70,6 +70,35 @@ def test_independent_project_can_be_registered_and_assessed_without_tasks():
     assert result.project_decisions[0].context.goal == "完成客户验收"
 
 
+def test_project_customer_label_requires_verbatim_source_citation():
+    payload = _independent_project_result()
+    project = payload["project_decisions"][0]
+    citation = {
+        "source_ref": "meeting:42",
+        "source_excerpt": "会议决定启动甲客户验收项目",
+    }
+    project["registration"]["title"] = "甲客户验收项目"
+    project["registration"]["source_excerpt"] = citation["source_excerpt"]
+    project["evidence"] = [citation]
+    payload["project_assessments"][0]["project_title"] = "甲客户验收项目"
+    project["crm_customer_label"] = "甲客户"
+    project["crm_customer_evidence"] = citation
+
+    result = TaskAgentDecision.model_validate(payload)
+    assert result.project_decisions[0].crm_customer_label == "甲客户"
+
+    project["crm_customer_label"] = "乙客户"
+    with pytest.raises(ValidationError, match="appear verbatim"):
+        TaskAgentDecision.model_validate(payload)
+
+
+def test_project_customer_label_cannot_be_inferred_without_evidence():
+    payload = _independent_project_result()
+    payload["project_decisions"][0]["crm_customer_label"] = "甲客户"
+    with pytest.raises(ValidationError, match="provided together"):
+        TaskAgentDecision.model_validate(payload)
+
+
 def test_independent_project_selector_indexes_projects_not_tasks():
     payload = _independent_project_result()
     payload["task_decisions"] = [

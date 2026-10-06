@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from app.store import AutoReplyStore
+from app.fxiaoke_customer_lookup import CrmCustomerCandidate, CrmCustomerLookup
 from tests.test_console_web_api import _client
 
 
@@ -108,6 +109,75 @@ def test_project_member_count_agrees_in_task_and_project_details(tmp_path):
         project = client.get(f"/api/console/tasks/projects/{project_id}").json()["item"]
     assert task_project["confirmed_task_count"] == project["summary"]["confirmed_task_count"] == 2
     assert len(project["confirmed_tasks"]) == 2
+
+
+def test_customer_grouping_uses_confirmed_crm_id_and_excludes_unlinked_projects(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    with store._immediate_write_transaction() as db:
+        for key, title in (("linked-a", "客户甲项目 A"), ("linked-b", "客户甲项目 B"), ("internal", "内部平台")):
+            anchor_id = store.create_business_anchor_in_transaction(anchor_type="project", anchor_ref=key, title=title, _db=db)
+            project_id = store.create_business_project_in_transaction(canonical_anchor_id=anchor_id, title=title, registry_source="registry", _db=db)
+            if key != "internal":
+                store.update_business_project_crm_customer_lookup_in_transaction(
+                    project_id=project_id, label="客户甲", evidence=None, lookup_status="matched",
+                    candidates=[], matched_customer_id="crm-account-1", matched_customer_name="客户甲有限公司", _db=db,
+                )
+    with _client(tmp_path) as client:
+        payload = client.get("/api/console/tasks/projects?group_by_customer=true").json()
+    assert payload["meta"]["total"] == 1
+    assert [group["crm_customer_id"] for group in payload["customer_groups"]] == ["crm-account-1"]
+    assert [project["title"] for project in payload["customer_groups"][0]["projects"]] == ["客户甲项目 A", "客户甲项目 B"]
+    assert "内部平台" not in [project["title"] for group in payload["customer_groups"] for project in group["projects"]]
+
+
+def test_task_customer_is_read_through_confirmed_project_not_copied_to_task(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    linked_task_id = store.create_business_task(title="准备甲客户验收材料", stage="formal", formal_basis="explicit_assignment")
+    standalone_task_id = store.create_business_task(title="整理内部周会", stage="formal", formal_basis="explicit_assignment")
+    with store._immediate_write_transaction() as db:
+        signal_id = _signal(store, db, "project-customer-source")
+        anchor_id = store.create_business_anchor_in_transaction(anchor_type="project", anchor_ref="customer-task", title="甲客户交付项目", _db=db)
+        project_id = store.create_business_project_in_transaction(canonical_anchor_id=anchor_id, title="甲客户交付项目", registry_source="registry", _db=db)
+        store.update_business_project_crm_customer_lookup_in_transaction(
+            project_id=project_id, label="甲客户", evidence=None, lookup_status="matched",
+            candidates=[], matched_customer_id="crm-account-1", matched_customer_name="甲客户有限公司", _db=db,
+        )
+        store.create_business_task_anchor_link_in_transaction(task_id=linked_task_id, anchor_id=anchor_id, status="confirmed", active=True, evidence_signal_id=signal_id, _db=db)
+    with _client(tmp_path) as client:
+        linked = client.get(f"/api/console/tasks/items/{linked_task_id}").json()["item"]["summary"]
+        standalone = client.get(f"/api/console/tasks/items/{standalone_task_id}").json()["item"]["summary"]
+    assert linked["project_customer_names"] == ["甲客户有限公司"]
+    assert standalone["project_customer_names"] == []
+    assert "crm_customer_id" not in linked
+
+
+def test_manual_crm_search_requires_human_confirmation_and_never_writes_crm(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    with store._immediate_write_transaction() as db:
+        anchor_id = store.create_business_anchor_in_transaction(anchor_type="project", anchor_ref="crm-manual", title="甲客户一期交付项目", _db=db)
+        project_id = store.create_business_project_in_transaction(canonical_anchor_id=anchor_id, title="甲客户一期交付项目", registry_source="registry", _db=db)
+    calls = []
+
+    def lookup(label):
+        calls.append(label)
+        return CrmCustomerLookup(status="matched", candidates=(CrmCustomerCandidate(customer_id="crm-1", name="甲客户有限公司", matched_fields=("name",)),))
+
+    monkeypatch.setattr("app.fxiaoke_customer_lookup.lookup_account_customers", lookup)
+    with _client(tmp_path) as client:
+        searched = client.post(f"/api/console/tasks/projects/{project_id}/crm-customer-search", json={"customer_label": "甲客户"})
+        assert searched.status_code == 200
+        project = client.get(f"/api/console/tasks/projects/{project_id}").json()["item"]["summary"]
+        assert project["crm_customer_id"] == ""
+        assert project["crm_customer_lookup_status"] == "needs_confirmation"
+        assert project["crm_customer_candidates"][0]["customer_id"] == "crm-1"
+        rejected = client.post(f"/api/console/tasks/projects/{project_id}/crm-customer", json={"customer_id": "unseen-id"})
+        assert rejected.status_code == 409
+        confirmed = client.post(f"/api/console/tasks/projects/{project_id}/crm-customer", json={"customer_id": "crm-1"})
+        assert confirmed.status_code == 200
+        grouped = client.get("/api/console/tasks/projects?group_by_customer=true").json()
+        assert grouped["customer_groups"][0]["crm_customer_id"] == "crm-1"
+        assert client.delete(f"/api/console/tasks/projects/{project_id}/crm-customer").status_code == 200
+    assert calls == ["甲客户"]
 
 
 def test_sent_todos_includes_task_keyed_links_with_semantic_deep_link(tmp_path):

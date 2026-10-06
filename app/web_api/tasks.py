@@ -24,6 +24,7 @@ from app.task_semantic_models import (
     BusinessTaskRelation,
     BusinessTaskSignal,
     ProjectContext,
+    ProjectCrmCustomerCandidate,
     ProjectResponsibility,
     TaskSuggestion,
 )
@@ -730,6 +731,7 @@ class ConsoleBusinessTaskSummary(BaseModel):
     suggested_owner: str
     suggestion_reason: str
     deadline_type: str
+    project_customer_names: list[str] = Field(default_factory=list)
 
 
 class ConsoleBusinessProjectSummary(BaseModel):
@@ -754,6 +756,18 @@ class ConsoleBusinessProjectSummary(BaseModel):
     source_excerpt: str = ""
     open_task_count: int = 0
     done_task_count: int = 0
+    crm_customer_id: str = ""
+    crm_customer_name: str = ""
+    crm_customer_lookup_status: str = "not_requested"
+    crm_customer_candidates: list[ProjectCrmCustomerCandidate] = Field(default_factory=list)
+    crm_customer_label: str = ""
+
+
+class ConsoleBusinessProjectCustomerGroup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    crm_customer_id: str
+    crm_customer_name: str
+    projects: list[ConsoleBusinessProjectSummary]
 
 
 class ConsoleBusinessProjectCandidate(BaseModel):
@@ -777,6 +791,7 @@ class ConsoleBusinessTaskListEnvelope(ApiListEnvelope):
 
 class ConsoleBusinessProjectListEnvelope(ApiListEnvelope):
     items: list[ConsoleBusinessProjectSummary] = Field(default_factory=list)
+    customer_groups: list[ConsoleBusinessProjectCustomerGroup] = Field(default_factory=list)
     candidates: list[ConsoleBusinessProjectCandidate] = Field(default_factory=list)
     candidate_meta: ApiListMeta
 
@@ -887,6 +902,9 @@ def _task_summary_payload(store: Any, task: Any, anchors: dict[int, Any]) -> dic
     labels = [anchors[link.anchor_id].title for link in links
               if link.status.value == "confirmed" and link.active and link.anchor_id in anchors and anchors[link.anchor_id].active]
     suggestion = TaskSuggestion.model_validate_json(task.suggestion_json) if task.origin == "agent_suggestion" and task.stage.value == "candidate" else None
+    project_customer_names = list(
+        store.list_business_task_project_customer_names(task_id=task.id)
+    )
     matching_dates = [row for row in store.list_business_task_date_evidence(task.id)
                       if task.deadline_at and row.value_at == task.deadline_at
                       and row.date_type.value in {"requested_deadline_at", "committed_deadline_at", "external_deadline_at"}]
@@ -901,6 +919,7 @@ def _task_summary_payload(store: Any, task: Any, anchors: dict[int, Any]) -> dic
         "suggested_owner": (suggestion.suggested_owner_name or suggestion.suggested_owner_user_id) if suggestion else "",
         "suggestion_reason": suggestion.reason if suggestion else "",
         "deadline_type": matching_dates[-1].date_type.value if matching_dates else "",
+        "project_customer_names": project_customer_names,
     }
 
 
@@ -987,15 +1006,51 @@ def _project_summary_payload(store: Any, project: Any, tasks: list[Any]) -> dict
         "updated_at": max(time for time in (project.created_at, revision_time, evidence_time) if time),
         "open_task_count": sum(task.status.value not in {"done", "cancelled"} for task in linked_tasks),
         "done_task_count": sum(task.status.value == "done" for task in linked_tasks),
+        "crm_customer_id": project.crm_customer_id,
+        "crm_customer_name": project.crm_customer_name,
+        "crm_customer_lookup_status": project.crm_customer_lookup_status,
+        "crm_customer_candidates": project.crm_customer_candidates,
+        "crm_customer_label": project.crm_customer_label,
     }
 
 
 def business_project_list_response(store: Any, *, page: int, page_size: int, query: str = "",
-                                   candidate_page: int = 1, candidate_page_size: int = 20) -> ConsoleBusinessProjectListEnvelope:
+                                   candidate_page: int = 1, candidate_page_size: int = 20,
+                                   group_by_customer: bool = False) -> ConsoleBusinessProjectListEnvelope:
     needle = query.strip().casefold()
-    projects = [row for row in store.list_business_projects(limit=None) if not needle or needle in row.title.casefold()]
-    selected, meta = _page(projects, page=page, page_size=page_size)
+    projects = [row for row in store.list_business_projects(limit=None)
+                if (not needle or needle in f"{row.title} {row.crm_customer_name}".casefold())]
     tasks = _all_business_tasks(store)
+    project_summaries = {
+        project.id: ConsoleBusinessProjectSummary.model_validate(
+            _project_summary_payload(store, project, tasks)
+        )
+        for project in projects
+    }
+    customer_groups = []
+    if group_by_customer:
+        grouped: dict[str, list[ConsoleBusinessProjectSummary]] = {}
+        labels: dict[str, str] = {}
+        for project in projects:
+            if not project.crm_customer_id:
+                continue
+            grouped.setdefault(project.crm_customer_id, []).append(project_summaries[project.id])
+            labels[project.crm_customer_id] = project.crm_customer_name or project.crm_customer_id
+        ordered_groups = [
+            ConsoleBusinessProjectCustomerGroup(
+                crm_customer_id=customer_id,
+                crm_customer_name=labels[customer_id],
+                projects=sorted(rows, key=lambda row: (row.title.casefold(), row.id)),
+            )
+            for customer_id, rows in sorted(
+                grouped.items(), key=lambda pair: (labels[pair[0]].casefold(), pair[0])
+            )
+        ]
+        selected_groups, meta = _page(ordered_groups, page=page, page_size=page_size)
+        selected = [project for group in selected_groups for project in group.projects]
+        customer_groups = selected_groups
+    else:
+        selected, meta = _page(projects, page=page, page_size=page_size)
     candidate_start = (candidate_page - 1) * candidate_page_size
     with store._connect() as db:
         if needle:
@@ -1017,7 +1072,8 @@ def business_project_list_response(store: Any, *, page: int, page_size: int, que
             ).fetchall()
     candidates = [BusinessProjectCandidate.model_validate(dict(row)) for row in candidate_rows]
     return ConsoleBusinessProjectListEnvelope(
-        items=[ConsoleBusinessProjectSummary.model_validate(_project_summary_payload(store, project, tasks)) for project in selected],
+        items=[project_summaries[project.id] for project in selected],
+        customer_groups=customer_groups,
         candidates=[ConsoleBusinessProjectCandidate(id=row.id, title=row.title, reason=row.reason,
                     status=row.status.value, cluster_id=row.cluster_id, provisional=row.status.value == "proposed",
                     confirmed_project_id=row.confirmed_project_id) for row in candidates],

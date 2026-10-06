@@ -88,7 +88,7 @@ function query(params: Record<string, string | number | undefined>) {
 }
 
 export interface TaskSummary { id: string; title: string; status: string; category: string; priority: string; risk: string; owner: string; progress: string; todo_count: number; state_summary: string; next_summary: string; integrity_issues?: string[]; }
-export type TaskView = "attention" | "formal" | "candidates" | "all" | "projects";
+export type TaskView = "attention" | "formal" | "candidates" | "all" | "projects" | "projects_by_customer";
 export type AttentionCategory = "fyi" | "watch" | "decision" | "push";
 export interface BusinessAttentionSummary {
   id: string;
@@ -117,6 +117,7 @@ export interface BusinessTaskSummary {
   deadline_type: string;
   business_relevance: string;
   anchor_labels: string[];
+  project_customer_names?: string[];
   updated_at: string;
   detail_url: string;
 }
@@ -141,9 +142,27 @@ export interface BusinessProjectSummary {
   source_excerpt?: string;
   open_task_count?: number;
   done_task_count?: number;
+  crm_customer_id?: string;
+  crm_customer_name?: string;
+  crm_customer_lookup_status?: string;
+  crm_customer_candidates?: BusinessProjectCrmCustomerCandidate[];
+  crm_customer_label?: string;
+}
+export interface BusinessProjectCrmCustomerCandidate {
+  customer_id: string;
+  name: string;
+  alias: string;
+  registered_name: string;
+  matched_fields: string[];
+}
+export interface BusinessProjectCustomerGroup {
+  crm_customer_id: string;
+  crm_customer_name: string;
+  projects: BusinessProjectSummary[];
 }
 export interface BusinessProjectCandidateSummary { id: string; title: string; reason: string; status: string; cluster_id: number; provisional: boolean; confirmed_project_id: number | null; }
 export interface BusinessProjectList extends ConsoleList<BusinessProjectSummary> {
+  customer_groups?: BusinessProjectCustomerGroup[];
   candidates: BusinessProjectCandidateSummary[];
   candidate_meta: ConsoleListMeta;
 }
@@ -882,12 +901,18 @@ const isTaskSummary = (item: Record<string, unknown>) => isIdentity(item.id)
   && (item.stage === "candidate" || item.stage === "formal")
   && (item.origin === "source" || item.origin === "agent_suggestion")
   && ["title", "status", "commitment_status", "owner", "suggested_owner", "suggestion_reason", "deadline_at", "deadline_type", "business_relevance", "updated_at", "detail_url"].every((field) => isString(item[field]))
-  && Array.isArray(item.anchor_labels) && item.anchor_labels.every(isString);
+  && Array.isArray(item.anchor_labels) && item.anchor_labels.every(isString)
+  && (item.project_customer_names === undefined || (Array.isArray(item.project_customer_names) && item.project_customer_names.every(isString)));
+const isCrmCustomerCandidate = (value: unknown): value is BusinessProjectCrmCustomerCandidate => isRecord(value)
+  && ["customer_id", "name", "alias", "registered_name"].every((field) => isString(value[field]))
+  && Array.isArray(value.matched_fields) && value.matched_fields.every(isString);
 const isProjectSummary = (item: Record<string, unknown>) => isIdentity(item.id)
   && ["title", "registry_source", "detail_url", "overall_owner", "overall_responsibility", "attention_reason", "updated_at"].every((field) => isString(item[field]))
   && typeof item.canonical_anchor_id === "number" && typeof item.confirmed_task_count === "number"
   && ["responsible_content", "goal", "deadline", "current_status", "source_title", "reporting_period", "source_url", "source_excerpt"].every((field) => item[field] === undefined || isString(item[field]))
-  && ["open_task_count", "done_task_count"].every((field) => item[field] === undefined || typeof item[field] === "number");
+  && ["open_task_count", "done_task_count"].every((field) => item[field] === undefined || typeof item[field] === "number")
+  && ["crm_customer_id", "crm_customer_name", "crm_customer_lookup_status", "crm_customer_label"].every((field) => item[field] === undefined || isString(item[field]))
+  && (item.crm_customer_candidates === undefined || (Array.isArray(item.crm_customer_candidates) && item.crm_customer_candidates.every(isCrmCustomerCandidate)));
 
 const isCitation = (value: unknown) => isRecord(value)
   && (value.signal_id === null || typeof value.signal_id === "number")
@@ -919,7 +944,8 @@ export function listBusinessProjects(params: Record<string, string | number | un
     const candidates = isRecord(value) && Array.isArray(value.candidates) ? value.candidates : [];
     if (!isRecord(value) || !isListMeta(value.candidate_meta)) throw new Error("invalid business project candidate page");
     if (!candidates.every((candidate) => isRecord(candidate) && isIdentity(candidate.id) && isString(candidate.title) && isString(candidate.reason) && isString(candidate.status) && typeof candidate.cluster_id === "number" && typeof candidate.provisional === "boolean")) throw new Error("invalid business project response");
-    return { ...page, candidates: candidates as BusinessProjectCandidateSummary[], candidate_meta: value.candidate_meta };
+    if (value.customer_groups !== undefined && (!Array.isArray(value.customer_groups) || !value.customer_groups.every((group) => isRecord(group) && isString(group.crm_customer_id) && isString(group.crm_customer_name) && Array.isArray(group.projects) && group.projects.every((item) => isRecord(item) && isProjectSummary(item))))) throw new Error("invalid business project customer groups");
+    return { ...page, customer_groups: (value.customer_groups || []) as BusinessProjectCustomerGroup[], candidates: candidates as BusinessProjectCandidateSummary[], candidate_meta: value.candidate_meta };
   });
 }
 function semanticDetail<T>(value: unknown, kind: string, valid: (item: Record<string, unknown>) => boolean): ConsoleResource<T> {
@@ -952,6 +978,15 @@ export function getBusinessProjectDetail(id: string, signal?: AbortSignal): Prom
     && Array.isArray(item.evidence_signals) && item.evidence_signals.every((row) => isRecord(row) && typeof row.id === "number" && ["source_type", "source_ref", "source_time", "evidence_text", "context_json"].every((field) => isString(row[field])))
     && Array.isArray(item.context_revisions) && item.context_revisions.every((row) => isRecord(row) && typeof row.id === "number" && typeof row.project_id === "number" && isProjectContext(row.context) && Array.isArray(row.evidence_signal_ids) && row.evidence_signal_ids.every((id) => typeof id === "number") && isString(row.created_at))
     && isListMeta(item.evidence_meta) && isListMeta(item.context_revision_meta)));
+}
+export function searchBusinessProjectCrmCustomers(projectId: string, customerLabel: string) {
+  return command(`/api/console/tasks/projects/${encodeURIComponent(projectId)}/crm-customer-search`, { customer_label: customerLabel });
+}
+export function confirmBusinessProjectCrmCustomer(projectId: string, customerId: string) {
+  return command(`/api/console/tasks/projects/${encodeURIComponent(projectId)}/crm-customer`, { customer_id: customerId });
+}
+export function clearBusinessProjectCrmCustomer(projectId: string) {
+  return request<{ ok: boolean; item?: unknown; message: string }>(`/api/console/tasks/projects/${encodeURIComponent(projectId)}/crm-customer`, { method: "DELETE" });
 }
 export function getLegacyProjectDetail(id: string, signal?: AbortSignal) {
   return request<ConsoleResource<unknown>>(`/api/console/tasks/legacy-projects/${encodeURIComponent(id)}`, { signal }).then((response) => ({ ...response, item: mapTaskDetail(response.item) }));

@@ -310,6 +310,20 @@ class BusinessTaskAnchorLink(_FrozenBusinessModel):
     created_at: str
 
 
+class SourceCitation(_FrozenBusinessModel):
+    signal_id: ReferenceId | None = None
+    source_ref: Nonblank
+    source_excerpt: Nonblank
+
+
+class ProjectCrmCustomerCandidate(_FrozenBusinessModel):
+    customer_id: Nonblank
+    name: Nonblank
+    alias: str = ""
+    registered_name: str = ""
+    matched_fields: list[Literal["name", "field_customer_alias__c", "UDSText1__c"]]
+
+
 class BusinessProject(_FrozenBusinessModel):
     id: int
     canonical_anchor_id: ReferenceId
@@ -318,12 +332,23 @@ class BusinessProject(_FrozenBusinessModel):
     registry_source: Nonblank
     created_at: str
     context: ProjectContext | None = Field(default=None, exclude=True)
+    crm_customer_id: str = ""
+    crm_customer_name: str = ""
+    crm_customer_lookup_status: Literal[
+        "not_requested", "matched", "ambiguous", "needs_confirmation",
+        "no_match", "unavailable", "conflict"
+    ] = "not_requested"
+    crm_customer_candidates: list[ProjectCrmCustomerCandidate] = Field(default_factory=list)
+    crm_customer_label: str = ""
+    crm_customer_evidence: SourceCitation | None = None
 
-
-class SourceCitation(_FrozenBusinessModel):
-    signal_id: ReferenceId | None = None
-    source_ref: Nonblank
-    source_excerpt: Nonblank
+    @model_validator(mode="after")
+    def validate_crm_customer_identity(self) -> BusinessProject:
+        if self.crm_customer_id and not self.crm_customer_name:
+            raise ValueError("linked CRM customer requires a display-name snapshot")
+        if self.crm_customer_lookup_status == "matched" and not self.crm_customer_id:
+            raise ValueError("matched CRM customer status requires a linked customer ID")
+        return self
 
 
 class ProjectResponsibility(_FrozenBusinessModel):

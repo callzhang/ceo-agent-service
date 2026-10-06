@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { getBusinessProjectDetail, type BusinessProjectDetail, type BusinessTaskSignal, type ProjectContext, type ProjectResponsibility } from "../api/console";
+import { clearBusinessProjectCrmCustomer, confirmBusinessProjectCrmCustomer, getBusinessProjectDetail, searchBusinessProjectCrmCustomers, type BusinessProjectDetail, type BusinessTaskSignal, type ProjectContext, type ProjectResponsibility } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 import { CitationList, DetailSection, LinkedTaskList, TaskSkeleton } from "./TaskParts";
@@ -29,12 +29,17 @@ export function TaskProjectDetailPage({ projectId }: { projectId: string }) {
   const [snapshot, setSnapshot] = useState("");
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
+  const [customerLabel, setCustomerLabel] = useState("");
+  const [customerBusy, setCustomerBusy] = useState(false);
+  const [customerMessage, setCustomerMessage] = useState("");
+  const [customerError, setCustomerError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
     setState("loading");
     getBusinessProjectDetail(projectId, controller.signal).then((result) => { if (!controller.signal.aborted) { setDetail(result.item); setSnapshot(result.meta.snapshot_at); setState("ready"); } }).catch((reason: unknown) => { if (!controller.signal.aborted) { setError(reason instanceof Error ? reason.message : "加载失败"); setState("error"); } });
     return () => controller.abort();
-  }, [projectId]);
+  }, [projectId, refreshKey]);
   if (state === "loading") return <ConsolePageLayout title="项目详情" breadcrumb={[...trail, { label: "项目详情" }]}><TaskSkeleton /></ConsolePageLayout>;
   if (state === "error" || !detail) return <ConsolePageLayout title="项目详情" breadcrumb={[...trail, { label: "项目详情" }]}><div className="page-state page-state-error" role="alert">{error || "项目不存在"}</div></ConsolePageLayout>;
   const project = detail.summary;
@@ -43,6 +48,29 @@ export function TaskProjectDetailPage({ projectId }: { projectId: string }) {
   const owner = context?.overall_owner;
   const sourceLabel = project.source_title || project.registry_source || "待明确";
   const totalTaskCount = project.confirmed_task_count;
+  const searchCustomers = async () => {
+    setCustomerBusy(true); setCustomerMessage(""); setCustomerError("");
+    try {
+      await searchBusinessProjectCrmCustomers(projectId, customerLabel);
+      setCustomerMessage("CRM 查询完成；请核对结果后手动确认关联。");
+      setRefreshKey((key) => key + 1);
+    } catch (reason: unknown) { setCustomerError(reason instanceof Error ? reason.message : "CRM 查询失败"); }
+    finally { setCustomerBusy(false); }
+  };
+  const confirmCustomer = async (customerId: string) => {
+    setCustomerBusy(true); setCustomerMessage(""); setCustomerError("");
+    try { await confirmBusinessProjectCrmCustomer(projectId, customerId); setCustomerMessage("项目客户关联已确认。"); setRefreshKey((key) => key + 1); }
+    catch (reason: unknown) { setCustomerError(reason instanceof Error ? reason.message : "确认关联失败"); }
+    finally { setCustomerBusy(false); }
+  };
+  const clearCustomer = async () => {
+    setCustomerBusy(true); setCustomerMessage(""); setCustomerError("");
+    try { await clearBusinessProjectCrmCustomer(projectId); setCustomerMessage("项目客户关联已解除。"); setRefreshKey((key) => key + 1); }
+    catch (reason: unknown) { setCustomerError(reason instanceof Error ? reason.message : "解除关联失败"); }
+    finally { setCustomerBusy(false); }
+  };
+  const lookupStatus: Record<string, string> = { not_requested: "尚未查询", matched: "已关联", needs_confirmation: "待确认", ambiguous: "有多个匹配客户", no_match: "未找到匹配客户", unavailable: "CRM 暂不可用", conflict: "查询结果与现有关联冲突" };
+  const candidates = project.crm_customer_candidates || [];
   return <ConsolePageLayout title={project.title} breadcrumb={[...trail, { label: "项目详情" }]} actions={<SnapshotBadge timestamp={snapshot} />}><div className="task-domain-page business-detail-page">
     <section className="console-card business-detail-section"><h2>项目整体情况</h2><div className="business-detail-badges"><span className="business-stage formal">正式项目</span></div>
       <dl className="business-detail-facts">
@@ -52,6 +80,18 @@ export function TaskProjectDetailPage({ projectId }: { projectId: string }) {
         <div><dt>所属业务主线</dt><dd>{typeof detail.anchor?.title === "string" ? detail.anchor.title : "未提供"}</dd></div>
         <div><dt>资料更新</dt><dd><TaskTime value={project.updated_at} /></dd></div>
       </dl>
+    </section>
+    <section className="console-card business-detail-section" aria-label="CRM 客户关联"><h2>CRM 客户</h2>
+      <p>{project.crm_customer_name ? `已关联：${project.crm_customer_name}` : (project.crm_customer_lookup_status || "not_requested") === "not_requested" ? "未关联 CRM 客户；可能是内部项目。" : `当前状态：${lookupStatus[project.crm_customer_lookup_status || "not_requested"] || project.crm_customer_lookup_status}`}</p>
+      {project.crm_customer_label && <p className="business-section-note">来源客户称呼：{project.crm_customer_label}</p>}
+      <form onSubmit={(event) => { event.preventDefault(); void searchCustomers(); }} className="business-customer-search">
+        <label>按 CRM 客户名称、别名或登记名称查询<input value={customerLabel} onChange={(event) => setCustomerLabel(event.target.value)} /></label>
+        <button type="submit" className="secondary-button" disabled={customerBusy || !customerLabel.trim()}>{customerBusy ? "查询中…" : "只读查询 CRM"}</button>
+      </form>
+      {candidates.length > 0 && <ul className="business-task-list">{candidates.map((candidate) => <li className="business-task-row" key={candidate.customer_id}><div className="business-task-row-main"><strong>{candidate.name}</strong><span>{candidate.alias && `别名：${candidate.alias}`}</span><span>{candidate.registered_name && `登记名称：${candidate.registered_name}`}</span></div><button type="button" className="secondary-button" disabled={customerBusy} onClick={() => void confirmCustomer(candidate.customer_id)}>{customerBusy ? "处理中…" : "确认关联"}</button></li>)}</ul>}
+      {project.crm_customer_id && <button type="button" className="secondary-button" disabled={customerBusy} onClick={() => void clearCustomer()}>解除客户关联</button>}
+      {customerMessage && <p role="status">{customerMessage}</p>}{customerError && <p role="alert">{customerError}</p>}
+      <p className="business-section-note">CRM 查询为只读；确认后仅在本系统关联。任务展示的客户来自其已确认关联的项目。</p>
     </section>
     <section className="console-card business-detail-section"><h2>总负责人及分工</h2>
       <dl className="business-detail-facts">

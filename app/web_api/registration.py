@@ -389,12 +389,14 @@ def register_console_routes(
     def console_business_projects(
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, ge=1, le=100), q: str = "",
+        group_by_customer: bool = False,
         candidate_page: int = Query(default=1, ge=1),
         candidate_page_size: int = Query(default=20, ge=1, le=100),
     ):
         return business_project_list_response(
             store_factory(), page=page, page_size=page_size, query=q,
             candidate_page=candidate_page, candidate_page_size=candidate_page_size,
+            group_by_customer=group_by_customer,
         )
 
     @app.get("/api/console/tasks/sent-todos", response_model=ConsoleSentTodoListEnvelope)
@@ -531,6 +533,83 @@ def register_console_routes(
         if item is None:
             raise HTTPException(status_code=404, detail="Business project not found")
         return ConsoleBusinessProjectDetailEnvelope(item=item, meta=ApiMeta(snapshot_at=snapshot_at()))
+
+    @app.post("/api/console/tasks/projects/{project_id}/crm-customer-search")
+    async def console_business_project_crm_customer_search(project_id: int, request: Request):
+        from app.fxiaoke_customer_lookup import lookup_account_customers
+
+        payload = await json_object(request)
+        label = str(payload.get("customer_label") or "").strip()
+        if not label:
+            return JSONResponse(
+                {"ok": False, "code": "customer_label_required", "message": "请输入 CRM 客户名称", "details": {}},
+                status_code=400,
+            )
+        store = store_factory()
+        if store.get_business_project(project_id) is None:
+            return JSONResponse(
+                {"ok": False, "code": "not_found", "message": "正式项目不存在", "details": {}},
+                status_code=404,
+            )
+        lookup = lookup_account_customers(label)
+        status = "needs_confirmation" if lookup.status == "matched" else lookup.status
+        candidates = [
+            {
+                "customer_id": item.customer_id,
+                "name": item.name,
+                "alias": item.alias,
+                "registered_name": item.registered_name,
+                "matched_fields": list(item.matched_fields),
+            }
+            for item in lookup.candidates
+        ]
+        with store._connect() as db:
+            store.update_business_project_crm_customer_lookup_in_transaction(
+                project_id=project_id,
+                label=label,
+                evidence=None,
+                lookup_status=status,
+                candidates=candidates,
+                _db=db,
+            )
+        detail = business_project_detail(store, project_id)
+        assert detail is not None
+        return command_result(
+            item=detail.summary.model_dump(mode="json"),
+            message="CRM 查询完成；客户关联仍需人工确认" if status == "needs_confirmation" else "CRM 查询完成",
+        )
+
+    @app.post("/api/console/tasks/projects/{project_id}/crm-customer")
+    async def console_business_project_crm_customer_confirm(project_id: int, request: Request):
+        payload = await json_object(request)
+        customer_id = str(payload.get("customer_id") or "").strip()
+        if not customer_id:
+            return JSONResponse(
+                {"ok": False, "code": "customer_id_required", "message": "请选择一个 CRM 客户", "details": {}},
+                status_code=400,
+            )
+        store = store_factory()
+        if store.get_business_project(project_id) is None:
+            return JSONResponse(
+                {"ok": False, "code": "not_found", "message": "正式项目不存在", "details": {}},
+                status_code=404,
+            )
+        if not store.confirm_business_project_crm_customer(project_id=project_id, customer_id=customer_id):
+            return JSONResponse(
+                {"ok": False, "code": "customer_not_in_search_results", "message": "只能确认本项目最近一次查询返回的客户", "details": {}},
+                status_code=409,
+            )
+        return command_result(item={"project_id": project_id, "customer_id": customer_id}, message="项目客户关联已确认")
+
+    @app.delete("/api/console/tasks/projects/{project_id}/crm-customer")
+    def console_business_project_crm_customer_clear(project_id: int):
+        store = store_factory()
+        if not store.clear_business_project_crm_customer(project_id=project_id):
+            return JSONResponse(
+                {"ok": False, "code": "not_found", "message": "正式项目不存在", "details": {}},
+                status_code=404,
+            )
+        return command_result(item={"project_id": project_id}, message="项目客户关联已解除")
 
     @app.get("/api/console/tasks/legacy-projects/{project_id}", response_model=ConsoleTaskDetailEnvelope)
     def console_legacy_project_detail(project_id: int):

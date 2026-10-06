@@ -450,6 +450,14 @@ class ProjectDecision(StrictTaskModel):
         default=None,
         description="Complete current Project snapshot with original proof for each role/fact. Keep unchanged historical citations; null only adds evidence and does not replace context.",
     )
+    crm_customer_label: str = Field(
+        default="",
+        description="Customer name/alias stated in source evidence, never extracted only by guessing from a Project title.",
+    )
+    crm_customer_evidence: SourceCitation | None = Field(
+        default=None,
+        description="Exact source citation that explicitly identifies crm_customer_label. CRM identity is resolved separately by read-only exact lookup.",
+    )
     evidence: list[SourceCitation] = Field(min_length=1)
     reason: str
 
@@ -461,6 +469,13 @@ class ProjectDecision(StrictTaskModel):
             )
         if not self.reason.strip():
             raise ValueError("project decision requires a nonblank reason")
+        if bool(self.crm_customer_label.strip()) != (self.crm_customer_evidence is not None):
+            raise ValueError("CRM customer label and source evidence must be provided together")
+        if self.crm_customer_evidence is not None:
+            if self.crm_customer_evidence not in self.evidence:
+                raise ValueError("CRM customer evidence must also support the Project decision")
+            if self.crm_customer_label.strip() not in self.crm_customer_evidence.source_excerpt:
+                raise ValueError("CRM customer label must appear verbatim in its source evidence")
         return self
 
 

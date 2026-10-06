@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.store import AutoReplyStore
+from app.fxiaoke_customer_lookup import CrmCustomerCandidate, CrmCustomerLookup
 from app.agent_runtime_router import CodexCommandFactory, RoutedResultValidationError
 from app.task_agent import (
     TaskAgentCodexRunner,
@@ -153,6 +154,47 @@ def test_independent_project_application_saves_zero_task_context_and_real_receip
     assert applied.revision_id is not None
     assert len(applied.signal_ids) == 1
     assert result.projection_receipt.project_decisions[0].project_id == project.id
+
+
+def test_task_agent_saves_even_single_crm_resolution_as_unconfirmed_candidate(tmp_path):
+    store = AutoReplyStore(tmp_path / "project-crm-candidate.sqlite3")
+    item = _independent_project_work_item().model_copy(update={
+        "summary": "会议决定启动甲客户验收项目，李四总负责交付，王五负责商务。当前验收按计划推进。",
+    })
+    decision_data = _independent_project_decision().model_dump(mode="json")
+    project = decision_data["project_decisions"][0]
+    project["registration"]["title"] = "甲客户验收项目"
+    project["registration"]["source_excerpt"] = "会议决定启动甲客户验收项目"
+    project["evidence"][0]["source_excerpt"] = "会议决定启动甲客户验收项目"
+    project["evidence"].append({
+        "source_ref": "meeting:independent-project",
+        "source_excerpt": "甲客户",
+    })
+    project["crm_customer_label"] = "甲客户"
+    project["crm_customer_evidence"] = {
+        "source_ref": "meeting:independent-project",
+        "source_excerpt": "甲客户",
+    }
+    decision_data["project_assessments"][0]["project_title"] = "甲客户验收项目"
+    decision = TaskAgentDecision.model_validate(decision_data)
+
+    result = apply_task_agent_decision(
+        store,
+        summary_input_id=1,
+        work_item=item,
+        decision=decision,
+        record_run=False,
+        crm_customer_lookups={0: CrmCustomerLookup(
+            status="matched",
+            candidates=(CrmCustomerCandidate(customer_id="crm-1", name="甲客户有限公司"),),
+        )},
+    )
+
+    saved = store.get_business_project(result.applied_projects[0].project_id)
+    assert saved is not None
+    assert saved.crm_customer_id == ""
+    assert saved.crm_customer_lookup_status == "needs_confirmation"
+    assert [candidate.customer_id for candidate in saved.crm_customer_candidates] == ["crm-1"]
 
 
 def test_independent_project_replay_does_not_create_task_or_context_revision(tmp_path):
@@ -1890,7 +1932,7 @@ def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract(monkeyp
     assert "read-only discovery" in prompt
     assert "Do not create, update, delete, send, or complete external records" in prompt
     assert "must never call memory_connector.memory_write" in prompt
-    assert "memory_connector.document_upload" in prompt
+    assert "memory_connector.document_upload" not in prompt
     assert "routine milestones and next steps are Project facts, not Task candidates" in prompt
     assert "Project title contains only the entity name, not its status or action" in prompt
     assert "current_project_attention.assessment_json.evidence" in prompt

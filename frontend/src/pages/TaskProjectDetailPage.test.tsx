@@ -1,10 +1,11 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BusinessProjectDetail, BusinessTaskSummary, ProjectContext } from "../api/console";
 
-const getBusinessProjectDetail = vi.hoisted(() => vi.fn<typeof import("../api/console").getBusinessProjectDetail>());
-vi.mock("../api/console", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api/console")>()), getBusinessProjectDetail }));
+const crmApi = vi.hoisted(() => ({ get: vi.fn<typeof import("../api/console").getBusinessProjectDetail>(), search: vi.fn(), confirm: vi.fn(), clear: vi.fn() }));
+vi.mock("../api/console", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api/console")>()), getBusinessProjectDetail: crmApi.get, searchBusinessProjectCrmCustomers: crmApi.search, confirmBusinessProjectCrmCustomer: crmApi.confirm, clearBusinessProjectCrmCustomer: crmApi.clear }));
 import { TaskProjectDetailPage } from "./TaskProjectDetailPage";
 
 const citation = (signal_id: number, source_ref: string, source_excerpt: string) => ({ signal_id, source_ref, source_excerpt });
@@ -36,12 +37,12 @@ describe("TaskProjectDetailPage", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("puts persisted project accountability before source Tasks, suggestions and history", async () => {
-    getBusinessProjectDetail.mockResolvedValue({ item: projectDetail(), meta: { snapshot_at: "2026-10-04" } });
+    crmApi.get.mockResolvedValue({ item: projectDetail(), meta: { snapshot_at: "2026-10-04" } });
     render(<MemoryRouter><TaskProjectDetailPage projectId="2" /></MemoryRouter>);
     expect(await screen.findByRole("heading", { name: "客户交付项目" })).toBeInTheDocument();
     for (const text of ["总负责人", "张三", "交付与验收", "人员分工", "王五", "商务与回款", context.goal, context.scope, "回款时间存在不确定性"]) expect(screen.getAllByText(text).length).toBeGreaterThan(0);
     const headings = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent);
-    expect(headings).toEqual(["项目整体情况", "总负责人及分工", "为什么关注", "来源任务1", "Agent 建议1", "来源与历史"]);
+    expect(headings).toEqual(["项目整体情况", "CRM 客户", "总负责人及分工", "为什么关注", "来源任务1", "Agent 建议1", "来源与历史"]);
     const sourceSection = screen.getByRole("heading", { name: "来源任务1" }).closest("details")!;
     expect(within(sourceSection).getByRole("link", { name: "整理验收材料" })).toHaveAttribute("href", "/tasks/item/42");
     expect(within(sourceSection).getByText(/任务执行统计：1 个/)).toHaveTextContent("已完成 1");
@@ -58,9 +59,28 @@ describe("TaskProjectDetailPage", () => {
     expect(screen.getByRole("link", { name: "来源：meeting-31" })).toHaveAttribute("href", "https://example.com/source/31");
   });
 
+  it("searches CRM read-only and requires an explicit click to confirm a returned customer", async () => {
+    const user = userEvent.setup();
+    const item = projectDetail();
+    item.summary.crm_customer_lookup_status = "needs_confirmation";
+    item.summary.crm_customer_label = "甲客户";
+    item.summary.crm_customer_candidates = [{ customer_id: "crm-1", name: "甲客户有限公司", alias: "甲客户", registered_name: "", matched_fields: ["alias"] }];
+    crmApi.get.mockResolvedValue({ item, meta: { snapshot_at: "2026-10-04" } });
+    crmApi.search.mockResolvedValue({ ok: true, message: "CRM 查询完成" });
+    crmApi.confirm.mockResolvedValue({ ok: true, message: "项目客户关联已确认" });
+    render(<MemoryRouter><TaskProjectDetailPage projectId="2" /></MemoryRouter>);
+    await screen.findByText("甲客户有限公司");
+    await user.clear(screen.getByLabelText("按 CRM 客户名称、别名或登记名称查询"));
+    await user.type(screen.getByLabelText("按 CRM 客户名称、别名或登记名称查询"), "甲客户");
+    await user.click(screen.getByRole("button", { name: "只读查询 CRM" }));
+    expect(crmApi.search).toHaveBeenCalledWith("2", "甲客户");
+    await user.click(await screen.findByRole("button", { name: "确认关联" }));
+    expect(crmApi.confirm).toHaveBeenCalledWith("2", "crm-1");
+  });
+
   it("keeps a zero-Task project readable without inferring missing context", async () => {
     const item = projectDetail();
-    getBusinessProjectDetail.mockResolvedValue({ item: { ...item, summary: { ...item.summary, overall_owner: "", overall_responsibility: "", confirmed_task_count: 0, open_task_count: 0, done_task_count: 0 }, context: null, responsibilities: [], confirmed_tasks: [], suggestions: [], context_revisions: [], context_revision_meta: { ...pageMeta, total: 0 } }, meta: { snapshot_at: "2026-10-04" } });
+    crmApi.get.mockResolvedValue({ item: { ...item, summary: { ...item.summary, overall_owner: "", overall_responsibility: "", confirmed_task_count: 0, open_task_count: 0, done_task_count: 0 }, context: null, responsibilities: [], confirmed_tasks: [], suggestions: [], context_revisions: [], context_revision_meta: { ...pageMeta, total: 0 } }, meta: { snapshot_at: "2026-10-04" } });
     render(<MemoryRouter><TaskProjectDetailPage projectId="2" /></MemoryRouter>);
     await screen.findByRole("heading", { name: "客户交付项目" });
     expect(screen.getByText("总负责人").nextElementSibling).toHaveTextContent("待明确");
@@ -77,7 +97,7 @@ describe("TaskProjectDetailPage", () => {
       { key: "payment-a", text: "商务预计本月回款", evidence: [citation(33, "source-a", "商务说本月可以回款。")], date_type: "", date_value: "" },
       { key: "payment-b", text: "客户尚未给出付款时间", evidence: [citation(34, "source-b", "客户说付款时间还未确认。")], date_type: "", date_value: "" },
     ];
-    getBusinessProjectDetail.mockResolvedValue({ item: { ...item, context: { ...context, facts }, context_revisions: [], evidence_signals: item.evidence_signals.map((signal) => { const fact = facts.find((fact) => fact.evidence[0].signal_id === signal.id); return fact ? { ...signal, source_ref: fact.evidence[0].source_ref, evidence_text: fact.evidence[0].source_excerpt } : signal; }), evidence_meta: { ...pageMeta, total: 30, has_more: true, next_cursor: "" }, context_revision_meta: { ...pageMeta, total: 0 } }, meta: { snapshot_at: "2026-10-04" } });
+    crmApi.get.mockResolvedValue({ item: { ...item, context: { ...context, facts }, context_revisions: [], evidence_signals: item.evidence_signals.map((signal) => { const fact = facts.find((fact) => fact.evidence[0].signal_id === signal.id); return fact ? { ...signal, source_ref: fact.evidence[0].source_ref, evidence_text: fact.evidence[0].source_excerpt } : signal; }), evidence_meta: { ...pageMeta, total: 30, has_more: true, next_cursor: "" }, context_revision_meta: { ...pageMeta, total: 0 } }, meta: { snapshot_at: "2026-10-04" } });
     render(<MemoryRouter><TaskProjectDetailPage projectId="2" /></MemoryRouter>);
     await screen.findByRole("heading", { name: "客户交付项目" });
     for (const fact of facts) {
@@ -91,7 +111,7 @@ describe("TaskProjectDetailPage", () => {
 
   it("labels confirmed project source candidates without implying assignment", async () => {
     const item = projectDetail();
-    getBusinessProjectDetail.mockResolvedValue({ item: { ...item, summary: { ...item.summary, open_task_count: 1, done_task_count: 0 }, confirmed_tasks: [{ ...sourceTask, stage: "candidate", status: "open", commitment_status: "none" }] }, meta: { snapshot_at: "2026-10-04" } });
+    crmApi.get.mockResolvedValue({ item: { ...item, summary: { ...item.summary, open_task_count: 1, done_task_count: 0 }, confirmed_tasks: [{ ...sourceTask, stage: "candidate", status: "open", commitment_status: "none" }] }, meta: { snapshot_at: "2026-10-04" } });
     render(<MemoryRouter><TaskProjectDetailPage projectId="2" /></MemoryRouter>);
     const section = (await screen.findByRole("heading", { name: "来源任务1" })).closest("details")!;
     expect(within(section).getByRole("link", { name: "整理验收材料" })).toBeInTheDocument();
@@ -104,7 +124,7 @@ describe("TaskProjectDetailPage", () => {
 
   it("keeps a promoted suggestion in actual task execution statistics and shows the actual owner", async () => {
     const item = projectDetail();
-    getBusinessProjectDetail.mockResolvedValue({ item: { ...item, confirmed_tasks: [{ ...sourceTask, origin: "agent_suggestion", owner: "赵六" }], suggestions: [] }, meta: { snapshot_at: "2026-10-04" } });
+    crmApi.get.mockResolvedValue({ item: { ...item, confirmed_tasks: [{ ...sourceTask, origin: "agent_suggestion", owner: "赵六" }], suggestions: [] }, meta: { snapshot_at: "2026-10-04" } });
     render(<MemoryRouter><TaskProjectDetailPage projectId="2" /></MemoryRouter>);
     const section = (await screen.findByRole("heading", { name: "来源任务1" })).closest("details")!;
     expect(within(section).getByText("正式任务")).toBeInTheDocument();
@@ -116,13 +136,13 @@ describe("TaskProjectDetailPage", () => {
   });
 
   it("shows a pending state", () => {
-    getBusinessProjectDetail.mockReturnValue(new Promise(() => {}));
+    crmApi.get.mockReturnValue(new Promise(() => {}));
     render(<MemoryRouter><TaskProjectDetailPage projectId="2" /></MemoryRouter>);
     expect(screen.getByRole("status", { name: "正在加载" })).toBeInTheDocument();
   });
 
   it("shows a request failure without stale project information", async () => {
-    getBusinessProjectDetail.mockRejectedValue(new Error("项目资料读取失败"));
+    crmApi.get.mockRejectedValue(new Error("项目资料读取失败"));
     render(<MemoryRouter><TaskProjectDetailPage projectId="2" /></MemoryRouter>);
     expect(await screen.findByRole("alert")).toHaveTextContent("项目资料读取失败");
   });

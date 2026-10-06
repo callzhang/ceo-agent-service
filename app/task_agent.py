@@ -60,6 +60,7 @@ from app.task_semantic_models import (
     AttentionCategory,
     SourceCitation,
     ProjectContext,
+    ProjectCrmCustomerCandidate,
     TaskSuggestion,
 )
 from app.task_semantic_service import (
@@ -84,6 +85,7 @@ from app.task_source_documents import (
     source_is_observed,
 )
 from app.project_context_service import ProjectContextService
+from app.fxiaoke_customer_lookup import CrmCustomerLookup, lookup_account_customers
 
 TASK_AGENT_DECISION_SCHEMA_PATH = (
     Path(__file__).resolve().parent / "schemas" / "task_agent_decision.schema.json"
@@ -548,7 +550,7 @@ instructions for this turn. Never upgrade old result fields or manufacture selec
 Tool-use boundary (prompt guidance): use connected CLI/API/MCP tools only for
 read-only discovery. Do not create, update, delete, send, or complete external records.
 For Memory MCP specifically, you may retrieve existing context, but must never call
-memory_connector.memory_write or memory_connector.document_upload.
+memory_connector.memory_write.
 Return structured local changes; the service applies supported operations.
 This prompt does not technically disable write-capable tools and is not an enforced
 permission boundary.
@@ -581,6 +583,13 @@ Apply the Skill before returning:
   do not let one Project's decision or assessment cover another report row.
   Adopt the exact current authoritative Project definition with registration to register or reuse.
   A different stored name cannot replace that definition merely because the action uses its shorter name.
+  A Project may have an optional CRM customer. Only set crm_customer_label with
+  crm_customer_evidence when the source explicitly names the customer; a clear
+  complete customer prefix plus distinct Project work may be cited as the label.
+  Do not put a customer ID or display name into the Project title, and do not
+  copy a customer onto Tasks. The service performs a read-only CRM name
+  resolution. Every result is an unconfirmed candidate, including a single
+  returned result; a person must explicitly confirm the Project association.
 - context is a complete current snapshot: one overall owner and responsible result,
   other people each with a distinct responsibility. Unknown owner is null.
   A bare responsibility clause (a person responsible for a business area) is
@@ -1480,6 +1489,8 @@ def _project_source_signal(work_item: WorkItem) -> SourceSignal:
 def _project_citations(decision: TaskAgentDecision):
     for project in decision.project_decisions:
         yield from project.evidence
+        if project.crm_customer_evidence is not None:
+            yield project.crm_customer_evidence
         if project.context is not None:
             yield from ProjectContextService._citations(project.context)
     for task in decision.task_decisions:
@@ -1806,6 +1817,7 @@ def apply_task_agent_decision(
     record_run: bool = True,
     dws=None,
     now: str = "",
+    crm_customer_lookups: dict[int, CrmCustomerLookup] | None = None,
     _db: sqlite3.Connection | None = None,
 ) -> TaskAgentApplyResult:
     """Persist all source-grounded task decisions, atomically when _db is supplied."""
@@ -1848,6 +1860,38 @@ def apply_task_agent_decision(
                     _db=db,
                 )
             projects_by_index[index] = project
+            if project_decision.crm_customer_label and project_decision.crm_customer_evidence:
+                lookup = (crm_customer_lookups or {}).get(index)
+                if lookup is None:
+                    lookup = CrmCustomerLookup(status="unavailable", error_code="not_run")
+                customer_evidence = _resolve_project_citation(
+                    store,
+                    project_decision.crm_customer_evidence,
+                    work_item=work_item,
+                    db=db,
+                    current_signal_id=current_signal_id,
+                )
+                customer_candidates = [
+                    ProjectCrmCustomerCandidate(
+                        customer_id=candidate.customer_id,
+                        name=candidate.name,
+                        alias=candidate.alias,
+                        registered_name=candidate.registered_name,
+                        matched_fields=list(candidate.matched_fields),
+                    )
+                    for candidate in lookup.candidates
+                ]
+                lookup_status = (
+                    "needs_confirmation" if lookup.status == "matched" else lookup.status
+                )
+                store.update_business_project_crm_customer_lookup_in_transaction(
+                    project_id=project.id,
+                    label=project_decision.crm_customer_label,
+                    evidence=customer_evidence,
+                    lookup_status=lookup_status,
+                    candidates=customer_candidates,
+                    _db=db,
+                )
             context = _resolved_context(
                 store,
                 project_decision.context,
@@ -3218,6 +3262,11 @@ def process_work_item(
         session_id = getattr(runner.codex, "last_session_id", None) or ""
         if session_lease is not None:
             session_lease.assert_owned()
+        crm_customer_lookups = {
+            index: lookup_account_customers(project.crm_customer_label)
+            for index, project in enumerate(decision.project_decisions)
+            if project.crm_customer_label
+        }
         with store.task_agent_domain_apply_transaction() as db:
             apply_result = apply_task_agent_decision(
                 store,
@@ -3227,6 +3276,7 @@ def process_work_item(
                 codex_session_id=session_id,
                 record_run=False,
                 now=now,
+                crm_customer_lookups=crm_customer_lookups,
                 _db=db,
             )
             if (

@@ -764,6 +764,10 @@ registration.source_excerpt 必须是当前不可变来源中定义该项目的�
 规范 anchor 和原 registry provenance；多活动同名对象为身份冲突，无对象才用现有来源登记方法。
 旧相似名称、简称或标题前缀不能替代新的正式定义；已退休的来源项目不由本轮重新激活。
 
+Project 可选关联 Fxiaoke CRM 客户；CRM 身份单独保存为稳定 AccountObj `_id` 和显示名称，不拼进项目标题，内部项目可保持未关联。Task 不复制客户字段：只有 Task 通过已确认的正式 Project 关系读取其 CRM 客户；独立 Task 不推断客户。Task Agent 的运行 prompt 明确禁止调用 Memory `memory_write`；这项约束不依赖工具白名单或 CLI/MCP 代码拦截。
+
+服务通过已认证的 `sharecrm data record query-by-name` 对 AccountObj 做只读名称解析。该解析器不保证候选完整或精确，单候选也只是候选；来源扫描和 Project 页面查询得到的所有 CRM ID 都须经用户明确确认后才能建立本地关联。多候选展示供选择，`NO_MATCH` 与查询不可用分开保留。查询失败或后续冲突不会清除已确认关联；冲突需显式处理。客户视图按 CRM `_id` 聚合已确认关联的项目，未关联项目（包括内部项目）留在常规正式项目视图，不进入客户分组。
+
 `ProjectContext` 独立于 Task 保存完整快照：goal、scope、最多一名 overall_owner 或 null、
 其他人的不同职责 responsibilities，以及各自的事实 facts。每条职责/事实有实际原始 Signal/ref/
 连续逐字引文；总负责与负责结果不能从 Task owner 猜出。未改变的职责沿用历史原文证据。

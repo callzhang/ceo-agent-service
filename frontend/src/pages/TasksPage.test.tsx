@@ -180,6 +180,15 @@ describe("TasksPage", () => {
     expect(screen.queryByText(/权威周报|DDL/)).not.toBeInTheDocument();
   });
 
+  it("groups confirmed customer Projects separately from the general Project list", async () => {
+    const project = { id: "21", title: "甲客户一期交付项目", registry_source: "管理周报", canonical_anchor_id: 21, confirmed_task_count: 1, detail_url: "/tasks/project/21", overall_owner: "张三", overall_responsibility: "交付", attention_reason: "", crm_customer_id: "crm-1", crm_customer_name: "甲客户有限公司", crm_customer_lookup_status: "matched", crm_customer_candidates: [], crm_customer_label: "甲客户", updated_at: "2026-10-04T08:00:00Z" };
+    api.projects.mockResolvedValue({ items: [project], customer_groups: [{ crm_customer_id: "crm-1", crm_customer_name: "甲客户有限公司", projects: [project] }], candidates: [], candidate_meta: { ...meta, total: 0 }, meta });
+    render(<MemoryRouter initialEntries={["/tasks?view=projects_by_customer"]}><TasksPage /></MemoryRouter>);
+    expect(await screen.findByRole("region", { name: "客户：甲客户有限公司" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "甲客户一期交付项目" })).toHaveAttribute("href", "/tasks/project/21");
+    expect(api.projects).toHaveBeenCalledWith(expect.objectContaining({ group_by_customer: "true" }), expect.anything());
+  });
+
   it("groups source leads separately from Agent suggestions without assigning their proposed owners", async () => {
     const source: BusinessTaskSummary = { ...routine, id: "10", title: "会议提到准备验收材料", stage: "candidate", owner: "", commitment_status: "none", anchor_labels: ["客户项目"] };
     const suggestion: BusinessTaskSummary = { ...source, id: "11", title: "确认客户回款时间", origin: "agent_suggestion", suggested_owner: "王五", suggestion_reason: "回款日期未知，王五负责商务与回款。", detail_url: "/tasks/item/11" };

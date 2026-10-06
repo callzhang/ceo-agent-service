@@ -128,6 +128,8 @@ from app.task_semantic_models import (
     BusinessProjectCandidate,
     BusinessProjectContextRevision,
     BusinessProjectEvidence,
+    ProjectCrmCustomerCandidate,
+    SourceCitation,
     BusinessRelationStatus,
     BusinessRelationType,
     BusinessRelevance,
@@ -227,7 +229,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-04.4"
+STORE_SCHEMA_VERSION = "2026-10-06.1"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -479,7 +481,9 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     ),
     "business_projects": (
         "id", "canonical_anchor_id", "anchor_type", "title", "registry_source",
-        "created_at",
+        "created_at", "crm_customer_id", "crm_customer_name",
+        "crm_customer_lookup_status", "crm_customer_candidates_json",
+        "crm_customer_label", "crm_customer_evidence_json",
     ),
     "business_project_context_revisions": (
         "id", "project_id", "context_json", "evidence_json", "created_at",
@@ -3927,6 +3931,20 @@ class AutoReplyStore:
                     title text not null check({_business_nonblank_sql("title")}),
                     registry_source text not null
                         check({_business_nonblank_sql("registry_source")}),
+                    crm_customer_id text not null default '',
+                    crm_customer_name text not null default '',
+                    crm_customer_lookup_status text not null default 'not_requested'
+                        check(crm_customer_lookup_status in (
+                            'not_requested', 'matched', 'ambiguous', 'needs_confirmation',
+                            'no_match', 'unavailable', 'conflict'
+                        )),
+                    crm_customer_candidates_json text not null default '[]'
+                        check(json_valid(crm_customer_candidates_json)
+                            and json_type(crm_customer_candidates_json) = 'array'),
+                    crm_customer_label text not null default '',
+                    crm_customer_evidence_json text not null default '{{}}'
+                        check(json_valid(crm_customer_evidence_json)
+                            and json_type(crm_customer_evidence_json) = 'object'),
                     created_at text not null default current_timestamp,
                     foreign key(canonical_anchor_id, anchor_type)
                         references business_anchors(id, anchor_type)
@@ -4461,6 +4479,35 @@ class AutoReplyStore:
                     "alter table business_task_signals add column author_kind text not null "
                     "default 'unknown' check(author_kind in ('human', 'system', 'agent', 'unknown'))"
                 )
+            project_columns = {
+                row["name"] for row in db.execute("pragma table_info(business_projects)")
+            }
+            project_customer_columns = (
+                ("crm_customer_id", "text not null default ''"),
+                ("crm_customer_name", "text not null default ''"),
+                (
+                    "crm_customer_lookup_status",
+                    "text not null default 'not_requested' check(crm_customer_lookup_status in "
+                    "('not_requested', 'matched', 'ambiguous', 'needs_confirmation', "
+                    "'no_match', 'unavailable', 'conflict'))",
+                ),
+                (
+                    "crm_customer_candidates_json",
+                    "text not null default '[]' check(json_valid(crm_customer_candidates_json) "
+                    "and json_type(crm_customer_candidates_json) = 'array')",
+                ),
+                ("crm_customer_label", "text not null default ''"),
+                (
+                    "crm_customer_evidence_json",
+                    "text not null default '{}' check(json_valid(crm_customer_evidence_json) "
+                    "and json_type(crm_customer_evidence_json) = 'object')",
+                ),
+            )
+            for column, definition in project_customer_columns:
+                if column not in project_columns:
+                    db.execute(
+                        f"alter table business_projects add column {column} {definition}"
+                    )
             stranded_event_table = db.execute(
                 "select 1 from sqlite_master where type='table' "
                 "and name='business_task_events_before_date_evidence'"
@@ -6738,6 +6785,17 @@ class AutoReplyStore:
         self, row: sqlite3.Row, *, _db: sqlite3.Connection
     ) -> BusinessProject:
         values = dict(row)
+        candidate_values = json.loads(values.pop("crm_customer_candidates_json", "[]"))
+        evidence_value = json.loads(values.pop("crm_customer_evidence_json", "{}"))
+        values["crm_customer_candidates"] = [
+            ProjectCrmCustomerCandidate.model_validate(candidate)
+            for candidate in candidate_values
+        ]
+        values["crm_customer_evidence"] = (
+            SourceCitation.model_validate(evidence_value)
+            if evidence_value
+            else None
+        )
         context = self.get_business_project_context_in_transaction(
             project_id=int(values["id"]), _db=_db
         )
@@ -7636,6 +7694,141 @@ class AutoReplyStore:
                (canonical_anchor_id, title, registry_source) values (?, ?, ?)""",
             (project.canonical_anchor_id, project.title, project.registry_source),
         ).lastrowid)
+
+    def update_business_project_crm_customer_lookup_in_transaction(
+        self,
+        *,
+        project_id: int,
+        label: str,
+        evidence: SourceCitation | None,
+        lookup_status: str,
+        candidates: list[ProjectCrmCustomerCandidate | dict[str, object]],
+        _db: sqlite3.Connection,
+        matched_customer_id: str = "",
+        matched_customer_name: str = "",
+    ) -> bool:
+        allowed_statuses = {
+            "matched", "ambiguous", "needs_confirmation", "no_match", "unavailable", "conflict"
+        }
+        if lookup_status not in allowed_statuses:
+            raise ValueError("unsupported Project CRM customer lookup status")
+        normalized_candidates = [
+            ProjectCrmCustomerCandidate.model_validate(candidate)
+            for candidate in candidates
+        ]
+        row = _db.execute(
+            "select crm_customer_id, crm_customer_name from business_projects where id=?",
+            (project_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("official Project does not exist")
+        current_customer_id = str(row["crm_customer_id"] or "")
+        customer_id = current_customer_id
+        customer_name = str(row["crm_customer_name"] or "")
+        selected_status = lookup_status
+
+        if lookup_status == "matched":
+            if not matched_customer_id.strip() or not matched_customer_name.strip():
+                raise ValueError("matched CRM lookup requires a stable ID and display name")
+            if current_customer_id and current_customer_id != matched_customer_id:
+                # A later source cannot silently replace a confirmed Project link.
+                selected_status = "conflict"
+                if all(candidate.customer_id != matched_customer_id for candidate in normalized_candidates):
+                    raise ValueError("conflicting CRM match must be present as a candidate")
+            else:
+                customer_id = matched_customer_id
+                customer_name = matched_customer_name
+        elif lookup_status == "conflict" and not current_customer_id:
+            raise ValueError("CRM customer conflict requires an existing confirmed link")
+
+        evidence_json = (
+            evidence.model_dump_json() if evidence is not None else "{}"
+        )
+        _db.execute(
+            """update business_projects
+               set crm_customer_id=?, crm_customer_name=?, crm_customer_lookup_status=?,
+                   crm_customer_candidates_json=?, crm_customer_label=?,
+                   crm_customer_evidence_json=?
+               where id=?""",
+            (
+                customer_id,
+                customer_name,
+                selected_status,
+                json.dumps(
+                    [candidate.model_dump(mode="json") for candidate in normalized_candidates],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                label,
+                evidence_json,
+                project_id,
+            ),
+        )
+        return True
+
+    def confirm_business_project_crm_customer(
+        self, *, project_id: int, customer_id: str
+    ) -> bool:
+        if not customer_id.strip():
+            return False
+        with self._connect() as db:
+            row = db.execute(
+                "select crm_customer_id, crm_customer_name, crm_customer_candidates_json "
+                "from business_projects where id=?",
+                (project_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            current_id = str(row["crm_customer_id"] or "")
+            if current_id == customer_id:
+                return True
+            candidates = [
+                ProjectCrmCustomerCandidate.model_validate(value)
+                for value in json.loads(row["crm_customer_candidates_json"] or "[]")
+            ]
+            candidate = next(
+                (value for value in candidates if value.customer_id == customer_id), None
+            )
+            if candidate is None:
+                return False
+            db.execute(
+                """update business_projects
+                   set crm_customer_id=?, crm_customer_name=?,
+                       crm_customer_lookup_status='matched', crm_customer_candidates_json='[]'
+                   where id=?""",
+                (candidate.customer_id, candidate.name, project_id),
+            )
+            return True
+
+    def clear_business_project_crm_customer(self, *, project_id: int) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
+                """update business_projects
+                   set crm_customer_id='', crm_customer_name='',
+                       crm_customer_lookup_status='not_requested',
+                       crm_customer_candidates_json='[]', crm_customer_label='',
+                       crm_customer_evidence_json='{}'
+                   where id=?""",
+                (project_id,),
+            )
+            return cursor.rowcount == 1
+
+    def list_business_task_project_customer_names(self, *, task_id: int) -> tuple[str, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                """select distinct project.crm_customer_name
+                   from business_projects project
+                   join business_task_anchor_links link
+                     on link.anchor_id=project.canonical_anchor_id
+                   join business_anchors anchor on anchor.id=link.anchor_id
+                   where link.task_id=? and link.status='confirmed' and link.active=1
+                     and anchor.active=1 and project.crm_customer_id<>''
+                     and project.crm_customer_name<>''
+                   order by project.crm_customer_name""",
+                (task_id,),
+            ).fetchall()
+            return tuple(str(row[0]) for row in rows)
 
     def create_business_project_candidate_in_transaction(
         self, *, cluster_id: int, title: str, reason: str, _db: sqlite3.Connection

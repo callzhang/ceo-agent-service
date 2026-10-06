@@ -352,7 +352,7 @@
             }
           ]
         },
-        "context": {
+    "context": {
           "anyOf": [
             {
               "$ref": "#/$defs/ProjectContext"
@@ -361,9 +361,32 @@
               "type": "null"
             }
           ],
-          "description": "Complete current Project snapshot with original proof for each role/fact. Keep unchanged historical citations; null only adds evidence and does not replace context."
+      "description": "Complete current Project snapshot with original proof for each role/fact. Keep unchanged historical citations; null only adds evidence and does not replace context."
+    },
+    "crm_customer_label": {
+      "anyOf": [
+        {
+          "description": "Customer name/alias stated in source evidence, never extracted only by guessing from a Project title.",
+          "type": "string"
         },
-        "evidence": {
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Crm Customer Label"
+    },
+    "crm_customer_evidence": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SourceCitation"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Exact source citation that explicitly identifies crm_customer_label. CRM identity is resolved separately by read-only exact lookup."
+    },
+    "evidence": {
           "items": {
             "$ref": "#/$defs/SourceCitation"
           },
@@ -377,10 +400,12 @@
         }
       },
       "required": [
-        "anchor_id",
-        "registration",
-        "context",
-        "evidence",
+    "anchor_id",
+    "registration",
+    "context",
+    "crm_customer_label",
+    "crm_customer_evidence",
+    "evidence",
         "reason"
       ],
       "title": "ProjectDecision",
