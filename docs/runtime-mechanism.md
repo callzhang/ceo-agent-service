@@ -1429,7 +1429,7 @@ role server 描述，仅证明本轮声明的入口，不证明连接/认证/读
 接收或任务成功；两者不是工具进展、外部动作或 provider receipt。记录完整服务 developer/task
 输入、实际 route、run attempt、执行代、修订与来源上下文，并复用已有凭据脱敏。
 
-Settings 的 Prompts/Rendered preview 使用 `/api/console/settings/prompt-preview` 查看上述输入。
+Settings 的 Prompts/运行输入 使用 `/api/console/settings/prompt-preview` 查看上述输入。
 当前预览标注「所选路线的配置预览」，使用当前角色规则和已保存的完整任务输入；无完整上下文
 的绑定任务显示不可用，不通过只保留原触发的重建冒充完整。历史预览只读既有事件，标明准备/
 调用状态、run/attempt/generation/revision/stage/时间；旧 run 缺输入时不重跑、不写回、不补造。
@@ -1440,3 +1440,8 @@ Settings 的 Prompts/Rendered preview 使用 `/api/console/settings/prompt-previ
 后来的准备失败不会隐藏早先已调用的输入。当前预览重新渲染当前默认 Skill 目录，仅复用明确
 标记的 task override；任务正文仍标记保存来源。时区事实只投影 participant_id/timezone/
 source_ref/applies_on 的字符串字段，其他来源字段不进入环境段；快照复用结构化凭据脱敏。
+
+Prompts 的 Developer/User/Profile 各自保留 Template 与 Rendered preview 的一一对应；预览只渲染
+同一份已保存模板，未保存草稿不进入预览。保存成功后重新读取服务器模板及渲染结果，避免继续
+显示旧预览。后台 Consumer/Audit 的多段完整输入放在独立只读「运行输入」页签（prompt=runtime），
+不再占用 Developer/User 模板的 Rendered preview；该页没有 Template 或保存操作。

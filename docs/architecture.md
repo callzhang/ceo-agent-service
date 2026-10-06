@@ -1325,7 +1325,7 @@ principal、task/generation/stage/revision、原业务对象与后台扫描来�
 环境事实；文字材料仍由 Agent 理解，不通过姓名或关键词分支提取。机器时区、公司所在地和
 钉钉源时间戳解析规则不证明对方所在地；未知时区与未知忙闲分别标注。
 
-`Settings → Prompts → Rendered preview` 显示完整服务输入，支持 Consumer/Audit、所选配置路线、
+`Settings → Prompts → 运行输入` 显示完整服务输入，支持 Consumer/Audit、所选配置路线、
 当前配置预览与历史 run。当前预览使用同一 developer/Skill/环境组装逻辑；无任务显示未绑定，
 绑定任务仅复用已保存的完整该角色任务正文，并标记来源 run/时间。不用省略材料、反馈和回执的
 原触发重建结果冒充完整输入；旧任务缺记录时显示不可用。历史模式读取当时保存内容，保留
@@ -1341,3 +1341,8 @@ schema 或完整会话历史；未保存的旧 run 不重跑补齐。没有新�
 后来的准备失败不会隐藏早先已调用的输入。当前预览重新渲染当前默认 Skill 目录，仅复用明确
 标记的 task override；任务正文仍标记保存来源。时区事实只投影 participant_id/timezone/
 source_ref/applies_on 的字符串字段，其他来源字段不进入环境段；快照复用结构化凭据脱敏。
+
+Prompts 的 Developer/User/Profile 各自保留 Template 与 Rendered preview 的一一对应；预览只渲染
+同一份已保存模板，未保存草稿不进入预览。保存成功后重新读取服务器模板及渲染结果，避免继续
+显示旧预览。后台 Consumer/Audit 的多段完整输入放在独立只读「运行输入」页签（prompt=runtime），
+不再占用 Developer/User 模板的 Rendered preview；该页没有 Template 或保存操作。

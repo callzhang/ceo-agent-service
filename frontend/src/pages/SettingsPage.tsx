@@ -18,7 +18,7 @@ import { McpPanel } from "../components/settings/McpPanel";
 
 type RecordValue = Record<string, unknown>;
 type SettingsSection = "status" | "info" | "configuration" | "agent-runtime" | "prompts" | "connectors" | "audit-rules" | "skills" | "mcp" | "attention";
-type PromptKind = "developer" | "user" | "profile";
+type PromptKind = "developer" | "user" | "profile" | "runtime";
 
 const sections: Array<[SettingsSection, string]> = [
   ["status", "Status"], ["info", "Info"], ["configuration", "Configuration"], ["agent-runtime", "Agent Runtime"],
@@ -84,7 +84,8 @@ function highlightRenderedPreview(template: string, preview: string): ReactNode 
     }
     return escapeRegExp(part);
   }).join("");
-  const match = new RegExp(pattern).exec(preview);
+  // A final placeholder must consume its rendered value, not an empty lazy match.
+  const match = new RegExp(pattern + (parts.at(-1) === "" ? "$" : "")).exec(preview);
   if (!match) return preview;
   let groupIndex = 1;
   const highlighted = parts.map((part, index) => {
@@ -109,6 +110,8 @@ function InfoPanel({ payload }: { payload: RecordValue }) {
 }
 
 function PromptPanel({ payload, prompt, view, draft, setDraft, saveState, saveError }: { payload: RecordValue; prompt: PromptKind; view: "template" | "preview"; draft: RecordValue; setDraft: (value: RecordValue) => void; saveState: "idle" | "saving" | "saved" | "error"; saveError: string }) {
+  const sectionTabs = <div className="settings-pill-row" role="tablist" aria-label="Prompt sections">{([['developer', 'Developer Prompt'], ['user', 'User Prompt'], ['profile', 'Distilled work profile'], ['runtime', '运行输入']] as const).map(([key, title]) => <Link key={key} role="tab" aria-selected={prompt === key} className={prompt === key ? "active" : ""} to={`/settings?tab=prompts&prompt=${key}&view=${key === 'runtime' ? 'preview' : 'template'}`}>{title}</Link>)}</div>;
+  if (prompt === "runtime") return <SettingsCard><h2>Prompts</h2><p className="muted">后台 Consumer/Audit 的完整运行输入，由角色规则、Skill、工作人格、任务上下文和 Runtime Context 共同组装。此页只读；Developer/User 模板的变量替换结果请在各自的 Rendered preview 查看。</p>{sectionTabs}<div id="prompt-panel" role="tabpanel" aria-label="运行输入"><RuntimePromptPreview /></div></SettingsCard>;
   const isProfile = prompt === "profile";
   const templateKey = isProfile ? "profile" : `${prompt}_template`;
   const rawTemplate = draft[templateKey] ?? fieldsOf(payload)[templateKey];
@@ -118,9 +121,9 @@ function PromptPanel({ payload, prompt, view, draft, setDraft, saveState, saveEr
   const path = isProfile ? "work_profile.md" : prompt === "developer" ? "developer_prompt.md" : "user_prompt.md";
   const viewTabs = <div className="settings-pill-row settings-view-row" role="tablist" aria-label="Prompt view"><Link role="tab" aria-selected={view === "template"} className={view === "template" ? "active" : ""} to={`/settings?tab=prompts&prompt=${prompt}&view=template`}>Template</Link><Link role="tab" aria-selected={view === "preview"} className={view === "preview" ? "active" : ""} to={`/settings?tab=prompts&prompt=${prompt}&view=preview`}>Rendered preview</Link></div>;
   return <SettingsCard>
-    <div className="settings-card-heading"><div><h2>Prompts</h2><p className="muted">{label} · {isProfile ? "在新的 Consumer 或 Audit 运行中追加到 Developer Prompt。" : "模板由服务端读取，预览使用当前运行时上下文。"}</p></div><span className="settings-path">{path}</span></div>
-    <div className="settings-pill-row" role="tablist" aria-label="Prompt sections"><Link role="tab" aria-selected={prompt === "developer"} className={prompt === "developer" ? "active" : ""} to="/settings?tab=prompts&prompt=developer&view=template">Developer Prompt</Link><Link role="tab" aria-selected={prompt === "user"} className={prompt === "user" ? "active" : ""} to="/settings?tab=prompts&prompt=user&view=template">User Prompt</Link><Link role="tab" aria-selected={isProfile} className={isProfile ? "active" : ""} to="/settings?tab=prompts&prompt=profile&view=template">Distilled work profile</Link></div>
-    <div className="prompt-editor-shell" id="prompt-panel" role="tabpanel" aria-label={view === "template" ? "Template" : "Rendered preview"}>{view === "template" ? <form onSubmit={(event) => event.preventDefault()}><div className="prompt-editor-toolbar">{viewTabs}</div><TokenEditor id="prompt-template" label="Template" value={value} onChange={(next) => setDraft({ ...draft, [templateKey]: next })} autoResize /><p className="muted prompt-runtime-note">{isProfile ? "保存后仅影响后续新建运行。" : <>运行时注入变量：<code>{"{{principal}}"}</code> <code>{"{{conversation}}"}</code>。这些变量不需要手动填写。</>}</p><SaveBar state={saveState} error={saveError} /></form> : <><div className="prompt-editor-toolbar">{viewTabs}</div>{isProfile ? <pre className="prompt-preview">{preview || "未提供预览"}</pre> : <RuntimePromptPreview />}</>}</div>
+    <div className="settings-card-heading"><div><h2>Prompts</h2><p className="muted">{label} · {isProfile ? "在新的 Consumer 或 Audit 运行中追加到 Developer Prompt。" : "Rendered preview 展示这份已保存模板的变量替换结果。后台完整输入见“运行输入”。"}</p></div><span className="settings-path">{path}</span></div>
+    {sectionTabs}
+    <div className="prompt-editor-shell" id="prompt-panel" role="tabpanel" aria-label={view === "template" ? "Template" : "Rendered preview"}>{view === "template" ? <form onSubmit={(event) => event.preventDefault()}><div className="prompt-editor-toolbar">{viewTabs}</div><TokenEditor id="prompt-template" label="Template" value={value} onChange={(next) => setDraft({ ...draft, [templateKey]: next })} autoResize /><p className="muted prompt-runtime-note">{isProfile ? "保存后仅影响后续新建运行。" : <>运行时注入变量：<code>{"{{principal}}"}</code> <code>{"{{conversation}}"}</code>。这些变量不需要手动填写。</>}</p><SaveBar state={saveState} error={saveError} /></form> : <><div className="prompt-editor-toolbar">{viewTabs}</div><p className="muted">预览使用已保存的模板；未保存的改动不会进入预览。</p><pre className="prompt-preview">{isProfile ? preview || "未提供预览" : highlightRenderedPreview(displayValue(fieldsOf(payload)[templateKey]), preview) || "未提供预览"}</pre></>}</div>
   </SettingsCard>;
 }
 
@@ -1040,7 +1043,7 @@ export function SettingsPage() {
   const rawSection = params.get("tab") || "status";
   const candidateSection = rawSection === "config" ? "configuration" : rawSection;
   const section = sections.some(([key]) => key === candidateSection) ? candidateSection as SettingsSection : "status";
-  const prompt: PromptKind = params.get("prompt") === "user" ? "user" : params.get("prompt") === "profile" ? "profile" : "developer";
+  const prompt: PromptKind = params.get("prompt") === "runtime" ? "runtime" : params.get("prompt") === "user" ? "user" : params.get("prompt") === "profile" ? "profile" : "developer";
   const view = params.get("view") === "preview" ? "preview" : "template";
   const connector = params.get("connector") || "dingtalk";
   const auditRule = (["template", "consumer", "audit"] as const).includes(params.get("rule") as never) ? params.get("rule") as "template" | "consumer" | "audit" : "template";
@@ -1051,6 +1054,7 @@ export function SettingsPage() {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveError, setSaveError] = useState("");
   const [attentionCount, setAttentionCount] = useState(0);
+  const sectionGeneration = useRef(0);
   useEffect(() => {
     if (section === "attention") return;
     let active = true;
@@ -1062,6 +1066,7 @@ export function SettingsPage() {
     return () => { active = false; };
   }, [section]);
   useEffect(() => {
+    sectionGeneration.current += 1;
     if (section === "skills" || section === "mcp") { setState("ready"); setPayload(null); setError(""); return; }
     if (section === "status" || section === "attention") return;
     const controller = new AbortController(); setState("loading"); setSaveState("idle"); setSaveError("");
@@ -1071,7 +1076,7 @@ export function SettingsPage() {
     getSettings(section, controller.signal).then((response) => { clearTimeout(timer); setPayload(response.item); setDraft(fieldsOf(response.item)); setState("ready"); setError(""); }).catch((reason: unknown) => { clearTimeout(timer); if (controller.signal.aborted) return; setError(reason instanceof Error ? reason.message : "加载失败"); setState("error"); });
     return () => { clearTimeout(timer); controller.abort(); };
   }, [section]);
-  async function save() { if (!payload) return; setSaveState("saving"); setSaveError(""); try { const promptKey = prompt === "profile" ? "profile" : `${prompt}_template`; const rawPrompt = draft[promptKey] ?? fieldsOf(payload)[promptKey]; const fields = section === "prompts" ? { template: typeof rawPrompt === "string" ? rawPrompt : displayValue(rawPrompt) } : section === "audit-rules" ? { template: displayValue(draft.template) } : draft; await saveSettings(section, fields, section === "prompts" ? { prompt } : {}); setSaveState("saved"); } catch (reason: unknown) { setSaveState("error"); setSaveError(reason instanceof Error && reason.message ? reason.message : "保存失败，草稿仍保留"); } }
+  async function save() { if (!payload) return; const generation = sectionGeneration.current; setSaveState("saving"); setSaveError(""); try { const promptKey = prompt === "profile" ? "profile" : `${prompt}_template`; const rawPrompt = draft[promptKey] ?? fieldsOf(payload)[promptKey]; const fields = section === "prompts" ? { template: typeof rawPrompt === "string" ? rawPrompt : displayValue(rawPrompt) } : section === "audit-rules" ? { template: displayValue(draft.template) } : draft; await saveSettings(section, fields, section === "prompts" ? { prompt } : {}); if (section === "prompts" || section === "audit-rules") { const refreshed = await getSettings(section); if (generation !== sectionGeneration.current) return; setPayload(refreshed.item); } if (generation !== sectionGeneration.current) return; setSaveState("saved"); } catch (reason: unknown) { if (generation !== sectionGeneration.current) return; setSaveState("error"); setSaveError(reason instanceof Error && reason.message ? reason.message : "保存失败，草稿仍保留"); } }
   const content = state === "error" ? <SettingsCard><div className="page-state page-state-error" role="alert">{error}</div></SettingsCard> : state === "loading" && !payload && section !== "status" && section !== "attention" && section !== "skills" && section !== "mcp" ? <SettingsCard><div className="page-state" role="status">正在加载…</div></SettingsCard> : <SettingsContent section={section} payload={payload || {}} draft={draft} setDraft={setDraft} prompt={prompt} view={view} connector={connector} auditRule={auditRule} saveState={saveState} saveError={saveError} onAttentionCountChange={setAttentionCount} />;
   return <main className="console-page settings-page" aria-labelledby="settings-page-title"><h1 id="settings-page-title" className="sr-only">Settings</h1><div className="settings-layout-react"><SectionNav section={section} attentionCount={attentionCount} /><div className="settings-content" onSubmit={(event) => { const form = event.target as HTMLFormElement; if (form.tagName === "FORM" && form.elements.namedItem("settings-save")) { event.preventDefault(); void save(); } }}>{content}</div></div></main>;
 }
