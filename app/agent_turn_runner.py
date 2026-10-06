@@ -1990,19 +1990,21 @@ _RUNTIME_REFERENCE_TEXT_LIMITS = {
 }
 
 
-def _validate_runtime_reference_text_bounds(value: object, *, depth: int = 0) -> None:
+def _validate_runtime_reference_text_bounds(
+    value: object, *, depth: int = 0, authored: bool = True,
+) -> None:
     if depth > 12:
         raise ValueError("runtime_result_reference_depth_invalid")
     if isinstance(value, dict):
         for key, item in value.items():
             normalized = _normalized_key(str(key))
             limit = _RUNTIME_REFERENCE_TEXT_LIMITS.get(normalized)
-            if limit is not None and isinstance(item, str) and len(item) > limit:
+            if authored and limit is not None and isinstance(item, str) and len(item) > limit:
                 raise ValueError("runtime_result_reference_text_too_large")
-            _validate_runtime_reference_text_bounds(item, depth=depth + 1)
+            _validate_runtime_reference_text_bounds(item, depth=depth + 1, authored=authored)
     elif isinstance(value, list | tuple):
         for item in value:
-            _validate_runtime_reference_text_bounds(item, depth=depth + 1)
+            _validate_runtime_reference_text_bounds(item, depth=depth + 1, authored=authored)
 
 
 def _validate_runtime_reference_domain_result(
@@ -2039,7 +2041,17 @@ def _validate_runtime_reference_domain_result(
     _redact_local_runtime_values(domain_result)
     # Local paths can be accidentally echoed while describing source material.
     # Redact the serialized domain fields before enforcing the result boundary.
-    _validate_runtime_reference_text_bounds(domain_result)
+    # Provider snapshots can contain full cards/documents under keys also used
+    # by authored judgments. Keep their depth/codec/security limits, not the
+    # Agent's short-field limits, without changing the persisted source value.
+    authored_result = dict(domain_result)
+    source_bindings = authored_result.pop("source_bindings", [])
+    _validate_runtime_reference_text_bounds(authored_result)
+    for binding in source_bindings:
+        _validate_runtime_reference_text_bounds(
+            {key: value for key, value in binding.items() if key != "value"}, depth=2,
+        )
+        _validate_runtime_reference_text_bounds(binding["value"], depth=3, authored=False)
     sensitive_projection = domain_result
     if _contains_sensitive_value(sensitive_projection):
         raise ValueError("agent_result_contains_sensitive_value")

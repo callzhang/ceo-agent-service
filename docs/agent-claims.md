@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+<!-- codex-source-snapshot-validation-20261006: app/agent_turn_runner.py (source value versus authored short-field validation only), tests/test_consumer_agent.py, docs/runtime-mechanism.md, CHANGELOG.md; production full calendar source reference incorrectly rejected; no change to callback/credential/depth/codec security, digest, source readback or authorization. -->
+
 <!-- codex-ceo-scheduled-rerun-20261002: app/audit_web.py (rerun payload validation only), tests/test_audit_web.py, docs/runtime-mechanism.md; preserve scheduled execution context instead of synthesizing DingTalk input; 320 focused tests passed. -->
 
 <!-- codex-ceo-result-syntax-20261002: app/agent_result.py, tests/test_agent_contracts.py, docs/runtime-mechanism.md; preserve unbalanced JSON as invalid, no result repair or effect policy change; 138 focused tests passed. -->

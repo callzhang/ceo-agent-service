@@ -2313,6 +2313,66 @@ def test_consumer_preserves_provider_rendered_historical_feedback_sources(
     assert json.loads(store.get_agent_run(result.run_id).final_result_json)["source_bindings"][0]["value"] == binding.value
 
 
+def test_consumer_preserves_full_calendar_material_source(store, task, context):
+    reference = json.dumps({"event_id": "event-1", "source": "Calendar details " * 70})
+    context = replace(context, materials=(MaterialReference(
+        kind="dingtalk_calendar", reference=reference,
+        source_message_id=context.trigger_message_id, read_commands=(),
+    ),))
+    result = ConsumerAgentRunner(
+        store=store, workspace=Path("/workspace"), executor=CapturingExecutor(_result_jsonl()),
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    assert result.result.outcome == "no_action"
+    [binding] = result.result.source_bindings
+    assert binding.value["materials"][0]["reference"] == reference
+    persisted = json.loads(store.get_agent_run(result.run_id).final_result_json)
+    assert persisted["source_bindings"][0]["value"] == binding.value
+    from app.reviewed_candidates import candidate_digest
+    from app.reviewed_sources import capture_candidate_sources, changed_candidate_sources
+
+    original_digest = candidate_digest(result.result)
+    assert not changed_candidate_sources(result.result, context, None)
+    changed_context = replace(context, materials=(replace(
+        context.materials[0], reference=reference[:-1] + ', "updated": true}',
+    ),))
+    assert changed_candidate_sources(result.result, changed_context, None)
+    changed_result = capture_candidate_sources(result.result, changed_context, None)
+    assert candidate_digest(changed_result) != original_digest
+
+
+@pytest.mark.parametrize("failure", ["credential", "depth", "codec_size"])
+def test_captured_sources_keep_security_and_resource_bounds(
+    store, task, context, failure,
+):
+    if failure == "credential":
+        source = {"access_token": "secret-value"}
+        expected = "agent_result_contains_sensitive_value"
+    elif failure == "depth":
+        source = {"leaf": "value"}
+        for _ in range(13):
+            source = {"nested": source}
+        expected = "runtime_result_source_invalid"
+    else:
+        from app.agent_turn_runner import _RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES
+        source = {"reference": "x" * (_RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES + 1)}
+        expected = "runtime_result_reference_too_large"
+    context = replace(context, trigger_raw_payload=source)
+    with pytest.raises(ValueError, match=expected) as raised:
+        ConsumerAgentRunner(
+            store=store, workspace=Path("/workspace"), executor=CapturingExecutor(_result_jsonl()),
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    if failure == "depth":
+        assert str(raised.value.__cause__) == "runtime_result_reference_depth_invalid"
+
+
+def test_authored_reference_still_has_short_field_bound(store, task, context):
+    with pytest.raises(ValueError, match="runtime_result_reference_text_too_large"):
+        ConsumerAgentRunner(
+            store=store, workspace=Path("/workspace"),
+            executor=CapturingExecutor(_proposal_jsonl({"reference": "x" * 513})),
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+
 @pytest.mark.parametrize("change", ["foreign", "token", "query", "unpaired", "source-secret"])
 def test_historical_feedback_does_not_exempt_invalid_urls_or_source_credentials(
     store, task, context, monkeypatch, change,

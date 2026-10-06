@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-06: Captured provider sources no longer inherit Agent-authored
+  short-field limits. Full calendar cards remain unchanged in source bindings
+  and candidate digests; credential, callback, nesting and total codec limits
+  remain enforced, as do authored reference bounds.
+
 - 2026-10-05: Consumer result inspection now distinguishes captured historical
   feedback rendering and serialized provider containers from current outgoing
   text. Original source snapshots remain bound to the candidate and reread;
