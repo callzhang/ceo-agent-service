@@ -13,10 +13,14 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.parse import urlsplit
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Error as PlaywrightError, sync_playwright
+
+from app.leak_check import redact_credentials
 
 
 SCRIPT_DIR = Path(
@@ -320,10 +324,59 @@ def _run_bounded_source(command: list[str]) -> str:
 
 
 def _fetch_user_okr(*, user_id: str, period_label: str) -> int:
-    headers = _get_headless_headers()
-    result = browser.direct.fetch_with_headers(user_id, period_label, headers)
+    try:
+        headers = _get_headless_headers()
+    except (RuntimeError, TimeoutError, PlaywrightError) as error:
+        print(json.dumps(_source_failure(
+            error, user_id=user_id, period_label=period_label, scope="shared",
+            code="okr_authentication_readiness_failed",
+        ), ensure_ascii=False), flush=True)
+        return 0
+    try:
+        result = browser.direct.fetch_with_headers(user_id, period_label, headers)
+    except browser.direct.MissingOkrPeriod as absence:
+        if absence.user_id != user_id or absence.period_label != period_label:
+            raise ValueError("personal-period absence identity does not match request")
+        result = {
+            "source": {
+                "system": "Dingteam personal-period API",
+                "capturedAt": datetime.now(UTC).isoformat(),
+            },
+            "userId": absence.user_id,
+            "periodLabel": absence.period_label,
+            "availability": {
+                "status": "goals_not_established",
+                "providerCode": 0,
+                "periodsComplete": True,
+            },
+            "periods": absence.periods,
+        }
+    except (RuntimeError, ValueError) as error:
+        cause = error.__cause__
+        if isinstance(cause, HTTPError):
+            scope = "shared" if cause.code == 401 else "member"
+            code = f"okr_source_http_{cause.code}"
+        elif isinstance(error, ValueError):
+            scope, code = "member", "okr_source_invalid_response"
+        else:
+            scope, code = "shared", "okr_source_unclassified_failure"
+        result = _source_failure(
+            error, user_id=user_id, period_label=period_label, scope=scope, code=code,
+        )
     print(json.dumps(result, ensure_ascii=False), flush=True)
     return 0
+
+
+def _source_failure(error: Exception, *, user_id: str, period_label: str, scope: str, code: str) -> dict:
+    return {
+        "userId": user_id,
+        "periodLabel": period_label,
+        "failure": {
+            "scope": scope,
+            "code": code,
+            "detail": f"{type(error).__name__}: {redact_credentials(str(error))[:300]}",
+        },
+    }
 
 
 def main() -> int:

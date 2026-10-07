@@ -29,6 +29,20 @@ class OkrPeriod:
     period_end: str
 
 
+class OkrLiveSourceError(RuntimeError):
+    """A source-declared failure, not a business absence or human decision."""
+
+    def __init__(self, *, scope: str, code: str, detail: str, user_id: str, period_label: str):
+        if scope not in {"shared", "member"} or not code.strip():
+            raise ValueError("invalid OKR source failure scope or code")
+        super().__init__(f"{code}: {detail}")
+        self.scope = scope
+        self.code = code
+        self.detail = detail
+        self.user_id = user_id
+        self.period_label = period_label
+
+
 class DwsLiveOkrSource:
     def __init__(
         self,
@@ -64,6 +78,18 @@ class DwsLiveOkrSource:
         )
         if not isinstance(payload, dict):
             raise ValueError("invalid OKR live source payload")
+        if "failure" in payload:
+            if payload.get("userId") != user_id or payload.get("periodLabel") != period_label:
+                raise ValueError("OKR source failure identity does not match request")
+            failure = payload["failure"]
+            if (
+                not isinstance(failure, dict)
+                or set(failure) != {"scope", "code", "detail"}
+                or any(not isinstance(value, str) or not value.strip() for value in failure.values())
+                or "availability" in payload or "processed" in payload
+            ):
+                raise ValueError("invalid OKR source failure receipt")
+            raise OkrLiveSourceError(**failure, user_id=user_id, period_label=period_label)
         return payload
 
 
@@ -464,9 +490,11 @@ class UnconfiguredOkrLiveSource:
         self.env_name = env_name
 
     def fetch_user_okr(self, *, user_id: str, period_label: str) -> dict:
-        raise RuntimeError(
-            "missing Dingteam OKR live source command template; "
-            f"set {self.env_name} to the configured Dingteam Web/OpenAPI command"
+        raise OkrLiveSourceError(
+            scope="shared", code="okr_source_unconfigured", user_id=user_id,
+            period_label=period_label,
+            detail="missing Dingteam OKR live source command template; "
+            f"set {self.env_name} to the configured Dingteam Web/OpenAPI command",
         )
 
 
