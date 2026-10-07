@@ -733,14 +733,14 @@ SQLite 继续保存既有 task/run/attempt/provider result identifier 状态；�
 
 `ceo-sales-weekly-report` 没有独立 producer 或功能开关。它由 Consumer 根据明确的销售周报请求动态选择，直接使用安装用户已有的 `sharecrm` 登录态；CRM 只读限制由 Skill 和 Codex automatic review 约束，不表示 service 建立了 `sharecrm` 命令白名单。
 
-### 项目为中心的工作跟踪（开发分支；尚未部署）
+### 项目为中心的工作跟踪（已发布；业务验收部分完成）
 
-Task-first 基础工作跟踪已上线；以下为 2026-10-04 获批设计在本分支的当前实现。
-Task 1–4 的存储、领域与检索已局部验证；Task 5 独立 Agent 输出和 Task 6 Project-owned
-关注已实现，14 个核心相关文件 636 项回归通过，多来源及独立 Project 读回 161 项通过；
-独立最终复核 PASS。Task 7 API 25 项、前端 86 项、构建及合成浏览器检查通过；
-Task 8 原生业务评测和 Task 9 发布未完成。
-Task 1–7 是整体发布单元，不能把本节当成上线或业务效果证明。
+2026-10-04 获批设计的代码经 PR #16/#17 发布；当前生产运行 `a385b86d`，
+包含 2026-10-06 确认的项目 Memory 写入规则。真实生产样本已保存 4 份独立 ProjectContext，
+并在没有 Task 成员时生成 2 张关注卡片；这不代表全部项目或多来源业务验收完成。
+较新会议因不连续原文引文在领域应用阶段失败，项目身份覆盖、历史上下文补充、
+真实建议/Memory/客户关联正向读回仍有未完成项。发布记录、预期与实际及证据边界见
+`docs/task-project-centered-validation.md` 当前状态；本节描述当前契约，不宣称所有样本通过。
 
 #### 来源、项目与任务
 

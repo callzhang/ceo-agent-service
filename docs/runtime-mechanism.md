@@ -262,14 +262,15 @@ Audit 返回 approve、return、reject，必须绑定 candidate_digest 和 propo
 Consumer 的任务改成另一个消息、日程或审批事项。Audit 返回 `return` 或 `reject` 后，服务
 必须把规则、观察结果和修改要求传给下一版 Consumer proposal，再创建对应的 Audit run；
 Audit 只反馈修改要求，不直接替换 Consumer 的业务正文。
-### Task Agent 的项目、任务与判断（开发分支；尚未部署）
+### Task Agent 的项目、任务与判断（已发布；业务验收部分完成）
 
-Task-first 基础工作跟踪已上线；以下为 2026-10-04 获批设计在本分支的当前实现。
-Task 1–4 的存储、领域与检索已局部验证；Task 5 独立 Agent 输出和 Task 6 Project-owned
-关注已实现，14 个核心相关文件 636 项回归通过，多来源及独立 Project 读回 161 项通过；
-独立最终复核 PASS。Task 7 API 25 项、前端 86 项、构建及合成浏览器检查通过；
-Task 8 原生业务评测和 Task 9 发布未完成。
-Task 1–7 是整体发布单元，不能把本节当成上线或业务效果证明。
+2026-10-04 获批设计的代码经 PR #16/#17 发布；当前生产运行 `a385b86d`，
+包含 2026-10-06 确认的项目 Memory 写入规则。生产 input `27465` / run `10690`
+保存了 4 份 ProjectContext 和 2 张零 Task 成员的业务关注卡片。input `27497` /
+run `10691` 的项目引文不连续，被领域校验拒绝并回滚；此类项目引文错误尚未进入
+既有 bounded decision repair。历史项目覆盖及近期多来源结果尚未全部达到设计预期。
+当前预期/实际、发布与未完成验收见 `docs/task-project-centered-validation.md`，
+不能把健康检查、非零关注或已发布代码单独当成全部业务效果证明。
 
 #### 来源、项目与任务
 
