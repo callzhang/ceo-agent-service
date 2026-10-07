@@ -88,7 +88,7 @@ function query(params: Record<string, string | number | undefined>) {
 }
 
 export interface TaskSummary { id: string; title: string; status: string; category: string; priority: string; risk: string; owner: string; progress: string; todo_count: number; state_summary: string; next_summary: string; integrity_issues?: string[]; }
-export type TaskView = "attention" | "formal" | "candidates" | "all" | "projects";
+export type TaskView = "attention" | "formal" | "candidates" | "all" | "projects" | "projects_by_customer";
 export type AttentionCategory = "fyi" | "watch" | "decision" | "push";
 export interface BusinessAttentionSummary {
   id: string;
@@ -106,19 +106,28 @@ export interface BusinessAttentionSummary {
 export interface BusinessTaskSummary {
   id: string;
   title: string;
+  origin: "source" | "agent_suggestion";
+  suggested_owner: string;
+  suggestion_reason: string;
   stage: "candidate" | "formal";
   status: string;
   commitment_status: string;
   owner: string;
   deadline_at: string;
+  deadline_type: string;
   business_relevance: string;
   anchor_labels: string[];
+  project_customer_names?: string[];
   updated_at: string;
   detail_url: string;
 }
 export interface BusinessProjectSummary {
   id: string;
   title: string;
+  overall_owner: string;
+  overall_responsibility: string;
+  attention_reason: string;
+  updated_at: string;
   registry_source: string;
   canonical_anchor_id: number;
   confirmed_task_count: number;
@@ -133,16 +142,86 @@ export interface BusinessProjectSummary {
   source_excerpt?: string;
   open_task_count?: number;
   done_task_count?: number;
+  crm_customer_id?: string;
+  crm_customer_name?: string;
+  crm_customer_lookup_status?: string;
+  crm_customer_candidates?: BusinessProjectCrmCustomerCandidate[];
+  crm_customer_label?: string;
+}
+export interface BusinessProjectCrmCustomerCandidate {
+  customer_id: string;
+  name: string;
+  alias: string;
+  registered_name: string;
+  matched_fields: string[];
+}
+export interface BusinessProjectCustomerGroup {
+  crm_customer_id: string;
+  crm_customer_name: string;
+  projects: BusinessProjectSummary[];
 }
 export interface BusinessProjectCandidateSummary { id: string; title: string; reason: string; status: string; cluster_id: number; provisional: boolean; confirmed_project_id: number | null; }
 export interface BusinessProjectList extends ConsoleList<BusinessProjectSummary> {
+  customer_groups?: BusinessProjectCustomerGroup[];
   candidates: BusinessProjectCandidateSummary[];
   candidate_meta: ConsoleListMeta;
 }
 export type BusinessAttentionList = ConsoleList<BusinessAttentionSummary>;
 export type BusinessTaskList = ConsoleList<BusinessTaskSummary>;
+export interface SourceCitation {
+  signal_id: number | null;
+  source_ref: string;
+  source_excerpt: string;
+}
+export interface ProjectResponsibility {
+  person_user_id: string;
+  person_name: string;
+  responsibility: string;
+  evidence: SourceCitation[];
+}
+export interface ProjectFact {
+  key: string;
+  text: string;
+  evidence: SourceCitation[];
+  date_type: string;
+  date_value: string;
+}
+export interface ProjectContext {
+  goal: string;
+  scope: string;
+  overall_owner: ProjectResponsibility | null;
+  responsibilities: ProjectResponsibility[];
+  facts: ProjectFact[];
+}
+export interface TaskSuggestion {
+  reason: string;
+  suggested_owner_user_id: string;
+  suggested_owner_name: string;
+  responsibility_evidence: SourceCitation[];
+  basis_evidence: SourceCitation[];
+}
+export interface BusinessTaskSignal extends Record<string, unknown> {
+  id: number;
+  source_type: string;
+  source_ref: string;
+  source_time: string;
+  evidence_text: string;
+  context_json: string;
+}
+export interface ProjectContextRevision {
+  id: number;
+  project_id: number;
+  context: ProjectContext;
+  evidence_signal_ids: number[];
+  created_at: string;
+}
 export interface BusinessAttentionDetail {
   summary: BusinessAttentionSummary;
+  assessment: {
+    material_trigger?: string;
+    inference?: string;
+    evidence?: Array<{ signal_id: number; source_ref: string; source_excerpt: string; source_time: string; source_link: string }>;
+  };
   anchor?: Record<string, unknown> | null;
   linked_tasks: BusinessTaskSummary[];
   evidence_signals: Array<Record<string, unknown>>;
@@ -150,6 +229,7 @@ export interface BusinessAttentionDetail {
 }
 export interface BusinessTaskDetail {
   summary: BusinessTaskSummary;
+  suggestion: TaskSuggestion | null;
   description?: string;
   formal_basis?: string;
   owner_user_id?: string;
@@ -168,6 +248,13 @@ export interface BusinessProjectDetail {
   summary: BusinessProjectSummary;
   anchor?: Record<string, unknown> | null;
   confirmed_tasks: BusinessTaskSummary[];
+  context: ProjectContext | null;
+  responsibilities: ProjectResponsibility[];
+  suggestions: BusinessTaskSummary[];
+  evidence_signals: BusinessTaskSignal[];
+  context_revisions: ProjectContextRevision[];
+  evidence_meta: ConsoleListMeta;
+  context_revision_meta: ConsoleListMeta;
 }
 export interface TaskFilters { categories: string[]; task_states: string[]; }
 export interface TaskList extends ConsoleList<TaskSummary> { filters: TaskFilters; }
@@ -812,13 +899,38 @@ const isAttentionSummary = (item: Record<string, unknown>) => isIdentity(item.id
   && typeof item.linked_task_count === "number";
 const isTaskSummary = (item: Record<string, unknown>) => isIdentity(item.id)
   && (item.stage === "candidate" || item.stage === "formal")
-  && ["title", "status", "commitment_status", "owner", "deadline_at", "business_relevance", "updated_at", "detail_url"].every((field) => isString(item[field]))
-  && Array.isArray(item.anchor_labels) && item.anchor_labels.every(isString);
+  && (item.origin === "source" || item.origin === "agent_suggestion")
+  && ["title", "status", "commitment_status", "owner", "suggested_owner", "suggestion_reason", "deadline_at", "deadline_type", "business_relevance", "updated_at", "detail_url"].every((field) => isString(item[field]))
+  && Array.isArray(item.anchor_labels) && item.anchor_labels.every(isString)
+  && (item.project_customer_names === undefined || (Array.isArray(item.project_customer_names) && item.project_customer_names.every(isString)));
+const isCrmCustomerCandidate = (value: unknown): value is BusinessProjectCrmCustomerCandidate => isRecord(value)
+  && ["customer_id", "name", "alias", "registered_name"].every((field) => isString(value[field]))
+  && Array.isArray(value.matched_fields) && value.matched_fields.every(isString);
 const isProjectSummary = (item: Record<string, unknown>) => isIdentity(item.id)
-  && ["title", "registry_source", "detail_url"].every((field) => isString(item[field]))
+  && ["title", "registry_source", "detail_url", "overall_owner", "overall_responsibility", "attention_reason", "updated_at"].every((field) => isString(item[field]))
   && typeof item.canonical_anchor_id === "number" && typeof item.confirmed_task_count === "number"
   && ["responsible_content", "goal", "deadline", "current_status", "source_title", "reporting_period", "source_url", "source_excerpt"].every((field) => item[field] === undefined || isString(item[field]))
-  && ["open_task_count", "done_task_count"].every((field) => item[field] === undefined || typeof item[field] === "number");
+  && ["open_task_count", "done_task_count"].every((field) => item[field] === undefined || typeof item[field] === "number")
+  && ["crm_customer_id", "crm_customer_name", "crm_customer_lookup_status", "crm_customer_label"].every((field) => item[field] === undefined || isString(item[field]))
+  && (item.crm_customer_candidates === undefined || (Array.isArray(item.crm_customer_candidates) && item.crm_customer_candidates.every(isCrmCustomerCandidate)));
+
+const isCitation = (value: unknown) => isRecord(value)
+  && (value.signal_id === null || typeof value.signal_id === "number")
+  && isString(value.source_ref) && isString(value.source_excerpt);
+const isResponsibility = (value: unknown) => isRecord(value)
+  && ["person_user_id", "person_name", "responsibility"].every((field) => isString(value[field]))
+  && Array.isArray(value.evidence) && value.evidence.every(isCitation);
+const isProjectContext = (value: unknown): boolean => isRecord(value)
+  && isString(value.goal) && isString(value.scope)
+  && (value.overall_owner === null || isResponsibility(value.overall_owner))
+  && Array.isArray(value.responsibilities) && value.responsibilities.every(isResponsibility)
+  && Array.isArray(value.facts) && value.facts.every((fact) => isRecord(fact)
+    && ["key", "text", "date_type", "date_value"].every((field) => isString(fact[field]))
+    && Array.isArray(fact.evidence) && fact.evidence.every(isCitation));
+const isTaskSuggestion = (value: unknown) => isRecord(value)
+  && ["reason", "suggested_owner_user_id", "suggested_owner_name"].every((field) => isString(value[field]))
+  && Array.isArray(value.responsibility_evidence) && value.responsibility_evidence.every(isCitation)
+  && Array.isArray(value.basis_evidence) && value.basis_evidence.every(isCitation);
 
 export function listBusinessAttention(params: Record<string, string | number | undefined> = {}, signal?: AbortSignal): Promise<BusinessAttentionList> {
   return request<unknown>(`/api/console/tasks/attention${query(params)}`, { signal }).then((value) => semanticList<BusinessAttentionSummary>(value, "attention", isAttentionSummary));
@@ -832,7 +944,8 @@ export function listBusinessProjects(params: Record<string, string | number | un
     const candidates = isRecord(value) && Array.isArray(value.candidates) ? value.candidates : [];
     if (!isRecord(value) || !isListMeta(value.candidate_meta)) throw new Error("invalid business project candidate page");
     if (!candidates.every((candidate) => isRecord(candidate) && isIdentity(candidate.id) && isString(candidate.title) && isString(candidate.reason) && isString(candidate.status) && typeof candidate.cluster_id === "number" && typeof candidate.provisional === "boolean")) throw new Error("invalid business project response");
-    return { ...page, candidates: candidates as BusinessProjectCandidateSummary[], candidate_meta: value.candidate_meta };
+    if (value.customer_groups !== undefined && (!Array.isArray(value.customer_groups) || !value.customer_groups.every((group) => isRecord(group) && isString(group.crm_customer_id) && isString(group.crm_customer_name) && Array.isArray(group.projects) && group.projects.every((item) => isRecord(item) && isProjectSummary(item))))) throw new Error("invalid business project customer groups");
+    return { ...page, customer_groups: (value.customer_groups || []) as BusinessProjectCustomerGroup[], candidates: candidates as BusinessProjectCandidateSummary[], candidate_meta: value.candidate_meta };
   });
 }
 function semanticDetail<T>(value: unknown, kind: string, valid: (item: Record<string, unknown>) => boolean): ConsoleResource<T> {
@@ -843,7 +956,7 @@ export function getBusinessAttentionDetail(id: string, signal?: AbortSignal): Pr
   return request<unknown>(`/api/console/tasks/attention/${encodeURIComponent(id)}`, { signal }).then((value) => semanticDetail<BusinessAttentionDetail>(value, "attention", (item) => isRecord(item.summary) && isAttentionSummary(item.summary) && Array.isArray(item.linked_tasks) && Array.isArray(item.events)));
 }
 export function getBusinessTaskDetail(id: string, signal?: AbortSignal): Promise<ConsoleResource<BusinessTaskDetail>> {
-  return request<unknown>(`/api/console/tasks/items/${encodeURIComponent(id)}`, { signal }).then((value) => semanticDetail<BusinessTaskDetail>(value, "task", (item) => isRecord(item.summary) && isTaskSummary(item.summary) && Array.isArray(item.evidence) && Array.isArray(item.events)));
+  return request<unknown>(`/api/console/tasks/items/${encodeURIComponent(id)}`, { signal }).then((value) => semanticDetail<BusinessTaskDetail>(value, "task", (item) => isRecord(item.summary) && isTaskSummary(item.summary) && (item.suggestion === null || isTaskSuggestion(item.suggestion)) && Array.isArray(item.evidence) && Array.isArray(item.events)));
 }
 /** Derek, 2026-09-25: 催办 goes out only when he clicks send. */
 export function sendBusinessTaskFollowUp(taskId: string, followUpId: string, revision: number) {
@@ -858,7 +971,22 @@ export function confirmBusinessProjectCandidate(candidateId: string, projectId?:
   return command(`/api/console/tasks/project-candidates/${encodeURIComponent(candidateId)}/confirm`, projectId ? { project_id: Number(projectId) } : {});
 }
 export function getBusinessProjectDetail(id: string, signal?: AbortSignal): Promise<ConsoleResource<BusinessProjectDetail>> {
-  return request<unknown>(`/api/console/tasks/projects/${encodeURIComponent(id)}`, { signal }).then((value) => semanticDetail<BusinessProjectDetail>(value, "project", (item) => isRecord(item.summary) && isProjectSummary(item.summary) && Array.isArray(item.confirmed_tasks)));
+  return request<unknown>(`/api/console/tasks/projects/${encodeURIComponent(id)}`, { signal }).then((value) => semanticDetail<BusinessProjectDetail>(value, "project", (item) => isRecord(item.summary) && isProjectSummary(item.summary)
+    && (item.context === null || isProjectContext(item.context))
+    && Array.isArray(item.responsibilities) && item.responsibilities.every(isResponsibility)
+    && [item.confirmed_tasks, item.suggestions].every((rows) => Array.isArray(rows) && rows.every((row) => isRecord(row) && isTaskSummary(row)))
+    && Array.isArray(item.evidence_signals) && item.evidence_signals.every((row) => isRecord(row) && typeof row.id === "number" && ["source_type", "source_ref", "source_time", "evidence_text", "context_json"].every((field) => isString(row[field])))
+    && Array.isArray(item.context_revisions) && item.context_revisions.every((row) => isRecord(row) && typeof row.id === "number" && typeof row.project_id === "number" && isProjectContext(row.context) && Array.isArray(row.evidence_signal_ids) && row.evidence_signal_ids.every((id) => typeof id === "number") && isString(row.created_at))
+    && isListMeta(item.evidence_meta) && isListMeta(item.context_revision_meta)));
+}
+export function searchBusinessProjectCrmCustomers(projectId: string, customerLabel: string) {
+  return command(`/api/console/tasks/projects/${encodeURIComponent(projectId)}/crm-customer-search`, { customer_label: customerLabel });
+}
+export function confirmBusinessProjectCrmCustomer(projectId: string, customerId: string) {
+  return command(`/api/console/tasks/projects/${encodeURIComponent(projectId)}/crm-customer`, { customer_id: customerId });
+}
+export function clearBusinessProjectCrmCustomer(projectId: string) {
+  return request<{ ok: boolean; item?: unknown; message: string }>(`/api/console/tasks/projects/${encodeURIComponent(projectId)}/crm-customer`, { method: "DELETE" });
 }
 export function getLegacyProjectDetail(id: string, signal?: AbortSignal) {
   return request<ConsoleResource<unknown>>(`/api/console/tasks/legacy-projects/${encodeURIComponent(id)}`, { signal }).then((response) => ({ ...response, item: mapTaskDetail(response.item) }));

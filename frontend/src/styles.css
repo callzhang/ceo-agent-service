@@ -1889,7 +1889,16 @@ h1, h2, h3, p { margin-top: 0; }
 .business-task-row, .business-project-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 14px; align-items: baseline; min-width: 0; padding: 12px 16px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: var(--surface); }
 .business-project-row.is-provisional { border-style: dashed; background: var(--surface-muted); }
 .business-task-row-main { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: .91rem; font-weight: 700; }
+.business-task-row-main a { min-width: 0; overflow-wrap: anywhere; }
 .business-task-time { display: inline-flex; gap: 8px; align-items: center; color: var(--ink-soft); font-size: .74rem; white-space: nowrap; }
+.business-origin { color: var(--ink-soft); font-size: .72rem; font-weight: 500; }
+.business-project-facts { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 4px 16px; min-width: 0; overflow-wrap: anywhere; color: var(--ink); font-size: .8rem; line-height: 1.5; }
+.business-project-facts p { margin: 0; white-space: pre-wrap; }
+.business-project-facts p:nth-child(n+3) { grid-column: 1 / -1; }
+.business-candidate-groups { display: grid; gap: 24px; }
+.business-candidate-group { min-width: 0; }
+.business-candidate-group h2 { display: flex; gap: 8px; align-items: center; margin: 0 0 10px; color: var(--ink); font-size: .9rem; }
+.business-suggestion-reason { grid-column: 1 / -1; margin: 3px 0 0; color: var(--ink-soft); font-size: .8rem; line-height: 1.5; overflow-wrap: anywhere; }
 .candidate-action { min-height: 30px; gap: 5px; padding: 0 9px; font-size: .76rem; font-weight: 650; }
 .candidate-action.is-icon { width: 30px; padding: 0; }
 .business-detail-badge-actions { margin-left: auto; display: inline-flex; gap: 8px; align-items: center; }
@@ -1912,6 +1921,21 @@ h1, h2, h3, p { margin-top: 0; }
 .business-detail-badges { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
 .business-detail-section > .business-detail-facts:first-child { margin-top: 0; }
 .business-detail-description { margin: 12px 0 0; color: var(--ink); line-height: 1.6; }
+.business-detail-section h3 { margin: 18px 0 9px; color: var(--ink); font-size: .84rem; }
+.business-section-note { margin: 0 0 10px; color: var(--ink-soft); font-size: .76rem; line-height: 1.5; }
+.business-project-attention { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.business-responsibilities, .business-project-state { display: grid; gap: 12px; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.business-responsibilities > li, .business-project-state > li { min-width: 0; overflow-wrap: anywhere; }
+.business-responsibilities p, .business-project-state p { margin: 0; white-space: pre-wrap; }
+.business-typed-date { color: var(--ink-soft); font-size: .78rem; }
+.business-citations { display: grid; gap: 7px; min-width: 0; margin: 7px 0 0; padding: 0; list-style: none; }
+.business-citations blockquote { margin: 0; padding-left: 10px; border-left: 2px solid var(--line-strong); color: var(--ink-soft); font-size: .8rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.business-citations small { display: block; padding-left: 12px; color: var(--ink-soft); font-size: .7rem; overflow-wrap: anywhere; }
+.business-citations a { color: var(--accent); }
+.business-context-history { display: grid; gap: 8px; margin: 0; padding-left: 20px; }
+.business-context-revision { min-width: 0; }
+.business-context-revision summary { color: var(--ink-soft); cursor: pointer; overflow-wrap: anywhere; font-size: .8rem; }
+.business-context-revision .business-responsibilities, .business-context-revision .business-project-state { margin-top: 12px; }
 .business-empty-line { margin: 0; color: var(--ink-soft); }
 .console-breadcrumb { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 6px; color: var(--ink-soft); font-size: .76rem; }
 .console-breadcrumb a { color: var(--ink-soft); text-decoration: none; }
@@ -1945,7 +1969,10 @@ h1, h2, h3, p { margin-top: 0; }
 .business-linked-list { padding-left: 0; list-style: none; }
 .business-linked-list li { padding: 8px 0; border-top: 1px solid var(--line); }
 .business-linked-list li:first-child { border-top: 0; padding-top: 0; }
-.business-source-list li small, .business-linked-list li span { display: block; color: var(--ink-soft); font-size: .72rem; }
+.business-source-list li small { display: block; color: var(--ink-soft); font-size: .72rem; }
+.business-source-text { white-space: pre-wrap; }
+.business-linked-facts { display: flex; gap: 4px 12px; flex-wrap: wrap; margin-top: 5px; color: var(--ink-soft); font-size: .76rem; }
+.business-linked-facts > span { min-width: 0; overflow-wrap: anywhere; }
 .follow-up-list { padding-left: 0; list-style: none; gap: 0; }
 .follow-up-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
 .follow-up-row:first-child { border-top: 0; padding-top: 0; }
@@ -1981,6 +2008,9 @@ h1, h2, h3, p { margin-top: 0; }
 }
 
 @media (max-width: 600px) {
+  .business-task-row, .business-project-row { grid-template-columns: minmax(0, 1fr); gap: 7px; padding: 12px; }
+  .business-task-time { white-space: normal; flex-wrap: wrap; }
+  .business-project-facts { grid-template-columns: minmax(0, 1fr); }
   .business-attention-card dl > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .business-attention-card { padding: 14px; }
   .business-attention-card footer { display: grid; gap: 5px; }

@@ -262,100 +262,200 @@ Audit 返回 approve、return、reject，必须绑定 candidate_digest 和 propo
 Consumer 的任务改成另一个消息、日程或审批事项。Audit 返回 `return` 或 `reject` 后，服务
 必须把规则、观察结果和修改要求传给下一版 Consumer proposal，再创建对应的 Audit run；
 Audit 只反馈修改要求，不直接替换 Consumer 的业务正文。
+### Task Agent 的项目、任务与判断（开发分支；尚未部署）
 
-Task Agent 按 Task-first 合约处理普通 work-summary：一个来源可返回 0..N 个 `task_decisions`。
-每个保留决策都必须引用 WorkItem 的准确 `source_ref`，并提供确实出现在来源摘要中的原文
-`source_excerpt`；检索到的 Task、Project 候选及 memory 只能提供背景，不能替代来源证据或授权。
-`skip` 表示没有应保留的 Task，不再以 Project 是否存在作为判断条件。
-正式 Project 注册表和当前 Task 状态优先读取最近一次确认的正式周报，尤其是
-项目管理部或管理层周报中明确列出的项目、负责人、目标、DDL、状态和下周任务；
-保留周报文档引用及统计周期。会议纪要、逐字稿或已确认会议行动项是尚未进入
-周报的新决策或变更的次级权威来源。聊天或消息只能补充上下文、负责人、状态或
-链接，不能单独创建正式 Project，也不能自行覆盖周报明确字段。明确决定启动、批准
-或立项的会议行动项可以创建带会议证据的正式 Project；普通项目提及只形成项目线索。
-来源冲突时先取
-最新明确周报字段，再取最新确认的会议决策，并保留精确来源引用。
-周报中的命名项目/工作流若有明确的负责人、目标/里程碑、状态、交付物或下一步，
-Task Agent 在相关 Task 决策上提交带周报权威类型的 `project_proposal`；孤立任务、
-部门或话题不能直接注册 Project。多位个人负责人可以用名单表示。通常其
-`owner_evidence.excerpt` 必须包含每个人名和当前报告的来源引用；如果负责人关系来自已绑定的
-权威 memory 或 session 上下文，则可使用 `linked_source_ref`、稳定的 `episode_id`/`thread_id`
-和包含明确负责人-行动关系的 `memory_excerpt`；校验忽略
-钉钉 `@` 标记和常见名单分隔符，不把多人整串当作一个名字。
-部门/团队标签（例如“项目管理部”“算法团队”）即使被模型误放进
-`project_proposal` 也不会注册为正式 Project；它们仍可作为 Task 的上下文或候选聚类。
-所有 `date_evidence.source_excerpt` 都必须是当前 Work Item 文本中逐字连续的子串，
-包括原始空格与标点，无法逐字引用时省略日期证据。周报“本周工作重点”“下周工作重点”、
-“团队管理和分工”“周度待办追踪”“行动项”章节是 Task 来源，不是 Project 注册表；
-只有单独的项目清单/项目组合、里程碑/路线图条目或明确会议立项才可注册正式 Project。
-项目/管理周报中有明确项目列的“手头项目/项目清单/项目组合”行先由 Task Agent 建立
-cluster，再依据登记表来源直接注册正式 Project，并把 cluster 中的 Task 关联到 Project；
-同一标题复用同一 anchor。普通项目提及、客户/部门标签和孤立 Task 只形成
-`business_project_candidates`，不会直接注册正式 Project。控制台确认只从 cluster 的已有
-Task evidence 选择来源信号，不凭空制造证据；事务会同时把 cluster 中的 Task 关联到 Project，
-重复确认保持幂等，不能把已确认 candidate 改绑到另一个 Project。
-正式 Project 的列表和详情从已关联 Task 的最新权威周报 signal 生成只读摘要：负责人/负责内容、目标、DDL 或统计周期、当前状态、报告标题/周期、原文摘录、来源链接，以及进行中/已完成 Task 数量；没有可解析的周报字段时保留现有登记来源和关联 Task 数，不用普通聊天或孤立 Task 推断字段。
-更新既有 Task 时，Task Agent 可依据本轮来源证据修改标题或描述；变更、新来源信号的证据链接及 before/after Task 事件在同一事务提交。纯标题/描述变更记录 `details_changed`，与状态、负责人或相关性等字段合并变更时记录 `fields_changed`；只把证据链接到 Task 而没有任何实际字段变化仍是无效更新。
+Task-first 基础工作跟踪已上线；以下为 2026-10-04 获批设计在本分支的当前实现。
+Task 1–4 的存储、领域与检索已局部验证；Task 5 独立 Agent 输出和 Task 6 Project-owned
+关注已实现，14 个核心相关文件 636 项回归通过，多来源及独立 Project 读回 161 项通过；
+独立最终复核 PASS。Task 7 API 25 项、前端 86 项、构建及合成浏览器检查通过；
+Task 8 原生业务评测和 Task 9 发布未完成。
+Task 1–7 是整体发布单元，不能把本节当成上线或业务效果证明。
 
-Task Agent 使用统一的 `TaskAgentDecision` 结果协议，返回 0..N 个新建/更新 Task 决定。完成由新证据驱动
-（Derek 2026-09-25：「不需要定期检查未完成任务，只需要定期扫描新信息并更新相应的 task」）：新完成的
-钉钉待办由扫描直接关闭对应 Task（见下文「后台周期性工作」），消息、会议等新信息照常作为 Work Item 进入
-Task Agent。单独的 Task completion Agent（`app/task_completion_agent.py`）已删除，服务不再产生
-`todo_completion_evidence_candidate`、`todo_completion_check`、`follow_up_completion_check` 三类 Work Item；
-队列里残留的这类输入在交给 Task Agent 之前被标为 `skipped`，原因
-`completion checks retired (Derek 2026-09-25: 完成由新证据驱动)`。三个枚举值保留，只为读取历史记录。
-`TaskAgentDecision` 里的 `todo_changes`、`follow_up_changes`、`search_trace` 字段仍在 schema 中，但当前没有
-服务端路径应用它们。Task Agent prompt 明确要求只读发现，不得通过 CLI/API/MCP 工具创建、更新、删除、
-发送或完成外部记录；这是 prompt-only 的 best-effort 指引，不是运行时权限边界。外部 TODO 完成只走现有
-outbox 同步，避免双写。
+#### 来源、项目与任务
 
-这描述当前功能分支的代码契约，不证明变更已部署。Task 6 仍不得单独部署，整体切换仍需发布验收。
-Task-first 输出不承载 Project 写操作或直接创建新外部 TODO；合格 Task 的钉钉镜像由 Task 7
-服务端 outbox 完成。缺少可信 producer 提供的 `external_task_id` 时不得猜测外部对象。
+所有会议、管理/部门/项目周报、聊天、邮件均可作为事实来源；周报不是唯一来源或风险判断前提。
+正式 Project 须有真实目标和范围，不把部门、客户标签、主题、孤立小任务或相似性 cluster 当成项目。
+确认的报告项目登记表行、明确会议立项可以登记正式 Project；聊天/邮件补充既有项目事实，
+不单独建立正式项目身份。保留不同时间、来源的冲突与引用，不静默以某类来源覆盖较新事实。
 
-Task Agent 的共享会话不会改变 Task、TODO 或 follow-up 的服务端应用边界；适用操作仍由当前
-Work Item 明确绑定，并在对应服务事务中校验和应用。
+独立 `ProjectDecision.registration` 引用当前权威定义，含 exact title、authority 与非空 source_excerpt；
+不是 Task 的嵌套字段，也不需要 Task 或 cluster 作为登记载体。报告核验实际类型、完整原文登记行
+中的项目列与提案标题；登记摘录只定位原文，不移动列。Task/行动章节不是项目登记表。
+registration.source_excerpt 必须是当前不可变来源中定义该项目的连续原文；一份报告列出多个项目时，分别记录各项目的判断与证据，不能用一个项目的判断覆盖其他行。每个 project_decisions[i] 必须有且只有一个对应 project_assessment。项目标题与 Task 行动分处原文不同位置时，project_link_evidence 引用一段从项目标题到行动的连续原文，保留中间内容，不拼接不连续片段。
+会议核验实际 AI Minutes 或可信 minutes 会话和当前原文引文；立项含义由 Agent 判断，不加关键词规则。项目标题只包含实体名称，不把同句中的状态或动作并入标题；例“甲客户一期交付项目正式启动”的标题是“甲客户一期交付项目”，启动状态可作为事实。
+先采用当前权威来源的精确定义再选对象：只有唯一活动、已登记且精确同标题的 Project 才复用
+规范 anchor 和原 registry provenance；多活动同名对象为身份冲突，无对象才用现有来源登记方法。
+旧相似名称、简称或标题前缀不能替代新的正式定义；已退休的来源项目不由本轮重新激活。
 
-定时的 TODO/follow-up 完成检查和 follow-up 投递失败后的 Agent 修复都已删除（Derek 2026-09-25），Task 只随新信息更新，不再有任何来源产生 `follow_up_completion_check`。Task 提取使用稳定的 `task-agent:work-tracking:v1` 会话范围；每个
-Work Item 仍有独立的 workload key、Task Agent run 与 runtime attempt。路由器按 runtime route 保存
-session，同一 route 上的后续输入续接既有 session。`process-work-items` 在恢复队列和领取输入之前
-取得共享 SQLite session lock，运行期间每 60 秒续租；竞争中的进程返回 0 项且不领取、不增加尝试次数。
-执行前与领域事务提交前均检查 lease；失锁后本轮不提交领域更改，并按 work-summary 临时错误策略重试。
-服务内的 dispatcher 以单 worker 运行 `work_summary` 队列（与会议队列相同，见 `SINGLE_SESSION_ADAPTERS`），同一时刻只有一个 Task Agent turn 续接共享 session；2026-09-24 Task-first 上线后该队列曾用两个 worker，第二个 turn 总是撞上 `already has an active writer`，约 70 秒重试后判失败，25 个 Work Item 因此失败。
-旧 `task:<run_id>` 会话记录不会迁移或覆盖。Task Agent prompt 将此前会话内容限定为背景，决定须依据当轮
-Work Item、当前存储/检索状态和新来源证据。Codex CLI 自己管理上下文自动压缩；其他 route 使用其自身
-会话能力，压缩后的会话仍不能替代 Work Item、数据库或来源证据。
-检索上下文中的历史 source signal 保留来源、时间、作者和上下文，但对可能包含完整会议
-JSON 的 `evidence_text` 使用有界的首尾摘录；原始证据仍在数据库中，避免重复信号把单次
-Agent 输入推过 provider 的输入契约。
-若 CLI 明确报告 compaction 自身因模型 context window 超限而失败，当前 run 会清除此 route 的共享
-session 指针并在同一路由的新 session 重试一次；若 fresh session 仍超限，则转入既有 runtime route
-fallback，不循环创建 session。普通会话冲突或其他错误不会清除共享 session。
+Project 可选关联 Fxiaoke CRM AccountObj，持久化稳定 `_id` 与 CRM 显示名称，不修改 Project 标题；内部 Project 可以不关联客户。Task 不保存重复客户字段，只有关联到已确认 Project 的 Task 才在读取时继承其客户名称，独立 Task 保持无客户。Task Agent prompt 禁止调用 Memory `memory_write`，不增加工具白名单或 CLI/MCP 写入拦截。
 
-正式指派不等于负责人接受：有授权来源、明确交付物和明确负责人的指派可成为
-`assigned_unaccepted` Task；只有负责人本人明确接受并且来源上下文带有可信、精确的
-`reply_to_source_ref`，且决策明确引用该 Task 已链接的指派证据，才可转为已接受承诺。模型不能
-制造回复链接或仅凭“收到”、相似文本、TODO 存在推断接受。缺少可信链接时保留未接受状态并记录
-跳过原因。负责人身份 ID 只能来自可信来源映射或与来源发言人匹配的稳定身份，不由模型单独指定。
+CRM 查询使用 `sharecrm data record query-by-name` 对 AccountObj 做只读名称解析，不写 CRM。Agent 提供的 `crm_customer_evidence` 必须同时、完全一致地出现在 Project `evidence` 中。该解析器不能证明候选精确或穷尽；Task Agent 和 Project 页面返回的每个候选（包括单条候选）都保持未关联，只有用户明确确认后才建立本地关联。Resolver `NO_MATCH` 与 CLI/认证/查询不可用分开记录。查询失败或后续冲突不会清除已确认关联。客户汇总按 CRM `_id` 分组，只包含已确认关联的 Project；未关联项目仍在常规项目视图。
 
-日期按语义类型保存，不使用含糊的通用 deadline：`assigned_at`（指派日期）、
-`requested_deadline_at`（请求方要求日期）、`external_deadline_at`（外部期限）、
-`committed_deadline_at`（负责人接受的承诺期限）、`estimated_deadline_at`（估算日期）及
-`next_check_at`（下次检查日期）。Task 6 只记录来源明确给出的 next-check 日期，不自动创建检查 cadence，也不把请求/外部期限改写成检查日期。每条日期都要有明确日期值、对应来源引用、原文摘录和行为人；只有
-接受承诺能建立 `committed_deadline_at`。标准化日期必须与原文中精确、可解析的日期短语一致；不能从只写日期的来源扩展出具体时分。周级或其他不可解析表达只保留在已链接的原始来源信号中，不产生 typed date fact，也不猜时间戳。`assigned_at` 只从明确正式指派来源的可信创建时间元数据派生，不是模型提供的日期。估算的行为人沿用作出估算的可信来源发言人；Agent 仅是抽取者。只有 `next_check_at` 由 Task Agent 署名，且必须是来源中明确给出的检查日期；它不自动创建 cadence。其他日期要求可识别的来源行为人，不能伪装或猜测身份。当前 AI Minutes producer 尚无可信的发言人到身份映射，因此不能把纪要中被转述的多方日期归给主持人或模型指定的人；该类日期暂不入 Task，需由 producer 提供映射后另行接通。
+`ProjectContext` 独立于 Task 保存完整快照：goal、scope、最多一名 overall_owner 或 null、
+其他人的不同职责 responsibilities，以及各自的事实 facts。每条职责/事实有实际原始 Signal/ref/
+连续逐字引文；总负责与负责结果不能从 Task owner 猜出。未改变的职责沿用历史原文证据。
+context=null 只补 Project↔Signal 关系；明确提供空分工快照才清空当前分工，旧版本仍可读。
+当前 Project 读取最新 context revision，不双存可失配的 current JSON；相同结构快照不追加版本。
+Agent 得到新事实时仍须返回完整的当前 ProjectContext 快照，带回先前有效职责、事实和出处；
+不能因本轮只讨论一项新风险，就把未变化资料从快照中丢掉。
+仅描述“某人负责某业务领域”的职责陈述只进入 ProjectContext，不单独生成 Task/candidate；
+Task 需要来源明确的、可独立完成的交付物或行动，或由已证实重大风险引出的独立建议下一步。
+正常项目序列中的例行里程碑和下一步即使写成行动句，也只记为 Project fact，不生成 Task/candidate。
+总体负责人归属冲突时 overall_owner 留空，竞争主张与未确认移交记为有出处的事实，不能把候选总负责人改写成不同职责；ProjectContext 的事实必须明确写“总体负责人存在冲突，仍待确认”，不能只写“未形成一致确认/仍需核实”；独立负责人的真实交付职责仍保留。
+会议明确某人总负责 Project 时，该人进入唯一 overall_owner 而不是一般职责；已有真实 Task 已直接处理同一风险时，用该 Task 支撑项目判断，不另建重复的监测/评估建议。
+“X负责Y”仅描述职责，即使 Y 是独立业务领域，也不自动生成 Task；需要来源明确的独立行动/交付要求或真实行动项记录。
+保留 existing_attention_id 时，assessment 必须引用当前 `current_project_attention.assessment_json.evidence` 中至少一条完全相同的原始证据三元组（signal_id、source_ref、source_excerpt）；新证据只能补充，不能替代卡片原始证明。
+区别职责与行动时，“李四负责核实客户付款排期并反馈”是具体可执行 Task；“王五负责商务对账”若仅描述职能范围则是 ProjectContext。项目级风险的显示型建议可基于已保存职责，也可由唯一 overall_owner 承接跨职能协调，但不构成正式指派。
 
-一个 work-summary 输入中的全部 Task 变更、来源信号、日期、关系/聚类/锚点/Project 候选提案及
-输入/run 结果在单个数据库事务中提交或回滚。CEO Attention 是派生投影，只在提交后先应用有效提案，再对所有受影响 Task（合并时包括来源和目标两侧）重算成员资格；完成、取消或变为不相关的 Task 会退出当前成员。Task Agent 的类型化完成和外部 TODO 完成也在各自领域事务提交后重算对应 Attention 成员，完成 Task 退出而未完成的兄弟 Task 保留；这不自动把 Attention 标为已解决。投影失败
-不回滚已完成的 Task 事实，也不把已完成 run/input 改成失败。Task 6 不再把 `work_projects`、
-`work_todos` 或 `work_updates` 当作 Task 事实写入；Task 7 的钉钉 TODO 镜像使用独立的
-`business_task_dingtalk_links` 和 `business_task_todo_sync_outbox`，并不把旧 Project/TODO 当作 Task 主键。
-此处描述的是代码分支，不代表已经部署；Task 6 不单独部署或重启服务。
+`business_source_documents` 保存不可变原文，Signal 通过真实 source_document_id 外键引用。
+只有来源类型/ref/时间、会话、作者 ID/姓名/类型和正文八项完全相同才共享正文；Signal ID、
+dedupe_key、上下文、Task 证据角色与历史仍独立。同 ref 的 memory/session 引文不冒充 observed 原文。
+旧库在既有重建事务逐行读回身份、正文、计数和外键后删除旧正文物理列，失败回滚。
+公开 BusinessTaskSignal.evidence_text 仍由 JOIN 返回原文；Task/event/run JSON 不重写。
+当前业务 schema 是 `2026-10-04.4`，不等于生产已迁移。
 
-目前通用 work-item 生产者尚未提供所有授权和 owner identity 映射元数据；在来源元数据缺失时，
-不能据此把显式提到负责人的讨论升级成正式授权指派。对应的生产者接线必须作为单独集成范围处理，
-不能由 Task Agent 猜测或合成。
+Task 保留真实独立交付物和行动的身份。来源明确行动记 origin=source；缺真实负责人/授权等时
+仍可为候选，不因为项目有总负责就伪造 Task 指派。新增任务必须非空标题；已有 ID 的更新可不填标题，
+仅 update_fields 修改提供的标题/描述，promotion、acceptance、merge 保留持久化标题。
+来源有明确的 authorized assignment、self commitment、external TODO 或具体有个人负责的
+meeting action 才按既有 FormalityEvidence 正式化。AI Minutes 区分 owner_kind/owner_relation，
+团队、仅发言或通用发言人占位不是个人负责人。owner ID 来自可信来源身份，不由 Agent 补造。
 
-Attention 的 `material_trigger` 是 Agent 对来源证据的语义分类，不是独立机器证明。每项提案必须附带当前来源摘录中的精确 trigger quote、分类理由和明确 CEO action；投影还要求业务锚点已确认、Task 相关且来源信号已链接。系统把 trigger 类型和摘录写入 Attention 原因/事件沿革。系统不靠关键词推断重大性；若未来需要独立机器级判定，应另行定义 canonical trigger facts 或人工确认机制。
+按项目事实和有出处的职责推导下一步，用同一 Task 表的 origin=agent_suggestion 与 suggestion_json。
+suggested_owner 不写实际 owner；建议记录为 open candidate、commitment=none、无 formal_basis/
+真实 owner/deadline，不产生 TODO、通知或 follow-up。最新消息不必再次点名建议人，历史职责和
+事实均须有原文证明；Agent 理由或上轮建议不是人类安排。之后真实指派沿用同一 ID promotion，
+保留建议发现历史，真实接受后不因 origin 阻止原有 TODO 资格。真实 source Task 不被重新标为建议。
+后续更新必须携带已检索 Task ID，不从可共享/被合并复制的证据关系猜唯一任务。
+仅改建议理由时省略 title/description 保留原值；确实变更才记事件。
+发现尚未解决且需要推进的重大项目风险时，即使原文未直接指派某人，也可依据该项目已保存且有出处的
+职责提出带 Project 关联、建议负责人和下一步的显示型 Task 建议；当重大影响与已保存职责直接相关时，
+即使当前消息没有写出下一步，也应推导一条具体建议。仅当现有 Task 处理同一未解决风险时才抑制重复建议；
+已完成或无关的项目 Task 不算该风险已被处理。这不构成正式派活。普通进展、已解决事项、单独的模糊线索
+不因“可能有帮助”而生成建议。
+项目风险也可在没有 Task 时独立生成需关注；若没有已保存职责能支持具体下一步与建议负责人，不补造监测任务、负责人或期限。保留已有 Attention 卡时只沿用实际已保存的 Task 成员；若原成员为空，不因新建的同风险候选 Task 扩大成员集合。候选 Task 仍可单独关联 Project。
+
+正式指派是 assigned_unaccepted，不等于本人已接受。接受仍需唯一既有 Task、本人身份、
+精确已链接指派 Signal、同会话与可信 reply_to_source_ref；收到、TODO 存在或服务消息不证明承诺。
+但未接受本身不自动构成项目风险：若当前证据显示工作正常推进、没有实质影响或负责人归属争议，应保留 assigned_unaccepted，不单独生成 Attention。
+任务继续推进、收到材料或更新项目背景均不等于本人接受；commitment_status 只有来源明确记录接受、争议、完成或取消时才更新。
+日期明确区分系统创建、assigned_at、requested/external/committed/estimated_deadline_at、
+next_check_at。来源日期需完整可解析当前短语及可信 actor，不能给原文补时分或用报告名作 actor；
+AI Minutes 暂无可信 speaker→identity 映射，不把多方日期归给主持人。assigned_at 来自可信指派时间；
+committed_deadline_at 需实际接受/承诺；next_check_at 只记录明确检查日期，不创造 cadence。
+项目登记 DDL 不转成 Task DDL。一般 Task 的历史 memory/session 引文可完善候选，但不能代替
+正式化、接受、合并或类型化日期所需的当前授权/身份；项目/职责/建议/关注证明只用已观察原文。
+
+#### 一个 Agent 的当前输出与应用
+
+TaskAgentDecision 必须明确返回三项无默认列表：
+`project_decisions`、`task_decisions`、`project_assessments`，各为 0..N。
+项目资料/判断可以有零 Task，空 Task 不等于无业务结果；没有相关项目/线索的空 assessment
+仍需非空 update_summary。当前 parser 不接受 TaskDecision 中的旧 project_proposal、
+project_link_proposal、attention_proposal；历史 decision_json 原样读，不经当前 parser 升级。
+Codex CLI 路径通过 `--output-schema` 使用 `app/schemas/task_agent_decision.schema.json`，
+该文件由 `TaskAgentDecision.model_json_schema()` 生成并由测试校验一致；strict schema
+要求每个对象显式返回全部属性，省略值用其契约允许的 `null` 表示。服务仍运行本地 Pydantic
+语义校验，失败时最多在同一 session 修正一次；结构化输出不取代业务校验。
+
+ProjectSelector 使用既有 anchor_id 或零基 project_decision_index 二选一；后者指向顶层
+Project 决定，不是 Task 列表。Task 用 project 与 project_link_evidence 明确归属，复用真正已有
+confirmed link；新关联依据当前或历史实际原文证明，不按词面相似性确认。
+所有 link 引文都保存为 Task 和 Project 的证据关系，canonical link 保留首条证明。
+关联本身没有 Task 字段变化时也可应用，使用其实际证明 Signal/anchor 写回执；不虚构 details_changed、
+重排 follow-up 或发 TODO。普通仅重述 Task 且没有新关联证明的 update 仍 skipped。
+来源明确的报告登记与 Task 显式 project_decision_index/cluster_id 可确认已有项目候选及原分组；
+已确认关联的首条证明不覆写，新来源追加为补充证据。新确认或重新有效的成员传给成员-only
+recompute，不把同项目但不支持该卡片的 Task 自动加入关注，也不重判风险。
+Task 关系用已有 related_task_id 和相对当前实际 Task 的 direction，应用后派生两端；
+相似交付只 proposed relation/cluster，不直接身份 merge，原始身份合并证明语义不变。
+
+每个 assessment 针对一个实际 Project 或身份待明确的线索。one Project/精确标题 一轮一项；
+覆盖所有已输出项目决定、Task Project selector 及当前引用 Task 的 confirmed 正式项目。
+支持 Task 决定用 decision_indexes，已有 Task 用 task_ids；两者可空，不伪造支持成员。若 Task 决定更新的正是本次评估中的同一具体工作（包括正常进展的 not_needed 评估），应将该决定列为支撑；已有 Task 也只有直接支撑评估时才列入。仅关联到同一 Project 不够，完成或无关 Task 不是成员。
+未登记线索保留原名与原文，outcome=insufficient_evidence，不借标题猜 ID。
+真实正常进展可 not_needed，没有风险或没有 Task 本身不等于证据不足。
+needs_attention 需实际已核验卡片或 assessment 自己的 attention_proposal；负面结果不生成或关闭卡片。
+提案没有重复 anchor/task selector，由所属判断解析 actual Project/支持成员；不在每条 Task 复制。
+
+当前 null-ID 引文精确匹配 immutable Work Item ref/原文；历史严格正 Signal ID 精确匹配保存的
+ref/逐字引文且为 observed 原始来源，JSON 引文可在一个解码叶子内，不跨字段拼接。
+historical_comparison 同时用当前与历史原始证明；当前对旧报告的转述不是旧报告，首次当前事实判断
+仍允许。缺原文只说明不确定，不用 session/Memory 充当原始事实。
+在同一领域事务写入前验证这些 selector、实际对象和引用，再按 Project 登记/资料→真实 Task
+生命周期或 record_suggestion→项目判断顺序应用。无效来源或身份冲突回滚本轮，不猜未来 ID。
+支持 Task 必须实际属于所评 Project，或本轮同一支持决定用真实证据确认；不能只因 ID 存在算成员。
+
+existing_attention_id 是该同 Project 活动旧卡原始证明的声明，不是 upsert 目标。
+它须核验真实原始 Signal/ref/quote，并在 assessment 原样引用该卡至少一条保存的证明；
+支持 Task 只取卡片实际成员，不把项目同伴当成员。真实旧证明可与当前 attention_proposal 并存。
+有当前提案时回执优先报告其实际 applied/rejected/error，已验证旧卡 ID 不把失败伪装 existing；
+只复用旧卡时才 existing。新风险按 Project stable key 更新，需关注不等于需介入，watch 可无需 CEO 动作。
+
+#### 回执、检索及尚未完成的关注集成
+
+Project 决定回执保存实际 project_decision_index→project_id/anchor/revision_id/signal_ids；
+Task 决定保存实际 decision_index→Task/Signal/anchor。skip、失败接受和无操作决定不伪造映射。
+项目-only、建议-only 输入仍可 completed/done；当前线索判断也保存真实来源，不依赖 Task 载体。
+逐 assessment 回执区分 recorded/applied/existing/rejected/error，引用只附实际来源 ID/时间/link；
+raw decision_json 的 outcome/reason 不被应用回执改写。领域事务先写 pending 回执，卡片消费者及
+最终回执在提交后；错误可观察但不把已完成 run 改失败，不增恢复 loop 或读路径自愈。
+proposal_count 按 assessment 自己的提案计，applied_count 按成功卡 ID 去重，
+project_link_count 为实际确认/复用的不同 Task↔Project 关系数；registry_row_count 只统计原始报告登记行。
+最终回执保存失败保留 pending 与日志；未记录 run 的直接 apply 不创建假 run。
+
+Attention domain 要求正式活动 Project 与 business_project_evidence 中已存在的原始 Signal 关系，
+不要求至少一个 Task，也不借 Task evidence 作为 Project 证明。可选成员必须是真实、相关、未合并的
+Task 且已确认关联同 Project；当前显示成员仍只取 open/waiting。零 Task positive assessment 只有
+实际 upsert 并读回卡片后才为 applied，重复来源不产生重复卡或事件。
+显式 resolve 要求同 Project 的原始解决证据，不依赖 Task 当前/历史成员；not_needed、Task 完成或
+成员清空不自动 resolve。recompute_for_tasks 保留且仅更新既有卡片成员、时间和成员事件，不重新
+判断风险、不创建卡片、不修改 category/current_state 或 active/resolved。人类 TODO 完成后直接
+调用这个成员更新，不再调用旧 Agent 卡片适配或要求虚假 receipt。
+Schema .4 的一次性迁移仅把旧 active 卡片所属 Project 已确认有效 Task 关联中的原始 Signal
+建成 Project evidence，排除 memory/session provenance，不改历史对象或引用，不重新激活 retired
+Project；原有关系即使 anchor 后来退休也仅作历史证明保留。独立 marker 与证据插入同事务提交；
+已有证据保留，多角色 Signal 去重，失败整体回滚，后续初始化/读取不继续补写。
+只读 inspector 输出当前 Project 决定、真实回执映射及由这些实际身份查得的最新 context/revision；
+历史缺字段仍缺失，不补为 not_needed，不推测 ID，不改源库或历史 run。
+多来源回归已经通过；v2 native 对照、W39 副本迁移/回放和生产迁移尚未全部完成。评测读回独立判断的提案，
+要求每项提案有对应真实卡片与实际 applied 回执；缺回执或仅写 completed 不判成功。
+当前 negative assessment 也要有对应保存的回执，历史缺字段不自动升级。既有会议表外键问题另行处理，
+不通过忽略外键或修改 frozen baseline 隐藏。这里没有新审批、工具白名单或风险关键词逻辑。
+
+检索先读取正式 Project 当前资料/证据，再相关 Tasks；同来源旧身份强制保留，预算先给它们。
+零 Task 项目仍可读 context、当前职责/事实证明与有界近期来源，context revision limit=1，
+证据有界并固定保留引用 ID。current_project_attention 保留真实卡成员和原 assessment 原文。
+source_documents 提供精确版本的共享正文一次，source_signals 保留所有 ID/元数据并指向正文；
+当前 WorkItem 正文也只出现一次，immutable 输入不改。历史长文在 2048 字符预算内保留首尾及关键
+引文，visible_ranges/full_length/truncated 和引用超预算明确显示，JSON 解码引用有实际 leaf 路径/偏移。
+source_metrics 是正文字符观测，不是总 prompt token 保证；检索排名不证明身份、分工或业务重大性。
+
+Task Agent 共享 task-agent:work-tracking:v1 逻辑 session，各 route 保留各自原生 session，
+native CLI 自行 compact；每个 WorkItem 仍独立 workload/run。process-work-items 领取前持有 SQLite
+共享会话锁，运行时续租并在提交前核验；失锁本轮不提交，普通既有重试策略不变。
+旧 task:<run_id> session 历史保留。prompt 只用新加载的 CI Skill revision 4，旧 scheduled
+skill_protocol 不注入；scheduled prompt 仅保留专项业务范围，旧 payload/history 不改。
+全局 Skill 尚未发布。只读工具行为由 prompt 引导，不是技术上禁用 CLI/MCP 写入的权限边界。
+
+完成只由新信息驱动。独立 completion Agent、周期性任务完成检查已删除，旧三类 completion-check
+输入到 Agent 前 skipped，枚举仅保历史；todo_changes/follow_up_changes/search_trace 没有当前应用路径。
+人类 DingTalk TODO 完成扫描只关闭对应 Task；外部 TODO 镜像/完成仍走现有 outbox，
+不由本 Task Agent 直接操作外部记录。隐藏 maintenance/recovery 业务 loop 不恢复。
+
+Attention 只读详情读取实际保存的 assessment_json 与准确引用 Signals，不重检索或补造历史 {}；
+页面现有“来源事实/Agent 判断”、watch“关注点”与 decision/push“你的动作”保留。
+项目列表直接读保存的 ProjectContext，展示唯一总负责人、整体负责事项、事实近况和实际活动卡片
+的关注原因。删除从关联 Task 周报重新推导项目的读路径；未知仍待明确，不借 Task owner。
+详情按整体情况、总负责及分工、关注原因、来源任务、Agent 建议、来源与修订展示；来源任务
+包含 Project 已确认关联的来源候选，实际安排以任务阶段和承诺为准，执行计数不是项目经营结论。
+当前建议仅指 origin=agent_suggestion 且 stage=candidate；同 ID 人类晋升后进入真实任务，
+显示实际 owner/date，原 origin 和 suggestion 仅作为历史依据，不再计入建议。
+Task 日期标签只采用与实际日期匹配的 typed date evidence；未知类型不猜请求或承诺截止。
+Project 资料更新时间取实际保存的 Project/context revision/evidence 时间，不借 Task 时间或报告周期。
+Project 来源首批最近 20 条加当前引用原 Signal，修订最近 20 条，并返回真实 total/has_more；
+页面明确未展示全部历史，没有假的加载更多。零 Task 关注保留来源与判断，显示暂无关联任务。
+API、TypeScript、mock、页面同步；合成浅/暗/窄屏验证不等于 native 或生产业务验收。
 
 
 
@@ -1003,6 +1103,8 @@ Agent 写入时一律按 `agent_reported_failure` 处理。
 **原则：任何更底层观察到的错误码或原文，被归并成更通用的服务码时都不能丢失，必须原样带到 Agent 报错记录里，供事后排查。** 通用化是给重试/授权决策用的分类，不是删除诊断信息的许可。已落实的例子：`agent_reported_failure` 保留 Agent 原文在 `source_code`；Agent 报告的 typed 失败结果保留其必填的 `summary` 在 `reported_summary`（2026-09-28，见下段）；Codex 进程失败保留 stderr 与 JSONL 里的 `error`/`message`/`detail`/`reason` 字段在 `detail`（`_process_failure_detail`，裁剪到 1000 字符、脱敏凭证）；路由执行错误沿 `__cause__` 链找具体解析/校验异常的 `reason`（`_runtime_failure_detail`）；退订浏览器错误保留异常类名和截断消息（见上文退订段落）。新增一处错误归并时必须同样保留来源，不能只留下分类码。
 
 任务 Agent 的 `memory_recall_used` 是 Agent 给出的上下文记录，不是服务的工具调用验收条件。
+Task Agent 的 Memory 写入边界由提示词约束：允许读取 Memory 上下文，但明确禁止调用
+`memory_connector.memory_write`；这不是工具层面的强制禁用。
 
 Task Agent 不直接调用外部 TODO 写入；Task 7 的创建/完成 intent 在 Task 语义事务中排入
 `business_task_todo_sync_outbox`，由 dispatcher 按 `business_task_id` 执行。创建仅限正式、开放、
@@ -1034,14 +1136,23 @@ Derek 2026-09-25 定的规则。Task Agent 用同一个长期 session 是为了�
 | --- | --- |
 | `evidence_origin` | `current`（当前 Work Item，默认）、`session`（此前 session 里读到的）、`memory`（Memory provenance 指向的原始来源） |
 | `source_ref` | 来源引用；`session` / `memory` 时是**原始来源**的引用 |
-| `source_excerpt` | 取自原文的一句话；普通任务引文可以摘取，日期证据的 `source_excerpt` 必须逐字连续匹配 |
+| `source_excerpt` | prompt、Skill 和字段说明要求原文中连续的逐字摘录，保留标点、空格和换行；普通 Task 的原有校验仍不检查来源子串，日期证据及 Project assessment / Attention 引文仍按各自既有原文规则校验 |
 | `source_link` | 来源有链接就必须给 |
 | `source_description` | 没有链接时用文字描述在哪里，例如钉钉消息写“群 + 发送人”；`source_group` 加 `source_person` 也算 |
 
 - 对 `session` / `memory`，链接和描述至少要有一个，否则模型校验拒绝。对 `current`，缺的定位由服务补：URL 引用、听记摘要里的页面链接、或会话加发送人；都没有时记录里仍有 `source_ref`。
-- 引文不再校验是不是原文子串。仍然要求：引文非空；负责人的名字必须出现在负责人引文里；日期证据仍要求是来源子串。
+- 普通 Task 引文的原有校验仍不检查是不是原文子串，逐字摘录是 Agent 指令，不是新加入的验证器。仍然要求：引文非空；负责人的名字必须出现在负责人引文里；日期证据仍要求是来源子串。Project assessment / Attention 的原文核验按前述独立契约执行。
 - `session` / `memory` 只能用于完善已有 Task（`update_fields`）或记录候选。创建正式 Task、晋升、确认接受、身份合并仍要当前 Work Item 的授权与身份元数据；日期证据仍要当前来源和明确说话人。
 - 引用的旧证据单独存成一条来源信号：`source_type` 为 `session_provenance` 或 `memory_provenance`，引文作证据文本，链接和描述放 `context_json`（`source_link`、`source_description`），群和人放会话标题与作者名，`cited_while_processing` 记录当时在处理哪个 Work Item。服务无法重读原文，所以这条记录标明的是“引用而非当下观察”。
+
+### 展示型任务建议的领域存储
+
+`RecordTaskSuggestion` 在既有业务 Task 表保存来源支持的建议，本分支 Task Agent 已接入 `TaskDecision.suggestion`，页面按当前 candidate 建议与真实晋升 Task 区分。新建议固定为 open candidate、commitment=none、无 formal_basis，实际 owner 和 deadline 为空；建议人选、理由、职责与事实的真实 Signal 引用仅在 `suggestion_json`。职责证明可以来自先前项目/人员分工，不要求最新风险原文点名，但不能把 Agent 理由当原始来源。建议命令只使用同一领域事务的 Task/Signal/evidence/event/Project link，既有建议 ID 的相同资料不追加事件，实际变化追加 details_changed；无 ID 的原来源重放保留最初任务身份，包括之后已由人类晋升的情况。建议更新省略标题或描述时保留原值，不把默认空字符串当成清空。
+
+无 ID 的重放身份来自原创建或其他已有事件的命令结果，不来自所有 evidence link。后来来源只补证据且资料未变时，不制造变更事件，应用及重放都保留明确 task_id，由 Agent 对已检索事项判断关联。一条来源可支持多个 Task，合并也会复制证据关系，不能据此自动选定唯一任务或合并。
+
+人类明确指派用既有 promotion 在同一 ID 晋升，保留 origin=agent_suggestion 和建议依据，实际 owner 才来自人类指派证明；真实接受、承诺日期与 TODO 资格仍按原生命周期。展示建议不产生 acceptance、follow-up、通知或 TODO outbox；不会因为历史 origin 永久拦住已由人类接受的正式任务。旧任务只增 source/空建议默认列，阶段、承诺、负责人及历史 JSON 不变。
+这里复用已有“原始观察／未观察的引用”区分：项目证据、上下文引文及建议的发现/职责/事实来源不接受 `memory_provenance` 或 `session_provenance` 作为原文。并非限制工具权限，也不按正文关键词分类；原有一般候选 Task 使用 memory/session 完善信息的语义不变。
 
 **批处理里的容错**：同一场会议的多个条目在一次提交里应用，一条不成立不应拖垮其余。
 

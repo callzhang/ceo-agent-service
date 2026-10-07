@@ -110,6 +110,7 @@ from app.outbound_postfix import (
 from app.task_models import (
     DingTalkTodoLinkStatus,
     FollowUpDraft,
+    TaskAttentionProjectionReceipt,
     TodoEvidenceCandidate,
     TodoEvidenceCandidateStatus,
     WorkProject,
@@ -126,6 +127,10 @@ from app.task_semantic_models import (
     BusinessEvidenceRole,
     BusinessProject,
     BusinessProjectCandidate,
+    BusinessProjectContextRevision,
+    BusinessProjectEvidence,
+    ProjectCrmCustomerCandidate,
+    SourceCitation,
     BusinessRelationStatus,
     BusinessRelationType,
     BusinessRelevance,
@@ -149,7 +154,9 @@ from app.task_semantic_models import (
     BusinessWorkClusterTask,
     CommitmentStatus,
     FormalTaskBasis,
+    ProjectContext,
 )
+from app.task_source_documents import source_document_key, source_is_observed
 from app.wechat.models import WechatReplyScope
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
@@ -223,7 +230,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-04.1"
+STORE_SCHEMA_VERSION = "2026-10-06.1"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -302,6 +309,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "outbound_postfixes",
     "outbound_postfix_receipts",
     "native_reply_dispatches",
+    "business_source_documents",
     "business_task_signals",
     "business_tasks",
     "business_task_dingtalk_links",
@@ -317,6 +325,8 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "business_anchors",
     "business_task_anchor_links",
     "business_projects",
+    "business_project_context_revisions",
+    "business_project_evidence",
     "business_project_candidates",
     "business_attention_items",
     "business_attention_tasks",
@@ -378,6 +388,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_feedback_iteration_decisions_batch",
     "idx_feedback_iteration_decision_items_feedback_round",
     "idx_business_task_signals_source",
+    "idx_business_signal_document",
     "idx_business_tasks_updated_id",
     "idx_business_tasks_list",
     "idx_business_tasks_relevance",
@@ -394,6 +405,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_business_work_cluster_tasks_task",
     "idx_business_task_anchor_links_task",
     "idx_business_project_candidates_cluster",
+    "idx_business_project_context_revisions_project",
     "idx_business_attention_items_list",
     "idx_business_attention_tasks_task",
     "idx_business_attention_proposal_tasks_task",
@@ -406,12 +418,14 @@ STORE_SCHEMA_REMOVED_TABLES = (
 )
 STORE_SCHEMA_REMOVED_COLUMNS = {
     "agent_runs": ("tool_events_json",),
+    "business_task_signals": ("evidence_text",),
 }
 STORE_SCHEMA_REQUIRED_COLUMNS = {
+    "business_source_documents": ("id", "identity_key", "body", "created_at"),
     "meeting_alignment_delivery_claims": ("job_id", "claim_token"),
     "business_task_signals": (
         "id", "source_type", "source_ref", "source_time", "conversation_id",
-        "conversation_title", "author_user_id", "author_name", "evidence_text",
+        "conversation_title", "author_user_id", "author_name", "source_document_id",
         "context_json", "dedupe_key", "created_at", "author_kind",
     ),
     "business_tasks": (
@@ -419,6 +433,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "commitment_status", "owner_user_id", "owner_name", "owner_evidence_json",
         "deadline_at", "business_relevance", "missing_evidence_json",
         "merged_into_task_id", "created_at", "updated_at", "last_activity_at",
+        "origin", "suggestion_json",
     ),
     "business_task_dingtalk_links": (
         "id", "business_task_id", "dingtalk_task_id", "executor_user_id",
@@ -471,8 +486,14 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     ),
     "business_projects": (
         "id", "canonical_anchor_id", "anchor_type", "title", "registry_source",
-        "created_at",
+        "created_at", "crm_customer_id", "crm_customer_name",
+        "crm_customer_lookup_status", "crm_customer_candidates_json",
+        "crm_customer_label", "crm_customer_evidence_json",
     ),
+    "business_project_context_revisions": (
+        "id", "project_id", "context_json", "evidence_json", "created_at",
+    ),
+    "business_project_evidence": ("project_id", "signal_id", "created_at"),
     "business_project_candidates": (
         "id", "cluster_id", "title", "reason", "status", "confirmed_project_id",
         "confirmation_signal_id", "created_at",
@@ -480,7 +501,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     "business_attention_items": (
         "id", "stable_key", "category", "status", "title", "business_area",
         "why_attention", "current_state", "ceo_action", "anchor_id",
-        "evidence_signal_id", "resolution_signal_id", "resolved_at",
+        "evidence_signal_id", "assessment_json", "resolution_signal_id", "resolved_at",
         "created_at", "updated_at",
     ),
     "business_attention_tasks": ("attention_item_id", "task_id", "created_at"),
@@ -556,7 +577,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "result_envelope_json",
     ),
     "conversation_runtime_sessions": ("contract_hash",),
-    "task_agent_runs": ("status", "error", "finished_at", "updated_at"),
+    "task_agent_runs": ("status", "error", "finished_at", "updated_at", "projection_json"),
     "meeting_alignment_jobs": (
         "calendar_summary_status",
         "calendar_summary_result_json",
@@ -601,6 +622,9 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     ),
 }
 STORE_SCHEMA_REQUIRED_TRIGGERS = (
+    "trg_business_source_documents_immutable_update",
+    "trg_business_source_documents_immutable_delete",
+    "trg_business_source_documents_immutable_replace",
     "trg_business_task_signals_immutable_update",
     "trg_business_task_signals_immutable_delete",
     "trg_business_task_signals_immutable_replace",
@@ -853,6 +877,77 @@ def _business_nonblank_sql(column: str) -> str:
         "8232,8233,8239,8287,12288)"
     )
     return f"trim({column}, {whitespace}) <> ''"
+
+
+BUSINESS_SOURCE_DOCUMENT_SCHEMA = (
+    f"""create table if not exists business_source_documents (
+        id integer primary key autoincrement,
+        identity_key text not null unique,
+        body text not null check({_business_nonblank_sql("body")}),
+        created_at text not null default current_timestamp
+    )""",
+    """create trigger if not exists trg_business_source_documents_immutable_update
+    before update on business_source_documents begin
+        select raise(abort, 'business source documents are immutable');
+    end""",
+    """create trigger if not exists trg_business_source_documents_immutable_delete
+    before delete on business_source_documents begin
+        select raise(abort, 'business source documents are immutable');
+    end""",
+    """create trigger if not exists trg_business_source_documents_immutable_replace
+    before insert on business_source_documents
+    when exists (
+        select 1 from business_source_documents
+        where id=new.id or identity_key=new.identity_key
+    ) begin
+        select raise(abort, 'business source documents are immutable: UNIQUE id or identity_key');
+    end""",
+)
+
+
+def _business_task_signal_table_sql(table: str) -> str:
+    # Both names are internal schema constants (live table and migration copy).
+    return f"""create table if not exists {table} (
+        id integer primary key autoincrement,
+        source_type text not null check({_business_nonblank_sql("source_type")}),
+        source_ref text not null check({_business_nonblank_sql("source_ref")}),
+        source_time text not null default '',
+        conversation_id text not null default '',
+        conversation_title text not null default '',
+        author_user_id text not null default '',
+        author_name text not null default '',
+        source_document_id integer not null,
+        context_json text not null default '{{}}'
+            check(json_valid(context_json) and json_type(context_json) = 'object'),
+        dedupe_key text not null unique check({_business_nonblank_sql("dedupe_key")}),
+        created_at text not null default current_timestamp,
+        author_kind text not null default 'unknown'
+            check(author_kind in ('human', 'system', 'agent', 'unknown')),
+        foreign key(source_document_id) references business_source_documents(id)
+    )"""
+
+
+BUSINESS_TASK_SIGNAL_INDEXES_AND_TRIGGERS = (
+    """create index if not exists idx_business_task_signals_source
+        on business_task_signals(source_type, source_ref, source_time, id)""",
+    """create index if not exists idx_business_signal_document
+        on business_task_signals(source_document_id)""",
+    """create trigger if not exists trg_business_task_signals_immutable_update
+    before update on business_task_signals begin
+        select raise(abort, 'business task signals are immutable');
+    end""",
+    """create trigger if not exists trg_business_task_signals_immutable_delete
+    before delete on business_task_signals begin
+        select raise(abort, 'business task signals are immutable');
+    end""",
+    """create trigger if not exists trg_business_task_signals_immutable_replace
+    before insert on business_task_signals
+    when exists (
+        select 1 from business_task_signals where id=new.id or dedupe_key=new.dedupe_key
+    ) begin
+        select raise(abort, 'business task signals are immutable: UNIQUE id or dedupe_key');
+    end""",
+)
 
 
 def _meeting_alignment_job_span(
@@ -2584,6 +2679,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
     def _initialize(self) -> None:
         with self._connect() as db:
+            self._migrate_business_task_source_documents(db)
             db.executescript(
                 """
                 create table if not exists conversations (
@@ -3584,49 +3680,17 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 );
                 """
                 f"""
-                create table if not exists business_task_signals (
-                    id integer primary key autoincrement,
-                    source_type text not null check({_business_nonblank_sql("source_type")}),
-                    source_ref text not null check({_business_nonblank_sql("source_ref")}),
-                    source_time text not null default '',
-                    conversation_id text not null default '',
-                    conversation_title text not null default '',
-                    author_user_id text not null default '',
-                    author_name text not null default '',
-                    evidence_text text not null check({_business_nonblank_sql("evidence_text")}),
-                    context_json text not null default '{{}}'
-                        check(json_valid(context_json) and json_type(context_json) = 'object'),
-                    dedupe_key text not null unique check({_business_nonblank_sql("dedupe_key")}),
-                    created_at text not null default current_timestamp,
-                    author_kind text not null default 'unknown'
-                        check(author_kind in ('human', 'system', 'agent', 'unknown'))
-                );
-                create index if not exists idx_business_task_signals_source
-                    on business_task_signals(source_type, source_ref, source_time, id);
-                create trigger if not exists trg_business_task_signals_immutable_update
-                before update on business_task_signals
-                begin
-                    select raise(abort, 'business task signals are immutable');
-                end;
-                create trigger if not exists trg_business_task_signals_immutable_delete
-                before delete on business_task_signals
-                begin
-                    select raise(abort, 'business task signals are immutable');
-                end;
-                create trigger if not exists trg_business_task_signals_immutable_replace
-                before insert on business_task_signals
-                when exists (
-                    select 1 from business_task_signals
-                    where id = new.id or dedupe_key = new.dedupe_key
-                )
-                begin
-                    select raise(abort, 'business task signals are immutable: UNIQUE id or dedupe_key');
-                end;
+                {';'.join(BUSINESS_SOURCE_DOCUMENT_SCHEMA)};
+                {_business_task_signal_table_sql("business_task_signals")};
+                {';'.join(BUSINESS_TASK_SIGNAL_INDEXES_AND_TRIGGERS)};
                 create table if not exists business_tasks (
                     id integer primary key autoincrement,
                     title text not null check({_business_nonblank_sql("title")}),
                     description text not null default '',
                     stage text not null check(stage in ('candidate', 'formal')),
+                    origin text not null default 'source' check(origin in ('source', 'agent_suggestion')),
+                    suggestion_json text not null default '{{}}'
+                        check(json_valid(suggestion_json) and json_type(suggestion_json) = 'object'),
                     status text not null default 'open' check(status in (
                         'open', 'waiting', 'done', 'cancelled', 'merged'
                     )),
@@ -3879,9 +3943,41 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     title text not null check({_business_nonblank_sql("title")}),
                     registry_source text not null
                         check({_business_nonblank_sql("registry_source")}),
+                    crm_customer_id text not null default '',
+                    crm_customer_name text not null default '',
+                    crm_customer_lookup_status text not null default 'not_requested'
+                        check(crm_customer_lookup_status in (
+                            'not_requested', 'matched', 'ambiguous', 'needs_confirmation',
+                            'no_match', 'unavailable', 'conflict'
+                        )),
+                    crm_customer_candidates_json text not null default '[]'
+                        check(json_valid(crm_customer_candidates_json)
+                            and json_type(crm_customer_candidates_json) = 'array'),
+                    crm_customer_label text not null default '',
+                    crm_customer_evidence_json text not null default '{{}}'
+                        check(json_valid(crm_customer_evidence_json)
+                            and json_type(crm_customer_evidence_json) = 'object'),
                     created_at text not null default current_timestamp,
                     foreign key(canonical_anchor_id, anchor_type)
                         references business_anchors(id, anchor_type)
+                );
+                create table if not exists business_project_context_revisions (
+                    id integer primary key autoincrement,
+                    project_id integer not null,
+                    context_json text not null,
+                    evidence_json text not null,
+                    created_at text not null default current_timestamp,
+                    foreign key(project_id) references business_projects(id)
+                );
+                create index if not exists idx_business_project_context_revisions_project
+                    on business_project_context_revisions(project_id, id desc);
+                create table if not exists business_project_evidence (
+                    project_id integer not null,
+                    signal_id integer not null,
+                    created_at text not null default current_timestamp,
+                    primary key(project_id, signal_id),
+                    foreign key(project_id) references business_projects(id),
+                    foreign key(signal_id) references business_task_signals(id)
                 );
                 create table if not exists business_project_candidates (
                     id integer primary key autoincrement,
@@ -3913,6 +4009,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     ceo_action text not null check({_business_nonblank_sql("ceo_action")}),
                     anchor_id integer not null,
                     evidence_signal_id integer not null,
+                    assessment_json text not null default '{{}}',
                     resolution_signal_id integer,
                     resolved_at text not null default '',
                     created_at text not null default current_timestamp,
@@ -4171,6 +4268,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     summary_input_id integer not null,
                     codex_session_id text not null default '',
                     decision_json text not null default '{}',
+                    projection_json text not null default '{}',
                     audit_summary text not null default '',
                     memory_recall_used integer not null default 0,
                     status text not null default 'completed'
@@ -4377,6 +4475,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 );
                 """
             )
+            attention_columns = {
+                row["name"] for row in db.execute("pragma table_info(business_attention_items)")
+            }
+            if "assessment_json" not in attention_columns:
+                db.execute(
+                    "alter table business_attention_items add column "
+                    "assessment_json text not null default '{}'"
+                )
             signal_columns = {
                 row["name"] for row in db.execute("pragma table_info(business_task_signals)")
             }
@@ -4385,6 +4491,35 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "alter table business_task_signals add column author_kind text not null "
                     "default 'unknown' check(author_kind in ('human', 'system', 'agent', 'unknown'))"
                 )
+            project_columns = {
+                row["name"] for row in db.execute("pragma table_info(business_projects)")
+            }
+            project_customer_columns = (
+                ("crm_customer_id", "text not null default ''"),
+                ("crm_customer_name", "text not null default ''"),
+                (
+                    "crm_customer_lookup_status",
+                    "text not null default 'not_requested' check(crm_customer_lookup_status in "
+                    "('not_requested', 'matched', 'ambiguous', 'needs_confirmation', "
+                    "'no_match', 'unavailable', 'conflict'))",
+                ),
+                (
+                    "crm_customer_candidates_json",
+                    "text not null default '[]' check(json_valid(crm_customer_candidates_json) "
+                    "and json_type(crm_customer_candidates_json) = 'array')",
+                ),
+                ("crm_customer_label", "text not null default ''"),
+                (
+                    "crm_customer_evidence_json",
+                    "text not null default '{}' check(json_valid(crm_customer_evidence_json) "
+                    "and json_type(crm_customer_evidence_json) = 'object')",
+                ),
+            )
+            for column, definition in project_customer_columns:
+                if column not in project_columns:
+                    db.execute(
+                        f"alter table business_projects add column {column} {definition}"
+                    )
             stranded_event_table = db.execute(
                 "select 1 from sqlite_master where type='table' "
                 "and name='business_task_events_before_date_evidence'"
@@ -5188,6 +5323,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         f"alter table dispatcher_claim_leases "
                         f"add column {column} {definition}"
                     )
+            business_task_columns = {
+                row["name"] for row in db.execute("pragma table_info(business_tasks)").fetchall()
+            }
+            for column, definition in (
+                ("origin", "text not null default 'source' check(origin in ('source','agent_suggestion'))"),
+                ("suggestion_json", "text not null default '{}' check(json_valid(suggestion_json) and json_type(suggestion_json)='object')"),
+            ):
+                if column not in business_task_columns:
+                    db.execute(f"alter table business_tasks add column {column} {definition}")
             work_todo_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(work_todos)").fetchall()
@@ -5427,6 +5571,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             }
             for column, definition in (
                 ("status", "text not null default 'completed'"),
+                ("projection_json", "text not null default '{}'"),
                 ("error", "text not null default ''"),
                 ("finished_at", "text not null default ''"),
                 ("updated_at", "text not null default ''"),
@@ -5792,6 +5937,31 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "update wechat_deliveries set reply_text=? where id=?",
                     (prepared.final_body, delivery["id"]),
                 )
+            self._migrate_project_attention_evidence(db)
+
+    @staticmethod
+    def _migrate_project_attention_evidence(db: sqlite3.Connection) -> None:
+        """Carry proven original sources to Project evidence once, without changing history."""
+        marker = "business_project_attention_evidence_migrated"
+        if db.execute("select 1 from service_state where key=?", (marker,)).fetchone() is not None:
+            return
+        rows = db.execute(
+            "select distinct project.id as project_id, signal.id as signal_id, signal.source_type "
+            "from business_attention_items card "
+            "join business_projects project on project.canonical_anchor_id=card.anchor_id "
+            "join business_task_anchor_links link on link.anchor_id=card.anchor_id "
+            "join business_task_evidence evidence on evidence.task_id=link.task_id "
+            "join business_task_signals signal on signal.id=evidence.signal_id "
+            "where card.status='active' and link.status='confirmed' and link.active=1"
+        ).fetchall()
+        for row in rows:
+            if source_is_observed(row["source_type"]):
+                db.execute(
+                    "insert into business_project_evidence(project_id, signal_id) values (?, ?) "
+                    "on conflict(project_id, signal_id) do nothing",
+                    (row["project_id"], row["signal_id"]),
+                )
+        db.execute("insert into service_state(key, value) values (?, '1')", (marker,))
 
     def prepare_outbound_postfix(
         self,
@@ -6616,6 +6786,36 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         return BusinessTaskEvent.model_validate(dict(row))
 
     @staticmethod
+    def _business_project_context_revision_from_row(
+        row: sqlite3.Row,
+    ) -> BusinessProjectContextRevision:
+        values = dict(row)
+        values["context"] = json.loads(values.pop("context_json"))
+        values["evidence_signal_ids"] = json.loads(values.pop("evidence_json"))
+        return BusinessProjectContextRevision.model_validate(values)
+
+    def _business_project_from_row(
+        self, row: sqlite3.Row, *, _db: sqlite3.Connection
+    ) -> BusinessProject:
+        values = dict(row)
+        candidate_values = json.loads(values.pop("crm_customer_candidates_json", "[]"))
+        evidence_value = json.loads(values.pop("crm_customer_evidence_json", "{}"))
+        values["crm_customer_candidates"] = [
+            ProjectCrmCustomerCandidate.model_validate(candidate)
+            for candidate in candidate_values
+        ]
+        values["crm_customer_evidence"] = (
+            SourceCitation.model_validate(evidence_value)
+            if evidence_value
+            else None
+        )
+        context = self.get_business_project_context_in_transaction(
+            project_id=int(values["id"]), _db=_db
+        )
+        values["context"] = context
+        return BusinessProject.model_validate(values)
+
+    @staticmethod
     def _business_attention_item_from_row(row: sqlite3.Row) -> BusinessAttentionItem:
         return BusinessAttentionItem.model_validate(dict(row))
 
@@ -6643,9 +6843,30 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, *, dedupe_key: str, _db: sqlite3.Connection
     ) -> BusinessTaskSignal | None:
         row = _db.execute(
-            "select * from business_task_signals where dedupe_key=?", (dedupe_key,)
+            "select signal.*, document.body as evidence_text from business_task_signals signal "
+            "join business_source_documents document on document.id=signal.source_document_id "
+            "where signal.dedupe_key=?", (dedupe_key,)
         ).fetchone()
         return self._business_task_signal_from_row(row) if row is not None else None
+
+    @staticmethod
+    def _business_source_document_id(db: sqlite3.Connection, source: dict[str, object]) -> int:
+        identity_key = source_document_key(**{
+            field: source[field] for field in (
+                "source_type", "source_ref", "source_time", "conversation_id",
+                "author_user_id", "author_name", "author_kind", "evidence_text",
+            )
+        })
+        row = db.execute(
+            "select id from business_source_documents where identity_key=?", (identity_key,)
+        ).fetchone()
+        if row is not None:
+            return int(row["id"])
+        cursor = db.execute(
+            "insert into business_source_documents (identity_key, body) values (?, ?)",
+            (identity_key, source["evidence_text"]),
+        )
+        return int(cursor.lastrowid)
 
     def create_business_task_signal_in_transaction(
         self,
@@ -6669,6 +6890,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         ).isoformat(timespec="seconds")
         signal = BusinessTaskSignal(
             id=0,
+            source_document_id=0,
             source_type=source_type,
             source_ref=source_ref,
             source_time=source_time,
@@ -6682,11 +6904,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             dedupe_key=dedupe_key,
             created_at=timestamp,
         )
+        document_id = self._business_source_document_id(_db, signal.model_dump(mode="json"))
         cursor = _db.execute(
             """
             insert into business_task_signals (
                 source_type, source_ref, source_time, conversation_id, conversation_title,
-                author_user_id, author_name, evidence_text, context_json, dedupe_key,
+                author_user_id, author_name, source_document_id, context_json, dedupe_key,
                 created_at, author_kind
             ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -6698,7 +6921,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 signal.conversation_title,
                 signal.author_user_id,
                 signal.author_name,
-                signal.evidence_text,
+                document_id,
                 signal.context_json,
                 signal.dedupe_key,
                 signal.created_at,
@@ -6717,6 +6940,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         formal_basis: FormalTaskBasis | str | None = None,
         business_relevance: BusinessRelevance | str = BusinessRelevance.UNKNOWN,
         description: str = "",
+        origin: str = "source",
+        suggestion_json: str = "{}",
         owner_user_id: str = "",
         owner_name: str = "",
         owner_evidence_json: str = "{}",
@@ -6734,6 +6959,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             id=0,
             title=title,
             description=description,
+            origin=origin,
+            suggestion_json=suggestion_json,
             stage=stage,
             status=status,
             commitment_status=commitment_status,
@@ -6755,8 +6982,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 title, description, stage, status, commitment_status, formal_basis,
                 business_relevance, merged_into_task_id, owner_user_id, owner_name,
                 owner_evidence_json, deadline_at, missing_evidence_json,
-                last_activity_at, created_at, updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                last_activity_at, created_at, updated_at, origin, suggestion_json
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task.title,
@@ -6775,6 +7002,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 task.last_activity_at,
                 task.created_at,
                 task.updated_at,
+                task.origin,
+                task.suggestion_json,
             ),
         )
         return int(cursor.lastrowid)
@@ -6796,7 +7025,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 title=?, description=?, stage=?, status=?, commitment_status=?, formal_basis=?,
                 business_relevance=?, merged_into_task_id=?, owner_user_id=?, owner_name=?,
                 owner_evidence_json=?, deadline_at=?, missing_evidence_json=?,
-                last_activity_at=?, updated_at=?
+                last_activity_at=?, updated_at=?, origin=?, suggestion_json=?
             where id=?
             """,
             (
@@ -6815,6 +7044,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 task.missing_evidence_json,
                 task.last_activity_at,
                 task.updated_at,
+                task.origin,
+                task.suggestion_json,
                 task.id,
             ),
         )
@@ -6853,14 +7084,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         return tuple(self._business_task_evidence_from_row(row) for row in rows)
 
     def get_business_task_signal_for_task_source_ref_in_transaction(
-        self, *, task_id: int, source_ref: str, _db: sqlite3.Connection
+        self, *, task_id: int, source_ref: str, _db: sqlite3.Connection,
+        source_type: str | None = None,
     ) -> BusinessTaskSignal | None:
+        source_type_filter = " and signal.source_type=?" if source_type is not None else ""
+        args = (task_id, source_ref, source_type) if source_type is not None else (task_id, source_ref)
         row = _db.execute(
-            """select signal.* from business_task_signals as signal
+            """select signal.*, document.body as evidence_text from business_task_signals as signal
+               join business_source_documents document on document.id=signal.source_document_id
                join business_task_evidence as evidence on evidence.signal_id=signal.id
-               where evidence.task_id=? and signal.source_ref=?
-               order by signal.id desc limit 1""",
-            (task_id, source_ref),
+               where evidence.task_id=? and signal.source_ref=?"""
+            + source_type_filter + " order by signal.id desc limit 1",
+            args,
         ).fetchone()
         return self._business_task_signal_from_row(row) if row is not None else None
 
@@ -7007,40 +7242,21 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         context_json: str = "{}",
         now: datetime | None = None,
     ) -> int:
-        timestamp = ensure_utc_datetime(
-            now or datetime.now(timezone.utc), field="business task signal now"
-        ).isoformat(timespec="seconds")
-        signal = BusinessTaskSignal(
-            id=0, source_type=source_type, source_ref=source_ref, source_time=source_time,
-            conversation_id=conversation_id, conversation_title=conversation_title,
-            author_user_id=author_user_id, author_name=author_name,
-            author_kind=author_kind,
-            evidence_text=evidence_text, context_json=context_json,
-            dedupe_key=dedupe_key, created_at=timestamp,
-        )
         with self._immediate_write_transaction() as db:
-            cursor = db.execute(
-                """
-                insert into business_task_signals (
-                    source_type, source_ref, source_time, conversation_id, conversation_title,
-                    author_user_id, author_name, evidence_text, context_json, dedupe_key,
-                    created_at, author_kind
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    signal.source_type, signal.source_ref, signal.source_time,
-                    signal.conversation_id, signal.conversation_title,
-                    signal.author_user_id, signal.author_name, signal.evidence_text,
-                    signal.context_json, signal.dedupe_key, signal.created_at,
-                    signal.author_kind.value,
-                ),
+            return self.create_business_task_signal_in_transaction(
+                source_type=source_type, source_ref=source_ref, source_time=source_time,
+                conversation_id=conversation_id, conversation_title=conversation_title,
+                author_user_id=author_user_id, author_name=author_name,
+                author_kind=author_kind, evidence_text=evidence_text,
+                context_json=context_json, dedupe_key=dedupe_key, now=now, _db=db,
             )
-            return int(cursor.lastrowid)
 
     def list_business_task_signals(self) -> tuple[BusinessTaskSignal, ...]:
         with self._connect() as db:
             rows = db.execute(
-                "select * from business_task_signals order by id"
+                "select signal.*, document.body as evidence_text from business_task_signals signal "
+                "join business_source_documents document on document.id=signal.source_document_id "
+                "order by signal.id"
             ).fetchall()
             return tuple(self._business_task_signal_from_row(row) for row in rows)
 
@@ -7052,7 +7268,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, *, signal_id: int, _db: sqlite3.Connection
     ) -> BusinessTaskSignal | None:
         row = _db.execute(
-            "select * from business_task_signals where id=?", (signal_id,)
+            "select signal.*, document.body as evidence_text from business_task_signals signal "
+            "join business_source_documents document on document.id=signal.source_document_id "
+            "where signal.id=?", (signal_id,)
         ).fetchone()
         return self._business_task_signal_from_row(row) if row else None
 
@@ -7066,6 +7284,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         formal_basis: FormalTaskBasis | str | None = None,
         business_relevance: BusinessRelevance | str = BusinessRelevance.UNKNOWN,
         description: str = "",
+        origin: str = "source",
+        suggestion_json: str = "{}",
         owner_user_id: str = "",
         owner_name: str = "",
         owner_evidence_json: str = "{}",
@@ -7075,51 +7295,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         last_activity_at: str | None = None,
         now: datetime | None = None,
     ) -> int:
-        timestamp = ensure_utc_datetime(
-            now or datetime.now(timezone.utc), field="business task now"
-        ).isoformat(timespec="seconds")
-        # Validate the model before writing so the Python and SQLite contracts
-        # reject the same invalid stage and merge combinations.
-        task = BusinessTask(
-            id=0,
-            title=title,
-            description=description,
-            stage=stage,
-            status=status,
-            commitment_status=commitment_status,
-            formal_basis=formal_basis,
-            business_relevance=business_relevance,
-            merged_into_task_id=merged_into_task_id,
-            owner_user_id=owner_user_id,
-            owner_name=owner_name,
-            owner_evidence_json=owner_evidence_json,
-            deadline_at=deadline_at,
-            missing_evidence_json=missing_evidence_json,
-            last_activity_at=timestamp if last_activity_at is None else last_activity_at,
-            created_at=timestamp,
-            updated_at=timestamp,
-        )
         with self._immediate_write_transaction() as db:
-            cursor = db.execute(
-                """
-                insert into business_tasks (
-                    title, description, stage, status, commitment_status, formal_basis,
-                    business_relevance, merged_into_task_id, owner_user_id, owner_name,
-                    owner_evidence_json, deadline_at, missing_evidence_json,
-                    last_activity_at, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    task.title, task.description, task.stage.value, task.status.value,
-                    task.commitment_status.value,
-                    task.formal_basis.value if task.formal_basis is not None else None,
-                    task.business_relevance.value, task.merged_into_task_id,
-                    task.owner_user_id, task.owner_name, task.owner_evidence_json,
-                    task.deadline_at, task.missing_evidence_json, task.last_activity_at,
-                    task.created_at, task.updated_at,
-                ),
+            return self.create_business_task_in_transaction(
+                title=title, description=description, stage=stage, status=status,
+                commitment_status=commitment_status, formal_basis=formal_basis,
+                business_relevance=business_relevance, merged_into_task_id=merged_into_task_id,
+                owner_user_id=owner_user_id, owner_name=owner_name, owner_evidence_json=owner_evidence_json,
+                deadline_at=deadline_at, missing_evidence_json=missing_evidence_json,
+                origin=origin, suggestion_json=suggestion_json,
+                last_activity_at=last_activity_at, now=now, _db=db,
             )
-            return int(cursor.lastrowid)
 
     def get_business_task(self, task_id: int) -> BusinessTask | None:
         with self._connect() as db:
@@ -7236,6 +7421,38 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchall()
             return tuple(self._business_task_event_from_row(row) for row in rows)
 
+    def list_business_project_ids_for_source(
+        self, *, source_type: str, source_id: str, limit: int = 100, offset: int = 0
+    ) -> tuple[int, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business source pagination requires positive limit and non-negative offset")
+        if not source_id.strip():
+            return ()
+        with self._connect() as db:
+            rows = db.execute(
+                "select distinct evidence.project_id from business_project_evidence evidence "
+                "join business_task_signals signal on signal.id=evidence.signal_id "
+                "where signal.source_type=? and (signal.source_ref=? or substr(signal.source_ref,1,?)=?) "
+                "order by evidence.project_id limit ? offset ?",
+                (source_type, source_id, len(source_id) + 1, source_id + "#", limit, offset),
+            ).fetchall()
+            return tuple(int(row["project_id"]) for row in rows)
+
+    def list_business_task_ids_for_project(
+        self, *, project_id: int, limit: int = 100, offset: int = 0
+    ) -> tuple[int, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business project pagination requires positive limit and non-negative offset")
+        with self._connect() as db:
+            rows = db.execute(
+                "select link.task_id from business_task_anchor_links link "
+                "join business_projects project on project.canonical_anchor_id=link.anchor_id "
+                "join business_anchors anchor on anchor.id=link.anchor_id "
+                "where project.id=? and link.status='confirmed' and link.active=1 and anchor.active=1 "
+                "order by link.task_id desc limit ? offset ?", (project_id, limit, offset),
+            ).fetchall()
+            return tuple(int(row["task_id"]) for row in rows)
+
     def list_business_task_project_links(self, *, task_id: int) -> list[BusinessProject]:
         with self._connect() as db:
             rows = db.execute(
@@ -7248,7 +7465,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 """,
                 (task_id,),
             ).fetchall()
-            return [BusinessProject.model_validate(dict(row)) for row in rows]
+            return [self._business_project_from_row(row, _db=db) for row in rows]
 
     # Task 4 resolution primitives deliberately accept an existing transaction.
     # The resolution service owns the policy and composes these rows atomically.
@@ -7318,10 +7535,43 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def get_business_project_in_transaction(
         self, *, project_id: int, _db: sqlite3.Connection
     ) -> BusinessProject | None:
+        row = _db.execute("select * from business_projects where id=?", (project_id,)).fetchone()
+        return self._business_project_from_row(row, _db=_db) if row is not None else None
+
+    def get_business_project_context_in_transaction(
+        self, *, project_id: int, _db: sqlite3.Connection
+    ) -> ProjectContext | None:
         row = _db.execute(
-            "select * from business_projects where id=?", (project_id,)
+            "select context_json from business_project_context_revisions "
+            "where project_id=? order by id desc limit 1", (project_id,)
         ).fetchone()
-        return BusinessProject.model_validate(dict(row)) if row is not None else None
+        return ProjectContext.model_validate_json(str(row["context_json"])) if row else None
+
+    def list_business_project_context_revisions_in_transaction(
+        self, *, project_id: int, _db: sqlite3.Connection, limit: int = 100, offset: int = 0
+    ) -> tuple[BusinessProjectContextRevision, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("project context pagination requires positive limit and non-negative offset")
+        rows = _db.execute(
+            "select * from business_project_context_revisions where project_id=? order by id desc limit ? offset ?",
+            (project_id, limit, offset),
+        ).fetchall()
+        return tuple(self._business_project_context_revision_from_row(row) for row in rows)
+
+    def list_business_project_evidence_in_transaction(
+        self, *, project_id: int, _db: sqlite3.Connection, limit: int = 100, offset: int = 0,
+        pinned_signal_ids: tuple[int, ...] = (),
+    ) -> tuple[BusinessProjectEvidence, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("project evidence pagination requires positive limit and non-negative offset")
+        rows = _db.execute(
+            "select * from business_project_evidence where project_id=? and (signal_id in ("
+            "select signal_id from business_project_evidence where project_id=? "
+            "order by signal_id desc limit ? offset ?) or signal_id in "
+            "(select value from json_each(?))) order by signal_id",
+            (project_id, project_id, limit, offset, json.dumps(pinned_signal_ids)),
+        ).fetchall()
+        return tuple(BusinessProjectEvidence.model_validate(dict(row)) for row in rows)
 
     def derive_business_task_relevance_in_transaction(
         self, *, task_id: int, _db: sqlite3.Connection
@@ -7458,6 +7708,141 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             (project.canonical_anchor_id, project.title, project.registry_source),
         ).lastrowid)
 
+    def update_business_project_crm_customer_lookup_in_transaction(
+        self,
+        *,
+        project_id: int,
+        label: str,
+        evidence: SourceCitation | None,
+        lookup_status: str,
+        candidates: list[ProjectCrmCustomerCandidate | dict[str, object]],
+        _db: sqlite3.Connection,
+        matched_customer_id: str = "",
+        matched_customer_name: str = "",
+    ) -> bool:
+        allowed_statuses = {
+            "matched", "ambiguous", "needs_confirmation", "no_match", "unavailable", "conflict"
+        }
+        if lookup_status not in allowed_statuses:
+            raise ValueError("unsupported Project CRM customer lookup status")
+        normalized_candidates = [
+            ProjectCrmCustomerCandidate.model_validate(candidate)
+            for candidate in candidates
+        ]
+        row = _db.execute(
+            "select crm_customer_id, crm_customer_name from business_projects where id=?",
+            (project_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("official Project does not exist")
+        current_customer_id = str(row["crm_customer_id"] or "")
+        customer_id = current_customer_id
+        customer_name = str(row["crm_customer_name"] or "")
+        selected_status = lookup_status
+
+        if lookup_status == "matched":
+            if not matched_customer_id.strip() or not matched_customer_name.strip():
+                raise ValueError("matched CRM lookup requires a stable ID and display name")
+            if current_customer_id and current_customer_id != matched_customer_id:
+                # A later source cannot silently replace a confirmed Project link.
+                selected_status = "conflict"
+                if all(candidate.customer_id != matched_customer_id for candidate in normalized_candidates):
+                    raise ValueError("conflicting CRM match must be present as a candidate")
+            else:
+                customer_id = matched_customer_id
+                customer_name = matched_customer_name
+        elif lookup_status == "conflict" and not current_customer_id:
+            raise ValueError("CRM customer conflict requires an existing confirmed link")
+
+        evidence_json = (
+            evidence.model_dump_json() if evidence is not None else "{}"
+        )
+        _db.execute(
+            """update business_projects
+               set crm_customer_id=?, crm_customer_name=?, crm_customer_lookup_status=?,
+                   crm_customer_candidates_json=?, crm_customer_label=?,
+                   crm_customer_evidence_json=?
+               where id=?""",
+            (
+                customer_id,
+                customer_name,
+                selected_status,
+                json.dumps(
+                    [candidate.model_dump(mode="json") for candidate in normalized_candidates],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                label,
+                evidence_json,
+                project_id,
+            ),
+        )
+        return True
+
+    def confirm_business_project_crm_customer(
+        self, *, project_id: int, customer_id: str
+    ) -> bool:
+        if not customer_id.strip():
+            return False
+        with self._connect() as db:
+            row = db.execute(
+                "select crm_customer_id, crm_customer_name, crm_customer_candidates_json "
+                "from business_projects where id=?",
+                (project_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            current_id = str(row["crm_customer_id"] or "")
+            if current_id == customer_id:
+                return True
+            candidates = [
+                ProjectCrmCustomerCandidate.model_validate(value)
+                for value in json.loads(row["crm_customer_candidates_json"] or "[]")
+            ]
+            candidate = next(
+                (value for value in candidates if value.customer_id == customer_id), None
+            )
+            if candidate is None:
+                return False
+            db.execute(
+                """update business_projects
+                   set crm_customer_id=?, crm_customer_name=?,
+                       crm_customer_lookup_status='matched', crm_customer_candidates_json='[]'
+                   where id=?""",
+                (candidate.customer_id, candidate.name, project_id),
+            )
+            return True
+
+    def clear_business_project_crm_customer(self, *, project_id: int) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
+                """update business_projects
+                   set crm_customer_id='', crm_customer_name='',
+                       crm_customer_lookup_status='not_requested',
+                       crm_customer_candidates_json='[]', crm_customer_label='',
+                       crm_customer_evidence_json='{}'
+                   where id=?""",
+                (project_id,),
+            )
+            return cursor.rowcount == 1
+
+    def list_business_task_project_customer_names(self, *, task_id: int) -> tuple[str, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                """select distinct project.crm_customer_name
+                   from business_projects project
+                   join business_task_anchor_links link
+                     on link.anchor_id=project.canonical_anchor_id
+                   join business_anchors anchor on anchor.id=link.anchor_id
+                   where link.task_id=? and link.status='confirmed' and link.active=1
+                     and anchor.active=1 and project.crm_customer_id<>''
+                     and project.crm_customer_name<>''
+                   order by project.crm_customer_name""",
+                (task_id,),
+            ).fetchall()
+            return tuple(str(row[0]) for row in rows)
+
     def create_business_project_candidate_in_transaction(
         self, *, cluster_id: int, title: str, reason: str, _db: sqlite3.Connection
     ) -> int:
@@ -7507,8 +7892,24 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
     def get_business_project(self, project_id: int) -> BusinessProject | None:
         with self._connect() as db:
-            row = db.execute("select * from business_projects where id=?", (project_id,)).fetchone()
-            return BusinessProject.model_validate(dict(row)) if row else None
+            return self.get_business_project_in_transaction(project_id=project_id, _db=db)
+
+    def get_business_project_context(self, project_id: int) -> ProjectContext | None:
+        with self._connect() as db:
+            return self.get_business_project_context_in_transaction(project_id=project_id, _db=db)
+
+    def list_business_project_context_revisions(
+        self, project_id: int, *, limit: int = 100, offset: int = 0
+    ) -> tuple[BusinessProjectContextRevision, ...]:
+        with self._connect() as db:
+            return self.list_business_project_context_revisions_in_transaction(project_id=project_id, _db=db, limit=limit, offset=offset)
+
+    def list_business_project_evidence(
+        self, project_id: int, *, limit: int = 100, offset: int = 0,
+        pinned_signal_ids: tuple[int, ...] = (),
+    ) -> tuple[BusinessProjectEvidence, ...]:
+        with self._connect() as db:
+            return self.list_business_project_evidence_in_transaction(project_id=project_id, _db=db, limit=limit, offset=offset, pinned_signal_ids=pinned_signal_ids)
 
     def list_business_work_clusters(
         self, *, limit: int = 100, offset: int = 0
@@ -7597,7 +7998,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "select * from business_projects order by id limit ? offset ?",
                 (limit if limit is not None else -1, offset),
             ).fetchall()
-            return [BusinessProject.model_validate(dict(row)) for row in rows]
+            return [self._business_project_from_row(row, _db=db) for row in rows]
 
     # Task 5 attention primitives accept an existing transaction.  The
     # projection service owns eligibility and event policy so these methods do
@@ -7630,6 +8031,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         ceo_action: str,
         anchor_id: int,
         evidence_signal_id: int,
+        assessment_json: str = "{}",
         now: str,
         _db: sqlite3.Connection,
     ) -> int:
@@ -7638,15 +8040,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             business_area=business_area, why_attention=why_attention,
             current_state=current_state, ceo_action=ceo_action, anchor_id=anchor_id,
             evidence_signal_id=evidence_signal_id, created_at=now, updated_at=now,
+            assessment_json=assessment_json,
         )
         return int(_db.execute(
             """insert into business_attention_items
                (stable_key, category, status, title, business_area, why_attention,
-                current_state, ceo_action, anchor_id, evidence_signal_id, created_at, updated_at)
-               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                current_state, ceo_action, anchor_id, evidence_signal_id, assessment_json, created_at, updated_at)
+               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (item.stable_key, item.category.value, item.status.value, item.title,
              item.business_area, item.why_attention, item.current_state, item.ceo_action,
-             item.anchor_id, item.evidence_signal_id, item.created_at, item.updated_at),
+             item.anchor_id, item.evidence_signal_id, item.assessment_json, item.created_at, item.updated_at),
         ).lastrowid)
 
     def update_business_attention_item_in_transaction(
@@ -7656,11 +8059,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             """update business_attention_items set
                category=?, status=?, title=?, business_area=?, why_attention=?, current_state=?,
                ceo_action=?, anchor_id=?, evidence_signal_id=?, resolution_signal_id=?,
-               resolved_at=?, updated_at=? where id=?""",
+               resolved_at=?, assessment_json=?, updated_at=? where id=?""",
             (item.category.value, item.status.value, item.title, item.business_area,
              item.why_attention, item.current_state, item.ceo_action, item.anchor_id,
              item.evidence_signal_id, item.resolution_signal_id, item.resolved_at,
-             item.updated_at, item.id),
+             item.assessment_json, item.updated_at, item.id),
         )
 
     def link_business_attention_task_in_transaction(
@@ -9817,8 +10220,31 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         db: sqlite3.Connection,
         *,
         migration_name: str,
+        allow_existing_foreign_key_violations: bool = False,
     ) -> Iterator[None]:
-        """Run a table rebuild with foreign keys verifiably disabled."""
+        """Run a table rebuild with foreign keys verifiably disabled.
+
+        Most rebuilds require a globally clean database. A narrowly scoped
+        migration may instead preserve a pre-existing set of violations, but
+        only when the exact foreign_key_check rows are unchanged afterward.
+        """
+        baseline_violations = tuple(sorted(
+            tuple(row) for row in db.execute("pragma foreign_key_check").fetchall()
+        ))
+        if baseline_violations and not allow_existing_foreign_key_violations:
+            raise sqlite3.IntegrityError(
+                f"{migration_name} migration found pre-existing foreign key violations"
+            )
+
+        def verify_foreign_keys(*, stage: str) -> None:
+            actual = tuple(sorted(
+                tuple(row) for row in db.execute("pragma foreign_key_check").fetchall()
+            ))
+            if actual != baseline_violations:
+                raise sqlite3.IntegrityError(
+                    f"{migration_name} migration changed foreign key violations {stage}"
+                )
+
         if db.in_transaction:
             db.commit()
         if db.in_transaction:
@@ -9836,17 +10262,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise sqlite3.IntegrityError(
                     f"{migration_name} migration transaction is missing"
                 )
-            violations = db.execute("pragma foreign_key_check").fetchall()
-            if violations:
-                raise sqlite3.IntegrityError(
-                    f"{migration_name} migration broke foreign keys"
-                )
+            verify_foreign_keys(stage="before commit")
             db.commit()
-            violations = db.execute("pragma foreign_key_check").fetchall()
-            if violations:
-                raise sqlite3.IntegrityError(
-                    f"{migration_name} migration broke foreign keys"
-                )
+            verify_foreign_keys(stage="after commit; readback is not rollbackable")
         except Exception:
             if db.in_transaction:
                 db.rollback()
@@ -9859,6 +10277,68 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise sqlite3.IntegrityError(
                     f"{migration_name} migration could not restore foreign keys"
                 )
+
+    @staticmethod
+    def _migrate_business_task_source_documents(db: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in db.execute("pragma table_info(business_task_signals)")}
+        if "evidence_text" not in columns:
+            return
+        # Keep the referenced parent under its original name until every row
+        # has been copied and read back. Renaming the old parent would rewrite
+        # all existing child foreign keys to the temporary table's name.
+        with AutoReplyStore._foreign_key_rebuild(
+            db,
+            migration_name="business source documents",
+            allow_existing_foreign_key_violations=True,
+        ):
+            db.execute("begin immediate")
+            for statement in BUSINESS_SOURCE_DOCUMENT_SCHEMA:
+                db.execute(statement)
+            db.execute(_business_task_signal_table_sql("business_task_signals_source_migration"))
+            old_count = db.execute("select count(*) from business_task_signals").fetchone()[0]
+            old_sequence = db.execute(
+                "select seq from sqlite_sequence where name='business_task_signals'"
+            ).fetchone()
+            for row in db.execute("select * from business_task_signals order by id"):
+                original = dict(row)
+                source = dict(original)
+                if "author_kind" not in source:
+                    source["author_kind"] = "unknown"
+                document_id = AutoReplyStore._business_source_document_id(db, source)
+                values = {key: value for key, value in source.items() if key != "evidence_text"}
+                values["source_document_id"] = document_id
+                db.execute(
+                    f"insert into business_task_signals_source_migration ({', '.join(values)}) "
+                    f"values ({', '.join('?' for _ in values)})", tuple(values.values()),
+                )
+                restored = db.execute(
+                    "select signal.*, document.body as evidence_text "
+                    "from business_task_signals_source_migration signal "
+                    "join business_source_documents document on document.id=signal.source_document_id "
+                    "where signal.id=?", (original["id"],),
+                ).fetchone()
+                if restored is None or {key: restored[key] for key in original} != original:
+                    raise sqlite3.IntegrityError("business source document migration changed a signal")
+            new_count = db.execute(
+                "select count(*) from business_task_signals_source_migration"
+            ).fetchone()[0]
+            if new_count != old_count:
+                raise sqlite3.IntegrityError("business source document migration changed signal count")
+            db.execute("drop table business_task_signals")
+            db.execute("alter table business_task_signals_source_migration rename to business_task_signals")
+            if old_sequence is not None:
+                db.execute(
+                    "insert into sqlite_sequence (name, seq) "
+                    "select 'business_task_signals', ? where not exists "
+                    "(select 1 from sqlite_sequence where name='business_task_signals')",
+                    (old_sequence["seq"],),
+                )
+                db.execute(
+                    "update sqlite_sequence set seq=max(seq, ?) where name='business_task_signals'",
+                    (old_sequence["seq"],),
+                )
+            for statement in BUSINESS_TASK_SIGNAL_INDEXES_AND_TRIGGERS:
+                db.execute(statement)
 
     @staticmethod
     def _migrate_agent_run_turn_identity(db: sqlite3.Connection) -> None:
@@ -29163,6 +29643,26 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return
         with self._agent_run_write_transaction(None) as (db, _):
             self._finish_task_agent_run_in_connection(db, run_id, expected)
+
+    def record_task_agent_projection(
+        self, run_id: int, projection_json: str, *,
+        _db: sqlite3.Connection | None = None,
+    ) -> None:
+        TaskAttentionProjectionReceipt.model_validate_json(projection_json)
+
+        def record(db: sqlite3.Connection) -> None:
+            cursor = db.execute(
+                "update task_agent_runs set projection_json=? where id=?",
+                (projection_json, run_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("task agent run does not exist")
+
+        if _db is not None:
+            record(_db)
+            return
+        with self._agent_run_write_transaction(None) as (db, _):
+            record(db)
 
     def recover_orphaned_task_agent_runs(self) -> int:
         """Close task runs whose parent input is no longer processing."""

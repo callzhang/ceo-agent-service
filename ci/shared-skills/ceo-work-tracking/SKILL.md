@@ -1,287 +1,336 @@
 ---
 name: ceo-work-tracking
-description: Use when source context contains one or more trackable Tasks needing extraction, evidence, explicit ownership, commitment/date interpretation, Project clustering, follow-up, completion evidence, or closure. Tasks must be derived from source context; never invent tasks or assignees. Use ceo-message-triage when no durable work item is needed and ceo-meeting-work for meeting synthesis before actions are confirmed. Load the relevant task operation Skill before changing tracked work.
+description: Use when source context concerns business Projects, their facts, responsibilities or material risks, actual Tasks, display-only next-action suggestions, ownership, commitment, typed dates or completion. Aggregate original sources into real Project context, preserve standalone Tasks and return structured local decisions; external operations belong to their service workflows.
 metadata:
   managed_by: ceo-agent-service
-  version: 2
+  version: 5
 ---
 
 # CEO Work Tracking
 
-Treat extraction, creation, follow-up, replies, completion verification, and
-closure as one lifecycle. Preserve identity, intent, evidence, and links across
-every state change. Do not use keyword routers, hardcoded business terms,
-person names, or static routing branches to make work decisions.
+One Task Agent reads new evidence, current Project context and existing Tasks.
+Return one envelope with all three required lists: `project_decisions`,
+`task_decisions`, `project_assessments` (each 0..N). Do not reply to the source.
+The only tool-specific prohibition is: never call
+`memory_connector.memory_write`. This is prompt guidance, not an enforced
+permission boundary; no general read-only mode is imposed here.
+Do not use keyword routers, hardcoded business terms or people, or static branches
+to make business judgments.
 
-Load `dingtalk-todo` for DingTalk TODO operations, `task-management` for local task records, and `dingtalk-chat` before requesting updates or reporting closure.
+## Project context first, actual Tasks and suggestions distinguished
 
-## Task-First Lifecycle Decision
+1. Read related original meetings, management/department/project weekly reports,
+   messages and emails together with existing Project context and Tasks.
+   Weekly reports are neither the sole information source nor a prerequisite.
+   Source authority, authorship, exact version and time matter; repetition is not
+   independent confirmation. Preserve conflicting facts and their evidence/times
+   instead of silently choosing a convenient source.
+2. A Project has a real goal and scope, not just a department, customer/topic,
+   small Task, todo bundle or similarity cluster. Register only a confirmed
+   report Project registry entry or explicit meeting Project decision; quote the
+   defining passage in `registration.source_excerpt` and set its real authority.
+   Preserve the exact source-defined title, reference and report period. A Project
+   title contains only the entity name, not a status or action attached in the
+   same clause. For example, in “甲客户一期交付项目正式启动”, keep
+   “甲客户一期交付项目” as the title and store “正式启动” as a fact when relevant.
+   Adopt the exact current authoritative Project definition with registration to register or reuse.
+   A different stored name cannot replace that definition merely because the action uses its shorter name.
+   Task/action sections are not Project registries. Chats/emails may supplement
+   known Project facts but do not by themselves create official Project identity.
+   Do not infer aliases or identity from rank or topical similarity. A complete
+   source-stated customer prefix may be emitted only as `crm_customer_label`
+   when it is clearly separate from the Project work (for example, “甲客户” +
+   “一期交付项目”); cite the exact source text as `crm_customer_evidence` and
+   repeat that identical citation in the Project's `evidence` list. The service performs the
+   read-only CRM exact match. A title prefix alone never proves a CRM identity.
+   The Project title remains unchanged and Tasks never store a copied customer.
+   CRM name-resolution output is only a candidate list, never proof of exact or
+   exhaustive uniqueness. Every returned customer, including a single result,
+   requires explicit user confirmation before linking. No match and CRM lookup
+   failure remain distinct and never create a CRM record.
+3. `project_decisions` independently registers a Project or updates its existing
+   active `anchor_id`. Its evidence is nonempty original proof. `context=null`
+   only adds proof; otherwise return the complete current snapshot, not a partial
+   patch. Project can have zero Tasks. Never create or update a Task just to carry
+   Project facts, risk evidence, owner information or Attention.
+   For a report containing multiple Projects, create a separate decision and
+   assessment for each Project row; one Project's assessment does not cover
+   another. A registration quote must be an exact contiguous excerpt from the
+   immutable current source that defines that Project.
+   For `project_link_evidence`, when the Project title and Task action occur in
+   different parts of the source, cite one exact contiguous span from the title
+   through the action and include the intervening source text verbatim. Never
+   splice nonadjacent excerpts into one quotation.
+4. `ProjectContext` has goal, scope, one `overall_owner` with the responsible
+   result, other `responsibilities`, and source-backed facts. Unknown overall
+   owner is null (待明确), not a concatenation of people or several overall owners.
+   A bare responsibility clause (a person being responsible for a business area)
+   is ProjectContext only, not a source Task or candidate. Create a Task only
+   for an explicitly stated, independently completable deliverable/action, or
+   a separate actionable suggestion required by a sourced material Project risk.
+   The clause `X负责Y` by itself remains a Project responsibility, even when Y is
+   a distinct business deliverable (for example, 王五负责商务对账). Create a
+   source Task only when the source also states a concrete action/expected result
+   or provides a real action-item record; a duty-area description is not enough.
+   A specific action such as “李四负责核实客户付款排期并反馈” is executable
+   and remains a source-origin Task; without an authorized meeting action record,
+   keep it a candidate. This differs from a bare duty such as “王五负责商务对账”.
+   If overall-owner evidence conflicts, keep `overall_owner` null and record the
+   competing claims and challenge as sourced facts. Do not reclassify competing
+   overall-owner candidates as responsibilities; that list contains only
+   independently evidenced, distinct work duties. State plainly in a Project fact
+   that the owner remains in conflict. Preserve unchanged separate deliverable
+   owners and their citations.
+   State explicitly in a Project fact: 总体负责人存在冲突，仍待确认. Do not
+   substitute only “尚未形成一致确认” or “仍需核实”; preserve the competing
+   source claims as separate evidence.
+   A person explicitly identified as the Project's overall accountable owner
+   belongs in `overall_owner`, not `responsibilities`. For example, “张三总负责
+   交付验收” identifies the overall role; keep “总” out of the person's name.
+   Each person has a distinct responsibility and original evidence. Keep unchanged
+   roles' and facts' historical references when updating a snapshot. Whenever new
+   facts or roles are learned, read the saved context and return the complete current
+   snapshot, retaining prior valid items with their citations; do not return only
+   this source's delta. Each dated fact names
+   both its date type and date value; ordinary facts leave both unset.
+   Keep personal name separate from a trailing Chinese rank/honorific such as
+   “总”; store the name only and express the rank/responsibility in the role.
+5. Preserve genuine standalone Tasks without forcing a Project. Unknown Project
+   clues retain their source names and evidence in assessments without registering
+   fake Projects. Uncertain Task association remains proposed, not confirmed.
+   `Task.project` selects an actual `anchor_id` or `project_decision_index`
+   into the top-level Project list, not the Task list. `project_link_evidence`
+   proves a new association. Reuse unchanged actual confirmed links.
+6. Original human work and Agent suggestions are different:
+   - Actual Task: a source-backed independently completable deliverable/action.
+     Its assignee, authority, acceptance and dates are factual source claims.
+     An ownerless or ambiguous human action stays a source-origin candidate.
+     When the source itself states the concrete action and expected result, keep
+     it source-origin even if metadata is insufficient for formal assignment;
+     preserve a clearly named responsible person as source-reported owner evidence
+     without inferring acceptance. Do not relabel that human-stated action as an
+     Agent suggestion.
+   - Display-only suggestion: infer a useful next action from Project facts plus
+     sourced Project roles or organizational responsibilities. Use `suggestion`
+     with `reason`, `suggested_owner_name/user_id`, `responsibility_evidence`
+     and `basis_evidence`. The proposed person need not occur in the current
+     message if original role evidence establishes the duty.
+     Suggestions do not assert human assignment/acceptance or author an actual
+     deadline. Keep actual owner fields, owner assignment metadata, formal basis,
+     typed dates, status and relevance changes unset; also keep `owner_kind` and
+     `owner_relation` unset, with empty actual-owner evidence. Put a proposed person
+     only in `suggested_owner_name/user_id` and cite the Project responsibility.
+     Record a candidate or update its existing ID; do not send TODOs, notifications
+     or follow-ups.
+   An unresolved material Project risk should have an actionable next step: create
+   one Project-linked display-only suggestion and derive its suggested person from
+   the saved responsibility that best matches the work. Do not create one merely
+   for routine progress, a settled/resolved fact, or an ambiguous clue.
+   Project roles are not Tasks; routine milestones and next steps are Project facts,
+   not Task candidates. Never create a Task merely to fill or resolve a Project
+   owner/responsibility field. Record that fact and assess its impact at Project
+   level. Missing ownership alone is not a material risk: require sourced delivery/
+   business impact or a required Gate for 需关注. Any suggestion must be an
+   independently actionable step beyond editing the Project record.
+   Before suggesting another next-step Task for a Project risk, check current
+   linked Tasks. If an existing actionable Task already addresses that risk,
+   use its existing ID as the supporting next step and do not add a duplicate
+   monitoring/evaluation suggestion.
+   Never quote your inferred action or earlier suggestion as a human instruction.
+7. Later real human assignment promotes the same suggestion Task ID through the
+   actual lifecycle; discovery origin and suggested rationale remain historical.
+   Before later-source updates match and carry the real Task ID. Repeated proof,
+   title similarity or changed reason wording alone does not establish identity.
+   Merge only identical deliverables supported by explicit identity proof.
+   Scope/content additions update the existing Task, not a duplicate deliverable.
+   New Tasks need a nonblank title; only update_fields changes a provided title.
+   Promotion, acceptance and merge preserve the stored title.
+   Relations name the existing related_task_id and direction relative to this
+   Task; never guess a newly created Task's ID or use unrelated endpoints.
 
-1. Extract zero or more distinct Tasks from supplied source context. Every Task
-   decision must cite its source: the reference, one sentence of the original
-   text (an extract is fine, it need not be word for word), and where to find it
-   (its link whenever it has one; otherwise a description, e.g. a DingTalk
-   message is its group and the person who sent it). Never originate a Task, deliverable,
-   owner, assignment, or date from Agent judgment alone.
-2. If the source contains no plausible action or decision, skip it. Retain
-   source-backed low-impact work when its source workflow needs a record, but
-   do not promote it to CEO attention merely because it was recorded.
-3. Classify each source-backed action as candidate or formal. A formal Task
-   needs an evidenced explicit commitment, authorized explicit assignment,
-   formal external TODO, or concrete meeting action item, and the responsible
-   owner/team must be explicitly identified by the source or authoritative
-   metadata. If ownership is missing or ambiguous, retain it as a candidate or
-   unmatched evidence; do not create a formal assignment with an invented or
-   blank owner. An external TODO proves a formal record exists; it does not
-   prove its assignee accepted it.
-4. Use an assignee only when source text or authoritative metadata names the
-   responsible person/team. Preserve owner identity, assignment evidence,
-   assigner/creator, and actor provenance. A participant, speaker, host, sender,
-   group member, contact lookup, or name match alone proves neither ownership
-   nor authority to assign. If the owner is unclear, retain missing evidence;
-   never guess.
-5. Derive commitment status from evidence, not an Agent-selected status. An
-   explicit assignment is `assigned_unaccepted`. `accepted` requires explicit
-   acceptance/commitment evidence from the identified owner, uniquely bound to
-   that existing Task. A named owner in a meeting action item or external TODO
-   remains `assigned_unaccepted` unless that owner's acceptance is separately
-   evidenced; the minutes author/meeting host or TODO creator is not the owner
-   accepting it. “收到” alone confirms receipt, not acceptance of the
-   deliverable or its date. If a reply could refer to multiple Tasks, do not
-   select one by semantic rank. Agent-authored or service-created messages and
-   TODOs are not evidence of the owner's personal acceptance.
-6. Keep date meanings separate and source-backed:
-   - `created_at`: when the system recorded the Task;
-   - `assigned_at`: when the source shows the assignment occurred;
-   - `requested_deadline_at`: an explicit due date requested by the assigner;
-   - `external_deadline_at`: a due date recorded in an external system;
-   - `committed_deadline_at`: a concrete date the owner explicitly accepted or
-     committed to;
-   - `estimated_deadline_at`: an estimate, never evidence of owner default;
-   - `next_check_at`: the Agent's operational check time, never a due date.
-   Preserve source and actor for every source-derived date. A week-level or
-   otherwise non-parseable date phrase stays only in the linked original source
-   signal; do not create a typed date fact or manufacture a timestamp from it.
-   An estimate is attributed to the identified source speaker who made it,
-   never to the extracting Agent. `next_check_at` is Agent-authored only when
-   the source explicitly supplies a check date.
-   Do not turn “尽快”, “应该这周可以”, a guessed date, or a next-check
-   schedule into a committed deadline.
-   In the Task 6 Task Agent path, record `next_check_at` only when a check date
-   is explicit in the source. Do not invent a check cadence or convert a due
-   date into a check date; a future scheduling policy needs separate definition.
-   Missing dates do not prevent recording a Business Task. A concrete,
-   parseable deadline is still required before mirroring a Task as a DingTalk
-   TODO.
-7. Keep a Task independent of Projects. Use the most recent confirmed official
-   weekly report first, especially a project-management or management weekly
-   report with explicit project, owner, target, DDL, status, and next-task
-   fields. Preserve its exact document reference and reporting period. Use
-   confirmed meeting evidence (minutes, transcript, or meeting action items)
-   next for newly decided work or changes not yet reflected in a weekly
-   report. Chat or message evidence only supplements these sources and cannot
-   create an official Project or override an explicit weekly-report field by
-   itself. When sources conflict, prefer the latest explicit weekly-report
-   field, then the latest confirmed meeting decision, and preserve the exact
-   source reference. Match only against that supplied registry; propose
-   uncertain anchor matches or Project candidates for explicit confirmation.
-   Semantic similarity, a cluster, or a Project candidate does not create an
-   official Project or prove business relevance.
-8. Merge only identical deliverables supported by explicit identity evidence.
-   Distinct deliverables with a shared goal may be clustered or linked; they
-   retain independent owners, dates, and completion. When identity is uncertain,
-   link or keep separate rather than merge.
-9. Enter CEO **需关注** only when a confirmed business anchor and a concrete
-   material trigger exist: threatened accepted commitment, material change,
-   material assignment/commitment dispute, CEO decision or push, required Gate,
-   or meaningful risk escalation. Relevance, acceptance, normal progress, and
-   date proximity alone are not triggers. FYI must be material and contain a
-   new meaningful change; do not repeat static facts.
-10. Apply replies, corrections, disputes, owner changes, scope changes, and
-    date changes to the existing Task when identity is explicit. Preserve new
-    evidence and actor; record corrections/supersession instead of erasing
-    history. Stop follow-up based on a disputed or superseded owner/date until
-    current state is resolved.
-11. A DingTalk TODO is an external mirror/operation for a source-backed Task,
-    never a new source of owner acceptance. Before following up, read the
-    current Task/TODO and external status using the relevant operation Skills.
-    Bind reminders to the existing Task and linked TODO; never create a
-    duplicate commitment or independent reminder.
-12. Select an audience and schedule only from verified target/source evidence.
-    Use an appropriate verified group that includes the intended owner, or a
-    verified direct identity for sensitive content. If target evidence is
-    missing, ask for it; do not let the service guess or reroute.
+## Human assignment, acceptance and dates
 
-## Lifecycle Cases
+A formal Task requires explicit commitment, authorized assignment, an existing
+formal external TODO or a concrete meeting action with an evidenced individual
+owner. A team, department, participant, speaker, meeting host, sender, directory
+match or contact lookup alone does not establish individual ownership or authority.
+Owner evidence must cite the source reference and a literal sentence naming the
+person and their action, not a paraphrase or a Task title.
 
-- `source_context_can_produce_multiple_tasks`: preserve every distinct action
-  from one meeting/message, each with its own source excerpt, owner, dates, and
-  commitment evidence.
-- `agent_does_not_invent_task_or_assignee`: no unsourced work or inferred owner
-  is created; ambiguous ownership remains unresolved.
-- `external_todo_is_not_owner_acceptance`: external existence proves a formal
-  record only; the named owner must explicitly accept before commitment becomes
-  accepted.
-- `receipt_acknowledgement_is_not_acceptance`: “收到” alone does not accept a
-  deliverable or due date.
-- `date_types_are_never_interchanged`: created, assigned, requested/external
-  DDL, owner-committed DDL, estimates, and next-check time remain distinct.
-- `routine_work_is_not_attention`: retain sourced low-impact work where needed
-  but keep it out of CEO attention absent a material trigger.
-- `attention_requires_trigger`: anchor/relevance alone does not create FYI,
-  WATCH, DECISION, or PUSH attention.
-- `follow_up_cannot_exist_without_task`: bind follow-ups to an existing Task;
-  any DingTalk TODO mirror must also be linked to that Task and have a valid due
-  date.
-- `participant_or_speaker_is_not_owner_evidence`: do not assign or contact a
-  person merely because they participated, spoke, sent, reported, or appeared.
-- `due_follow_up_refreshes_live_task_before_send`: require current Task, linked TODO, and
-  external-status reads before deciding that a due reminder remains useful.
-- `completed_task_suppresses_follow_up`: close or suppress all pending reminders
-  when supported completion evidence exists.
-- `owner_correction_updates_existing_task`: preserve correction evidence and
-  stop the old owner/date follow-up before considering a new one.
-- `follow_up_reply_updates_existing_task`: match a reply by explicit reference
-  or one unique evidenced Task; do not create a second Task for the same work.
-- `stale_follow_up_is_skipped`: when an old draft is presented for
-  reevaluation, read its current Task, linked TODO, external status, and replies;
-  suppress it only when those facts show the old question is no longer
-  appropriate. The service may enqueue reevaluation but cannot decide the
-  semantic outcome. If the decision keeps the follow-up open, provide a new
-  future work-hours schedule; the revised draft is a new repair revision.
-- `sensitive_follow_up_uses_verified_direct_target`: use only the verified
-  direct identity selected in the decision; never convert a group target to a
-  direct target in service code.
+For AI Minutes read the full meeting_summary, action items and transcript_excerpts.
+The assigned person or person taking on the work is not automatically the speaker.
+Quote the sentence (speaker label included when present) that establishes the
+named owner, even if outside the narrow action excerpt. Generic speaker placeholders
+are not people. Classify owner_kind and owner_relation: explicit_assignment,
+self_commitment or meeting_summary_action_item may establish an individual owner;
+speaker_only/unknown or a team remains candidate. Authoritative source identity
+metadata, not an Agent-generated identity, establishes a stable owner_user_id.
+When a live directory lookup is available, use it to verify the exact named person;
+keep the name and leave the ID empty when identity is not established.
+Treat a meeting action item as formal only when the source context identifies an
+AI Minutes conversation and the current source reference carries its
+`#todos-sha256=` action-item record marker. A non-meeting explicit assignment is
+formal only when current source metadata explicitly says
+`assignment_authorized=true`; otherwise preserve it as a display-only candidate.
 
-## TODO Completion Discovery
+An assignment or meeting action creates assigned_unaccepted, not accepted.
+Only explicit identified-owner acceptance bound to exactly that existing Task
+can apply_acceptance; cite the assignment Signal and verified reply_to_source_ref.
+“收到” alone is receipt, not acceptance. External TODO existence or Agent/service
+messages do not prove a human commitment. Generic updates cannot select commitment
+status. Ambiguous replies do not choose a Task by rank.
+For existing Task updates, leave commitment_status unchanged unless the named
+owner explicitly accepts, disputes, completes or cancels it. Work progress,
+continued handling or receiving materials does not prove acceptance. Do not set
+acceptance polarity except through apply_acceptance with verified owner/reply proof.
 
-The ordinary Task extraction and TODO/follow-up completion turns share the
-`task-agent:work-tracking:v1` runtime session so that context is not lost
-(validated project rule). Evidence read earlier in the session, and evidence found
-through Memory provenance, may be cited to refine a Task: set `evidence_origin`
-to `session` or `memory`, cite the original source's reference and one sentence
-of its text, and give its link (or, with no link, a description of where it is). Such evidence may refine
-an existing Task or record a candidate; creating a formal Task, promotion,
-acceptance and identity merges still need the current Work Item's authority and
-identity metadata, and dates need current, identified source evidence. Runtime
-route sessions remain separate; Codex CLI manages its own context compaction.
+Keep date meanings explicit and source-backed:
+- created_at: when the system recorded the Task;
+- assigned_at: trusted source timestamp of assignment;
+- requested_deadline_at: requested by the assigner;
+- external_deadline_at: recorded in an external system;
+- committed_deadline_at: explicitly accepted or committed by the identified owner;
+- estimated_deadline_at: sourced estimate, never the extracting Agent's estimate;
+- next_check_at: explicit operational check time, not a due date or invented cadence.
 
-Runtime integration: one Task Agent returns one `TaskAgentDecision` lifecycle
-contract for both new Task extraction and existing Task/TODO/follow-up
-transitions. The Work Item source type selects the context and service-side
-operations; it does not select a different Agent or decision schema.
-`todo_completion_evidence_candidate`, `todo_completion_check`, and
-`follow_up_completion_check` are lifecycle inputs. A decision may contain
-zero or more source-grounded `task_decisions` plus applicable linked TODO or
-follow-up changes in the same result. The service applies Task transitions,
-local TODO completion, evidence-candidate status, and linked follow-up changes
-within the transaction. TODO-close synchronization uses the existing outbox
-only when the DingTalk client is configured. The Task Agent cannot create a
-TODO through completion fields, target unlinked records, or add replacement
-follow-up drafts during repair. Invalid identities or operations fail the
-work-summary input and run without committing domain changes. A completion
-check records its bounded `search_trace` even when it finds no completion
-evidence.
+Quote only the complete parseable current-source date phrase, with punctuation,
+spaces and wording unchanged, and normalize without adding absent precision.
+Use trusted sender identity for source-derived date actors; next_check_at uses
+task-agent/CEO Agent. Reports/document names are not actors. AI Minutes has no
+trusted speaker-to-identity date mapping: do not emit source-derived typed deadlines
+there. Missing dates do not prevent a Task. A Project date is not a Task deadline;
+a parseable accepted due date is still required for a DingTalk TODO mirror.
+“尽快”, an estimate or a check schedule is not an owner-committed date.
 
-The runtime validates `source_kind` against the Work Item's `search_policy`,
-checks source timestamps against its supplied time window, service-stamps
-retrieval time and rejects a timestamp that predates the window, enforces the
-returned-source and observed-tool-call limits, and associates each
-trace locator with a tool-call receipt from the current run. The service derives
-the persisted call IDs from those receipts; it does not trust model-authored
-receipt IDs. Current receipts do not contain a separately verified copy of the
-external source's semantic truth, so a trace match is provenance linkage, not
-proof that the source really establishes completion. Candidate-source timestamps
-are also matched to the persisted candidate timestamp. `completed_at` is checked
-only for timestamp syntax and that it is not in the future; the runtime cannot
-prove that it matches the source content. The Task Agent prompt directs the
-Agent to use connected tools only for read-only discovery and not to perform
-external writes through CLI, API, or MCP; this is prompt-only best-effort
-guidance. The current Codex route has no per-turn MCP write-tool allowlist, so
-prompt wording does not enforce that restriction. The runtime also lacks typed
-search-versus-raw-read receipts, so `max_raw_reads` is an instruction without
-an independent runtime counter. This is a documented prompt/runtime limitation
-outside the approved Task 6 scope, not a release blocker; do not add a counter
-or write-tool allowlist as part of Task 6.
+## Project judgment and 需关注
 
-This describes the code contract, not deployment status: Task 6 must remain
-undeployed until its complete Task 6/Task 7 acceptance gate is verified. The
-separate Task 7 Task-to-DingTalk-TODO mirror remains out of scope; do not infer
-an external TODO identity when no trusted producer supplied one.
+Every relevant Project/clue in the current source and current Tasks' confirmed
+Project links gets one assessment, whether or not this result emits a Project
+update. Exact duplicate titles and repeated anchors share one judgment.
+Include one matching assessment for every project_decisions index:
+every `project_decisions[i]` must have exactly one matching assessment with
+`project_decision_index: i`. Do not use `anchor_id` when a matching
+`project_decisions` entry exists. Do not omit one report row because another
+Project is also assessed.
+Selector shapes are exclusive: a new or re-registered Project uses `registration`
+only: omit `anchor_id`; a known existing Project uses `anchor_id` only: omit
+`registration`. If a matching Project decision is in this output, its assessment
+cites the decision index only: omit `anchor_id`; use an existing `anchor_id` only
+when there is no matching decision in this output.
+Every assessment has current null-ID evidence: at least one exact current-source
+quote with `signal_id: null` and the current `source_ref`, even for
+`historical_comparison`; that basis additionally requires verified positive-ID
+original evidence.
+Use [] only when no relevant Project/clue exists and explain it in update_summary.
+Assess bounded retrieved context, not the whole company or all history.
 
-When the Work Item source is `todo_completion_check`, the service is asking for
-a bounded current-state check, not reporting a completion fact. First restate
-the TODO's concrete completion condition from its title, description, owner,
-deadline, follow-up question, and project context. Then use the supplied
-`search_policy` to search only the allowed sources within the allowed budget.
+- needs_attention: original facts show material unresolved business impact,
+  threatened accepted commitment, meaningful escalation/dispute, CEO decision/push
+  or a required Gate. A first current risk may be watch without a previous card.
+- not_needed: supported normal progress or a supported negative judgment.
+  No reported risk or zero Tasks alone is not missing evidence.
+- insufficient_evidence: genuinely unresolved identity or facts needed to judge;
+  name the missing facts, do not invent a risk or an official Project.
 
-Search in this order when the corresponding tool or link is available:
+A real Project can need Attention with zero Tasks. Put `attention_proposal` once
+in its assessment, never copy it onto Task decisions. Create a display-only Task
+suggestion only when a concrete next action is warranted and a saved, sourced
+Project responsibility supports the suggested person and duty, or the single
+overall_owner is suitable for a project-wide coordination action. If no Project
+role supports an actionable owner, keep the risk in Attention without inventing a task,
+owner, monitoring item or deadline. Optional decision_indexes
+index Task decisions; task_ids name real existing confirmed members, not guessed
+IDs or all Project peers. A Task being linked to this Project is not enough:
+include it only when it directly supports this specific Project assessment.
+When a Task decision updates the same concrete Project work described by the
+assessment, include that decision index as support, including for a not_needed
+progress assessment. An existing Task belongs in task_ids only when it directly
+supports the assessment;
+completed or unrelated Project Tasks are not members. Keep current_state as Project-level risk facts, not per-Task action summaries, why_attention as
+inference and ceo_action as the relevant action or observation. For watch it may
+say 当前无需你处理 and name what outcome to watch. 需关注 does not imply 需介入.
+When a Project needs Attention because of a material unresolved impact and a
+directly relevant saved Project responsibility exists, create one display-only
+candidate next-step Task for that role even if the current message does not spell
+out an assignment or action. Infer the concrete action from the risk. An existing
+Task suppresses this suggestion only if it addresses the same unresolved risk; a
+completed or unrelated Project deliverable does not. Prefer one suggestion for one
+material Project risk: do not create separate candidates for substeps or for each
+role involved. Create multiple suggestions only when current evidence identifies
+separately completable actions with distinct outcomes.
 
-1. Structured task status such as DingTalk TODO or Lark Task.
-2. The original follow-up conversation and nearby replies after the follow-up
-   was sent.
-3. DWS messages and DWS/AI minutes in the supplied time window.
-4. Lark messages, Lark docs, email, and local files under the runtime-supplied workspace root only
-   when the TODO context indicates those sources may contain the result.
-5. `memory_recall` for stable background only; memory is never current
-   completion evidence by itself.
+A retained existing_attention_id claims that card's original proof, not an update
+target. Cite at least one stored assessment_json.evidence triple unchanged and
+use actual current_project_attention membership, not other Project Tasks. For new
+risk/membership use this assessment's proposal; its Project key reuses the card.
+For an existing card, copy `task_ids` only from its actual stored member IDs in
+`current_project_attention`; never add a same-Project peer Task. Unrelated
+current-turn Task updates do not add membership to that card. If the
+delivered card has no member IDs, keep both `task_ids` and `decision_indexes`
+empty, including when another linked Task is completed or updated this turn. Do
+not add to the card even a same-risk candidate suggested on an earlier turn; that
+candidate remains a separate Project-linked Task. An
+unresolved dispute over who holds the overall Project accountability (for example,
+a claimed transfer that the prior owner says was not confirmed) is 需关注 even
+before a separate operational impact is quantified. Record the conflict in
+ProjectContext, without creating a Task just to resolve that field. A missing
+overall owner without a stated impact or dispute is not a material risk; when the
+other Project evidence is normal and complete, classify it as not_needed.
+An assigned person not yet accepting is not a material risk by itself when
+current evidence shows the work is progressing and no meaningful impact or
+accountability dispute; preserve assigned_unaccepted without Attention solely
+for that status.
+A not_needed judgment, zero Tasks or one Task's completion does not resolve a
+Project risk. Do not invent a Task update, next_check, owner or deadline to make
+Attention possible. Routine progress, relevance, acceptance, labels or date
+proximity alone are not a material trigger.
 
-Respect these operational limits unless the Work Item explicitly supplies
-stricter values: at most 8 read/search tool calls, at most 3 raw source reads,
-and at most 3 evidence sources in the final decision. The runtime validates
-observed call count and trace-source count, but the raw-read cap remains an
-instruction rather than an independently enforced counter. Prefer the window from follow-up sent
-time or `search_policy.time_window.prefer_since` to now. For local files, use
-only the runtime-supplied workspace root, prefer files changed after
-`search_policy.time_window.changed_files_since`, and cite a narrow locator such
-as relative path plus line, paragraph, mtime, or hash. Do not read or copy large
-files when a snippet search is enough.
+Return every list-valued field as a JSON array; use `[]` when empty and never
+`null` (including `decision_indexes`, `task_ids`, `todo_changes`,
+`follow_up_changes` and `search_trace`).
 
-Stop searching as soon as one strong, current completion evidence source is
-found. Strong evidence must identify who or what system confirmed completion,
-where it was recorded, when it happened, and why it directly satisfies the TODO
-completion condition. Phrases like "I'll look", "in progress", "arranged",
-"should be OK", or generic "done" language are not enough unless the surrounding
-source ties them to the exact deliverable.
+## Original evidence and shared session
 
-For TODO completion checks, use the unified TaskAgentDecision contract and the
-`dingtalk-todo` operation Skill to recommend a local TODO close; the Agent is
-instructed to only read external TODOs and never write them. Put completion
-operations in the top-level `todo_changes` and `follow_up_changes` fields, not
-inside individual `task_decisions`. The service applies local completion and
-queues the configured existing outbox sync. Record complete
-`completion_evidence.source`, `reason`, `description`, `completed_at`, and
-`checked_at`, with a compact `search_trace` showing which sources were checked
-and why the evidence is sufficient. These typed lifecycle fields can close or
-update only records linked by the current Work Item; they cannot create or
-mirror an external TODO. If no strong completion evidence is found, keep the
-TODO open and summarize the check in that independent workflow; do not create
-duplicate TODOs or follow-ups.
+All source_excerpt values are exact contiguous quotes, preserving punctuation,
+spaces and line breaks. Do not join separate spans or paraphrase. Quote a raw
+visible range or one decoded JSON string leaf; shared source_documents contain
+the body once and source_signals retain real identity/version/actor metadata.
 
-## Memory And Evidence
+Current Project proof uses null signal_id and the current source_ref.
+Historical Project/context/suggestion/Attention proof requires a real positive
+observed Signal ID, matching reference and exact quote, not memory_provenance or
+session_provenance. Never prove original facts with your own summary or suggestion.
+Do not reconstruct an earlier quotation from a later summary. If the exact
+original excerpt is unavailable, omit that historical claim, rely only on
+verified current evidence, and state what cannot be confirmed.
+current_observation asserts current facts; historical_comparison requires current
+null-ID and positive original historical proof. When current text compares earlier
+facts and originals are delivered, verify against them. A current retelling of
+history is not original historical proof. When originals are unavailable, state
+the comparison's uncertainty and assert only current facts.
 
-Memory is how to find related information: recall it, follow its provenance to
-the original source, and cite that source (with `evidence_origin: memory`) to
-refine a Task. A memory summary without its original source is not evidence. It
-cannot originate Tasks, establish acceptance, or authorize a Project; those need
-the current Work Item's source and authority. Record a recall query/result only
-in the designated context field; do not write it into a Project patch.
+The shared logical task-agent:work-tracking:v1 session retains context while each
+Work Item has its own run/workload key. Runtime routes retain separate native
+sessions; native CLI compaction manages history. Earlier session or Memory
+provenance may refine a Task or record a candidate with the original reference,
+exact quote and source link/location, but cannot authorize formal creation,
+promotion, acceptance, identity merge, typed dates or official Project registration.
+Memory is discovery/background, not observed source proof.
 
-Use current source material and live systems as authority for owner, target, and
-completion state. Load a specialist Skill when a tracked item belongs to a
-specialized workflow instead of copying that workflow here.
+## Service boundary
 
-## Service Boundary
+The service persists originals, Project context revisions, actual Task lifecycle,
+typed dates, explicit identity/association and application receipts. It does not
+invent business conclusions. Only structured local results are applied.
+todo_changes, follow_up_changes, search_trace and old completion-check source
+enums are historical, not current operations. Newly observed DingTalk human
+completion deterministically updates only its explicitly linked Task.
 
-The service owns source/evidence persistence, Task transition validation,
-evidence-derived commitment state, typed date storage, explicit matching to
-existing Tasks, scheduled wake-up, due-time and local-work-hours guards, the
-parseable due-date gate for a DingTalk TODO mirror, live external-status refresh,
-completion-check enqueueing, exact-message idempotency, and sent-result or
-retry state. The Agent may extract and propose interpretations only from
-supplied source context; the service rejects unsupported owners, acceptance,
-dates, transitions, identity merges, or attention triggers. The Agent/service
-must not create an unsourced Task or treat their own output as a human
-commitment. Preserve exact-message idempotency. A corrected or materially
-changed message is a new revision and is not blocked merely because an older
-message was stored or sent.
+Actual corrections preserve history and suppress obsolete Task follow-up.
+Mirrors/reminders belong to an existing actual Task and verified source/target;
+refresh live status before a due reminder. Preserve due-time/local-work-hours and
+idempotency rules. Never guess an audience, reroute a group to a direct message
+or invent a commitment. Source-corrected or materially changed messages are new
+versions, not blocked by old message history. Use specialist Skills for those
+external workflows. Keep runtime paths, credentials and diagnostics out of
+business fields.
