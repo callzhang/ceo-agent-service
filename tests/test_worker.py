@@ -1332,9 +1332,20 @@ class FakeDws:
             raise self.text_emotion_error
         self.created_text_emotions.append((text, emotion_name, background_id))
         return {
-            "emotionId": f"created-{len(self.created_text_emotions)}",
-            "backgroundId": "created-bg",
+            "success": True,
+            "result": {
+                "emotionId": f"created-{len(self.created_text_emotions)}",
+                "backgroundId": "created-bg",
+            },
         }
+
+    def remove_message_text_emotion(self, conversation_id, message_id, **template):
+        if self.text_emotion_error:
+            raise self.text_emotion_error
+        self.message_text_emotions.remove((conversation_id, message_id,
+            template["text"], template["emotion_id"], template["emotion_name"],
+            template["background_id"]))
+        return {"success": True}
 
     def ding_self(self, text: str) -> None:
         if self.ding_error:
@@ -4264,7 +4275,7 @@ def test_no_reply_agent_envelope_text_emotion_creates_and_adds_reaction(
     assert attempt.action == "agent_run"
     assert attempt.send_status == "completed"
     assert attempt.send_error == ""
-    assert dws.created_text_emotions == []
+    assert dws.created_text_emotions == [("处理中", "处理中", "")]
     assert dws.message_text_emotions == []
     assert final_sent(dws) == []
 
@@ -14506,7 +14517,7 @@ def test_untyped_handoff_is_failed_not_escalated_as_a_principal_decision(
 
     assert final_sent(dws) == []
     assert dws.reply_messages == []
-    assert dws.created_text_emotions == []
+    assert dws.created_text_emotions == [("处理中", "处理中", "")]
     assert dws.message_text_emotions == []
     assert dws.dings == []
     attempt = store.get_reply_attempt(1)

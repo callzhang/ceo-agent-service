@@ -91,6 +91,7 @@ from app.oa_notification_routing import (
     classify_oa_notification,
     render_oa_result_reply,
 )
+from app.processing_reaction import ProcessingReaction
 from app.service_message_sender import ServiceMessageSender
 from app.org_cache import (
     ORG_CACHE_REFRESHED_DATE_STATE_KEY,
@@ -1040,6 +1041,7 @@ class DingTalkAutoReplyWorker:
         self._pass_channel_results = {}
         if not self._required_channels_ready({"dingtalk"}):
             return 0
+        self._sync_processing_reactions()
         self._maybe_upgrade_dws_once_per_day()
         self._maybe_refresh_org_cache_once_per_week()
         fast_path_checked_at = self._now().astimezone(timezone.utc)
@@ -1809,6 +1811,7 @@ class DingTalkAutoReplyWorker:
         # a freshly claimed task from a peer before the peer materializes its
         # first Agent run. Long-lived stalls remain covered by the stale-age
         # recovery below.
+        self._sync_processing_reactions()
         self._recover_stale_agent_reply_tasks()
         # Startup recovery can requeue effect-free work.  Bound repeated
         # restart/retry loops so a task cannot remain pending indefinitely.
@@ -2043,6 +2046,7 @@ class DingTalkAutoReplyWorker:
             if completed:
                 self.store.clear_codex_capacity_pause()
                 processed_tasks += 1
+        self._sync_processing_reactions()
         return processed_tasks
 
     def _recover_stale_agent_reply_tasks(self) -> None:
@@ -2564,6 +2568,7 @@ class DingTalkAutoReplyWorker:
             )
         elif task_status == "done":
             self._dismiss_problem_notification(task)
+        self._sync_processing_reactions()
         return task_status == "done"
 
     def _deliver_oa_reminder_results(
@@ -3459,6 +3464,7 @@ class DingTalkAutoReplyWorker:
                 channel="dingtalk",
             )
             if updated:
+                self._start_processing_reaction(conversation, trigger)
                 return True
         inserted = self.store.enqueue_reply_task(
             conversation_id=conversation.open_conversation_id,
@@ -3474,6 +3480,7 @@ class DingTalkAutoReplyWorker:
             channel="dingtalk",
         )
         if inserted:
+            self._start_processing_reaction(conversation, trigger)
             return True
         updated = self.store.update_pending_reply_task_trigger_for_message(
             conversation.open_conversation_id,
@@ -3482,7 +3489,20 @@ class DingTalkAutoReplyWorker:
             trigger_message_json=trigger_message_json,
             channel="dingtalk",
         )
+        if updated > 0:
+            self._start_processing_reaction(conversation, trigger)
         return updated > 0
+
+    def _sync_processing_reactions(self):
+        if not self.dry_run:
+            ProcessingReaction(self.store, self.dws).sync()
+
+    def _start_processing_reaction(self, conversation, trigger):
+        if self.dry_run or self._is_service_task_trigger(trigger) or self._is_calendar_message(trigger):
+            return
+        progress = ProcessingReaction(self.store, self.dws)
+        progress.sync()
+        progress.start(conversation.open_conversation_id, trigger.open_message_id)
 
     @staticmethod
     def _scheduled_trigger_message_json(trigger: DingTalkMessage) -> str:
