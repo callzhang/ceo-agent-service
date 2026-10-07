@@ -733,14 +733,14 @@ SQLite 继续保存既有 task/run/attempt/provider result identifier 状态；�
 
 `ceo-sales-weekly-report` 没有独立 producer 或功能开关。它由 Consumer 根据明确的销售周报请求动态选择，直接使用安装用户已有的 `sharecrm` 登录态；CRM 只读限制由 Skill 和 Codex automatic review 约束，不表示 service 建立了 `sharecrm` 命令白名单。
 
-### 项目为中心的工作跟踪（开发分支；尚未部署）
+### 项目为中心的工作跟踪（已发布；业务验收部分完成）
 
-Task-first 基础工作跟踪已上线；以下为 2026-10-04 获批设计在本分支的当前实现。
-Task 1–4 的存储、领域与检索已局部验证；Task 5 独立 Agent 输出和 Task 6 Project-owned
-关注已实现，14 个核心相关文件 636 项回归通过，多来源及独立 Project 读回 161 项通过；
-独立最终复核 PASS。Task 7 API 25 项、前端 86 项、构建及合成浏览器检查通过；
-Task 8 原生业务评测和 Task 9 发布未完成。
-Task 1–7 是整体发布单元，不能把本节当成上线或业务效果证明。
+2026-10-04 获批设计的代码经 PR #16/#17 发布；当前生产运行 `a385b86d`，
+包含 2026-10-06 确认的项目 Memory 写入规则。真实生产样本已保存 4 份独立 ProjectContext，
+并在没有 Task 成员时生成 2 张关注卡片；这不代表全部项目或多来源业务验收完成。
+较新会议因不连续原文引文在领域应用阶段失败，项目身份覆盖、历史上下文补充、
+真实建议/Memory/客户关联正向读回仍有未完成项。发布记录、预期与实际及证据边界见
+`docs/task-project-centered-validation.md` 当前状态；本节描述当前契约，不宣称所有样本通过。
 
 #### 来源、项目与任务
 
@@ -758,7 +758,7 @@ registration.source_excerpt 必须是当前不可变来源中定义该项目的�
 规范 anchor 和原 registry provenance；多活动同名对象为身份冲突，无对象才用现有来源登记方法。
 旧相似名称、简称或标题前缀不能替代新的正式定义；已退休的来源项目不由本轮重新激活。
 
-Project 可选关联 Fxiaoke CRM 客户；CRM 身份单独保存为稳定 AccountObj `_id` 和显示名称，不拼进项目标题，内部项目可保持未关联。Task 不复制客户字段：只有 Task 通过已确认的正式 Project 关系读取其 CRM 客户；独立 Task 不推断客户。Task Agent 的运行 prompt 明确禁止调用 Memory `memory_write`；这项约束不依赖工具白名单或 CLI/MCP 代码拦截。
+Project 可选关联 Fxiaoke CRM 客户；CRM 身份单独保存为稳定 AccountObj `_id` 和显示名称，不拼进项目标题，内部项目可保持未关联。Task 不复制客户字段：只有 Task 通过已确认的正式 Project 关系读取其 CRM 客户；独立 Task 不推断客户。Task Agent 通过 prompt/Skill 引导，将当前证据支持的持久、重要项目风险和进度/状态更新写入 Memory `memory_write`：简洁注明项目、原始来源与来源时间，区分来源事实与有证据的风险推断。不写单条 Task/TODO、日常活动、临时讨论、无依据猜测、秘密、原始转录或重复信息。这项约束不增加工具白名单、通用只读模式或 CLI/MCP 代码拦截。
 
 服务通过已认证的 `sharecrm data record query-by-name` 对 AccountObj 做只读名称解析。`crm_customer_evidence` 还必须作为同一条引用出现在 Project 的 `evidence` 中。该解析器不保证候选完整或精确，单候选也只是候选；来源扫描和 Project 页面查询得到的所有 CRM ID 都须经用户明确确认后才能建立本地关联。多候选展示供选择，`NO_MATCH` 与查询不可用分开保留。查询失败或后续冲突不会清除已确认关联；冲突需显式处理。客户视图按 CRM `_id` 聚合已确认关联的项目，未关联项目（包括内部项目）留在常规正式项目视图，不进入客户分组。
 

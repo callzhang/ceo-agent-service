@@ -549,9 +549,15 @@ A scheduled prompt supplies specialized business scope only; the freshly loaded
 current Skill controls the work protocol. Historical Skill snapshots are not
 instructions for this turn. Never upgrade old result fields or manufacture selectors.
 
-Memory-write boundary (prompt guidance): you may retrieve existing context, but
-must never call memory_connector.memory_write. This is the only tool-specific
-prohibition in this prompt; the prompt does not impose a general read-only mode.
+Memory-write boundary (prompt guidance): write durable, material Project-level
+risks and progress/status updates supported by current evidence using
+memory_connector.memory_write. Keep each update concise, identify the Project,
+cite the original source, and use the original source time as created_at with
+type="text". Include Project entity and source provenance metadata when available.
+Distinguish reported facts from evidence-based risk inference. Do not write
+individual Task/TODO records, routine activity, temporary discussion, unsupported
+guesses, secrets, raw transcripts, or duplicate updates. Without a durable
+Project-level change, do not write Memory. This prompt does not impose a general read-only mode.
 Return structured local changes; the service applies supported operations.
 This prompt does not technically disable tools or enforce permissions.
 

@@ -12,6 +12,23 @@
 
 ## 状态、边界与依赖
 
+### 当前状态：2026-10-06（America/Los_Angeles）
+
+**代码已发布；业务验收部分完成，Task 9 不能整体关闭。** PR #16/#17 已合并和部署，
+当前生产为 `a385b86d`；该 Memory 规则提交的 Quality run `37560722735` 已成功。
+真实共享 Skill 已与 Project-centered 契约同步。原 input `27465` 的 run `10690`
+成功保存 4 份 ProjectContext、2 张无 Task 成员的业务关注卡片，0 个 Task 决定。
+input `27497` 的 run `10691` 因项目引文拼接不连续原文失败，未形成新的领域结果。
+本次只读核验为 32 个 Project、4 个有新 context 的 Project、2 条 active 业务关注。
+仍需完成项目引文纠正反馈、项目身份/近期来源覆盖、真实建议展示、Memory 写入回执与
+召回、客户关联及浏览器正向读回。详见 `../../task-project-centered-validation.md`。
+
+Memory 规则以当前确认更新为准：写入有来源支持的持久项目风险和重要进展/状态更新，
+不再整体禁止 `memory_write`。下面保留的“未部署”“仍禁写 Memory”“发布未完成”等
+日期段落是历史检查点，不是当前状态；历史实验和失败保持原样，不降低验收目标。
+
+### 历史检查点
+
 设计于 2026-10-04 获 Derek 确认：`../specs/2026-10-04-project-centered-work-design.md`。开发对话负责全部 Task 1–9：Task 1–4 的代码、局部回归及独立需求/质量审查通过，Task 5/6 核心集成已完成：14 文件 636 passed、完整多来源与 Project 读回 161 passed，独立最终复核 PASS。Task 5 正向 Project 关注回归依赖 Task 6 去掉旧 Task carrier 限制，故这两步作为同一当前契约集成验证；没有中间部署。Task 3 的两个 TODO 基线失败已通过 Task 6 的直接成员更新修正，Task 3 指定四文件 172 passed，TODO completion/sync 两文件 59 passed。原始冻结 W39 迁移前快照仍不可用；保留的 W39 后迁移产物反向重建后，当前迁移函数已在 403 Signals、259 Tasks 上完成往返和幂等验证，并保留其 1 条既有会议外键；这不替代原始快照对照。Task 7 API/页面实现与局部测试、构建、独立复核和合成浏览器检查通过；Task 8 原生同案例评测及 Task 9 发布未完成。复用旧业务测试通过记录不能替代本次 native 或生产效果。
 
 2026-10-06 最新门禁：Task Agent Memory 限制只通过 prompt 明确禁止 `memory_connector.memory_write`，没有工具白名单或 CLI/MCP 拦截。Project selector/current evidence 与单一风险任务建议规则已同步到 prompt 和共享 Skill；Task Agent/Skill 234 tests、eval contract 21 tests、Ruff/diff-check 通过。最新全量 v4 native 运行 18/19，唯一失败为已保存正式 Task 的标题使用来源原文同义词“付款排期”；扩大 fixture 的精确同义词允许项后，对原保存库的 domain readback 全部通过。原先失败的多来源、completed-task-risk、peer membership 案例均在独立新副本上复跑通过。W39 输入 27465 在隔离数据库副本中完成：Project 20→21，新增登记来自明确项目注册表行；5 个 Project assessment 均有当前来源证据，Task 数 259 不变，3 张 Attention 不变且无重复卡。生产 CRM 仍只有只读 `NO_MATCH` smoke，尚无 positive confirmed customer-link readback。PR/merge/deploy 与 post-deploy health/queue/Attention/History readback 未完成，故 Task 9 仍未完成。详情见 `docs/task-project-centered-validation.md`。
@@ -432,10 +449,11 @@ Task 8 脚手架记录（2026-10-04）：版本 1 固定 19 个案例，原始�
 **Files:** 本计划、`docs/task-project-centered-validation.md`、行为文档及发布所需受控 Skill 文件；不在生产 checkout 编辑代码或运行测试。
 
 - [x] 检查当前生产入口、prompt、模型字段、CI Skill、API/UI 中的 Project/Attention 输出位置：`ProjectProposal` 仅作为 `ProjectDecision.registration`，`TaskAttentionProposal` 仅作为顶层 `TaskProjectAssessment.attention_proposal`，二者都不在 `TaskDecision` 内；Task Agent 输入分别为 `project_decisions`、`task_decisions`、`project_assessments`。当前 parser 拒绝旧 TaskDecision 项目/关注字段，旧 run 和历史 spec 保留原始身份。无 Task 的项目风险、单一负责人和职责分离规则均已在 prompt/Skill/行为文档表达。此项为代码契约审计，不代表原生评测、真实 W39、迁移或发布通过。
-- [ ] 独立代码审查和固定 eval 比较完成后，以 PR 合并本次产品行为变化。PR 描述明确旧/新取舍与真实 W39 结果；创建 PR 后附加到当前任务。不以单元测试通过替代业务评测，不直接绕过产品变更的 PR 要求。
+- [x] 独立代码审查和固定 eval 比较完成后，以 PR 合并本次产品行为变化。PR #16/#17 已合并并附加；原生固定评测与 W39 副本结果按验证文档保留原始边界。发布不代表真实近期来源的全部结果通过。
 - [ ] 发布前核实原有回复、会议、已领取工作和外部动作的既有可恢复性；不趁此新增安全/审计机制。列出将补充上下文的明确项目/输入及备份位置，先在副本证明结构迁移前后 Signal/Task/历史等价。未知旧记录仍留历史，禁止全库自动升级为项目或候选。
-- [ ] 推送并合并后使用 `python -m app.deploy`，让标准流程等待空闲、备份、推进生产 checkout、构建与重启；不手动 kill/kickstart、不编辑生产目录。代码部署与实际加载 Skill 的发布必须同版本衔接；服务开始处理新输入前核验契约哈希和实际 Skill，不能长期留下新代码配旧规则。
+- [x] 推送并合并后使用 `python -m app.deploy`，让标准流程等待空闲、备份、推进生产 checkout、构建与重启；当前生产 `a385b86d`。本次发现旧安装 Skill 后已同步当前 Skill 并核对内容，不手动 kill/kickstart、不编辑生产目录。后续发布仍须核验真实 Skill 与代码契约一致。
 - [ ] 仅对验证记录中已明确的近期来源进行小批重处理，走新的唯一正常入口，不使用直接 SQL 补卡、改 owner 或改 Task 状态。先读回样本再扩大；结构迁移和业务补充分别记录结果。
+  当前进度：`27465` 成功，`27497` 项目引文校验失败；不将两条原始输入的重跑记录描述成全量或稳定多来源通过。
 - [ ] 部署后读回新 PID、healthz、queues、Attention、History；页面亲自核对真实项目唯一总负责/负责事项、建议标签、零 Task 关注及证据详情。不得打印 settings 中的秘密字段。
 - [ ] 只有“代码与局部测试、固定 native、真实原文结果、部署健康、真实页面”分别通过才报告上线完成。若任何一步失败，记录确切层次及尚未完成项；按 deploy 自身机制回退，不改旧实验、补偿造卡或重复外发。
 
