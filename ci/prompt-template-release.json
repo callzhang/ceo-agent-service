@@ -5,7 +5,7 @@
       "source": "app/defaults/developer_prompt.md",
       "target": "developer_prompt",
       "old_sha256": "b2bb8ed69298c7fa57bf95c54fa6693fa76d265e90d07cb666ab05e35cfe2623",
-      "new_sha256": "9a0f97eec8a6928c110363afe419240a057183561f6576d443540db60c30de20"
+      "new_sha256": "1504f5bafb2529a1392ba147d6ce9507f9bf7ce867e5b8c95373138244ce3bf5"
     },
     {
       "source": "app/defaults/user_prompt.md",
