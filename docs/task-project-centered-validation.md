@@ -2,22 +2,28 @@
 
 ## 2026-10-07 production readback and Project-list latency repair
 
-PR #16 (merged as `020ae847`) passed the current full GitHub Quality run
-`37550292249`: `npm test`, workbench build, Playwright installation and browser
-tests all passed. Standard `python -m app.deploy` completed from `fe4d2c39` to
-`020ae847`; launchd reports the service running at PID `69738`, and `/healthz`
-returns `{ok: true, status: "ok"}`. Production read-only DB counts are 28
-Projects, 431 non-merged Tasks (267 candidate, 163 formal, 1 cancelled), and
-14,474 reply attempts. The business Task Attention route reports 0 active
-items; the general Attention page currently reports 5 items; History reports
-33,606 records.
+PR #16 (merged as `020ae847`) passed full GitHub Quality run `37550292249`;
+PR #17 (merged as `9776ae2f`) passed full run `37553640789`. Both runs passed
+`npm test`, workbench build, and Playwright browser tests. Standard deploys
+completed from `fe4d2c39` to `020ae847`, then `020ae847` to `9776ae2f`. Final
+launchd readback reports running PID `98190`; `/healthz` returns
+`{ok: true, status: "ok"}`.
 
-The production Project list endpoint did not respond within 20 seconds, while
-the health, Attention, History, and status endpoints returned successfully.
-Code inspection found an N+1 fan-out: for each of 28 Projects, the response
-walked all 431 Tasks and queried each Task's confirmed Project links again.
-The resulting repeated membership lookups are now being replaced by a single
-batched read; production latency/readback remains pending the follow-up release.
+After PR #16, the Project list endpoint timed out at 20 seconds. Production
+read-only DB counts were 28 Projects and 431 non-merged Tasks. Code inspection
+found that each Project summary walked all Tasks and queried each Task's
+Project links again. PR #17 batches the active Task→Project membership query.
+After the second deploy, the same Project list endpoint returned all 28
+Projects in **0.191 seconds**, with 0 proposed Project candidates; Project list
+and detail summary semantics are covered by the new regression test.
+
+Final runtime readback: the business Task Attention route has 0 active items;
+the general Attention page has 5. History reports 33,611 records. The runtime
+status endpoint returned in 4.977 seconds with 13 queues, 3 pending, 0
+processing, 8 failed, 0 retryable, and 5 Attention items. The 3 pending records
+are Email provider actions; scheduled dispatch reports 2 running leases. These
+are observed existing queue states, not evidence of Task/Project writes by this
+feature. No CRM writes were performed.
 
 ## 2026-10-06 latest prompt, fixed-eval and W39 readback
 
