@@ -132,3 +132,40 @@ def test_synthetic_intake_has_no_reaction(tmp_path, monkeypatch):
     trigger = message('service work').model_copy(update={'raw_payload': {'service_task': True}})
     assert worker._enqueue_reply_task(conversation(), trigger)
     assert provider.calls == []
+
+
+def test_dry_run_intake_has_no_reaction(tmp_path, monkeypatch):
+    from tests.test_worker import FakeCodex, FakeDws, conversation, make_worker, message
+    dws = FakeDws([], {})
+    provider = Provider()
+    dws.create_message_text_emotion = provider.create_message_text_emotion
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch, dry_run=True)
+    assert worker._enqueue_reply_task(conversation(), message('please respond'))
+    assert provider.calls == []
+
+
+@pytest.mark.parametrize('verified', [True, False])
+def test_system_removes_progress_only_after_verified_delivery(monkeypatch, verified):
+    from app.system_executor import ActionOutcome, SystemExecutor
+    from tests.test_system_executor import FakeStore, Handler, _candidate
+    import app.processing_reaction as module
+    candidate = _candidate(actions=[{
+        'description': 'Reply', 'action_identity': 'notice', 'capability': 'dingtalk-chat',
+        'operation': 'send_message', 'target': {'conversation_id': 'cid'},
+        'payload': {'content': 'Prepared text'},
+    }])
+    store = FakeStore(candidate)
+    handler = Handler()
+    if not verified:
+        handler.dispatch = lambda *args, **kwargs: ActionOutcome('uncertain', {})
+    class Progress:
+        def __init__(self, passed_store, dws):
+            assert passed_store is store
+        def finish(self, cid, mid):
+            assert 'sent_reply' in store.events
+            assert (cid, mid) == ('cid', 'trigger')
+            store.events.append('progress_removed')
+    monkeypatch.setattr(module, 'ProcessingReaction', Progress)
+    SystemExecutor(store, {('dingtalk-chat', 'send_message'): handler},
+                   dws=object(), owner='worker').execute(store.get_reply_task(1), 1, 2)
+    assert ('progress_removed' in store.events) is verified

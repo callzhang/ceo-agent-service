@@ -79,7 +79,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-processing-reaction | Isolated processing-reaction worktree: app/processing_reaction.py, app/dws_client.py, app/worker.py (progress only), app/system_executor.py (after verified delivery projection only), tests/test_processing_reaction.py and tests/test_worker.py (progress only), architecture/runtime docs, design and plan | Approved temporary processing reactions; no audit or authorization changes. | 2026-10-07 |
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |

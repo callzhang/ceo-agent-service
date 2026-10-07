@@ -1683,7 +1683,7 @@ Consumer 完整候选、Audit 精确审核、System 执行持久化计划及真�
 ## DingTalk 临时处理表情
 
 普通钉钉聊天消息被服务接入处理队列后，原消息上添加服务账号的文字表情「处理中」。
-日历邀请和合成 service_task 不添加。成功回复的 provider 回执写入 sent_replies 后，
+日历邀请、合成 service_task 和 dry-run 不添加。成功回复的 provider 回执写入 sent_replies 后，
 立即移除这个临时表情；无需回复、失败、转人工以及待处理任务换成新消息时也移除。
 待处理和执行中的重试保留表情。表情的添加、移除失败不改变业务任务或回复结果。
 
