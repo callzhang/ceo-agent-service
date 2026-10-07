@@ -16,13 +16,23 @@ The case data and runtime settings were frozen before candidate model runs.
 uses the real `AgentTaskContext.render`, scheduled prefix, revision feedback,
 continuation and production User-template composition. Audit uses the real
 `AuditTurnContext.render`, complete fixed candidate and canonical candidate
-digest. Candidate Audit rendering passes the same developer_audit_rules argument
-as the actual runner, removing only its redundant Task copy; baseline rendering
-remains unchanged. Each candidate role loads its own frozen PromptConfiguration,
+digest. It inspects each archived Audit runner's actual render call: older
+candidate refs pass `developer_audit_rules` to suppress a repeated Task copy,
+while the restored caller renders the Task without that argument. Each candidate
+role loads its own frozen PromptConfiguration,
 including the Audit role that does not consume the User template. Both roles use their ref's real developer-instruction renderer, default
 configuration templates, fixture work-profile wrapper, task Skill override and
 final-route Runtime Context. The baseline task prefix copies the exact baseline
 Consumer runner assembly because that ref predates the shared pure function.
+
+The frozen cases pre-fill `AuditTurnContext.audit_rules` with canonical rendered
+rules so the fixed synthetic Task carries that fixture fact. Production
+Orchestrator contexts pass an empty `audit_rules` value; the Audit runner puts
+configured rules in Developer instructions and does not fill the Task context.
+This fixture difference is an evaluation boundary, not a runtime policy change.
+The extractor's opt-in `audit_context_rules="runtime-empty"` condition is used
+only for read-only, exact-input checks of that real caller boundary; native
+comparisons retain the frozen pre-filled cases and labels.
 
 The fixture short profile is identical for both refs. Full private profile size
 is reported separately as counts only. Full `source_bindings` are present in

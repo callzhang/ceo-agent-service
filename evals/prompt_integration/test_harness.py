@@ -3,6 +3,7 @@
 import importlib.util
 import json
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -96,6 +97,37 @@ def test_actual_candidate_preparation_contains_full_audit_bindings():
             == case["audit_subject"]["source_bindings"]
         )
         assert row["candidate_digest"] in row["task"]
+
+
+def test_audit_render_compatibility_uses_archived_runner_call():
+    manifest = eval_module.load_manifest()
+    archived_ref = "9851aed72762e88ea942b41f528e5f74115a97cf"
+    with TemporaryDirectory(prefix="prompt-eval-archived-render-") as raw:
+        source = Path(raw) / "source"
+        source.mkdir()
+        eval_module.archive_ref(archived_ref, source)
+        historical = eval_module.extract(source, manifest, "candidate")
+    historical_audit = next(row for row in historical if row["role"] == "audit")
+    assert "## Audit Rules\n" not in historical_audit["task"]
+
+    restored = eval_module.extract(ROOT, manifest, "candidate")
+    restored_audit = next(row for row in restored if row["role"] == "audit")
+    assert restored_audit["task"].count("## Audit Rules\n") == 1
+
+
+def test_real_caller_empty_audit_context_keeps_current_main_wire_inputs():
+    manifest = eval_module.load_manifest()
+    with TemporaryDirectory(prefix="prompt-eval-runtime-context-") as raw:
+        source = Path(raw) / "source"
+        source.mkdir()
+        eval_module.archive_ref("1e3711a049df525d80ddab33c92c17d72098b276", source)
+        control = eval_module.extract(source, manifest, "baseline", audit_context_rules="runtime-empty")
+    candidate = eval_module.extract(ROOT, manifest, "candidate", audit_context_rules="runtime-empty")
+    assert len(control) == len(candidate) == 40
+    for old, new in zip(control, candidate):
+        assert (old["case_id"], old["role"]) == (new["case_id"], new["role"])
+        for field in ("developer", "task", "runtime_context", "source_bindings", "candidate_digest"):
+            assert old[field] == new[field]
 
 
 def test_resume_accepts_only_exact_inputs_and_completed_prefix():

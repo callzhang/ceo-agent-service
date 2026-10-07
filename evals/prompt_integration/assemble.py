@@ -1,7 +1,9 @@
 """Executed in each archived ref so production imports belong to that ref."""
 
+import ast
 import json
 from hashlib import sha256
+from inspect import signature
 import sys
 from types import SimpleNamespace
 from pathlib import Path
@@ -25,9 +27,37 @@ from app.reviewed_candidates import candidate_digest
 from app.runtime_prompt_context import render_runtime_context
 from app.store import AgentRole
 
+
+def audit_caller_passes_developer_rules():
+    """Read the archived runner call, not the mutable eval arm name."""
+    module = ast.parse(Path("app/audit_agent.py").read_text())
+    runner = next(
+        node for node in module.body
+        if isinstance(node, ast.ClassDef) and node.name == "AuditAgentRunner"
+    )
+    execute = next(
+        node for node in runner.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "_execute_claimed"
+    )
+    calls = [
+        node for node in ast.walk(execute)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "context"
+        and node.func.attr == "render"
+    ]
+    if len(calls) != 1:
+        raise ValueError("archived Audit runner render call changed")
+    return any(keyword.arg == "developer_audit_rules" for keyword in calls[0].keywords)
+
 payload = json.load(sys.stdin)
 manifest = payload["manifest"]
 settings = manifest["settings"]
+audit_context_rules = payload.get("audit_context_rules", "fixture")
+if audit_context_rules not in ("fixture", "runtime-empty"):
+    raise ValueError("unknown Audit context-rules condition")
 configuration = None
 audit_configuration = None
 if payload["arm"] == "candidate":
@@ -93,15 +123,17 @@ for case in manifest["cases"]:
         operation_id="synthetic-operation-" + case["id"],
         candidate=subject,
         candidate_digest=digest,
-        audit_rules=rules,
+        audit_rules=rules if audit_context_rules == "fixture" else "",
     )
-    audit_task = (
-        audit_context.render(
-            current_time=settings["fixed_time"], developer_audit_rules=rules
-        )
-        if audit_configuration is not None
-        else audit_context.render(current_time=settings["fixed_time"])
-    )
+    # The frozen fixture pre-fills AuditTurnContext.audit_rules. Match the
+    # archived runner's render call: older candidate refs passed Developer
+    # rules to suppress a Task duplicate; the restored caller does not.
+    audit_render_kwargs = {"current_time": settings["fixed_time"]}
+    if audit_configuration is not None and audit_caller_passes_developer_rules():
+        if "developer_audit_rules" not in signature(AuditTurnContext.render).parameters:
+            raise ValueError("archived Audit runner and context render signature differ")
+        audit_render_kwargs["developer_audit_rules"] = rules
+    audit_task = audit_context.render(**audit_render_kwargs)
     from app.prompt import work_profile_instruction
 
     fixture_profile = work_profile_instruction(create_missing=False)

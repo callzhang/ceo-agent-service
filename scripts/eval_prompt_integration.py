@@ -76,7 +76,7 @@ def load_manifest():
     return manifest
 
 
-def extract(root, manifest, arm, *, profile_path=None):
+def extract(root, manifest, arm, *, profile_path=None, audit_context_rules="fixture"):
     fixture = ROOT / "evals/prompt_integration"
     profile = Path(profile_path) if profile_path is not None else fixture / "profile.md"
     # Source ref selects default template semantics, never mutable live files.
@@ -101,6 +101,7 @@ def extract(root, manifest, arm, *, profile_path=None):
                 "manifest": manifest,
                 "arm": arm,
                 "fixture_profile_sha256": sha256(profile.read_bytes()).hexdigest(),
+                "audit_context_rules": audit_context_rules,
             },
             ensure_ascii=False,
         ),
