@@ -84,6 +84,13 @@ Reports save full actual input text, SHA, candidate digest, native events, stric
 normalized result, real usage, elapsed time and failures incrementally after each
 invocation.
 
+For an interrupted single-arm full-corpus run with no native failure, repeat the
+same `--run` invocation with `--resume`. The harness checks the immutable ref,
+settings, complete assembled inputs and ordered completed prefix before it
+appends missing roles. It records the resume harness SHA and prefix length in
+the existing private report. A native failure is not resumed as if it were a
+completed model result.
+
 ## Independent review
 
 Automatic screening measures strict role schema, supported outcome, Consumer
@@ -138,6 +145,10 @@ python evals/prompt_integration/blind_review.py "$EVAL_ARTIFACT_ROOT/baseline-na
 The packet retains complete case context and exact wire output. It omits arm
 labels, latency, length and expected-outcome labels to keep those from substituting
 for source/semantic assessment. The key is a separate decoding artifact.
+Use a unique `--namespace` for each new review packet so its opaque output IDs
+cannot be confused with a prior packet's key. The same packet builder accepts
+`--manifest evals/prompt_integration/supplement.v1.json` for the four-case
+matching-source and profile comparisons; each requires its own output and key.
 
 The20 frozen cases use a task Skill override rather than the default catalog.
 Their source bindings preserve complete synthetic facts but do not equal the

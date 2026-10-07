@@ -3,6 +3,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location(
@@ -95,3 +96,67 @@ def test_actual_candidate_preparation_contains_full_audit_bindings():
             == case["audit_subject"]["source_bindings"]
         )
         assert row["candidate_digest"] in row["task"]
+
+
+def test_resume_accepts_only_exact_inputs_and_completed_prefix():
+    rows = [
+        {"case_id": "a", "role": "consumer", "developer": "d", "task": "t", "static_developer_chars": 1},
+        {"case_id": "a", "role": "audit", "developer": "d", "task": "t2", "static_developer_chars": 1},
+    ]
+    prepared = {
+        "mode": "native_synthetic_tool_free",
+        "manifest_sha256": "manifest",
+        "cases_sha256": "cases",
+        "assembler_sha256": "assembler",
+        "refs": {"candidate": "ref"},
+        "settings": {"model": "fixed"},
+        "arms": {"candidate": {"inputs": rows, "size_summary": eval_module.sizes(rows)}},
+    }
+    previous = json.loads(json.dumps(prepared))
+    previous["arms"]["candidate"]["results"] = [
+        {"case_id": "a", "role": "consumer", "native": {"ok": True, "result": {}}}
+    ]
+    assert eval_module.resume_position(previous, prepared, "candidate", rows) == 1
+    changed = json.loads(json.dumps(previous))
+    changed["arms"]["candidate"]["inputs"][1]["task"] = "different"
+    try:
+        eval_module.resume_position(changed, prepared, "candidate", rows)
+    except ValueError as error:
+        assert "inputs differ" in str(error)
+    else:
+        assert False, "changed inputs must prevent resume"
+    changed = json.loads(json.dumps(previous))
+    changed["arms"]["candidate"]["results"][0]["role"] = "audit"
+    try:
+        eval_module.resume_position(changed, prepared, "candidate", rows)
+    except ValueError as error:
+        assert "ordered prefix" in str(error)
+    else:
+        assert False, "a different result order must prevent resume"
+
+
+def test_blind_packet_supports_four_case_supplement_and_distinct_keys():
+    from evals.prompt_integration.blind_review import build_packet
+
+    manifest = {"cases": [{
+        "id": "one", "category": "message", "context": {}, "feedback": None,
+        "proposal_revision": 1, "audit_subject": {}, "semantic_rubric": {},
+    }]}
+    cases_sha = eval_module.fingerprint(manifest["cases"])
+    def report(arm):
+        return {
+            "completed": True, "cases_sha256": cases_sha, "settings": {"model": "fixed"},
+            "arms": {arm: {"results": [
+                {"case_id": "one", "role": role, "normalized": {"ok": True, "result": {}}, "native": {"raw": "{}"}}
+                for role in ("consumer", "audit")
+            ]}},
+        }
+    first, key_first = build_packet(report("baseline"), report("candidate"), manifest, namespace="matching")
+    second, key_second = build_packet(report("baseline"), report("candidate"), manifest, namespace="profile")
+    assert len(first["cases"]) == 1
+    assert len(key_first) == 4
+    assert set(key_first).isdisjoint(key_second)
+    incomplete = report("candidate")
+    incomplete["arms"]["candidate"]["results"].pop()
+    with pytest.raises(ValueError, match="complete manifest"):
+        build_packet(report("baseline"), incomplete, manifest)

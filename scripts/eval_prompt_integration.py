@@ -243,11 +243,35 @@ def save(output, report):
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 
 
+def resume_position(previous, prepared, arm, rows):
+    """Verify an interrupted artifact is an exact prefix of these frozen inputs."""
+    if previous.get("completed") or previous.get("stop_reason"):
+        raise ValueError("resume requires an interrupted run without native failure")
+    for key in ("mode", "manifest_sha256", "cases_sha256", "assembler_sha256", "refs", "settings"):
+        if previous.get(key) != prepared[key]:
+            raise ValueError(f"resume {key} differs")
+    if set(previous["arms"]) != {arm}:
+        raise ValueError("resume arms differ")
+    old = previous["arms"][arm]
+    if old["inputs"] != rows or old["size_summary"] != sizes(rows):
+        raise ValueError("resume assembled inputs differ")
+    results = old["results"]
+    if len(results) > len(rows) or any(
+        (result["case_id"], result["role"]) != (row["case_id"], row["role"])
+        for result, row in zip(results, rows)
+    ):
+        raise ValueError("resume results are not an ordered prefix")
+    if any(not result["native"]["ok"] and result["native"]["result"] is None for result in results):
+        raise ValueError("resume prefix contains missing native evidence")
+    return len(results)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate-ref")
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--run", action="store_true")
+    parser.add_argument("--resume", action="store_true", help="Append missing roles to an interrupted exact-input report")
     parser.add_argument("--probe", action="store_true")
     parser.add_argument("--cases", help="Comma-separated frozen IDs; default all 20")
     parser.add_argument(
@@ -256,6 +280,8 @@ def main(argv=None):
     parser.add_argument("--artifact-root", type=Path, default=ARTIFACT_ROOT)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
+    if args.resume and (not args.run or args.cases or args.arms == "both"):
+        parser.error("--resume requires --run, one arm, and the complete frozen corpus")
     if args.output is None:
         mode = "probe" if args.probe else ("native" if args.run else "size")
         args.output = args.artifact_root / f"{args.arms}-{mode}.v2.json"
@@ -314,7 +340,7 @@ def main(argv=None):
             root.mkdir()
             archive_ref(refs[arm], root)
             rows = extract(root, manifest, arm)
-            report["arms"][arm] = {
+            prepared_arm = {
                 "size_summary": sizes(rows),
                 "inputs": [],
                 "results": [],
@@ -324,12 +350,23 @@ def main(argv=None):
                     developer_sha256=sha256(row["developer"].encode()).hexdigest(),
                     task_sha256=sha256(row["task"].encode()).hexdigest(),
                 )
-                report["arms"][arm]["inputs"].append(row)
-            save(args.output, report)
+                prepared_arm["inputs"].append(row)
+            if args.resume:
+                previous = json.loads(args.output.read_text())
+                start = resume_position(previous, {**report, "arms": {arm: prepared_arm}}, arm, rows)
+                report = previous
+                report["resume_harness_sha256"] = sha256(Path(__file__).read_bytes()).hexdigest()
+                report["resumed_after_roles"] = start
+            else:
+                start = 0
+                report["arms"][arm] = prepared_arm
+                save(args.output, report)
             if args.run:
                 workdir = Path(raw) / "native"
                 workdir.mkdir()
-                for row in rows:
+                for index, row in enumerate(rows):
+                    if index < start:
+                        continue
                     if row["case_id"] not in selected:
                         continue
                     case = next(
