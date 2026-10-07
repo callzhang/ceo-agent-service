@@ -2878,6 +2878,168 @@ def test_process_work_item_repairs_owner_citation_before_atomic_apply(
     assert store.get_work_summary_input(input_id).status.value == "done"
 
 
+@pytest.mark.parametrize("location", ["project", "context", "assessment"])
+def test_process_work_item_repairs_current_project_quote_before_atomic_apply(
+    tmp_path, monkeypatch, location,
+):
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "project-citation-repair.sqlite3")
+    item = _independent_project_work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json(),
+    )
+    good = _independent_project_decision().model_dump(mode="json")
+    bad = json.loads(json.dumps(good))
+    if location == "project":
+        citation = bad["project_decisions"][0]["evidence"][0]
+    elif location == "context":
+        citation = bad["project_decisions"][0]["context"]["overall_owner"]["evidence"][0]
+    else:
+        citation = bad["project_assessments"][0]["evidence"][0]
+    citation["source_excerpt"] = "会议决定启动客户验收项目王五负责商务"
+
+    class RepairingCodex(FakeCodex):
+        def decide(self, **kwargs):
+            if self.calls:
+                assert not store.list_business_projects()
+                assert not store.list_business_task_signals()
+                self.payload = good
+            return super().decide(**kwargs)
+
+    codex = RepairingCodex(bad)
+    process_work_item(
+        store, TaskAgentRunner(codex), store.claim_work_summary_inputs(limit=1)[0],
+    )
+
+    assert len(codex.calls) == 2
+    assert "current Project quote is absent" in codex.prompts[1]
+    assert "Previous candidate:" in codex.prompts[1]
+    assert codex.calls[1]["workload_key"] == codex.calls[0]["workload_key"] + ":decision_repair.1"
+    assert len(store.list_business_projects()) == 1
+    assert store.get_work_summary_input(input_id).status.value == "done"
+
+
+def test_current_project_quote_repair_exhaustion_preserves_atomic_rejection(
+    tmp_path, monkeypatch,
+):
+    from app.task_agent import TASK_DECISION_REPAIR_ROUNDS, TaskDecisionRepairExhausted
+
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "project-citation-exhausted.sqlite3")
+    item = _independent_project_work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json(),
+    )
+    bad = _independent_project_decision().model_dump(mode="json")
+    bad["project_assessments"][0]["evidence"][0]["source_excerpt"] = "不存在的原文"
+    codex = FakeCodex(bad)
+
+    with pytest.raises(TaskDecisionRepairExhausted, match="current Project quote is absent"):
+        process_work_item(
+            store, TaskAgentRunner(codex), store.claim_work_summary_inputs(limit=1)[0],
+        )
+
+    assert len(codex.calls) == TASK_DECISION_REPAIR_ROUNDS + 1
+    assert not store.list_business_projects()
+    assert not store.list_business_task_signals()
+    assert store.get_work_summary_input(input_id).status.value == "failed"
+
+
+@pytest.mark.parametrize("repair_succeeds", [True, False])
+def test_current_project_quote_repair_reports_all_distinct_rejected_quotes(
+    tmp_path, monkeypatch, repair_succeeds,
+):
+    from app.task_agent import TASK_DECISION_REPAIR_ROUNDS, TaskDecisionRepairExhausted
+
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "project-all-citation-errors.sqlite3")
+    item = _independent_project_work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json(),
+    )
+    good = _independent_project_decision().model_dump(mode="json")
+    good["project_decisions"][0]["evidence"] *= 2
+    bad = json.loads(json.dumps(good))
+    rejected = (
+        "会议决定启动**客户验收项目**",
+        "李四总负责\n交付",
+        "当前验收按计划顺利推进",
+    )
+    for citation in bad["project_decisions"][0]["evidence"]:
+        citation["source_excerpt"] = rejected[0]
+    bad["project_decisions"][0]["context"]["overall_owner"]["evidence"][0]["source_excerpt"] = rejected[1]
+    bad["project_assessments"][0]["evidence"][0]["source_excerpt"] = rejected[2]
+    bad["project_assessments"][0]["evidence"].append(
+        dict(bad["project_decisions"][0]["evidence"][0])
+    )
+
+    class RepairingCodex(FakeCodex):
+        def decide(self, **kwargs):
+            assert not store.list_business_projects()
+            assert not store.list_business_task_signals()
+            assert not store.list_business_tasks()
+            assert not store.list_business_attention_items()
+            if self.calls:
+                feedback = kwargs["prompt"].split(
+                    "Decision validation rejected the previous candidate", 1
+                )[1].split("\nPrevious candidate:", 1)[0]
+                for quote in rejected:
+                    assert feedback.count(repr(quote)) == 1
+                assert feedback.count("current Project quote is absent") == len(rejected)
+                assert "王五负责商务" not in feedback
+                if repair_succeeds:
+                    self.payload = good
+            return super().decide(**kwargs)
+
+    codex = RepairingCodex(bad)
+    claimed = store.claim_work_summary_inputs(limit=1)[0]
+    if repair_succeeds:
+        process_work_item(store, TaskAgentRunner(codex), claimed)
+        assert len(codex.calls) == 2
+        assert len(store.list_business_projects()) == 1
+        assert store.get_work_summary_input(input_id).status.value == "done"
+    else:
+        with pytest.raises(TaskDecisionRepairExhausted) as raised:
+            process_work_item(store, TaskAgentRunner(codex), claimed)
+        for quote in rejected:
+            assert str(raised.value).count(repr(quote)) == 1
+        assert len(codex.calls) == TASK_DECISION_REPAIR_ROUNDS + 1
+        assert not store.list_business_projects()
+        assert not store.list_business_task_signals()
+        assert not store.list_business_tasks()
+        assert not store.list_business_attention_items()
+        assert store.get_work_summary_input(input_id).status.value == "failed"
+
+    for index, call in enumerate(codex.calls[1:], start=1):
+        assert call["workload_key"] == codex.calls[0]["workload_key"] + f":decision_repair.{index}"
+        assert call["session_scope_id"] == codex.calls[0]["session_scope_id"]
+
+
+def test_repeated_valid_current_project_quotes_do_not_request_correction(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "project-valid-repeated-quotes.sqlite3")
+    item = _independent_project_work_item()
+    store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json(),
+    )
+    good = _independent_project_decision().model_dump(mode="json")
+    good["project_decisions"][0]["evidence"] *= 2
+    good["project_assessments"][0]["evidence"].extend(
+        good["project_decisions"][0]["evidence"]
+    )
+    codex = FakeCodex(good)
+
+    process_work_item(
+        store, TaskAgentRunner(codex), store.claim_work_summary_inputs(limit=1)[0],
+    )
+
+    assert len(codex.calls) == 1
+    assert len(store.list_business_projects()) == 1
+    assert "Decision validation rejected the previous candidate" not in codex.prompts[0]
+
+
 def test_owner_citation_repair_is_bounded_and_never_applies_invalid_owner(
     tmp_path, monkeypatch
 ):
@@ -9240,6 +9402,132 @@ def test_existing_attention_requires_assessment_to_cite_that_cards_original_proo
                 ),
                 record_run=False,
             )
+
+
+@pytest.mark.parametrize("repair_succeeds", [True, False])
+def test_process_work_item_repairs_stored_attention_original_proof_before_domain_writes(
+    tmp_path, monkeypatch, repair_succeeds,
+):
+    from app.task_agent import TASK_DECISION_REPAIR_ROUNDS, TaskDecisionRepairExhausted
+
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "stored-attention-proof-repair.sqlite3")
+    seed, anchor_id = _stored_project_task(store)
+    attention_id = _stored_attention_card(store, seed=seed, anchor_id=anchor_id)
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json(),
+    )
+    bad = {
+        "project_decisions": [],
+        "project_assessments": [
+            _stored_project_assessment(
+                item, seed, anchor_id,
+                outcome="needs_attention",
+                existing_attention_id=attention_id,
+            )
+        ],
+        "task_decisions": [],
+    }
+    good = json.loads(json.dumps(bad))
+    good["project_assessments"][0]["assessment_basis"] = "historical_comparison"
+    good["project_assessments"][0]["evidence"].append(
+        {
+            "signal_id": seed.signal_id,
+            "source_ref": "seed:售前知识库",
+            "source_excerpt": "售前知识库历史交付风险",
+        }
+    )
+
+    def domain_snapshot():
+        with store._connect() as db:
+            tables = db.execute(
+                "select name from sqlite_master where type='table' "
+                "and name like 'business_%' order by name"
+            ).fetchall()
+            return {
+                row["name"]: tuple(
+                    tuple(record)
+                    for record in db.execute(f'select * from "{row["name"]}" order by rowid')
+                )
+                for row in tables
+            }
+
+    before = domain_snapshot()
+    attention_events_before = store.list_business_attention_events(attention_id)
+
+    class RepairingCodex(FakeCodex):
+        def decide(self, **kwargs):
+            assert domain_snapshot() == before
+            if self.calls and repair_succeeds:
+                self.payload = good
+            return super().decide(**kwargs)
+
+    codex = RepairingCodex(bad)
+    claimed = store.claim_work_summary_inputs(limit=1)[0]
+    problem = "existing Attention assessment must cite this card's stored original evidence"
+    if repair_succeeds:
+        process_work_item(store, TaskAgentRunner(codex), claimed)
+        assert len(codex.calls) == 2
+        assert store.get_work_summary_input(input_id).status.value == "done"
+        assert len(store.list_business_attention_items()) == 1
+        assert store.list_business_attention_events(attention_id) == attention_events_before
+    else:
+        with pytest.raises(TaskDecisionRepairExhausted, match=problem):
+            process_work_item(store, TaskAgentRunner(codex), claimed)
+        assert len(codex.calls) == TASK_DECISION_REPAIR_ROUNDS + 1
+        assert domain_snapshot() == before
+        assert store.get_work_summary_input(input_id).status.value == "failed"
+
+    for index, call in enumerate(codex.calls[1:], start=1):
+        assert call["workload_key"] == codex.calls[0]["workload_key"] + f":decision_repair.{index}"
+        assert call["session_scope_id"] == codex.calls[0]["session_scope_id"]
+        assert problem in codex.prompts[index]
+        assert "Previous candidate:" in codex.prompts[index]
+        assert '"existing_attention_id"' in codex.prompts[index]
+
+
+@pytest.mark.parametrize("failure_stage", ["prevalidation", "atomic_apply"])
+def test_stored_project_validation_does_not_repair_operational_or_atomic_apply_errors(
+    tmp_path, monkeypatch, failure_stage,
+):
+    import app.task_agent as task_agent
+
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "stored-validation-error-boundary.sqlite3")
+    item = _independent_project_work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json(),
+    )
+    codex = FakeCodex(_independent_project_decision().model_dump(mode="json"))
+    original = task_agent._validate_stored_project_assessments
+    calls = []
+    error = (
+        sqlite3.OperationalError("database is locked")
+        if failure_stage == "prevalidation"
+        else ValueError("stored identity changed before atomic application")
+    )
+
+    def validate(*args, **kwargs):
+        calls.append(kwargs["db"])
+        if failure_stage == "prevalidation" or len(calls) == 2:
+            raise error
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(task_agent, "_validate_stored_project_assessments", validate)
+    with pytest.raises(type(error)) as raised:
+        process_work_item(
+            store, TaskAgentRunner(codex), store.claim_work_summary_inputs(limit=1)[0],
+        )
+
+    assert raised.value is error
+    assert len(codex.calls) == 1
+    assert len(calls) == (1 if failure_stage == "prevalidation" else 2)
+    assert not store.list_business_projects()
+    assert not store.list_business_task_signals()
+    assert not store.list_business_tasks()
+    assert not store.list_business_attention_items()
+    assert store.get_work_summary_input(input_id).status.value == "failed"
 
 
 def test_existing_attention_changed_current_words_with_actual_old_proof_is_idempotent(

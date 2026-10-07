@@ -55,10 +55,10 @@ def test_mail_review_skill_defines_complete_review_workflow():
         "Inspect every linked material needed for the requested judgment",
         "Check the current thread, sent state, and safe prior receipts before proposing a reply",
         "Do not propose or execute a duplicate reply",
-        "Every reply requires explicit reply authorization",
-        "For a DingTalk or Lark review, the current request must explicitly authorize replying",
+        "Evaluate a mail reply from the complete current context",
+        "For a DingTalk or Lark request, decide whether a reply fits the full current conversation and the requested outcome",
         "For `channel=email`, the current immutable ActionPlan is the authorization",
-        "Review-only, summarize-only, or approval-only requests do not authorize a mail reply",
+        "An explicit review-only, draft-only, summarize-only or do-not-send limitation must be respected",
         "The agent performs the business judgment",
         "The service supplies references and exact commands without interpreting mail or linked content",
     ):

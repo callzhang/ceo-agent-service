@@ -38,7 +38,7 @@ def _fixture(tmp_path: Path):
     entries = []
     old = {}
     new = {}
-    for name in (*SKILLS, "dingtalk-oa-approval"):
+    for name in (*SKILLS, "dingtalk-oa-approval", "ceo-wechat"):
         rel = f"{name}/SKILL.md"
         previous = _skill(name, name in SKILLS, "old")
         replacement = _skill(name, name in SKILLS, "new")

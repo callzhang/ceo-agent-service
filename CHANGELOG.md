@@ -9,6 +9,12 @@
 
 ## Unreleased
 
+- 2026-10-07: Invalid current Work Item Project citations now enter the existing
+  bounded Task Agent correction loop before atomic apply. The same source and
+  contiguous-quote checks still run during apply, including nested context and
+  assessment evidence; exhausted corrections remain failed without partial
+  domain writes. Historical citation checks and the retry budget are unchanged.
+
 - 2026-10-06: Rejected sensitive Audit output is recorded as an invalid result,
   not a CLI execution outage. The existing result-correction and bounded retry
   path now receives this failure; the sensitive-value rejection is unchanged.

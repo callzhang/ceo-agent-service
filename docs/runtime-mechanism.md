@@ -264,11 +264,14 @@ Consumer 的任务改成另一个消息、日程或审批事项。Audit 返回 `
 Audit 只反馈修改要求，不直接替换 Consumer 的业务正文。
 ### Task Agent 的项目、任务与判断（已发布；业务验收部分完成）
 
-2026-10-04 获批设计的代码经 PR #16/#17 发布；当前生产运行 `a385b86d`，
-包含 2026-10-06 确认的项目 Memory 写入规则。生产 input `27465` / run `10690`
+2026-10-04 获批设计的代码经 PR #16/#17 发布；2026-10-06 22:34 PDT 读回生产为
+`f4a889df`，包含项目 Memory 写入规则及当前来源项目引文的 bounded repair 修复。
+生产 input `27465` / run `10690`
 保存了 4 份 ProjectContext 和 2 张零 Task 成员的业务关注卡片。input `27497` /
-run `10691` 的项目引文不连续，被领域校验拒绝并回滚；此类项目引文错误尚未进入
-既有 bounded decision repair。历史项目覆盖及近期多来源结果尚未全部达到设计预期。
+run `10691` 的项目引文不连续，被领域校验拒绝并回滚，原失败保留；其后的
+run `10692` 虽 completed，但只判断会议主题，具体项目覆盖不通过。后续副本对照
+仍有引文纠正耗尽和旧关注卡原证据声明错误，详见验证记录；不把修复发布当成业务通过。
+历史项目覆盖及近期多来源结果尚未全部达到设计预期。
 当前预期/实际、发布与未完成验收见 `docs/task-project-centered-validation.md`，
 不能把健康检查、非零关注或已发布代码单独当成全部业务效果证明。
 
@@ -1468,6 +1471,24 @@ uses the existing work-summary retry policy; it never guesses an owner or
 changes a technical failure into `needs_human`. Memory-backed ownership still
 requires linked source provenance and an `episode_id`.
 
+Current Work Item Project citations, including nested context and assessment
+evidence, use the same exact source identity and contiguous-quote validator
+before domain writes and again during atomic apply. Invalid current citations
+enter the existing bounded correction rounds with the rejected candidate.
+One rejection reports all distinct invalid current citation entries, retaining
+each validator reason, source_ref and exact rejected excerpt; repeated entries
+are reported once. This does not rewrite or normalize quotes, and the same
+two-round budget applies to the entire decision, not separately per citation;
+exhaustion remains failed without partial Project or signal writes. Historical
+signal citations retain their existing provenance checks. The same read-only
+stored Project/assessment validator also runs through a short connection before
+domain apply, within these existing correction rounds. Its ValueError reports
+the original evidence/identity/membership error to the model; this includes an
+existing Attention declaration that omits the card's stored original proof.
+Atomic apply runs the unchanged validator again. Database operational errors
+and errors raised during atomic apply are not converted to model correction.
+No new validation rule, correction budget or recovery loop is introduced.
+
 Date source, actor and exact-precision validation uses the same pure validator
 before the domain transaction and during apply. Evidence errors enter the same
 bounded correction loop; unidentified source actors or invented dates remain
@@ -1616,3 +1637,9 @@ Developer 保存先以现有渲染器验证，未知变量或不可渲染内容�
 配置回执同时记录 Developer 模板原文和渲染后共同原则正文的 SHA；相同模板引用的变量/文件/代码展开改变时，静态契约指纹也改变。静态指纹仍不是 session 身份；历史记录缺正文 SHA 时只显示未记录，不以当前值补造。
 
 默认共同原则保留原有的部分交付与必要追问要求。审核角色、决定类型与生命周期保持原契约。
+
+### 业务审核按完整上下文判断（2026-10-06）
+
+Consumer/Audit 根据完整任务和对话上下文、本人职责、实际事实、接收对象、工作目的和动作后果判断候选是否合理。业务上下文不划分为可信或不可信，不另设“可信授权”或逐条消息许可声明。财务主题或群名本身不构成拒绝理由；不合适的候选必须指出具体事实缺口、受众不匹配、无依据承诺或与明确只出草稿／不发送要求的冲突。上下文不改变已配置能力，也不证明外部动作完成。邮件与微信 Skill 使用同一原则；Email 子系统现有 unsubscribe ActionPlan 和禁用 auto_reply 的范围保持原样。
+
+Consumer 完整候选、Audit 精确审核、System 执行持久化计划及真实回执的绑定保持原样。实际 CLI／provider 认证、权限和拒绝错误仍按原诊断保留；本次规则修改不重放历史拒绝动作。固定规则在已保存自定义审核模板前注入，并通过正式部署发布邮件、微信 Skill 和默认审核规则。
