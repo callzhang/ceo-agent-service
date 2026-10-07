@@ -2354,11 +2354,24 @@ def test_project_link_count_includes_confirmed_candidate_cluster_members(tmp_pat
     assert result.projection_receipt.proposal_count == 0
 
 
-def test_conflicting_chat_risk_does_not_replace_report_registry_summary(tmp_path):
+def test_conflicting_chat_risk_does_not_replace_report_registry_summary(
+    tmp_path, monkeypatch
+):
     from app.web_api.tasks import business_project_detail
     from app.project_context_service import ProjectContextService
 
     store = AutoReplyStore(tmp_path / "conflicting-chat.sqlite3")
+    clock = {"now": "2026-10-07 10:10:30"}
+    open_connection = store._open_connection
+
+    def open_connection_with_test_clock():
+        connection = open_connection()
+        connection.create_function(
+            "current_timestamp", 0, lambda: clock["now"]
+        )
+        return connection
+
+    monkeypatch.setattr(store, "_open_connection", open_connection_with_test_clock)
     seed = seed_report(store)
     (project,) = store.list_business_projects()
     context = ProjectContext.model_validate(
@@ -2392,6 +2405,8 @@ def test_conflicting_chat_risk_does_not_replace_report_registry_summary(tmp_path
     before = business_project_detail(store, project.id).summary
     assert before.goal == "降低现金流风险"
     assert before.current_status == "有风险"
+    assert before.updated_at == "2026-10-07 10:10:30"
+    clock["now"] = "2026-10-07 10:10:31"
     item, decision = update_risk(store, seed)
     summary = item.summary + " 聊天提出目标改为扩张销售、状态恢复正常、DDL 改为 12-31。"
     item = item.model_copy(update={"summary": summary})
@@ -2407,7 +2422,10 @@ def test_conflicting_chat_risk_does_not_replace_report_registry_summary(tmp_path
     )
     assert result.projection_receipt.status == "completed"
     after = business_project_detail(store, project.id).summary
-    assert after == before
+    assert after.model_dump(exclude={"updated_at"}) == before.model_dump(
+        exclude={"updated_at"}
+    )
+    assert after.updated_at == "2026-10-07 10:10:31"
     (card,) = store.list_business_attention_items()
     assert (
         json.loads(card.assessment_json)["evidence"][0]["source_ref"] == item.source.ref

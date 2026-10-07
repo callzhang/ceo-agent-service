@@ -25,7 +25,9 @@ from app.web_api.tasks import (
     ConsoleBusinessAttentionDetailEnvelope,
     ConsoleBusinessAttentionListEnvelope,
     ConsoleBusinessProjectDetailEnvelope,
+    ConsoleBusinessProjectEvidenceListEnvelope,
     ConsoleBusinessProjectListEnvelope,
+    ConsoleBusinessTaskSignalDetailEnvelope,
     ConsoleBusinessTaskDetailEnvelope,
     ConsoleBusinessTaskListEnvelope,
     ConsoleTaskDetail,
@@ -35,6 +37,7 @@ from app.web_api.tasks import (
     business_attention_detail,
     business_attention_list_response,
     business_project_detail,
+    business_project_evidence_response,
     business_project_list_response,
     business_task_detail,
     business_task_list_response,
@@ -533,6 +536,42 @@ def register_console_routes(
         if item is None:
             raise HTTPException(status_code=404, detail="Business project not found")
         return ConsoleBusinessProjectDetailEnvelope(item=item, meta=ApiMeta(snapshot_at=snapshot_at()))
+
+    @app.get(
+        "/api/console/tasks/projects/{project_id}/evidence",
+        response_model=ConsoleBusinessProjectEvidenceListEnvelope,
+    )
+    def console_business_project_evidence(
+        project_id: int,
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=20, ge=1, le=100),
+    ):
+        store = store_factory()
+        with store.read_snapshot():
+            response = business_project_evidence_response(
+                store,
+                project_id,
+                page=page,
+                page_size=page_size,
+            )
+        if response is None:
+            raise HTTPException(status_code=404, detail="Business project not found")
+        return response
+
+    @app.get(
+        "/api/console/tasks/signals/{signal_id}",
+        response_model=ConsoleBusinessTaskSignalDetailEnvelope,
+    )
+    def console_business_task_signal_detail(signal_id: int):
+        store = store_factory()
+        with store.read_snapshot():
+            item = store.get_business_task_signal(signal_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Business task signal not found")
+        return ConsoleBusinessTaskSignalDetailEnvelope(
+            item=item,
+            meta=ApiMeta(snapshot_at=snapshot_at()),
+        )
 
     @app.post("/api/console/tasks/projects/{project_id}/crm-customer-search")
     async def console_business_project_crm_customer_search(project_id: int, request: Request):
