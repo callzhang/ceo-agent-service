@@ -52,7 +52,7 @@ describe("RuntimePromptPreview", () => {
     expect(screen.queryByText(/可能采用当时的 User 模板/)).not.toBeInTheDocument();
   });
   it("shows current and historical Task configuration hashes separately without replacing Task text", async () => {
-    const current = { developer_template: "a".repeat(64), user_template: "b".repeat(64), work_profile_instruction: "c".repeat(64) };
+    const current = { developer_instructions: "f".repeat(64), developer_template: "a".repeat(64), user_template: "b".repeat(64), work_profile_instruction: "c".repeat(64) };
     const saved = { developer_template: "d".repeat(64), user_template: "e".repeat(64), work_profile_instruction: current.work_profile_instruction };
     getPromptPreview.mockResolvedValueOnce(response({ task_id: 42, configuration_fingerprints: current,
       task_source_configuration_fingerprints: saved, task_source_run_id: 9, task_source_rendered_at: "2026-10-04T10:00:00Z" }));
@@ -65,6 +65,10 @@ describe("RuntimePromptPreview", () => {
     const developer = within(table.getByRole("row", { name: /Developer template/ }));
     expect(developer.getByText(current.developer_template)).toBeInTheDocument();
     expect(developer.getByText(saved.developer_template)).toBeInTheDocument();
+    const rendered = within(table.getByText("Developer rendered principles").closest("tr")!);
+    expect(rendered.getByText(current.developer_instructions)).toBeInTheDocument();
+    expect(rendered.getByText("未记录")).toBeInTheDocument();
+    expect(rendered.getByText("无法比较")).toBeInTheDocument();
     expect(developer.getByText("不同")).toBeInTheDocument();
     expect(table.getByRole("row", { name: /Work profile wrapper/ })).toHaveTextContent("一致");
     expect(screen.getByText(/Task 来源运行 9/)).toHaveTextContent("2026-10-04T10:00:00Z");
@@ -78,8 +82,8 @@ describe("RuntimePromptPreview", () => {
     fireEvent.click(screen.getByText("配置指纹与 Task 来源"));
     const table = within(screen.getByRole("table", { name: "配置 SHA 与来源" }));
     expect(table.getByRole("columnheader", { name: "历史配置" })).toBeInTheDocument();
-    expect(table.getAllByText("未记录")).toHaveLength(6);
-    expect(table.getAllByText("无法比较")).toHaveLength(3);
+    expect(table.getAllByText("未记录")).toHaveLength(8);
+    expect(table.getAllByText("无法比较")).toHaveLength(4);
   });
   it("requests selected role, route and task and shows Claude service input", async () => {
     render(<RuntimePromptPreview />);

@@ -23,7 +23,7 @@ def test_current_preview_separates_frozen_current_configuration_from_saved_task_
     result = current_prompt_preview(store, role="consumer", config=load_runtime_config({}), task_id=task.id)
 
     assert result["configuration_fingerprints"] == frozen.fingerprints()
-    assert result["task_source_configuration_fingerprints"] == saved
+    assert result["task_source_configuration_fingerprints"] == {**saved, "developer_instructions": None}
     assert result["task_source_run_id"] == run.id
     assert result["task_source_rendered_at"] == saved_time
     assert result["invocation_facts"]["prompt_configuration"] == frozen.fingerprints()
@@ -90,8 +90,8 @@ def test_historical_preview_reads_saved_input_not_current_templates(tmp_path, mo
     assert result["submission_state"] == "prepared" and "不能称为模型已经收到" in result["reason"]
     assert store.get_reply_task(task.id).status == task.status
     assert len(store.get_agent_run(run.id).tool_events) == 1
-    assert result["configuration_fingerprints"] == saved
-    assert result["task_source_configuration_fingerprints"] == saved
+    assert result["configuration_fingerprints"] == {**saved, "developer_instructions": None}
+    assert result["task_source_configuration_fingerprints"] == {**saved, "developer_instructions": None}
     assert result["task_source_run_id"] == run.id
     assert result["task_source_rendered_at"] == event["rendered_at"]
 
@@ -108,7 +108,7 @@ def test_historical_missing_fingerprints_stay_unrecorded_instead_of_reading_curr
     monkeypatch.setattr("app.prompt_preview.load_prompt_configuration", unexpected_current_read)
 
     result = historical_prompt_preview(store, run_id=run.id)
-    unknown = {"developer_template": None, "user_template": None, "work_profile_instruction": None}
+    unknown = {"developer_instructions": None, "developer_template": None, "user_template": None, "work_profile_instruction": None}
     assert result["configuration_fingerprints"] == unknown
     assert result["task_source_configuration_fingerprints"] == unknown
     assert result["task_prompt"] == "Saved Task"
@@ -203,7 +203,7 @@ def test_historical_preview_can_select_earlier_invoked_attempt(tmp_path):
     assert earlier["developer_instructions"] == "instructions-81" and earlier["submission_state"] == "invoked"
     assert latest["configuration_fingerprints"]["developer_template"] == "sha-82"
     assert earlier["configuration_fingerprints"] == {
-        "developer_template": "sha-81", "user_template": None, "work_profile_instruction": None,
+        "developer_template": "sha-81", "developer_instructions": None, "user_template": None, "work_profile_instruction": None,
     }
     assert earlier["task_source_configuration_fingerprints"] == earlier["configuration_fingerprints"]
     with pytest.raises(LookupError):

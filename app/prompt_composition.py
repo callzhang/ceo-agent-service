@@ -35,6 +35,7 @@ class PromptConfiguration:
             name: sha256(value.encode('utf-8')).hexdigest()
             for name, value in (
                 ('developer_template', self.developer_template),
+                ('developer_instructions', self.developer_instructions),
                 ('user_template', self.user_template),
                 ('work_profile_instruction', self.work_profile),
             )

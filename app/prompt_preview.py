@@ -20,7 +20,7 @@ PROMPT_SCOPE = "服务提交的 Developer 与 Task 输入；不包含 CLI 自行
 def _saved_configuration_fingerprints(snapshot: dict | None) -> dict[str, str | None]:
     saved = (snapshot or {}).get("invocation_facts", {}).get("prompt_configuration") or {}
     return {name: saved.get(name) for name in (
-        "developer_template", "user_template", "work_profile_instruction",
+        "developer_template", "developer_instructions", "user_template", "work_profile_instruction",
     )}
 
 

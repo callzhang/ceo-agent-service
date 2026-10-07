@@ -486,6 +486,15 @@ describe("SettingsPage", () => {
     expect(panel).not.toHaveTextContent("{{principal}}");
   });
 
+  it("documents the supported Developer template variable syntax", async () => {
+    getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { developer_template: "Developer" }, preview: { developer: "Developer" } }, meta: {} });
+    renderSettings("/settings?tab=prompts&prompt=developer&view=template");
+
+    const panel = await screen.findByRole("tabpanel", { name: "Template" });
+    expect(panel).toHaveTextContent("<var: principal>");
+    expect(panel).not.toHaveTextContent("{{principal}}");
+  });
+
   it("labels the paired User rendering as a synthetic complete task example", async () => {
     getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { user_template: "Task:\n{{task_context}}" }, preview: { user: "Task:\nSynthetic complete task" }, preview_kind: "example", consumers: { user: ["consumer"] } }, meta: {} });
     renderSettings("/settings?tab=prompts&prompt=user&view=preview");

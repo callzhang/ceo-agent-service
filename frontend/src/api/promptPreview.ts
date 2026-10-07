@@ -5,6 +5,7 @@ export interface PromptPreviewRoute { name: string; runtime_kind: string; model:
 export interface PromptPreviewAttempt { runtime_attempt_id: number; route_name: string; rendered_at: string; submission_state: "prepared" | "invoked"; }
 export interface PromptConfigurationFingerprints {
   developer_template?: string | null;
+  developer_instructions?: string | null;
   user_template?: string | null;
   work_profile_instruction?: string | null;
 }

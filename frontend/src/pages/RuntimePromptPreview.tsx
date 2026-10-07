@@ -9,6 +9,7 @@ function positiveId(value: string) {
 function ConfigurationFingerprints({ item }: { item: PromptPreviewItem }) {
   const fields = [
     ["developer_template", "Developer template"],
+    ["developer_instructions", "Developer rendered principles"],
     ["user_template", item.role === "audit" ? "User template（Audit 不使用）" : "User template"],
     ["work_profile_instruction", "Work profile wrapper"],
   ] as const;

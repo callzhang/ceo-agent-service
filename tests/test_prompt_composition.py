@@ -87,3 +87,23 @@ def test_task_source_template_syntax_is_inserted_literally_once():
     from app.developer_prompt import render_consumer_task_template
     source = 'Source says {{task_context}} and <code: app.user_prompt_blocks:current_message_block()>'
     assert render_consumer_task_template('Before\n{{task_context}}\nAfter', source) == 'Before\n' + source + '\nAfter'
+
+
+def test_same_developer_template_changed_variable_updates_rendered_fingerprint_and_contract(tmp_path, monkeypatch):
+    from hashlib import sha256
+    from app.prompt_composition import load_prompt_configuration
+    from app.consumer_agent import consumer_developer_instructions, consumer_wire_contract_hash
+    developer = tmp_path / 'developer.md'
+    developer.write_text('Responsibilities: <var: responsibility_summary>')
+    monkeypatch.setenv('CEO_DEVELOPER_PROMPT_TEMPLATE_PATH', str(developer))
+    monkeypatch.setenv('CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY', 'First responsibilities')
+    first = load_prompt_configuration(create_missing=False)
+    monkeypatch.setenv('CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY', 'Second responsibilities')
+    second = load_prompt_configuration(create_missing=False)
+    assert first.developer_template == second.developer_template
+    assert first.fingerprints()['developer_template'] == second.fingerprints()['developer_template']
+    assert first.fingerprints()['developer_instructions'] == sha256(first.developer_instructions.encode()).hexdigest()
+    assert first.fingerprints()['developer_instructions'] != second.fingerprints()['developer_instructions']
+    assert consumer_wire_contract_hash(prompt_configuration=first) != consumer_wire_contract_hash(prompt_configuration=second)
+    assert 'First responsibilities' in consumer_developer_instructions(prompt_configuration=first, runtime_context='')
+    assert 'Second responsibilities' in consumer_developer_instructions(prompt_configuration=second, runtime_context='')
