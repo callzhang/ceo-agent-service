@@ -51,19 +51,21 @@ def project_attempt_status(
         if not generation
         or str(getattr(run, "execution_generation", "") or "").strip() == generation
     ]
+    latest_run = max(
+        current_runs,
+        key=lambda run: (
+            int(getattr(run, "proposal_revision", 0) or 0),
+            getattr(run, "role", "") == "audit",
+            int(getattr(run, "turn_attempt", 0) or 0),
+            int(getattr(run, "id", 0) or 0),
+        ),
+        default=None,
+    )
     if (
         fallback == "needs_human"
         and current_runs
         and int(getattr(attempt, "agent_run_id", 0) or 0) > 0
     ):
-        latest_run = max(
-            current_runs,
-            key=lambda run: (
-                int(getattr(run, "turn_attempt", 0) or 0),
-                int(getattr(run, "proposal_revision", 0) or 0),
-                int(getattr(run, "id", 0) or 0),
-            ),
-        )
         if int(getattr(latest_run, "id", 0) or 0) == int(attempt.agent_run_id):
             from app.decision_quality import (
                 StoredNeedsHumanProjection,
@@ -88,17 +90,19 @@ def project_attempt_status(
     # `skipped` -- so the item looked failed to a reader and resolved to every
     # check that walks the list.
     if task_status in _TERMINAL_TASK_STATES:
+        # Task completion closes the processing cycle; the latest bound
+        # Attempt still records whether that cycle intentionally did no action.
+        if (
+            task_status == "done"
+            and fallback == "skipped"
+            and latest_run is not None
+            and getattr(latest_run, "status", "") == "completed"
+            and int(getattr(attempt, "agent_run_id", 0) or 0) == int(latest_run.id)
+        ):
+            return "skipped"
         return task_status
-    if current_runs:
-        last_run = max(
-            current_runs,
-            key=lambda run: (
-                int(getattr(run, "turn_attempt", 0) or 0),
-                int(getattr(run, "proposal_revision", 0) or 0),
-                int(getattr(run, "id", 0) or 0),
-            ),
-        )
-        run_status = str(getattr(last_run, "status", "") or "").strip()
+    if latest_run is not None:
+        run_status = str(getattr(latest_run, "status", "") or "").strip()
         if run_status in {"pending", "running", "failed"}:
             return run_status
     if task_status in {"pending", "processing", "running"}:

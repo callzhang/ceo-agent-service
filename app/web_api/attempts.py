@@ -461,7 +461,7 @@ def _action_links(
     from app.audit_web import _sent_reply_has_recall_target
 
     status = str(getattr(attempt, "send_status", "") or "").strip().lower()
-    terminal = status in {"sent", "skipped", "completed", "commented", "calendar", "document", "reacted"}
+    terminal = status in {"done", "sent", "skipped", "completed", "commented", "calendar", "document", "reacted"}
     dingtalk_url = ""
     approval_url = _oa_url(attempt, reply_task)
     if approval_url:
