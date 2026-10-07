@@ -451,9 +451,9 @@ Task 8 脚手架记录（2026-10-04）：版本 1 固定 19 个案例，原始�
 - [x] 检查当前生产入口、prompt、模型字段、CI Skill、API/UI 中的 Project/Attention 输出位置：`ProjectProposal` 仅作为 `ProjectDecision.registration`，`TaskAttentionProposal` 仅作为顶层 `TaskProjectAssessment.attention_proposal`，二者都不在 `TaskDecision` 内；Task Agent 输入分别为 `project_decisions`、`task_decisions`、`project_assessments`。当前 parser 拒绝旧 TaskDecision 项目/关注字段，旧 run 和历史 spec 保留原始身份。无 Task 的项目风险、单一负责人和职责分离规则均已在 prompt/Skill/行为文档表达。此项为代码契约审计，不代表原生评测、真实 W39、迁移或发布通过。
 - [x] 独立代码审查和固定 eval 比较完成后，以 PR 合并本次产品行为变化。PR #16/#17 已合并并附加；原生固定评测与 W39 副本结果按验证文档保留原始边界。发布不代表真实近期来源的全部结果通过。
 - [ ] 发布前核实原有回复、会议、已领取工作和外部动作的既有可恢复性；不趁此新增安全/审计机制。列出将补充上下文的明确项目/输入及备份位置，先在副本证明结构迁移前后 Signal/Task/历史等价。未知旧记录仍留历史，禁止全库自动升级为项目或候选。
-- [x] 推送并合并后使用 `python -m app.deploy`，让标准流程等待空闲、备份、推进生产 checkout、构建与重启；当前生产 `a385b86d`。本次发现旧安装 Skill 后已同步当前 Skill 并核对内容，不手动 kill/kickstart、不编辑生产目录。后续发布仍须核验真实 Skill 与代码契约一致。
+- [x] 推送并合并后使用 `python -m app.deploy`，让标准流程等待空闲、备份、推进生产 checkout、构建与重启；2026-10-06 22:34 PDT 核验生产为 `f4a889df`（包含 `a385b86d` Memory 规则及当前引文纠错）。旧安装 Skill 已同步并核对内容，不手动 kill/kickstart、不编辑生产目录。发布步骤通过不等于业务验收完成；检索排序候选尚未发布，后续仍须核验 Skill 与代码一致。
 - [ ] 仅对验证记录中已明确的近期来源进行小批重处理，走新的唯一正常入口，不使用直接 SQL 补卡、改 owner 或改 Task 状态。先读回样本再扩大；结构迁移和业务补充分别记录结果。
-  当前进度：`27465` 成功，`27497` 项目引文校验失败；不将两条原始输入的重跑记录描述成全量或稳定多来源通过。
+  当前进度：`27465` 已保存 4 份项目上下文和 2 张关注卡；`27497` 首轮引文失败，部署纠错后重跑 completed，但只有会议主题线索，具体项目覆盖未通过。不将输入 done 或非零卡片描述成全量、稳定多来源通过。
 - [ ] 部署后读回新 PID、healthz、queues、Attention、History；页面亲自核对真实项目唯一总负责/负责事项、建议标签、零 Task 关注及证据详情。不得打印 settings 中的秘密字段。
 - [ ] 只有“代码与局部测试、固定 native、真实原文结果、部署健康、真实页面”分别通过才报告上线完成。若任何一步失败，记录确切层次及尚未完成项；按 deploy 自身机制回退，不改旧实验、补偿造卡或重复外发。
 
