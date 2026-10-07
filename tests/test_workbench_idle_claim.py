@@ -60,3 +60,39 @@ def test_preflight_keeps_expired_running_turn_recovery(tmp_path):
             ).fetchone()[0]
             == "replacement"
         )
+
+
+@pytest.mark.parametrize("expired", [False, True])
+def test_positive_preflight_rechecks_another_workers_claim(
+    tmp_path, monkeypatch, expired
+):
+    store = WorkbenchStore(tmp_path / "worker.sqlite3")
+    other = WorkbenchStore(store.path)
+    task = store.create_task(title="Report", runtime_kind="codex")
+    turn = store.create_turn(task.id, user_text="Prepare", client_request_id="one")
+    if expired:
+        assert store.claim_next_turn(
+            owner="dead", lease_seconds=1, now="2026-10-07T10:00:00Z"
+        )
+    connect = store._connect
+    injected = False
+
+    @contextmanager
+    def claim_after_read():
+        nonlocal injected
+        with connect() as db:
+            yield db
+        if not injected:
+            injected = True
+            claimed = other.claim_next_turn(owner="winner", now="2026-10-07T10:00:02Z")
+            assert claimed is not None and claimed.id == turn.id
+
+    monkeypatch.setattr(store, "_connect", claim_after_read)
+    assert store.claim_next_turn(owner="loser", now="2026-10-07T10:00:02Z") is None
+    with other._connect() as db:
+        assert (
+            db.execute(
+                "select lease_owner from workbench_turns where id=?", (turn.id,)
+            ).fetchone()[0]
+            == "winner"
+        )
