@@ -228,6 +228,33 @@ def test_audit_wire_digest_and_revision_must_match_claimed_candidate(setup):
             _runner(setup, CapturingExecutor(raw)).run(task, context, turn_attempt=turn_attempt, parent_agent_run_id=parent.id)
 
 
+def test_sensitive_audit_output_is_a_result_failure_not_a_process_outage(setup):
+    store, task, parent, context, _config, _router = setup
+    lines = _wire(context.candidate_digest, outcome="return").splitlines()
+    event = json.loads(lines[-1])
+    output = json.loads(event["item"]["text"])
+    output["feedback"]["observation"] = "access_token=synthetic-test-secret"
+    event["item"]["text"] = json.dumps(output)
+    lines[-1] = json.dumps(event)
+    executor = CapturingExecutor("\n".join(lines))
+
+    with pytest.raises(ResultParseError, match="agent_result_contains_sensitive_value"):
+        _runner(setup, executor).run(
+            task, context, turn_attempt=0, parent_agent_run_id=parent.id,
+        )
+
+    run = store.get_agent_run_for_turn(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0,
+    )
+    assert run.status == "failed"
+    assert run.final_result_json == ""
+    error = json.loads(run.structured_error_json)
+    assert error["code"] == "codex_result_invalid"
+    assert error["stage"] == "result"
+    assert error["detail"] == "agent_result_contains_sensitive_value"
+
+
 def test_audit_parent_must_be_completed_exact_consumer_candidate(setup):
     store, task, _parent, context, _config, _router = setup
     other = store.claim_agent_run(task.id, task.execution_generation, role=AgentRole.CONSUMER,

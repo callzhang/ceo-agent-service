@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- 2026-10-06: Rejected sensitive Audit output is recorded as an invalid result,
+  not a CLI execution outage. The existing result-correction and bounded retry
+  path now receives this failure; the sensitive-value rejection is unchanged.
+
 - 2026-10-06: Daily report history facts retain each attempt's conversation
   and trigger IDs, creation time and Agent run ID. Identically titled reports
   from different scheduled runs no longer lose their original source identity

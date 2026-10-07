@@ -1362,6 +1362,15 @@ errors still expose only the existing approved error fields; command argument
 redaction, retry policy and action authorization are unchanged. This improves
 future failure evidence and does not rewrite already-truncated historical runs.
 
+### Sensitive Result Classification
+
+The post-process sensitive-result guard raises the same result-parse exception
+as other invalid typed output. Rejection is recorded as `codex_result_invalid`
+at the result stage, allowing the existing Audit result-correction prompt and
+bounded attempt handling to operate. It is not a CLI execution outage. The
+credential predicate and rejection itself remain unchanged; no unsafe result
+is accepted and no content-feedback cycle is consumed by a parse failure.
+
 ### Daily Report Source Identity
 
 Daily report `handled_today` facts retain their original conversation ID,
