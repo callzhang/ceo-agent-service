@@ -1,7 +1,9 @@
 from pathlib import Path
 
 from app.consumer_agent import (
-    CORE_DYNAMIC_SKILL_BODY,
+    AUDIT_DYNAMIC_SKILL_BODY,
+    CONSUMER_DYNAMIC_SKILL_BODY,
+    audit_developer_instructions,
     consumer_developer_instructions,
 )
 
@@ -137,7 +139,8 @@ def test_canonical_prompt_delegates_mail_policy_to_skill():
 
     assert "如果已读完原邮件和依赖材料、当前消息明确授权回复邮件" not in text
     assert "决策 agent 不得直接发送邮件" not in text
-    assert CORE_DYNAMIC_SKILL_BODY in text
+    assert CONSUMER_DYNAMIC_SKILL_BODY in text
+    assert AUDIT_DYNAMIC_SKILL_BODY in audit_developer_instructions("audit only", runtime_context="", work_profile="")
     assert "independently selects and reads every applicable" in text
     assert "2. [output_contracts] Output Contracts:" in text
 
