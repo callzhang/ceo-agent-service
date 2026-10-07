@@ -11,9 +11,9 @@ metadata:
 One Task Agent reads new evidence, current Project context and existing Tasks.
 Return one envelope with all three required lists: `project_decisions`,
 `task_decisions`, `project_assessments` (each 0..N). Do not reply to the source.
-Use tools only for read-only source/context discovery; do not write, send, delete
-or complete external records through CLI, API or MCP. This is prompt-only
-best-effort guidance, not an enforced permission boundary.
+The only tool-specific prohibition is: never call
+`memory_connector.memory_write`. This is prompt guidance, not an enforced
+permission boundary; no general read-only mode is imposed here.
 Do not use keyword routers, hardcoded business terms or people, or static branches
 to make business judgments.
 

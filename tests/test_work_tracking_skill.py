@@ -32,7 +32,8 @@ def test_work_tracking_skill_owns_judgment_and_delegates_only_mechanics():
     for required in (
         "One Task Agent reads new evidence, current Project context and existing Tasks.",
         "Return one envelope with all three required lists",
-        "Use tools only for read-only source/context discovery",
+        "The only tool-specific prohibition is: never call `memory_connector.memory_write`.",
+        "no general read-only mode is imposed here",
         "Project can have zero Tasks.",
         "A bare responsibility clause (a person being responsible for a business area) is ProjectContext only",
         "Actual Task: a source-backed independently completable deliverable/action.",

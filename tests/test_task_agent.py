@@ -1929,8 +1929,8 @@ def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract(monkeyp
     assert "# CEO Work Tracking" in prompt
     assert '"title": "TaskAgentDecision"' in prompt
     assert "Memory connector status:" in prompt
-    assert "read-only discovery" in prompt
-    assert "Do not create, update, delete, send, or complete external records" in prompt
+    assert "This is the only tool-specific" in prompt
+    assert "does not impose a general read-only mode" in prompt
     assert "must never call memory_connector.memory_write" in prompt
     assert "memory_connector.document_upload" not in prompt
     assert "include that exact same citation in the Project's evidence list" in prompt

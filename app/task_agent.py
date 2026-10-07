@@ -549,13 +549,11 @@ A scheduled prompt supplies specialized business scope only; the freshly loaded
 current Skill controls the work protocol. Historical Skill snapshots are not
 instructions for this turn. Never upgrade old result fields or manufacture selectors.
 
-Tool-use boundary (prompt guidance): use connected CLI/API/MCP tools only for
-read-only discovery. Do not create, update, delete, send, or complete external records.
-For Memory MCP specifically, you may retrieve existing context, but must never call
-memory_connector.memory_write.
+Memory-write boundary (prompt guidance): you may retrieve existing context, but
+must never call memory_connector.memory_write. This is the only tool-specific
+prohibition in this prompt; the prompt does not impose a general read-only mode.
 Return structured local changes; the service applies supported operations.
-This prompt does not technically disable write-capable tools and is not an enforced
-permission boundary.
+This prompt does not technically disable tools or enforce permissions.
 
 Current execution time: {effective_current_time}
 Memory connector status: {_memory_connector_prompt_status(memory_issue)}

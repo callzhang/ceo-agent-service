@@ -2,11 +2,11 @@
 
 ## 2026-10-06 latest prompt, fixed-eval and W39 readback
 
-Derek confirmed the Task Agent restriction must remain prompt-only: the prompt
-prohibits `memory_connector.memory_write`; there is no tool allowlist or
-CLI/MCP interception, and `document_upload` is not prohibited. The candidate
-prompt and shared Skill also state exclusive Project selector shapes, require
-every Project assessment to cite current null-ID evidence, and prefer one
+Derek confirmed the Task Agent restriction must remain prompt-only and limited
+to `memory_connector.memory_write`; there is no general read-only instruction,
+tool allowlist or CLI/MCP interception, and `document_upload` is not prohibited.
+The candidate prompt and shared Skill also state exclusive Project selector
+shapes, require every Project assessment to cite current null-ID evidence, and prefer one
 display-only Task suggestion for one material Project risk unless the source
 contains multiple distinct independently completable actions. This is intended
 to avoid expanding each Project responsibility into separate inferred TODOs.
