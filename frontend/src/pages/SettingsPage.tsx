@@ -126,7 +126,7 @@ function PromptOverview() {
     <p>Developer 与工作人格用于 Consumer/Audit；User 模板用于进入 AgentOrchestrator 的 Consumer 任务。Audit 的任务输入使用独立的候选审核上下文。</p>
     <ol>
       <li><strong>后台 Consumer：</strong>角色、输出与能力契约 → 共同 Developer 工作原则 → 质量要求与 Skill 协议 → 工作人格 → Runtime Context；Task 由 User 模板承载完整任务上下文，包括定时任务专用要求、反馈与修正内容。</li>
-      <li><strong>后台 Audit：</strong>角色、输出与能力契约 → 同一份 Developer 工作原则 → Audit Rules 与质量要求 → 工作人格 → 本轮额外 Skill 协议（如有）→ Runtime Context；Task 包含任务证据、精确候选、版本、digest 及修正内容。</li>
+      <li><strong>后台 Audit：</strong>Audit Rules → 角色、输出与能力契约 → 同一份 Developer 工作原则 → 质量要求 → 工作人格 → 本轮额外 Skill 协议（如有）→ Runtime Context；Task 包含任务证据、精确候选、版本、digest 及修正内容。</li>
     </ol>
     <p className="muted">这组配置不影响 Workbench、WeChat 独立流程、纯服务命令与 Email 退订。保存后由下一次角色调用读取；已保存历史输入保留原文，同一对话继续复用已有 session。</p>
     <p className="muted">上述顺序表示内容在各输入中的拼接位置；Developer 与 Task 分别提交给运行路线。CLI 自带的系统提示、工具定义和会话历史不包含在此预览中。Template 查看原文，Rendered preview 查看已保存模板的渲染结果；完整后台输入请打开“运行输入”。</p>

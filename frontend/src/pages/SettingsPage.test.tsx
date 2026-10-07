@@ -461,6 +461,7 @@ describe("SettingsPage", () => {
     const overview = await screen.findByRole("region", { name: "提示词作用与上下文顺序" });
     expect(overview).toHaveTextContent("后台 Consumer");
     expect(overview).toHaveTextContent("后台 Audit");
+    expect(overview).toHaveTextContent("后台 Audit：Audit Rules → 角色、输出与能力契约 → 同一份 Developer 工作原则 → 质量要求");
     expect(overview).toHaveTextContent("Audit Rules");
     expect(overview).toHaveTextContent("Runtime Context");
     expect(within(overview).getByRole("row", { name: /Developer Prompt/ })).toHaveTextContent("Consumer 与 Audit");
