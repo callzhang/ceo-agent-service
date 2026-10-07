@@ -16,6 +16,22 @@ def delivery_matches(case: dict, result: dict | None) -> bool:
         return False
     proposal = result.get("proposal") or {}
     actions = proposal.get("actions", [])
+    option_actions = [
+        action
+        for option in result.get("decision_options", [])
+        for action in (option.get("plan") or {}).get("actions", [])
+    ]
+    if option_actions:
+        return False
+    if case.get("require_factual_input") and (
+        result.get("decision_options") or not result.get("requested_input")
+    ):
+        return False
+    expected_error = case.get("expected_error")
+    if expected_error is not None:
+        error = result.get("error") or {}
+        if any(error.get(key) != value for key, value in expected_error.items()):
+            return False
     expected = case["expected_deliveries"]
     if len(actions) != len(expected):
         return False
@@ -37,9 +53,10 @@ def delivery_matches(case: dict, result: dict | None) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate-ref", required=True)
+    parser.add_argument("--manifest", type=Path, default=ROOT / "evals/message_audience/v2.json")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    manifest_path = ROOT / "evals/message_audience/v1.json"
+    manifest_path = args.manifest
     manifest = json.loads(manifest_path.read_text())
     baseline_ref = resolve_commit_ref(manifest["baseline_ref"])
     candidate_ref = resolve_commit_ref(args.candidate_ref)

@@ -195,7 +195,20 @@ def audit_subject(root: Path, case: dict, result: dict, digest: str | None) -> d
     if "audit_override" not in case:
         return {"ok": True, "error": "", "result": result, "digest": digest}
     altered = json.loads(json.dumps(result, ensure_ascii=False))
-    altered["summary"] = case["audit_override"]["summary"]
+    override = case["audit_override"]
+    if "summary" in override:
+        altered["summary"] = override["summary"]
+    for action_override in override.get("action_overrides", []):
+        matches = [
+            action for action in (altered.get("proposal") or {}).get("actions", [])
+            if action.get("target") == action_override["target_match"]
+        ]
+        if len(matches) != 1:
+            return {"ok": False, "error": "audit_override_target_not_unique", "result": None, "digest": None}
+        action = matches[0]
+        for field in ("target", "payload"):
+            if field in action_override:
+                action[field] = action_override[field]
     return normalize_review_subject(root, altered)
 
 
