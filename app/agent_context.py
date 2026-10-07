@@ -347,10 +347,10 @@ class AuditTurnContext:
         from app.reviewed_sources import context_source
 
         source_reference = ""
-        actual = context_source(self.task)
+        actual = json.dumps(context_source(self.task), ensure_ascii=False, sort_keys=True)
         for index, binding in enumerate(self.candidate.source_bindings):
             if (binding.provider == "task_context" and binding.object_ref == self.task.trigger_message_id
-                    and binding.value == actual):
+                    and json.dumps(binding.value, ensure_ascii=False, sort_keys=True) == actual):
                 source_reference = f"Candidate revision.candidate.source_bindings[{index}].value"
                 break
         context_facts = "\n\n".join(

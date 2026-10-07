@@ -58,3 +58,17 @@ def test_audit_task_retains_existing_review_contract_at_the_task_boundary():
     body = AuditTurnContext(context, 0, 'operation', candidate(context), 'digest', 'configured audit rule').render(developer_audit_rules='configured audit rule')
     assert body.startswith(_AUDIT_AGENT_RULES + '\n\n')
     assert body.count('configured audit rule') == 0
+
+
+def test_audit_does_not_collapse_distinct_json_boolean_and_number_sources():
+    from dataclasses import replace
+    context = replace(task_context(), trigger_raw_payload={'flag': True})
+    result = candidate(context)
+    source = result.source_bindings[0]
+    source = source.model_copy(update={'value': {**source.value, 'trigger_raw_payload': {'flag': 1}}})
+    result = result.model_copy(update={'source_bindings': (source,)})
+    body = AuditTurnContext(context, 0, 'operation', result, 'digest', '').render(developer_audit_rules='')
+    trigger, _ = json.JSONDecoder().raw_decode(body.partition('Original trigger\n')[2])
+    assert trigger['raw_payload']['flag'] is True
+    persisted, _ = json.JSONDecoder().raw_decode(body.partition('Candidate revision\n')[2])
+    assert type(persisted['candidate']['source_bindings'][0]['value']['trigger_raw_payload']['flag']) is int
