@@ -96,6 +96,31 @@ def test_two_projects_api_never_mix_accountability(tmp_path):
     assert business_project_detail(store, second).evidence_signals[0].source_ref == "meeting:二期"
 
 
+def test_project_summaries_batch_task_project_membership_queries(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "batched-membership.sqlite3")
+    first, anchor, _, _ = _project(store, title="一期")
+    second, _, _, _ = _project(store, title="二期")
+    task_id = store.create_business_task(title="准备交付材料", stage="candidate")
+    signal_id = store.create_business_task_signal(
+        source_type="meeting", source_ref="meeting:assignment",
+        evidence_text="准备交付材料", dedupe_key="assignment",
+    )
+    BusinessResolutionService(store).confirm_anchor_match(
+        task_id=task_id, anchor_id=anchor, evidence_signal_id=signal_id,
+    )
+
+    def unexpected_per_task_lookup(**_kwargs):
+        pytest.fail("Project summary should use the batched membership query")
+
+    monkeypatch.setattr(store, "list_business_task_project_links", unexpected_per_task_lookup)
+    summaries = business_project_list_response(store, page=1, page_size=20).items
+    first_summary = next(item for item in summaries if item.id == first)
+    second_summary = next(item for item in summaries if item.id == second)
+    assert first_summary.confirmed_task_count == first_summary.open_task_count == 1
+    assert second_summary.confirmed_task_count == second_summary.open_task_count == 0
+    assert business_project_detail(store, first).summary.confirmed_task_count == 1
+
+
 def test_human_promoted_suggestion_is_an_actual_task_without_losing_origin(tmp_path):
     store = AutoReplyStore(tmp_path / "promoted.sqlite3")
     project_id, anchor, citation, _ = _project(store)
