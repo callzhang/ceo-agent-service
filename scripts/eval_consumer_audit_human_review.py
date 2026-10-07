@@ -47,8 +47,8 @@ def run_suite(root: Path, manifest: dict) -> dict:
             'cases': cases, 'passed': sum(case['outcome_passed'] for case in cases)}
 
 
-def compare(candidate_ref: str) -> dict:
-    manifest = json.loads(MANIFEST.read_text())
+def compare(candidate_ref: str, manifest_path: Path = MANIFEST) -> dict:
+    manifest = json.loads(manifest_path.read_text())
     candidate = business.resolve_commit_ref(candidate_ref)
     baseline = business.resolve_commit_ref(manifest['baseline_ref'])
     with ExitStack() as stack:
@@ -61,7 +61,7 @@ def compare(candidate_ref: str) -> dict:
     return {'mode': 'native_synthetic_audit_human_question_review',
             'consumer_results': 'fixed-stimuli-not-generated-consumer-output',
             'semantic_review': 'independent-exact-output-required',
-            'manifest_sha256': sha256(MANIFEST.read_bytes()).hexdigest(),
+            'manifest_sha256': sha256(manifest_path.read_bytes()).hexdigest(),
             'harness_sha256': sha256(Path(__file__).read_bytes()).hexdigest(),
             'shared_harness_sha256': sha256(Path(business.__file__).read_bytes()).hexdigest(),
             'baseline_ref': baseline, 'candidate_ref': candidate,
@@ -72,8 +72,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--candidate-ref', required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--manifest', type=Path, default=MANIFEST)
     args = parser.parse_args()
-    args.output.write_text(json.dumps(compare(args.candidate_ref), ensure_ascii=False,
+    args.output.write_text(json.dumps(compare(args.candidate_ref, args.manifest), ensure_ascii=False,
                                       indent=2) + '\n')
 
 

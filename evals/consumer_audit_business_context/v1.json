@@ -190,7 +190,7 @@
         "durable_memories": []
       },
       "expected_audit": [
-        "return_for_revision",
+        "return",
         "reject"
       ]
     },
@@ -252,7 +252,7 @@
         "durable_memories": []
       },
       "expected_audit": [
-        "return_for_revision",
+        "return",
         "reject"
       ]
     },
@@ -314,7 +314,7 @@
         "durable_memories": []
       },
       "expected_audit": [
-        "return_for_revision",
+        "return",
         "reject"
       ]
     },
@@ -376,7 +376,7 @@
         "durable_memories": []
       },
       "expected_audit": [
-        "return_for_revision",
+        "return",
         "reject"
       ]
     }
