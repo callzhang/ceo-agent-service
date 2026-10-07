@@ -65,6 +65,12 @@ KNOWN_DRIFT: dict[str, tuple[str, str, str]] = {
         "memory_context_item; the model makes every field optional and names "
         "it ProjectMemoryContextItem",
     ),
+    "task_agent_decision.schema.json": (
+        "app.task_models",
+        "TaskAgentDecision",
+        "the strict native-output snapshot also requires model-defaulted list fields; "
+        "tests/test_work_tracking_skill.py compares it with task_agent_output_schema()",
+    ),
     "repository_upgrade_suggestion.schema.json": (
         "app.repository_upgrade_agent",
         "PreservationSuggestion",

@@ -2311,6 +2311,7 @@ def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatc
         def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             return TaskAgentDecision.model_validate(
                 {
+                    "project_decisions": [],
                     "project_assessments": [
                         {
                             "project_title": "售前知识库",
@@ -2660,6 +2661,7 @@ def test_process_work_items_command_processes_existing_input_without_feature_gat
         def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             return TaskAgentDecision.model_validate(
                 {
+                    "project_decisions": [],
                     "project_assessments": [
                         {
                             "project_title": "已有项目",
@@ -2689,7 +2691,7 @@ def test_process_work_items_command_processes_existing_input_without_feature_gat
     with store._connect() as db:
         assert db.execute(
             "select status from work_summary_inputs where id=?", (input_id,)
-        ).fetchone()["status"] == "skipped"
+        ).fetchone()["status"] == "done"
 def test_process_work_items_command_reclaims_stale_processing_input(
     tmp_path,
     monkeypatch,
@@ -2707,6 +2709,7 @@ def test_process_work_items_command_reclaims_stale_processing_input(
         def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             return TaskAgentDecision.model_validate(
                 {
+                    "project_decisions": [],
                     "project_assessments": [
                         {
                             "project_title": "售前知识库",
@@ -3478,6 +3481,7 @@ def test_process_work_items_command_uses_task_agent_timeouts(
         def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             return TaskAgentDecision.model_validate(
                 {
+                    "project_decisions": [],
                     "project_assessments": [],
                     "update_summary": "当前来源是一次性同步，没有相关的业务 Project 或 Project 线索。",
                     "task_decisions": [

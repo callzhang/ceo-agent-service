@@ -30,16 +30,14 @@ def test_work_tracking_skill_owns_judgment_and_delegates_only_mechanics():
     text = " ".join(_skill_text().split())
 
     for required in (
-        "Extract zero or more distinct Tasks from supplied source context",
-        "Never originate a Task, deliverable, owner, assignment, or date from Agent judgment alone",
-        "An external TODO proves a formal record exists; it does not prove its assignee accepted it",
-        "Keep date meanings separate and source-backed",
-        "confirmed business anchor and a concrete material trigger",
-        "A memory summary without its original source is not evidence",
-        "Evidence read earlier in the session, and evidence found",
-        "one Task Agent returns one `TaskAgentDecision` lifecycle contract",
-        "The Task Agent cannot create a TODO through completion fields",
-        "The current Codex route has no per-turn",
+        "One Task Agent reads new evidence, current Project context and existing Tasks.",
+        "Return one envelope with all three required lists",
+        "Use tools only for read-only source/context discovery",
+        "Project can have zero Tasks.",
+        "A bare responsibility clause (a person being responsible for a business area) is ProjectContext only",
+        "Actual Task: a source-backed independently completable deliverable/action.",
+        "Memory is discovery/background, not observed source proof.",
+        "Newly observed DingTalk human completion deterministically updates only its explicitly linked Task.",
     ):
         assert required in text
 
@@ -92,7 +90,7 @@ def test_task_agent_output_schema_matches_the_pydantic_contract():
     assert_strict_objects(schema)
 
 
-def test_completion_operations_are_top_level_unified_decision_fields_and_skill_agrees():
+def test_legacy_completion_fields_are_not_current_skill_operations():
     decision_fields = TaskAgentDecision.model_fields
     task_decision_fields = TaskDecision.model_fields
     assert "todo_changes" in decision_fields
@@ -101,10 +99,10 @@ def test_completion_operations_are_top_level_unified_decision_fields_and_skill_a
     assert "follow_up_changes" not in task_decision_fields
 
     text = " ".join(_skill_text().split())
-    assert "top-level `todo_changes` and `follow_up_changes` fields" in text
-    assert "Do not emit legacy `todo_changes`" not in text
-    assert "outside the approved Task 6 scope, not a release blocker" in text
-    assert "`max_raw_reads` cap remains unmet and is a release blocker" not in text
+    assert (
+        "todo_changes, follow_up_changes, search_trace and old completion-check source enums "
+        "are historical, not current operations."
+    ) in text
 
 
 def _formal_task(**overrides) -> dict[str, object]:

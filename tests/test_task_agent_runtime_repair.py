@@ -29,6 +29,7 @@ def config():
 
 def _routed_runner(store, config, payloads):
     provider_calls = []
+    executions = 0
 
     class RecordingAdapter(FakeAdapter):
         def build_command(self, **kwargs):
@@ -36,9 +37,16 @@ def _routed_runner(store, config, payloads):
             return super().build_command(**kwargs)
 
     def executor(*args, **kwargs):
+        nonlocal executions
         assert not store.list_business_tasks()
-        payload = payloads[min(len(provider_calls) - 1, len(payloads) - 1)]
-        return ProcessRunResult(0, json.dumps(payload), "")
+        payload = payloads[min(executions, len(payloads) - 1)]
+        executions += 1
+        session_event = json.dumps(
+            {"type": "system", "session_id": "task-agent-session"}
+        )
+        return ProcessRunResult(
+            0, session_event + "\n" + json.dumps(payload), ""
+        )
 
     snapshots = {route.name: RuntimeCapabilitySnapshot(
         route_name=route.name, capabilities=TASK_RUNTIME_CAPABILITIES, healthy=True,
@@ -78,7 +86,10 @@ def test_semantic_repair_executes_new_round_and_replays_only_matching_receipt(
     process_work_item(store, runner, store.claim_work_summary_inputs(limit=1)[0])
 
     assert len(provider_calls) == 2
-    assert "Previous candidate" in provider_calls[1]
+    if invalid_kind == "title":
+        assert "previous output was not accepted" in provider_calls[1]
+    else:
+        assert "Previous candidate" in provider_calls[1]
     assert store.get_work_summary_input(input_id).status.value == "done"
     assert len(store.list_business_tasks()) == 1
     with store._connect() as db:
@@ -86,9 +97,14 @@ def test_semantic_repair_executes_new_round_and_replays_only_matching_receipt(
         keys = [row[0] for row in db.execute(
             "select workload_key from agent_runtime_attempts order by id"
         )]
-    assert keys == [str(run_id), f"{run_id}:decision_repair.1"]
+    repair_round = 0 if invalid_kind == "title" else 1
+    assert keys == (
+        [str(run_id), str(run_id)]
+        if invalid_kind == "title"
+        else [str(run_id), f"{run_id}:decision_repair.1"]
+    )
     replay = runner.decide(
-        item, "Replay the same correction", run_id=run_id, repair_round=1,
+        item, "Replay the same correction", run_id=run_id, repair_round=repair_round,
         session_scope_id="task-agent",
     )
     assert replay.model_dump(mode="json") == corrected
@@ -96,7 +112,7 @@ def test_semantic_repair_executes_new_round_and_replays_only_matching_receipt(
     reopened = AutoReplyStore(tmp_path / "routed-repair.sqlite3")
     new_runner, new_calls = _routed_runner(reopened, config, [corrected])
     restored = new_runner.decide(
-        item, "Restore persisted correction", run_id=run_id, repair_round=1,
+        item, "Restore persisted correction", run_id=run_id, repair_round=repair_round,
         session_scope_id="task-agent",
     )
     assert restored == replay
@@ -108,15 +124,19 @@ def test_routed_semantic_repair_exhaustion_has_real_bounded_provider_turns(
 ):
     monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
     store = AutoReplyStore(tmp_path / "routed-exhaustion.sqlite3")
-    item = _work_item()
+    item = _work_item().model_copy(update={"summary": "Prepare report by 2026-09-25"})
     invalid = _candidate_decision(item).model_dump(mode="json")
-    invalid["task_decisions"][0]["title"] = ""
+    invalid["task_decisions"][0]["date_evidence"] = [{
+        "kind": "estimated_deadline_at", "value": "2026-09-25",
+        "source_ref": item.source.ref, "source_excerpt": "2026-09-25",
+        "actor_name": "Report document",
+    }]
     input_id = store.enqueue_work_summary_input(
         item.source.type.value, item.source.ref, item.model_dump_json()
     )
     runner, calls = _routed_runner(store, config, [invalid])
 
-    with pytest.raises(TaskDecisionRepairExhausted, match="requires title"):
+    with pytest.raises(TaskDecisionRepairExhausted, match="date actor_name"):
         process_work_item(store, runner, store.claim_work_summary_inputs(limit=1)[0])
 
     assert len(calls) == 1 + TASK_DECISION_REPAIR_ROUNDS
@@ -139,9 +159,9 @@ def test_date_evidence_is_repairable_before_domain_transaction(date_patch, conte
         "kind": "estimated_deadline_at", "value": "2026-09-25",
         "source_ref": item.source.ref, "source_excerpt": "2026-09-25", **date_patch,
     }
-    decision = type(decision).model_validate({"task_decisions": [{
+    decision = type(decision).model_validate({"project_decisions": [], "task_decisions": [{
         **decision.task_decisions[0].model_dump(mode="json"), "date_evidence": [fact],
-    }]})
+    }], "project_assessments": [], "update_summary": "No relevant Project was found."})
 
     with pytest.raises(RepairableTaskDecisionValidationError, match=message):
         _validate_task_agent_decision(decision, work_item=item)

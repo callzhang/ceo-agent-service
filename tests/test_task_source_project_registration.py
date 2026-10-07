@@ -248,7 +248,10 @@ def test_only_active_official_exact_title_project_is_reused(tmp_path, source_typ
     result = apply_task_agent_decision(
         store, summary_input_id=1, work_item=item, decision=decision, record_run=False
     )
-    assert set(store.list_business_projects()) == {inactive, active}
+    assert {project.id for project in store.list_business_projects()} == {
+        inactive.id,
+        active.id,
+    }
     assert result.project_links == ((task_id, active.canonical_anchor_id),)
 
 

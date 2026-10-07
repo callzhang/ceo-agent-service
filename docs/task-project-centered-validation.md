@@ -43,12 +43,19 @@ is a bounded real-source replay on a copy, not a production mutation or a proof
 of exhaustive cross-source project coverage. CRM lookup remains read-only;
 there is still no positive confirmed CRM-customer link readback.
 
-The CRM implementation is still isolated and unreleased. No push, merge, deploy,
-or production behavior change has happened. Remaining release gates are final
-diff/claims review, the PR/merge, deployment, and post-deploy process/health/
-queue/Attention/History readback. See the later dated sections for historical
-experiments; where those sections say a native or W39 run is pending, they
-describe an earlier checkpoint and are superseded by this section.
+The implementation is on PR #16 and is not deployed. Its first GitHub full-suite
+run completed with 20 failures among 10,696 passed tests. The failures exposed
+stale fixtures/assertions after the required Project decision/assessment fields,
+strict Task Agent output schema, and project-centred Skill contract changed. The
+affected test expectations and inputs were corrected without weakening the
+runtime contract. Verification now passes across all seven affected test files
+(410 tests), plus the focused Task Agent/eval/daily-report/message-ledger set
+(274 tests); Ruff and `git diff --check` pass. A new PR CI run is still required
+for the updated commit. Remaining gates are rerun CI, final review, merge,
+deployment, and post-deploy process/health/queue/Attention/History readback. See
+later dated sections for historical experiments; where those sections say a
+native or W39 run is pending, they describe an earlier checkpoint and are
+superseded by this section.
 
 ## 2026-10-06 CRM customer-association continuation (unreleased)
 
