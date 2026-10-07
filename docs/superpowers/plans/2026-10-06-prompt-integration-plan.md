@@ -299,6 +299,12 @@ Derek 明确要求同一个对话对象复用已有session。代码与生产记�
 
 ### 第一次固定比较的停止与修订
 
-候选 b79ab9ca 的40个原生输出格式有效，但独立盲评发现 scheduled-report Consumer 把 principal-only 投递替换成 group；状态 pending 还存在被加强为 underway 的问题。该候选未批准发布，全部原生结果/盲评保留。遵循“质量下降保留最小必要信息”，恢复 Audit Task 开头原有 Application Result Contract；Developer 中仍只保留一份 Audit role contract。共同原则强调既有请求的交付物、收件人、受众/渠道及来源状态/主体准确性，没有新增审核/授权政策。用原来相同冻结用例、模型、配置再次比较，baseline 不重新挑选或改写。
+候选 b79ab9ca 的40个原生输出格式有效，但独立盲评发现 scheduled-report Consumer 在未建立请求收件人的稳定 provider 身份时，采用触发任务的运行时 conversation_id 作为投递目标（用例并未字面声明 principal-only；运行时键也不证明存在真实群）；状态 pending 还存在被加强为 underway 的问题。该候选未批准发布，全部原生结果/盲评保留。遵循“质量下降保留最小必要信息”，恢复 Audit Task 开头原有 Application Result Contract；Developer 中仍只保留一份 Audit role contract。共同原则强调既有请求的交付物、收件人、受众/渠道及来源状态/主体准确性，没有新增审核/授权政策。用原来相同冻结用例、模型、配置再次比较，baseline 不重新挑选或改写。
 
-第二版 af054b9f/de66fd5d 的固定40个输出中，Audit已识别虚构目标与对外候选说明，但 Consumer 仍替代 principal-only 收件人；因此继续停止发布。第三版保留 Consumer Developer 的原有 Application Result Contract，并取消可能让模型在目标未明确时仍强行提案的泛化“需要回复就提案”表述，明确原有精确目标和依赖失败路径。没有增加审核/授权政策；目标不足不能用另一目的地假装完成。先同条件运行收件人/未知时区/邮件 smoke，再跑完整冻结比较。所有失败候选证据保留。
+第二版 af054b9f/de66fd5d 的固定40个输出中，Audit已识别虚构目标与对外候选说明，但 Consumer 仍以运行时 conversation_id 替代尚未核实的报告收件人；因此继续停止发布。第三版保留 Consumer Developer 的原有 Application Result Contract，并取消可能让模型在目标未明确时仍强行提案的泛化“需要回复就提案”表述，明确原有精确目标和依赖失败路径。没有增加审核/授权政策；目标不足不能用另一目的地假装完成。先同条件运行收件人/未知时区/邮件 smoke，再跑完整冻结比较。所有失败候选证据保留。
+
+### 中断恢复与 CI 回归修正
+
+临时 worktree 清除后，从已提交的 e741f80a 在 .worktrees/prompt-integration 恢复。私有原生报告保留11/40完成角色，恢复运行仅在全部冻结输入逐字相同且已有结果是无失败的顺序前缀时追加其余角色；不重跑已完成结果。
+
+CI 的六个 Skill 用例仍从可编辑共同原则文件寻找固定 Dynamic Skill，已改为检查真正的 Consumer Developer 组装输出，全部原断言保留（修正前6失败，修正后65通过）。OA 原生模拟 Agent 把同输入 source_ref 对象当 JSON 字符串，导致4个状态用例失败；测试读取器现在解析候选中的准确来源路径，原5个状态和 provider 身份断言通过，整个 runtime worker 文件74通过。此修正只涉及测试解释输入，不改运行策略。

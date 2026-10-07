@@ -1,6 +1,9 @@
 from pathlib import Path
 
-from app.consumer_agent import CORE_DYNAMIC_SKILL_BODY
+from app.consumer_agent import (
+    CORE_DYNAMIC_SKILL_BODY,
+    consumer_developer_instructions,
+)
 
 import pytest
 
@@ -11,7 +14,6 @@ SKILLS_ROOT = bundled_business_skills_root()
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_PATH = SKILLS_ROOT / "ceo-personnel-communication" / "SKILL.md"
-DEFAULT_PROMPT_PATH = ROOT / "app" / "defaults" / "developer_prompt.md"
 
 
 def _skill_text() -> str:
@@ -97,7 +99,7 @@ def test_personnel_skill_reuses_specialist_skills_without_copying_workflows():
 
 
 def test_canonical_prompt_delegates_personnel_and_candidate_policy_to_skill():
-    text = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
+    text = consumer_developer_instructions(runtime_context="", work_profile="")
 
     for removed in (
         "必须输出 user_response.sensitivity_kind",
