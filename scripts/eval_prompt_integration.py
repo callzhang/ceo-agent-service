@@ -324,6 +324,36 @@ def reusable_consumer_results(source, source_sha256, prepared, rows):
     return reusable
 
 
+def validate_resume_evidence(previous, reusable, source_sha256):
+    """Recount an interrupted prefix against fresh source evidence before append."""
+    recorded = previous.get("model_evidence")
+    if bool(recorded) != bool(reusable):
+        raise ValueError("resume Consumer reuse mode differs")
+    results = previous["arms"]["candidate"]["results"]
+    if not reusable:
+        if any("evidence_origin" in result for result in results):
+            raise ValueError("resume contains unexplained reused evidence")
+        return
+    if recorded["source_report_sha256"] != source_sha256:
+        raise ValueError("resume Consumer source report changed")
+    reused_count = 0
+    new_count = 0
+    for result in results:
+        if result["role"] == "consumer":
+            if result != reusable.get(result["case_id"]):
+                raise ValueError("resume Consumer source evidence differs")
+            reused_count += 1
+        else:
+            if "evidence_origin" in result:
+                raise ValueError("resume Audit carries reused evidence")
+            new_count += 1
+    if (
+        recorded["reused_model_evidence"] != reused_count
+        or recorded["new_native_calls"] != new_count
+    ):
+        raise ValueError("resume model evidence count differs")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate-ref")
@@ -426,9 +456,7 @@ def main(argv=None):
                 report = previous
                 report["resume_harness_sha256"] = sha256(Path(__file__).read_bytes()).hexdigest()
                 report["resumed_after_roles"] = start
-                if args.reuse_consumer_report:
-                    if report.get("model_evidence", {}).get("source_report_sha256") != source_sha256:
-                        raise ValueError("resume Consumer source report changed")
+                validate_resume_evidence(report, reusable, source_sha256)
             else:
                 start = 0
                 report["arms"][arm] = prepared_arm

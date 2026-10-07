@@ -99,7 +99,9 @@ native JSON and strict schema must be valid with zero tool events. Each reused
 result records its source report/input SHA. Reports and compact summaries count
 reused evidence separately from new native calls. Original events, usage and
 elapsed time remain historical evidence, not new candidate provider cost or
-latency. Audit still runs natively.
+latency. Audit still runs natively. Resuming this mode requires the same source
+report and checks each saved Consumer result against it while recounting new
+and reused rows.
 
 ## Independent review
 
@@ -161,7 +163,8 @@ cannot be confused with a prior packet's key. The same packet builder accepts
 matching-source and profile comparisons; each requires its own output and key.
 The packet includes one common System Action Contracts section only after
 checking that exact section in every actual baseline/candidate Consumer/Audit
-Developer input. Arm-specific Developer text remains out of the packet.
+Developer input and full case/role coverage in both input artifacts. Arm-specific
+Developer text remains out of the packet.
 
 The20 frozen cases use a task Skill override rather than the default catalog.
 Their source bindings preserve complete synthetic facts but do not equal the

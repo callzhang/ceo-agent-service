@@ -336,3 +336,11 @@ GET settings/prompts 改用同一次原文快照，分别渲染各配置，返�
 现有中文原则已原样迁入默认Developer，1083字符/2961字节（无尾随换行），与0d AST常量.strip()精确相同，SHA3ccd6261291b6610aa95a4764d4fd81b7c232011f8ca7dbc52b18639703fb457。两角色在Dynamic Skill之后、System Action之前插入冻结渲染值一次；代码常量与后续英文重复段删除，角色/schema/能力/审核/执行条款未改写，原Consumer与Audit必要合同副本保留。独立spec复核通过；CI bundled Skill条件下定向319通过4跳过，UI82通过2跳过与构建通过。外部共享mail Skill的一个断言漂移未修改，用仓库CI绑定的源检查通过。默认输入逐字比较与Audit模型验收待完成。
 
 54f逐字核对发现默认Consumer仍有一项实际差异：恢复合同副本时，将Application Result Contract和Decision Evidence的原序放反。已按0d原序恢复（Decision Evidence在前、Consumer合同在后）；位置回归修正前失败/后通过，125项定向检查通过。Task、Runtime Context、全部来源绑定/digest先前已相同。继续证明最终默认Developer全文相同；54f不允许复用基线输出。
+
+### 3c 单一来源的精确比较
+
+最终 3c078876 的 Consumer 在主语料20项、匹配来源4项、原工作人格4项中，Developer、Task、Runtime Context、source_bindings与候选digest全部与保存基线逐字相同；28项同模型/settings的原生结果完整、严格schema有效且没有工具事件。新增配置指纹属于服务回执，没有进入模型文本。main显式复用20项原生Consumer证据，记录源report/input SHA，新增20次Audit原生调用；复用的usage/耗时仅保留为历史证据，不计作新调用成本或延迟。匹配来源和精简人格补充分别重新运行8个角色。
+
+固定主语料静态Developer：Consumer37921→37921（相同），Audit28168→23869（减少4299，15.26%）。默认可编辑共同原则1083字符，来自现有中文原文；这不表示完整Consumer Developer只有1083字符。静态30%目标仍未达到。真实Audit Task去重样本仍为67418→46009（31.7556%），不得把单条样本扩大为生产分布。最终原生Audit质量及精简人格质量尚待独立盲评，未上线、未改线上工作人格。
+
+新盲评包仅在每个实际两角色/两组输入中的System Action Contracts完全相同时纳入该共享合同，供审阅精确action参数；没有纳入候选独有提示或预期outcome。此前完整输出、失败候选和盲评原件保留，不以新审阅抹掉历史。

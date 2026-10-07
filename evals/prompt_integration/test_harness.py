@@ -168,6 +168,10 @@ def test_blind_packet_supports_four_case_supplement_and_distinct_keys():
     changed_contract["arms"]["candidate"]["inputs"][0]["developer"] = "## System Action Contracts\ndifferent\n## Pydantic Wire Contract\n"
     with pytest.raises(ValueError, match="differ between actual role inputs"):
         build_packet(report("baseline"), changed_contract, manifest)
+    missing_input = report("candidate")
+    missing_input["arms"]["candidate"]["inputs"].pop()
+    with pytest.raises(ValueError, match="complete manifest inputs"):
+        build_packet(report("baseline"), missing_input, manifest)
 
 
 def test_reuse_consumer_evidence_requires_exact_input_and_valid_source():
@@ -233,3 +237,23 @@ def test_summary_counts_reused_evidence_separately_from_new_calls():
     assert summary["arms"]["candidate"]["roles"]["consumer"]["reused_model_evidence"] == 1
     assert summary["arms"]["candidate"]["roles"]["consumer"]["provider_usage_includes_reused_history"]
     assert summary["arms"]["candidate"]["roles"]["audit"]["new_native_calls"] == 1
+
+
+def test_resume_reuse_verifies_source_results_mode_and_counts():
+    consumer = {"case_id": "one", "role": "consumer", "native": {"raw": "saved"}, "evidence_origin": {"kind": "reused_baseline_native"}}
+    audit = {"case_id": "one", "role": "audit", "native": {"raw": "fresh"}}
+    previous = {
+        "arms": {"candidate": {"results": [consumer, audit]}},
+        "model_evidence": {"source_report_sha256": "sha", "reused_model_evidence": 1, "new_native_calls": 1},
+    }
+    eval_module.validate_resume_evidence(previous, {"one": consumer}, "sha")
+    with pytest.raises(ValueError, match="reuse mode differs"):
+        eval_module.validate_resume_evidence(previous, {}, None)
+    tampered = json.loads(json.dumps(previous))
+    tampered["arms"]["candidate"]["results"][0]["native"]["raw"] = "changed"
+    with pytest.raises(ValueError, match="source evidence differs"):
+        eval_module.validate_resume_evidence(tampered, {"one": consumer}, "sha")
+    tampered = json.loads(json.dumps(previous))
+    tampered["model_evidence"]["new_native_calls"] = 2
+    with pytest.raises(ValueError, match="count differs"):
+        eval_module.validate_resume_evidence(tampered, {"one": consumer}, "sha")

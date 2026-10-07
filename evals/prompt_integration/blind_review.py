@@ -43,9 +43,15 @@ def build_packet(baseline, candidate, manifest, *, namespace=""):
     baseline_rows = baseline["arms"]["baseline"]["results"]
     candidate_rows = candidate["arms"]["candidate"]["results"]
     expected = {(case["id"], role) for case in manifest["cases"] for role in ("consumer", "audit")}
-    for rows in (baseline_rows, candidate_rows):
+    for arm, report, rows in (
+        ("baseline", baseline, baseline_rows),
+        ("candidate", candidate, candidate_rows),
+    ):
         if len(rows) != len(expected) or {(r["case_id"], r["role"]) for r in rows} != expected:
             raise ValueError("complete manifest cases and roles required for independent review")
+        inputs = report["arms"][arm]["inputs"]
+        if len(inputs) != len(expected) or {(r["case_id"], r["role"]) for r in inputs} != expected:
+            raise ValueError("complete manifest inputs required for independent review")
     shared_contract = common_system_action_contract(baseline, candidate)
     rng = random.Random(20261006)
     packet = {
