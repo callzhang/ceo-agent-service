@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import workbenchStyles from "./styles.css?raw";
 import emailStyles from "./pages/email/email.css?raw";
@@ -12,6 +12,52 @@ function mediumStyles() {
 }
 
 describe("Tasks responsive layout contract", () => {
+  describe("long source references", () => {
+    let stylesheet: HTMLStyleElement;
+    let row: HTMLDivElement;
+
+    beforeEach(() => {
+      stylesheet = document.createElement("style");
+      stylesheet.textContent = workbenchStyles;
+      document.head.append(stylesheet);
+      row = document.createElement("div");
+      row.className = "business-project-row";
+      row.style.width = "330px";
+      document.body.append(row);
+    });
+
+    afterEach(() => {
+      row.remove();
+      stylesheet.remove();
+    });
+
+    it.each(["span", "a"])("delivers shrinkable wrapping styles to %s references", (tag) => {
+      const metadata = document.createElement("p");
+      metadata.className = "business-task-meta";
+      const reference = document.createElement(tag);
+      const source = `registry-source:${"0123456789abcdef".repeat(12)}`;
+      reference.textContent = source;
+      if (reference instanceof HTMLAnchorElement) reference.href = "https://example.com/source";
+      metadata.append(reference);
+      row.append(metadata);
+
+      // JSDOM has no layout engine: verify delivery of the real stylesheet's
+      // wrapping contract; browser viewport checks verify the rendered width.
+      const metadataStyle = getComputedStyle(metadata);
+      expect(metadataStyle.display).toBe("flex");
+      expect(metadataStyle.flexWrap).toBe("wrap");
+      expect(metadataStyle.minWidth).toBe("0px");
+      const referenceStyle = getComputedStyle(reference);
+      expect(referenceStyle.overflowWrap).toBe("anywhere");
+      expect(referenceStyle.minWidth).toBe("0px");
+      expect(referenceStyle.maxWidth).toBe("100%");
+      expect(referenceStyle.whiteSpace).not.toBe("nowrap");
+      expect(referenceStyle.textOverflow).not.toBe("ellipsis");
+      expect(referenceStyle.overflow).not.toBe("hidden");
+      expect(reference.textContent).toBe(source);
+    });
+  });
+
   it("wraps dense project accountability and stacks task rows on narrow screens", () => {
     expect(workbenchStyles).toMatch(/\.business-project-facts\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/);
     expect(workbenchStyles).toMatch(/\.business-citations blockquote\s*\{[^}]*white-space:\s*pre-wrap;[^}]*overflow-wrap:\s*anywhere;/);
