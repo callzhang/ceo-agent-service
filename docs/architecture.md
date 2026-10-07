@@ -785,6 +785,14 @@ dedupe_key、上下文、Task 证据角色与历史仍独立。同 ref 的 memor
 公开 BusinessTaskSignal.evidence_text 仍由 JOIN 返回原文；Task/event/run JSON 不重写。
 当前业务 schema 是 `2026-10-04.4`，不等于生产已迁移。
 
+Console 提供两条只读的原始证据接口。`GET /api/console/tasks/projects/{project_id}/evidence`
+按既有 Store 顺序分页返回 `BusinessProjectEvidence` 引用（project_id、signal_id、created_at），
+不复制来源正文；第一页取最新窗口，meta 返回 total、has_more 和下一页 cursor。项目详情原有的
+20 条有界来源及 context 引文 pinned 行为保持不变。`GET /api/console/tasks/signals/{signal_id}`
+按精确 Signal ID 返回完整 `BusinessTaskSignal`，evidence_text 来自不可变 source document 的原始
+正文，不走展示截断或值规范化；相同 source_ref 的不同来源版本仍由各自 Signal 和
+source_document_id 区分。两条接口都在一个只读 SQLite snapshot 中执行，不修改业务领域表。
+
 Task 保留真实独立交付物和行动的身份。来源明确行动记 origin=source；缺真实负责人/授权等时
 仍可为候选，不因为项目有总负责就伪造 Task 指派。新增任务必须非空标题；已有 ID 的更新可不填标题，
 仅 update_fields 修改提供的标题/描述，promotion、acceptance、merge 保留持久化标题。
