@@ -16,6 +16,8 @@ from app.agent_context import (
 from app.email_classifier_contracts import EmailAttachmentMetadata
 from app.agent_contracts import ConsumerAgentResult, ConsumerProposal
 from app.consumer_agent import (
+    audit_developer_instructions,
+    consumer_developer_instructions,
     AUDIT_DYNAMIC_SKILL_BODY,
     CONSUMER_DYNAMIC_SKILL_BODY,
 )
@@ -46,9 +48,8 @@ def test_role_boundary_invariant_is_complete_across_all_core_prompts():
     assert "personal blocked or sleep hold" in _AUDIT_AGENT_RULES
     assert "sourced importance comparison" in _AUDIT_AGENT_RULES
     assert "request for the missing reason" in _AUDIT_AGENT_RULES
-    assert "Consumer Agent A gathers facts and proposes a typed candidate" in (
-        SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
-    )
+    assert "Consumer Agent A gathers facts and proposes a typed candidate" in consumer_developer_instructions()
+    assert "## 原请求与取证" in SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
 
 
 def test_consumer_core_prompt_contains_only_runtime_invariants():
@@ -735,12 +736,13 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
         audit_rules="Only publish supported facts.",
     ).render()
 
+    assert "Audit reads and judges it" in audit_developer_instructions("Only publish supported facts.")
     assert "Audit reads and judges it" in rendered
     assert '"proposal_revision": 2' in rendered
     assert '"operation_id": "op-2"' in rendered
     assert "请补充材料。" in rendered
     assert "dws oa approval detail --instance-id pid-1 --format json" in rendered
-    assert "Audit reads and judges it without executing actions" in rendered
+    assert "Audit reads and judges it without executing actions" in audit_developer_instructions("Only publish supported facts.")
     assert '"candidate_digest": "' + "b" * 64 + '"' in rendered
     assert "Candidate revision" in rendered
     assert "group-send candidate" not in rendered

@@ -25,7 +25,7 @@ def test_context_uses_final_role_directory_and_declared_tools(monkeypatch):
     audit = render_runtime_context(role="audit", route=route(), command=command("audit", monkeypatch), task=None, current_time="2026-10-05T18:00:00-07:00")
     assert "/task/current" in consumer
     assert "agent_cli.list_dingtalk_calendar_events" in consumer
-    assert "Read the principal's events over an explicit time window" in consumer
+    assert "Read the principal's events over an explicit time window" not in consumer
     assert "agent_cli.consumer_artifact_write" in consumer
     assert "agent_cli.consumer_artifact_write" not in audit
     assert "exa.web_search_exa" in consumer
@@ -176,3 +176,29 @@ def test_explicit_timezone_evidence_requires_a_nonempty_source_zone():
         {"participant_id": "unknown-person"}, {"timezone": "  "},
         {"participant_id": "known-person", "timezone": "Europe/London"}]}) == [
             {"participant_id": "known-person", "timezone": "Europe/London"}]
+
+
+@pytest.mark.parametrize('role', ['consumer', 'audit'])
+@pytest.mark.parametrize('kind', [RuntimeKind.CODEX_CLI, RuntimeKind.CLAUDE_CLI])
+def test_context_preserves_every_declared_tool_without_repeating_schema_descriptions(monkeypatch, role, kind):
+    from app.agent_cli import build_role_server
+    from app.runtime_prompt_context import declared_role_tools
+
+    value = command(role, monkeypatch) if kind is RuntimeKind.CODEX_CLI else ['claude', '--tools', 'Read,Glob,Grep']
+    selected = route(kind)
+    text = render_runtime_context(role=role, route=selected, command=value, task=None, current_time='2026-10-05T18:00:00-07:00')
+    tools = declared_role_tools(role, selected, value)
+    expected = [f'{server}.{name}' for server, names in sorted(tools.items()) for name in names]
+    actual = [line.removeprefix('  - ') for line in text.splitlines() if line.startswith('  - ')]
+    assert actual == expected
+    assert '参数以本轮工具 schema 为准' in text
+
+    descriptors = {tool.name: tool for tool in build_role_server(role)._tool_manager.list_tools()}
+    old_lines = []
+    for server, names in sorted(tools.items()):
+        for name in names:
+            description = descriptors[name].description.strip().splitlines()[0] if server == 'agent_cli' and name in descriptors else ''
+            old_lines.append(f'  - {server}.{name}' + (f'：{description}' if description else ''))
+    current_lines = '\n'.join(f'  - {name}' for name in expected)
+    baseline = text.replace(current_lines, '\n'.join(old_lines))
+    assert len(text) < len(baseline) * .8

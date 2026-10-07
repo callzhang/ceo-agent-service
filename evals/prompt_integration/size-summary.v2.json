@@ -1,0 +1,58 @@
+{
+  "full_profile_measurement": {
+    "source_path": "/Users/derek/Services/ceo-agent-service/data/work-profile/work_profile.md",
+    "characters": 16325,
+    "utf8_bytes": 17513,
+    "private_content_included": false
+  },
+  "synthetic_profile_characters": 399,
+  "baseline_synthetic_size": {
+    "consumer": {
+      "static_developer_chars": {
+        "min": 37921,
+        "mean": 37921.0,
+        "max": 37921
+      },
+      "developer_chars": {
+        "min": 38731,
+        "mean": 38739.0,
+        "max": 38743
+      },
+      "task_chars": {
+        "min": 5865,
+        "mean": 6156.4,
+        "max": 7146
+      },
+      "total_chars": {
+        "min": 44603,
+        "mean": 44895.4,
+        "max": 45881
+      }
+    },
+    "audit": {
+      "static_developer_chars": {
+        "min": 28168,
+        "mean": 28168.0,
+        "max": 28168
+      },
+      "developer_chars": {
+        "min": 28902,
+        "mean": 28910.0,
+        "max": 28914
+      },
+      "task_chars": {
+        "min": 13431,
+        "mean": 14372.35,
+        "max": 14974
+      },
+      "total_chars": {
+        "min": 42338,
+        "mean": 43282.35,
+        "max": 43886
+      }
+    }
+  },
+  "native_history": "fresh ephemeral, zero prior turns",
+  "tokenizer": "not measured",
+  "provider_usage": "not applicable to size-only preparation"
+}

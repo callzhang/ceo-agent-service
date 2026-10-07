@@ -147,6 +147,7 @@ class AgentTaskContext:
         *,
         current_time: str | None = None,
         include_heading: bool = True,
+        source_reference: str = "",
     ) -> str:
         trigger = {
             "task_id": self.task_id,
@@ -181,6 +182,13 @@ class AgentTaskContext:
             }
             for material in self.materials
         ]
+        if source_reference:
+            trigger["text"] = {"source_ref": source_reference + ".trigger_text"}
+            trigger["raw_payload"] = {"source_ref": source_reference + ".trigger_raw_payload"}
+            for index, message in enumerate(messages):
+                message["text"] = {"source_ref": f"{source_reference}.messages[{index}].text"}
+            for index, material in enumerate(materials):
+                material["reference"] = {"source_ref": f"{source_reference}.materials[{index}].reference"}
         effective_current_time = current_time or _current_local_time()
         sections = [
             "Current turn execution time\n"
@@ -336,11 +344,21 @@ class AuditTurnContext:
     audit_rules: str
 
     def render(self, *, current_time: str | None = None) -> str:
+        from app.reviewed_sources import context_source
+
+        source_reference = ""
+        actual = json.dumps(context_source(self.task), ensure_ascii=False, sort_keys=True)
+        for index, binding in enumerate(self.candidate.source_bindings):
+            if (binding.provider == "task_context" and binding.object_ref == self.task.trigger_message_id
+                    and json.dumps(binding.value, ensure_ascii=False, sort_keys=True) == actual):
+                source_reference = f"Candidate revision.candidate.source_bindings[{index}].value"
+                break
         context_facts = "\n\n".join(
             (
                 self.task.render_business_context(
                     current_time=current_time,
                     include_heading=False,
+                    source_reference=source_reference,
                 ),
                 "Candidate revision\n"
                 + _json(

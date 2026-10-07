@@ -3,6 +3,37 @@ from app.prompt_preview import current_prompt_preview, historical_prompt_preview
 from app.store import AgentRole, AutoReplyStore
 
 
+def test_current_preview_separates_frozen_current_configuration_from_saved_task_fingerprints(tmp_path, monkeypatch):
+    from app.prompt_composition import PromptConfiguration
+
+    store = AutoReplyStore(tmp_path / "preview.sqlite3")
+    task, run = task_and_run(store)
+    saved = {"developer_template": "a" * 64, "user_template": "b" * 64, "work_profile_instruction": "c" * 64}
+    saved_time = "2026-10-05T10:00:00+00:00"
+    store.append_agent_run_event(run.id, {"type": "runtime.prompt", "role": "consumer", "rendered_at": saved_time,
+        "task_prompt": "Saved complete Task with old template, materials and receipts",
+        "invocation_facts": {"prompt_configuration": saved, "private_profile_source": "Private profile body marker"}}, owner="test")
+    frozen = PromptConfiguration("New principles", "Current shared principles", "New {{task_context}}", "Current profile wrapper")
+    loads = []
+    def load_once(**kwargs):
+        loads.append(kwargs)
+        return frozen
+    monkeypatch.setattr("app.prompt_preview.load_prompt_configuration", load_once)
+
+    result = current_prompt_preview(store, role="consumer", config=load_runtime_config({}), task_id=task.id)
+
+    assert result["configuration_fingerprints"] == frozen.fingerprints()
+    assert result["task_source_configuration_fingerprints"] == {**saved, "developer_instructions": None}
+    assert result["task_source_run_id"] == run.id
+    assert result["task_source_rendered_at"] == saved_time
+    assert result["invocation_facts"]["prompt_configuration"] == frozen.fingerprints()
+    assert result["invocation_facts"] == {"prompt_configuration": frozen.fingerprints()}
+    assert result["task_prompt"] == "Saved complete Task with old template, materials and receipts"
+    assert "New " not in result["task_prompt"]
+    assert loads == [{"create_missing": False, "role": "consumer"}]
+    assert len(store.get_agent_run(run.id).tool_events) == 1
+
+
 def test_current_preview_renders_full_role_without_creating_profile_or_rule_files(monkeypatch, tmp_path):
     monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(tmp_path / "missing-profile.md"))
     monkeypatch.setenv("CEO_AUDIT_RULES_TEMPLATE_PATH", str(tmp_path / "missing-rules.md"))
@@ -44,8 +75,9 @@ def test_historical_preview_reads_saved_input_not_current_templates(tmp_path, mo
         "rendered_at": "2026-10-05T10:00:00+00:00", "developer_instructions": "Old instructions",
         "task_prompt": "Original submitted task", "submitted_input": "Original submitted task",
         "runtime_context": "Old context", "redacted": False}
+    saved = {"developer_template": "a" * 64, "user_template": "b" * 64, "work_profile_instruction": "c" * 64}
     event.update(runtime_attempt_id=81, execution_generation="g1", proposal_revision=2,
-                 invocation_facts={"stage_index": 1})
+                 invocation_facts={"stage_index": 1, "prompt_configuration": saved})
     store.append_agent_run_event(run.id, event, owner="test")
     monkeypatch.setenv("USER_ALIAS", "Different principal today")
     result = historical_prompt_preview(store, run_id=run.id)
@@ -57,6 +89,29 @@ def test_historical_preview_reads_saved_input_not_current_templates(tmp_path, mo
     assert result["proposal_revision"] == 2 and result["stage_index"] == 1
     assert result["submission_state"] == "prepared" and "不能称为模型已经收到" in result["reason"]
     assert store.get_reply_task(task.id).status == task.status
+    assert len(store.get_agent_run(run.id).tool_events) == 1
+    assert result["configuration_fingerprints"] == {**saved, "developer_instructions": None}
+    assert result["task_source_configuration_fingerprints"] == {**saved, "developer_instructions": None}
+    assert result["task_source_run_id"] == run.id
+    assert result["task_source_rendered_at"] == event["rendered_at"]
+
+
+def test_historical_missing_fingerprints_stay_unrecorded_instead_of_reading_current_config(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "preview.sqlite3")
+    task, run = task_and_run(store)
+    store.append_agent_run_event(run.id, {"type": "runtime.prompt", "role": "consumer", "task_id": task.id,
+        "runtime_attempt_id": 81, "runtime_kind": "codex_cli", "route_name": "old", "model": "old",
+        "rendered_at": "2026-10-05T10:00:00+00:00", "developer_instructions": "Saved Developer",
+        "task_prompt": "Saved Task", "submitted_input": "Saved Task", "runtime_context": "Saved context"}, owner="test")
+    def unexpected_current_read(**_kwargs):
+        raise AssertionError("historical metadata must not be rebuilt from current configuration")
+    monkeypatch.setattr("app.prompt_preview.load_prompt_configuration", unexpected_current_read)
+
+    result = historical_prompt_preview(store, run_id=run.id)
+    unknown = {"developer_instructions": None, "developer_template": None, "user_template": None, "work_profile_instruction": None}
+    assert result["configuration_fingerprints"] == unknown
+    assert result["task_source_configuration_fingerprints"] == unknown
+    assert result["task_prompt"] == "Saved Task"
     assert len(store.get_agent_run(run.id).tool_events) == 1
 
 
@@ -137,7 +192,8 @@ def test_historical_preview_can_select_earlier_invoked_attempt(tmp_path):
         store.append_agent_run_event(run.id, {"type": "runtime.prompt", "role": "consumer", "task_id": task.id,
             "runtime_attempt_id": attempt, "runtime_kind": "codex_cli", "route_name": f"route-{attempt}", "model": "model",
             "rendered_at": "2026-10-05T10:00:00+00:00", "developer_instructions": f"instructions-{attempt}",
-            "task_prompt": "task", "submitted_input": "task", "runtime_context": "context"}, owner="test")
+            "task_prompt": "task", "submitted_input": "task", "runtime_context": "context",
+            "invocation_facts": {"prompt_configuration": {"developer_template": f"sha-{attempt}"}}}, owner="test")
         if attempt == 81:
             store.append_agent_run_event(run.id, {"type": "runtime.prompt.invoked", "runtime_attempt_id": attempt}, owner="test")
     latest = historical_prompt_preview(store, run_id=run.id)
@@ -145,6 +201,11 @@ def test_historical_preview_can_select_earlier_invoked_attempt(tmp_path):
     assert [item["runtime_attempt_id"] for item in latest["attempts"]] == [81, 82]
     earlier = historical_prompt_preview(store, run_id=run.id, runtime_attempt_id=81)
     assert earlier["developer_instructions"] == "instructions-81" and earlier["submission_state"] == "invoked"
+    assert latest["configuration_fingerprints"]["developer_template"] == "sha-82"
+    assert earlier["configuration_fingerprints"] == {
+        "developer_template": "sha-81", "developer_instructions": None, "user_template": None, "work_profile_instruction": None,
+    }
+    assert earlier["task_source_configuration_fingerprints"] == earlier["configuration_fingerprints"]
     with pytest.raises(LookupError):
         historical_prompt_preview(store, run_id=run.id, runtime_attempt_id=99)
 

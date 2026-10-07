@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "files": [
+    {
+      "source": "app/defaults/developer_prompt.md",
+      "target": "developer_prompt",
+      "old_sha256": "b2bb8ed69298c7fa57bf95c54fa6693fa76d265e90d07cb666ab05e35cfe2623",
+      "new_sha256": "3ccd6261291b6610aa95a4764d4fd81b7c232011f8ca7dbc52b18639703fb457"
+    },
+    {
+      "source": "app/defaults/user_prompt.md",
+      "target": "user_prompt",
+      "old_sha256": "5106c30c0ea2cbf133ec537a600d3250b699659c786892eaa46434cdb6eff398",
+      "new_sha256": "164feb55f0f14f01253f5394eae21e692a64d089e60e868872ec39a2579a1866"
+    }
+  ]
+}

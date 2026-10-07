@@ -1,6 +1,9 @@
 from pathlib import Path
 
-from app.consumer_agent import CORE_DYNAMIC_SKILL_BODY
+from app.consumer_agent import (
+    CORE_DYNAMIC_SKILL_BODY,
+    consumer_developer_instructions,
+)
 
 import pytest
 
@@ -11,7 +14,6 @@ SKILLS_ROOT = bundled_business_skills_root()
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_PATH = SKILLS_ROOT / "ceo-calendar-invite" / "SKILL.md"
-DEFAULT_PROMPT_PATH = ROOT / "app" / "defaults" / "developer_prompt.md"
 
 
 def _skill_text() -> str:
@@ -69,7 +71,7 @@ def test_calendar_skill_defines_complete_read_and_decision_workflow():
 
 
 def test_developer_prompts_delegate_calendar_policy_to_business_skills():
-    text = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
+    text = consumer_developer_instructions(runtime_context="", work_profile="")
 
     assert "<var: calendar_rules_path>" not in text
     assert CORE_DYNAMIC_SKILL_BODY in text

@@ -1,0 +1,50 @@
+{
+  "scope": "Count-only summary safe to share. Character counts are not provider token usage. No model calls were made.",
+  "refs": {
+    "main_baseline": "0d6bf42eb2922ed57a6bc6de8b836f5a443106c3",
+    "candidate": "e741f80a1d0ae8a5805082e35ec4f03acea4edd8"
+  },
+  "saved_audit_run_24805_task": {
+    "baseline_characters": 67418,
+    "candidate_characters": 46009,
+    "reduction_characters": 21409,
+    "reduction_percent": 31.755614227654334,
+    "candidate_binding_and_digest_preserved": true,
+    "note": "One dynamic Audit task; not a static-input or overall-token claim."
+  },
+  "frozen_synthetic_20_case_static_developer": {
+    "consumer": {
+      "baseline_characters": 37921,
+      "candidate_characters": 39141,
+      "change_characters": 1220,
+      "change_percent": 3.217214735898315
+    },
+    "audit": {
+      "baseline_characters": 28168,
+      "candidate_characters": 25089,
+      "reduction_characters": 3079,
+      "reduction_percent": 10.930843510366373
+    },
+    "note": "Twenty synthetic cases per role; not twenty real runtime records."
+  },
+  "available_real_saved_runtime_prompts": {
+    "consumer_distinct_tasks": 4,
+    "audit_distinct_tasks": 4,
+    "note": "Earlier runs lacked saved runtime.prompt snapshots and were not regenerated."
+  },
+  "public_default_skill_catalog": {
+    "entries": 12,
+    "compact_characters": 4192,
+    "prior_json_characters": 4945,
+    "reduction_characters": 753,
+    "reduction_percent": 15.227502527805864
+  },
+  "english_profile_reference": {
+    "original_characters": 16324,
+    "final_draft_characters": 8804,
+    "original_o200k_reference_tokens": 3942,
+    "final_draft_o200k_reference_tokens": 1703,
+    "tokenizer": "tiktoken 0.13.0 o200k_base reference only; not native provider usage",
+    "published": false
+  }
+}
