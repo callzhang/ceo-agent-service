@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-07: Synchronize the Git-tracked common Developer prompt with the
+  already approved Chinese default and pin byte-for-byte equality in release
+  regression tests. Retain template tracking, publication receipts and the
+  existing deployment dirty-tree check; no prompt or audit policy changes.
+
 - 2026-10-07: Invalid current Work Item Project citations now enter the existing
   bounded Task Agent correction loop before atomic apply. The same source and
   contiguous-quote checks still run during apply, including nested context and

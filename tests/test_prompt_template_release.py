@@ -320,3 +320,10 @@ def test_checked_release_manifest_pins_baseline_and_current_two_defaults():
         assert entry['source'] == f"app/defaults/{entry['target']}.md"
         assert entry['old_sha256'] == old_sha
         assert entry['new_sha256'] == new_sha == _digest((root / entry['source']).read_bytes())
+
+
+def test_tracked_common_developer_template_matches_approved_release_default():
+    root = Path(__file__).resolve().parents[1]
+    tracked = root / 'data/prompts/developer_prompt.md'
+    source = root / 'app/defaults/developer_prompt.md'
+    assert tracked.read_bytes() == source.read_bytes()
