@@ -9,6 +9,13 @@
 
 ## Unreleased
 
+- 2026-10-07: Workbench idle claim polls no longer acquire a SQLite writer
+  lock when no queued or expired running turn exists. A closed read preflight
+  avoids contention with unrelated writers, while real work retains the
+  original transactional expiry recovery, eligibility checks and CAS claim.
+  Regressions cover a competing writer, live leases, concurrent enqueue and
+  expired recovery; no queue cache or lease/retry policy changes.
+
 - 2026-10-07: Anchor Attention's scheduled recovery checks to the exact stale
   run before searching later successful replies. Nested EXISTS prevents
   unrelated dispatched successes from repeatedly scanning scheduled history.

@@ -574,6 +574,20 @@ class WorkbenchStore(AutoReplyStore):
         lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
+        # Idle polling needs no writer lock; expired leases still require recovery.
+        # Close the read before BEGIN IMMEDIATE and recheck everything under that lock.
+        with self._connect() as db:
+            ready = db.execute(
+                """
+                select 1 from workbench_turns
+                where status='queued'
+                   or (status='running' and lease_expires_at<=?)
+                limit 1
+                """,
+                (now_text,),
+            ).fetchone()
+        if ready is None:
+            return None
         with self._connect() as db:
             db.execute("begin immediate")
             self._recover_expired_turns_in_transaction(db, now_text=now_text)
