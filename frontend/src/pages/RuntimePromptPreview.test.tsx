@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RuntimePromptPreview } from "./RuntimePromptPreview";
 
@@ -32,6 +32,58 @@ describe("RuntimePromptPreview", () => {
     render(<RuntimePromptPreview />);
     expect(await screen.findByText("当前配置与公共上下文")).toBeInTheDocument();
     expect(screen.getByText("敏感字段已隐藏")).toBeInTheDocument();
+  });
+  it("identifies the historical Task body in a bound current configuration preview", async () => {
+    getPromptPreview.mockResolvedValueOnce(response({ task_id: 42, run_id: 9, scope: "服务输入范围", reason: "任务正文来自 run 9 保存的输入，不代表外部资料当前状态。" }));
+    render(<RuntimePromptPreview />);
+    expect(await screen.findByText(/当前配置与已保存历史任务正文/)).toBeInTheDocument();
+    expect(screen.getByText(/Developer 按当前已保存配置组装/)).toHaveTextContent("Task 沿用已保存的历史正文");
+    expect(screen.getByText(/Developer 按当前已保存配置组装/)).toHaveTextContent("不是该次运行的实际输入");
+    expect(screen.getByText("任务正文来自 run 9 保存的输入，不代表外部资料当前状态。")).toBeInTheDocument();
+    expect(screen.getByText("服务输入范围")).toBeInTheDocument();
+    expect(screen.getByText(item.task_prompt)).toBeInTheDocument();
+    expect(screen.queryByText(/未绑定任务/)).not.toBeInTheDocument();
+  });
+  it("describes a bound Audit Task as candidate review context rather than a User template", async () => {
+    getPromptPreview.mockResolvedValueOnce(response({ role: "audit", task_id: 42 }));
+    render(<RuntimePromptPreview />);
+    expect(await screen.findByRole("heading", { name: "Task · 完整候选审核输入" })).toBeInTheDocument();
+    expect(screen.getByText(/Developer 按当前已保存配置组装/)).toHaveTextContent("独立候选审核上下文");
+    expect(screen.queryByText(/可能采用当时的 User 模板/)).not.toBeInTheDocument();
+  });
+  it("shows current and historical Task configuration hashes separately without replacing Task text", async () => {
+    const current = { developer_instructions: "f".repeat(64), developer_template: "a".repeat(64), user_template: "b".repeat(64), work_profile_instruction: "c".repeat(64) };
+    const saved = { developer_template: "d".repeat(64), user_template: "e".repeat(64), work_profile_instruction: current.work_profile_instruction };
+    getPromptPreview.mockResolvedValueOnce(response({ task_id: 42, configuration_fingerprints: current,
+      task_source_configuration_fingerprints: saved, task_source_run_id: 9, task_source_rendered_at: "2026-10-04T10:00:00Z" }));
+    render(<RuntimePromptPreview />);
+    await screen.findByText(item.task_prompt);
+    fireEvent.click(screen.getByText("配置指纹与 Task 来源"));
+    const table = within(screen.getByRole("table", { name: "配置 SHA 与来源" }));
+    expect(table.getByRole("columnheader", { name: "当前配置" })).toBeInTheDocument();
+    expect(table.getByRole("columnheader", { name: "历史 Task 来源配置" })).toBeInTheDocument();
+    const developer = within(table.getByRole("row", { name: /Developer template/ }));
+    expect(developer.getByText(current.developer_template)).toBeInTheDocument();
+    expect(developer.getByText(saved.developer_template)).toBeInTheDocument();
+    const rendered = within(table.getByText("Developer rendered principles").closest("tr")!);
+    expect(rendered.getByText(current.developer_instructions)).toBeInTheDocument();
+    expect(rendered.getByText("未记录")).toBeInTheDocument();
+    expect(rendered.getByText("无法比较")).toBeInTheDocument();
+    expect(developer.getByText("不同")).toBeInTheDocument();
+    expect(table.getByRole("row", { name: /Work profile wrapper/ })).toHaveTextContent("一致");
+    expect(screen.getByText(/Task 来源运行 9/)).toHaveTextContent("2026-10-04T10:00:00Z");
+    expect(screen.getByText(/仅比较配置指纹/)).toBeInTheDocument();
+    expect(screen.getByText(item.task_prompt)).toBeInTheDocument();
+  });
+  it("shows absent old fingerprint metadata as unrecorded rather than current hashes", async () => {
+    getPromptPreview.mockResolvedValueOnce(response({ mode: "historical", run_id: 9, task_id: 42 }));
+    render(<RuntimePromptPreview />);
+    await screen.findByText(item.task_prompt);
+    fireEvent.click(screen.getByText("配置指纹与 Task 来源"));
+    const table = within(screen.getByRole("table", { name: "配置 SHA 与来源" }));
+    expect(table.getByRole("columnheader", { name: "历史配置" })).toBeInTheDocument();
+    expect(table.getAllByText("未记录")).toHaveLength(8);
+    expect(table.getAllByText("无法比较")).toHaveLength(4);
   });
   it("requests selected role, route and task and shows Claude service input", async () => {
     render(<RuntimePromptPreview />);
@@ -90,6 +142,7 @@ describe("RuntimePromptPreview", () => {
     getPromptPreview.mockResolvedValue(response({ status: "unavailable", task_id: 42, reason: "该任务尚无完整已保存输入" }));
     fireEvent.click(screen.getByRole("button", { name: "查看 / 刷新" }));
     expect(await screen.findByText("该任务尚无完整已保存输入")).toBeInTheDocument();
+    expect(screen.queryByText(/当前配置与已保存历史任务正文/)).not.toBeInTheDocument();
     expect(screen.queryByText(item.task_prompt)).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Developer Prompt · 完整指令" })).not.toBeInTheDocument();
   });

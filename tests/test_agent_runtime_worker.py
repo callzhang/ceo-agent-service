@@ -818,6 +818,31 @@ def _prompt_json_section(prompt: str, heading: str):
             key: value[key]
             for key in ("operation_id", "proposal_revision", "candidate_digest")
         }}
+    if "Candidate revision\n" in prompt:
+        start = prompt.index("Candidate revision\n") + len("Candidate revision\n")
+        candidate, _end = json.JSONDecoder().raw_decode(prompt[start:].lstrip())
+        sources = {}
+
+        def index_sources(node, path):
+            sources[path] = node
+            if isinstance(node, dict):
+                for key, child in node.items():
+                    index_sources(child, f"{path}.{key}")
+            elif isinstance(node, list):
+                for index, child in enumerate(node):
+                    index_sources(child, f"{path}[{index}]")
+
+        def resolve_sources(node):
+            if isinstance(node, dict):
+                if set(node) == {"source_ref"}:
+                    return sources[node["source_ref"]]
+                return {key: resolve_sources(child) for key, child in node.items()}
+            if isinstance(node, list):
+                return [resolve_sources(child) for child in node]
+            return node
+
+        index_sources(candidate, "Candidate revision")
+        return resolve_sources(value)
     return value
 
 

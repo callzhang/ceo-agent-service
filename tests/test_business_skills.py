@@ -662,3 +662,63 @@ def test_the_installed_skills_root_defaults_to_the_agents_directory(
     assert bundled_business_skills_root() == (
         Path.home() / ".agents" / "skills"
     )
+
+
+def _compact_catalog_records(protocol):
+    import csv
+    import io
+
+    body = protocol.split('## Installed CEO business Skill catalog\n', 1)[1].split('\n\n## Required Skill protocol', 1)[0]
+    roots_body, entries_body = body.split('\n\nName\tRead path\tDescription', 1)
+    entries_body = entries_body.removeprefix('\n')
+    roots = dict(csv.reader(io.StringIO(roots_body.split('Root\tPath', 1)[1].removeprefix('\n')), delimiter='\t'))
+    entries = []
+    for name, read_path, description in csv.reader(io.StringIO(entries_body), delimiter='\t'):
+        alias, relative = read_path.split(':', 1)
+        entries.append((name, Path(roots[alias]) / relative, description))
+    return roots, entries
+
+
+def test_compact_protocol_round_trips_every_entry_and_full_description(tmp_path):
+    from app.business_skills import BusinessSkillCatalogEntry
+
+    shared = tmp_path / '.agents/skills'
+    plugin = tmp_path / '.codex/plugins/cache/vendor/plugin/1.0/skills'
+    catalog = (
+        BusinessSkillCatalogEntry('calendar', shared / 'calendar/SKILL.md', 'Full description: calendar | meetings; timezone dates.'),
+        BusinessSkillCatalogEntry('document', shared / 'document/SKILL.md', 'First line\nSecond line\twith a tab, quotes "x" and backslash \\.'),
+        BusinessSkillCatalogEntry('plugin:recall', plugin / 'recall/SKILL.md', '读取 durable memory; keep exact UUID sources.'),
+        BusinessSkillCatalogEntry('no-description', shared / 'no-description/SKILL.md', ''),
+        BusinessSkillCatalogEntry('nested', shared / 'bundle/deep/nested/SKILL.md', 'Nested package: keep this exact read path.'),
+    )
+
+    compact = render_business_skill_protocol(catalog, compact=True)
+    roots, entries = _compact_catalog_records(compact)
+
+    assert entries == [(entry.name, entry.skill_path, entry.description) for entry in catalog]
+    assert set(roots.values()) == {str(shared), str(plugin)}
+    assert compact.count(str(shared)) == compact.count(str(plugin)) == 1
+    assert compact.split('## Required Skill protocol', 1)[1] == render_business_skill_protocol(catalog).split('## Required Skill protocol', 1)[1]
+
+
+def test_compact_protocol_reduces_catalog_characters_without_dropping_entries(tmp_path):
+    from app.business_skills import BusinessSkillCatalogEntry
+
+    root = tmp_path / 'shared/agent/runtime/skills'
+    catalog = tuple(BusinessSkillCatalogEntry(
+        f'skill-{index}', root / f'skill-{index}/SKILL.md',
+        f'Complete description for Skill {index}: source records, provider readback, original context and timezone evidence.',
+    ) for index in range(100))
+    old = render_business_skill_protocol(catalog)
+    compact = render_business_skill_protocol(catalog, compact=True)
+
+    assert _compact_catalog_records(compact)[1] == [(entry.name, entry.skill_path, entry.description) for entry in catalog]
+    assert len(compact) < len(old) * .8
+    assert render_business_skill_protocol(catalog, compact=False) == old
+
+
+def test_compact_protocol_keeps_empty_catalog_and_required_read_contract():
+    compact = render_business_skill_protocol((), compact=True)
+    assert _compact_catalog_records(compact)[1] == []
+    assert 'PROTOCOL PRECONDITION' in compact
+    assert '`agent_cli.read_skill`' in compact

@@ -1,6 +1,9 @@
 from pathlib import Path
 
-from app.consumer_agent import CORE_DYNAMIC_SKILL_BODY
+from app.consumer_agent import (
+    CORE_DYNAMIC_SKILL_BODY,
+    consumer_developer_instructions,
+)
 
 import pytest
 
@@ -11,7 +14,6 @@ SKILLS_ROOT = bundled_business_skills_root()
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_PATH = SKILLS_ROOT / "ceo-meeting-work" / "SKILL.md"
-DEFAULT_PROMPT_PATH = ROOT / "app" / "defaults" / "developer_prompt.md"
 
 
 def _skill_text() -> str:
@@ -67,7 +69,7 @@ def test_meeting_work_skill_places_each_mention_with_its_subject():
 
 
 def test_canonical_prompt_delegates_meeting_policy_to_skill():
-    text = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
+    text = consumer_developer_instructions(runtime_context="", work_profile="")
 
     assert "如果新消息或引用涉及“静默会”、AI 听记、会议纪要链接或会议材料" not in text
     assert CORE_DYNAMIC_SKILL_BODY in text

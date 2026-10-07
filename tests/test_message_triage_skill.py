@@ -1,6 +1,9 @@
 from pathlib import Path
 
-from app.consumer_agent import CORE_DYNAMIC_SKILL_BODY
+from app.consumer_agent import (
+    CORE_DYNAMIC_SKILL_BODY,
+    consumer_developer_instructions,
+)
 
 import pytest
 
@@ -11,7 +14,6 @@ SKILLS_ROOT = bundled_business_skills_root()
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_PATH = SKILLS_ROOT / "ceo-message-triage" / "SKILL.md"
-DEFAULT_PROMPT_PATH = ROOT / "app" / "defaults" / "developer_prompt.md"
 
 
 def _skill_text() -> str:
@@ -94,7 +96,7 @@ def test_message_triage_skill_verifies_external_target_before_asking_for_disambi
 
 
 def test_canonical_prompt_delegates_message_triage_judgment_to_skill():
-    text = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
+    text = consumer_developer_instructions(runtime_context="", work_profile="")
 
     assert "单聊里如果对方只是表示感谢、确认收到、认可或客气收口" not in text
     assert "群聊里的 @所有人、全员通知、流程提醒" not in text

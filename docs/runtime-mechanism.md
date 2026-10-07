@@ -1620,7 +1620,23 @@ Prompts 的 Developer/User/Profile 各自保留 Template 与 Rendered preview �
 
 Prompts 内容标题随当前查看方式显示「模板」或「渲染结果」，与所选 Developer/User/Profile 页签对应；完整运行输入仍位于独立只读「运行输入」页签。
 
-Prompts 页在各页签之前说明 Developer/User 对话模板、工作人格、Audit Rules 与运行输入的用途，并分别列出对话入口和后台 Consumer/Audit 的上下文组装顺序。后台角色使用代码生成指令，工作人格与 Runtime Context 追加在 Developer 输入中；角色任务上下文另作 Task 输入。
+Developer Prompt 是 Consumer 与 Audit 共用的工作原则，渲染后的冻结正文在两角色核心 Developer 的 Dynamic Skill 之后、System Action Contracts 与 Wire Schema 之前各插入一次；默认正文即原有的中文取证与日历时区原则，不再从代码常量或后续 Shared 段重复注入。User Prompt 是 Consumer 的完整任务模板，必须包含恰好一个 `{{task_context}}`，仅支持普通文本和这个插槽。任务来源、定时要求、stage、反馈、既有回执及 continuation 先由服务组装成完整上下文，再填入插槽；不将旧消息块模板叠加到后台任务。工作人格仍注入两角色，Audit Rules 只进入 Audit。角色、输出 schema、System action contract 与能力职责继续由代码提供。Workbench、独立 WeChat、纯服务命令及 Email 退订保留各自入口和显式指令。
+
+一次角色 invocation 只读取一次 Developer/User/Profile 正文，供组装、静态指纹与重试共用；Audit 不读取无关 User 模板。实际路线和工具命令确定后，再追加 Runtime Context。静态配置 SHA 写入现有 runtime.prompt invocation facts，仅作来源回执；Consumer 继续按 `conversation_id + route` 复用原 session，配置或 contract hash 变化不创建新会话，Audit 的独立 session 不与 Consumer 合并。
+
+默认 User 的 Rendered preview 使用明确标记的合成完整任务，不读取业务材料；Developer/Profile 渲染同一份已保存正文。完整运行输入仍在独立只读页签，当前配置 Developer 与所选已保存历史 Task 的来源分别标注，历史模式不重新渲染。读取设置/预览不创建或覆盖配置文件。已存在模板不在读取时自动升级；部署使用 `python -m app.deploy --publish-prompt-templates`，仅在既有停止/备份窗口根据 `ci/prompt-template-release.json` 的精确旧/新 SHA 发布默认 Developer/User。自定义模板须明确迁移，不能覆盖；文件备份、发布与回退沿用 RepositoryUpdater 的 publication 协议。该发布不修改工作人格。
+
+Prompts 设置读取先返回 Developer/User 的已保存原文；某份模板验证或渲染失败时，仅该份渲染预览为空并返回明确的 `preview_errors`，编辑器仍显示原文供修正。保存仍需通过现有验证，后台角色调用仍严格验证，不自动迁移或覆盖旧模板。
+
+精简仅去除经固定模型比较确认不会损失质量的重复文本：Consumer 原有 Application Result Contract 同时保留在 Developer 与完整 Task；Audit Developer 保留原有两处 Application Result Contract（核心角色边界内一处，Decision Evidence 后一处），Audit Task 开头保留同一合同并原样呈现 `AuditTurnContext.audit_rules`。配置化 Audit Rules 仍由 Audit Developer 携带；生产编排沿用原有空 Task 字段，不把 Developer 规则复制进 Task。固定模型比较发现同时删除这些指令副本的候选出现错误的日历 rollover 返回，当前保留原有完整指令，没有删除或改写合同条款。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。标准 Skill 目录使用 TSV 与路径根别名，保留所有名称、完整用途说明、读取路径和顺序；定时专项 Skill 正文不改。Runtime Context 缩短工具说明，保留原有准确 server.tool 名称和其他环境事实。无业务调用的旧 build_turn_prompt、ceo_agent_thread_prompt 及 CodexRunner 的隐含业务 Developer 默认入口已退休；底层 native 指令保留模式及真实调用者显式指令不变。
+
+Developer 保存先以现有渲染器验证，未知变量或不可渲染内容返回具体错误且不覆盖已保存正文；该检查属于配置格式合同。
+
+默认共同工作原则要求先识别原请求要向谁交付什么、按本轮声明入口取证、交付可核实部分并说明剩余协调责任；日历原则要求核实参与者时区和候选日期的偏移。它们随可编辑 Developer 模板进入两角色，不改变已有角色、审核或执行合同。
+
+配置回执同时记录 Developer 模板原文和渲染后共同原则正文的 SHA；相同模板引用的变量/文件/代码展开改变时，静态契约指纹也改变。静态指纹仍不是 session 身份；历史记录缺正文 SHA 时只显示未记录，不以当前值补造。
+
+默认共同原则保留原有的部分交付与必要追问要求。审核角色、决定类型与生命周期保持原契约。
 
 ### 业务审核按完整上下文判断（2026-10-06）
 

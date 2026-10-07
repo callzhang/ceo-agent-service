@@ -2000,30 +2000,40 @@ def register_console_routes(
                     ],
                 }
             elif section == "prompts":
-                from app.developer_prompt import (
-                    read_developer_prompt_template,
-                    read_user_prompt_template,
-                    render_developer_prompt_template,
-                    render_user_prompt_template,
-                )
-                from app.prompt import work_profile_instruction, work_profile_path
+                from app.developer_prompt import DeveloperPromptTemplateError, render_developer_prompt_template
+                from app.prompt import work_profile_instruction
+                from app.prompt_composition import example_consumer_task, read_prompt_configuration_raw
 
-                developer_template = read_developer_prompt_template()
-                user_template = read_user_prompt_template()
-                profile_path = work_profile_path()
-                profile_instruction = work_profile_instruction()
+                raw = read_prompt_configuration_raw(create_missing=False)
+                preview_errors: dict[str, str] = {}
+                try:
+                    developer_preview = render_developer_prompt_template(raw.developer_template)
+                except Exception as exc:
+                    # A saved code/file tag can stop rendering after its module
+                    # or dependency changes. Keep the raw text editable here;
+                    # invocation still receives the original exception.
+                    developer_preview = ""
+                    preview_errors["developer"] = str(exc) or type(exc).__name__
+                try:
+                    user_preview = example_consumer_task(raw)
+                except DeveloperPromptTemplateError as exc:
+                    user_preview = ""
+                    preview_errors["user"] = str(exc)
                 fields = {
-                    "developer_template": developer_template,
-                    "user_template": user_template,
-                    "profile": profile_path.read_text(encoding="utf-8").strip(),
+                    "developer_template": raw.developer_template,
+                    "user_template": raw.user_template,
+                    "profile": raw.work_profile_text,
                 }
                 payload = {
                     "section": section,
                     "fields": fields,
+                    "preview_kind": "example",
+                    "preview_errors": preview_errors,
+                    "consumers": {"developer": ["consumer", "audit"], "user": ["consumer"], "profile": ["consumer", "audit"]},
                     "preview": {
-                        "developer": render_developer_prompt_template(developer_template),
-                        "user": render_user_prompt_template(user_template, {}),
-                        "profile": profile_instruction,
+                        "developer": developer_preview,
+                        "user": user_preview,
+                        "profile": work_profile_instruction(profile_text=raw.work_profile_text),
                     },
                 }
             elif section == "audit-rules":
@@ -2040,7 +2050,6 @@ def register_console_routes(
                     "fields": fields,
                     "preview": {
                         "template": _render_audit_variables(template),
-                        "consumer": render_audit_rules(AgentRole.CONSUMER),
                         "audit": render_audit_rules(AgentRole.AUDIT),
                     },
                 }

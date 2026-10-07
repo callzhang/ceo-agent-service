@@ -1117,6 +1117,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 if command_env is not None:
                     command_env.update(self.execution_mode_environment)
                 from app.runtime_prompt_context import render_runtime_context, runtime_prompt_snapshot
+                from app.prompt_composition import append_runtime_context
 
                 rendered_at = datetime.now().astimezone().isoformat()
                 context_facts = {**(invocation_facts or {}), "proposal_revision": run.proposal_revision}
@@ -1124,7 +1125,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     role=run.role.value, route=route, command=command, task=self.task,
                     current_time=rendered_at, invocation_facts=context_facts,
                 )
-                submitted_developer_instructions = developer_instructions + "\n\n" + runtime_context
+                submitted_developer_instructions = append_runtime_context(developer_instructions, runtime_context)
                 if route.runtime_kind is RuntimeKind.CODEX_CLI:
                     command = [
                         "developer_instructions=" + json.dumps(submitted_developer_instructions)

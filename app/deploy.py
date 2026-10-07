@@ -23,6 +23,7 @@ from uuid import uuid4
 
 from app.config import PRODUCTION_CHECKOUT_MESSAGE, read_env_file, service_root, worker_db_path
 from app.consumer_system_release import prepare_consumer_system_contracts
+from app.prompt_template_release import prepare_prompt_templates
 from app.deploy_maintenance import check_maintenance, prepare_maintenance, stop_for_maintenance
 from app.repository_updater import (
     ExistingSchemaUpgradeStateStore,
@@ -128,16 +129,33 @@ def _production_audit_rules_path(root: Path) -> Path:
     return path if path.is_absolute() else root / path
 
 
+def _production_prompt_template_paths(root: Path) -> tuple[Path, Path]:
+    """Resolve Developer/User files using the installed worker environment."""
+    environment = read_env_file(root / ".env")
+    plist = Path.home() / "Library/LaunchAgents/com.ceo-agent-service.main.plist"
+    if plist.exists():
+        environment.update(plistlib.loads(plist.read_bytes()).get("EnvironmentVariables", {}))
+    paths = []
+    for name in ("developer_prompt", "user_prompt"):
+        configured = environment.get(f"CEO_{name.upper()}_TEMPLATE_PATH", "")
+        path = Path(os.path.expandvars(configured)).expanduser() if configured else root / f"data/prompts/{name}.md"
+        paths.append(path if path.is_absolute() else root / path)
+    return paths[0], paths[1]
+
+
 def deploy(
     root: Path, database_path: Path, *, publish_contracts: bool = False,
+    publish_prompt_templates: bool = False,
     maintenance_tasks: tuple[int, ...] = (),
 ) -> str:
+    if publish_contracts and publish_prompt_templates:
+        raise SystemExit("Consumer/Audit contracts and prompt templates require separate deployments")
     ensure_production_guards(root)
     repository = GitRepository(root)
     repository.fetch(REMOTE)
     current = repository.resolve_ref(f"refs/heads/{BRANCH}")
     target = repository.resolve_ref(f"refs/remotes/{REMOTE}/{BRANCH}")
-    if current == target and not publish_contracts:
+    if current == target and not publish_contracts and not publish_prompt_templates:
         return f"already current at {current[:8]}"
     records = repository.status_records()
     if records:
@@ -192,6 +210,26 @@ def deploy(
         else:
             wait_until_quiet(database_path)
 
+    publication = None
+    if publish_contracts:
+        def publication():
+            return prepare_consumer_system_contracts(
+                root=root,
+                database_path=database_path,
+                operation_id=operation.operation_id,
+                audit_rules_path=_production_audit_rules_path(root),
+            )
+    elif publish_prompt_templates:
+        def publication():
+            developer_path, user_path = _production_prompt_template_paths(root)
+            return prepare_prompt_templates(
+                root=root,
+                database_path=database_path,
+                operation_id=operation.operation_id,
+                developer_prompt_path=developer_path,
+                user_prompt_path=user_path,
+            )
+
     updater = RepositoryUpdater(
         root,
         ExistingSchemaUpgradeStateStore(database_path),
@@ -204,15 +242,7 @@ def deploy(
         dependency_sync=lambda: build_frontend(root, changed),
         verification=lambda: verify_imports(root),
         health=wait_for_health,
-        publication=(
-            (lambda: prepare_consumer_system_contracts(
-                root=root,
-                database_path=database_path,
-                operation_id=operation.operation_id,
-                audit_rules_path=_production_audit_rules_path(root),
-            ))
-            if publish_contracts else None
-        ),
+        publication=publication,
     )
     # Unlocked for exactly the checkout + build + verify window; the source
     # tree is locked again in `finally` whether this succeeds, rolls back, or
@@ -261,6 +291,11 @@ def main() -> int:
         action="store_true",
         help="publish the reviewed Consumer/Audit Skill and Audit-rule files in the quiet deploy window",
     )
+    parser.add_argument(
+        "--publish-prompt-templates",
+        action="store_true",
+        help="migrate the approved Developer/User default files in the stopped deploy window",
+    )
     parser.add_argument("--maintenance-task", type=int, action="append", default=[],
                         help="explicitly authorized recoverable reply task interrupted for maintenance; repeat per task")
     args = parser.parse_args()
@@ -268,12 +303,17 @@ def main() -> int:
         parser.error("maintenance requires a commit deployment")
     if args.restart and args.publish_consumer_system_contracts:
         parser.error("--restart cannot publish Consumer/Audit contracts")
+    if args.restart and args.publish_prompt_templates:
+        parser.error("--restart cannot publish prompt templates")
+    if args.publish_consumer_system_contracts and args.publish_prompt_templates:
+        parser.error("Consumer/Audit contracts and prompt templates require separate deployments")
     if args.restart:
         print(restart_only(args.db or worker_db_path()), flush=True)
         return 0
     print(deploy(
         args.root or service_root(), args.db or worker_db_path(),
         publish_contracts=args.publish_consumer_system_contracts,
+        publish_prompt_templates=args.publish_prompt_templates,
         maintenance_tasks=tuple(args.maintenance_task),
     ), flush=True)
     return 0

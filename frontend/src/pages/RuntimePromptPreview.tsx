@@ -6,6 +6,29 @@ function positiveId(value: string) {
   return value.trim() && Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+function ConfigurationFingerprints({ item }: { item: PromptPreviewItem }) {
+  const fields = [
+    ["developer_template", "Developer template"],
+    ["developer_instructions", "Developer rendered principles"],
+    ["user_template", item.role === "audit" ? "User template（Audit 不使用）" : "User template"],
+    ["work_profile_instruction", "Work profile wrapper"],
+  ] as const;
+  return <details className="settings-collapse">
+    <summary>配置指纹与 Task 来源</summary>
+    <p className="muted">仅比较配置指纹，不代表完整输入或外部事实相同。{item.mode === "historical" ? "历史 SHA 只来自该次保存记录；缺项为未记录，未按当前配置重建。" : "当前配置的 User SHA 不表示历史 Task 已用新模板重新渲染。"}</p>
+    {item.task_source_run_id != null && <p className="muted">Task 来源运行 {item.task_source_run_id} · 保存时间 {item.task_source_rendered_at || "未记录"}</p>}
+    <div className="settings-table-wrap"><table className="settings-table" aria-label="配置 SHA 与来源">
+      <thead><tr><th>配置项</th><th>{item.mode === "historical" ? "历史配置" : "当前配置"}</th><th>历史 Task 来源配置</th><th>指纹比较</th></tr></thead>
+      <tbody>{fields.map(([key, label]) => {
+        const configuration = item.configuration_fingerprints?.[key];
+        const source = item.task_source_configuration_fingerprints?.[key];
+        const comparison = item.mode === "current" && item.task_id === null ? "无任务来源" : !configuration || !source ? "无法比较" : configuration === source ? "一致" : "不同";
+        return <tr key={key}><td>{label}</td><td><code style={{ overflowWrap: "anywhere" }}>{configuration || "未记录"}</code></td><td><code style={{ overflowWrap: "anywhere" }}>{source || "未记录"}</code></td><td>{comparison}</td></tr>;
+      })}</tbody>
+    </table></div>
+  </details>;
+}
+
 export function RuntimePromptPreview() {
   const [role, setRole] = useState<PromptPreviewRole>("consumer");
   const [route, setRoute] = useState("");
@@ -70,7 +93,7 @@ export function RuntimePromptPreview() {
   const fieldStyle = { display: "grid", gap: "6px", minWidth: 0 };
   const textStyle = { minWidth: 0, maxWidth: "100%", whiteSpace: "pre-wrap" as const, overflowWrap: "anywhere" as const };
   return <section aria-label="完整运行输入预览" style={{ minWidth: 0 }}>
-    <p className="muted">当前预览按已保存的配置生成；历史输入显示该次运行保存的原文。查看不会运行任务或保存设置。</p>
+    <p className="muted">当前预览按已保存的配置生成；绑定任务时沿用该角色已保存的历史任务正文，来源见下方说明。历史输入显示该次运行保存的原文。查看不会运行任务或保存设置。</p>
     <form onSubmit={(event) => {
       event.preventDefault();
       if (invalidId) return;
@@ -92,7 +115,7 @@ export function RuntimePromptPreview() {
     {error && <p className="save-error" role="alert">{error}</p>}
     {!loading && !error && !item && <p className="muted">{mode === "historical" ? "输入运行 ID 后查看历史输入。" : "选择完成后点击查看 / 刷新。"}</p>}
     {item && <>
-      <p className="muted" style={textStyle}>{item.mode === "historical" ? "历史输入 · 已保存的运行记录" : "当前预览 · 当前已保存配置"} · {item.role === "audit" ? "Audit" : "Consumer"} · {item.route_name} · {item.runtime_kind} · {item.model} · {item.rendered_at || "时间未记录"}{item.run_id !== null && ` · 运行 ${item.run_id}`}{item.task_id !== null && ` · 任务 ${item.task_id}`}</p>
+      <p className="muted" style={textStyle}>{item.mode === "historical" ? "历史输入 · 已保存的运行记录" : item.task_id === null || item.status === "unavailable" ? "当前预览 · 当前已保存配置" : "当前预览 · 当前配置与已保存历史任务正文"} · {item.role === "audit" ? "Audit" : "Consumer"} · {item.route_name} · {item.runtime_kind} · {item.model} · {item.rendered_at || "时间未记录"}{item.run_id !== null && ` · 运行 ${item.run_id}`}{item.task_id !== null && ` · 任务 ${item.task_id}`}</p>
       {item.mode === "historical" && <p className="muted" style={textStyle}>
         {item.submission_state === "prepared" ? "已准备的服务输入" : item.submission_state === "invoked" ? "已提交的服务输入" : "预览输入"}
         {item.runtime_attempt_id !== null && ` · 运行尝试 ${item.runtime_attempt_id}`}
@@ -102,13 +125,15 @@ export function RuntimePromptPreview() {
       </p>}
       {item.scope && <p className="muted" style={textStyle}>{item.scope}</p>}
       {item.status === "available" && item.reason && <p className="muted" style={textStyle}>{item.reason}</p>}
+      <ConfigurationFingerprints item={item} />
       {item.status === "unavailable" ? <p role="status">{item.reason || (item.mode === "historical" ? "该运行的历史输入不可用。" : "当前任务预览不可用。")}</p> : <>
         {item.mode === "current" && item.task_id === null && <p className="muted">未绑定任务：展示当前公共上下文，不包含具体任务输入。</p>}
+        {item.mode === "current" && item.task_id !== null && <p className="muted">Developer 按当前已保存配置组装；Task 沿用已保存的历史正文，{item.role === "audit" ? "包含当时的独立候选审核上下文" : "可能采用当时的 User 模板"}。这份混合预览不是该次运行的实际输入，也不代表外部资料当前状态；实际原文请切换到历史输入。</p>}
         <h3>运行环境与能力说明 (Runtime Context)</h3>
         <pre className="prompt-preview" style={textStyle}>{item.runtime_context || "未记录运行环境说明"}</pre>
         <h3>Developer Prompt · 完整指令</h3>
         <pre className="prompt-preview" style={textStyle}>{item.developer_instructions || "未提供 Developer Prompt"}</pre>
-        <h3>User Prompt · 完整任务输入</h3>
+        <h3>{item.role === "audit" ? "Task · 完整候选审核输入" : "User Prompt · 完整任务输入"}</h3>
         <pre className="prompt-preview" style={textStyle}>{item.task_prompt || "未绑定具体任务输入"}</pre>
         {item.runtime_kind === "claude_cli" && <><h3>Claude · 完整服务输入</h3><pre className="prompt-preview" style={textStyle}>{item.submitted_input || "未保存服务输入"}</pre></>}
       </>}

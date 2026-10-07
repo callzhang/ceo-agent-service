@@ -21,6 +21,12 @@ _BLOCKS: ContextVar[dict[str, str] | None] = ContextVar(
 
 USER_PROMPT_BLOCKS = [
     UserPromptBlock(
+        name="task_context_block",
+        expression="app.user_prompt_blocks:task_context_block()",
+        description="完整的 Consumer 任务、来源、材料、阶段、反馈与续接内容。",
+        default="## Synthetic task example\nTask: inspect a supplied document.\nSource: fixture-message.\nMaterials: fixture-document.\nStage: 0; proposal revision: 0.\nFeedback: none. Prior receipts: none. This is example data, not an actual task.",
+    ),
+    UserPromptBlock(
         name="style_lines",
         expression="app.user_prompt_blocks:style_lines()",
         description="相似历史回复风格例子等动态风格上下文。",
@@ -187,3 +193,7 @@ def image_download_block() -> str:
 
 def context_messages_block() -> str:
     return _block("context_messages_block")
+
+
+def task_context_block() -> str:
+    return _block("task_context_block")

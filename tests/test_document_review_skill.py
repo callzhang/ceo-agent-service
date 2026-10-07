@@ -1,6 +1,9 @@
 from pathlib import Path
 
-from app.consumer_agent import CORE_DYNAMIC_SKILL_BODY
+from app.consumer_agent import (
+    CORE_DYNAMIC_SKILL_BODY,
+    consumer_developer_instructions,
+)
 
 import pytest
 
@@ -11,7 +14,6 @@ SKILLS_ROOT = bundled_business_skills_root()
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_PATH = SKILLS_ROOT / "ceo-document-review" / "SKILL.md"
-DEFAULT_PROMPT_PATH = ROOT / "app" / "defaults" / "developer_prompt.md"
 
 
 def _skill_text() -> str:
@@ -74,7 +76,7 @@ def test_document_review_skill_uses_executable_image_inspection_guidance():
 
 
 def test_canonical_prompt_delegates_document_review_judgment_to_skill():
-    text = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
+    text = consumer_developer_instructions(runtime_context="", work_profile="")
 
     assert "如果新消息要求 comments、审核、定稿或确认" not in text
     assert "如果新消息明确表示前一次依据的材料已经被修改" not in text

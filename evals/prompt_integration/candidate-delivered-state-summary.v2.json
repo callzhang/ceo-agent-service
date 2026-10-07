@@ -1,0 +1,174 @@
+{
+  "completed": true,
+  "refs": {
+    "baseline": "0d6bf42eb2922ed57a6bc6de8b836f5a443106c3",
+    "candidate": "e835173db725ed3b35fbbd65b7ce6641268de818"
+  },
+  "settings": {
+    "route_name": "codex_oauth",
+    "runtime_kind": "codex_cli",
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "medium",
+    "concurrency": 1,
+    "timeout_seconds": 300,
+    "repetitions": 1,
+    "fixed_time": "2026-10-06T09:00:00-07:00",
+    "tools": "none",
+    "profile": "identical-synthetic-short"
+  },
+  "cases_sha256": "5041b0dfb2656fceea617ffedbae2913592878c7158917112937f0b5a89edea2",
+  "arms": {
+    "candidate": {
+      "size_summary": {
+        "consumer": {
+          "static_developer_chars": {
+            "min": 39525,
+            "mean": 39525.0,
+            "max": 39525
+          },
+          "developer_chars": {
+            "min": 40335,
+            "mean": 40343.0,
+            "max": 40347
+          },
+          "task_chars": {
+            "min": 5865,
+            "mean": 6156.4,
+            "max": 7146
+          },
+          "total_chars": {
+            "min": 46207,
+            "mean": 46499.4,
+            "max": 47485
+          }
+        },
+        "audit": {
+          "static_developer_chars": {
+            "min": 25473,
+            "mean": 25473.0,
+            "max": 25473
+          },
+          "developer_chars": {
+            "min": 26207,
+            "mean": 26215.0,
+            "max": 26219
+          },
+          "task_chars": {
+            "min": 8835,
+            "mean": 9776.35,
+            "max": 10378
+          },
+          "total_chars": {
+            "min": 35047,
+            "mean": 35991.35,
+            "max": 36595
+          }
+        }
+      },
+      "roles": {
+        "consumer": {
+          "invocations": 20,
+          "native_json_valid": 20,
+          "strict_schema_valid": 20,
+          "outcome_and_binding_screen_passed": 14,
+          "tool_events": 0,
+          "screen_failures": [
+            {
+              "case_id": "email-reply",
+              "errors": [
+                "unexpected_consumer_outcome"
+              ]
+            },
+            {
+              "case_id": "email-attachment",
+              "errors": [
+                "unexpected_consumer_outcome"
+              ]
+            },
+            {
+              "case_id": "calendar-known",
+              "errors": [
+                "unexpected_consumer_outcome"
+              ]
+            },
+            {
+              "case_id": "calendar-fold",
+              "errors": [
+                "unexpected_consumer_outcome"
+              ]
+            },
+            {
+              "case_id": "calendar-gap",
+              "errors": [
+                "unexpected_consumer_outcome"
+              ]
+            },
+            {
+              "case_id": "scheduled-report",
+              "errors": [
+                "unexpected_consumer_outcome"
+              ]
+            }
+          ],
+          "provider_usage_events": 20,
+          "provider_input_tokens_total": 469085,
+          "provider_output_tokens_total": 15745,
+          "elapsed_seconds_total": 289.89802245900046,
+          "elapsed_seconds_mean": 14.494901122950022,
+          "semantic_quality": "pending independent exact-output review"
+        },
+        "audit": {
+          "invocations": 20,
+          "native_json_valid": 20,
+          "strict_schema_valid": 20,
+          "outcome_and_binding_screen_passed": 14,
+          "tool_events": 0,
+          "screen_failures": [
+            {
+              "case_id": "oa-missing-material",
+              "errors": [
+                "unexpected_audit_outcome"
+              ]
+            },
+            {
+              "case_id": "oa-policy-gap",
+              "errors": [
+                "unexpected_audit_outcome"
+              ]
+            },
+            {
+              "case_id": "email-reply",
+              "errors": [
+                "unexpected_audit_outcome"
+              ]
+            },
+            {
+              "case_id": "calendar-rollover",
+              "errors": [
+                "unexpected_audit_outcome"
+              ]
+            },
+            {
+              "case_id": "scheduled-report",
+              "errors": [
+                "unexpected_audit_outcome"
+              ]
+            },
+            {
+              "case_id": "ordinary-document",
+              "errors": [
+                "unexpected_audit_outcome"
+              ]
+            }
+          ],
+          "provider_usage_events": 20,
+          "provider_input_tokens_total": 442806,
+          "provider_output_tokens_total": 11821,
+          "elapsed_seconds_total": 269.31800500100053,
+          "elapsed_seconds_mean": 13.465900250050026,
+          "semantic_quality": "pending independent exact-output review"
+        }
+      }
+    }
+  }
+}

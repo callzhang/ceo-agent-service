@@ -1,10 +1,9 @@
-import json
 import hashlib
 from pathlib import Path
 
 import pytest
 
-from app.dingtalk_models import DingTalkConversation, DingTalkMessage
+from app.dingtalk_models import DingTalkMessage
 from app.config import env_file_path
 from app.config import profile_evidence_dir
 from app.config import repo_root
@@ -13,6 +12,9 @@ from app.developer_prompt import (
     CONFIGURABLE_PROMPT_VARIABLE_DEFAULTS,
     DeveloperPromptTemplateError,
     SEED_DEVELOPER_PROMPT_TEMPLATE,
+    SEED_USER_PROMPT_TEMPLATE,
+    render_consumer_task_template,
+    write_user_prompt_template,
     configurable_prompt_variable_pairs,
     developer_prompt_template_path,
     prompt_template_variables,
@@ -25,8 +27,8 @@ from app.developer_prompt import (
 from app.prompt import (
     LinkedDocumentContext,
     MaterialReferenceContext,
-    build_turn_prompt,
-    ceo_agent_thread_prompt,
+    linked_document_lines,
+    material_reference_lines,
     message_lines,
     runtime_context_instruction,
     sanitize_dingtalk_prompt_text,
@@ -35,11 +37,9 @@ from app.prompt import (
 )
 from app.consumer_agent import (
     AGENT_CAPABILITY_INSTRUCTIONS,
-    CORE_DYNAMIC_SKILL_BODY,
 )
 from app.business_skills import bundled_business_skills_root
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS
-from tests.prompt_structure import validate_prompt_structure
 
 
 def test_runtime_context_injects_deployment_values_without_skill_literals(monkeypatch, tmp_path):
@@ -130,12 +130,12 @@ def test_read_prompt_templates_seed_missing_configured_files(tmp_path, monkeypat
 
     assert developer_path.exists()
     assert user_path.exists()
-    assert "independently selects and reads every applicable" in developer_template
-    assert "{{current_message}}" in user_template
+    assert developer_template.startswith("## 原请求与取证\n")
+    assert user_template.strip() == "{{task_context}}"
     assert "CEO Agent Prompt" not in user_template
 
 
-def test_unmodified_legacy_developer_prompt_is_upgraded(tmp_path, monkeypatch):
+def test_unmodified_legacy_developer_prompt_is_not_migrated_by_read(tmp_path, monkeypatch):
     developer_path = tmp_path / "data" / "prompts" / "developer_prompt.md"
     developer_path.parent.mkdir(parents=True)
     legacy = "legacy default"
@@ -146,9 +146,8 @@ def test_unmodified_legacy_developer_prompt_is_upgraded(tmp_path, monkeypatch):
         {_sha256_for_test(legacy)},
     )
 
-    assert read_developer_prompt_template() == SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(
-        encoding="utf-8"
-    )
+    assert read_developer_prompt_template() == legacy
+    assert developer_path.read_text(encoding="utf-8") == legacy
 
 
 def test_customized_developer_prompt_is_preserved(tmp_path, monkeypatch):
@@ -160,20 +159,35 @@ def test_customized_developer_prompt_is_preserved(tmp_path, monkeypatch):
     assert read_developer_prompt_template() == "custom instructions"
 
 
+def test_seed_marker_does_not_trigger_a_developer_migration_during_read(tmp_path, monkeypatch):
+    developer_path = tmp_path / "developer.md"
+    original = "previous default principles\n"
+    developer_path.write_text(original, encoding="utf-8")
+    marker = tmp_path / ".developer_prompt.seed.sha256"
+    original_marker = _sha256_for_test(original) + "\n"
+    marker.write_text(original_marker, encoding="ascii")
+    monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(developer_path))
+
+    assert read_developer_prompt_template() == original
+    assert developer_path.read_text(encoding="utf-8") == original
+    assert marker.read_text(encoding="ascii") == original_marker
+
+
+def test_default_developer_template_contains_shared_principles_without_role_schema():
+    template = read_developer_prompt_template()
+    assert template.startswith("## 原请求与取证\n")
+    assert "原触发是权威请求" in template
+    assert "普通文档、文件、研究、报告与计算工作" in template
+    assert "## 日历任务与参与者时区\n" in template
+    assert "不对外暴露凭据、私密日历正文或内部配置" in template
+    assert "Consumer Agent A" not in template
+    assert "Pydantic Wire/Result Contract" not in template
+    assert "## System Action Contracts" not in template
+    assert "{{task_context}}" not in template
+
+
 def _sha256_for_test(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def test_default_developer_prompt_assigns_execution_to_system_code():
-    prompt = SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
-
-    assert (
-        "1. [role_boundary] Role Boundary: Consumer Agent A gathers facts and proposes "
-        "a typed candidate, including current-instance human questions. Audit Agent B "
-        "reviews the whole candidate without executing its controlled actions. System "
-        "code executes the exact persisted approved plan or selected reviewed option."
-    ) in prompt
-    assert "read-only representative" not in prompt
 
 
 def test_calendar_rules_path_is_not_an_effective_prompt_variable(monkeypatch):
@@ -243,84 +257,11 @@ def test_default_developer_prompt_template_is_a_separate_file():
     assert "Alex 工作人格 Profile:" not in template
 
 
-def test_canonical_default_prompt_keeps_only_runtime_invariants_and_skill_loading():
-    template = render_developer_prompt_template(read_developer_prompt_template())
-
-    validate_prompt_structure(
-        template,
-        contract_models=(),
-        dynamic_skill_body=CORE_DYNAMIC_SKILL_BODY,
-        audit_rules=None,
-        context_facts=None,
-        size_limit=3_000,
-    )
-
-
-def test_developer_prompt_delegates_memory_operations_to_installed_skills():
-    template = read_developer_prompt_template()
-
-    assert "memory_connector" not in template
-    assert "memory_recall" not in template
-    assert "memory_write" not in template
-    assert "unavailable Memory dependency never triggers login" in template
-
-
 def test_personnel_skill_keeps_business_facts_out_of_personnel_sensitivity():
-    template = read_developer_prompt_template()
     skill = _personnel_skill_prose()
 
     assert "A person's name alone does not make a business fact personnel information" in skill
     assert "Ownership, delivery, revenue, customer progress, project risk" in skill
-    assert "A person's name alone does not make a business fact personnel information" not in template
-    assert "没有列出的字段不要编造职位或上下级关系" not in template
-    assert "login, reset, or logout" in template
-
-
-def test_developer_prompt_delegates_latest_material_review_to_business_skill():
-    template = read_developer_prompt_template()
-
-    assert "前一次依据的材料已经被修改、补充、评论确认或按要求更新" not in template
-    assert "处理文档时，如果是钉钉文档可以用评论功能" not in template
-    assert CORE_DYNAMIC_SKILL_BODY in template
-    assert "independently selects and reads every applicable" in template
-
-
-def test_dynamic_skill_contract_leaves_reconciliation_with_system_runtime():
-    template = read_developer_prompt_template()
-
-    assert "already-unknown effect" not in template
-    assert "strictly read-only evidence reconciliation" not in template
-    assert "The service resumes an unchanged technical recovery from its persisted approved plan." in template
-    assert "Provider command names, MCP tools, receipts, and readback procedures remain runtime-owned." in template
-
-
-def test_developer_prompt_defines_role_execution_boundary():
-    template = read_developer_prompt_template()
-
-    assert (
-        "1. [role_boundary] Role Boundary: Consumer Agent A gathers facts and proposes "
-        "a typed candidate, including current-instance human questions. Audit Agent B "
-        "reviews the whole candidate without executing its controlled actions. System "
-        "code executes the exact persisted approved plan or selected reviewed option."
-    ) in template
-    assert "read-only representative" not in template
-
-
-def test_developer_prompt_leaves_solution_workflow_to_business_skills():
-    template = read_developer_prompt_template()
-
-    assert "不要只讲方向、原则或抽象道理" not in template
-    assert "回复必须给可执行建议" not in template
-    assert CORE_DYNAMIC_SKILL_BODY in template
-
-
-def test_developer_prompt_delegates_output_shape_to_pydantic_contract():
-    template = read_developer_prompt_template()
-
-    assert "Pydantic output contract" in template
-    assert "field combinations are authoritative" in template
-    assert "queue_okr_review" not in template
-    assert "domain_payload" not in template
 
 
 def test_work_profile_path_default_is_not_user_specific(monkeypatch):
@@ -391,23 +332,43 @@ def test_user_prompt_template_path_can_be_overridden(tmp_path, monkeypatch):
 
 
 def test_default_user_prompt_template_is_a_separate_file():
-    template = read_user_prompt_template()
-    named_variables = [
-        "{{style_lines}}",
-        "{{current_message}}",
-        "{{sender_org}}",
-        "{{known_people}}",
-        "{{context_messages}}",
-        "{{material_references}}",
-        "{{linked_documents}}",
-        "{{image_download_status}}",
-    ]
-
-    assert template.strip() == "\n---\n".join(named_variables)
-    assert "{{current_message}}" in template
-    assert "{{context_messages}}" in template
-    assert "<var: current_message_block>" not in template
+    template = read_user_prompt_template(SEED_USER_PROMPT_TEMPLATE)
+    assert template.strip() == "{{task_context}}"
+    assert "{{current_message}}" not in template
     assert "CEO Agent Prompt" not in template
+
+
+def test_custom_user_template_is_read_without_automatic_migration(tmp_path, monkeypatch):
+    path = tmp_path / "user.md"
+    original = "Custom legacy {{current_message}} template\n"
+    path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(path))
+
+    assert read_user_prompt_template() == original
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_user_template_writer_preserves_complete_task_slot_and_raw_context(tmp_path):
+    path = tmp_path / "user.md"
+    template = "Inspect the complete task:\n{{task_context}}\nRespond with the required result."
+    context = 'Task evidence\nFeedback and prior receipts\nLiteral source {{not_a_template}}'
+
+    assert write_user_prompt_template(template, path) == path
+    assert path.read_text(encoding="utf-8") == template
+    assert render_consumer_task_template(template, context) == (
+        "Inspect the complete task:\n" + context + "\nRespond with the required result."
+    )
+
+
+@pytest.mark.parametrize("template", ["no complete task slot", "{{task_context}} {{task_context}}", "{{task_context}} {{current_message}}"])
+def test_invalid_consumer_user_template_does_not_overwrite_saved_content(tmp_path, template):
+    path = tmp_path / "user.md"
+    original = "Saved task:\n{{task_context}}"
+    path.write_text(original, encoding="utf-8")
+
+    with pytest.raises(DeveloperPromptTemplateError, match="exactly one"):
+        write_user_prompt_template(template, path)
+    assert path.read_text(encoding="utf-8") == original
 
 
 def test_user_prompt_block_registry_orders_material_references_before_assets():
@@ -421,169 +382,6 @@ def test_user_prompt_block_registry_orders_material_references_before_assets():
         "app.user_prompt_blocks:material_references_block()",
         "app.user_prompt_blocks:linked_documents_block()",
         "app.user_prompt_blocks:image_download_block()",
-    ]
-
-
-def test_build_turn_prompt_uses_user_prompt_template_override(tmp_path, monkeypatch):
-    template_path = tmp_path / "user.md"
-    template_path.write_text(
-        "\n".join(
-            [
-                "CUSTOM USER PROMPT",
-                "<code: app.user_prompt_blocks:current_message_block()>",
-                "<code: app.user_prompt_blocks:material_references_block()>",
-                "<code: app.user_prompt_blocks:image_download_block()>",
-                "<code: app.user_prompt_blocks:context_messages_block()>",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(template_path))
-
-    prompt = build_turn_prompt(
-        DingTalkConversation(
-            open_conversation_id="cid-1",
-            title="产品群",
-            single_chat=False,
-            unread_point=1,
-        ),
-        [
-            DingTalkMessage(
-                open_conversation_id="cid-1",
-                open_message_id="msg-1",
-                conversation_title="产品群",
-                single_chat=False,
-                sender_name="Avery",
-                create_time="2026-05-15 13:00:00",
-                content="@Alex Chen(明哥) 看下图片",
-            )
-        ],
-        [],
-        style_lines=[],
-        include_thread_prompt=False,
-        image_download_errors=["msg-1: resource @img error unsupported resourceType: image"],
-    )
-
-    assert prompt.startswith("CUSTOM USER PROMPT")
-    assert "当前待处理消息:" in prompt
-    assert "图片读取状态:" in prompt
-    assert "unsupported resourceType: image" in prompt
-    assert "上下文消息（自上次回复后的新信息，最多 20 条）:" in prompt
-
-
-def test_context_messages_block_renders_json_array():
-    context_message = DingTalkMessage(
-        open_conversation_id="cid-1",
-        open_message_id="ctx-1",
-        conversation_title="产品群",
-        single_chat=False,
-        sender_name="Avery",
-        sender_user_id="sender-user-1",
-        sender_open_dingtalk_id="open-sender-1",
-        message_type="text",
-        create_time="2026-05-15 12:59:00",
-        content="上文背景",
-        mentioned_user_ids=["principal-user-1"],
-        quoted_message_id="quoted-1",
-        quoted_content="引用背景",
-    )
-
-    prompt = build_turn_prompt(
-        DingTalkConversation(
-            open_conversation_id="cid-1",
-            title="产品群",
-            single_chat=False,
-            unread_point=1,
-        ),
-        [
-            DingTalkMessage(
-                open_conversation_id="cid-1",
-                open_message_id="msg-1",
-                conversation_title="产品群",
-                single_chat=False,
-                sender_name="Avery",
-                create_time="2026-05-15 13:00:00",
-                content="@Alex Chen(明哥) 看下",
-            )
-        ],
-        [context_message],
-        style_lines=[],
-        include_thread_prompt=False,
-    )
-
-    json_text = prompt.split("上下文消息（自上次回复后的新信息，最多 20 条）:", 1)[
-        1
-    ].split("\n---", 1)[0]
-    records = json.loads(json_text)
-
-    assert records == [
-        {
-            "open_message_id": "ctx-1",
-            "create_time": "2026-05-15 12:59:00",
-            "sender": {
-                "name": "Avery",
-                "user_id": "sender-user-1",
-                "open_dingtalk_id": "open-sender-1",
-            },
-            "message_type": "text",
-            "content": "上文背景",
-            "mentioned_user_ids": ["principal-user-1"],
-            "quoted": {
-                "open_message_id": "quoted-1",
-                "content": "引用背景",
-            },
-        }
-    ]
-
-
-def test_context_messages_block_includes_existing_reactions():
-    context_message = DingTalkMessage(
-        open_conversation_id="cid-1",
-        open_message_id="ctx-1",
-        conversation_title="产品群",
-        single_chat=False,
-        sender_name="Avery",
-        create_time="2026-05-15 12:59:00",
-        content="上文背景",
-        raw_payload={
-            "emotionReplyList": [
-                {"emoji": "OK", "replyUsers": ["明哥"]},
-                {"text": "我去摇人", "replyUsers": ["Alex"]},
-            ]
-        },
-    )
-
-    prompt = build_turn_prompt(
-        DingTalkConversation(
-            open_conversation_id="cid-1",
-            title="产品群",
-            single_chat=False,
-            unread_point=1,
-        ),
-        [
-            DingTalkMessage(
-                open_conversation_id="cid-1",
-                open_message_id="msg-1",
-                conversation_title="产品群",
-                single_chat=False,
-                sender_name="Avery",
-                create_time="2026-05-15 13:00:00",
-                content="@Alex Chen(明哥) 看下",
-            )
-        ],
-        [context_message],
-        style_lines=[],
-        include_thread_prompt=False,
-    )
-
-    json_text = prompt.split("上下文消息（自上次回复后的新信息，最多 20 条）:", 1)[
-        1
-    ].split("\n---", 1)[0]
-    records = json.loads(json_text)
-
-    assert records[0]["reactions"] == [
-        {"reaction": "OK", "users": ["明哥"]},
-        {"reaction": "我去摇人", "users": ["Alex"]},
     ]
 
 
@@ -612,6 +410,36 @@ def test_message_lines_remove_repeated_card_images_and_shorten_links():
         "https://alidocs.dingtalk.com/i/nodes/vy20BglGWOKXmP5zs0OGQn6DWA7depqY"
         in rendered
     )
+
+
+def test_linked_document_lines_preserve_readable_material_without_card_assets():
+    document = LinkedDocumentContext(
+        url="https://alidocs.dingtalk.com/i/nodes/doc123?utm_source=im",
+        title="Decision evidence",
+        markdown='<span style="color: red;">Actual conclusion</span>\nVerified source facts.',
+    )
+    rendered = "\n".join(linked_document_lines(1, document))
+    assert "Decision evidence" in rendered
+    assert "https://alidocs.dingtalk.com/i/nodes/doc123" in rendered
+    assert "Actual conclusion" in rendered
+    assert "Verified source facts." in rendered
+    assert "utm_source" not in rendered
+    assert "<span" not in rendered
+
+
+def test_material_reference_lines_preserve_source_identity_and_read_command():
+    material = MaterialReferenceContext(
+        kind="dingtalk_doc", reference="https://alidocs.dingtalk.com/i/nodes/doc123?utm_source=im",
+        source_message_id="source-1", source_sender="Origin", source_time="2026-10-06T12:00:00Z",
+        read_command="dws doc read --node https://alidocs.dingtalk.com/i/nodes/doc123 --format json",
+    )
+    rendered = "\n".join(material_reference_lines(1, material))
+    assert "dingtalk_doc" in rendered
+    assert "source-1" in rendered
+    assert "Origin" in rendered
+    assert "2026-10-06T12:00:00Z" in rendered
+    assert material.read_command in rendered
+    assert "utm_source" not in rendered
 
 
 def test_message_lines_include_existing_reactions():
@@ -656,254 +484,14 @@ def test_sanitize_dingtalk_prompt_text_keeps_url_with_nfkc_unsafe_host_text():
     assert "http://stardust-gpu4:8787？" in rendered
 
 
-def test_build_turn_prompt_sanitizes_quoted_card_without_repeating_assets():
-    conversation = DingTalkConversation(
-        open_conversation_id="cid-1",
-        title="26年董事会筹备组",
-        single_chat=False,
-        unread_point=1,
-    )
-    message = DingTalkMessage(
-        open_conversation_id="cid-1",
-        open_message_id="msg-1",
-        conversation_title="26年董事会筹备组",
-        single_chat=False,
-        sender_name="Riley",
-        create_time="2026-05-14 15:04:04",
-        content=CARD_CONTENT,
-        quoted_message_id="quoted-1",
-        quoted_content=CARD_CONTENT,
-    )
-
-    prompt = build_turn_prompt(
-        conversation,
-        [message],
-        [message],
-        style_lines=[],
-        include_thread_prompt=False,
-    )
-
-    assert prompt.count("![image]") == 0
-    assert prompt.count("O1CN01DXenu91IyBR0wQXk9") == 0
-    assert prompt.count("utm_source") == 0
-    assert prompt.count("https://alidocs.dingtalk.com/i/nodes/") <= 3
-
-
 def test_personnel_skill_explains_first_person_single_chat_subject():
-    prompt = ceo_agent_thread_prompt()
     skill = _personnel_skill_prose()
 
     assert "When the recipient asks about their own personnel information" in skill
     assert "the subject and recipient are the same person" in skill
-    assert "单聊里可以回答发信人关于他自己的请假、调休" not in prompt
-    assert "没有列出的字段不要编造职位或上下级关系" not in prompt
-
-
-def test_thread_prompt_delegates_direct_message_triage_to_business_skill():
-    prompt = ceo_agent_thread_prompt()
-
-    assert "明确要求 明哥 处理、确认、决策或对某个结论表态" not in prompt
-    assert CORE_DYNAMIC_SKILL_BODY in prompt
-    assert "independently selects and reads every applicable" in prompt
-
-
-def test_thread_prompt_leaves_structured_analysis_policy_to_business_skills():
-    prompt = ceo_agent_thread_prompt()
-
-    assert "写出列表" not in prompt
-    assert "直接给出可用的结构化初版" not in prompt
-    assert "independently selects and reads every applicable" in prompt
-
-
-def test_build_turn_prompt_keeps_user_message_separate_from_thread_prompt():
-    prompt = build_turn_prompt(
-        DingTalkConversation(
-            open_conversation_id="cid-1",
-            title="孙伟",
-            single_chat=True,
-            unread_point=1,
-        ),
-        [
-            DingTalkMessage(
-                open_conversation_id="cid-1",
-                open_message_id="msg-1",
-                conversation_title="孙伟",
-                single_chat=True,
-                sender_name="孙伟",
-                sender_user_id="junjie-user-1",
-                create_time="2026-05-15 13:00:00",
-                content="明哥，我今天想请一天调休。",
-            )
-        ],
-        [],
-        style_lines=[],
-        include_thread_prompt=True,
-    )
-
-    assert "当前待处理消息:" in prompt
-    assert "会话: 孙伟" in prompt
-    assert "CEO Agent Prompt" not in prompt
-    assert "孙伟 sender_user_id=junjie-user-1" in prompt
-
-
-def test_build_turn_prompt_includes_known_people_lines():
-    conversation = DingTalkConversation(
-        open_conversation_id="cid-1",
-        title="Avery",
-        single_chat=True,
-        unread_point=1,
-    )
-    message = DingTalkMessage(
-        open_conversation_id="cid-1",
-        open_message_id="msg-1",
-        conversation_title="Avery",
-        single_chat=True,
-        sender_name="Avery",
-        create_time="2026-05-15 13:00:00",
-        content="明哥，晓民的转正时间快到了。",
-    )
-
-    prompt = build_turn_prompt(
-        conversation,
-        [message],
-        [message],
-        style_lines=[],
-        include_thread_prompt=True,
-        known_people_lines=["- 张晓民: user_id=subject-user-1"],
-    )
-
-    assert "可用组织人员标识" in prompt
-    assert "- 张晓民: user_id=subject-user-1" in prompt
-
-
-def test_build_turn_prompt_includes_sender_org_lines():
-    conversation = DingTalkConversation(
-        open_conversation_id="cid-1",
-        title="Avery",
-        single_chat=True,
-        unread_point=1,
-    )
-    message = DingTalkMessage(
-        open_conversation_id="cid-1",
-        open_message_id="msg-1",
-        conversation_title="Avery",
-        single_chat=True,
-        sender_name="Avery",
-        create_time="2026-05-15 13:00:00",
-        content="明哥，晓民的转正时间快到了。",
-    )
-
-    prompt = build_turn_prompt(
-        conversation,
-        [message],
-        [message],
-        style_lines=[],
-        include_thread_prompt=True,
-        sender_org_lines=[
-            '{\n  "name": "Avery",\n  "user_id": "sender-user-1",\n  "title": "首席人力资源专家兼HRVP",\n  "manager": {"name": "Alex Chen", "user_id": "principal-user-1"}\n}'
-        ],
-    )
-
-    assert "发信人组织信息(JSON):" in prompt
-    assert '"name": "Avery"' in prompt
-    assert '"user_id": "sender-user-1"' in prompt
-    assert '"title": "首席人力资源专家兼HRVP"' in prompt
-
-
-def test_thread_prompt_delegates_document_commands_to_operation_skills():
-    prompt = ceo_agent_thread_prompt()
-
-    assert 'dws doc info --node "<链接>" --format json' not in prompt
-    assert 'dws doc read --node "<链接>" --format json' not in prompt
-    assert "extension=able" not in prompt
-    assert "普通钉钉文件不同于钉钉在线文档" not in prompt
-    assert "independently selects and reads every applicable" in prompt
-    assert "DWS 登录/工具问题" not in prompt
-    assert "不要说成对方没有提供材料" not in prompt
-
-
-def test_thread_prompt_does_not_embed_followup_document_policy():
-    prompt = ceo_agent_thread_prompt()
-
-    assert "文档、复盘或补充材料" not in prompt
-    assert "先用当前消息、引用、合并前序消息和上下文判断它的角色" not in prompt
-    assert "independently selects and reads every applicable" in prompt
-
-
-def test_thread_prompt_delegates_business_context_retrieval():
-    prompt = ceo_agent_thread_prompt()
-
-    assert "默认不了解当前业务背景" not in prompt
-    assert "dws aisearch" not in prompt
-    assert "memory_recall" not in prompt
-    assert "independently selects and reads every applicable" in prompt
-
-
-def test_thread_prompt_does_not_embed_sender_org_policy():
-    prompt = ceo_agent_thread_prompt()
-
-    assert "发信人组织信息" not in prompt
-    assert "不要编造职位" not in prompt
-    assert "independently selects and reads every applicable" in prompt
-
-
-def test_thread_prompt_does_not_always_load_work_profile(
-    monkeypatch,
-    tmp_path,
-):
-    profile = tmp_path / "work_profile.md"
-    profile.write_text(
-        "# Work Profile\n\n"
-        "This profile is a runtime work-judgment profile.\n\n"
-        "## Core Operating Loop\n\n"
-        "- Decide whether to reply.\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv(
-        "CEO_WORK_PROFILE_PATH",
-        str(profile),
-    )
-
-    prompt = ceo_agent_thread_prompt()
-
-    assert "明哥 工作人格 Profile" not in prompt
-    assert "Profile 内容:" not in prompt
-    assert "# Work Profile" not in prompt
-    assert "Core Operating Loop" not in prompt
-
-
-def test_thread_prompt_does_not_embed_approval_workflow():
-    prompt = ceo_agent_thread_prompt()
-
-    assert "材料完整且符合审批原则" not in prompt
-    assert "independently selects and reads every applicable" in prompt
-
-
-def test_thread_prompt_does_not_embed_notification_workflow():
-    prompt = ceo_agent_thread_prompt()
-
-    assert "审批/OA/日程/文件状态/自动同步等通知性消息，只记录 no_reply" not in prompt
-    assert "不能因为通知格式默认 no_reply" not in prompt
-
-
-def test_seed_prompt_delegates_calendar_rules_to_business_skills():
-    prompt = SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
-
-    assert "<var: calendar_rules_path>" not in prompt
-    assert "independently selects and reads every applicable" in prompt
-    assert CORE_DYNAMIC_SKILL_BODY in prompt
-
-
-def test_thread_prompt_delegates_minutes_handling_to_business_skill():
-    prompt = ceo_agent_thread_prompt()
-
-    assert "如果新消息或引用涉及“静默会”、AI 听记、会议纪要链接或会议材料" not in prompt
-    assert "independently selects and reads every applicable" in prompt
-    assert CORE_DYNAMIC_SKILL_BODY in prompt
 
 
 def test_personnel_skill_delegates_candidate_evidence_to_specialist():
-    prompt = ceo_agent_thread_prompt()
     skill = _personnel_skill_prose()
 
     assert "Load `stardust-interview` for candidate evaluation" in skill
@@ -911,147 +499,3 @@ def test_personnel_skill_delegates_candidate_evidence_to_specialist():
     assert "Do not reproduce or replace those specialist workflows here" in skill
     assert "resume, role requirements, and interview records" not in skill
     assert "Ask for specifically missing candidate or role material" not in skill
-    assert "候选人上下文不能只看当前一句话" not in prompt
-    assert "先查会话名、消息、引用、AI 听记、面试记录、简历和岗位材料" not in prompt
-
-
-def test_thread_prompt_delegates_lightweight_interaction_judgment():
-    prompt = ceo_agent_thread_prompt()
-
-    assert "真人直接 @明哥 或分身开玩笑" not in prompt
-    assert "不要为了显得参与而发送低信息增益文字" not in prompt
-    assert "independently selects and reads every applicable" in prompt
-
-
-def test_thread_prompt_prevents_interjecting_on_group_broadcasts():
-    prompt = ceo_agent_thread_prompt()
-
-    assert "@所有人不是自动跳过的理由" not in prompt
-    assert "群聊广播如果是在推进高价值客户线索" not in prompt
-    assert "independently selects and reads every applicable" in prompt
-
-
-def test_thread_prompt_delegates_reaction_policy_to_business_skill():
-    prompt = ceo_agent_thread_prompt()
-
-    assert "不要为了显得参与而发送低信息增益文字" not in prompt
-    assert "不要为了“礼貌收口”发送“收到”“好的”这类低信息增益文字" not in prompt
-    assert "no_reply 通常用空数组" not in prompt
-    assert "dws_message_reaction" not in prompt
-    assert "independently selects and reads every applicable" in prompt
-
-
-def test_thread_prompt_delegates_document_reply_shape_to_skills_and_schema():
-    prompt = ceo_agent_thread_prompt()
-
-    assert "dws_markdown_document_reply" not in prompt
-    assert "正文仍完整写在 user_response.text" not in prompt
-    assert "Pydantic output contract" in prompt
-
-
-def test_thread_prompt_keeps_generic_reaction_output_contract():
-    prompt = ceo_agent_thread_prompt()
-
-    assert "我让明哥本人看一下" not in prompt
-    assert "dws_message_reaction" not in prompt
-    assert "independently selects and reads every applicable" in prompt
-
-
-def test_thread_prompt_treats_existing_principal_reaction_as_handled():
-    prompt = ceo_agent_thread_prompt()
-
-    assert "已有 reaction" not in prompt
-    assert "通常说明真人已经用轻量方式处理过" not in prompt
-    assert "dws_message_reaction" not in prompt
-    assert "independently selects and reads every applicable" in prompt
-
-
-def test_build_turn_prompt_includes_prefetched_dingtalk_document():
-    prompt = build_turn_prompt(
-        DingTalkConversation(
-            open_conversation_id="cid-1",
-            title="CEO-2 管理群",
-            single_chat=False,
-            unread_point=1,
-        ),
-        [
-            DingTalkMessage(
-                open_conversation_id="cid-1",
-                open_message_id="msg-1",
-                conversation_title="CEO-2 管理群",
-                single_chat=False,
-                sender_name="张毅倜(ET)",
-                create_time="2026-05-18 00:33:40",
-                content="https://alidocs.dingtalk.com/i/nodes/doc123 @Alex Chen(明哥) 看下",
-            )
-        ],
-        [],
-        style_lines=[],
-        include_thread_prompt=False,
-        linked_documents=[
-            LinkedDocumentContext(
-                url="https://alidocs.dingtalk.com/i/nodes/doc123?utm_source=im",
-                title="数据导入导出业务低效根因和最终解法",
-                markdown=(
-                    '<span style="color: red;">核心结论</span>\n'
-                    "根因是协作方式不对。"
-                ),
-            )
-        ],
-    )
-
-    assert "已获取的钉钉材料:" in prompt
-    assert "数据导入导出业务低效根因和最终解法" in prompt
-    assert "https://alidocs.dingtalk.com/i/nodes/doc123" in prompt
-    assert "utm_source" not in prompt
-    assert "<span" not in prompt
-    assert "根因是协作方式不对。" in prompt
-
-
-def test_build_turn_prompt_includes_material_references_for_agent_reading():
-    prompt = build_turn_prompt(
-        DingTalkConversation(
-            open_conversation_id="cid-1",
-            title="CEO-2 管理群",
-            single_chat=False,
-            unread_point=1,
-        ),
-        [
-            DingTalkMessage(
-                open_conversation_id="cid-1",
-                open_message_id="msg-1",
-                conversation_title="CEO-2 管理群",
-                single_chat=False,
-                sender_name="吴婷",
-                create_time="2026-06-08 18:46:32",
-                content="@Alex Chen(明哥) 看第二份材料",
-            )
-        ],
-        [],
-        style_lines=[],
-        include_thread_prompt=False,
-        material_references=[
-            MaterialReferenceContext(
-                kind="dingtalk_doc",
-                reference="https://alidocs.dingtalk.com/i/nodes/doc123?utm_scene=team_space",
-                source_message_id="msg-1",
-                source_sender="吴婷",
-                source_time="2026-06-08 18:46:32",
-            ),
-            MaterialReferenceContext(
-                kind="dingtalk_minutes",
-                reference="7632756964333134343836383736303334325f3435313431363430365f35",
-                source_message_id="msg-1",
-                source_sender="吴婷",
-                source_time="2026-06-08 18:46:32",
-            ),
-        ],
-    )
-
-    assert "待读取材料（由 agent 判断是否读取）:" in prompt
-    assert "类型: dingtalk_doc" in prompt
-    assert "dws doc info --node" in prompt
-    assert "dws doc read --node" in prompt
-    assert "类型: dingtalk_minutes" in prompt
-    assert "dws minutes get info --id" in prompt
-    assert "如果判断依赖材料正文，必须先读取材料" in prompt
