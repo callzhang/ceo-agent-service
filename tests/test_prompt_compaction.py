@@ -49,15 +49,15 @@ def test_developer_contracts_keep_their_required_copies():
     consumer = consumer_developer_instructions(runtime_context='', work_profile='') + task_context().render()
     audit = audit_developer_instructions('configured audit rule', runtime_context='', work_profile='')
     assert consumer.count(_CONSUMER_AGENT_RULES) == 2
-    assert audit.count(_AUDIT_AGENT_RULES) == 1
+    assert audit.count(_AUDIT_AGENT_RULES) == 2
 
 
 def test_audit_task_retains_existing_review_contract_at_the_task_boundary():
     from app.agent_context import _AUDIT_AGENT_RULES
     context = task_context()
-    body = AuditTurnContext(context, 0, 'operation', candidate(context), 'digest', 'configured audit rule').render(developer_audit_rules='configured audit rule')
+    body = AuditTurnContext(context, 0, 'operation', candidate(context), 'digest', 'configured audit rule').render()
     assert body.startswith(_AUDIT_AGENT_RULES + '\n\n')
-    assert body.count('configured audit rule') == 0
+    assert body.count('configured audit rule') == 1
 
 
 def test_audit_does_not_collapse_distinct_json_boolean_and_number_sources():
@@ -67,7 +67,7 @@ def test_audit_does_not_collapse_distinct_json_boolean_and_number_sources():
     source = result.source_bindings[0]
     source = source.model_copy(update={'value': {**source.value, 'trigger_raw_payload': {'flag': 1}}})
     result = result.model_copy(update={'source_bindings': (source,)})
-    body = AuditTurnContext(context, 0, 'operation', result, 'digest', '').render(developer_audit_rules='')
+    body = AuditTurnContext(context, 0, 'operation', result, 'digest', '').render()
     trigger, _ = json.JSONDecoder().raw_decode(body.partition('Original trigger\n')[2])
     assert trigger['raw_payload']['flag'] is True
     persisted, _ = json.JSONDecoder().raw_decode(body.partition('Candidate revision\n')[2])

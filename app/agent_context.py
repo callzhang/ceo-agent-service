@@ -343,7 +343,7 @@ class AuditTurnContext:
     candidate_digest: str
     audit_rules: str
 
-    def render(self, *, current_time: str | None = None, developer_audit_rules: str | None = None) -> str:
+    def render(self, *, current_time: str | None = None) -> str:
         from app.reviewed_sources import context_source
 
         source_reference = ""
@@ -371,8 +371,7 @@ class AuditTurnContext:
                 ),
             )
         )
-        rules = "" if developer_audit_rules == self.audit_rules else f"## Audit Rules\n{self.audit_rules}\n\n"
-        return f"{_AUDIT_AGENT_RULES}\n\n{rules}## Context Facts\n{context_facts}"
+        return f"{_AUDIT_AGENT_RULES}\n\n## Audit Rules\n{self.audit_rules}\n\n## Context Facts\n{context_facts}"
 
 
 def _json(value: object) -> str:

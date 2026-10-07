@@ -137,7 +137,7 @@ def _runner(setup, executor):
 def test_audit_context_contains_exact_candidate_and_all_review_checks(setup):
     _store, _task, _parent, context, _config, _router = setup
     from app.consumer_agent import audit_developer_instructions
-    rendered = audit_developer_instructions(context.audit_rules) + context.render(developer_audit_rules=context.audit_rules)
+    rendered = audit_developer_instructions(context.audit_rules) + context.render()
     assert context.candidate_digest in rendered
     assert "Exact prepared notice" in rendered
     assert "Check exact audience and content" in rendered
@@ -267,16 +267,26 @@ def test_audit_parent_must_be_completed_exact_consumer_candidate(setup):
 
 
 def test_actual_audit_runner_uses_production_review_instructions(setup):
+    from app.agent_context import _AUDIT_AGENT_RULES
     from app.audit_rules import render_audit_rules
     from app.consumer_agent import audit_developer_instructions
 
     _store, task, parent, _context, _config, _router = setup
-    executor = CapturingExecutor(_wire(_context.candidate_digest))
-    _runner(setup, executor).run(task, _context, turn_attempt=0, parent_agent_run_id=parent.id)
+    context = replace(_context, audit_rules="")
+    executor = CapturingExecutor(_wire(context.candidate_digest))
+    _runner(setup, executor).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
     command = executor.commands[0]
     setting = next(value for value in command if value.startswith("developer_instructions="))
     actual = json.loads(setting.split("=", 1)[1])
     [snapshot] = [event for event in _store.list_agent_runs_for_task_generation(task.id, task.execution_generation)[-1].tool_events if event.get("type") == "runtime.prompt"]
-    assert actual == audit_developer_instructions(render_audit_rules(AgentRole.AUDIT), runtime_context="") + "\n\n" + snapshot["runtime_context"]
+    rendered_rules = render_audit_rules(AgentRole.AUDIT)
+    assert actual == audit_developer_instructions(rendered_rules, runtime_context="") + "\n\n" + snapshot["runtime_context"]
     assert actual == snapshot["developer_instructions"]
+    assert actual.count(_AUDIT_AGENT_RULES) == 2
+    assert f"## Audit Rules\n{rendered_rules}" in actual
+    task_rules = executor.prompts[0].partition("## Audit Rules\n")[2].partition(
+        "\n\n## Context Facts"
+    )[0]
+    assert task_rules == ""
+    assert rendered_rules not in executor.prompts[0]
     assert "只读审核" in snapshot["runtime_context"]

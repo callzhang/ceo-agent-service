@@ -1628,7 +1628,7 @@ Developer Prompt 是 Consumer 与 Audit 共用的工作原则，渲染后的冻�
 
 Prompts 设置读取先返回 Developer/User 的已保存原文；某份模板验证或渲染失败时，仅该份渲染预览为空并返回明确的 `preview_errors`，编辑器仍显示原文供修正。保存仍需通过现有验证，后台角色调用仍严格验证，不自动迁移或覆盖旧模板。
 
-精简仅去除已有重复文本：Consumer 原有 Application Result Contract 同时保留在 Developer 与完整 Task、Audit 在 Developer 中保留一份角色规则，Audit Task 开头仍保留其原有 Application Result Contract。固定模型比较发现移除 Task 审核合同的候选存在交付/审核质量退步，因此仅删除 Developer 内部的重复副本；没有修改合同条款。Audit Rules 与本轮 Developer 相同时不在 Task 重复。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。标准 Skill 目录使用 TSV 与路径根别名，保留所有名称、完整用途说明、读取路径和顺序；定时专项 Skill 正文不改。Runtime Context 缩短工具说明，保留原有准确 server.tool 名称和其他环境事实。无业务调用的旧 build_turn_prompt、ceo_agent_thread_prompt 及 CodexRunner 的隐含业务 Developer 默认入口已退休；底层 native 指令保留模式及真实调用者显式指令不变。
+精简仅去除经固定模型比较确认不会损失质量的重复文本：Consumer 原有 Application Result Contract 同时保留在 Developer 与完整 Task；Audit Developer 保留原有两处 Application Result Contract（核心角色边界内一处，Decision Evidence 后一处），Audit Task 开头保留同一合同并原样呈现 `AuditTurnContext.audit_rules`。配置化 Audit Rules 仍由 Audit Developer 携带；生产编排沿用原有空 Task 字段，不把 Developer 规则复制进 Task。固定模型比较发现同时删除这些指令副本的候选出现错误的日历 rollover 返回，当前保留原有完整指令，没有删除或改写合同条款。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。标准 Skill 目录使用 TSV 与路径根别名，保留所有名称、完整用途说明、读取路径和顺序；定时专项 Skill 正文不改。Runtime Context 缩短工具说明，保留原有准确 server.tool 名称和其他环境事实。无业务调用的旧 build_turn_prompt、ceo_agent_thread_prompt 及 CodexRunner 的隐含业务 Developer 默认入口已退休；底层 native 指令保留模式及真实调用者显式指令不变。
 
 Developer 保存先以现有渲染器验证，未知变量或不可渲染内容返回具体错误且不覆盖已保存正文；该检查属于配置格式合同。
 

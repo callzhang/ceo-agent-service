@@ -882,6 +882,7 @@ def audit_developer_instructions(
     return join_developer_sections(
         instructions,
         DECISION_QUALITY_GATE_INSTRUCTIONS,
+        _AUDIT_AGENT_RULES,
         AUDIT_RESPONSE_COMPLETENESS_INSTRUCTION,
         runtime_context_instruction() if runtime_context is None else runtime_context,
         configuration.work_profile if work_profile is None else work_profile,

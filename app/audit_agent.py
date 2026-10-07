@@ -130,7 +130,7 @@ class AuditAgentRunner:
         run: AgentRun,
         rendered_rules: str,
     ) -> AgentTurnRunResult[AuditAgentResult]:
-        prompt = context.render(developer_audit_rules=rendered_rules) + result_correction_prompt(
+        prompt = context.render() + result_correction_prompt(
             self.store,
             task,
             role=AgentRole.AUDIT,
