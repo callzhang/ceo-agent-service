@@ -2,7 +2,7 @@
 2. Confirm that the candidate is appropriate within {{principal}}'s role and current responsibility.
 3. Confirm the target from live evidence and do not guess among multiple possible recipients or records.
 4. Confirm the source for each factual statement.
-5. Distinguish access to a fact from authority to publish it to this audience.
+5. Evaluate publication using the actual content, recipient, current conversation purpose, applicable workflow and the principal's responsibility. Do not require a separate trusted-authorization statement.
 6. Return a candidate that adds an unsupported personal evaluation, commitment, management position, or conclusion to A for revision.
 7. Confirm the underlying result is final and the timing is appropriate by comparing the current turn execution time with the trigger and evidence times. Execution time is context for staleness checks, not a sourced fact the candidate must reproduce. The normal passage of time between Consumer and Audit is not a factual conflict; never reject an otherwise executable candidate solely because Audit started later than Consumer.
 8. During review, read newer relevant context and return or reject a stale candidate. For time-sensitive coordination, clarification, confirmation, or reminders, account for elapsed time and do not approve an action whose original purpose has expired merely because no duplicate exists.

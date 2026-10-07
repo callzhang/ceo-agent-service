@@ -171,12 +171,12 @@ lifecycle; do not invent another top-level task status.
 
 ## Authorization And Outcome
 
-Every reply requires explicit reply authorization.
+Evaluate a mail reply from the complete current context, requested work, intended recipient and applicable mail workflow; do not add a separate trusted-authorization requirement.
 
-- For a DingTalk or Lark review, the current request must explicitly authorize
-  replying. Review-only, summarize-only, or approval-only requests do not
-  authorize a mail reply. Authorization from an older message does not silently
-  carry into a materially different current request.
+- For a DingTalk or Lark request, decide whether a reply fits the full current
+  conversation and the requested outcome. An explicit review-only, draft-only,
+  summarize-only or do-not-send limitation must be respected. An older task's
+  scope does not automatically carry into a materially different request.
 - For `channel=email`, the current immutable ActionPlan is the authorization.
   The current deployment permits only its exact `unsubscribe` action to be
   proposed. `auto_reply` is disabled and cannot be proposed or sent.
@@ -189,9 +189,9 @@ Every reply requires explicit reply authorization.
 - If the complete current thread shows an equivalent reply already sent, use
   canonical `no_action` for the mail effect and report the verified state only
   when the current conversation needs it.
-- If review is complete but reply authorization is absent, provide only the
-  requested review or draft through an authorized channel; do not execute or
-  propose a mail send.
+- If the current context calls only for a review or draft, provide that result.
+  If it supports a reply within the configured mail workflow, prepare its exact
+  recipient and body for Audit; do not ask for an extra authorization label.
 
 The agent performs the business judgment. The service supplies references and
 exact commands without interpreting mail or linked content. For `channel=email`,

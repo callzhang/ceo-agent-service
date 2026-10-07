@@ -1,14 +1,71 @@
 {
   "version": 1,
   "files": [
-    {"source": "ci/shared-skills/ceo-calendar-invite/SKILL.md", "target": "skills/ceo-calendar-invite/SKILL.md", "old_sha256": "4bf7aa197eaa2207ef2ac1666100b8d7b4e2e1cd21a5110d61ce18c359cb8591", "old_managed_sha256": "4bf7aa197eaa2207ef2ac1666100b8d7b4e2e1cd21a5110d61ce18c359cb8591", "new_sha256": "8419e3922762fee2134caefad659a08b596d480cee0f34553f80e1a16b8f9f00"},
-    {"source": "ci/shared-skills/ceo-daily-report/SKILL.md", "target": "skills/ceo-daily-report/SKILL.md", "old_sha256": "aeb24666540fdfdb3d4a515cb159ffea97843c2cd5aacf4dab59125383c9a1bb", "old_managed_sha256": "aeb24666540fdfdb3d4a515cb159ffea97843c2cd5aacf4dab59125383c9a1bb", "new_sha256": "225c898e84fcb56112ec2b2a0678f14216adb578ce9c6e5ed4b22c77e5bc2f35"},
-    {"source": "ci/shared-skills/ceo-document-review/SKILL.md", "target": "skills/ceo-document-review/SKILL.md", "old_sha256": "59f625fb89fa2cfa1668bf2aab0d2ecd12bb507dee64c135a9a42d8cb817d723", "old_managed_sha256": "59f625fb89fa2cfa1668bf2aab0d2ecd12bb507dee64c135a9a42d8cb817d723", "new_sha256": "99185770c11339be2273c727e59c627bae806f97bd1a499f59918a73ac184f2f"},
-    {"source": "ci/shared-skills/ceo-mail-review/SKILL.md", "target": "skills/ceo-mail-review/SKILL.md", "old_sha256": "cbdb77ff028a13b2e4a7217df8ca4e7c95b64004cf6d09e24883dfc3d3a28897", "old_managed_sha256": "0a9ca86e7f510df8b2564bfd99617f2944a09523d4101b4b1da5a6f33a7cc405", "new_sha256": "11ff63aa9bf726ee39d2b79e9682d6e146d7e2a8b257d21925acbc292402de3c"},
-    {"source": "ci/shared-skills/ceo-message-triage/SKILL.md", "target": "skills/ceo-message-triage/SKILL.md", "old_sha256": "f7abe1de667a9f4b2a39c2e41d6e3178622e0c7e469f8754746a6bef0b17b3ed", "old_managed_sha256": "a4ed211f204ad76efe460e01a4a329427ff7c551a02995acaa29322e86eaf7a7", "new_sha256": "e44abfe43f850e7bf659206909e31b9059f0c01ceb1355046bc1572d183366bd"},
-    {"source": "ci/shared-skills/ceo-weekly-report/SKILL.md", "target": "skills/ceo-weekly-report/SKILL.md", "old_sha256": "8a737edfb6f8d7f7c73a7fa66bd6555c74d80be573c0733e93ea1b14096af72b", "old_managed_sha256": "62ea0faad3c3c65d112e5edbd666d9f81f76b6dc654c0d56286914b76763f04b", "new_sha256": "8a8c03255ca9f559e73591bedf84a285d9f836ce6a3d3df34d5793c742cb9372"},
-    {"source": "ci/shared-skills/ceo-weekly-report/references/dingtalk-runbook.md", "target": "skills/ceo-weekly-report/references/dingtalk-runbook.md", "old_sha256": "24bd8f3050fa1f0f1c82f3139896e15c2ac24fc831d8c8404787f6f1de67ee9f", "new_sha256": "121579a2f3a7f6bcd52ef9d11e0796704b01e63576f68dc14fb1986401e1a396"},
-    {"source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md", "target": "skills/dingtalk-oa-approval/SKILL.md", "old_sha256": "04561fe54d2a6fa4b9b6d010bd8c0e446e7e55ffbbd749cfd18476f2382af959", "new_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5"},
-    {"source": "app/defaults/audit_rules.md", "target": "audit_rules", "old_sha256": "23cef8866a1affbb7c0d6d73c83cc747536f40cb5175a2ffba8eaef31cd71e71", "new_sha256": "75d7bb0959f5dd61ea66a7588869ec0e8a26831d8f0d4146faa1d37f3d408c43"}
+    {
+      "source": "app/defaults/audit_rules.md",
+      "target": "audit_rules",
+      "old_sha256": "75d7bb0959f5dd61ea66a7588869ec0e8a26831d8f0d4146faa1d37f3d408c43",
+      "new_sha256": "2109b25434cadad2822888f489877849c5eb169db31b7acf516e45f89e2526e1"
+    },
+    {
+      "source": "ci/shared-skills/ceo-calendar-invite/SKILL.md",
+      "target": "skills/ceo-calendar-invite/SKILL.md",
+      "old_sha256": "8419e3922762fee2134caefad659a08b596d480cee0f34553f80e1a16b8f9f00",
+      "new_sha256": "8419e3922762fee2134caefad659a08b596d480cee0f34553f80e1a16b8f9f00",
+      "old_managed_sha256": "8419e3922762fee2134caefad659a08b596d480cee0f34553f80e1a16b8f9f00"
+    },
+    {
+      "source": "ci/shared-skills/ceo-daily-report/SKILL.md",
+      "target": "skills/ceo-daily-report/SKILL.md",
+      "old_sha256": "225c898e84fcb56112ec2b2a0678f14216adb578ce9c6e5ed4b22c77e5bc2f35",
+      "new_sha256": "225c898e84fcb56112ec2b2a0678f14216adb578ce9c6e5ed4b22c77e5bc2f35",
+      "old_managed_sha256": "225c898e84fcb56112ec2b2a0678f14216adb578ce9c6e5ed4b22c77e5bc2f35"
+    },
+    {
+      "source": "ci/shared-skills/ceo-document-review/SKILL.md",
+      "target": "skills/ceo-document-review/SKILL.md",
+      "old_sha256": "99185770c11339be2273c727e59c627bae806f97bd1a499f59918a73ac184f2f",
+      "new_sha256": "99185770c11339be2273c727e59c627bae806f97bd1a499f59918a73ac184f2f",
+      "old_managed_sha256": "99185770c11339be2273c727e59c627bae806f97bd1a499f59918a73ac184f2f"
+    },
+    {
+      "source": "ci/shared-skills/ceo-mail-review/SKILL.md",
+      "target": "skills/ceo-mail-review/SKILL.md",
+      "old_sha256": "11ff63aa9bf726ee39d2b79e9682d6e146d7e2a8b257d21925acbc292402de3c",
+      "new_sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+      "old_managed_sha256": "11ff63aa9bf726ee39d2b79e9682d6e146d7e2a8b257d21925acbc292402de3c"
+    },
+    {
+      "source": "ci/shared-skills/ceo-message-triage/SKILL.md",
+      "target": "skills/ceo-message-triage/SKILL.md",
+      "old_sha256": "e44abfe43f850e7bf659206909e31b9059f0c01ceb1355046bc1572d183366bd",
+      "new_sha256": "e44abfe43f850e7bf659206909e31b9059f0c01ceb1355046bc1572d183366bd",
+      "old_managed_sha256": "e44abfe43f850e7bf659206909e31b9059f0c01ceb1355046bc1572d183366bd"
+    },
+    {
+      "source": "ci/shared-skills/ceo-wechat/SKILL.md",
+      "target": "skills/ceo-wechat/SKILL.md",
+      "old_sha256": "c4b6b739678e6343197af064eb2ffdf4fca041f5d69ef4d2c5559fdebc0d5c40",
+      "new_sha256": "dc2ae1f5aa4b3466d9fa03bf7bb608cba6734b84b7eeb64b8491c1e465472fae"
+    },
+    {
+      "source": "ci/shared-skills/ceo-weekly-report/SKILL.md",
+      "target": "skills/ceo-weekly-report/SKILL.md",
+      "old_sha256": "8a8c03255ca9f559e73591bedf84a285d9f836ce6a3d3df34d5793c742cb9372",
+      "new_sha256": "8a8c03255ca9f559e73591bedf84a285d9f836ce6a3d3df34d5793c742cb9372",
+      "old_managed_sha256": "8a8c03255ca9f559e73591bedf84a285d9f836ce6a3d3df34d5793c742cb9372"
+    },
+    {
+      "source": "ci/shared-skills/ceo-weekly-report/references/dingtalk-runbook.md",
+      "target": "skills/ceo-weekly-report/references/dingtalk-runbook.md",
+      "old_sha256": "121579a2f3a7f6bcd52ef9d11e0796704b01e63576f68dc14fb1986401e1a396",
+      "new_sha256": "121579a2f3a7f6bcd52ef9d11e0796704b01e63576f68dc14fb1986401e1a396"
+    },
+    {
+      "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
+      "target": "skills/dingtalk-oa-approval/SKILL.md",
+      "old_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
+      "new_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5"
+    }
   ]
 }
