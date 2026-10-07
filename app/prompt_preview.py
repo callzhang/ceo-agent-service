@@ -10,6 +10,7 @@ from app.audit_rules import render_audit_rules
 from app.config import workspace_path
 from app.consumer_agent import consumer_developer_instructions, audit_developer_instructions, default_consumer_skill_protocol
 from app.prompt import work_profile_instruction
+from app.prompt_composition import append_runtime_context
 from app.runtime_prompt_context import render_runtime_context, runtime_prompt_snapshot
 from app.store import AgentRole, AutoReplyStore
 
@@ -113,7 +114,7 @@ def current_prompt_preview(
             if role == "consumer" else ClaudeCommandPolicy.audit(task_id=task.id if task else 0, db_path=str(store.path), execution_generation=task.execution_generation if task else ""))
     runtime_context = render_runtime_context(role=role, route=route, command=command, task=task,
         current_time=rendered_at, invocation_facts={**facts, "proposal_revision": source_run.proposal_revision if source_run else "未绑定"}, preview=True)
-    developer += "\n\n" + runtime_context
+    developer = append_runtime_context(developer, runtime_context)
     result.update(runtime_prompt_snapshot(role=role, route=route, runtime_attempt_id=0, task=task,
         developer_instructions=developer, task_prompt=prompt, runtime_context=runtime_context, current_time=rendered_at))
     result.pop("type")

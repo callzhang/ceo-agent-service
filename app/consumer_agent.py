@@ -48,6 +48,7 @@ from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.config import principal_display_name
 from app.prompt import runtime_context_instruction, work_profile_instruction
+from app.prompt_composition import assemble_consumer_task, join_developer_sections
 from app.runtime_prompt_context import RUNTIME_WORK_PRINCIPLES, explicit_participant_timezones
 from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.store import AgentRole, AutoReplyStore, ReplyTask
@@ -600,18 +601,11 @@ class ConsumerAgentRunner:
                 invocation_facts={"stage_index": context.stage_index, "skill_protocol": selected_skill_protocol,
                                   "skill_protocol_source": "task_override" if context_skill_protocol is not None else "runtime_catalog",
                                   "participant_timezones": explicit_participant_timezones(context.trigger_raw_payload)},
-                prompt="## Runtime Invariants\nPreserve typed proposal contracts and session boundaries. The proposal must match the supplied JSON Schema exactly.\n\n"
-                + (
-                    "## Scheduled Consumer Prompt\n"
-                    + context.consumer_prompt
-                    + "\n\n"
-                    if context.consumer_prompt
-                    else ""
-                )
-                + context.render(
-                    proposal_revision=proposal_revision,
-                    feedback=feedback,
-                ) + continuation_prompt,
+                prompt=assemble_consumer_task(
+                    task_context=context.render(proposal_revision=proposal_revision, feedback=feedback),
+                    scheduled_prompt=context.consumer_prompt,
+                    continuation=continuation_prompt,
+                ),
                 session_id=session_id,
                 developer_instructions=consumer_developer_instructions(
                     runtime_context="",
@@ -788,17 +782,14 @@ def consumer_developer_instructions(
         capability_instructions=AGENT_CAPABILITY_INSTRUCTIONS,
         role_boundary=CONSUMER_ROLE_BOUNDARY.replace("Derek", principal_display_name()),
     )
-    return "\n\n".join(
-        part
-        for part in (
-            instructions,
-            DECISION_QUALITY_GATE_INSTRUCTIONS,
-            _CONSUMER_AGENT_RULES,
-            skill_protocol,
-            runtime_context_instruction() if runtime_context is None else runtime_context,
-            work_profile_instruction() if work_profile is None else work_profile,
-        )
-        if part
+    return join_developer_sections(
+        instructions,
+        DECISION_QUALITY_GATE_INSTRUCTIONS,
+        _CONSUMER_AGENT_RULES,
+        skill_protocol,
+        runtime_context_instruction() if runtime_context is None else runtime_context,
+        work_profile_instruction() if work_profile is None else work_profile,
+        omit_empty=True,
     )
 
 
@@ -876,15 +867,14 @@ def audit_developer_instructions(
             "complete."
         ), role_boundary=AUDIT_ROLE_BOUNDARY,
     )
-    return "\n\n".join(
-        (
-            instructions,
-            DECISION_QUALITY_GATE_INSTRUCTIONS,
-            _AUDIT_AGENT_RULES,
-            AUDIT_RESPONSE_COMPLETENESS_INSTRUCTION,
-            runtime_context_instruction() if runtime_context is None else runtime_context,
-            work_profile_instruction() if work_profile is None else work_profile,
-        )
+    return join_developer_sections(
+        instructions,
+        DECISION_QUALITY_GATE_INSTRUCTIONS,
+        _AUDIT_AGENT_RULES,
+        AUDIT_RESPONSE_COMPLETENESS_INSTRUCTION,
+        runtime_context_instruction() if runtime_context is None else runtime_context,
+        work_profile_instruction() if work_profile is None else work_profile,
+        omit_empty=False,
     )
 
 
