@@ -793,8 +793,8 @@ def consumer_developer_instructions(
     )
     return join_developer_sections(
         instructions,
-        _CONSUMER_AGENT_RULES,
         DECISION_QUALITY_GATE_INSTRUCTIONS,
+        _CONSUMER_AGENT_RULES,
         skill_protocol,
         runtime_context_instruction() if runtime_context is None else runtime_context,
         configuration.work_profile if work_profile is None else work_profile,

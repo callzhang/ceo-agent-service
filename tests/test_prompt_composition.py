@@ -87,6 +87,24 @@ def test_default_common_principles_are_inserted_verbatim_once_in_both_roles(tmp_
         assert f'\n\n{principles}\n\n## System Action Contracts' in instructions
 
 
+def test_consumer_decision_evidence_precedes_application_result_contract(tmp_path, monkeypatch):
+    from app.prompt_composition import load_prompt_configuration
+    from app.consumer_agent import consumer_developer_instructions
+
+    developer = tmp_path / 'developer.md'
+    user = tmp_path / 'user.md'
+    developer.write_text('Common principle sentinel', encoding='utf-8')
+    user.write_text('{{task_context}}', encoding='utf-8')
+    monkeypatch.setenv('CEO_DEVELOPER_PROMPT_TEMPLATE_PATH', str(developer))
+    monkeypatch.setenv('CEO_USER_PROMPT_TEMPLATE_PATH', str(user))
+    configuration = load_prompt_configuration()
+
+    instructions = consumer_developer_instructions(
+        prompt_configuration=configuration, runtime_context='', work_profile='',
+    )
+    assert instructions.index('## Decision Evidence') < instructions.index('## Application Result Contract')
+
+
 def test_consumer_template_requires_one_complete_context_slot():
     import pytest
     from app.developer_prompt import validate_consumer_task_template, DeveloperPromptTemplateError
