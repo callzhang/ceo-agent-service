@@ -287,7 +287,7 @@ registration.source_excerpt 必须是当前不可变来源中定义该项目的�
 规范 anchor 和原 registry provenance；多活动同名对象为身份冲突，无对象才用现有来源登记方法。
 旧相似名称、简称或标题前缀不能替代新的正式定义；已退休的来源项目不由本轮重新激活。
 
-Project 可选关联 Fxiaoke CRM AccountObj，持久化稳定 `_id` 与 CRM 显示名称，不修改 Project 标题；内部 Project 可以不关联客户。Task 不保存重复客户字段，只有关联到已确认 Project 的 Task 才在读取时继承其客户名称，独立 Task 保持无客户。Task Agent prompt 禁止调用 Memory `memory_write`，不增加工具白名单或 CLI/MCP 写入拦截。
+Project 可选关联 Fxiaoke CRM AccountObj，持久化稳定 `_id` 与 CRM 显示名称，不修改 Project 标题；内部 Project 可以不关联客户。Task 不保存重复客户字段，只有关联到已确认 Project 的 Task 才在读取时继承其客户名称，独立 Task 保持无客户。Task Agent prompt/Skill 引导写入当前证据支持的持久项目风险和重要进度/状态更新，保留原始来源引用与来源时间，区分来源事实和有证据的风险推断；不写单条 Task/TODO、日常或临时信息、无依据猜测、秘密、原始转录及重复更新。不增加工具白名单、通用只读模式或 CLI/MCP 写入拦截。
 
 CRM 查询使用 `sharecrm data record query-by-name` 对 AccountObj 做只读名称解析，不写 CRM。Agent 提供的 `crm_customer_evidence` 必须同时、完全一致地出现在 Project `evidence` 中。该解析器不能证明候选精确或穷尽；Task Agent 和 Project 页面返回的每个候选（包括单条候选）都保持未关联，只有用户明确确认后才建立本地关联。Resolver `NO_MATCH` 与 CLI/认证/查询不可用分开记录。查询失败或后续冲突不会清除已确认关联。客户汇总按 CRM `_id` 分组，只包含已确认关联的 Project；未关联项目仍在常规项目视图。
 
@@ -1103,8 +1103,9 @@ Agent 写入时一律按 `agent_reported_failure` 处理。
 **原则：任何更底层观察到的错误码或原文，被归并成更通用的服务码时都不能丢失，必须原样带到 Agent 报错记录里，供事后排查。** 通用化是给重试/授权决策用的分类，不是删除诊断信息的许可。已落实的例子：`agent_reported_failure` 保留 Agent 原文在 `source_code`；Agent 报告的 typed 失败结果保留其必填的 `summary` 在 `reported_summary`（2026-09-28，见下段）；Codex 进程失败保留 stderr 与 JSONL 里的 `error`/`message`/`detail`/`reason` 字段在 `detail`（`_process_failure_detail`，裁剪到 1000 字符、脱敏凭证）；路由执行错误沿 `__cause__` 链找具体解析/校验异常的 `reason`（`_runtime_failure_detail`）；退订浏览器错误保留异常类名和截断消息（见上文退订段落）。新增一处错误归并时必须同样保留来源，不能只留下分类码。
 
 任务 Agent 的 `memory_recall_used` 是 Agent 给出的上下文记录，不是服务的工具调用验收条件。
-Task Agent 的 Memory 写入边界由提示词约束：允许读取 Memory 上下文，但明确禁止调用
-`memory_connector.memory_write`；这不是工具层面的强制禁用。
+Task Agent 的 Memory 写入边界由提示词约束：可调用 `memory_connector.memory_write` 保存
+当前证据支持的持久、重要项目风险与进度/状态更新，注明项目与原始来源，并以来源时间作为
+`created_at`，使用 `type="text"`；没有持久项目变化则不写。此行为由 prompt 引导，不是工具层权限隔离。
 
 Task Agent 不直接调用外部 TODO 写入；Task 7 的创建/完成 intent 在 Task 语义事务中排入
 `business_task_todo_sync_outbox`，由 dispatcher 按 `business_task_id` 执行。创建仅限正式、开放、
