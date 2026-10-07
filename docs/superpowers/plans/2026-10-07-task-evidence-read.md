@@ -18,3 +18,5 @@ Production Project detail returns at most 20 evidence rows plus pinned citations
 
 - 2026-10-07: isolated managed worktree at origin/main2cfd02f5; file claims recorded. Production baseline7e0e9654. No runtime changes yet.
 - 2026-10-07: RED `tests/test_task_evidence_read_api.py` = 4 failed on missing routes (expected 404). GREEN = 4 passed; focused compatibility = 31 passed (4 new + 27 existing Project detail/Console Task API checks) in 138.58s; Ruff passed on the three touched Python files and `git diff --check` passed. Added only typed read envelopes/helper and the two GET routes; no Store/schema/domain mutation, push, deploy, or production write.
+
+- 2026-10-07: independent scoped spec/quality review of863de4b7 clean; same deployed-source and domain/read boundaries confirmed. Merged upstream501d7c3c tests-only Skill assertion correction without altering this API implementation. Final CI, merge/deploy and native production source readback remain pending.
