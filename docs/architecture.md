@@ -857,6 +857,14 @@ historical_comparison 同时用当前与历史原始证明；当前对旧报告�
 生命周期或 record_suggestion→项目判断顺序应用。无效来源或身份冲突回滚本轮，不猜未来 ID。
 支持 Task 必须实际属于所评 Project，或本轮同一支持决定用真实证据确认；不能只因 ID 存在算成员。
 
+同一个既有 stored Project/assessment 只读校验器也在领域应用前、原有两轮 decision
+repair 中通过短连接执行；其 ValueError 携带原始错误和被拒决定反馈给同一 Task session。
+包括已有关注卡缺少其保存原证据的声明错误，不放宽原文、身份、成员标准。领域事务内
+仍再次执行未改动的同一校验器；SQLite 操作错误和原子应用阶段错误不进入模型纠正。
+没有新增校验政策、循环或纠正预算。
+当前 null-ID 项目引文的反馈一次列出所有不同的拒绝原因、来源 ref 和被拒引文原样文本；
+重复项只报告一次，不自动改写、模糊匹配或归一化引文，整体仍只有既有两轮纠正。
+
 existing_attention_id 是该同 Project 活动旧卡原始证明的声明，不是 upsert 目标。
 它须核验真实原始 Signal/ref/quote，并在 assessment 原样引用该卡至少一条保存的证明；
 支持 Task 只取卡片实际成员，不把项目同伴当成员。真实旧证明可与当前 attention_proposal 并存。

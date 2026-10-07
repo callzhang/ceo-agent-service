@@ -1399,12 +1399,20 @@ def _validate_formal_basis_source(item: TaskDecision, work_item: WorkItem) -> No
 def _validate_task_agent_decision(
     decision: TaskAgentDecision, *, work_item: WorkItem, now: str = ""
 ) -> None:
+    citation_errors: list[str] = []
     for citation in _project_citations(decision):
         if citation.signal_id is None:
             try:
                 _validate_current_project_citation(citation, work_item=work_item)
             except ValueError as exc:
-                raise RepairableTaskDecisionValidationError(str(exc)) from exc
+                citation_errors.append(
+                    f"{exc}; source_ref={citation.source_ref!r}; "
+                    f"source_excerpt={citation.source_excerpt!r}"
+                )
+    if citation_errors:
+        raise RepairableTaskDecisionValidationError(
+            "\n".join(dict.fromkeys(citation_errors))
+        )
     for item in decision.task_decisions:
         if item.action == "skip":
             continue
@@ -3276,6 +3284,13 @@ def process_work_item(
             )
             try:
                 _validate_task_agent_decision(decision, work_item=work_item, now=now)
+                with store._connect() as db:
+                    try:
+                        _validate_stored_project_assessments(
+                            store, decision, work_item=work_item, db=db
+                        )
+                    except ValueError as exc:
+                        raise RepairableTaskDecisionValidationError(str(exc)) from exc
             except RepairableTaskDecisionValidationError as exc:
                 if repair_round == TASK_DECISION_REPAIR_ROUNDS:
                     raise TaskDecisionRepairExhausted(str(exc)) from exc
