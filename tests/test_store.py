@@ -1589,6 +1589,122 @@ def test_weekly_okr_cache_miss_reclaim_wrong_key_or_status_fails_closed(
         )
 
 
+def _completed_projection_run(store):
+    input_id = store.enqueue_work_summary_input("local_file", "receipt-source", "{}")
+    store.claim_work_summary_inputs(1)
+    run_id = store.begin_task_agent_run(input_id)
+    store.finish_task_agent_run(
+        run_id, status="completed", decision_json='{"task_decisions":[]}',
+        audit_summary="Task facts committed", codex_session_id="receipt-session",
+        memory_recall_used=True,
+    )
+    return input_id, run_id
+
+
+def _projection_receipt_json():
+    from app.task_models import TaskAttentionProjectionOutcome, TaskAttentionProjectionReceipt
+
+    return TaskAttentionProjectionReceipt(
+        status="partial", source_type="local_file", task_decision_count=2,
+        project_link_count=1, registry_row_count=None, proposal_count=2,
+        applied_count=1, outcomes=[
+            TaskAttentionProjectionOutcome(task_id=1, anchor_id=3, attention_id=5, status="applied"),
+            TaskAttentionProjectionOutcome(task_id=2, status="rejected", reason="Missing linked evidence"),
+        ],
+    ).model_dump_json()
+
+
+def test_task_agent_projection_receipt_preserves_terminal_run(tmp_path: Path):
+    from app.task_models import TaskAgentRun
+
+    store = AutoReplyStore(tmp_path / "projection-receipt.sqlite3")
+    _, run_id = _completed_projection_run(store)
+    with store._connect() as db:
+        before = dict(db.execute("select * from task_agent_runs where id=?", (run_id,)).fetchone())
+    assert TaskAgentRun.model_validate(before).projection_json == "{}"
+    receipt = _projection_receipt_json()
+    store.record_task_agent_projection(run_id, receipt)
+    with store._connect() as db:
+        after = dict(db.execute("select * from task_agent_runs where id=?", (run_id,)).fetchone())
+    assert TaskAgentRun.model_validate(after).projection_json == receipt
+    assert after.pop("projection_json") == receipt
+    assert before.pop("projection_json") == "{}"
+    assert after == before
+
+
+def test_task_agent_projection_receipt_rejects_invalid_and_absent_run(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "invalid-receipt.sqlite3")
+    _, run_id = _completed_projection_run(store)
+    with pytest.raises(ValueError):
+        store.record_task_agent_projection(run_id, '{"status":"completed"}')
+    with pytest.raises(ValueError, match="task agent run does not exist"):
+        store.record_task_agent_projection(999999, _projection_receipt_json())
+
+
+def test_task_agent_projection_receipt_uses_existing_transaction(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "rollback-receipt.sqlite3")
+    _, run_id = _completed_projection_run(store)
+    with pytest.raises(RuntimeError, match="rollback receipt"):
+        with store.business_task_transaction() as db:
+            store.record_task_agent_projection(run_id, _projection_receipt_json(), _db=db)
+            assert db.execute("select projection_json from task_agent_runs where id=?", (run_id,)).fetchone()[0] != "{}"
+            raise RuntimeError("rollback receipt")
+    with store._connect() as db:
+        assert db.execute("select projection_json from task_agent_runs where id=?", (run_id,)).fetchone()[0] == "{}"
+
+
+def _create_receipt_attention(store, assessment_json=None):
+    signal_id = store.create_business_task_signal(
+        source_type="message", source_ref="receipt-message", evidence_text="Delivery is blocked",
+        dedupe_key="receipt-message",
+    )
+    with store.business_task_transaction() as db:
+        anchor_id = store.create_business_anchor_in_transaction(
+            anchor_type="customer", anchor_ref="receipt-customer", title="Receipt customer", _db=db,
+        )
+        extra = {} if assessment_json is None else {"assessment_json": assessment_json}
+        return store.create_business_attention_item_in_transaction(
+            stable_key="receipt-attention", category="watch", title="Delivery blocked",
+            business_area="Delivery", why_attention="Customer delivery risk", current_state="Blocked",
+            ceo_action="Review delivery options", anchor_id=anchor_id, evidence_signal_id=signal_id,
+            now="2026-10-01T12:00:00+00:00", _db=db, **extra,
+        )
+
+
+def test_business_attention_assessment_json_create_and_update(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "assessment.sqlite3")
+    assessment = '{"material_trigger":"delivery_risk","inference":"Customer impact","evidence":[{"signal_id":1,"source_ref":"receipt-message","source_excerpt":"Delivery is blocked","source_time":"","link":""}]}'
+    item_id = _create_receipt_attention(store, assessment)
+    item = store.get_business_attention_item(item_id)
+    assert item.assessment_json == assessment
+    updated = item.model_copy(update={"assessment_json": '{"inference":"Updated assessment"}'})
+    with store.business_task_transaction() as db:
+        store.update_business_attention_item_in_transaction(item=updated, _db=db)
+    assert store.get_business_attention_item(item_id).assessment_json == updated.assessment_json
+
+
+def test_task_attention_receipt_migrates_without_claiming_historical_success(tmp_path: Path):
+    db_path = tmp_path / "legacy-receipts.sqlite3"
+    store = AutoReplyStore(db_path)
+    _, run_id = _completed_projection_run(store)
+    item_id = _create_receipt_attention(store)
+    with store._connect() as db:
+        before_run = dict(db.execute("select * from task_agent_runs where id=?", (run_id,)).fetchone())
+        before_item = dict(db.execute("select * from business_attention_items where id=?", (item_id,)).fetchone())
+        db.execute("alter table task_agent_runs drop column projection_json")
+        db.execute("alter table business_attention_items drop column assessment_json")
+    assert not store._schema_is_current()
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    upgraded = AutoReplyStore(db_path)
+    with upgraded._connect() as db:
+        run = dict(db.execute("select * from task_agent_runs where id=?", (run_id,)).fetchone())
+        item = dict(db.execute("select * from business_attention_items where id=?", (item_id,)).fetchone())
+    assert run == before_run
+    assert item == before_item
+    assert run["projection_json"] == "{}"
+    assert item["assessment_json"] == "{}"
+
+
 def test_task_agent_run_begin_is_concurrent_and_finish_is_idempotent(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task-run-lifecycle.sqlite3")
     summary_id = store.enqueue_work_summary_input("local_file", "source", "{}")

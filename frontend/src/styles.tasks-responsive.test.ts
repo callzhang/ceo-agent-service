@@ -12,6 +12,12 @@ function mediumStyles() {
 }
 
 describe("Tasks responsive layout contract", () => {
+  it("wraps dense project accountability and stacks task rows on narrow screens", () => {
+    expect(workbenchStyles).toMatch(/\.business-project-facts\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/);
+    expect(workbenchStyles).toMatch(/\.business-citations blockquote\s*\{[^}]*white-space:\s*pre-wrap;[^}]*overflow-wrap:\s*anywhere;/);
+    expect(workbenchStyles).toMatch(/@media \(max-width:\s*600px\)\s*\{[\s\S]*?\.business-task-row, \.business-project-row\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
+    expect(workbenchStyles).toMatch(/\.business-candidate-group h2\s*\{[^}]*color:\s*var\(--ink\);/);
+  });
   it("scopes dark readable tokens to Tasks and keeps card text on theme variables", () => {
     expect(workbenchStyles).toMatch(/@media \(prefers-color-scheme: dark\)\s*\{\s*\.task-domain-route\s*\{[^}]*--canvas:\s*#111411;[^}]*--ink:\s*#f0f3ed;[^}]*--accent:\s*#61d0a6;/);
     expect(workbenchStyles).toMatch(/\.business-attention-card\s*\{[^}]*color:\s*var\(--ink\);[^}]*background:\s*var\(--surface\);/);

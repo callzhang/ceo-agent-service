@@ -27,6 +27,72 @@ def test_task_agent_session_lease_serializes_store_instances(tmp_path):
     second.close()
 
 
+def test_task_agent_runtime_prompt_keeps_current_shared_source_body_once(
+    tmp_path, monkeypatch
+):
+    from app.task_agent import TaskAgentRunner, process_work_item
+    from app.task_models import TaskAgentDecision, WorkItem
+
+    store = AutoReplyStore(tmp_path / "runtime-source.sqlite3")
+    item = WorkItem.model_validate(
+        {
+            "source": {
+                "type": "reply_attempt",
+                "ref": "message:one",
+                "conversation_id": "c1",
+            },
+            "summary": "完整的本次来源只装载一次 runtime-body-8934",
+            "context": {
+                "source_conversation_kind": "group",
+                "sender_user_id": "u1",
+                "sender": "张三",
+            },
+        }
+    )
+    task = store.create_business_task(title="完整的本次来源", stage="candidate")
+    signal = store.create_business_task_signal(
+        source_type="reply_attempt",
+        source_ref=item.source.ref,
+        evidence_text=item.summary,
+        conversation_id="c1",
+        author_kind="human",
+        author_user_id="u1",
+        author_name="张三",
+        dedupe_key="current",
+    )
+    store.link_business_task_evidence(
+        task_id=task, signal_id=signal, evidence_role="discovery"
+    )
+    id = store.enqueue_work_summary_input(
+        payload_json=item.model_dump_json(),
+        source_type=item.source.type.value,
+        source_ref=item.source.ref,
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+
+    class CapturingCodex:
+        last_session_id = "fixture-shared-session"
+        prompts = []
+
+        def decide(self, **kwargs):
+            self.prompts.append(kwargs["prompt"])
+            return TaskAgentDecision(
+                project_decisions=[],
+                task_decisions=[],
+                project_assessments=[],
+                update_summary="没有新的行动项",
+            )
+
+    codex = CapturingCodex()
+    process_work_item(store, TaskAgentRunner(codex), work_input)
+    assert len(codex.prompts) == 1
+    assert codex.prompts[0].count(item.summary) == 1
+    assert '"sender_user_id": "u1"' in codex.prompts[0]
+    assert '"document_count": 1' in codex.prompts[0]
+    assert store.get_work_summary_input(id).status.value != "failed"
+
+
 def test_task_agent_session_lease_marks_failed_renewal_as_lost():
     class Store:
         def acquire_codex_session_lock(self, conversation_id, owner):

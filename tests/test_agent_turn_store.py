@@ -2024,7 +2024,7 @@ def test_agent_run_migration_rolls_back_before_commit_on_foreign_key_failure(
             """
         )
 
-    with pytest.raises(sqlite3.IntegrityError, match="broke foreign keys"):
+    with pytest.raises(sqlite3.IntegrityError, match="pre-existing foreign key violations"):
         AutoReplyStore(db_path)
 
     with sqlite3.connect(db_path) as db:

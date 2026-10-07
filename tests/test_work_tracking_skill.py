@@ -1,3 +1,4 @@
+import json
 import inspect
 from pathlib import Path
 
@@ -5,7 +6,12 @@ import pytest
 from pydantic import ValidationError
 
 from app.task_agent import build_task_agent_prompt
-from app.task_models import TaskAgentDecision, TaskDecision, owner_identity_is_supported
+from app.task_models import (
+    TaskAgentDecision,
+    TaskDecision,
+    owner_identity_is_supported,
+    task_agent_output_schema,
+)
 
 from app.business_skills import bundled_business_skills_root
 
@@ -24,16 +30,15 @@ def test_work_tracking_skill_owns_judgment_and_delegates_only_mechanics():
     text = " ".join(_skill_text().split())
 
     for required in (
-        "Extract zero or more distinct Tasks from supplied source context",
-        "Never originate a Task, deliverable, owner, assignment, or date from Agent judgment alone",
-        "An external TODO proves a formal record exists; it does not prove its assignee accepted it",
-        "Keep date meanings separate and source-backed",
-        "confirmed business anchor and a concrete material trigger",
-        "A memory summary without its original source is not evidence",
-        "Evidence read earlier in the session, and evidence found",
-        "one Task Agent returns one `TaskAgentDecision` lifecycle contract",
-        "The Task Agent cannot create a TODO through completion fields",
-        "The current Codex route has no per-turn",
+        "One Task Agent reads new evidence, current Project context and existing Tasks.",
+        "Return one envelope with all three required lists",
+        "The only tool-specific prohibition is: never call `memory_connector.memory_write`.",
+        "no general read-only mode is imposed here",
+        "Project can have zero Tasks.",
+        "A bare responsibility clause (a person being responsible for a business area) is ProjectContext only",
+        "Actual Task: a source-backed independently completable deliverable/action.",
+        "Memory is discovery/background, not observed source proof.",
+        "Newly observed DingTalk human completion deterministically updates only its explicitly linked Task.",
     ):
         assert required in text
 
@@ -41,11 +46,20 @@ def test_work_tracking_skill_owns_judgment_and_delegates_only_mechanics():
         assert forbidden not in text
 
 
+def test_candidate_skill_repeats_crm_customer_citation_in_project_evidence():
+    text = (ROOT / "ci/shared-skills/ceo-work-tracking/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "repeat that identical citation in the Project's `evidence` list" in " ".join(
+        text.split()
+    )
+
+
 def test_task_agent_prompt_builder_contains_transport_not_business_policy():
     source = inspect.getsource(build_task_agent_prompt)
 
     assert "load_skill_text" in source
-    assert "TaskAgentDecision.model_json_schema" in source
+    assert "task_agent_output_schema" in source
     for duplicated_policy in (
         "流程性内容默认忽略",
         "owner_user_id 不能靠猜",
@@ -56,11 +70,28 @@ def test_task_agent_prompt_builder_contains_transport_not_business_policy():
         assert duplicated_policy not in source
 
 
-def test_task_agent_contract_has_no_checked_duplicate_schema():
-    assert not (ROOT / "app" / "schemas" / "task_agent_decision.schema.json").exists()
+def test_task_agent_output_schema_matches_the_pydantic_contract():
+    schema_path = ROOT / "app" / "schemas" / "task_agent_decision.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    assert schema == task_agent_output_schema()
+
+    def assert_strict_objects(value):
+        if isinstance(value, dict):
+            if value.get("type") == "object":
+                properties = value.get("properties", {})
+                assert value.get("additionalProperties") is False
+                assert value.get("required", []) == list(properties)
+            for nested in value.values():
+                assert_strict_objects(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                assert_strict_objects(nested)
+
+    assert_strict_objects(schema)
 
 
-def test_completion_operations_are_top_level_unified_decision_fields_and_skill_agrees():
+def test_legacy_completion_fields_are_not_current_skill_operations():
     decision_fields = TaskAgentDecision.model_fields
     task_decision_fields = TaskDecision.model_fields
     assert "todo_changes" in decision_fields
@@ -69,10 +100,10 @@ def test_completion_operations_are_top_level_unified_decision_fields_and_skill_a
     assert "follow_up_changes" not in task_decision_fields
 
     text = " ".join(_skill_text().split())
-    assert "top-level `todo_changes` and `follow_up_changes` fields" in text
-    assert "Do not emit legacy `todo_changes`" not in text
-    assert "outside the approved Task 6 scope, not a release blocker" in text
-    assert "`max_raw_reads` cap remains unmet and is a release blocker" not in text
+    assert (
+        "todo_changes, follow_up_changes, search_trace and old completion-check source enums "
+        "are historical, not current operations."
+    ) in text
 
 
 def _formal_task(**overrides) -> dict[str, object]:
