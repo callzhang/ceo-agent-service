@@ -15,6 +15,7 @@ from app.task_business_resolution import BusinessResolutionService
 from app.task_semantic_models import AttentionCategory, ProjectContext, TaskSuggestion
 from app.task_semantic_service import RecordTaskSuggestion, SourceSignal, TaskSemanticService
 from app.task_models import TaskAgentDecision, WorkItem
+from app.task_agent import TaskAgentRunner
 
 
 def _tool():
@@ -24,6 +25,82 @@ def _tool():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.mark.parametrize("call_style", ["positional", "keyword"])
+@pytest.mark.parametrize("repair_round", [0, 1])
+def test_scoped_runner_delivers_read_only_evaluation_prompt(call_style, repair_round):
+    tool = _tool()
+    decision = TaskAgentDecision(
+        project_decisions=[], task_decisions=[], project_assessments=[],
+        update_summary="Evaluation result",
+    )
+    transported = []
+
+    class CapturingCodex:
+        def decide(self, **kwargs):
+            transported.append(kwargs)
+            return decision
+
+    runner = tool.scoped_runner(TaskAgentRunner, CapturingCodex())
+    item = WorkItem.model_validate({
+        "source": {"type": "reply_attempt", "ref": "original:chat:42",
+                   "created_at": "2026-10-02T09:00:00Z"},
+        "context": {"source_conversation_kind": "group"},
+        "summary": "Original Project source",
+    })
+    payload = {
+        "current_work_item": {"document_id": "original:document:42"},
+        "source_metrics": {"original_characters": 80, "delivered_characters": 8},
+        "source_documents": [{
+            "document_id": "original:document:42", "full_length": 80,
+            "truncated": True, "citation_budget_exceeded": False,
+            "visible_ranges": [{"start": 20, "end": 28, "text": "原始项目来源文本"}],
+            "decoded_excerpts": [{"start": 20, "end": 28, "text": "原始项目来源文本"}],
+        }],
+    }
+    source_json = json.dumps(payload, ensure_ascii=False)
+    candidate = source_json + "\nExisting context instruction."
+    options = {
+        "run_id": 42, "session_scope_id": "production:scope",
+        "repair_round": repair_round, "memory_issue": "evaluation-memory-marker",
+    }
+    if call_style == "positional":
+        result = runner.decide(item, candidate, **options)
+    else:
+        result = runner.decide(work_item=item, candidate_prompt=candidate, **options)
+
+    assert result is decision
+    assert len(transported) == 1
+    transport = transported[0]
+    assert transport["session_scope_id"] == tool.EVALUATION_SCOPE
+    assert transport["workload_key"] == (
+        "42" if repair_round == 0 else "42:decision_repair.1"
+    )
+    prompt = transport["prompt"]
+    assert candidate in prompt
+    assert '"ref": "original:chat:42"' in prompt
+    assert "evaluation-memory-marker" in prompt
+    delivered_context = prompt.split(
+        "Current semantic Project/Task context (rank is context, never authority):\n", 1
+    )[1]
+    delivered_payload, _ = json.JSONDecoder().raw_decode(delivered_context)
+    assert delivered_payload == payload
+    assert runner.context_deliveries == [{
+        "notice": "Actual delivered context ranges, not proof of what the Agent read.",
+        "source_metrics": payload["source_metrics"],
+        "source_documents": [{
+            "document_id": "original:document:42", "full_length": 80,
+            "truncated": True, "citation_budget_exceeded": False,
+            "visible_ranges": [{"start": 20, "end": 28}],
+            "decoded_excerpts": [{"start": 20, "end": 28}],
+        }],
+    }]
+    assert "Evaluation instruction (prompt guidance only)" in prompt
+    assert "Connected tools are external read-only for this evaluation" in prompt
+    assert "Do not call memory_connector.memory_write or any memory_write tool" in prompt
+    assert "Do not perform external or business writes" in prompt
+    assert "overrides production Memory-write guidance for this turn" in prompt
 
 
 def domain_snapshot(store: AutoReplyStore) -> dict[str, tuple[str, ...]]:

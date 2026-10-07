@@ -13,6 +13,12 @@ import subprocess
 import sys
 
 EVALUATION_SCOPE = "task-agent:attention-eval:v1"
+EVALUATION_INSTRUCTION = """Evaluation instruction (prompt guidance only):
+This turn evaluates synthetic fixtures or copied sources. Connected tools are external read-only for this evaluation.
+Do not call memory_connector.memory_write or any memory_write tool. Do not perform external or business writes.
+This evaluation instruction overrides production Memory-write guidance for this turn.
+Preserve original source identities and return the normal TaskAgentDecision for local evaluation application.
+This instruction does not technically disable tools or enforce permissions."""
 W39_SOURCE_REF = "dingtalk-doc:a9E05BDRVQvy7QEacPZLB4anJ63zgkYA#sha256=21661643562265ca27e3369112a7ce3e91d9cbb6d21733050b5c3e7a9d42bf1e"
 
 
@@ -40,7 +46,8 @@ def scoped_runner(runner_type, codex):
             self.context_deliveries = []
 
         def decide(self, *args, **kwargs):
-            payload, _ = json.JSONDecoder().raw_decode(args[1] if len(args) > 1 else kwargs["candidate_prompt"])
+            candidate_prompt = args[1] if len(args) > 1 else kwargs["candidate_prompt"]
+            payload, _ = json.JSONDecoder().raw_decode(candidate_prompt)
             documents = payload.get("source_documents")
             self.context_deliveries.append({
                 "notice": "Actual delivered context ranges, not proof of what the Agent read.",
@@ -51,6 +58,11 @@ def scoped_runner(runner_type, codex):
                     "decoded_excerpts": [{key: value for key, value in span.items() if key != "text"} for span in document.get("decoded_excerpts", [])],
                 } for document in documents] if documents is not None else None,
             })
+            candidate_prompt += "\n\n" + EVALUATION_INSTRUCTION
+            if len(args) > 1:
+                args = (args[0], candidate_prompt, *args[2:])
+            else:
+                kwargs["candidate_prompt"] = candidate_prompt
             kwargs["session_scope_id"] = EVALUATION_SCOPE
             return super().decide(*args, **kwargs)
 
