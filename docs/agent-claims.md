@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+<!-- codex-project-citation-repair-20261007: isolated task-project-citation-repair worktree; app/task_agent.py (existing current-source citation checks and bounded correction only), tests/test_task_agent.py, docs/runtime-mechanism.md, CHANGELOG.md. Feed invalid current Project citations into the existing repair rounds before domain writes; preserve exact contiguous quote/source identity checks and atomic application. No evidence allowance, policy, schema, external dispatch or historical import changes. -->
+
 ## Current assessment implementation coordination
 
 | Owner | Files | What | Since |

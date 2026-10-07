@@ -1468,6 +1468,13 @@ uses the existing work-summary retry policy; it never guesses an owner or
 changes a technical failure into `needs_human`. Memory-backed ownership still
 requires linked source provenance and an `episode_id`.
 
+Current Work Item Project citations, including nested context and assessment
+evidence, use the same exact source identity and contiguous-quote validator
+before domain writes and again during atomic apply. Invalid current citations
+enter the existing bounded correction rounds with the rejected candidate;
+exhaustion remains failed without partial Project or signal writes. Historical
+signal citations retain their existing in-transaction provenance checks.
+
 Date source, actor and exact-precision validation uses the same pure validator
 before the domain transaction and during apply. Evidence errors enter the same
 bounded correction loop; unidentified source actors or invented dates remain
