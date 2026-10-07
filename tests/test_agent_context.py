@@ -737,7 +737,7 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
     ).render()
 
     assert "Audit reads and judges it" in audit_developer_instructions("Only publish supported facts.")
-    assert "Audit reads and judges it" not in rendered
+    assert "Audit reads and judges it" in rendered
     assert '"proposal_revision": 2' in rendered
     assert '"operation_id": "op-2"' in rendered
     assert "请补充材料。" in rendered

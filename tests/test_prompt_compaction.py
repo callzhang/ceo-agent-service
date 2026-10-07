@@ -43,10 +43,18 @@ def test_audit_keeps_current_and_different_bound_source_values_visible():
     assert 'source_bindings[0].value.trigger_text' not in body
 
 
-def test_role_rules_are_not_repeated_across_developer_and_task_inputs():
+def test_consumer_rules_and_each_developer_contract_avoid_repeated_copies():
     from app.consumer_agent import consumer_developer_instructions, audit_developer_instructions
     from app.agent_context import _CONSUMER_AGENT_RULES, _AUDIT_AGENT_RULES
     consumer = consumer_developer_instructions(runtime_context='', work_profile='') + task_context().render()
     audit = audit_developer_instructions('configured audit rule', runtime_context='', work_profile='')
     assert consumer.count(_CONSUMER_AGENT_RULES) == 1
     assert audit.count(_AUDIT_AGENT_RULES) == 1
+
+
+def test_audit_task_retains_existing_review_contract_at_the_task_boundary():
+    from app.agent_context import _AUDIT_AGENT_RULES
+    context = task_context()
+    body = AuditTurnContext(context, 0, 'operation', candidate(context), 'digest', 'configured audit rule').render(developer_audit_rules='configured audit rule')
+    assert body.startswith(_AUDIT_AGENT_RULES + '\n\n')
+    assert body.count('configured audit rule') == 0

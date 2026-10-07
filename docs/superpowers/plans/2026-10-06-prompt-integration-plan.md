@@ -296,3 +296,7 @@ Derek 明确要求同一个对话对象复用已有session。代码与生产记�
 - Consumer 的既有 conversation_id+route session 复用保留；新回归证明已保存 Developer/User 改动更新实际输入和契约回执，同时 resume 原session。Audit session 独立。
 
 固定输入/原生模型输出、部署、自然新 invocation 和外部业务结果是不同证据边界。最终验收记录将给出 immutable candidate SHA、质量比较、发布回执及仍未满足的目标。
+
+### 第一次固定比较的停止与修订
+
+候选 b79ab9ca 的40个原生输出格式有效，但独立盲评发现 scheduled-report Consumer 把 principal-only 投递替换成 group；状态 pending 还存在被加强为 underway 的问题。该候选未批准发布，全部原生结果/盲评保留。遵循“质量下降保留最小必要信息”，恢复 Audit Task 开头原有 Application Result Contract；Developer 中仍只保留一份 Audit role contract。共同原则强调既有请求的交付物、收件人、受众/渠道及来源状态/主体准确性，没有新增审核/授权政策。用原来相同冻结用例、模型、配置再次比较，baseline 不重新挑选或改写。

@@ -372,7 +372,7 @@ class AuditTurnContext:
             )
         )
         rules = "" if developer_audit_rules == self.audit_rules else f"## Audit Rules\n{self.audit_rules}\n\n"
-        return f"{rules}## Context Facts\n{context_facts}"
+        return f"{_AUDIT_AGENT_RULES}\n\n{rules}## Context Facts\n{context_facts}"
 
 
 def _json(value: object) -> str:
