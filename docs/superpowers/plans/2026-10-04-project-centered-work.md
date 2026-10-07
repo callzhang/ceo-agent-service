@@ -12,16 +12,23 @@
 
 ## 状态、边界与依赖
 
-### 当前状态：2026-10-06（America/Los_Angeles）
+### 当前状态：2026-10-07 00:12 PDT（America/Los_Angeles）
 
 **代码已发布；业务验收部分完成，Task 9 不能整体关闭。** PR #16/#17 已合并和部署，
-当前生产为 `a385b86d`；该 Memory 规则提交的 Quality run `37560722735` 已成功。
+当前生产为 `1e3711a0`；证据反馈修复 `bdc52029` 已包含在该版本，Quality run
+`37581151917` 已成功。Memory 规则 `a385b86d` 也包含在当前生产版本。
 真实共享 Skill 已与 Project-centered 契约同步。原 input `27465` 的 run `10690`
 成功保存 4 份 ProjectContext、2 张无 Task 成员的业务关注卡片，0 个 Task 决定。
-input `27497` 的 run `10691` 因项目引文拼接不连续原文失败，未形成新的领域结果。
+input `27497` 的 run `10691` 因项目引文拼接不连续原文失败；后续生产 `10692`
+虽 completed，但只判断会议主题、没有具体项目更新。两份冻结会议 native 副本在
+相同证据修复下实际纠正后 completed，各有 6 个项目判断，却仍为 0 个 Project 决定，
+项目 #47 上下文与冻结初态逐字相同。因此当前首要缺口是新事实/负责事项没有更新
+完整 ProjectContext，而不是卡片数量为零；增加卡片不证明业务验收通过。
 本次只读核验为 32 个 Project、4 个有新 context 的 Project、2 条 active 业务关注。
-仍需完成项目引文纠正反馈、项目身份/近期来源覆盖、真实建议展示、Memory 写入回执与
-召回、客户关联及浏览器正向读回。详见 `../../task-project-centered-validation.md`。
+引文纠正技术路径已在副本验证；仍需完成项目上下文刷新、身份/近期来源覆盖、重复
+域幂等、迁移等价、真实总负责/建议展示、Memory 写入回执与召回、确认客户关联及
+完整浏览器读回。排序候选未证明整体更优，已撤下，未提交/发布。详见
+`../../task-project-centered-validation.md` 最新设计符合度；Task 8/9 未完成项保持未勾选。
 
 Memory 规则以当前确认更新为准：写入有来源支持的持久项目风险和重要进展/状态更新，
 不再整体禁止 `memory_write`。下面保留的“未部署”“仍禁写 Memory”“发布未完成”等
@@ -451,7 +458,7 @@ Task 8 脚手架记录（2026-10-04）：版本 1 固定 19 个案例，原始�
 - [x] 检查当前生产入口、prompt、模型字段、CI Skill、API/UI 中的 Project/Attention 输出位置：`ProjectProposal` 仅作为 `ProjectDecision.registration`，`TaskAttentionProposal` 仅作为顶层 `TaskProjectAssessment.attention_proposal`，二者都不在 `TaskDecision` 内；Task Agent 输入分别为 `project_decisions`、`task_decisions`、`project_assessments`。当前 parser 拒绝旧 TaskDecision 项目/关注字段，旧 run 和历史 spec 保留原始身份。无 Task 的项目风险、单一负责人和职责分离规则均已在 prompt/Skill/行为文档表达。此项为代码契约审计，不代表原生评测、真实 W39、迁移或发布通过。
 - [x] 独立代码审查和固定 eval 比较完成后，以 PR 合并本次产品行为变化。PR #16/#17 已合并并附加；原生固定评测与 W39 副本结果按验证文档保留原始边界。发布不代表真实近期来源的全部结果通过。
 - [ ] 发布前核实原有回复、会议、已领取工作和外部动作的既有可恢复性；不趁此新增安全/审计机制。列出将补充上下文的明确项目/输入及备份位置，先在副本证明结构迁移前后 Signal/Task/历史等价。未知旧记录仍留历史，禁止全库自动升级为项目或候选。
-- [x] 推送并合并后使用 `python -m app.deploy`，让标准流程等待空闲、备份、推进生产 checkout、构建与重启；2026-10-06 22:34 PDT 核验生产为 `f4a889df`（包含 `a385b86d` Memory 规则及当前引文纠错）。旧安装 Skill 已同步并核对内容，不手动 kill/kickstart、不编辑生产目录。发布步骤通过不等于业务验收完成；检索排序候选尚未发布，后续仍须核验 Skill 与代码一致。
+- [x] 推送并合并后使用 `python -m app.deploy`，让标准流程等待空闲、备份、推进生产 checkout、构建与重启；2026-10-07 00:12 PDT 只读核验生产为 `1e3711a0`（包含 `a385b86d` Memory 规则、`f4a889df` 引文纠错及 `bdc52029` 完整证据反馈）。旧安装 Skill 已同步并核对内容，不手动 kill/kickstart、不编辑生产目录。发布步骤通过不等于业务验收完成；检索排序候选未证明更优，已撤下且未发布，后续仍须核验 Skill 与代码一致。
 - [ ] 仅对验证记录中已明确的近期来源进行小批重处理，走新的唯一正常入口，不使用直接 SQL 补卡、改 owner 或改 Task 状态。先读回样本再扩大；结构迁移和业务补充分别记录结果。
   当前进度：`27465` 已保存 4 份项目上下文和 2 张关注卡；`27497` 首轮引文失败，部署纠错后重跑 completed，但只有会议主题线索，具体项目覆盖未通过。不将输入 done 或非零卡片描述成全量、稳定多来源通过。
 - [ ] 部署后读回新 PID、healthz、queues、Attention、History；页面亲自核对真实项目唯一总负责/负责事项、建议标签、零 Task 关注及证据详情。不得打印 settings 中的秘密字段。
