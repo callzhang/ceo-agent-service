@@ -507,6 +507,21 @@ describe("SettingsPage", () => {
     expect(getPromptPreview).not.toHaveBeenCalled();
   });
 
+  it.each(["template", "preview"])("keeps an invalid saved User template editable and explains its render error in %s", async (view) => {
+    const legacy = "Reply to {{current_message}}";
+    getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { user_template: legacy }, preview: { user: "" }, preview_errors: { user: "must contain exactly one {{task_context}}" } }, meta: {} });
+    renderSettings(`/settings?tab=prompts&prompt=user&view=${view}`);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("must contain exactly one {{task_context}}");
+    expect(alert).toHaveTextContent("Template");
+    if (view === "template") {
+      expect(screen.getByRole("textbox", { name: "Template" })).toHaveValue(legacy);
+      expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
+    } else {
+      expect(document.querySelector(".prompt-preview")).not.toBeInTheDocument();
+    }
+  });
+
   it("shows complete runtime input only on its separate tab", async () => {
     getPromptPreview.mockResolvedValueOnce({ item: { mode: "current", status: "available", role: "consumer", runtime_kind: "codex_cli", route_name: "primary", model: "model-a", rendered_at: "2026-10-05T18:00:00Z", task_id: null, run_id: null, attempts: [], runtime_attempt_id: null, execution_generation: null, proposal_revision: null, stage_index: null, submission_state: "preview", developer_instructions: "Complete developer input", task_prompt: "Reply to 磊哥 in Friday. Complete task input.", submitted_input: "", runtime_context: "Runtime tools and timezone", reason: "", scope: "unbound", routes: [{ name: "primary", runtime_kind: "codex_cli", model: "model-a" }] }, meta: { snapshot_at: "2026-10-05T18:00:00Z" } });
     getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { user_template: "Reply to {{principal}} in {{conversation}}." }, preview: { user: "Reply to 磊哥 in Friday." } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });

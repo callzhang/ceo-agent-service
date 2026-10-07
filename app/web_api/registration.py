@@ -2000,26 +2000,40 @@ def register_console_routes(
                     ],
                 }
             elif section == "prompts":
-                from app.prompt_composition import example_consumer_task, load_prompt_configuration
+                from app.developer_prompt import DeveloperPromptTemplateError, render_developer_prompt_template
+                from app.prompt import work_profile_instruction
+                from app.prompt_composition import example_consumer_task, read_prompt_configuration_raw
 
-                configuration = load_prompt_configuration(create_missing=False)
-                developer_template = configuration.developer_template
-                user_template = configuration.user_template
-                profile_instruction = configuration.work_profile
+                raw = read_prompt_configuration_raw(create_missing=False)
+                preview_errors: dict[str, str] = {}
+                try:
+                    developer_preview = render_developer_prompt_template(raw.developer_template)
+                except Exception as exc:
+                    # A saved code/file tag can stop rendering after its module
+                    # or dependency changes. Keep the raw text editable here;
+                    # invocation still receives the original exception.
+                    developer_preview = ""
+                    preview_errors["developer"] = str(exc) or type(exc).__name__
+                try:
+                    user_preview = example_consumer_task(raw)
+                except DeveloperPromptTemplateError as exc:
+                    user_preview = ""
+                    preview_errors["user"] = str(exc)
                 fields = {
-                    "developer_template": developer_template,
-                    "user_template": user_template,
-                    "profile": configuration.work_profile_text,
+                    "developer_template": raw.developer_template,
+                    "user_template": raw.user_template,
+                    "profile": raw.work_profile_text,
                 }
                 payload = {
                     "section": section,
                     "fields": fields,
                     "preview_kind": "example",
+                    "preview_errors": preview_errors,
                     "consumers": {"developer": ["consumer", "audit"], "user": ["consumer"], "profile": ["consumer", "audit"]},
                     "preview": {
-                        "developer": configuration.developer_instructions,
-                        "user": example_consumer_task(configuration),
-                        "profile": profile_instruction,
+                        "developer": developer_preview,
+                        "user": user_preview,
+                        "profile": work_profile_instruction(profile_text=raw.work_profile_text),
                     },
                 }
             elif section == "audit-rules":

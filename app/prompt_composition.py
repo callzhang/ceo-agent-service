@@ -42,14 +42,22 @@ class PromptConfiguration:
         }
 
 
-def load_prompt_configuration(*, create_missing: bool = True, role: str = "consumer") -> PromptConfiguration:
+@dataclass(frozen=True)
+class RawPromptConfiguration:
+    """Saved template text before invocation validation or rendering."""
+
+    developer_template: str
+    user_template: str
+    work_profile_text: str
+
+
+def read_prompt_configuration_raw(*, create_missing: bool = True, role: str = "consumer") -> RawPromptConfiguration:
     from app.developer_prompt import (
         read_developer_prompt_template, read_user_prompt_template,
-        render_developer_prompt_template, validate_consumer_task_template,
         developer_prompt_template_path, user_prompt_template_path,
         SEED_DEVELOPER_PROMPT_TEMPLATE, SEED_USER_PROMPT_TEMPLATE,
     )
-    from app.prompt import read_work_profile, work_profile_instruction
+    from app.prompt import read_work_profile
 
     if create_missing:
         developer = read_developer_prompt_template()
@@ -63,14 +71,23 @@ def load_prompt_configuration(*, create_missing: bool = True, role: str = "consu
         else:
             path = user_prompt_template_path()
             user = (path if path.exists() else SEED_USER_PROMPT_TEMPLATE).read_text(encoding="utf-8")
-        validate_consumer_task_template(user)
     profile_text = read_work_profile(create_missing=create_missing)
+    return RawPromptConfiguration(developer, user, profile_text)
+
+
+def load_prompt_configuration(*, create_missing: bool = True, role: str = "consumer") -> PromptConfiguration:
+    from app.developer_prompt import render_developer_prompt_template, validate_consumer_task_template
+    from app.prompt import work_profile_instruction
+
+    raw = read_prompt_configuration_raw(create_missing=create_missing, role=role)
+    if role == "consumer":
+        validate_consumer_task_template(raw.user_template)
     return PromptConfiguration(
-        developer_template=developer,
-        developer_instructions=render_developer_prompt_template(developer),
-        user_template=user,
-        work_profile=work_profile_instruction(profile_text=profile_text),
-        work_profile_text=profile_text,
+        developer_template=raw.developer_template,
+        developer_instructions=render_developer_prompt_template(raw.developer_template),
+        user_template=raw.user_template,
+        work_profile=work_profile_instruction(profile_text=raw.work_profile_text),
+        work_profile_text=raw.work_profile_text,
     )
 
 
@@ -83,11 +100,14 @@ def compose_consumer_task(configuration: PromptConfiguration, *, task_context: s
     return render_consumer_task_template(configuration.user_template, complete).strip('\n')
 
 
-def example_consumer_task(configuration: PromptConfiguration) -> str:
+def example_consumer_task(configuration: PromptConfiguration | RawPromptConfiguration) -> str:
     """Render the saved User template using explicit synthetic complete facts."""
     from app.agent_context import AgentTaskContext
+    from app.developer_prompt import render_consumer_task_template
+
     context = AgentTaskContext(task_id=0, channel="example", conversation_id="example-conversation",
         conversation_title="Synthetic example", single_chat=True, trigger_message_id="fixture-message",
         trigger_sender="Example sender", trigger_text="Review the supplied document.",
         trigger_create_time="2026-01-01T12:00:00+00:00", messages=(), materials=(), prior_receipts=())
-    return compose_consumer_task(configuration, task_context=context.render(current_time="2026-01-01T12:00:00+00:00"))
+    complete = assemble_consumer_task(task_context=context.render(current_time="2026-01-01T12:00:00+00:00"))
+    return render_consumer_task_template(configuration.user_template, complete).strip('\n')

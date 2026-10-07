@@ -6319,6 +6319,106 @@ def test_handle_user_prompt_post_saves_template(tmp_path: Path, monkeypatch):
     assert template_path.read_text(encoding="utf-8") == "USER {{task_context}}"
 
 
+def test_settings_prompts_get_exposes_legacy_user_template_for_repair(tmp_path: Path, monkeypatch):
+    developer = tmp_path / "developer.md"
+    user = tmp_path / "user.md"
+    profile = tmp_path / "profile.md"
+    developer.write_text("Current shared principles", encoding="utf-8")
+    legacy_user = (
+        "{{style_lines}}\n---\n{{current_message}}\n---\n{{sender_org}}\n---\n"
+        "{{known_people}}\n---\n{{context_messages}}\n---\n{{material_references}}\n"
+        "---\n{{linked_documents}}\n---\n{{image_download_status}}\n"
+    )
+    user.write_text(legacy_user, encoding="utf-8")
+    profile.write_text("Saved profile", encoding="utf-8")
+    monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(developer))
+    monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(user))
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
+
+    with TestClient(create_audit_app(tmp_path / "worker.sqlite3")) as client:
+        response = client.get("/api/console/settings/prompts")
+        assert response.status_code == 200
+        item = response.json()["item"]
+        assert item["fields"]["user_template"] == legacy_user
+        assert item["preview"]["user"] == ""
+        assert "{{task_context}}" in item["preview_errors"]["user"]
+        assert item["preview"]["developer"] == "Current shared principles"
+        assert "Saved profile" in item["preview"]["profile"]
+        assert user.read_text(encoding="utf-8") == legacy_user
+
+        saved = client.post("/api/console/settings/prompts", json={"prompt": "user", "fields": {"template": "Task: {{task_context}}"}})
+        assert saved.status_code == 200
+        repaired = client.get("/api/console/settings/prompts").json()["item"]
+        assert repaired["fields"]["user_template"] == "Task: {{task_context}}"
+        assert repaired["preview_errors"] == {}
+        assert "Synthetic example" in repaired["preview"]["user"]
+
+
+def test_settings_prompts_get_keeps_valid_user_preview_when_developer_template_is_invalid(tmp_path: Path, monkeypatch):
+    developer = tmp_path / "developer.md"
+    user = tmp_path / "user.md"
+    developer.write_text("Broken <var: missing_principle>", encoding="utf-8")
+    user.write_text("Task: {{task_context}}", encoding="utf-8")
+    monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(developer))
+    monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(user))
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(tmp_path / "missing-profile.md"))
+
+    with TestClient(create_audit_app(tmp_path / "worker.sqlite3")) as client:
+        response = client.get("/api/console/settings/prompts")
+        assert response.status_code == 200
+        item = response.json()["item"]
+        assert item["fields"]["developer_template"] == "Broken <var: missing_principle>"
+        assert item["preview"]["developer"] == ""
+        assert "missing_principle" in item["preview_errors"]["developer"]
+        assert "Synthetic example" in item["preview"]["user"]
+        assert item["preview_errors"].get("user") is None
+        assert developer.read_text(encoding="utf-8") == "Broken <var: missing_principle>"
+        assert not (tmp_path / "missing-profile.md").exists()
+
+
+def test_settings_prompts_get_reports_missing_developer_code_module_without_hiding_saved_text(tmp_path: Path, monkeypatch):
+    developer = tmp_path / "developer.md"
+    user = tmp_path / "user.md"
+    profile = tmp_path / "profile.md"
+    saved_developer = "Instructions: <code: app.module_that_does_not_exist_for_prompt_review:render()>"
+    developer.write_text(saved_developer, encoding="utf-8")
+    user.write_text("Task: {{task_context}}", encoding="utf-8")
+    profile.write_text("Saved profile", encoding="utf-8")
+    monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(developer))
+    monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(user))
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
+
+    with TestClient(create_audit_app(tmp_path / "worker.sqlite3")) as client:
+        response = client.get("/api/console/settings/prompts")
+        assert response.status_code == 200
+        item = response.json()["item"]
+        assert item["fields"]["developer_template"] == saved_developer
+        assert item["preview"]["developer"] == ""
+        assert "module_that_does_not_exist_for_prompt_review" in item["preview_errors"]["developer"]
+        assert "Synthetic example" in item["preview"]["user"]
+        assert developer.read_text(encoding="utf-8") == saved_developer
+        assert user.read_text(encoding="utf-8") == "Task: {{task_context}}"
+        assert profile.read_text(encoding="utf-8") == "Saved profile"
+
+    from app.prompt_composition import load_prompt_configuration
+    with pytest.raises(ModuleNotFoundError, match="module_that_does_not_exist_for_prompt_review"):
+        load_prompt_configuration(create_missing=False)
+
+
+def test_settings_prompts_get_names_preview_exception_without_a_message(tmp_path: Path, monkeypatch):
+    def render_without_message(_template: str) -> str:
+        raise RuntimeError()
+
+    monkeypatch.setattr("app.developer_prompt.render_developer_prompt_template", render_without_message)
+    with TestClient(create_audit_app(tmp_path / "worker.sqlite3")) as client:
+        response = client.get("/api/console/settings/prompts")
+        assert response.status_code == 200
+        item = response.json()["item"]
+        assert item["preview"]["developer"] == ""
+        assert item["preview_errors"]["developer"] == "RuntimeError"
+        assert "Synthetic example" in item["preview"]["user"]
+
+
 def test_legacy_user_save_reports_invalid_complete_context_without_writing(tmp_path: Path, monkeypatch):
     template_path = tmp_path / "user.md"
     template_path.write_text("Existing {{task_context}}")

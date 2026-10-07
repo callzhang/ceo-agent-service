@@ -73,6 +73,31 @@ def test_audit_does_not_depend_on_unused_user_template(tmp_path, monkeypatch):
     assert load_prompt_configuration(role='audit', create_missing=False).user_template == ''
 
 
+def test_raw_saved_prompt_snapshot_keeps_invalid_user_text_without_weakening_runtime(tmp_path, monkeypatch):
+    import pytest
+    from app.developer_prompt import DeveloperPromptTemplateError
+    from app.prompt_composition import load_prompt_configuration, read_prompt_configuration_raw
+
+    developer = tmp_path / 'developer.md'
+    user = tmp_path / 'user.md'
+    profile = tmp_path / 'profile.md'
+    developer.write_text('Current shared principles')
+    legacy_user = '{{current_message}}\n{{context_messages}}\n'
+    user.write_text(legacy_user)
+    profile.write_text('Current work profile')
+    monkeypatch.setenv('CEO_DEVELOPER_PROMPT_TEMPLATE_PATH', str(developer))
+    monkeypatch.setenv('CEO_USER_PROMPT_TEMPLATE_PATH', str(user))
+    monkeypatch.setenv('CEO_WORK_PROFILE_PATH', str(profile))
+
+    raw = read_prompt_configuration_raw(create_missing=False)
+    assert raw.developer_template == 'Current shared principles'
+    assert raw.user_template == legacy_user
+    assert raw.work_profile_text == 'Current work profile'
+    with pytest.raises(DeveloperPromptTemplateError, match='exactly one'):
+        load_prompt_configuration(create_missing=False)
+    assert user.read_text() == legacy_user
+
+
 def test_invalid_shared_developer_save_preserves_working_template(tmp_path):
     import pytest
     from app.developer_prompt import write_developer_prompt_template, DeveloperPromptTemplateError
