@@ -1,6 +1,7 @@
 # Generic Message Audience And Split Delivery
 
-Status: proposed implementation design; not installed or business recovery proof.
+Status: approved by Derek with the no-self-delivery constraint below; not
+installed or business recovery proof.
 
 ## Approved Business Outcome
 
@@ -9,6 +10,16 @@ membership, verified identities and current responsibilities/titles. This is a
 general messaging policy, not a meeting-only or financing-only exception.
 Titles provide responsibility evidence; they do not automatically authorize
 disclosure. A direct message is not inherently safe.
+
+Split-message private recipients must be the verified relevant counterpart,
+not the principal. Do not send the sensitive section to Derek himself, use a
+self-chat as a fallback, or add a self-copy merely to complete a split plan.
+Compare stable recipient identity with the configured principal identity,
+including verified aliases; matching display names alone are insufficient.
+If the appropriate counterpart cannot be established, retain the actual gap
+instead of replacing that recipient with the principal. This constraint is for
+audience-specific split delivery, not a ban on separately requested reports or
+notifications addressed to Derek.
 
 ## Options And Decision
 
@@ -76,6 +87,8 @@ Freeze cases, model and configuration for baseline/candidate native evaluation:
 - Relevant title but unsuitable actual discussion: no automatic disclosure.
 - Unknown membership or direct identity: no guessed target.
 - Private recipient not entitled to content: DM does not bypass review.
+- Proposed split DM resolves to the principal or a verified principal alias:
+  no self-delivery, no fallback self-copy, no fabricated substitute recipient.
 - Historical harness refusal: no replay or indirect circumvention.
 - Completed group action and unfinished DM: only the unfinished action resumes.
 

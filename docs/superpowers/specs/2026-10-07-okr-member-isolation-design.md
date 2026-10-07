@@ -1,6 +1,6 @@
 # Weekly OKR Member Failure Isolation
 
-Status: proposed implementation design; not installed or report delivery proof.
+Status: approved by Derek; not installed or report delivery proof.
 
 ## Approved Business Outcome And Confirmed Defects
 
