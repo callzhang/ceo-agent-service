@@ -1624,6 +1624,8 @@ Developer Prompt 是 Consumer 与 Audit 共用的工作原则，渲染后的冻�
 
 一次角色 invocation 只读取一次 Developer/User/Profile 正文，供组装、静态指纹与重试共用；Audit 不读取无关 User 模板。实际路线和工具命令确定后，再追加 Runtime Context。静态配置 SHA 写入现有 runtime.prompt invocation facts，仅作来源回执；Consumer 继续按 `conversation_id + route` 复用原 session，配置或 contract hash 变化不创建新会话，Audit 的独立 session 不与 Consumer 合并。
 
+2026-10-07 原生提交读回发现一个已确认限制：安装的 Codex CLI 0.154.0 在 `exec resume` 中忽略新传入的 `developer_instructions`，继续使用 session 初始 Developer 内容。服务每轮读取/冻结配置并记录 runtime.prompt，不证明原生模型收到该更新；自然 resumed Consumer 的原生 transcript 仍含原 profile，fresh Audit 已收到精简 profile。同 conversation + route 的复用本身已验证。原生 app-server `turn/start.additionalContext` 的 application 类型在同一个 thread 中生成新的 Developer 消息；合成连续更新及历史读取探针通过，但服务尚未切换此调用接口。旧 Developer 与历史仍保留，不能把探针称为历史删除、prompt 总 token 降低或生产修复。具体独立修复范围见 [原生 resume 配置更新方案](superpowers/plans/2026-10-07-codex-resume-prompt-update.md)。
+
 默认 User 的 Rendered preview 使用明确标记的合成完整任务，不读取业务材料；Developer/Profile 渲染同一份已保存正文。完整运行输入仍在独立只读页签，当前配置 Developer 与所选已保存历史 Task 的来源分别标注，历史模式不重新渲染。读取设置/预览不创建或覆盖配置文件。已存在模板不在读取时自动升级；部署使用 `python -m app.deploy --publish-prompt-templates`，仅在既有停止/备份窗口根据 `ci/prompt-template-release.json` 的精确旧/新 SHA 发布默认 Developer/User。自定义模板须明确迁移，不能覆盖；文件备份、发布与回退沿用 RepositoryUpdater 的 publication 协议。该发布不修改工作人格。
 
 Prompts 设置读取先返回 Developer/User 的已保存原文；某份模板验证或渲染失败时，仅该份渲染预览为空并返回明确的 `preview_errors`，编辑器仍显示原文供修正。保存仍需通过现有验证，后台角色调用仍严格验证，不自动迁移或覆盖旧模板。

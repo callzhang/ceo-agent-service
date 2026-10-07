@@ -356,3 +356,14 @@ GET settings/prompts 改用同一次原文快照，分别渲染各配置，返�
 恢复后的固定40角色输入和另20个真实空字段Audit路径，与固定1e主干实际组装逐字一致（Developer/Task/RuntimeContext、全部来源、digest、阶段/版本）；不可变最终SHA仍需确认。完整角色静态Developer在同规则配置下不缩短，30%目标未达到。11个评价回归、74个prompt/Audit/context检查和142个Consumer检查（4跳过）通过；UI82通过2跳过。默认共享模板仍为原1083字符中文，用户模板完整插槽、模板预览、指纹、session复用、目录/工具说明精简、相同来源引用和工作人格精简保持本次范围。
 
 最终主比较将仅在输入完全相同的不可变SHA证明后，显式复用已完成1e控制的20Audit和原0d的20Consumer原生证据，新增主模型调用0；使用/耗时只为历史证据。匹配来源与原／精简人格的最后补充及同规则控制独立验证，最终质量、最新HEAD CI、默认模板正式发布和生产读回仍未完成。
+
+
+## 13. 2026-10-07 发布与原生读回
+
+最终 `44e1880f` 输入、固定评价和独立补充盲评已验收；Quality `37585192757` 通过。PR #19 已合并为 `7e0e9654`，正式 `python -m app.deploy --publish-prompt-templates` 完成默认 Developer/User publication 和部署。生产 HEAD `7e0e9654`、PID10931、healthz200 已读回；自然 Consumer24867/Audit24868 分别 completed/no_action、completed/approve。同实际 conversation 的两个不同 Task386173/386180 复用同 route/native session。此结果不证明任何外部发送或会议安排。
+
+原工作人格16324字符，已逐条审阅精简文件8804字符（含末尾换行），通过现有 Settings API 发布并物理读回相同 SHA；编辑器 strip 后8803字符。参考 tokenizer o200k_base 3942→1703，属于原文件参考 token，不是 provider 计费/完整上下文用量。最终真实 Audit Task 样本67418→46026，降低31.7304%；完整静态 Developer 的30%目标未实现。
+
+原生 transcript 比服务 prepared 快照提供更强的证据：fresh Audit 已收到精简 profile，resumed Consumer 仍保留旧 session 初始 Developer。安装的 Codex CLI0.154.0 不应用 resume 时的 Developer 更新；移动全局 `-c` 或 app-server `thread/resume.developerInstructions` 也无效。原生 app-server `turn/start.additionalContext` application 可在同一 thread 新增 Developer 消息，连续两个配置更新及历史读取合成探针通过。该接口尚未接入服务，因此“保存后下一轮原生 Consumer 生效”仍未完成验收。
+
+后续方案与具体接受条件见 [原生 resume 配置更新方案](2026-10-07-codex-resume-prompt-update.md)。这次只记录诊断与方案，没有改原生传输接口、清空会话或重写历史。前述候选阶段的“未上线/CI待完成”是当时记录，以本节为当前状态；原始基线、失败候选及评价证据继续保留。
