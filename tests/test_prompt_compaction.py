@@ -43,12 +43,12 @@ def test_audit_keeps_current_and_different_bound_source_values_visible():
     assert 'source_bindings[0].value.trigger_text' not in body
 
 
-def test_consumer_rules_and_each_developer_contract_avoid_repeated_copies():
+def test_developer_contracts_keep_their_required_copies():
     from app.consumer_agent import consumer_developer_instructions, audit_developer_instructions
     from app.agent_context import _CONSUMER_AGENT_RULES, _AUDIT_AGENT_RULES
     consumer = consumer_developer_instructions(runtime_context='', work_profile='') + task_context().render()
     audit = audit_developer_instructions('configured audit rule', runtime_context='', work_profile='')
-    assert consumer.count(_CONSUMER_AGENT_RULES) == 1
+    assert consumer.count(_CONSUMER_AGENT_RULES) == 2
     assert audit.count(_AUDIT_AGENT_RULES) == 1
 
 
@@ -72,3 +72,9 @@ def test_audit_does_not_collapse_distinct_json_boolean_and_number_sources():
     assert trigger['raw_payload']['flag'] is True
     persisted, _ = json.JSONDecoder().raw_decode(body.partition('Candidate revision\n')[2])
     assert type(persisted['candidate']['source_bindings'][0]['value']['trigger_raw_payload']['flag']) is int
+
+
+def test_consumer_keeps_existing_result_contract_in_developer_input():
+    from app.consumer_agent import consumer_developer_instructions
+    from app.agent_context import _CONSUMER_AGENT_RULES
+    assert _CONSUMER_AGENT_RULES in consumer_developer_instructions(runtime_context='', work_profile='')

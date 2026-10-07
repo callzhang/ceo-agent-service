@@ -300,3 +300,5 @@ Derek 明确要求同一个对话对象复用已有session。代码与生产记�
 ### 第一次固定比较的停止与修订
 
 候选 b79ab9ca 的40个原生输出格式有效，但独立盲评发现 scheduled-report Consumer 把 principal-only 投递替换成 group；状态 pending 还存在被加强为 underway 的问题。该候选未批准发布，全部原生结果/盲评保留。遵循“质量下降保留最小必要信息”，恢复 Audit Task 开头原有 Application Result Contract；Developer 中仍只保留一份 Audit role contract。共同原则强调既有请求的交付物、收件人、受众/渠道及来源状态/主体准确性，没有新增审核/授权政策。用原来相同冻结用例、模型、配置再次比较，baseline 不重新挑选或改写。
+
+第二版 af054b9f/de66fd5d 的固定40个输出中，Audit已识别虚构目标与对外候选说明，但 Consumer 仍替代 principal-only 收件人；因此继续停止发布。第三版保留 Consumer Developer 的原有 Application Result Contract，并取消可能让模型在目标未明确时仍强行提案的泛化“需要回复就提案”表述，明确原有精确目标和依赖失败路径。没有增加审核/授权政策；目标不足不能用另一目的地假装完成。先同条件运行收件人/未知时区/邮件 smoke，再跑完整冻结比较。所有失败候选证据保留。

@@ -793,6 +793,7 @@ def consumer_developer_instructions(
     )
     return join_developer_sections(
         instructions,
+        _CONSUMER_AGENT_RULES,
         "## Shared Developer Principles\n" + configuration.developer_instructions,
         DECISION_QUALITY_GATE_INSTRUCTIONS,
         skill_protocol,
