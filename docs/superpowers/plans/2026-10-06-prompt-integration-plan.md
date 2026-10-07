@@ -332,3 +332,5 @@ GET settings/prompts 改用同一次原文快照，分别渲染各配置，返�
 ### 收敛到同一份现有工作原则
 
 完整e835原生输出和两名新独立盲评已保留，仍未通过无新增实质退步验收。代码还同时注入RUNTIME_WORK_PRINCIPLES原中文和新Developer英文改写，未达到单一来源的目标。下一步把原中文原样迁入默认Developer，并在其原位置使用本轮冻结渲染值，删除代码副本及额外模板段；没有改写条款。优先证明固定语料Consumer的默认Developer/Task/RuntimeContext与保存基线逐字一致；相同输入可显式复用已有同条件实际模型证据，不伪称为新增调用。Audit仅保留已设计的重复指令/来源去重，独立验证其改变量和输出。
+
+现有中文原则已原样迁入默认Developer，1083字符/2961字节（无尾随换行），与0d AST常量.strip()精确相同，SHA3ccd6261291b6610aa95a4764d4fd81b7c232011f8ca7dbc52b18639703fb457。两角色在Dynamic Skill之后、System Action之前插入冻结渲染值一次；代码常量与后续英文重复段删除，角色/schema/能力/审核/执行条款未改写，原Consumer与Audit必要合同副本保留。独立spec复核通过；CI bundled Skill条件下定向319通过4跳过，UI82通过2跳过与构建通过。外部共享mail Skill的一个断言漂移未修改，用仓库CI绑定的源检查通过。默认输入逐字比较与Audit模型验收待完成。

@@ -306,7 +306,7 @@ def test_checked_release_manifest_pins_baseline_and_current_two_defaults():
     expected = {
         'developer_prompt': (
             'b2bb8ed69298c7fa57bf95c54fa6693fa76d265e90d07cb666ab05e35cfe2623',
-            '44f5d17915358755d4fd9406d986d9cbc3e482802977c67916fa1eb056b9c5d3',
+            '3ccd6261291b6610aa95a4764d4fd81b7c232011f8ca7dbc52b18639703fb457',
         ),
         'user_prompt': (
             '5106c30c0ea2cbf133ec537a600d3250b699659c786892eaa46434cdb6eff398',

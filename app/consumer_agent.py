@@ -49,7 +49,7 @@ from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.config import principal_display_name
 from app.prompt import runtime_context_instruction
 from app.prompt_composition import PromptConfiguration, compose_consumer_task, join_developer_sections, load_prompt_configuration
-from app.runtime_prompt_context import RUNTIME_WORK_PRINCIPLES, explicit_participant_timezones
+from app.runtime_prompt_context import explicit_participant_timezones
 from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.store import AgentRole, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import ControlledCliConfig, make_consumer_agent_command
@@ -177,7 +177,6 @@ def consumer_wire_contract_hash(
         "role_boundary": CONSUMER_ROLE_BOUNDARY,
         "system_action_contracts": system_action_contracts_text(),
         "agent_capability_instructions": AGENT_CAPABILITY_INSTRUCTIONS,
-        "runtime_work_principles": RUNTIME_WORK_PRINCIPLES,
         # The runtime Skill tree is the single source the Agent reads; the
         # snapshot below records which revisions were in force, it is not the
         # content the Agent is served.
@@ -784,6 +783,7 @@ def consumer_developer_instructions(
     core = _developer_instructions(
         audit_rules=None,
         skill_instruction=CONSUMER_DYNAMIC_SKILL_BODY,
+        common_principles=configuration.developer_instructions,
         wire_model=ConsumerAgentWireResult,
     )
     instructions = _role_developer_instructions(
@@ -794,7 +794,6 @@ def consumer_developer_instructions(
     return join_developer_sections(
         instructions,
         _CONSUMER_AGENT_RULES,
-        "## Shared Developer Principles\n" + configuration.developer_instructions,
         DECISION_QUALITY_GATE_INSTRUCTIONS,
         skill_protocol,
         runtime_context_instruction() if runtime_context is None else runtime_context,
@@ -861,6 +860,7 @@ def audit_developer_instructions(
     configuration = prompt_configuration or load_prompt_configuration(role="audit")
     core = _developer_instructions(
         audit_rules=audit_rules, skill_instruction=AUDIT_DYNAMIC_SKILL_BODY,
+        common_principles=configuration.developer_instructions,
         wire_model=AuditAgentWireResult,
     )
     instructions = _role_developer_instructions(
@@ -881,7 +881,6 @@ def audit_developer_instructions(
     )
     return join_developer_sections(
         instructions,
-        "## Shared Developer Principles\n" + configuration.developer_instructions,
         DECISION_QUALITY_GATE_INSTRUCTIONS,
         AUDIT_RESPONSE_COMPLETENESS_INSTRUCTION,
         runtime_context_instruction() if runtime_context is None else runtime_context,
@@ -894,6 +893,7 @@ def _developer_instructions(
     *,
     audit_rules: str | None,
     skill_instruction: str,
+    common_principles: str,
     wire_model: type[ConsumerAgentWireResult] | type[AuditAgentWireResult],
 ) -> str:
     sections: list[str] = []
@@ -912,7 +912,7 @@ def _developer_instructions(
             "7. [external_secrecy] External Secrecy: do not expose secrets.\n"
             "8. [dependency_auth] Dependency Authentication: verify dependency evidence.",
             f"## Dynamic Skill\n{skill_instruction}",
-            RUNTIME_WORK_PRINCIPLES,
+            common_principles,
             "## System Action Contracts\n" + system_action_contracts_text(),
             f"## Pydantic Wire Contract\n{_schema_json(wire_model)}",
         )

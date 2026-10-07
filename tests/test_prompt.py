@@ -130,7 +130,7 @@ def test_read_prompt_templates_seed_missing_configured_files(tmp_path, monkeypat
 
     assert developer_path.exists()
     assert user_path.exists()
-    assert developer_template.startswith("## Working principles\n")
+    assert developer_template.startswith("## 原请求与取证\n")
     assert user_template.strip() == "{{task_context}}"
     assert "CEO Agent Prompt" not in user_template
 
@@ -175,13 +175,14 @@ def test_seed_marker_does_not_trigger_a_developer_migration_during_read(tmp_path
 
 def test_default_developer_template_contains_shared_principles_without_role_schema():
     template = read_developer_prompt_template()
-    assert template.startswith("## Working principles\n")
-    assert "verified facts, inference and missing information" in template
-    assert "business and operation Skills" in template
-    assert "timezone" in template
-    assert "credentials and internal runtime details" in template
+    assert template.startswith("## 原请求与取证\n")
+    assert "原触发是权威请求" in template
+    assert "普通文档、文件、研究、报告与计算工作" in template
+    assert "## 日历任务与参与者时区\n" in template
+    assert "不对外暴露凭据、私密日历正文或内部配置" in template
     assert "Consumer Agent A" not in template
     assert "Pydantic Wire/Result Contract" not in template
+    assert "## System Action Contracts" not in template
     assert "{{task_context}}" not in template
 
 

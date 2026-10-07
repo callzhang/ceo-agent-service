@@ -40,6 +40,53 @@ def test_saved_templates_enter_roles_and_complete_consumer_task(tmp_path, monkey
     assert consumer.count('Shared configured principles') == 1
 
 
+def test_frozen_common_principles_occupy_one_core_position_in_both_roles(tmp_path, monkeypatch):
+    from app.prompt_composition import load_prompt_configuration
+    from app.consumer_agent import consumer_developer_instructions, audit_developer_instructions
+
+    developer = tmp_path / 'developer.md'
+    user = tmp_path / 'user.md'
+    developer.write_text('Configured principle sentinel', encoding='utf-8')
+    user.write_text('{{task_context}}', encoding='utf-8')
+    monkeypatch.setenv('CEO_DEVELOPER_PROMPT_TEMPLATE_PATH', str(developer))
+    monkeypatch.setenv('CEO_USER_PROMPT_TEMPLATE_PATH', str(user))
+    configuration = load_prompt_configuration()
+    developer.write_text('Changed after the frozen snapshot', encoding='utf-8')
+
+    for instructions in (
+        consumer_developer_instructions(prompt_configuration=configuration, runtime_context='', work_profile=''),
+        audit_developer_instructions('audit only', prompt_configuration=configuration, runtime_context='', work_profile=''),
+    ):
+        assert instructions.count('Configured principle sentinel') == 1
+        assert instructions.index('## Dynamic Skill') < instructions.index('Configured principle sentinel')
+        assert instructions.index('Configured principle sentinel') < instructions.index('## System Action Contracts')
+        assert '## Shared Developer Principles' not in instructions
+        assert '## 原请求与取证' not in instructions
+        assert 'Changed after the frozen snapshot' not in instructions
+
+
+def test_default_common_principles_are_inserted_verbatim_once_in_both_roles(tmp_path, monkeypatch):
+    from pathlib import Path
+    from app.prompt_composition import load_prompt_configuration
+    from app.consumer_agent import consumer_developer_instructions, audit_developer_instructions
+
+    default = Path(__file__).resolve().parents[1] / 'app/defaults/developer_prompt.md'
+    user = tmp_path / 'user.md'
+    user.write_text('{{task_context}}', encoding='utf-8')
+    monkeypatch.setenv('CEO_DEVELOPER_PROMPT_TEMPLATE_PATH', str(default))
+    monkeypatch.setenv('CEO_USER_PROMPT_TEMPLATE_PATH', str(user))
+    configuration = load_prompt_configuration(create_missing=False)
+    principles = default.read_text(encoding='utf-8')
+    assert configuration.developer_instructions == principles
+
+    for instructions in (
+        consumer_developer_instructions(prompt_configuration=configuration, runtime_context='', work_profile=''),
+        audit_developer_instructions('audit only', prompt_configuration=configuration, runtime_context='', work_profile=''),
+    ):
+        assert instructions.count(principles) == 1
+        assert f'\n\n{principles}\n\n## System Action Contracts' in instructions
+
+
 def test_consumer_template_requires_one_complete_context_slot():
     import pytest
     from app.developer_prompt import validate_consumer_task_template, DeveloperPromptTemplateError

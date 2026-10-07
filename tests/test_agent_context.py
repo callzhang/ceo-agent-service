@@ -49,7 +49,7 @@ def test_role_boundary_invariant_is_complete_across_all_core_prompts():
     assert "sourced importance comparison" in _AUDIT_AGENT_RULES
     assert "request for the missing reason" in _AUDIT_AGENT_RULES
     assert "Consumer Agent A gathers facts and proposes a typed candidate" in consumer_developer_instructions()
-    assert "## Working principles" in SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
+    assert "## 原请求与取证" in SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
 
 
 def test_consumer_core_prompt_contains_only_runtime_invariants():

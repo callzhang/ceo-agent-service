@@ -461,7 +461,7 @@ describe("SettingsPage", () => {
     const overview = await screen.findByRole("region", { name: "提示词作用与上下文顺序" });
     expect(overview).toHaveTextContent("后台 Consumer");
     expect(overview).toHaveTextContent("后台 Audit");
-    expect(overview).toHaveTextContent("后台 Audit：Audit Rules → 角色、输出与能力契约 → 同一份 Developer 工作原则 → 质量要求");
+    expect(overview).toHaveTextContent("后台 Audit：Audit Rules → 运行约定与 Skill 职责 → 同一份 Developer 工作原则 → System 动作、输出、能力与角色契约 → 质量要求");
     expect(overview).toHaveTextContent("Audit Rules");
     expect(overview).toHaveTextContent("Runtime Context");
     expect(within(overview).getByRole("row", { name: /Developer Prompt/ })).toHaveTextContent("Consumer 与 Audit");
@@ -505,6 +505,14 @@ describe("SettingsPage", () => {
     expect(panel).toHaveTextContent("Synthetic complete task");
     expect(screen.getByText("Synthetic complete task", { selector: "mark" })).toBeInTheDocument();
     expect(getPromptPreview).not.toHaveBeenCalled();
+  });
+
+  it("shows the actual core position of shared principles before action and output contracts", async () => {
+    getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { developer_template: "Principles" }, preview: { developer: "Principles" } }, meta: {} });
+    renderSettings("/settings?tab=prompts&prompt=developer&view=template");
+    const overview = await screen.findByRole("region", { name: "提示词作用与上下文顺序" });
+    expect(overview).toHaveTextContent("运行约定与 Skill 职责 → 共同 Developer 工作原则 → System 动作、输出、能力与角色契约");
+    expect(overview).toHaveTextContent("Audit Rules → 运行约定与 Skill 职责 → 同一份 Developer 工作原则 → System 动作、输出、能力与角色契约");
   });
 
   it.each(["template", "preview"])("keeps an invalid saved User template editable and explains its render error in %s", async (view) => {

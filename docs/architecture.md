@@ -1495,7 +1495,7 @@ Prompts 的 Developer/User/Profile 各自保留 Template 与 Rendered preview �
 显示旧预览。后台 Consumer/Audit 的多段完整输入放在独立只读「运行输入」页签（prompt=runtime），
 不再占用 Developer/User 模板的 Rendered preview；该页没有 Template 或保存操作。
 
-Developer Prompt 是 Consumer 与 Audit 共用的工作原则；User Prompt 是 Consumer 的完整任务模板，必须包含恰好一个 `{{task_context}}`，仅支持普通文本和这个插槽。任务来源、定时要求、stage、反馈、既有回执及 continuation 先由服务组装成完整上下文，再填入插槽；不将旧消息块模板叠加到后台任务。工作人格仍注入两角色，Audit Rules 只进入 Audit。角色、输出 schema、System action contract 与能力职责继续由代码提供。Workbench、独立 WeChat、纯服务命令及 Email 退订保留各自入口和显式指令。
+Developer Prompt 是 Consumer 与 Audit 共用的工作原则，渲染后的冻结正文在两角色核心 Developer 的 Dynamic Skill 之后、System Action Contracts 与 Wire Schema 之前各插入一次；默认正文即原有的中文取证与日历时区原则，不再从代码常量或后续 Shared 段重复注入。User Prompt 是 Consumer 的完整任务模板，必须包含恰好一个 `{{task_context}}`，仅支持普通文本和这个插槽。任务来源、定时要求、stage、反馈、既有回执及 continuation 先由服务组装成完整上下文，再填入插槽；不将旧消息块模板叠加到后台任务。工作人格仍注入两角色，Audit Rules 只进入 Audit。角色、输出 schema、System action contract 与能力职责继续由代码提供。Workbench、独立 WeChat、纯服务命令及 Email 退订保留各自入口和显式指令。
 
 一次角色 invocation 只读取一次 Developer/User/Profile 正文，供组装、静态指纹与重试共用；Audit 不读取无关 User 模板。实际路线和工具命令确定后，再追加 Runtime Context。静态配置 SHA 写入现有 runtime.prompt invocation facts，仅作来源回执；Consumer 继续按 `conversation_id + route` 复用原 session，配置或 contract hash 变化不创建新会话，Audit 的独立 session 不与 Consumer 合并。
 
@@ -1507,8 +1507,8 @@ Prompts 设置读取先返回 Developer/User 的已保存原文；某份模板�
 
 Developer 保存先以现有渲染器验证，未知变量或不可渲染内容返回具体错误且不覆盖已保存正文；该检查属于配置格式合同。
 
-共同工作原则明确保留请求的交付物、收件人、受众和渠道，精确引用来源状态与行为主体；触发会话或其他可用目的地不代替请求的精确 provider target/投递范围；必要查找未能确定目标时报告既有依赖失败及已核实的部分工作。这是既有请求忠实度/投递合同的说明，未新增审核项、授权或执行动作。
+默认共同工作原则要求先识别原请求要向谁交付什么、按本轮声明入口取证、交付可核实部分并说明剩余协调责任；日历原则要求核实参与者时区和候选日期的偏移。它们随可编辑 Developer 模板进入两角色，不改变已有角色、审核或执行合同。
 
 配置回执同时记录 Developer 模板原文和渲染后共同原则正文的 SHA；相同模板引用的变量/文件/代码展开改变时，静态契约指纹也改变。静态指纹仍不是 session 身份；历史记录缺正文 SHA 时只显示未记录，不以当前值补造。
 
-共同原则明确已有的部分交付与正文合同：将可核实的暂定答案和不确定项交付给已建立的收件人，人工决策只涉及完成原请求确实需要的事实或选择；直接审核收件人正文与原请求/来源的一致性，将内部工作流元数据留在内部摘要。审核角色、决定类型与生命周期保持原契约。
+默认共同原则保留原有的部分交付与必要追问要求。审核角色、决定类型与生命周期保持原契约。
