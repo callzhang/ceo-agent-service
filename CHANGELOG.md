@@ -9,6 +9,13 @@
 
 ## Unreleased
 
+- 2026-10-07: Runtime history quality checks resolve the forbidden path
+  configuration once per scan rather than once per field. Every row and
+  credential/path check remains covered; each new scan rereads configuration.
+  Regressions bound configuration resolution and preserve empty-prefix,
+  fixed runtime-path and changed-configuration detection. No result cache,
+  schema migration or relaxed security policy.
+
 - 2026-10-07: Workbench idle claim polls no longer acquire a SQLite writer
   lock when no queued or expired running turn exists. A closed read preflight
   avoids contention with unrelated writers, while real work retains the

@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from app.agent_cron.scheduler import SCHEDULED_CAPABILITY_UNAVAILABLE_KINDS
+from app.config import forbidden_path_prefixes
 from app.leak_check import contains_credential, contains_local_runtime_leak
 from app.store import SERVICE_HEALTH_STATE_PREFIX
 
@@ -568,8 +569,13 @@ def _check_runtime_attempt_invariants(db: sqlite3.Connection, violations: list[Q
     for code, sql in checks.items():
         _add(violations, source="agent_runtime_attempts", code=code, count=_count(db, sql), severity="error", detail="runtime attempt invariant violated")
     leaks = 0
+    path_prefixes = forbidden_path_prefixes()
     for row in db.execute("select route_name, runtime_kind, credential_mode, model, session_id, failure_code, transcript_reference from agent_runtime_attempts"):
-        leaks += any(contains_credential(str(value or "")) or contains_local_runtime_leak(str(value or "")) for value in row)
+        leaks += any(
+            contains_credential(str(value or ""))
+            or contains_local_runtime_leak(str(value or ""), path_prefixes=path_prefixes)
+            for value in row
+        )
     _add(violations, source="agent_runtime_attempts", code="runtime_secret_leak", count=leaks, severity="error", detail="runtime attempt evidence contains sensitive material")
 
 

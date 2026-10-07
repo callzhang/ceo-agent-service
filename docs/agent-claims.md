@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+<!-- codex-quality-gate-scan-cost-20261007: app/quality_gate.py runtime evidence leak scan, app/leak_check.py explicit per-scan path prefixes, tests/test_quality_gate_scan_cost.py, docs/runtime-mechanism.md, CHANGELOG.md. Resolve configuration once per scan while preserving every field, credentials, fixed paths and next-scan configuration changes; no security-policy change, global/result cache or migration. -->
+
 <!-- codex-attention-query-cost-20261007: app/audit_web.py scheduled recovery EXISTS queries only, tests/test_attention_query_cost.py, docs/runtime-mechanism.md, CHANGELOG.md. Repair confirmed join-order cost using SQLite VM-budget regressions; preserve same-object recovery semantics, immutable facts and policy; no cache. -->
 <!-- codex-idle-workbench-claim-20261007: app/workbench/store.py claim_next_turn empty poll only, tests/test_workbench_idle_claim.py, docs/runtime-mechanism.md, CHANGELOG.md. Confirm unnecessary writer acquisition with competing-writer regression; retain transactional expiry recovery and CAS claim. -->
 
