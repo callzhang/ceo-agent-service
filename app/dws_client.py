@@ -3425,6 +3425,18 @@ class DwsClient:
             )
         )
 
+    def remove_message_text_emotion(
+        self, conversation_id: str, message_id: str, *, text: str,
+        emotion_id: str, emotion_name: str, background_id: str,
+    ) -> dict[str, Any]:
+        return self.run_json([
+            self.dws_bin, "chat", "+messages-remove-text-emotion",
+            "--conversation-id", conversation_id, "--msg-id", message_id,
+            "--text", text, "--emotion-id", emotion_id,
+            "--emotion-name", emotion_name, "--background-id", background_id,
+            "--format", "json", "--yes",
+        ])
+
     def create_message_text_emotion(
         self,
         *,

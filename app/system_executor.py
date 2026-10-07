@@ -127,6 +127,12 @@ class SystemExecutor:
             reply_text=body,
             provider_result=json.loads(receipt["provider_result_json"]),
         )
+        if self.source_client is not None:
+            from app.processing_reaction import ProcessingReaction
+
+            ProcessingReaction(self.store, self.source_client).finish(
+                task.conversation_id, task.trigger_message_id,
+            )
 
     def _check_reviewed_sources(
         self, candidate: ConsumerAgentResult, context: object | None,

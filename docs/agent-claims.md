@@ -79,6 +79,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-processing-reaction | Isolated processing-reaction worktree: app/processing_reaction.py, app/dws_client.py, app/worker.py (progress only), app/system_executor.py (after verified delivery projection only), tests/test_processing_reaction.py and tests/test_worker.py (progress only), architecture/runtime docs, design and plan | Approved temporary processing reactions; no audit or authorization changes. | 2026-10-07 |
+
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
 | codex-project-customer-design | Isolated /Users/derek/.codex/worktrees/project-centered-resume/ceo-agent-service: docs/superpowers/specs/2026-10-04-project-centered-work-design.md, docs/superpowers/plans/2026-10-04-project-centered-work.md, docs/task-project-centered-validation.md, docs/agent-claims.md | Record Derek's approved optional CRM customer relationship for Projects; track remaining fixed evaluation/release gates and current validation evidence; no customer code until the written spec is reviewed. | 2026-10-06 |

@@ -1537,3 +1537,15 @@ Consumer 完整候选、Audit 精确审核、System 执行持久化计划及真�
 ### Attempt 无动作终态展示（2026-10-07）
 
 任务的 done 表示处理周期已经结束，不能覆盖最新有效运行所绑定 Attempt 的 skipped：经审核无需动作的 Attempt 继续显示 skipped 和无需操作。判定使用现有执行代与最新有效运行身份，并按存储契约先比较 revision，再比较 Consumer/Audit 角色、该角色的重试次数和运行 ID；旧执行代或旧 revision 的 skipped 不覆盖后续任务结果。其他 done 详情也属于终态，保留既有微信待发送／重试操作对操作按钮的影响。该展示修正不修改任务、Attempt、Consumer/Audit 结果或外部执行回执，页面读取不产生业务动作。
+
+## DingTalk 临时处理表情
+
+普通钉钉聊天消息被服务接入处理队列后，原消息上添加服务账号的文字表情「处理中」。
+日历邀请和合成 service_task 不添加。成功回复的 provider 回执写入 sent_replies 后，
+立即移除这个临时表情；无需回复、失败、转人工以及待处理任务换成新消息时也移除。
+待处理和执行中的重试保留表情。表情的添加、移除失败不改变业务任务或回复结果。
+
+ProcessingReaction 在现有 service_state 保存文字表情模板与每条源消息的添加/移除意图；
+正常生产和消费 pass 根据现有 reply_tasks 与 sent_replies 清理已结束的源消息，
+重启后继续未确认的表情操作。只操作本功能记录的源消息与服务账号的「处理中」表情。
+该进度展示不改变 Consumer/Audit 生命周期、发送授权或现有业务效果检查。
