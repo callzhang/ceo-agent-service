@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-07: Skill prompt regressions now verify the complete current
+  Consumer and Audit instruction bodies on their respective roles, rather
+  than relying on the obsolete combined paragraph from the common template.
+  Existing Skill policy assertions remain; runtime code and rules are unchanged.
+
 - 2026-10-07: Synchronize the Git-tracked common Developer prompt with the
   already approved Chinese default and pin byte-for-byte equality in release
   regression tests. Retain template tracking, publication receipts and the

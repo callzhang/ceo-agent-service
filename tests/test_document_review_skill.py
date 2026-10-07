@@ -1,7 +1,9 @@
 from pathlib import Path
 
 from app.consumer_agent import (
-    CORE_DYNAMIC_SKILL_BODY,
+    AUDIT_DYNAMIC_SKILL_BODY,
+    CONSUMER_DYNAMIC_SKILL_BODY,
+    audit_developer_instructions,
     consumer_developer_instructions,
 )
 
@@ -82,7 +84,8 @@ def test_canonical_prompt_delegates_document_review_judgment_to_skill():
     assert "如果新消息明确表示前一次依据的材料已经被修改" not in text
     assert "处理文档时，如果是钉钉文档可以用评论功能" not in text
     assert "普通钉钉文件不同于钉钉在线文档" not in text
-    assert CORE_DYNAMIC_SKILL_BODY in text
+    assert CONSUMER_DYNAMIC_SKILL_BODY in text
+    assert AUDIT_DYNAMIC_SKILL_BODY in audit_developer_instructions("audit only", runtime_context="", work_profile="")
     assert "independently selects and reads every applicable" in text
     assert "2. [output_contracts] Output Contracts:" in text
 
