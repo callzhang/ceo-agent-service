@@ -976,11 +976,36 @@ def business_attention_list_response(store: Any, *, page: int, page_size: int,
     )
 
 
-def _project_summary_payload(store: Any, project: Any, tasks: list[Any]) -> dict[str, Any]:
+def _confirmed_project_ids_by_task(store: Any) -> dict[int, set[int]]:
+    """Load active Task→Project membership once for summary projections."""
+    with store._connect() as db:
+        rows = db.execute(
+            """
+            select link.task_id, project.id
+            from business_task_anchor_links link
+            join business_projects project on project.canonical_anchor_id=link.anchor_id
+            join business_anchors anchor on anchor.id=link.anchor_id
+            where link.status='confirmed' and link.active=1 and anchor.active=1
+            """
+        ).fetchall()
+    result: dict[int, set[int]] = {}
+    for row in rows:
+        result.setdefault(int(row[0]), set()).add(int(row[1]))
+    return result
+
+
+def _project_summary_payload(
+    store: Any,
+    project: Any,
+    tasks: list[Any],
+    project_ids_by_task: dict[int, set[int]] | None = None,
+) -> dict[str, Any]:
+    if project_ids_by_task is None:
+        project_ids_by_task = _confirmed_project_ids_by_task(store)
     linked_tasks = [
         task for task in tasks
         if not (task.origin == "agent_suggestion" and task.stage.value == "candidate")
-        and project.id in {linked.id for linked in store.list_business_task_project_links(task_id=task.id)}
+        and project.id in project_ids_by_task.get(task.id, set())
     ]
     context = store.get_business_project_context(project.id)
     owner = context.overall_owner if context else None
@@ -1021,9 +1046,10 @@ def business_project_list_response(store: Any, *, page: int, page_size: int, que
     projects = [row for row in store.list_business_projects(limit=None)
                 if (not needle or needle in f"{row.title} {row.crm_customer_name}".casefold())]
     tasks = _all_business_tasks(store)
+    project_ids_by_task = _confirmed_project_ids_by_task(store)
     project_summaries = {
         project.id: ConsoleBusinessProjectSummary.model_validate(
-            _project_summary_payload(store, project, tasks)
+            _project_summary_payload(store, project, tasks, project_ids_by_task)
         )
         for project in projects
     }
@@ -1127,6 +1153,7 @@ def business_task_detail(store: Any, task_id: int) -> ConsoleBusinessTaskDetail 
     clusters = _clusters_by_id(store)
     projects = store.list_business_task_project_links(task_id=task_id)
     project_members = _all_business_tasks(store) if projects else []
+    project_ids_by_task = _confirmed_project_ids_by_task(store) if projects else {}
     anchor_links: list[BusinessTaskAnchorLink] = _all_pages(store.list_business_task_anchor_links, task_id=task_id)
     follow_ups = [dict(row) for row in _all_pages(store.list_business_task_follow_ups, business_task_id=task_id)]
     dingtalk_todos = [dict(row) for row in _all_pages(store.list_business_task_dingtalk_links, business_task_id=task_id)]
@@ -1139,7 +1166,9 @@ def business_task_detail(store: Any, task_id: int) -> ConsoleBusinessTaskDetail 
         relations=_all_pages(store.list_business_task_relations, task_id=task_id),
         clusters=[{"membership": json_safe(link), "cluster": json_safe(clusters.get(link.cluster_id))} for link in cluster_links],
         anchors=[{"link": json_safe(link), "anchor": json_safe(anchors.get(link.anchor_id))} for link in anchor_links],
-        official_projects=[ConsoleBusinessProjectSummary.model_validate(_project_summary_payload(store, project, project_members)) for project in projects],
+        official_projects=[ConsoleBusinessProjectSummary.model_validate(
+            _project_summary_payload(store, project, project_members, project_ids_by_task)
+        ) for project in projects],
         follow_ups=follow_ups, dingtalk_todos=dingtalk_todos,
         suggestion=TaskSuggestion.model_validate_json(task.suggestion_json) if task.origin == "agent_suggestion" else None,
     )
@@ -1149,7 +1178,9 @@ def business_project_detail(store: Any, project_id: int) -> ConsoleBusinessProje
     project = store.get_business_project(project_id)
     if project is None:
         return None
-    tasks = [task for task in _all_business_tasks(store) if project.id in {linked.id for linked in store.list_business_task_project_links(task_id=task.id)}]
+    all_tasks = _all_business_tasks(store)
+    project_ids_by_task = _confirmed_project_ids_by_task(store)
+    tasks = [task for task in all_tasks if project.id in project_ids_by_task.get(task.id, set())]
     anchors = _anchors_by_id(store)
     context = store.get_business_project_context(project_id)
     citations = (
@@ -1166,7 +1197,9 @@ def business_project_detail(store: Any, project_id: int) -> ConsoleBusinessProje
         return ApiListMeta(snapshot_at=snapshot_at(), page=1, page_size=20, total=total,
                            has_more=total > visible, next_cursor="")
     return ConsoleBusinessProjectDetail(
-        summary=ConsoleBusinessProjectSummary.model_validate(_project_summary_payload(store, project, tasks)),
+        summary=ConsoleBusinessProjectSummary.model_validate(
+            _project_summary_payload(store, project, tasks, project_ids_by_task)
+        ),
         anchor=json_safe(anchors[project.canonical_anchor_id]) if project.canonical_anchor_id in anchors else {},
         confirmed_tasks=[ConsoleBusinessTaskSummary.model_validate(_task_summary_payload(store, task, anchors)) for task in tasks if not (task.origin == "agent_suggestion" and task.stage.value == "candidate")],
         context=context,

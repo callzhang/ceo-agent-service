@@ -1,5 +1,24 @@
 # Project-centered work validation
 
+## 2026-10-07 production readback and Project-list latency repair
+
+PR #16 (merged as `020ae847`) passed the current full GitHub Quality run
+`37550292249`: `npm test`, workbench build, Playwright installation and browser
+tests all passed. Standard `python -m app.deploy` completed from `fe4d2c39` to
+`020ae847`; launchd reports the service running at PID `69738`, and `/healthz`
+returns `{ok: true, status: "ok"}`. Production read-only DB counts are 28
+Projects, 431 non-merged Tasks (267 candidate, 163 formal, 1 cancelled), and
+14,474 reply attempts. The business Task Attention route reports 0 active
+items; the general Attention page currently reports 5 items; History reports
+33,606 records.
+
+The production Project list endpoint did not respond within 20 seconds, while
+the health, Attention, History, and status endpoints returned successfully.
+Code inspection found an N+1 fan-out: for each of 28 Projects, the response
+walked all 431 Tasks and queried each Task's confirmed Project links again.
+The resulting repeated membership lookups are now being replaced by a single
+batched read; production latency/readback remains pending the follow-up release.
+
 ## 2026-10-06 latest prompt, fixed-eval and W39 readback
 
 Derek confirmed the Task Agent restriction must remain prompt-only and limited
