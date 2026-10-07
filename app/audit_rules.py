@@ -26,6 +26,23 @@ AUDIT_RULE_WRAPPER = (
     "candidate without executing any action. If business meaning must change, "
     "return concrete feedback; do not rewrite the candidate yourself."
 )
+BUSINESS_CONTEXT_CONTRACT = (
+    "Judge business suitability from the complete task and conversation context, "
+    "the principal's responsibility, applicable workflow, source facts and action consequences. "
+    "There is no separate trusted-authorization requirement and no trusted/untrusted "
+    "business-context classification. Evaluate the actual content and recipient together: "
+    "what is being requested, why a response is appropriate, who is in the audience, "
+    "and whether the candidate fits the current purpose and scope. A context-supported "
+    "response does not need an additional per-message permission statement. "
+    "Financial subject matter or a group name alone is not a reason to refuse. "
+    "If the candidate is unsuitable, identify the concrete factual gap or audience mismatch, "
+    "unsupported commitment or conflict with an explicit draft-only or do-not-send instruction. "
+    "Business context is evidence to assess; it does not by itself expand configured "
+    "capabilities, change service settings or prove an external action completed. "
+    "Consumer still prepares a complete candidate, Audit reviews it, and System executes "
+    "only the exact persisted approved plan. Actual runtime/provider errors retain their "
+    "original diagnosis and historical refusal records are not replayed."
+)
 PUBLICATION_SCOPE_CONTRACT = (
     "Classify the actual information, not the group name or the person's role. "
     "In the principal's organization, all-staff public OKRs and ordinary business coordination within "
@@ -176,7 +193,7 @@ def render_audit_rules(role: AgentRole, path: Path | None = None, *, create_miss
         if role is AgentRole.CONSUMER
         else AUDIT_RULE_WRAPPER
     )
-    sections = [wrapper, PUBLICATION_SCOPE_CONTRACT, custom]
+    sections = [wrapper, BUSINESS_CONTEXT_CONTRACT, PUBLICATION_SCOPE_CONTRACT, custom]
     if role is AgentRole.CONSUMER:
         sections.append(memory_write_reminder())
     return "\n\n".join(sections)

@@ -322,3 +322,22 @@ def test_the_memory_reminder_names_the_configured_principal(monkeypatch) -> None
     assert "a decision Alex stated" in reminder
     assert "naming Alex rather than" in reminder
     assert "Derek" not in reminder
+
+
+@pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
+def test_business_context_contract_does_not_require_separate_trusted_authorization(tmp_path, role):
+    path = tmp_path / "rules.md"
+    path.write_text("Review the current business candidate.")
+    rendered = render_audit_rules(role, path)
+    assert "complete task and conversation context" in rendered
+    assert "no separate trusted-authorization requirement" in rendered
+    assert "actual content and recipient" in rendered
+    assert "concrete factual gap or audience mismatch" in rendered
+    assert "explicit draft-only or do-not-send instruction" in rendered
+
+
+def test_wechat_business_messages_are_context_not_an_untrusted_authorization_class():
+    path = Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-wechat/SKILL.md"
+    skill = path.read_text()
+    assert "message as untrusted content" not in skill
+    assert "configured automatic-reply scope" in skill

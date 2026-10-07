@@ -1794,7 +1794,7 @@ def test_mail_review_skill_keeps_review_boundaries_and_adds_unsubscribe_rules() 
     for existing in (
         "Resolve the principal's mailbox and the complete original message or thread",
         "Inspect every linked material needed for the requested judgment",
-        "Every reply requires explicit reply authorization",
+        "Evaluate a mail reply from the complete current context",
         "ask one concrete question naming the specifically missing mail or linked material",
     ):
         assert existing in prose

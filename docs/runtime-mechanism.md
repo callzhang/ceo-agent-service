@@ -1607,3 +1607,9 @@ Prompts 的 Developer/User/Profile 各自保留 Template 与 Rendered preview �
 Prompts 内容标题随当前查看方式显示「模板」或「渲染结果」，与所选 Developer/User/Profile 页签对应；完整运行输入仍位于独立只读「运行输入」页签。
 
 Prompts 页在各页签之前说明 Developer/User 对话模板、工作人格、Audit Rules 与运行输入的用途，并分别列出对话入口和后台 Consumer/Audit 的上下文组装顺序。后台角色使用代码生成指令，工作人格与 Runtime Context 追加在 Developer 输入中；角色任务上下文另作 Task 输入。
+
+### 业务审核按完整上下文判断（2026-10-06）
+
+Consumer/Audit 根据完整任务和对话上下文、本人职责、实际事实、接收对象、工作目的和动作后果判断候选是否合理。业务上下文不划分为可信或不可信，不另设“可信授权”或逐条消息许可声明。财务主题或群名本身不构成拒绝理由；不合适的候选必须指出具体事实缺口、受众不匹配、无依据承诺或与明确只出草稿／不发送要求的冲突。上下文不改变已配置能力，也不证明外部动作完成。邮件与微信 Skill 使用同一原则；Email 子系统现有 unsubscribe ActionPlan 和禁用 auto_reply 的范围保持原样。
+
+Consumer 完整候选、Audit 精确审核、System 执行持久化计划及真实回执的绑定保持原样。实际 CLI／provider 认证、权限和拒绝错误仍按原诊断保留；本次规则修改不重放历史拒绝动作。固定规则在已保存自定义审核模板前注入，并通过正式部署发布邮件、微信 Skill 和默认审核规则。

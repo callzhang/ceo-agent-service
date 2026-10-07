@@ -27,6 +27,7 @@ EXPECTED_SOURCES = frozenset((
     "ci/shared-skills/ceo-weekly-report/references/dingtalk-runbook.md",
     "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
     "app/defaults/audit_rules.md",
+    "ci/shared-skills/ceo-wechat/SKILL.md",
 ))
 DEFAULT_MANIFEST = Path("ci/consumer-system-contract-release.json")
 SHA256_HEX = re.compile(r"[0-9a-f]{64}\Z")
