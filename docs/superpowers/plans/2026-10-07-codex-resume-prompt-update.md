@@ -1,6 +1,6 @@
 # Codex 原生 session 复用与逐轮 Developer 更新方案
 
-状态：2026-10-07，根因和合成原生探针已确认；传输接口实施待讨论。此方案不改变角色、业务审核、授权或执行政策。
+状态：2026-10-07，Derek 决定本轮不实施传输接口迁移：Developer Prompt 不常修改，不为这项更新能力更换接口。继续现有 exec/resume 与 session 复用，已确认的 Developer/profile/Runtime Context 更新限制保留为记录。以下实验和方案仅作历史调查依据；Task Agent 输入修复是独立议题。
 
 ## 已确认问题
 

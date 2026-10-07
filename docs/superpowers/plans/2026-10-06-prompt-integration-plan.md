@@ -367,3 +367,8 @@ GET settings/prompts 改用同一次原文快照，分别渲染各配置，返�
 原生 transcript 比服务 prepared 快照提供更强的证据：fresh Audit 已收到精简 profile，resumed Consumer 仍保留旧 session 初始 Developer。安装的 Codex CLI0.154.0 不应用 resume 时的 Developer 更新；移动全局 `-c` 或 app-server `thread/resume.developerInstructions` 也无效。原生 app-server `turn/start.additionalContext` application 可在同一 thread 新增 Developer 消息，连续两个配置更新及历史读取合成探针通过。该接口尚未接入服务，因此“保存后下一轮原生 Consumer 生效”仍未完成验收。
 
 后续方案与具体接受条件见 [原生 resume 配置更新方案](2026-10-07-codex-resume-prompt-update.md)。这次只记录诊断与方案，没有改原生传输接口、清空会话或重写历史。前述候选阶段的“未上线/CI待完成”是当时记录，以本节为当前状态；原始基线、失败候选及评价证据继续保留。
+
+
+### Derek 的范围决定：不实施原生接口迁移
+
+2026-10-07，Derek 表示 Developer Prompt 不会经常修改，若只是为该处更新可忽略。本轮从实施范围撤出 app-server 迁移，继续现有 exec/resume 和同 conversation+route session 复用。已查实的初始 Developer 保留行为及 profile/Runtime Context 影响不改写为修复成功；保留调查证据。此决定不取消独立的 Task Agent 输入装配问题，也不授权其实现。
