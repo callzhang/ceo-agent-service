@@ -85,6 +85,15 @@ Codex Consumer 可在绑定工作区进行原生代码执行；Audit 只读。�
 
 候选分为动作计划和当前实例的人工问题。人工问题包含来源上下文、具体原因、证据、互斥可行选项及后果；可执行选项各自绑定完整动作计划，停止选项写明 skipped 和原因。只有 Derek 能补充的开放事实使用 requested_input，不制造假选择。不能混合立即执行的动作与尚未选择的条件分支。
 
+通用消息受众契约由 Consumer/Audit 共用的固定审核规则注入，已保存或空的自定义规则均不会
+省略该契约。候选应依据相关群讨论、完整当前成员、稳定身份及当前 title/职责判断实际内容
+的披露范围；职位只是证据，不是自动授权，私聊也不自动安全。同一受众适合全部内容时保持
+单条消息；确需不同受众时沿用既有多动作候选，各自保存准确正文、目标与 action identity。
+拆分后的私聊只能发给已核实的对应人员，不能发给 principal 自己或其已验证别名、默认抄送
+自己或把自己作为未知对应人员的兜底；另行明确要求给 principal 的报告不受此拆分约束影响。
+每个动作独立核对既有回执并恢复未完成结果；拆分不得绕过历史运行时风险拒绝。这是准备和
+审核规则，不是新增发送器，不以 prompt 注入成功替代原生业务验收或生产回执。
+
 Consumer 的业务结果与 wire JSON Schema 和解析器一致：`proposal`、`no_action`、`failed` 的 `decision_options` 为空，`requested_input`、`needs_human_reason`、`decision_basis` 不得有值；这些字段只属于 `needs_human`。普通方案的事实证据写在 `proposal.sourced_facts`，无需动作的依据写在 `summary`，不借用人工问题字段。
 
 Consumer 的未审核外部效果检测只把写入操作的 provider 回执视作副作用；

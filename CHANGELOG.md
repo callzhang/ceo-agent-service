@@ -2243,3 +2243,10 @@
   decisions with applicant notification, and read-only recovery when an external side effect is unknown.
 
 - Clarify reconciled invalid `needs_human` projections as technical failures in Attention, so malformed historical decision payloads cannot be mistaken for live human authorization requests.
+# Unreleased
+
+- Add a shared Consumer/Audit message-audience contract for discussion and member
+  responsibility evidence, audience-specific multi-action plans and no split-message
+  self-delivery. Saved custom rules retain the fixed contract. Historical risk guards
+  and System receipt/recovery semantics remain unchanged. Native audience evaluation
+  is a separate release gate; this entry does not imply installation or delivery.
