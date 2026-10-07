@@ -324,12 +324,12 @@ def reusable_consumer_results(source, source_sha256, prepared, rows):
     return reusable
 
 
-def validate_resume_evidence(previous, reusable, source_sha256):
+def validate_resume_evidence(previous, arm, reusable, source_sha256):
     """Recount an interrupted prefix against fresh source evidence before append."""
     recorded = previous.get("model_evidence")
     if bool(recorded) != bool(reusable):
         raise ValueError("resume Consumer reuse mode differs")
-    results = previous["arms"]["candidate"]["results"]
+    results = previous["arms"][arm]["results"]
     if not reusable:
         if any("evidence_origin" in result for result in results):
             raise ValueError("resume contains unexplained reused evidence")
@@ -456,7 +456,7 @@ def main(argv=None):
                 report = previous
                 report["resume_harness_sha256"] = sha256(Path(__file__).read_bytes()).hexdigest()
                 report["resumed_after_roles"] = start
-                validate_resume_evidence(report, reusable, source_sha256)
+                validate_resume_evidence(report, arm, reusable, source_sha256)
             else:
                 start = 0
                 report["arms"][arm] = prepared_arm

@@ -246,14 +246,19 @@ def test_resume_reuse_verifies_source_results_mode_and_counts():
         "arms": {"candidate": {"results": [consumer, audit]}},
         "model_evidence": {"source_report_sha256": "sha", "reused_model_evidence": 1, "new_native_calls": 1},
     }
-    eval_module.validate_resume_evidence(previous, {"one": consumer}, "sha")
+    eval_module.validate_resume_evidence(previous, "candidate", {"one": consumer}, "sha")
     with pytest.raises(ValueError, match="reuse mode differs"):
-        eval_module.validate_resume_evidence(previous, {}, None)
+        eval_module.validate_resume_evidence(previous, "candidate", {}, None)
     tampered = json.loads(json.dumps(previous))
     tampered["arms"]["candidate"]["results"][0]["native"]["raw"] = "changed"
     with pytest.raises(ValueError, match="source evidence differs"):
-        eval_module.validate_resume_evidence(tampered, {"one": consumer}, "sha")
+        eval_module.validate_resume_evidence(tampered, "candidate", {"one": consumer}, "sha")
     tampered = json.loads(json.dumps(previous))
     tampered["model_evidence"]["new_native_calls"] = 2
     with pytest.raises(ValueError, match="count differs"):
-        eval_module.validate_resume_evidence(tampered, {"one": consumer}, "sha")
+        eval_module.validate_resume_evidence(tampered, "candidate", {"one": consumer}, "sha")
+    baseline_only = {"arms": {"baseline": {"results": [
+        {"case_id": "one", "role": "consumer"},
+        {"case_id": "one", "role": "audit"},
+    ]}}}
+    eval_module.validate_resume_evidence(baseline_only, "baseline", {}, None)
