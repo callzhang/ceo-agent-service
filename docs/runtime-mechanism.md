@@ -44,6 +44,14 @@ Attention 的失败 Reply task 先在已有 `(status, id)` 覆盖索引上筛选
 其他 Attention 来源及队列的最新失败原因也先通过已有状态索引筛选行 ID，再读取
 必要字段。失败大小写、非空错误过滤、更新时刻及 ID 排序和下一快照立即反映恢复保持不变。
 
+定时任务的后续恢复检查先匹配当前失败 Reply task 或错误所绑定的旧 run，再查询同一
+scheduled_task_id 的更晚 run。使用嵌套 EXISTS 避免查询器从大量无关成功 run 反向连接，
+导致每个成功 run 重复扫描历史。覆盖条件仍是更晚 run 已 dispatched 且对应 Reply task
+为 done/skipped；不同任务、较早成功、后续失败或 service_command 均不能覆盖。
+SQLite VM 操作预算回归限制无关成功历史带来的查询工作量，语义回归同时保留原失败和错误
+物理记录；不新增索引、迁移、队列缓存或恢复写入。该修复针对查询计算成本，不将慢连接
+上下文计时等同于持写锁时长，也不证明所有 SQLITE_BUSY 原因已消除。
+
 日报的 task-bound `consumer_document_write` 回执除报告文档和正文读回外，还原样返回
 已从目标知识库完整目录解析出的 `folder` 元数据。Consumer 使用其中 provider 实际提供的
 `url` / `docUrl` 完成日报文件夹链接要求；服务不由 node ID 拼接 URL，也不为返回该元数据

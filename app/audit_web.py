@@ -3319,16 +3319,19 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                   and not exists (
                       select 1
                       from scheduled_task_runs as stale_run
-                      join scheduled_task_runs as later_run
-                        on later_run.scheduled_task_id=stale_run.scheduled_task_id
-                       and later_run.id>stale_run.id
-                       and later_run.dispatch_status='dispatched'
-                      join reply_tasks as later_task
-                        on later_run.execution_kind='reply_task'
-                       and cast(later_run.execution_id as integer)=later_task.id
-                       and lower(later_task.status) in ('done', 'skipped')
                      where stale_run.execution_kind='reply_task'
                        and cast(stale_run.execution_id as integer)=reply_tasks.id
+                       and exists (
+                           select 1
+                           from scheduled_task_runs as later_run
+                           join reply_tasks as later_task
+                             on later_run.execution_kind='reply_task'
+                            and cast(later_run.execution_id as integer)=later_task.id
+                            and lower(later_task.status) in ('done', 'skipped')
+                           where later_run.scheduled_task_id=stale_run.scheduled_task_id
+                             and later_run.id>stale_run.id
+                             and later_run.dispatch_status='dispatched'
+                       )
                   )
                 order by
                     reply_tasks.updated_at desc,
@@ -3600,19 +3603,22 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                   and not exists (
                     select 1
                     from scheduled_task_runs as stale_run
-                    join scheduled_task_runs as later_run
-                      on later_run.scheduled_task_id=stale_run.scheduled_task_id
-                     and later_run.id>stale_run.id
-                     and later_run.dispatch_status='dispatched'
-                    join reply_tasks as later_task
-                      on later_run.execution_kind='reply_task'
-                     and cast(later_run.execution_id as integer)=later_task.id
-                     and lower(later_task.status) in ('done', 'skipped')
                    where (
                          stale_run.event_id=error_event.message_id
                          or error_event.conversation_id=
                             'scheduled-task-run:' || cast(stale_run.id as text)
                    )
+                     and exists (
+                         select 1
+                         from scheduled_task_runs as later_run
+                         join reply_tasks as later_task
+                           on later_run.execution_kind='reply_task'
+                          and cast(later_run.execution_id as integer)=later_task.id
+                          and lower(later_task.status) in ('done', 'skipped')
+                         where later_run.scheduled_task_id=stale_run.scheduled_task_id
+                           and later_run.id>stale_run.id
+                           and later_run.dispatch_status='dispatched'
+                     )
                   )
                 order by error_event.created_at desc, error_event.id desc
                 """,

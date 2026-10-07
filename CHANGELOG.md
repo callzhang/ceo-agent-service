@@ -9,6 +9,13 @@
 
 ## Unreleased
 
+- 2026-10-07: Anchor Attention's scheduled recovery checks to the exact stale
+  run before searching later successful replies. Nested EXISTS prevents
+  unrelated dispatched successes from repeatedly scanning scheduled history.
+  VM-budget regressions cover both failed tasks and errors; same-schedule,
+  later-run, dispatched and done/skipped requirements remain unchanged. No
+  cache, schema migration, failure suppression or recovery policy change.
+
 - 2026-10-07: Skill prompt regressions now verify the complete current
   Consumer and Audit instruction bodies on their respective roles, rather
   than relying on the obsolete combined paragraph from the common template.
