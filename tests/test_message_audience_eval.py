@@ -72,3 +72,16 @@ def test_audit_counterfactual_matches_identity_not_action_order(monkeypatch):
     assert result["proposal"]["actions"][0]["target"] == {"open_dingtalk_id": "counterpart"}
     case["audit_override"]["action_overrides"][0]["target_match"] = {"open_dingtalk_id": "absent"}
     assert not harness.audit_subject(Path("."), case, result, None)["ok"]
+
+
+def test_audit_gate_requires_exact_subject_digest_and_revision():
+    row = {"score": {"audit_applicable": True},
+           "consumer_contract": {"digest": "original"},
+           "audit_subject": {"digest": "mutated"},
+           "audit_contract": {"result": {"candidate_digest": "mutated", "proposal_revision": 0}}}
+    assert module.audit_binding_matches(row)
+    row["audit_contract"]["result"]["candidate_digest"] = "original"
+    assert not module.audit_binding_matches(row)
+    row["audit_contract"]["result"]["candidate_digest"] = "mutated"
+    row["audit_contract"]["result"]["proposal_revision"] = 99
+    assert not module.audit_binding_matches(row)

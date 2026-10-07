@@ -50,14 +50,47 @@ def delivery_matches(case: dict, result: dict | None) -> bool:
     return True
 
 
+def audit_binding_matches(row: dict) -> bool:
+    if not row["score"]["audit_applicable"]:
+        return True
+    subject = row.get("audit_subject") or row["consumer_contract"]
+    result = row["audit_contract"].get("result") or {}
+    return bool(subject.get("digest")) and (
+        result.get("candidate_digest") == subject["digest"]
+        and result.get("proposal_revision") == 0
+    )
+
+
+def score_deliveries(suite: dict, manifest: dict) -> None:
+    if [row["id"] for row in suite["cases"]] != [case["id"] for case in manifest["cases"]]:
+        raise ValueError("artifact cases do not match the frozen manifest")
+    for case, row in zip(manifest["cases"], suite["cases"], strict=True):
+        row["exact_delivery_passed"] = delivery_matches(case, row["consumer_contract"].get("result"))
+        row["audit_binding_passed"] = audit_binding_matches(row)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--candidate-ref", required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--candidate-ref")
+    mode.add_argument("--rescore", type=Path)
     parser.add_argument("--manifest", type=Path, default=ROOT / "evals/message_audience/v2.json")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     manifest_path = args.manifest
     manifest = json.loads(manifest_path.read_text())
+    if args.rescore:
+        report = json.loads(args.rescore.read_text())
+        if report["manifest_sha256"] != sha256(manifest_path.read_bytes()).hexdigest():
+            raise ValueError("artifact manifest changed; cannot rescore different inputs")
+        report["rescore_harness_sha256"] = sha256(Path(__file__).read_bytes()).hexdigest()
+        report["rescore_source"] = str(args.rescore)
+        for label in ("baseline", "candidate"):
+            score_deliveries(report[label], manifest)
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+        print("Rechecked original native outputs; no new provider turns.", flush=True)
+        return _exit_status(report)
     baseline_ref = resolve_commit_ref(manifest["baseline_ref"])
     candidate_ref = resolve_commit_ref(args.candidate_ref)
     report = {
@@ -74,15 +107,18 @@ def main() -> int:
             archive_ref(ref, root)
             suite = run_suite(root, manifest, archived=True)
         suite["ref"] = ref
-        for case, row in zip(manifest["cases"], suite["cases"], strict=True):
-            row["exact_delivery_passed"] = delivery_matches(case, row["consumer_contract"].get("result"))
+        score_deliveries(suite, manifest)
         report[label] = suite
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
         print(f"{label}: {sum(row['exact_delivery_passed'] for row in suite['cases'])}/{len(suite['cases'])} exact deliveries", flush=True)
     print("Artifact retained for independent exact-output review; scores alone are not acceptance.", flush=True)
+    return _exit_status(report)
+
+
+def _exit_status(report: dict) -> int:
     return 0 if all(
-        row["exact_delivery_passed"] and
+        row["exact_delivery_passed"] and row["audit_binding_passed"] and
         (not row["score"]["audit_applicable"] or row["score"]["audit_ok"])
         for row in report["candidate"]["cases"]
     ) else 1
