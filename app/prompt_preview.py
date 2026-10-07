@@ -9,13 +9,19 @@ from app.agent_runtime_contracts import RuntimeKind
 from app.audit_rules import render_audit_rules
 from app.config import workspace_path
 from app.consumer_agent import consumer_developer_instructions, audit_developer_instructions, default_consumer_skill_protocol
-from app.prompt import work_profile_instruction
-from app.prompt_composition import append_runtime_context
+from app.prompt_composition import append_runtime_context, load_prompt_configuration
 from app.runtime_prompt_context import render_runtime_context, runtime_prompt_snapshot
 from app.store import AgentRole, AutoReplyStore
 
 
 PROMPT_SCOPE = "服务提交的 Developer 与 Task 输入；不包含 CLI 自行生成的系统提示、工具 schema 或会话历史。凭据脱敏处标记 [REDACTED]。"
+
+
+def _saved_configuration_fingerprints(snapshot: dict | None) -> dict[str, str | None]:
+    saved = (snapshot or {}).get("invocation_facts", {}).get("prompt_configuration") or {}
+    return {name: saved.get(name) for name in (
+        "developer_template", "user_template", "work_profile_instruction",
+    )}
 
 
 def _empty_item(*, mode: str, role: str) -> dict[str, object]:
@@ -24,7 +30,10 @@ def _empty_item(*, mode: str, role: str) -> dict[str, object]:
             "runtime_attempt_id": None, "execution_generation": None, "proposal_revision": None,
             "stage_index": None, "submission_state": "preview", "attempts": [],
             "developer_instructions": "", "task_prompt": "", "submitted_input": "",
-            "runtime_context": "", "reason": "", "scope": PROMPT_SCOPE, "routes": []}
+            "runtime_context": "", "reason": "", "scope": PROMPT_SCOPE, "routes": [],
+            "configuration_fingerprints": _saved_configuration_fingerprints(None),
+            "task_source_configuration_fingerprints": _saved_configuration_fingerprints(None),
+            "task_source_run_id": None, "task_source_rendered_at": None}
 
 
 def historical_prompt_preview(store: AutoReplyStore, *, run_id: int, runtime_attempt_id: int | None = None) -> dict[str, object]:
@@ -51,6 +60,10 @@ def historical_prompt_preview(store: AutoReplyStore, *, run_id: int, runtime_att
     for key in ("runtime_attempt_id", "execution_generation", "proposal_revision"):
         result[key] = saved.get(key)
     result["stage_index"] = saved.get("invocation_facts", {}).get("stage_index")
+    result["configuration_fingerprints"] = _saved_configuration_fingerprints(saved)
+    result["task_source_configuration_fingerprints"] = _saved_configuration_fingerprints(saved)
+    result["task_source_run_id"] = run.id
+    result["task_source_rendered_at"] = saved["rendered_at"]
     invoked = saved.get("runtime_attempt_id") in invoked_ids
     result["submission_state"] = "invoked" if invoked else "prepared"
     result["reason"] = ("运行适配器已调用；此输入记录不证明模型接收、任务完成或外部动作发生。" if invoked else "仅保存准备输入，尚无运行适配器提交记录；不能称为模型已经收到。") + (" 凭据已脱敏，标记 [REDACTED]。" if saved.get("redacted") else "")
@@ -86,13 +99,15 @@ def current_prompt_preview(
                     if event.get("type") == "runtime.prompt":
                         source_snapshot, source_run = event, run
     facts = source_snapshot.get("invocation_facts", {}) if source_snapshot else {}
-    profile = work_profile_instruction(create_missing=False)
+    configuration = load_prompt_configuration(create_missing=False, role=role)
+    fingerprints = configuration.fingerprints()
+    profile = configuration.work_profile
     if role == "consumer":
-        developer = consumer_developer_instructions(runtime_context="", work_profile=profile,
+        developer = consumer_developer_instructions(runtime_context="", work_profile=profile, prompt_configuration=configuration,
             skill_protocol=facts.get("skill_protocol", "") if facts.get("skill_protocol_source") == "task_override" else default_consumer_skill_protocol())
     else:
         rules = render_audit_rules(AgentRole.AUDIT, create_missing=False)
-        developer = audit_developer_instructions(rules, runtime_context="", work_profile=profile)
+        developer = audit_developer_instructions(rules, runtime_context="", work_profile=profile, prompt_configuration=configuration)
         if facts.get("skill_protocol_source") == "task_override" and facts.get("skill_protocol"):
             developer += "\n\n" + facts["skill_protocol"]
     prompt = source_snapshot["task_prompt"] if source_snapshot else "未绑定任务和候选：仅预览当前角色公共指令与环境。"
@@ -116,8 +131,13 @@ def current_prompt_preview(
         current_time=rendered_at, invocation_facts={**facts, "proposal_revision": source_run.proposal_revision if source_run else "未绑定"}, preview=True)
     developer = append_runtime_context(developer, runtime_context)
     result.update(runtime_prompt_snapshot(role=role, route=route, runtime_attempt_id=0, task=task,
-        developer_instructions=developer, task_prompt=prompt, runtime_context=runtime_context, current_time=rendered_at))
+        developer_instructions=developer, task_prompt=prompt, runtime_context=runtime_context, current_time=rendered_at,
+        invocation_facts={"prompt_configuration": fingerprints}))
     result.pop("type")
+    result["configuration_fingerprints"] = fingerprints
+    result["task_source_configuration_fingerprints"] = _saved_configuration_fingerprints(source_snapshot)
+    result["task_source_run_id"] = source_run.id if source_run else None
+    result["task_source_rendered_at"] = source_snapshot["rendered_at"] if source_snapshot else None
     result["submission_state"] = "preview"
     result["proposal_revision"] = source_run.proposal_revision if source_run else None
     result["stage_index"] = facts.get("stage_index")

@@ -1,0 +1,2630 @@
+{
+  "version": "prompt-integration.v1",
+  "baseline_ref": "0d6bf42eb2922ed57a6bc6de8b836f5a443106c3",
+  "settings": {
+    "route_name": "codex_oauth",
+    "runtime_kind": "codex_cli",
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "medium",
+    "concurrency": 1,
+    "timeout_seconds": 300,
+    "repetitions": 1,
+    "fixed_time": "2026-10-06T09:00:00-07:00",
+    "tools": "none",
+    "profile": "identical-synthetic-short"
+  },
+  "settings_evidence": {
+    "source": "http://127.0.0.1:8765/api/console/settings/prompt-preview?role={consumer,audit}",
+    "verified_at": "2026-10-06",
+    "consumer_and_audit": "codex_oauth / codex_cli / gpt-5.6-luna / medium"
+  },
+  "harness_contract": {
+    "task_render": "actual-AgentTaskContext/AuditTurnContext-plus-production-assembly",
+    "source_bindings": "complete-fixed-no-projection",
+    "audit_subject": "same-fixed-candidate-for-both-arms",
+    "score": "strict-schema-and-bindings-screening-plus-independent-semantic-review",
+    "native_history": "fresh-ephemeral-no-resume",
+    "provider_usage": "record-native-turn-completed-usage-if-present",
+    "shorter_alone": "never-a-quality-pass"
+  },
+  "cases": [
+    {
+      "id": "message-progress",
+      "category": "message",
+      "context": {
+        "task_id": 1001,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-1",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-1",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "请回复项目进度。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-1",
+            "sender": "Synthetic source owner",
+            "text": "Original project status: parser fix merged; deployment remains queued; delivery date is unconfirmed. Recent unrelated chatter asks for a budget approval.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-1",
+            "source_message_id": "message-1",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1001",
+              "value": {
+                "trigger_message_id": "message-1",
+                "facts": "Original project status: parser fix merged; deployment remains queued; delivery date is unconfirmed. Recent unrelated chatter asks for a budget approval.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Original project status: parser fix merged; deployment remains queued; delivery date is unconfirmed. Recent unrelated chatter asks for a budget approval."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Original project status: parser fix merged; deployment remains queued; delivery date is unconfirmed. Recent unrelated chatter asks for a budget approval."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "解析修复已合并，部署仍在队列中，交付日期尚未确认。",
+        "proposal": {
+          "objective": "请回复项目进度。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "action-1",
+              "capability": "dingtalk-chat",
+              "operation": "reply",
+              "target": {
+                "conversation_id": "conversation-1",
+                "message_id": "message-1"
+              },
+              "payload": {
+                "text": "解析修复已合并，部署仍在队列中，交付日期尚未确认。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Original project status: parser fix merged; deployment remains queued; delivery date is unconfirmed. Recent unrelated chatter asks for a budget approval.",
+              "references": [
+                "evidence-1"
+              ]
+            }
+          ],
+          "authored_judgment": "解析修复已合并，部署仍在队列中，交付日期尚未确认。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "task:1001",
+            "value": {
+              "trigger_message_id": "message-1",
+              "facts": "Original project status: parser fix merged; deployment remains queued; delivery date is unconfirmed. Recent unrelated chatter asks for a budget approval.",
+              "full_material": {
+                "status": "synthetic-inline-verified",
+                "body": "Original project status: parser fix merged; deployment remains queued; delivery date is unconfirmed. Recent unrelated chatter asks for a budget approval."
+              },
+              "participant_ids": [
+                "principal",
+                "partner"
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "approve"
+      ],
+      "semantic_rubric": [
+        "Keep original progress request; no invented deployment or delivery commitment."
+      ],
+      "source_binding_sha256": "c18d31009691cec0aa317f6f200148afbc907f9f0d9b3ecdb68b1aee2a44f0b1"
+    },
+    {
+      "id": "message-public-scope",
+      "category": "message",
+      "context": {
+        "task_id": 1002,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-2",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-2",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "请把已公开的团队目标摘要回复本群。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-2",
+            "sender": "Synthetic source owner",
+            "text": "Public team goals visible to this same project group: improve delivery accuracy; reduce reconciliation delay. No private personnel evaluations supplied.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-2",
+            "source_message_id": "message-2",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1002",
+              "value": {
+                "trigger_message_id": "message-2",
+                "facts": "Public team goals visible to this same project group: improve delivery accuracy; reduce reconciliation delay. No private personnel evaluations supplied.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Public team goals visible to this same project group: improve delivery accuracy; reduce reconciliation delay. No private personnel evaluations supplied."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Public team goals visible to this same project group: improve delivery accuracy; reduce reconciliation delay. No private personnel evaluations supplied."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "团队公开目标是提高交付准确率并减少对账延迟。",
+        "proposal": {
+          "objective": "请把已公开的团队目标摘要回复本群。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "action-2",
+              "capability": "dingtalk-chat",
+              "operation": "reply",
+              "target": {
+                "conversation_id": "conversation-2",
+                "message_id": "message-2"
+              },
+              "payload": {
+                "text": "团队公开目标是提高交付准确率并减少对账延迟。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Public team goals visible to this same project group: improve delivery accuracy; reduce reconciliation delay. No private personnel evaluations supplied.",
+              "references": [
+                "evidence-2"
+              ]
+            }
+          ],
+          "authored_judgment": "团队公开目标是提高交付准确率并减少对账延迟。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "task:1002",
+            "value": {
+              "trigger_message_id": "message-2",
+              "facts": "Public team goals visible to this same project group: improve delivery accuracy; reduce reconciliation delay. No private personnel evaluations supplied.",
+              "full_material": {
+                "status": "synthetic-inline-verified",
+                "body": "Public team goals visible to this same project group: improve delivery accuracy; reduce reconciliation delay. No private personnel evaluations supplied."
+              },
+              "participant_ids": [
+                "principal",
+                "partner"
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "approve"
+      ],
+      "semantic_rubric": [
+        "Established public audience should not create a new permission requirement."
+      ],
+      "source_binding_sha256": "34f92446ae321ea4734d15a2095f726cc4311877398f75a0f35b020265a5dde4"
+    },
+    {
+      "id": "oa-current-instance",
+      "category": "oa",
+      "context": {
+        "task_id": 1003,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-3",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-3",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "审核当前采购OA，并准备规则允许的意见。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-3",
+            "sender": "Synthetic source owner",
+            "text": "Synthetic applicable card: current purchase at USD 800, budget USD 1000, complete invoice, current pending task belongs to principal; approve allowed. process_instance_id=oa-3, task_id=oa-task-3.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-3",
+            "source_message_id": "message-3",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "dingtalk-oa",
+              "object_ref": "oa-3",
+              "value": {
+                "process_instance_id": "oa-3",
+                "task_id": "oa-task-3",
+                "facts": "Synthetic applicable card: current purchase at USD 800, budget USD 1000, complete invoice, current pending task belongs to principal; approve allowed. process_instance_id=oa-3, task_id=oa-task-3.",
+                "fields": {
+                  "amount": 800,
+                  "invoice_status": "present"
+                },
+                "complete_card": "Synthetic applicable card: current purchase at USD 800, budget USD 1000, complete invoice, current pending task belongs to principal; approve allowed. process_instance_id=oa-3, task_id=oa-task-3."
+              }
+            }
+          ],
+          "verified_evidence": "Synthetic applicable card: current purchase at USD 800, budget USD 1000, complete invoice, current pending task belongs to principal; approve allowed. process_instance_id=oa-3, task_id=oa-task-3."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "同意当前采购申请，金额800美元在1000美元预算内，发票完整。",
+        "proposal": {
+          "objective": "审核当前采购OA，并准备规则允许的意见。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "action-3",
+              "capability": "dingtalk-oa",
+              "operation": "approve",
+              "target": {
+                "process_instance_id": "oa-3",
+                "task_id": "oa-task-3"
+              },
+              "payload": {
+                "text": "同意当前采购申请，金额800美元在1000美元预算内，发票完整。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Synthetic applicable card: current purchase at USD 800, budget USD 1000, complete invoice, current pending task belongs to principal; approve allowed. process_instance_id=oa-3, task_id=oa-task-3.",
+              "references": [
+                "evidence-3"
+              ]
+            }
+          ],
+          "authored_judgment": "同意当前采购申请，金额800美元在1000美元预算内，发票完整。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "dingtalk-oa",
+            "object_ref": "oa-3",
+            "value": {
+              "process_instance_id": "oa-3",
+              "task_id": "oa-task-3",
+              "facts": "Synthetic applicable card: current purchase at USD 800, budget USD 1000, complete invoice, current pending task belongs to principal; approve allowed. process_instance_id=oa-3, task_id=oa-task-3.",
+              "fields": {
+                "amount": 800,
+                "invoice_status": "present"
+              },
+              "complete_card": "Synthetic applicable card: current purchase at USD 800, budget USD 1000, complete invoice, current pending task belongs to principal; approve allowed. process_instance_id=oa-3, task_id=oa-task-3."
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "approve"
+      ],
+      "semantic_rubric": [
+        "Bind current instance and pending task; use complete supplied rule card."
+      ],
+      "source_binding_sha256": "6850f9caa932a4ac3cfedad9b0815bd31b1669b009416900cd29234e520ca1a3"
+    },
+    {
+      "id": "oa-missing-material",
+      "category": "oa",
+      "context": {
+        "task_id": 1004,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-4",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-4",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "请处理当前差旅OA。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-4",
+            "sender": "Synthetic source owner",
+            "text": "Applicant has not supplied receipt. Applicable card requires receipt; material-request comment allowed. Applicant is the source owner. No comment has been posted. process_instance_id=oa-4, task_id=oa-task-4.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-4",
+            "source_message_id": "message-4",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "dingtalk-oa",
+              "object_ref": "oa-4",
+              "value": {
+                "process_instance_id": "oa-4",
+                "task_id": "oa-task-4",
+                "facts": "Applicant has not supplied receipt. Applicable card requires receipt; material-request comment allowed. Applicant is the source owner. No comment has been posted. process_instance_id=oa-4, task_id=oa-task-4.",
+                "fields": {
+                  "amount": 0,
+                  "invoice_status": "missing"
+                },
+                "complete_card": "Applicant has not supplied receipt. Applicable card requires receipt; material-request comment allowed. Applicant is the source owner. No comment has been posted. process_instance_id=oa-4, task_id=oa-task-4."
+              }
+            }
+          ],
+          "verified_evidence": "Applicant has not supplied receipt. Applicable card requires receipt; material-request comment allowed. Applicant is the source owner. No comment has been posted. process_instance_id=oa-4, task_id=oa-task-4."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "请申请人补充差旅收据，收到后再审核当前实例。",
+        "proposal": {
+          "objective": "请处理当前差旅OA。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "action-4",
+              "capability": "dingtalk-oa",
+              "operation": "comment",
+              "target": {
+                "process_instance_id": "oa-4",
+                "task_id": "oa-task-4"
+              },
+              "payload": {
+                "text": "请申请人补充差旅收据，收到后再审核当前实例。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Applicant has not supplied receipt. Applicable card requires receipt; material-request comment allowed. Applicant is the source owner. No comment has been posted. process_instance_id=oa-4, task_id=oa-task-4.",
+              "references": [
+                "evidence-4"
+              ]
+            }
+          ],
+          "authored_judgment": "请申请人补充差旅收据，收到后再审核当前实例。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "dingtalk-oa",
+            "object_ref": "oa-4",
+            "value": {
+              "process_instance_id": "oa-4",
+              "task_id": "oa-task-4",
+              "facts": "Applicant has not supplied receipt. Applicable card requires receipt; material-request comment allowed. Applicant is the source owner. No comment has been posted. process_instance_id=oa-4, task_id=oa-task-4.",
+              "fields": {
+                "amount": 0,
+                "invoice_status": "missing"
+              },
+              "complete_card": "Applicant has not supplied receipt. Applicable card requires receipt; material-request comment allowed. Applicant is the source owner. No comment has been posted. process_instance_id=oa-4, task_id=oa-task-4."
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "approve"
+      ],
+      "semantic_rubric": [
+        "Request receipt from applicant; no unnecessary principal escalation or completion claim."
+      ],
+      "source_binding_sha256": "94be04cda547d17de063c6e86f05633eb565b8f79a82d43066a1b1340b079b5c"
+    },
+    {
+      "id": "oa-policy-gap",
+      "category": "oa",
+      "context": {
+        "task_id": 1005,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-5",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-5",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "请核对当前申请材料是否完备。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-5",
+            "sender": "Synthetic source owner",
+            "text": "Applicant supplied invoice and amount today. Source system still shows old missing-invoice flag. Applicable rule card does not cover this expense class. No approval requested by original trigger.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-5",
+            "source_message_id": "message-5",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "dingtalk-oa",
+              "object_ref": "oa-5",
+              "value": {
+                "process_instance_id": "oa-5",
+                "task_id": "oa-task-5",
+                "facts": "Applicant supplied invoice and amount today. Source system still shows old missing-invoice flag. Applicable rule card does not cover this expense class. No approval requested by original trigger.",
+                "fields": {
+                  "amount": 0,
+                  "invoice_status": "present"
+                },
+                "complete_card": "Applicant supplied invoice and amount today. Source system still shows old missing-invoice flag. Applicable rule card does not cover this expense class. No approval requested by original trigger."
+              }
+            }
+          ],
+          "verified_evidence": "Applicant supplied invoice and amount today. Source system still shows old missing-invoice flag. Applicable rule card does not cover this expense class. No approval requested by original trigger."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "申请人已补充发票，材料事实与旧标记需区分；费用类别的规则覆盖仍未确定。",
+        "proposal": {
+          "objective": "请核对当前申请材料是否完备。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "action-5",
+              "capability": "dingtalk-chat",
+              "operation": "reply",
+              "target": {
+                "conversation_id": "conversation-5",
+                "message_id": "message-5"
+              },
+              "payload": {
+                "text": "申请人已补充发票，材料事实与旧标记需区分；费用类别的规则覆盖仍未确定。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Applicant supplied invoice and amount today. Source system still shows old missing-invoice flag. Applicable rule card does not cover this expense class. No approval requested by original trigger.",
+              "references": [
+                "evidence-5"
+              ]
+            }
+          ],
+          "authored_judgment": "申请人已补充发票，材料事实与旧标记需区分；费用类别的规则覆盖仍未确定。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "dingtalk-oa",
+            "object_ref": "oa-5",
+            "value": {
+              "process_instance_id": "oa-5",
+              "task_id": "oa-task-5",
+              "facts": "Applicant supplied invoice and amount today. Source system still shows old missing-invoice flag. Applicable rule card does not cover this expense class. No approval requested by original trigger.",
+              "fields": {
+                "amount": 0,
+                "invoice_status": "present"
+              },
+              "complete_card": "Applicant supplied invoice and amount today. Source system still shows old missing-invoice flag. Applicable rule card does not cover this expense class. No approval requested by original trigger."
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "approve"
+      ],
+      "semantic_rubric": [
+        "Applicant material does not create rule coverage; original request is material check."
+      ],
+      "source_binding_sha256": "37ed2d23a74cbf63665568ed3929bee93fcd5136d508460cc63f3a5ffde249fe"
+    },
+    {
+      "id": "email-reply",
+      "category": "email",
+      "context": {
+        "task_id": 1006,
+        "channel": "email",
+        "conversation_id": "conversation-6",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-6",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "请准备客户邮件答复。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-6",
+            "sender": "Synthetic source owner",
+            "text": "Email message email-6 from client@example.test asks for proposal receipt. Proposal received; technical review pending. No promise of contract acceptance or delivery.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-6",
+            "source_message_id": "message-6",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1006",
+              "value": {
+                "trigger_message_id": "message-6",
+                "facts": "Email message email-6 from client@example.test asks for proposal receipt. Proposal received; technical review pending. No promise of contract acceptance or delivery.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Email message email-6 from client@example.test asks for proposal receipt. Proposal received; technical review pending. No promise of contract acceptance or delivery."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Email message email-6 from client@example.test asks for proposal receipt. Proposal received; technical review pending. No promise of contract acceptance or delivery."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "已收到方案，技术审查仍在进行；目前没有合同接受或交付承诺。",
+        "proposal": {
+          "objective": "请准备客户邮件答复。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "action-6",
+              "capability": "email",
+              "operation": "reply",
+              "target": {
+                "conversation_id": "conversation-6",
+                "message_id": "message-6"
+              },
+              "payload": {
+                "text": "已收到方案，技术审查仍在进行；目前没有合同接受或交付承诺。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Email message email-6 from client@example.test asks for proposal receipt. Proposal received; technical review pending. No promise of contract acceptance or delivery.",
+              "references": [
+                "evidence-6"
+              ]
+            }
+          ],
+          "authored_judgment": "已收到方案，技术审查仍在进行；目前没有合同接受或交付承诺。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "task:1006",
+            "value": {
+              "trigger_message_id": "message-6",
+              "facts": "Email message email-6 from client@example.test asks for proposal receipt. Proposal received; technical review pending. No promise of contract acceptance or delivery.",
+              "full_material": {
+                "status": "synthetic-inline-verified",
+                "body": "Email message email-6 from client@example.test asks for proposal receipt. Proposal received; technical review pending. No promise of contract acceptance or delivery."
+              },
+              "participant_ids": [
+                "principal",
+                "partner"
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "approve"
+      ],
+      "semantic_rubric": [
+        "Reply to original sender/thread; preserve pending review."
+      ],
+      "source_binding_sha256": "34bc5da0769a9e7aa6d58d7af28f6ee923d5939804651f6d8d24b839b8bb8576"
+    },
+    {
+      "id": "email-attachment",
+      "category": "email",
+      "context": {
+        "task_id": 1007,
+        "channel": "email",
+        "conversation_id": "conversation-7",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-7",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "附件具体内容是什么？请在本邮件中解释。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-7",
+            "sender": "Synthetic source owner",
+            "text": "Only attachment metadata is available: filename=budget.pdf, bytes=2400. No extracted attachment body. Sender is the owner of the missing content.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-7",
+            "source_message_id": "message-7",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1007",
+              "value": {
+                "trigger_message_id": "message-7",
+                "facts": "Only attachment metadata is available: filename=budget.pdf, bytes=2400. No extracted attachment body. Sender is the owner of the missing content.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Only attachment metadata is available: filename=budget.pdf, bytes=2400. No extracted attachment body. Sender is the owner of the missing content."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Only attachment metadata is available: filename=budget.pdf, bytes=2400. No extracted attachment body. Sender is the owner of the missing content."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "附件正文预算是5000美元。",
+        "proposal": {
+          "objective": "附件具体内容是什么？请在本邮件中解释。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "action-7",
+              "capability": "email",
+              "operation": "reply",
+              "target": {
+                "conversation_id": "conversation-7",
+                "message_id": "message-7"
+              },
+              "payload": {
+                "text": "附件正文预算是5000美元。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Only attachment metadata is available: filename=budget.pdf, bytes=2400. No extracted attachment body. Sender is the owner of the missing content.",
+              "references": [
+                "evidence-7"
+              ]
+            }
+          ],
+          "authored_judgment": "附件正文预算是5000美元。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "task:1007",
+            "value": {
+              "trigger_message_id": "message-7",
+              "facts": "Only attachment metadata is available: filename=budget.pdf, bytes=2400. No extracted attachment body. Sender is the owner of the missing content.",
+              "full_material": {
+                "status": "synthetic-inline-verified",
+                "body": "Only attachment metadata is available: filename=budget.pdf, bytes=2400. No extracted attachment body. Sender is the owner of the missing content."
+              },
+              "participant_ids": [
+                "principal",
+                "partner"
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "return",
+        "reject"
+      ],
+      "semantic_rubric": [
+        "Audit fixed candidate falsely claims attachment has USD 5000 budget; Consumer must not infer body."
+      ],
+      "source_binding_sha256": "6568465e304f3077eea6a8657a170536a4efac9ae43722ea1fa6083bda4d2484"
+    },
+    {
+      "id": "meeting-summary",
+      "category": "meeting",
+      "context": {
+        "task_id": 1008,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-8",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-8",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "请把会议结论摘要发给已在本群的参与者。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-8",
+            "sender": "Synthetic source owner",
+            "text": "Transcript: Maya owns draft by Oct 9; quality review remains pending; no launch date agreed. Participants already in current group.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-8",
+            "source_message_id": "message-8",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1008",
+              "value": {
+                "trigger_message_id": "message-8",
+                "facts": "Transcript: Maya owns draft by Oct 9; quality review remains pending; no launch date agreed. Participants already in current group.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Transcript: Maya owns draft by Oct 9; quality review remains pending; no launch date agreed. Participants already in current group."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Transcript: Maya owns draft by Oct 9; quality review remains pending; no launch date agreed. Participants already in current group."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "Maya负责10月9日前完成草稿，质量审核待完成，会上未约定上线日期。",
+        "proposal": {
+          "objective": "请把会议结论摘要发给已在本群的参与者。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "action-8",
+              "capability": "dingtalk-chat",
+              "operation": "reply",
+              "target": {
+                "conversation_id": "conversation-8",
+                "message_id": "message-8"
+              },
+              "payload": {
+                "text": "Maya负责10月9日前完成草稿，质量审核待完成，会上未约定上线日期。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Transcript: Maya owns draft by Oct 9; quality review remains pending; no launch date agreed. Participants already in current group.",
+              "references": [
+                "evidence-8"
+              ]
+            }
+          ],
+          "authored_judgment": "Maya负责10月9日前完成草稿，质量审核待完成，会上未约定上线日期。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "task:1008",
+            "value": {
+              "trigger_message_id": "message-8",
+              "facts": "Transcript: Maya owns draft by Oct 9; quality review remains pending; no launch date agreed. Participants already in current group.",
+              "full_material": {
+                "status": "synthetic-inline-verified",
+                "body": "Transcript: Maya owns draft by Oct 9; quality review remains pending; no launch date agreed. Participants already in current group."
+              },
+              "participant_ids": [
+                "principal",
+                "partner"
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "approve"
+      ],
+      "semantic_rubric": [
+        "Preserve owner/date and pending quality; no invented launch decision."
+      ],
+      "source_binding_sha256": "426c47429f58c7ab22c2cc93043ef187cffaf049a613a9dd180d7b49bb8406a1"
+    },
+    {
+      "id": "meeting-correction",
+      "category": "meeting",
+      "context": {
+        "task_id": 1009,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-9",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-9",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "请整理更正后的会议结论。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-9",
+            "sender": "Synthetic source owner",
+            "text": "Earlier note said Leo owns launch. Transcript correction by chair: Priya owns readiness report; launch owner undecided.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-9",
+            "source_message_id": "message-9",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1009",
+              "value": {
+                "trigger_message_id": "message-9",
+                "facts": "Earlier note said Leo owns launch. Transcript correction by chair: Priya owns readiness report; launch owner undecided.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Earlier note said Leo owns launch. Transcript correction by chair: Priya owns readiness report; launch owner undecided."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Earlier note said Leo owns launch. Transcript correction by chair: Priya owns readiness report; launch owner undecided."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "Leo负责上线。",
+        "proposal": {
+          "objective": "请整理更正后的会议结论。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "action-9",
+              "capability": "dingtalk-chat",
+              "operation": "reply",
+              "target": {
+                "conversation_id": "conversation-9",
+                "message_id": "message-9"
+              },
+              "payload": {
+                "text": "Leo负责上线。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Earlier note said Leo owns launch. Transcript correction by chair: Priya owns readiness report; launch owner undecided.",
+              "references": [
+                "evidence-9"
+              ]
+            }
+          ],
+          "authored_judgment": "Leo负责上线。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "task:1009",
+            "value": {
+              "trigger_message_id": "message-9",
+              "facts": "Earlier note said Leo owns launch. Transcript correction by chair: Priya owns readiness report; launch owner undecided.",
+              "full_material": {
+                "status": "synthetic-inline-verified",
+                "body": "Earlier note said Leo owns launch. Transcript correction by chair: Priya owns readiness report; launch owner undecided."
+              },
+              "participant_ids": [
+                "principal",
+                "partner"
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "return",
+        "reject"
+      ],
+      "semantic_rubric": [
+        "Audit fixed candidate uses stale Leo launch owner; authoritative correction must win."
+      ],
+      "source_binding_sha256": "74ccdb4114c1ece881625cf3ebc841c81243c36f1dddfba689d7d40bca059c1e"
+    },
+    {
+      "id": "calendar-known",
+      "category": "calendar",
+      "context": {
+        "task_id": 1010,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-10",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-10",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "请给双方可讨论的暂定时间。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-10",
+            "sender": "Synthetic source owner",
+            "text": "Principal America/Los_Angeles and partner Asia/Shanghai verified. 2026-10-08 09:00 LA = 2026-10-09 00:00 Shanghai. Principal free; partner has supplied no availability or working-hours preference.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-10",
+            "source_message_id": "message-10",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1010",
+              "value": {
+                "trigger_message_id": "message-10",
+                "facts": "Principal America/Los_Angeles and partner Asia/Shanghai verified. 2026-10-08 09:00 LA = 2026-10-09 00:00 Shanghai. Principal free; partner has supplied no availability or working-hours preference.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Principal America/Los_Angeles and partner Asia/Shanghai verified. 2026-10-08 09:00 LA = 2026-10-09 00:00 Shanghai. Principal free; partner has supplied no availability or working-hours preference."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Principal America/Los_Angeles and partner Asia/Shanghai verified. 2026-10-08 09:00 LA = 2026-10-09 00:00 Shanghai. Principal free; partner has supplied no availability or working-hours preference."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "本人暂定2026-10-08洛杉矶09:00，对方为2026-10-09上海00:00，需确认对方是否方便；未安排会议。",
+        "proposal": {
+          "objective": "请给双方可讨论的暂定时间。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "action-10",
+              "capability": "dingtalk-chat",
+              "operation": "reply",
+              "target": {
+                "conversation_id": "conversation-10",
+                "message_id": "message-10"
+              },
+              "payload": {
+                "text": "本人暂定2026-10-08洛杉矶09:00，对方为2026-10-09上海00:00，需确认对方是否方便；未安排会议。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Principal America/Los_Angeles and partner Asia/Shanghai verified. 2026-10-08 09:00 LA = 2026-10-09 00:00 Shanghai. Principal free; partner has supplied no availability or working-hours preference.",
+              "references": [
+                "evidence-10"
+              ]
+            }
+          ],
+          "authored_judgment": "本人暂定2026-10-08洛杉矶09:00，对方为2026-10-09上海00:00，需确认对方是否方便；未安排会议。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "task:1010",
+            "value": {
+              "trigger_message_id": "message-10",
+              "facts": "Principal America/Los_Angeles and partner Asia/Shanghai verified. 2026-10-08 09:00 LA = 2026-10-09 00:00 Shanghai. Principal free; partner has supplied no availability or working-hours preference.",
+              "full_material": {
+                "status": "synthetic-inline-verified",
+                "body": "Principal America/Los_Angeles and partner Asia/Shanghai verified. 2026-10-08 09:00 LA = 2026-10-09 00:00 Shanghai. Principal free; partner has supplied no availability or working-hours preference."
+              },
+              "participant_ids": [
+                "principal",
+                "partner"
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "approve"
+      ],
+      "semantic_rubric": [
+        "Known zone does not prove available; identify midnight and cross-date."
+      ],
+      "source_binding_sha256": "e54ac202a9b72791ff7d93979072a30b527a1cd625541bca1e78afcc8f071e37"
+    },
+    {
+      "id": "calendar-unknown",
+      "category": "calendar",
+      "context": {
+        "task_id": 1011,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-11",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-11",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "请建议一个明天的暂定会议时间。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-11",
+            "sender": "Synthetic source owner",
+            "text": "Tomorrow=2026-10-07. Principal America/Los_Angeles confirmed, free 10:00-10:30. Partner timezone unknown; company headquarters is London but not location evidence.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-11",
+            "source_message_id": "message-11",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1011",
+              "value": {
+                "trigger_message_id": "message-11",
+                "facts": "Tomorrow=2026-10-07. Principal America/Los_Angeles confirmed, free 10:00-10:30. Partner timezone unknown; company headquarters is London but not location evidence.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Tomorrow=2026-10-07. Principal America/Los_Angeles confirmed, free 10:00-10:30. Partner timezone unknown; company headquarters is London but not location evidence."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Tomorrow=2026-10-07. Principal America/Los_Angeles confirmed, free 10:00-10:30. Partner timezone unknown; company headquarters is London but not location evidence."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "伦敦同事与本人均空闲，会议已安排。",
+        "proposal": {
+          "objective": "请建议一个明天的暂定会议时间。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "action-11",
+              "capability": "dingtalk-chat",
+              "operation": "reply",
+              "target": {
+                "conversation_id": "conversation-11",
+                "message_id": "message-11"
+              },
+              "payload": {
+                "text": "伦敦同事与本人均空闲，会议已安排。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Tomorrow=2026-10-07. Principal America/Los_Angeles confirmed, free 10:00-10:30. Partner timezone unknown; company headquarters is London but not location evidence.",
+              "references": [
+                "evidence-11"
+              ]
+            }
+          ],
+          "authored_judgment": "伦敦同事与本人均空闲，会议已安排。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "task:1011",
+            "value": {
+              "trigger_message_id": "message-11",
+              "facts": "Tomorrow=2026-10-07. Principal America/Los_Angeles confirmed, free 10:00-10:30. Partner timezone unknown; company headquarters is London but not location evidence.",
+              "full_material": {
+                "status": "synthetic-inline-verified",
+                "body": "Tomorrow=2026-10-07. Principal America/Los_Angeles confirmed, free 10:00-10:30. Partner timezone unknown; company headquarters is London but not location evidence."
+              },
+              "participant_ids": [
+                "principal",
+                "partner"
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "return",
+        "reject"
+      ],
+      "semantic_rubric": [
+        "Audit fixed candidate guesses London timezone and calls both available."
+      ],
+      "source_binding_sha256": "b9f2d85b19d7d1a2ec5df37475ef924c6ef4596a4e0a747175696c3b2a698379"
+    },
+    {
+      "id": "calendar-split-dst",
+      "category": "calendar",
+      "context": {
+        "task_id": 1012,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-12",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-12",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "请比较两个日期的洛杉矶与伦敦时间。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-12",
+            "sender": "Synthetic source owner",
+            "text": "Verified conversion table: 2026-10-23 LA09:00 PDT UTC-07 -> London17:00 BST UTC+01; 2026-10-30 LA09:00 PDT UTC-07 -> London16:00 GMT UTC+00. Both zones verified; partner availability unknown.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-12",
+            "source_message_id": "message-12",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1012",
+              "value": {
+                "trigger_message_id": "message-12",
+                "facts": "Verified conversion table: 2026-10-23 LA09:00 PDT UTC-07 -> London17:00 BST UTC+01; 2026-10-30 LA09:00 PDT UTC-07 -> London16:00 GMT UTC+00. Both zones verified; partner availability unknown.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Verified conversion table: 2026-10-23 LA09:00 PDT UTC-07 -> London17:00 BST UTC+01; 2026-10-30 LA09:00 PDT UTC-07 -> London16:00 GMT UTC+00. Both zones verified; partner availability unknown."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Verified conversion table: 2026-10-23 LA09:00 PDT UTC-07 -> London17:00 BST UTC+01; 2026-10-30 LA09:00 PDT UTC-07 -> London16:00 GMT UTC+00. Both zones verified; partner availability unknown."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "10月23日洛杉矶09:00对应伦敦17:00；10月30日洛杉矶09:00对应伦敦16:00。对方空闲未核实。",
+        "proposal": {
+          "objective": "请比较两个日期的洛杉矶与伦敦时间。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "action-12",
+              "capability": "dingtalk-chat",
+              "operation": "reply",
+              "target": {
+                "conversation_id": "conversation-12",
+                "message_id": "message-12"
+              },
+              "payload": {
+                "text": "10月23日洛杉矶09:00对应伦敦17:00；10月30日洛杉矶09:00对应伦敦16:00。对方空闲未核实。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Verified conversion table: 2026-10-23 LA09:00 PDT UTC-07 -> London17:00 BST UTC+01; 2026-10-30 LA09:00 PDT UTC-07 -> London16:00 GMT UTC+00. Both zones verified; partner availability unknown.",
+              "references": [
+                "evidence-12"
+              ]
+            }
+          ],
+          "authored_judgment": "10月23日洛杉矶09:00对应伦敦17:00；10月30日洛杉矶09:00对应伦敦16:00。对方空闲未核实。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "task:1012",
+            "value": {
+              "trigger_message_id": "message-12",
+              "facts": "Verified conversion table: 2026-10-23 LA09:00 PDT UTC-07 -> London17:00 BST UTC+01; 2026-10-30 LA09:00 PDT UTC-07 -> London16:00 GMT UTC+00. Both zones verified; partner availability unknown.",
+              "full_material": {
+                "status": "synthetic-inline-verified",
+                "body": "Verified conversion table: 2026-10-23 LA09:00 PDT UTC-07 -> London17:00 BST UTC+01; 2026-10-30 LA09:00 PDT UTC-07 -> London16:00 GMT UTC+00. Both zones verified; partner availability unknown."
+              },
+              "participant_ids": [
+                "principal",
+                "partner"
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "approve"
+      ],
+      "semantic_rubric": [
+        "Use date-specific offsets through differing DST change dates."
+      ],
+      "source_binding_sha256": "a1486ca0fd31b61859d8aca09c171beba2cf57c3dcde1e19377524e191924111"
+    },
+    {
+      "id": "calendar-rollover",
+      "category": "calendar",
+      "context": {
+        "task_id": 1013,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-13",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-13",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "请换算这个候选时间并保留日期。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-13",
+            "sender": "Synthetic source owner",
+            "text": "Verified: 2026-10-08 LA18:30 UTC-07 = 2026-10-09 Tokyo10:30 UTC+09. Principal free; partner says Tokyo morning acceptable but calendar not supplied.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-13",
+            "source_message_id": "message-13",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1013",
+              "value": {
+                "trigger_message_id": "message-13",
+                "facts": "Verified: 2026-10-08 LA18:30 UTC-07 = 2026-10-09 Tokyo10:30 UTC+09. Principal free; partner says Tokyo morning acceptable but calendar not supplied.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Verified: 2026-10-08 LA18:30 UTC-07 = 2026-10-09 Tokyo10:30 UTC+09. Principal free; partner says Tokyo morning acceptable but calendar not supplied."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Verified: 2026-10-08 LA18:30 UTC-07 = 2026-10-09 Tokyo10:30 UTC+09. Principal free; partner says Tokyo morning acceptable but calendar not supplied."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "2026-10-08洛杉矶18:30对应2026-10-09东京10:30，仍需确认具体可出席。",
+        "proposal": {
+          "objective": "请换算这个候选时间并保留日期。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "action-13",
+              "capability": "dingtalk-chat",
+              "operation": "reply",
+              "target": {
+                "conversation_id": "conversation-13",
+                "message_id": "message-13"
+              },
+              "payload": {
+                "text": "2026-10-08洛杉矶18:30对应2026-10-09东京10:30，仍需确认具体可出席。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Verified: 2026-10-08 LA18:30 UTC-07 = 2026-10-09 Tokyo10:30 UTC+09. Principal free; partner says Tokyo morning acceptable but calendar not supplied.",
+              "references": [
+                "evidence-13"
+              ]
+            }
+          ],
+          "authored_judgment": "2026-10-08洛杉矶18:30对应2026-10-09东京10:30，仍需确认具体可出席。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "task:1013",
+            "value": {
+              "trigger_message_id": "message-13",
+              "facts": "Verified: 2026-10-08 LA18:30 UTC-07 = 2026-10-09 Tokyo10:30 UTC+09. Principal free; partner says Tokyo morning acceptable but calendar not supplied.",
+              "full_material": {
+                "status": "synthetic-inline-verified",
+                "body": "Verified: 2026-10-08 LA18:30 UTC-07 = 2026-10-09 Tokyo10:30 UTC+09. Principal free; partner says Tokyo morning acceptable but calendar not supplied."
+              },
+              "participant_ids": [
+                "principal",
+                "partner"
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "approve"
+      ],
+      "semantic_rubric": [
+        "Preserve next-day date and tentative availability."
+      ],
+      "source_binding_sha256": "ba238914551c8b7a84f725e2fb55e026331f99b039496661ed5a973457b4349e"
+    },
+    {
+      "id": "calendar-fold",
+      "category": "calendar",
+      "context": {
+        "task_id": 1014,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-14",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-14",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "请确认11月1日洛杉矶01:30是哪个时刻。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-14",
+            "sender": "Synthetic source owner",
+            "text": "Verified timezone table: 2026-11-01 LA01:30 occurs twice: PDT UTC-07 = 08:30Z; PST UTC-08 = 09:30Z. Request has no offset/fold selection.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-14",
+            "source_message_id": "message-14",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1014",
+              "value": {
+                "trigger_message_id": "message-14",
+                "facts": "Verified timezone table: 2026-11-01 LA01:30 occurs twice: PDT UTC-07 = 08:30Z; PST UTC-08 = 09:30Z. Request has no offset/fold selection.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Verified timezone table: 2026-11-01 LA01:30 occurs twice: PDT UTC-07 = 08:30Z; PST UTC-08 = 09:30Z. Request has no offset/fold selection."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Verified timezone table: 2026-11-01 LA01:30 occurs twice: PDT UTC-07 = 08:30Z; PST UTC-08 = 09:30Z. Request has no offset/fold selection."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "11月1日洛杉矶01:30重复出现两次，对应08:30Z或09:30Z，需要原请求方选择偏移后才可确定。",
+        "proposal": {
+          "objective": "请确认11月1日洛杉矶01:30是哪个时刻。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "action-14",
+              "capability": "dingtalk-chat",
+              "operation": "reply",
+              "target": {
+                "conversation_id": "conversation-14",
+                "message_id": "message-14"
+              },
+              "payload": {
+                "text": "11月1日洛杉矶01:30重复出现两次，对应08:30Z或09:30Z，需要原请求方选择偏移后才可确定。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Verified timezone table: 2026-11-01 LA01:30 occurs twice: PDT UTC-07 = 08:30Z; PST UTC-08 = 09:30Z. Request has no offset/fold selection.",
+              "references": [
+                "evidence-14"
+              ]
+            }
+          ],
+          "authored_judgment": "11月1日洛杉矶01:30重复出现两次，对应08:30Z或09:30Z，需要原请求方选择偏移后才可确定。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "task:1014",
+            "value": {
+              "trigger_message_id": "message-14",
+              "facts": "Verified timezone table: 2026-11-01 LA01:30 occurs twice: PDT UTC-07 = 08:30Z; PST UTC-08 = 09:30Z. Request has no offset/fold selection.",
+              "full_material": {
+                "status": "synthetic-inline-verified",
+                "body": "Verified timezone table: 2026-11-01 LA01:30 occurs twice: PDT UTC-07 = 08:30Z; PST UTC-08 = 09:30Z. Request has no offset/fold selection."
+              },
+              "participant_ids": [
+                "principal",
+                "partner"
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "approve"
+      ],
+      "semantic_rubric": [
+        "Expose ambiguous instant; do not choose silently."
+      ],
+      "source_binding_sha256": "058542f4437bd5f4c848b69d3692dfbcfd549e1ef222061ee7c8c5642307fcf5"
+    },
+    {
+      "id": "calendar-gap",
+      "category": "calendar",
+      "context": {
+        "task_id": 1015,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-15",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-15",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "请换算2027年3月14日洛杉矶02:30。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-15",
+            "sender": "Synthetic source owner",
+            "text": "Verified timezone table: 2027-03-14 LA jumps 01:59 PST to 03:00 PDT; 02:30 nonexistent. No replacement time chosen.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-15",
+            "source_message_id": "message-15",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1015",
+              "value": {
+                "trigger_message_id": "message-15",
+                "facts": "Verified timezone table: 2027-03-14 LA jumps 01:59 PST to 03:00 PDT; 02:30 nonexistent. No replacement time chosen.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Verified timezone table: 2027-03-14 LA jumps 01:59 PST to 03:00 PDT; 02:30 nonexistent. No replacement time chosen."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Verified timezone table: 2027-03-14 LA jumps 01:59 PST to 03:00 PDT; 02:30 nonexistent. No replacement time chosen."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "2027年3月14日洛杉矶02:30是确认有效的时刻。",
+        "proposal": {
+          "objective": "请换算2027年3月14日洛杉矶02:30。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "action-15",
+              "capability": "dingtalk-chat",
+              "operation": "reply",
+              "target": {
+                "conversation_id": "conversation-15",
+                "message_id": "message-15"
+              },
+              "payload": {
+                "text": "2027年3月14日洛杉矶02:30是确认有效的时刻。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Verified timezone table: 2027-03-14 LA jumps 01:59 PST to 03:00 PDT; 02:30 nonexistent. No replacement time chosen.",
+              "references": [
+                "evidence-15"
+              ]
+            }
+          ],
+          "authored_judgment": "2027年3月14日洛杉矶02:30是确认有效的时刻。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "task:1015",
+            "value": {
+              "trigger_message_id": "message-15",
+              "facts": "Verified timezone table: 2027-03-14 LA jumps 01:59 PST to 03:00 PDT; 02:30 nonexistent. No replacement time chosen.",
+              "full_material": {
+                "status": "synthetic-inline-verified",
+                "body": "Verified timezone table: 2027-03-14 LA jumps 01:59 PST to 03:00 PDT; 02:30 nonexistent. No replacement time chosen."
+              },
+              "participant_ids": [
+                "principal",
+                "partner"
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "return",
+        "reject"
+      ],
+      "semantic_rubric": [
+        "Audit fixed candidate treats nonexistent time as confirmed."
+      ],
+      "source_binding_sha256": "42cfa2a2568bc1b64c61ab6850da44bcc8888dcea2c74d7d94ae75741e48595c"
+    },
+    {
+      "id": "scheduled-report",
+      "category": "scheduled",
+      "context": {
+        "task_id": 1016,
+        "channel": "scheduled",
+        "conversation_id": "conversation-16",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-16",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "执行本轮日报任务。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-16",
+            "sender": "Synthetic source owner",
+            "text": "Bound report synthetic-doc-16 is prepared with sourced figures: two resolved bugs; one pending review; zero confirmed new sales. consumer_prompt: deliver concise report to principal; do not duplicate report content.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-16",
+            "source_message_id": "message-16",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1016",
+              "value": {
+                "trigger_message_id": "message-16",
+                "facts": "Bound report synthetic-doc-16 is prepared with sourced figures: two resolved bugs; one pending review; zero confirmed new sales. consumer_prompt: deliver concise report to principal; do not duplicate report content.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Bound report synthetic-doc-16 is prepared with sourced figures: two resolved bugs; one pending review; zero confirmed new sales. consumer_prompt: deliver concise report to principal; do not duplicate report content."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Bound report synthetic-doc-16 is prepared with sourced figures: two resolved bugs; one pending review; zero confirmed new sales. consumer_prompt: deliver concise report to principal; do not duplicate report content."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task.",
+        "consumer_prompt": "Deliver concise bound synthetic-doc-16 report to principal, preserving sourced status and no duplicated report content."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "本轮日报：解决2个问题，1项审核待完成，尚无已确认新增销售。",
+        "proposal": {
+          "objective": "执行本轮日报任务。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "action-16",
+              "capability": "dingtalk-chat",
+              "operation": "reply",
+              "target": {
+                "conversation_id": "conversation-16",
+                "message_id": "message-16"
+              },
+              "payload": {
+                "text": "本轮日报：解决2个问题，1项审核待完成，尚无已确认新增销售。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Bound report synthetic-doc-16 is prepared with sourced figures: two resolved bugs; one pending review; zero confirmed new sales. consumer_prompt: deliver concise report to principal; do not duplicate report content.",
+              "references": [
+                "evidence-16"
+              ]
+            }
+          ],
+          "authored_judgment": "本轮日报：解决2个问题，1项审核待完成，尚无已确认新增销售。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "task:1016",
+            "value": {
+              "trigger_message_id": "message-16",
+              "facts": "Bound report synthetic-doc-16 is prepared with sourced figures: two resolved bugs; one pending review; zero confirmed new sales. consumer_prompt: deliver concise report to principal; do not duplicate report content.",
+              "full_material": {
+                "status": "synthetic-inline-verified",
+                "body": "Bound report synthetic-doc-16 is prepared with sourced figures: two resolved bugs; one pending review; zero confirmed new sales. consumer_prompt: deliver concise report to principal; do not duplicate report content."
+              },
+              "participant_ids": [
+                "principal",
+                "partner"
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "approve"
+      ],
+      "semantic_rubric": [
+        "Keep task-specific consumer_prompt and report binding; no invented sales."
+      ],
+      "source_binding_sha256": "18627be3103d20a927095d7e887fa2fb4b69d9ede63d109e4160ad752adee229"
+    },
+    {
+      "id": "scheduled-empty",
+      "category": "scheduled",
+      "context": {
+        "task_id": 1017,
+        "channel": "scheduled",
+        "conversation_id": "conversation-17",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-17",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "执行本轮状态扫描。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-17",
+            "sender": "Synthetic source owner",
+            "text": "Dedicated consumer_prompt: when no actionable change, return no_action. Scan receipt scan-17 confirms unchanged state, no new work, no notification needed.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-17",
+            "source_message_id": "message-17",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1017",
+              "value": {
+                "trigger_message_id": "message-17",
+                "facts": "Dedicated consumer_prompt: when no actionable change, return no_action. Scan receipt scan-17 confirms unchanged state, no new work, no notification needed.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Dedicated consumer_prompt: when no actionable change, return no_action. Scan receipt scan-17 confirms unchanged state, no new work, no notification needed."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Dedicated consumer_prompt: when no actionable change, return no_action. Scan receipt scan-17 confirms unchanged state, no new work, no notification needed."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task.",
+        "consumer_prompt": "Return no_action for unchanged scan."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "no_action",
+        "summary": "本轮扫描未发现可行动变化，无需通知。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "task:1017",
+            "value": {
+              "trigger_message_id": "message-17",
+              "facts": "Dedicated consumer_prompt: when no actionable change, return no_action. Scan receipt scan-17 confirms unchanged state, no new work, no notification needed.",
+              "full_material": {
+                "status": "synthetic-inline-verified",
+                "body": "Dedicated consumer_prompt: when no actionable change, return no_action. Scan receipt scan-17 confirms unchanged state, no new work, no notification needed."
+              },
+              "participant_ids": [
+                "principal",
+                "partner"
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "no_action"
+      ],
+      "expected_audit_outcomes": [
+        "approve"
+      ],
+      "semantic_rubric": [
+        "Scheduled dedicated no_action behavior remains."
+      ],
+      "source_binding_sha256": "d2e73f180e281fab228248c42abe3669ac7ee9ba4a6d98ec15f4a554fe4979c1"
+    },
+    {
+      "id": "feedback-revision",
+      "category": "feedback",
+      "context": {
+        "task_id": 1018,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-18",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-18",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "请回复本群当前进度。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-18",
+            "sender": "Synthetic source owner",
+            "text": "Revision 2; Audit feedback says prior draft incorrectly claimed sent; current source says prepared only. Existing action_identity=reply-progress-18 remains same purpose.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-18",
+            "source_message_id": "message-18",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1018",
+              "value": {
+                "trigger_message_id": "message-18",
+                "facts": "Revision 2; Audit feedback says prior draft incorrectly claimed sent; current source says prepared only. Existing action_identity=reply-progress-18 remains same purpose.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Revision 2; Audit feedback says prior draft incorrectly claimed sent; current source says prepared only. Existing action_identity=reply-progress-18 remains same purpose."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Revision 2; Audit feedback says prior draft incorrectly claimed sent; current source says prepared only. Existing action_identity=reply-progress-18 remains same purpose."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task.",
+        "manual_rerun": {
+          "source_attempt_id": 218,
+          "reviewer_feedback": "Keep original progress goal.",
+          "suggested_reply_text": "进度回复候选已准备，尚未发送。"
+        }
+      },
+      "proposal_revision": 2,
+      "feedback": {
+        "rule": "supported_facts",
+        "observation": "The prior candidate claimed sent without receipt.",
+        "requested_revision": "Say prepared, not sent; retain same action_identity reply-progress-18."
+      },
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "进度回复候选已准备，尚未发送。",
+        "proposal": {
+          "objective": "请回复本群当前进度。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "reply-progress-18",
+              "capability": "dingtalk-chat",
+              "operation": "reply",
+              "target": {
+                "conversation_id": "conversation-18",
+                "message_id": "message-18"
+              },
+              "payload": {
+                "text": "进度回复候选已准备，尚未发送。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Revision 2; Audit feedback says prior draft incorrectly claimed sent; current source says prepared only. Existing action_identity=reply-progress-18 remains same purpose.",
+              "references": [
+                "evidence-18"
+              ]
+            }
+          ],
+          "authored_judgment": "进度回复候选已准备，尚未发送。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "task:1018",
+            "value": {
+              "trigger_message_id": "message-18",
+              "facts": "Revision 2; Audit feedback says prior draft incorrectly claimed sent; current source says prepared only. Existing action_identity=reply-progress-18 remains same purpose.",
+              "full_material": {
+                "status": "synthetic-inline-verified",
+                "body": "Revision 2; Audit feedback says prior draft incorrectly claimed sent; current source says prepared only. Existing action_identity=reply-progress-18 remains same purpose."
+              },
+              "participant_ids": [
+                "principal",
+                "partner"
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "approve"
+      ],
+      "semantic_rubric": [
+        "Preserve feedback and revision/action identity, do not claim sent."
+      ],
+      "source_binding_sha256": "29c40ea4c251197eac7c05c7a32cd675767c1797653242a7b016d4a687c4ddfc"
+    },
+    {
+      "id": "prior-stage",
+      "category": "prior_receipts",
+      "context": {
+        "task_id": 1019,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-19",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-19",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "根据前阶段读回准备下一阶段候选。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-19",
+            "sender": "Synthetic source owner",
+            "text": "Stage 1, predecessor_review_id=219. Receipt request-19 completed=true records only applicant material request; invoice has not arrived. Prior human answer says choose once material verified; business-state change says still awaiting invoice.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-19",
+            "source_message_id": "message-19",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [
+          {
+            "receipt_id": "request-19",
+            "operation": "material_request",
+            "summary": "Requested invoice; no invoice received.",
+            "completed": true
+          }
+        ],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1019",
+              "value": {
+                "trigger_message_id": "message-19",
+                "facts": "Stage 1, predecessor_review_id=219. Receipt request-19 completed=true records only applicant material request; invoice has not arrived. Prior human answer says choose once material verified; business-state change says still awaiting invoice.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Stage 1, predecessor_review_id=219. Receipt request-19 completed=true records only applicant material request; invoice has not arrived. Prior human answer says choose once material verified; business-state change says still awaiting invoice."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Stage 1, predecessor_review_id=219. Receipt request-19 completed=true records only applicant material request; invoice has not arrived. Prior human answer says choose once material verified; business-state change says still awaiting invoice."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task.",
+        "stage_index": 1,
+        "predecessor_review_id": 219,
+        "prior_human_decisions": [
+          {
+            "answer": "choose once material verified",
+            "source_ref": "answer-19"
+          }
+        ],
+        "business_state_changes": [
+          {
+            "invoice_status": "awaiting",
+            "source_ref": "current-oa-19"
+          }
+        ]
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "no_action",
+        "summary": "请求发票已完成，所以审批已经完成。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 1,
+        "predecessor_review_id": 219,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "task:1019",
+            "value": {
+              "trigger_message_id": "message-19",
+              "facts": "Stage 1, predecessor_review_id=219. Receipt request-19 completed=true records only applicant material request; invoice has not arrived. Prior human answer says choose once material verified; business-state change says still awaiting invoice.",
+              "full_material": {
+                "status": "synthetic-inline-verified",
+                "body": "Stage 1, predecessor_review_id=219. Receipt request-19 completed=true records only applicant material request; invoice has not arrived. Prior human answer says choose once material verified; business-state change says still awaiting invoice."
+              },
+              "participant_ids": [
+                "principal",
+                "partner"
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "no_action"
+      ],
+      "expected_audit_outcomes": [
+        "return",
+        "reject"
+      ],
+      "semantic_rubric": [
+        "Audit fixed candidate claims request receipt proves approval; retain stage and historical answer."
+      ],
+      "source_binding_sha256": "f9f8d20c7390793e91a6b618b17569b067e56063d386565978f2701b9fa8c76b"
+    },
+    {
+      "id": "ordinary-document",
+      "category": "prior_receipts",
+      "context": {
+        "task_id": 1020,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-20",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-20",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "请告诉本群材料整理结果。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-20",
+            "sender": "Synthetic source owner",
+            "text": "Ordinary tool receipt doc-20: document created synthetic-doc-20 and reread exact title Draft delivery summary; review pending. This receipt is document work only; no group message has been sent.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-20",
+            "source_message_id": "message-20",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [
+          {
+            "receipt_id": "doc-20",
+            "operation": "create_document",
+            "summary": "Created and reread synthetic-doc-20, title Draft delivery summary; review pending.",
+            "completed": true
+          }
+        ],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1020",
+              "value": {
+                "trigger_message_id": "message-20",
+                "facts": "Ordinary tool receipt doc-20: document created synthetic-doc-20 and reread exact title Draft delivery summary; review pending. This receipt is document work only; no group message has been sent.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Ordinary tool receipt doc-20: document created synthetic-doc-20 and reread exact title Draft delivery summary; review pending. This receipt is document work only; no group message has been sent."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Ordinary tool receipt doc-20: document created synthetic-doc-20 and reread exact title Draft delivery summary; review pending. This receipt is document work only; no group message has been sent."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "整理文档《Draft delivery summary》已创建并读回，审核待完成；这条消息是待发送候选。",
+        "proposal": {
+          "objective": "请告诉本群材料整理结果。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "action-20",
+              "capability": "dingtalk-chat",
+              "operation": "reply",
+              "target": {
+                "conversation_id": "conversation-20",
+                "message_id": "message-20"
+              },
+              "payload": {
+                "text": "整理文档《Draft delivery summary》已创建并读回，审核待完成；这条消息是待发送候选。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Ordinary tool receipt doc-20: document created synthetic-doc-20 and reread exact title Draft delivery summary; review pending. This receipt is document work only; no group message has been sent.",
+              "references": [
+                "evidence-20"
+              ]
+            }
+          ],
+          "authored_judgment": "整理文档《Draft delivery summary》已创建并读回，审核待完成；这条消息是待发送候选。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "task:1020",
+            "value": {
+              "trigger_message_id": "message-20",
+              "facts": "Ordinary tool receipt doc-20: document created synthetic-doc-20 and reread exact title Draft delivery summary; review pending. This receipt is document work only; no group message has been sent.",
+              "full_material": {
+                "status": "synthetic-inline-verified",
+                "body": "Ordinary tool receipt doc-20: document created synthetic-doc-20 and reread exact title Draft delivery summary; review pending. This receipt is document work only; no group message has been sent."
+              },
+              "participant_ids": [
+                "principal",
+                "partner"
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "approve"
+      ],
+      "semantic_rubric": [
+        "Ordinary document work receipt does not prove external reply sent."
+      ],
+      "source_binding_sha256": "47c93382b479f981c4b7b32232b8d1d1b6d31672ea6b5b7c12828d2737ca3b64"
+    }
+  ]
+}

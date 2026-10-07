@@ -6309,19 +6309,26 @@ def test_handle_prompt_variables_post_saves_variables_without_changing_template(
 def test_handle_user_prompt_post_saves_template(tmp_path: Path, monkeypatch):
     template_path = tmp_path / "user.md"
     monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(template_path))
-    body = (
-        "template=USER+%3Ccode%3A+"
-        "app.user_prompt_blocks%3Acurrent_message_block%28%29%3E"
-    ).encode()
+    body = b"template=USER+%7B%7Btask_context%7D%7D"
 
     status, headers, html = handle_user_prompt_post(body)
 
     assert status == 303
-    assert headers["Location"] == "/config?tab=user&saved=1"
+    assert headers["Location"] == "/settings?tab=prompts&prompt=user&view=template&saved=1"
     assert html == ""
-    assert template_path.read_text(encoding="utf-8") == (
-        "USER <code: app.user_prompt_blocks:current_message_block()>"
-    )
+    assert template_path.read_text(encoding="utf-8") == "USER {{task_context}}"
+
+
+def test_legacy_user_save_reports_invalid_complete_context_without_writing(tmp_path: Path, monkeypatch):
+    template_path = tmp_path / "user.md"
+    template_path.write_text("Existing {{task_context}}")
+    monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(template_path))
+
+    status, _headers, html = handle_user_prompt_post(b"template=missing+source+context")
+
+    assert status == 400
+    assert "task_context" in html
+    assert template_path.read_text() == "Existing {{task_context}}"
 
 
 def test_empty_attempt_list_shows_db_path(tmp_path: Path):

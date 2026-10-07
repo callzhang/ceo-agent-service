@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import csv
 from dataclasses import dataclass
+import io
 import json
 import os
 import re
@@ -355,8 +357,32 @@ def installed_runtime_skills(
     return tuple(entries)
 
 
+def _compact_skill_catalog(catalog: tuple[BusinessSkillCatalogEntry, ...]) -> str:
+    candidates = dict.fromkeys(item.skill_path.parent.parent for item in catalog)
+    roots = tuple(root for root in candidates if not any(parent in candidates for parent in root.parents))
+    aliases = {root: f"r{index}" for index, root in enumerate(roots, start=1)}
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter="\t", lineterminator="\n")
+    writer.writerow(("Root", "Path"))
+    writer.writerows((alias, str(root)) for root, alias in aliases.items())
+    output.write("\n")
+    writer.writerow(("Name", "Read path", "Description"))
+    for item in catalog:
+        root = next(root for root in roots if item.skill_path.is_relative_to(root))
+        writer.writerow((
+            item.name,
+            f"{aliases[root]}:{item.skill_path.relative_to(root)}",
+            item.description,
+        ))
+    return (
+        "Read paths use root-alias:relative-path; join with the exact root below.\n"
+        "Tables are tab-separated; quoted cells preserve full text.\n"
+        + output.getvalue().rstrip("\n")
+    )
+
+
 def render_business_skill_protocol(
-    catalog: tuple[BusinessSkillCatalogEntry, ...],
+    catalog: tuple[BusinessSkillCatalogEntry, ...], *, compact: bool = False,
 ) -> str:
     inventory = [
         {
@@ -368,7 +394,7 @@ def render_business_skill_protocol(
     ]
     return (
         "## Installed CEO business Skill catalog\n"
-        + json.dumps(inventory, ensure_ascii=False, sort_keys=True)
+        + (_compact_skill_catalog(catalog) if compact else json.dumps(inventory, ensure_ascii=False, sort_keys=True))
         + "\n\n## Required Skill protocol\n"
         "PROTOCOL PRECONDITION: before returning any Consumer outcome, call "
         "`agent_cli.read_skill` for at least one CEO business Skill from the exact "

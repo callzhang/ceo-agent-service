@@ -354,7 +354,7 @@ def test_consumer_and_audit_instructions_include_current_work_profile(
     )
     monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
 
-    consumer = consumer_developer_instructions("Verify supported facts.")
+    consumer = consumer_developer_instructions("Verify supported facts.") + _CONSUMER_AGENT_RULES
     audit = audit_developer_instructions("Verify supported facts.")
 
     for instructions in (consumer, audit):
@@ -364,7 +364,7 @@ def test_consumer_and_audit_instructions_include_current_work_profile(
 
 
 def test_consumer_and_audit_instructions_keep_oa_material_and_policy_gaps_separate():
-    consumer = consumer_developer_instructions("Verify supported facts.")
+    consumer = consumer_developer_instructions("Verify supported facts.") + _CONSUMER_AGENT_RULES
     audit = audit_developer_instructions("Verify supported facts.")
 
     assert "Do not introduce a new factual requirement" in consumer
@@ -739,7 +739,7 @@ def test_consumer_instructions_require_dynamic_business_and_operation_skill_read
 
 
 def test_consumer_does_not_require_feedback_queue_identity_for_chat_rule_requests():
-    instructions = consumer_developer_instructions("Verify supported facts.")
+    instructions = consumer_developer_instructions("Verify supported facts.") + _CONSUMER_AGENT_RULES
 
     assert "ordinary conversation request to improve a policy, Skill, or service behavior" in instructions
     assert "Require a feedback_key or batch_id only when the supplied context explicitly identifies" in instructions
@@ -756,7 +756,7 @@ def test_consumer_oa_contract_never_requires_fields_absent_from_current_stage():
 
 
 def test_consumer_oa_finance_rule_card_keeps_material_and_policy_gaps_separate():
-    instructions = consumer_developer_instructions("Verify supported facts.")
+    instructions = consumer_developer_instructions("Verify supported facts.") + _CONSUMER_AGENT_RULES
 
     assert "stardust-oa-finance-review" in instructions
     assert "live `processCode`" in instructions
@@ -1307,7 +1307,7 @@ def test_consumer_resumes_session_when_agent_capability_contract_changes(
 
 
 def test_service_agent_instructions_skip_interactive_memory_bootstrap() -> None:
-    instructions = consumer_developer_instructions("Verify supported facts.")
+    instructions = consumer_developer_instructions("Verify supported facts.") + _CONSUMER_AGENT_RULES
 
     assert "background service turn" in instructions
     assert "do not call `memory_connector.user_get` as a session-start prerequisite" in instructions
@@ -3544,3 +3544,39 @@ def test_source_capture_native_oa_failure_envelope_persists_diagnostics(
     assert detail["authorization_required"] is authorization
     assert detail["retryable"] is False
     assert run.status == "failed" and not run.final_result_json
+
+
+def test_saved_prompt_changes_update_input_and_hash_without_replacing_route_session(store, task, context, tmp_path, monkeypatch):
+    developer = tmp_path / 'developer.md'
+    user = tmp_path / 'user.md'
+    profile = tmp_path / 'profile.md'
+    developer.write_text('Original shared principle')
+    user.write_text('{{task_context}}')
+    profile.write_text('Profile fixture')
+    monkeypatch.setenv('CEO_DEVELOPER_PROMPT_TEMPLATE_PATH', str(developer))
+    monkeypatch.setenv('CEO_USER_PROMPT_TEMPLATE_PATH', str(user))
+    monkeypatch.setenv('CEO_WORK_PROFILE_PATH', str(profile))
+    before_hash = consumer_wire_contract_hash()
+    store.upsert_conversation_runtime_session(task.conversation_id, 'codex_api', 'existing-conversation-session', before_hash)
+    developer.write_text('Changed shared principle')
+    user.write_text('Configured task wrapper\n{{task_context}}')
+    after_hash = consumer_wire_contract_hash()
+    assert after_hash != before_hash
+    config, router, adapter = _consumer_runtime_dependencies(store, routes='codex_api')
+    executor = CapturingExecutor(_result_jsonl(session='existing-conversation-session'))
+
+    result = ConsumerAgentRunner(store=store, workspace=Path('/workspace'), executor=executor,
+        runtime_config=config, runtime_router=router, codex_adapter=adapter, codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert executor.commands[0][3:5] == ['exec', 'resume']
+    assert executor.commands[0][-2:] == ['existing-conversation-session', '-']
+    assert 'Changed shared principle' in '\n'.join(executor.commands[0])
+    assert executor.prompts[0].startswith('Configured task wrapper\n')
+    assert context.trigger_text in executor.prompts[0]
+    assert store.get_conversation_runtime_session_contract_hash(task.conversation_id, 'codex_api') == after_hash
+    saved = store.get_agent_run(result.run_id)
+    snapshot = next(event for event in saved.tool_events if event.get('type') == 'runtime.prompt')
+    assert snapshot['task_prompt'] == executor.prompts[0]
+    from app.prompt_composition import load_prompt_configuration
+    assert snapshot['invocation_facts']['prompt_configuration'] == load_prompt_configuration().fingerprints()

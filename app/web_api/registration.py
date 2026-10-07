@@ -2000,29 +2000,25 @@ def register_console_routes(
                     ],
                 }
             elif section == "prompts":
-                from app.developer_prompt import (
-                    read_developer_prompt_template,
-                    read_user_prompt_template,
-                    render_developer_prompt_template,
-                    render_user_prompt_template,
-                )
-                from app.prompt import work_profile_instruction, work_profile_path
+                from app.prompt_composition import example_consumer_task, load_prompt_configuration
 
-                developer_template = read_developer_prompt_template()
-                user_template = read_user_prompt_template()
-                profile_path = work_profile_path()
-                profile_instruction = work_profile_instruction()
+                configuration = load_prompt_configuration(create_missing=False)
+                developer_template = configuration.developer_template
+                user_template = configuration.user_template
+                profile_instruction = configuration.work_profile
                 fields = {
                     "developer_template": developer_template,
                     "user_template": user_template,
-                    "profile": profile_path.read_text(encoding="utf-8").strip(),
+                    "profile": configuration.work_profile_text,
                 }
                 payload = {
                     "section": section,
                     "fields": fields,
+                    "preview_kind": "example",
+                    "consumers": {"developer": ["consumer", "audit"], "user": ["consumer"], "profile": ["consumer", "audit"]},
                     "preview": {
-                        "developer": render_developer_prompt_template(developer_template),
-                        "user": render_user_prompt_template(user_template, {}),
+                        "developer": configuration.developer_instructions,
+                        "user": example_consumer_task(configuration),
                         "profile": profile_instruction,
                     },
                 }
@@ -2040,7 +2036,6 @@ def register_console_routes(
                     "fields": fields,
                     "preview": {
                         "template": _render_audit_variables(template),
-                        "consumer": render_audit_rules(AgentRole.CONSUMER),
                         "audit": render_audit_rules(AgentRole.AUDIT),
                     },
                 }

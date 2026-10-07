@@ -1,4 +1,3 @@
-import json
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -11,8 +10,7 @@ from app.config import (
     work_profile_path,
     workspace_path,
 )
-from app.developer_prompt import render_user_prompt
-from app.dingtalk_models import DingTalkConversation, DingTalkMessage
+from app.dingtalk_models import DingTalkMessage
 
 
 MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*]\([^)]+\)")
@@ -47,12 +45,16 @@ class MaterialReferenceContext:
     read_command: str = ""
 
 
-def work_profile_instruction(*, create_missing: bool = True) -> str:
+def read_work_profile(*, create_missing: bool = True) -> str:
     path = work_profile_path()
     if not path.exists() and create_missing:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(DEFAULT_WORK_PROFILE_TEXT, encoding="utf-8")
-    profile = path.read_text(encoding="utf-8").strip() if path.exists() else DEFAULT_WORK_PROFILE_TEXT.strip()
+    return path.read_text(encoding="utf-8").strip() if path.exists() else DEFAULT_WORK_PROFILE_TEXT.strip()
+
+
+def work_profile_instruction(*, create_missing: bool = True, profile_text: str | None = None) -> str:
+    profile = read_work_profile(create_missing=create_missing) if profile_text is None else profile_text.strip()
     if not profile:
         return ""
     principal = principal_display_name()
@@ -98,166 +100,6 @@ def write_work_profile(profile: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(normalized + "\n", encoding="utf-8")
     return path
-
-
-def ceo_agent_thread_prompt() -> str:
-    from app.developer_prompt import render_developer_prompt
-
-    return render_developer_prompt()
-
-
-def build_turn_prompt(
-    conversation: DingTalkConversation,
-    new_messages: list[DingTalkMessage],
-    context_messages: list[DingTalkMessage],
-    *,
-    style_lines: list[str],
-    include_thread_prompt: bool,
-    linked_documents: list[LinkedDocumentContext] | None = None,
-    material_references: list[MaterialReferenceContext] | None = None,
-    image_download_errors: list[str] | None = None,
-    known_people_lines: list[str] | None = None,
-    sender_org_lines: list[str] | None = None,
-) -> str:
-    current_message_lines = [
-        "当前待处理消息:",
-        f"会话: {conversation.title}",
-        f"会话类型: {'单聊' if conversation.single_chat else '群聊'}",
-        "新消息:",
-    ]
-    for message in new_messages:
-        current_message_lines.extend(message_lines(message))
-
-    sender_org_block = ""
-    if sender_org_lines:
-        sender_org_block = _prompt_section_block(
-            ["发信人组织信息(JSON):", *sender_org_lines],
-            trailing_newline=True,
-        )
-
-    known_people_block = ""
-    if known_people_lines:
-        known_people_block = _prompt_section_block(
-            [
-                "可用组织人员标识（如内部人员问题对象匹配这些人，personnel_subject_user_id 必须使用对应 user_id）:",
-                *known_people_lines,
-            ],
-            trailing_newline=True,
-        )
-
-    material_references_block = ""
-    if material_references:
-        material_lines: list[str] = [
-            "待读取材料（由 agent 判断是否读取）:",
-            (
-                "如果判断依赖材料正文，必须先读取材料；如果消息正文已经足够，可以不读取。"
-                "读取失败时不要臆测材料内容，应说明权限或材料问题。"
-            ),
-            "DWS 读取命令提示:",
-            "- 钉钉文档: dws doc info --node <URL> --format json；需要正文时 dws doc read --node <URL> --format json",
-            "- AI 听记: dws minutes get info --id <MINUTES_ID> --format json",
-            "- 飞书文档: lark-cli docs +fetch --doc <URL> --doc-format markdown --format json --as bot",
-            "- 普通文件: 先用消息中的文件名和上下文判断是否需要读取；需要时使用 DWS 文件/云盘能力查询或下载。",
-        ]
-        for index, material in enumerate(material_references, start=1):
-            material_lines.extend(material_reference_lines(index, material))
-        material_references_block = _prompt_section_block(
-            material_lines,
-            trailing_newline=True,
-        )
-
-    linked_documents_block = ""
-    if linked_documents:
-        linked_document_lines_: list[str] = ["已获取的钉钉材料:"]
-        for index, document in enumerate(linked_documents, start=1):
-            linked_document_lines_.extend(linked_document_lines(index, document))
-        linked_documents_block = _prompt_section_block(
-            linked_document_lines_,
-            trailing_newline=True,
-        )
-
-    image_download_block = ""
-    if image_download_errors:
-        image_download_block = _prompt_section_block(
-            [
-                "图片读取状态:",
-                (
-                    "以下图片未能下载。如果当前问题依赖图片内容，不能臆测图片细节；"
-                    "应说明图片读取失败并追问可查看版本。"
-                    "如果当前问题可基于文字上下文独立处理，可以继续处理。"
-                ),
-                *[f"- {error}" for error in image_download_errors],
-            ],
-            trailing_newline=True,
-        )
-
-    context_messages_block = (
-        "上下文消息（自上次回复后的新信息，最多 20 条）:\n"
-        f"{json.dumps(_context_message_records(context_messages), ensure_ascii=False, indent=2)}"
-    )
-
-    return render_user_prompt(
-        {
-            "style_lines": _prompt_section_block(style_lines, trailing_newline=True),
-            "current_message_block": _prompt_section_block(
-                current_message_lines,
-                trailing_newline=True,
-            ),
-            "sender_org_block": sender_org_block,
-            "known_people_block": known_people_block,
-            "material_references_block": material_references_block,
-            "linked_documents_block": linked_documents_block,
-            "image_download_block": image_download_block,
-            "context_messages_block": context_messages_block,
-        }
-    ).strip("\n")
-
-
-def _prompt_section_block(
-    lines: list[str],
-    *,
-    trailing_newline: bool = False,
-) -> str:
-    if not lines:
-        return ""
-    block = "\n".join(lines)
-    if trailing_newline:
-        return f"{block}\n"
-    return block
-
-
-def _context_message_records(messages: list[DingTalkMessage]) -> list[dict]:
-    return [_context_message_record(message) for message in messages]
-
-
-def _context_message_record(message: DingTalkMessage) -> dict:
-    sender: dict[str, str] = {"name": message.sender_name}
-    if message.sender_user_id:
-        sender["user_id"] = message.sender_user_id
-    if message.sender_open_dingtalk_id:
-        sender["open_dingtalk_id"] = message.sender_open_dingtalk_id
-
-    record: dict = {
-        "open_message_id": message.open_message_id,
-        "create_time": message.create_time,
-        "sender": sender,
-        "content": sanitize_dingtalk_prompt_text(message.content),
-    }
-    if message.message_type:
-        record["message_type"] = message.message_type
-    if message.mentioned_user_ids:
-        record["mentioned_user_ids"] = message.mentioned_user_ids
-    if message.quoted_message_id or message.quoted_content:
-        quoted: dict[str, str] = {}
-        if message.quoted_message_id:
-            quoted["open_message_id"] = message.quoted_message_id
-        if message.quoted_content:
-            quoted["content"] = sanitize_dingtalk_prompt_text(message.quoted_content)
-        record["quoted"] = quoted
-    reactions = _message_reaction_records(message.raw_payload)
-    if reactions:
-        record["reactions"] = reactions
-    return record
 
 
 def message_lines(message: DingTalkMessage) -> list[str]:

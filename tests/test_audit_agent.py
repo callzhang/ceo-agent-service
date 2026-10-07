@@ -136,7 +136,8 @@ def _runner(setup, executor):
 
 def test_audit_context_contains_exact_candidate_and_all_review_checks(setup):
     _store, _task, _parent, context, _config, _router = setup
-    rendered = context.render()
+    from app.consumer_agent import audit_developer_instructions
+    rendered = audit_developer_instructions(context.audit_rules) + context.render(developer_audit_rules=context.audit_rules)
     assert context.candidate_digest in rendered
     assert "Exact prepared notice" in rendered
     assert "Check exact audience and content" in rendered

@@ -1,6 +1,6 @@
 # Prompt 配置与 Consumer/Audit 上下文整合计划
 
-> **For agentic workers:** 本文是供 Derek 决策的整合方案和分阶段计划，尚未批准实施。获批后使用 executing-plans 逐阶段执行；不可把建议当成当前运行事实。Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Derek 已于2026-10-06回复 OK 批准实施。执行使用 executing-plans/subagent-driven-development；下面调查基线保留为历史来源，实施与上线状态见末尾记录。Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 精简实际提交的 prompt，保留并补齐同一对话对象的已有 session 复用；Settings 中每个可编辑 prompt 有明确的运行消费者；编辑、渲染预览、实际提交及历史输入使用同一组装规则，并保留当前 Consumer/Audit/System 的职责与会话契约。
 
@@ -282,3 +282,17 @@ Derek 明确要求同一个对话对象复用已有session。代码与生产记�
 复用session与精简prompt分别测量。resume保留上下文和可能的缓存收益，但不保证provider只处理增量或token成本下降；还可能累积更长历史。本计划不新增按token阈值强制重置session、自动剪裁事实或自建compaction策略。原生compaction能力及可用指标先验证，再决定是否需要独立优化。
 
 新增验收用例的现有测试位置：`tests/test_consumer_agent.py`、`tests/test_agent_turn_runner.py`、`tests/test_agent_runtime_router.py`与现有Claude adapter/Store session持久化测试。部署后读回同conversation的自然连续task及session lineage，不为验收自动发送测试消息或重放历史动作。
+
+## 12. 实施记录（候选阶段，未上线）
+
+- 阶段1已提交 `7b9f08df`，组装前后 Consumer/Audit 输入逐字一致。
+- 共同原则、唯一完整任务插槽、一次配置读取、实际输入指纹、同模板预览、旧无调用 renderer 退休及正式默认模板 publication 已实现；定向单元/接口/页面/构建检查已通过，最终候选的模型评价和上线读回待完成。
+- 模板保存拒绝不可渲染 Developer、缺失/重复/隐藏 User 插槽；旧 User POST 入口复用同一处理器，不覆盖现有配置。
+- 静态规则按唯一权威来源去重；完整 Audit candidate/source_bindings/digest 保留；完全相同来源在同一输入中引用，不同值保留全文。没有改变审核、执行、授权、会话重置政策。
+- 固定20个合成用例 v2，baseline/candidate 共用同一短 profile 与任务 Skill override；另外冻结4个 exact source-binding 补充用例。原生 CLI 路线/模型/thinking 相同，禁用业务工具，没有业务重放。原生质量需独立审阅，schema/outcome screen 不能代替。
+- 实际已保存 runtime.prompt 只有每角色4个不同任务，无法满足20个真实完整输入样本；缺历史不重新生成。已按结构计数保存私人证据，不导出业务正文。
+- v2 候选静态 Developer 字符降幅 Consumer5.32%、Audit12.93%，尚未达到30%设计目标；Audit Task 平均降61.89%。该用例不覆盖标准目录或私人人格，不能扩大结论。
+- 工作人格英文精简稿经独立逐条原文审阅，修正限定词后保留现有政策；16324→8820字符，参考 tiktoken0.14.0/o200k_base 3942→1705 tokens。尚未写入线上；私人原文、草稿、覆盖映射及完整模型证据均置于个人工作资料目录，不进入Git。原有数值门槛/handoff 等政策张力没有借精简改写。
+- Consumer 的既有 conversation_id+route session 复用保留；新回归证明已保存 Developer/User 改动更新实际输入和契约回执，同时 resume 原session。Audit session 独立。
+
+固定输入/原生模型输出、部署、自然新 invocation 和外部业务结果是不同证据边界。最终验收记录将给出 immutable candidate SHA、质量比较、发布回执及仍未满足的目标。

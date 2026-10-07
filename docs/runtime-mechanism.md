@@ -1597,6 +1597,12 @@ Prompts 的 Developer/User/Profile 各自保留 Template 与 Rendered preview �
 
 Prompts 内容标题随当前查看方式显示「模板」或「渲染结果」，与所选 Developer/User/Profile 页签对应；完整运行输入仍位于独立只读「运行输入」页签。
 
-Prompts 页在各页签之前说明 Developer/User 对话模板、工作人格、Audit Rules 与运行输入的用途，并分别列出对话入口和后台 Consumer/Audit 的上下文组装顺序。后台角色使用代码生成指令，工作人格与 Runtime Context 追加在 Developer 输入中；角色任务上下文另作 Task 输入。
+Developer Prompt 是 Consumer 与 Audit 共用的工作原则；User Prompt 是 Consumer 的完整任务模板，必须包含恰好一个 `{{task_context}}`，仅支持普通文本和这个插槽。任务来源、定时要求、stage、反馈、既有回执及 continuation 先由服务组装成完整上下文，再填入插槽；不将旧消息块模板叠加到后台任务。工作人格仍注入两角色，Audit Rules 只进入 Audit。角色、输出 schema、System action contract 与能力职责继续由代码提供。Workbench、独立 WeChat、纯服务命令及 Email 退订保留各自入口和显式指令。
 
-Developer 段落组合、Consumer Task 前缀和 final-route Runtime Context 追加使用共享纯组装函数；角色执行与运行预览复用同一函数。此机械提取保持原提交文本及空段语义不变。
+一次角色 invocation 只读取一次 Developer/User/Profile 正文，供组装、静态指纹与重试共用；Audit 不读取无关 User 模板。实际路线和工具命令确定后，再追加 Runtime Context。静态配置 SHA 写入现有 runtime.prompt invocation facts，仅作来源回执；Consumer 继续按 `conversation_id + route` 复用原 session，配置或 contract hash 变化不创建新会话，Audit 的独立 session 不与 Consumer 合并。
+
+默认 User 的 Rendered preview 使用明确标记的合成完整任务，不读取业务材料；Developer/Profile 渲染同一份已保存正文。完整运行输入仍在独立只读页签，当前配置 Developer 与所选已保存历史 Task 的来源分别标注，历史模式不重新渲染。读取设置/预览不创建或覆盖配置文件。已存在模板不在读取时自动升级；部署使用 `python -m app.deploy --publish-prompt-templates`，仅在既有停止/备份窗口根据 `ci/prompt-template-release.json` 的精确旧/新 SHA 发布默认 Developer/User。自定义模板须明确迁移，不能覆盖；文件备份、发布与回退沿用 RepositoryUpdater 的 publication 协议。该发布不修改工作人格。
+
+精简仅去除已有重复文本：Consumer 规则保留在完整 Task、Audit 角色规则保留在 Developer，Audit Rules 与本轮 Developer 相同时不在 Task 重复。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 逐字段相符时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。标准 Skill 目录使用 TSV 与路径根别名，保留所有名称、完整用途说明、读取路径和顺序；定时专项 Skill 正文不改。Runtime Context 缩短工具说明，保留原有准确 server.tool 名称和其他环境事实。无业务调用的旧 build_turn_prompt、ceo_agent_thread_prompt 及 CodexRunner 的隐含业务 Developer 默认入口已退休；底层 native 指令保留模式及真实调用者显式指令不变。
+
+Developer 保存先以现有渲染器验证，未知变量或不可渲染内容返回具体错误且不覆盖已保存正文；该检查属于配置格式合同。

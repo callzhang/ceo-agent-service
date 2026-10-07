@@ -47,8 +47,8 @@ from app.codex_history import find_codex_session_path
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.config import principal_display_name
-from app.prompt import runtime_context_instruction, work_profile_instruction
-from app.prompt_composition import assemble_consumer_task, join_developer_sections
+from app.prompt import runtime_context_instruction
+from app.prompt_composition import PromptConfiguration, compose_consumer_task, join_developer_sections, load_prompt_configuration
 from app.runtime_prompt_context import RUNTIME_WORK_PRINCIPLES, explicit_participant_timezones
 from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.store import AgentRole, AutoReplyStore, ReplyTask
@@ -168,8 +168,10 @@ def system_action_contracts_text() -> str:
 def consumer_wire_contract_hash(
     runtime_skill_snapshot: RuntimeSkillSnapshot | None = None,
     *, skill_protocol_override: str | None = None,
+    prompt_configuration: PromptConfiguration | None = None,
 ) -> str:
     """Fingerprint stable Consumer output, instructions, and read-tool policy."""
+    configuration = prompt_configuration or load_prompt_configuration()
     contract = {
         "consumer_rules": _CONSUMER_AGENT_RULES,
         "role_boundary": CONSUMER_ROLE_BOUNDARY,
@@ -181,9 +183,10 @@ def consumer_wire_contract_hash(
         # content the Agent is served.
         "business_skill_protocol": render_business_skill_protocol(
             installed_runtime_skills(names=BUNDLED_BUSINESS_SKILL_NAMES)
-            + default_skill_catalog()
+            + default_skill_catalog(), compact=True,
         ),
-        "work_profile_instruction": work_profile_instruction(),
+        "work_profile_instruction": configuration.work_profile,
+        "prompt_configuration": configuration.fingerprints(),
         "wire_schema": ConsumerAgentWireResult.model_json_schema(),
         "codex_multi_agent": False,
         "codex_apps": False,
@@ -489,9 +492,11 @@ class ConsumerAgentRunner:
             if context.skill_protocol_override is not None
             else self.skill_protocol_override
         )
+        configuration = load_prompt_configuration()
         contract_hash = consumer_wire_contract_hash(
             self.runtime_skill_snapshot,
             skill_protocol_override=context_skill_protocol,
+            prompt_configuration=configuration,
         )
         route_sessions = self._consumer_route_sessions(task.conversation_id)
         # A forced rerun changes the execution generation and prompt, but it
@@ -600,8 +605,9 @@ class ConsumerAgentRunner:
                 skill_names=context.skill_names,
                 invocation_facts={"stage_index": context.stage_index, "skill_protocol": selected_skill_protocol,
                                   "skill_protocol_source": "task_override" if context_skill_protocol is not None else "runtime_catalog",
-                                  "participant_timezones": explicit_participant_timezones(context.trigger_raw_payload)},
-                prompt=assemble_consumer_task(
+                                  "participant_timezones": explicit_participant_timezones(context.trigger_raw_payload),
+                                  "prompt_configuration": configuration.fingerprints()},
+                prompt=compose_consumer_task(configuration,
                     task_context=context.render(proposal_revision=proposal_revision, feedback=feedback),
                     scheduled_prompt=context.consumer_prompt,
                     continuation=continuation_prompt,
@@ -610,6 +616,7 @@ class ConsumerAgentRunner:
                 developer_instructions=consumer_developer_instructions(
                     runtime_context="",
                     skill_protocol=selected_skill_protocol,
+                    prompt_configuration=configuration,
                 ),
                 configure_command=configure_consumer_command,
                 parse_result=_parse_consumer_result,
@@ -768,10 +775,12 @@ def consumer_developer_instructions(
     skill_protocol: str = "",
     runtime_context: str | None = None,
     work_profile: str | None = None,
+    prompt_configuration: PromptConfiguration | None = None,
 ) -> str:
     # Retain the legacy argument for caller compatibility, but never expose
     # Audit's independent review policy to the Consumer.
     del audit_rules
+    configuration = prompt_configuration or load_prompt_configuration()
     core = _developer_instructions(
         audit_rules=None,
         skill_instruction=CONSUMER_DYNAMIC_SKILL_BODY,
@@ -784,18 +793,18 @@ def consumer_developer_instructions(
     )
     return join_developer_sections(
         instructions,
+        "## Shared Developer Principles\n" + configuration.developer_instructions,
         DECISION_QUALITY_GATE_INSTRUCTIONS,
-        _CONSUMER_AGENT_RULES,
         skill_protocol,
         runtime_context_instruction() if runtime_context is None else runtime_context,
-        work_profile_instruction() if work_profile is None else work_profile,
+        configuration.work_profile if work_profile is None else work_profile,
         omit_empty=True,
     )
 
 
 def default_consumer_skill_protocol() -> str:
     return render_business_skill_protocol(
-        installed_runtime_skills(names=BUNDLED_BUSINESS_SKILL_NAMES) + default_skill_catalog()
+        installed_runtime_skills(names=BUNDLED_BUSINESS_SKILL_NAMES) + default_skill_catalog(), compact=True,
     )
 
 
@@ -845,8 +854,10 @@ def _is_parent_mcp_inventory_failure(code: str) -> bool:
 def audit_developer_instructions(
     audit_rules: str,
     *, runtime_context: str | None = None, work_profile: str | None = None,
+    prompt_configuration: PromptConfiguration | None = None,
 ) -> str:
     """Render the Audit contract; provider policy belongs to the runtime."""
+    configuration = prompt_configuration or load_prompt_configuration(role="audit")
     core = _developer_instructions(
         audit_rules=audit_rules, skill_instruction=AUDIT_DYNAMIC_SKILL_BODY,
         wire_model=AuditAgentWireResult,
@@ -869,11 +880,11 @@ def audit_developer_instructions(
     )
     return join_developer_sections(
         instructions,
+        "## Shared Developer Principles\n" + configuration.developer_instructions,
         DECISION_QUALITY_GATE_INSTRUCTIONS,
-        _AUDIT_AGENT_RULES,
         AUDIT_RESPONSE_COMPLETENESS_INSTRUCTION,
         runtime_context_instruction() if runtime_context is None else runtime_context,
-        work_profile_instruction() if work_profile is None else work_profile,
+        configuration.work_profile if work_profile is None else work_profile,
         omit_empty=False,
     )
 

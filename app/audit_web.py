@@ -9383,10 +9383,7 @@ def handle_configuration_post(body: bytes) -> tuple[int, dict[str, str], str]:
 
 
 def handle_user_prompt_post(body: bytes) -> tuple[int, dict[str, str], str]:
-    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
-    template = parsed.get("template", [""])[0]
-    write_user_prompt_template(template)
-    return 303, {"Location": "/config?tab=user&saved=1"}, ""
+    return handle_settings_prompt_post(b"prompt=user&" + body)
 
 
 def handle_settings_prompt_post(body: bytes) -> tuple[int, dict[str, str], str]:

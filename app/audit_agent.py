@@ -130,15 +130,17 @@ class AuditAgentRunner:
         run: AgentRun,
         rendered_rules: str,
     ) -> AgentTurnRunResult[AuditAgentResult]:
-        prompt = context.render() + result_correction_prompt(
+        prompt = context.render(developer_audit_rules=rendered_rules) + result_correction_prompt(
             self.store,
             task,
             role=AgentRole.AUDIT,
             proposal_revision=context.proposal_revision,
         )
         from app.consumer_agent import audit_developer_instructions
+        from app.prompt_composition import load_prompt_configuration
 
-        developer_instructions = audit_developer_instructions(rendered_rules, runtime_context="")
+        configuration = load_prompt_configuration(role="audit")
+        developer_instructions = audit_developer_instructions(rendered_rules, runtime_context="", prompt_configuration=configuration)
         if self.skill_protocol_override:
             developer_instructions += "\n\n" + self.skill_protocol_override
         process = AgentTurnProcess[AuditAgentResult](
@@ -171,7 +173,8 @@ class AuditAgentRunner:
             run=run,
             invocation_facts={"stage_index": context.task.stage_index, "skill_protocol": self.skill_protocol_override or "",
                               "skill_protocol_source": "task_override" if self.skill_protocol_override is not None else "runtime_catalog",
-                              "participant_timezones": explicit_participant_timezones(context.task.trigger_raw_payload)},
+                              "participant_timezones": explicit_participant_timezones(context.task.trigger_raw_payload),
+                              "prompt_configuration": configuration.fingerprints()},
             skill_names=context.task.skill_names,
             prompt=prompt,
             session_id=run.codex_session_id or None,

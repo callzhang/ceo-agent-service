@@ -115,39 +115,42 @@ function PromptOverview() {
     <div className="settings-table-wrap"><table className="settings-table">
       <thead><tr><th>提示词 / 内容</th><th>作用与使用位置</th></tr></thead>
       <tbody>
-        <tr><td>Developer Prompt</td><td>对话模板入口的通用行为规则；渲染后作为 Developer 指令，随后追加该入口的输出结构约定。</td></tr>
-        <tr><td>User Prompt</td><td>对话模板入口的本轮消息模板；按模板位置填入当前消息、会话历史、人员、文档与附件等材料。</td></tr>
-        <tr><td>Distilled work profile</td><td>工作人格与长期偏好；追加到后台 Consumer 和 Audit 的 Developer 指令中。</td></tr>
-        <tr><td>Audit Rules</td><td>后台 Audit 的独立审核规则；在 Settings → Audit Rules 编辑，置于 Audit 角色指令开头。</td></tr>
+        <tr><td>Developer Prompt</td><td>Consumer 与 Audit 共用的可配置工作原则，如证据、判断与沟通方式；与各角色的固定契约一起组成 Developer 指令。</td></tr>
+        <tr><td>User Prompt</td><td>Consumer 的完整任务模板；通过 <code>{"{{task_context}}"}</code> 填入当前任务、来源、材料、阶段、历史回执、审核反馈与续接内容。</td></tr>
+        <tr><td>Distilled work profile</td><td>工作人格与长期偏好；追加到后台 Consumer 与 Audit 的 Developer 指令中。</td></tr>
+        <tr><td>Audit Rules</td><td>Audit 的独立业务审核规则；在 Audit Rules 页面编辑，进入 Audit 指令。</td></tr>
+        <tr><td>服务角色与输出契约</td><td>各角色职责、输出 schema、能力边界与 System 动作契约由代码定义；在完整运行输入中只读查看。</td></tr>
         <tr><td>运行输入 / Runtime Context</td><td>只读查看服务提交的 Developer 与 Task 输入。Runtime Context 说明本轮角色、模型、工具、时间及时区等运行事实，最后追加到后台 Developer 指令。</td></tr>
       </tbody>
     </table></div>
-    <p>不同入口分别组装上下文；后台 Consumer/Audit 使用代码生成的角色指令，不直接套用这里的 Developer/User 模板。</p>
+    <p>Developer 与工作人格用于 Consumer/Audit；User 模板用于进入 AgentOrchestrator 的 Consumer 任务。Audit 的任务输入使用独立的候选审核上下文。</p>
     <ol>
-      <li><strong>对话模板入口：</strong>Developer 模板渲染 → 输出结构约定；User 模板按变量位置渲染为本轮输入。</li>
-      <li><strong>后台 Consumer：</strong>角色规则、行动与输出约定 → 能力说明与共享规则 → 质量要求与 Consumer 规则 → Skill 协议 → 工作人格 → Runtime Context；Task 输入包含本轮任务、材料、反馈及续接内容。</li>
-      <li><strong>后台 Audit：</strong>Audit Rules → 角色规则、行动与输出约定 → 能力说明与共享规则 → 质量要求与 Audit 规则 → 工作人格 → 本轮额外 Skill 协议（如有）→ Runtime Context；Task 输入包含待审候选、任务证据及修正内容。</li>
+      <li><strong>后台 Consumer：</strong>角色、输出与能力契约 → 共同 Developer 工作原则 → 质量要求与 Skill 协议 → 工作人格 → Runtime Context；Task 由 User 模板承载完整任务上下文，包括定时任务专用要求、反馈与修正内容。</li>
+      <li><strong>后台 Audit：</strong>角色、输出与能力契约 → 同一份 Developer 工作原则 → Audit Rules 与质量要求 → 工作人格 → 本轮额外 Skill 协议（如有）→ Runtime Context；Task 包含任务证据、精确候选、版本、digest 及修正内容。</li>
     </ol>
+    <p className="muted">这组配置不影响 Workbench、WeChat 独立流程、纯服务命令与 Email 退订。保存后由下一次角色调用读取；已保存历史输入保留原文，同一对话继续复用已有 session。</p>
     <p className="muted">上述顺序表示内容在各输入中的拼接位置；Developer 与 Task 分别提交给运行路线。CLI 自带的系统提示、工具定义和会话历史不包含在此预览中。Template 查看原文，Rendered preview 查看已保存模板的渲染结果；完整后台输入请打开“运行输入”。</p>
   </section>;
 }
 
 function PromptPanel({ payload, prompt, view, draft, setDraft, saveState, saveError }: { payload: RecordValue; prompt: PromptKind; view: "template" | "preview"; draft: RecordValue; setDraft: (value: RecordValue) => void; saveState: "idle" | "saving" | "saved" | "error"; saveError: string }) {
   const sectionTabs = <div className="settings-pill-row" role="tablist" aria-label="Prompt sections">{([['developer', 'Developer Prompt'], ['user', 'User Prompt'], ['profile', 'Distilled work profile'], ['runtime', '运行输入']] as const).map(([key, title]) => <Link key={key} role="tab" aria-selected={prompt === key} className={prompt === key ? "active" : ""} to={`/settings?tab=prompts&prompt=${key}&view=${key === 'runtime' ? 'preview' : 'template'}`}>{title}</Link>)}</div>;
-  if (prompt === "runtime") return <SettingsCard><h2>Prompts</h2><p className="muted">后台 Consumer/Audit 的完整运行输入，由角色规则、Skill、工作人格、任务上下文和 Runtime Context 共同组装。此页只读；Developer/User 模板的变量替换结果请在各自的 Rendered preview 查看。</p><PromptOverview />{sectionTabs}<div id="prompt-panel" role="tabpanel" aria-label="运行输入"><RuntimePromptPreview /></div></SettingsCard>;
+  if (prompt === "runtime") return <SettingsCard><h2>Prompts</h2><p className="muted">后台 Consumer/Audit 的完整运行输入，由角色契约、共同工作原则、Skill、工作人格、任务上下文和 Runtime Context 共同组装。此页只读；Developer/User 模板的变量替换结果请在各自的 Rendered preview 查看。</p><PromptOverview />{sectionTabs}<div id="prompt-panel" role="tabpanel" aria-label="运行输入"><RuntimePromptPreview /></div></SettingsCard>;
   const isProfile = prompt === "profile";
   const templateKey = isProfile ? "profile" : `${prompt}_template`;
   const rawTemplate = draft[templateKey] ?? fieldsOf(payload)[templateKey];
   const value = typeof rawTemplate === "string" ? rawTemplate : displayValue(rawTemplate);
   const preview = displayValue(record(payload.preview)[prompt]);
   const label = isProfile ? "Distilled work profile" : prompt === "developer" ? "Developer Prompt" : "User Prompt";
+  const consumers = record(payload.consumers)[prompt];
+  const purpose = isProfile ? "Consumer 与 Audit 共用的工作人格与长期偏好。" : prompt === "developer" ? "Consumer 与 Audit 共用的工作原则；角色和输出契约由代码提供。" : "Consumer 的任务组织模板；Audit 使用独立候选审核上下文。";
   const path = isProfile ? "work_profile.md" : prompt === "developer" ? "developer_prompt.md" : "user_prompt.md";
   const viewTabs = <div className="settings-pill-row settings-view-row" role="tablist" aria-label="Prompt view"><Link role="tab" aria-selected={view === "template"} className={view === "template" ? "active" : ""} to={`/settings?tab=prompts&prompt=${prompt}&view=template`}>Template</Link><Link role="tab" aria-selected={view === "preview"} className={view === "preview" ? "active" : ""} to={`/settings?tab=prompts&prompt=${prompt}&view=preview`}>Rendered preview</Link></div>;
   return <SettingsCard>
-    <div className="settings-card-heading"><div><h2>Prompts</h2><p className="muted">{label} · {view === "template" ? "模板" : "渲染结果"}</p><p className="muted">{isProfile ? "在新的 Consumer 或 Audit 运行中追加到 Developer Prompt。" : "Rendered preview 展示这份已保存模板的变量替换结果。后台完整输入见“运行输入”。"}</p></div><span className="settings-path">{path}</span></div>
+    <div className="settings-card-heading"><div><h2>Prompts</h2><p className="muted">{label} · {view === "template" ? "模板" : "渲染结果"}</p><p className="muted">{purpose} Rendered preview 展示这份已保存模板的渲染结果；后台完整输入见“运行输入”。</p>{Array.isArray(consumers) && <p className="muted">使用角色：{consumers.join("、")}</p>}</div><span className="settings-path">{path}</span></div>
     <PromptOverview />
     {sectionTabs}
-    <div className="prompt-editor-shell" id="prompt-panel" role="tabpanel" aria-label={view === "template" ? "Template" : "Rendered preview"}>{view === "template" ? <form onSubmit={(event) => event.preventDefault()}><div className="prompt-editor-toolbar">{viewTabs}</div><TokenEditor id="prompt-template" label="Template" value={value} onChange={(next) => setDraft({ ...draft, [templateKey]: next })} autoResize /><p className="muted prompt-runtime-note">{isProfile ? "保存后仅影响后续新建运行。" : <>运行时注入变量：<code>{"{{principal}}"}</code> <code>{"{{conversation}}"}</code>。这些变量不需要手动填写。</>}</p><SaveBar state={saveState} error={saveError} /></form> : <><div className="prompt-editor-toolbar">{viewTabs}</div><p className="muted">预览使用已保存的模板；未保存的改动不会进入预览。</p><pre className="prompt-preview">{isProfile ? preview || "未提供预览" : highlightRenderedPreview(displayValue(fieldsOf(payload)[templateKey]), preview) || "未提供预览"}</pre></>}</div>
+    <div className="prompt-editor-shell" id="prompt-panel" role="tabpanel" aria-label={view === "template" ? "Template" : "Rendered preview"}>{view === "template" ? <form onSubmit={(event) => event.preventDefault()}><div className="prompt-editor-toolbar">{viewTabs}</div><TokenEditor id="prompt-template" label="Template" value={value} onChange={(next) => setDraft({ ...draft, [templateKey]: next })} autoResize /><p className="muted prompt-runtime-note">{isProfile ? "保存后由下一次 Consumer 或 Audit 调用读取。" : prompt === "user" ? <>必须保留 <code>{"{{task_context}}"}</code> 恰好一次，服务将完整注入任务、来源、材料、阶段、历史回执、审核反馈与续接内容。</> : <>可使用 <code>{"{{principal}}"}</code> 引用当前配置显示名；共同原则之外的角色、输出和能力契约由服务组装。</>}</p><SaveBar state={saveState} error={saveError} /></form> : <><div className="prompt-editor-toolbar">{viewTabs}</div><p className="muted">预览使用已保存的模板；未保存的改动不会进入预览。</p>{prompt === "user" && payload.preview_kind === "example" && <p className="muted">示例变量渲染：使用合成的完整任务示例填入这份 User 模板，不是实际运行输入。</p>}<pre className="prompt-preview">{isProfile ? preview || "未提供预览" : highlightRenderedPreview(displayValue(fieldsOf(payload)[templateKey]), preview) || "未提供预览"}</pre></>}</div>
   </SettingsCard>;
 }
 
@@ -1038,7 +1041,7 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
   </SettingsCard>;
 }
 
-function SettingsContent({ section, payload, draft, setDraft, prompt, view, connector, auditRule, saveState, saveError, onAttentionCountChange }: { section: SettingsSection; payload: RecordValue; draft: RecordValue; setDraft: (value: RecordValue) => void; prompt: PromptKind; view: "template" | "preview"; connector: string; auditRule: "template" | "consumer" | "audit"; saveState: "idle" | "saving" | "saved" | "error"; saveError: string; onAttentionCountChange: (count: number) => void }) {
+function SettingsContent({ section, payload, draft, setDraft, prompt, view, connector, auditRule, saveState, saveError, onAttentionCountChange }: { section: SettingsSection; payload: RecordValue; draft: RecordValue; setDraft: (value: RecordValue) => void; prompt: PromptKind; view: "template" | "preview"; connector: string; auditRule: "template" | "audit"; saveState: "idle" | "saving" | "saved" | "error"; saveError: string; onAttentionCountChange: (count: number) => void }) {
   if (section === "status") return <StatusPanel />;
   if (section === "attention") return <AttentionPanel onCountChange={onAttentionCountChange} />;
   if (section === "skills") return <ManagedSkillsPanel />;
@@ -1049,14 +1052,14 @@ function SettingsContent({ section, payload, draft, setDraft, prompt, view, conn
   if (section === "audit-rules") {
     const template = displayValue(draft.template ?? fieldsOf(payload).template);
     const preview = displayValue(record(payload.preview)[auditRule]);
-    const ruleLabels = { template: "Template", consumer: "Consumer", audit: "Audit" } as const;
+    const ruleLabels = { template: "Template", audit: "Audit" } as const;
     const viewLabel = view === "template" ? "Template" : "Rendered preview";
     const panelLabel = view === "template" ? `${ruleLabels[auditRule]} template` : `${ruleLabels[auditRule]} rendered preview`;
     const templatePanel = auditRule === "template"
       ? <form onSubmit={(event) => event.preventDefault()}><TokenEditor id="audit-rules-template" label="Configurable rules" value={template} onChange={(next) => setDraft({ ...draft, template: next })} rows={16} /><SaveBar state={saveState} /></form>
       : <><p className="muted">当前 tab 使用同一份 Audit Rules template；切换到 Template tab 编辑。</p><pre className="prompt-preview">{template || "未提供模板"}</pre></>;
     const previewPanel = <><p className="muted">Rendered preview · current configuration</p><pre className="prompt-preview">{preview ? highlightRenderedPreview(template, preview) : "未提供预览"}</pre></>;
-    return <SettingsCard><h2>Audit Rules</h2><p className="muted">Audit Rules 先定义可配置模板，再分别查看 Consumer 和 Audit wrapper 的最终渲染结果。Template 中的 <code>{"{{principal}}"}</code> 会使用当前配置显示名替换。</p><p className="muted">当前规则：{ruleLabels[auditRule]} · 当前视图：{viewLabel}</p><div className="settings-control-group"><span className="settings-control-label">规则类型</span><div className="settings-pill-row" role="tablist" aria-label="Audit Rule sections">{(["template", "consumer", "audit"] as const).map((key) => <Link key={key} role="tab" aria-selected={auditRule === key} className={auditRule === key ? "active" : ""} to={`/settings?tab=audit-rules&rule=${key}&view=${view}`}>{ruleLabels[key]}</Link>)}</div></div><div className="settings-control-group"><span className="settings-control-label">查看方式</span><div className="settings-pill-row settings-view-row" role="tablist" aria-label="Audit Rule view"><Link role="tab" aria-selected={view === "template"} className={view === "template" ? "active" : ""} to={`/settings?tab=audit-rules&rule=${auditRule}&view=template`}>Template</Link><Link role="tab" aria-selected={view === "preview"} className={view === "preview" ? "active" : ""} to={`/settings?tab=audit-rules&rule=${auditRule}&view=preview`}>Rendered preview</Link></div></div><div id="audit-rules-panel" role="tabpanel" aria-label={panelLabel}>{view === "template" ? templatePanel : previewPanel}</div></SettingsCard>;
+    return <SettingsCard><h2>Audit Rules</h2><p className="muted">规则仅用于 Audit；Template 编辑规则原文，Audit 查看独立审核 wrapper 的渲染结果。Template 中的 <code>{"{{principal}}"}</code> 会使用当前配置显示名替换。</p><p className="muted">当前规则：{ruleLabels[auditRule]} · 当前视图：{viewLabel}</p><div className="settings-control-group"><span className="settings-control-label">规则类型</span><div className="settings-pill-row" role="tablist" aria-label="Audit Rule sections">{(["template", "audit"] as const).map((key) => <Link key={key} role="tab" aria-selected={auditRule === key} className={auditRule === key ? "active" : ""} to={`/settings?tab=audit-rules&rule=${key}&view=${view}`}>{ruleLabels[key]}</Link>)}</div></div><div className="settings-control-group"><span className="settings-control-label">查看方式</span><div className="settings-pill-row settings-view-row" role="tablist" aria-label="Audit Rule view"><Link role="tab" aria-selected={view === "template"} className={view === "template" ? "active" : ""} to={`/settings?tab=audit-rules&rule=${auditRule}&view=template`}>Template</Link><Link role="tab" aria-selected={view === "preview"} className={view === "preview" ? "active" : ""} to={`/settings?tab=audit-rules&rule=${auditRule}&view=preview`}>Rendered preview</Link></div></div><div id="audit-rules-panel" role="tabpanel" aria-label={panelLabel}>{view === "template" ? templatePanel : previewPanel}</div></SettingsCard>;
   }
   if (section === "configuration") { const groups = Array.isArray(payload.groups) ? payload.groups.map(record) : []; const compatibility = Array.isArray(payload.compatibility) ? payload.compatibility.map(record) : []; return <SettingsCard><h2>Configuration</h2><p className="muted">所有影响服务行为的环境配置统一保存在 <code>.env</code>；每个配置项的说明和当前值保持在同一行。</p><form onSubmit={(event) => event.preventDefault()}><ConfigTable groups={groups} compatibility={compatibility} draft={draft} setDraft={setDraft} /><SaveBar state={saveState} /></form></SettingsCard>; }
   return <InfoPanel payload={payload} />;
@@ -1070,7 +1073,7 @@ export function SettingsPage() {
   const prompt: PromptKind = params.get("prompt") === "runtime" ? "runtime" : params.get("prompt") === "user" ? "user" : params.get("prompt") === "profile" ? "profile" : "developer";
   const view = params.get("view") === "preview" ? "preview" : "template";
   const connector = params.get("connector") || "dingtalk";
-  const auditRule = (["template", "consumer", "audit"] as const).includes(params.get("rule") as never) ? params.get("rule") as "template" | "consumer" | "audit" : "template";
+  const auditRule = params.get("rule") === "audit" ? "audit" : "template";
   const [payload, setPayload] = useState<RecordValue | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");

@@ -85,10 +85,8 @@ def render_runtime_context(
     invocation_facts: dict[str, object] | None = None,
     preview: bool = False,
 ) -> str:
-    from app.agent_cli import build_role_server
     from app.business_skills import bundled_business_skills_root
 
-    descriptors = {tool.name: tool for tool in build_role_server(role)._tool_manager.list_tools()}
     tools = declared_role_tools(role, route, command)
     facts = _redacted_facts(invocation_facts or {})
     cwd = str(working_directory or Path.cwd())
@@ -137,10 +135,7 @@ def render_runtime_context(
     lines.append("- 来源与普通工作入口（参数以本轮工具 schema 为准）：")
     for server, names in sorted(tools.items()):
         for name in names:
-            description = ""
-            if server == "agent_cli" and name in descriptors:
-                description = descriptors[name].description.strip().splitlines()[0]
-            lines.append(f"  - {server}.{name}" + (f"：{description}" if description else ""))
+            lines.append(f"  - {server}.{name}")
     if not any(tools.values()):
         lines.append("  - 本轮未声明来源读取入口；不能由个人安装或历史会话推断。")
     if role == "consumer":

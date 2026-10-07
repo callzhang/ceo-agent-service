@@ -463,7 +463,38 @@ describe("SettingsPage", () => {
     expect(overview).toHaveTextContent("后台 Audit");
     expect(overview).toHaveTextContent("Audit Rules");
     expect(overview).toHaveTextContent("Runtime Context");
+    expect(within(overview).getByRole("row", { name: /Developer Prompt/ })).toHaveTextContent("Consumer 与 Audit");
+    expect(within(overview).getByRole("row", { name: /User Prompt/ })).toHaveTextContent("{{task_context}}");
+    expect(within(overview).getByRole("row", { name: /服务角色与输出契约/ })).toHaveTextContent("只读");
+    expect(overview).toHaveTextContent("Workbench、WeChat 独立流程、纯服务命令与 Email 退订");
+    expect(overview).toHaveTextContent("CLI 自带的系统提示、工具定义和会话历史不包含在此预览中");
+    expect(overview).not.toHaveTextContent("对话模板入口");
+    expect(overview).not.toHaveTextContent("不直接套用这里的 Developer/User 模板");
     expect(overview.compareDocumentPosition(screen.getByRole("tablist", { name: "Prompt sections" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("explains the mandatory complete Consumer task slot before saving a User template", async () => {
+    getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { user_template: "Task:\n{{task_context}}" }, preview: { user: "Task:\nSynthetic task" }, preview_kind: "example", consumers: { user: ["consumer"] } }, meta: {} });
+    renderSettings("/settings?tab=prompts&prompt=user&view=template");
+    expect(await screen.findByRole("textbox", { name: "Template" })).toHaveValue("Task:\n{{task_context}}");
+    const panel = screen.getByRole("tabpanel", { name: "Template" });
+    expect(panel).toHaveTextContent("{{task_context}}");
+    expect(panel).toHaveTextContent("恰好一次");
+    expect(panel).toHaveTextContent("材料、阶段、历史回执、审核反馈与续接内容");
+    expect(panel).not.toHaveTextContent("{{conversation}}");
+    expect(panel).not.toHaveTextContent("{{principal}}");
+  });
+
+  it("labels the paired User rendering as a synthetic complete task example", async () => {
+    getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { user_template: "Task:\n{{task_context}}" }, preview: { user: "Task:\nSynthetic complete task" }, preview_kind: "example", consumers: { user: ["consumer"] } }, meta: {} });
+    renderSettings("/settings?tab=prompts&prompt=user&view=preview");
+    const panel = await screen.findByRole("tabpanel", { name: "Rendered preview" });
+    expect(panel).toHaveTextContent("合成的完整任务示例");
+    expect(panel).toHaveTextContent("不是实际运行输入");
+    expect(panel).toHaveTextContent("未保存的改动不会进入预览");
+    expect(panel).toHaveTextContent("Synthetic complete task");
+    expect(screen.getByText("Synthetic complete task", { selector: "mark" })).toBeInTheDocument();
+    expect(getPromptPreview).not.toHaveBeenCalled();
   });
 
   it("shows complete runtime input only on its separate tab", async () => {
@@ -514,13 +545,13 @@ describe("SettingsPage", () => {
     getSettings.mockImplementationOnce(() => new Promise((resolve) => { resolveRefresh = resolve; }));
     fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
     await waitFor(() => expect(getSettings).toHaveBeenCalledTimes(2));
-    getSettings.mockResolvedValueOnce({ item: { section: "audit-rules", fields: { template: "Audit rules" }, preview: { consumer: "Consumer rules" } }, meta: {} });
+    getSettings.mockResolvedValueOnce({ item: { section: "audit-rules", fields: { template: "Audit rules" }, preview: { audit: "Audit rules" } }, meta: {} });
     await user.click(screen.getByRole("link", { name: "Audit Rules" }));
-    await user.click(screen.getByRole("tab", { name: "Consumer" }));
+    await user.click(screen.getByRole("tab", { name: "Audit" }));
     await user.click(screen.getByRole("tab", { name: "Rendered preview" }));
-    expect(await screen.findByRole("tabpanel", { name: "Consumer rendered preview" })).toHaveTextContent("Consumer rules");
+    expect(await screen.findByRole("tabpanel", { name: "Audit rendered preview" })).toHaveTextContent("Audit rules");
     await act(async () => { resolveRefresh({ item: { section: "prompts", fields: { developer_template: "New" }, preview: { developer: "New" } }, meta: {} }); });
-    await waitFor(() => expect(screen.getByRole("tabpanel", { name: "Consumer rendered preview" })).toHaveTextContent("Consumer rules"));
+    await waitFor(() => expect(screen.getByRole("tabpanel", { name: "Audit rendered preview" })).toHaveTextContent("Audit rules"));
   });
 
   it("edits the distilled work profile from Prompts and shows its runtime injection", async () => {
@@ -552,16 +583,16 @@ describe("SettingsPage", () => {
         section: "audit-rules",
         fields: { template: "Escalate to {{principal}} only when needed." },
         preview: {
-          consumer: "Consumer wrapper\n\nEscalate to Alex only when needed.\n\nConsumer footer",
+          audit: "Audit wrapper\n\nEscalate to Alex only when needed.\n\nAudit footer",
         },
       },
       meta: { snapshot_at: "2026-08-29T00:00:00Z" },
     });
-    renderSettings("/settings?tab=audit-rules&rule=consumer&view=preview");
+    renderSettings("/settings?tab=audit-rules&rule=audit&view=preview");
 
     expect(await screen.findByText("Alex", { selector: "mark" })).toBeInTheDocument();
-    expect(screen.getByRole("tabpanel", { name: "Consumer rendered preview" })).toHaveTextContent("Consumer wrapper");
-    expect(screen.getByRole("tabpanel", { name: "Consumer rendered preview" })).toHaveTextContent("Consumer footer");
+    expect(screen.getByRole("tabpanel", { name: "Audit rendered preview" })).toHaveTextContent("Audit wrapper");
+    expect(screen.getByRole("tabpanel", { name: "Audit rendered preview" })).toHaveTextContent("Audit footer");
   });
 
   it("keeps audit rule selection independent from the template or preview view", async () => {
@@ -571,7 +602,6 @@ describe("SettingsPage", () => {
         fields: { template: "Escalate to {{principal}} only when needed." },
         preview: {
           template: "Escalate to Alex only when needed.",
-          consumer: "Escalate to Alex only when needed.\n\nConsumer wrapper",
           audit: "Escalate to Alex only when needed.\n\nAudit wrapper",
         },
       },
@@ -588,7 +618,9 @@ describe("SettingsPage", () => {
     expect(ruleTabs.getByRole("tab", { name: /^Template$/ })).toHaveAttribute("aria-selected", "true");
     expect(viewTabs.getByRole("tab", { name: /^Template$/ })).toHaveAttribute("aria-selected", "false");
     expect(viewTabs.getByRole("tab", { name: "Rendered preview" })).toHaveAttribute("aria-selected", "true");
-    expect(ruleTabs.getByRole("tab", { name: /^Consumer$/ })).toHaveAttribute("href", "/settings?tab=audit-rules&rule=consumer&view=preview");
+    expect(ruleTabs.queryByRole("tab", { name: /^Consumer$/ })).not.toBeInTheDocument();
+    expect(ruleTabs.getByRole("tab", { name: /^Audit$/ })).toHaveAttribute("href", "/settings?tab=audit-rules&rule=audit&view=preview");
+    expect(screen.getByText(/规则仅用于 Audit/)).toBeInTheDocument();
 
     firstRender.unmount();
     getSettings.mockResolvedValueOnce({
@@ -599,15 +631,15 @@ describe("SettingsPage", () => {
       },
       meta: { snapshot_at: "2026-08-29T00:00:00Z" },
     });
-    renderSettings("/settings?tab=audit-rules&rule=consumer&view=template");
+    renderSettings("/settings?tab=audit-rules&rule=audit&view=template");
 
     expect(await screen.findByText("Escalate to {{principal}} only when needed.", { selector: "pre" })).toBeInTheDocument();
     expect(screen.getByText("当前 tab 使用同一份 Audit Rules template；切换到 Template tab 编辑。")).toBeInTheDocument();
-    const consumerRuleTabs = within(screen.getByRole("tablist", { name: "Audit Rule sections" }));
-    const consumerViewTabs = within(screen.getByRole("tablist", { name: "Audit Rule view" }));
-    expect(consumerRuleTabs.getByRole("tab", { name: /^Consumer$/ })).toHaveAttribute("aria-selected", "true");
-    expect(consumerViewTabs.getByRole("tab", { name: /^Template$/ })).toHaveAttribute("aria-selected", "true");
-    expect(consumerViewTabs.getByRole("tab", { name: "Rendered preview" })).toHaveAttribute("aria-selected", "false");
+    const auditRuleTabs = within(screen.getByRole("tablist", { name: "Audit Rule sections" }));
+    const auditViewTabs = within(screen.getByRole("tablist", { name: "Audit Rule view" }));
+    expect(auditRuleTabs.getByRole("tab", { name: /^Audit$/ })).toHaveAttribute("aria-selected", "true");
+    expect(auditViewTabs.getByRole("tab", { name: /^Template$/ })).toHaveAttribute("aria-selected", "true");
+    expect(auditViewTabs.getByRole("tab", { name: "Rendered preview" })).toHaveAttribute("aria-selected", "false");
   });
 
   it("shows the WeChat reply scope editor inline instead of linking away", async () => {

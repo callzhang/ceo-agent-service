@@ -3,20 +3,16 @@ from pathlib import Path
 
 import pytest
 
-import app.codex_runner as codex_runner_module
 from app.codex_decision import CodexDecisionRunner
 from app.codex_runner import (
     AGENT_ENVELOPE_SCHEMA_PATH,
     CODEX_DECISION_SCHEMA_PATH,
     CodexRunner,
-    codex_developer_instructions,
     codex_model_config_options,
     memory_connector_config_issue,
 )
-from app.consumer_agent import CORE_DYNAMIC_SKILL_BODY
-from app.dingtalk_models import CodexAction, CodexDecision
+from app.dingtalk_models import CodexAction
 from app.dws_client import DWS_AGENT_CODE_ENV
-from tests.prompt_structure import validate_prompt_structure
 
 
 @pytest.fixture(autouse=True)
@@ -294,15 +290,42 @@ def test_codex_model_options_without_arguments_keep_environment_defaults(monkeyp
     ]
 
 
-def test_preserving_native_instructions_does_not_read_workbench_prompt(
+@pytest.mark.parametrize("session_id", [None, "existing-session"])
+def test_omitted_developer_instructions_do_not_read_business_template(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, session_id: str | None
+):
+    def unexpected_prompt_read(*_args, **_kwargs) -> str:
+        raise AssertionError("a native runner must not read the business template")
+
+    monkeypatch.setattr("app.developer_prompt.read_developer_prompt_template", unexpected_prompt_read)
+    command = CodexRunner(workspace=tmp_path).build_command(
+        prompt="hello", session_id=session_id, developer_instructions=None,
+    )
+    assert _developer_instructions_arg(command) == 'developer_instructions=""'
+
+
+def test_explicit_developer_instructions_are_preserved_without_business_rendering(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    def unexpected_prompt_read() -> str:
-        raise AssertionError("native instruction mode must not read Workbench prompt")
+    def unexpected_prompt_read(*_args, **_kwargs) -> str:
+        raise AssertionError("explicit role instructions must not read the business template")
+
+    monkeypatch.setattr("app.developer_prompt.read_developer_prompt_template", unexpected_prompt_read)
+    instructions = 'Role input\nLiteral {{principal}} and "schema"'
+    command = CodexRunner(workspace=tmp_path).build_command(
+        prompt="task", session_id=None, developer_instructions=instructions,
+    )
+    assert json.loads(_developer_instructions_arg(command).partition("=")[2]) == instructions
+
+
+def test_preserving_native_instructions_does_not_read_business_template(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    def unexpected_prompt_read(*_args, **_kwargs) -> str:
+        raise AssertionError("native instruction mode must not read business prompt")
 
     monkeypatch.setattr(
-        codex_runner_module,
-        "codex_developer_instructions",
+        "app.developer_prompt.read_developer_prompt_template",
         unexpected_prompt_read,
     )
 
@@ -362,14 +385,6 @@ def test_codex_command_does_not_copy_principal_mcp_configuration(
     assert not any("EXA_API_KEY" in item for item in command)
     assert not any("secret-key" in item for item in command)
     assert not any("mcp_servers." in item for item in command)
-
-
-def test_codex_developer_instructions_classify_dws_login_as_tool_issue():
-    instructions = codex_developer_instructions()
-
-    assert "do not perform login or credential repair" in instructions
-    assert "Dependency Authentication" in instructions
-    assert "An unavailable Memory dependency never triggers login" in instructions
 
 
 def test_codex_runner_blocks_reply_when_only_dws_material_read_fails(tmp_path: Path):
@@ -445,37 +460,6 @@ def test_codex_runner_blocks_reply_when_only_dws_material_read_fails(tmp_path: P
     assert decision.reason.startswith("dws_transient_dependency_unavailable:")
     assert decision.reply_text == ""
     assert len(runner.last_audit_tool_events) == 2
-
-
-def test_codex_developer_instructions_leave_read_options_to_operation_skills():
-    instructions = codex_developer_instructions()
-
-    assert "--timeout 900" not in instructions
-    assert CORE_DYNAMIC_SKILL_BODY in instructions
-    assert instructions.count("[dynamic-skill]") == 1
-
-
-def test_codex_composed_prompt_keeps_runtime_invariants_not_domain_workflows():
-    instructions = codex_developer_instructions()
-
-    validate_prompt_structure(
-        instructions,
-        contract_models=(("Pydantic Wire/Result Contract", CodexDecision),),
-        dynamic_skill_body=CORE_DYNAMIC_SKILL_BODY,
-        audit_rules=None,
-        context_facts=None,
-        size_limit=5_000,
-    )
-
-
-def test_codex_developer_instructions_leave_interview_workflow_to_skills():
-    instructions = codex_developer_instructions()
-
-    assert "Xiaoqing interview material reading" not in instructions
-    assert "https://interview.hr.startask.net/candidates/" not in instructions
-    assert "search_candidates" not in instructions
-    assert "xiaoqing_interview" not in instructions
-    assert CORE_DYNAMIC_SKILL_BODY in instructions
 
 
 def test_codex_command_does_not_use_agent_envelope_schema_by_default(tmp_path: Path):
@@ -653,7 +637,7 @@ def test_codex_command_treats_native_memory_oauth_as_runtime_owned(
 
     assert not any("mcp_servers.memory_connector" in item for item in command)
     assert memory_connector_config_issue() == ""
-    assert "unavailable Memory dependency never triggers login" in developer_arg
+    assert developer_arg == 'developer_instructions=""'
 
 
 def test_codex_command_does_not_auto_fallback_to_configured_profile(
@@ -785,38 +769,14 @@ def test_codex_runner_does_not_forward_dws_oauth_override_env(
     assert "DINGTALK_APP_SECRET" not in env
 
 
-def test_codex_developer_instructions_fold_dependency_guidance_into_invariant_eight():
-    instructions = codex_developer_instructions()
-
-    assert "Runtime dependency handling" not in instructions
-    assert "8. [dependency_auth] Dependency Authentication:" in instructions
-
-
-def test_codex_developer_instructions_delegate_operation_syntax_to_skills():
-    instructions = codex_developer_instructions()
-
-    assert "DingTalk mail handling" not in instructions
-    assert "mailbox list" not in instructions
-    assert "mail message search" not in instructions
-    assert "mail message get" not in instructions
-    assert "dws doc info --node" not in instructions
-    assert "dws doc read --node" not in instructions
-    assert "dws minutes get info --id" not in instructions
-    assert "Use the exact read command supplied in the task context" not in instructions
-    assert CORE_DYNAMIC_SKILL_BODY in instructions
-    assert "External Secrecy" in instructions
-
-
 def test_builds_new_thread_command(tmp_path: Path):
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
-    command = runner.build_command(prompt="hello", session_id=None)
+    command = runner.build_command(prompt="hello", session_id=None, developer_instructions="Explicit role instructions")
 
     developer_arg = _developer_instructions_arg(command)
-    assert "Consumer Agent A gathers facts and proposes a typed candidate" in developer_arg
-    assert "Pydantic output contract" in developer_arg
+    assert json.loads(developer_arg.partition("=")[2]) == "Explicit role instructions"
     assert "当前待处理消息" not in developer_arg
-    assert "\\n" in developer_arg
     assert "memory_write" not in developer_arg
     assert "memory_recall" not in developer_arg
 
@@ -849,11 +809,10 @@ def test_builds_new_thread_command(tmp_path: Path):
 def test_builds_resume_command(tmp_path: Path):
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
-    command = runner.build_command(prompt="next", session_id="abc")
+    command = runner.build_command(prompt="next", session_id="abc", developer_instructions="Explicit role instructions")
 
     developer_arg = _developer_instructions_arg(command)
-    assert "Consumer Agent A gathers facts and proposes a typed candidate" in developer_arg
-    assert "Pydantic output contract" in developer_arg
+    assert json.loads(developer_arg.partition("=")[2]) == "Explicit role instructions"
     assert "当前待处理消息" not in developer_arg
 
     assert _without_developer_instructions(command) == [
@@ -918,58 +877,6 @@ def test_builds_resume_command_with_images(tmp_path: Path):
         "abc",
         "-",
     ]
-
-
-def test_codex_developer_instructions_hold_thread_prompt_not_turn_message(monkeypatch):
-    monkeypatch.setenv(
-        "CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY",
-        "星尘数据的CEO，负责算法部、售前部、市场部、HR部的工作。",
-    )
-    instructions = codex_developer_instructions()
-
-    assert instructions.startswith("## Runtime Invariants\n")
-    assert "Consumer Agent A gathers facts and proposes a typed candidate" in instructions
-    assert "independently selects and reads every applicable" in instructions
-    assert "星尘数据的CEO，负责算法部、售前部、市场部、HR部的工作。" not in instructions
-    assert "当前待处理消息" not in instructions
-
-
-def test_codex_developer_instructions_do_not_always_load_work_profile(
-    monkeypatch,
-    tmp_path,
-):
-    profile = tmp_path / "work_profile.md"
-    profile.write_text(
-        "# Work Profile\n\n"
-        "## Core Operating Loop\n\n"
-        "- Keep the loop tight.\n\n"
-        "心智模型、决策启发式、表达DNA\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv(
-        "CEO_WORK_PROFILE_PATH",
-        str(profile),
-    )
-
-    instructions = codex_developer_instructions()
-
-    assert "明哥 工作人格 Profile" not in instructions
-    assert "# Work Profile" not in instructions
-    assert "Core Operating Loop" not in instructions
-    assert "心智模型、决策启发式、表达DNA" not in instructions
-
-
-def test_codex_developer_instructions_uses_template_variable_values():
-    instructions = codex_developer_instructions()
-
-    assert (
-        "1. [role_boundary] Role Boundary: Consumer Agent A gathers facts and "
-        "proposes a typed candidate, including current-instance human questions."
-    ) in instructions
-    assert "Audit Agent B reviews the whole candidate without executing its controlled actions." in instructions
-    assert "System code executes the exact persisted approved plan or selected reviewed option." in instructions
-    assert "executes an accepted candidate" not in instructions
-    assert "feedback_provided" not in instructions
 
 
 def test_codex_decision_schema_file_exists():
