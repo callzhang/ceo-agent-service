@@ -1135,6 +1135,15 @@ Task 7 的新 follow-up 只从链接来源信号的精确群/单聊目标与明�
 
 Derek 2026-09-25 定的规则。Task Agent 用同一个长期 session 是为了不丢上下文，所以**不禁止它用之前的证据**，也不禁止它通过 `memory_recall` 顺着 provenance 找到原始来源；但每条来源都要能回溯到出处。
 
+Console 的来源读接口分两步保持正文唯一：
+`GET /api/console/tasks/projects/{project_id}/evidence?page=N&page_size=M` 只分页返回该 Project
+保存的 `BusinessProjectEvidence` 引用，沿用 Store 的“最新窗口优先、窗口内既有顺序”，并返回
+total/has_more/next_cursor；`GET /api/console/tasks/signals/{signal_id}` 再按精确 ID 返回完整保存的
+`BusinessTaskSignal` 和不可变 source document 原文。长 JSON/原始正文不使用详情页的 2048 字符
+投影，也不经过 display normalization。未知 Project/Signal 返回 404，已存在但无证据的 Project
+返回空列表 200；读取在同一个 `read_snapshot` 中完成，不更新 Task、Project、Signal 或证据关系。
+Project 详情仍只展示原有 20 条有界来源并保留 context 引文 pinned 语义。
+
 **每个决定引用什么**
 
 | 字段 | 含义 |

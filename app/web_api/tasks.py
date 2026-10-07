@@ -22,6 +22,7 @@ from app.task_semantic_models import (
     BusinessTaskDateEvidence,
     BusinessTaskEvent,
     BusinessTaskRelation,
+    BusinessProjectEvidence,
     BusinessTaskSignal,
     ProjectContext,
     ProjectCrmCustomerCandidate,
@@ -851,6 +852,14 @@ class ConsoleBusinessProjectDetailEnvelope(ApiItemEnvelope):
     item: ConsoleBusinessProjectDetail
 
 
+class ConsoleBusinessProjectEvidenceListEnvelope(ApiListEnvelope):
+    items: list[BusinessProjectEvidence] = Field(default_factory=list)
+
+
+class ConsoleBusinessTaskSignalDetailEnvelope(ApiItemEnvelope):
+    item: BusinessTaskSignal
+
+
 def _page(items: list[Any], *, page: int, page_size: int) -> tuple[list[Any], ApiListMeta]:
     total = len(items)
     start = (page - 1) * page_size
@@ -1207,4 +1216,36 @@ def business_project_detail(store: Any, project_id: int) -> ConsoleBusinessProje
         suggestions=[ConsoleBusinessTaskSummary.model_validate(_task_summary_payload(store, task, anchors)) for task in tasks if task.origin == "agent_suggestion" and task.stage.value == "candidate"],
         evidence_signals=[signal for proof in evidence if (signal := store.get_business_task_signal(proof.signal_id)) is not None],
         context_revisions=list(revisions), evidence_meta=metadata(evidence_count, len(evidence)), context_revision_meta=metadata(revision_count, len(revisions)),
+    )
+
+
+def business_project_evidence_response(
+    store: Any, project_id: int, *, page: int, page_size: int
+) -> ConsoleBusinessProjectEvidenceListEnvelope | None:
+    if store.get_business_project(project_id) is None:
+        return None
+    offset = (page - 1) * page_size
+    evidence = store.list_business_project_evidence(
+        project_id,
+        limit=page_size,
+        offset=offset,
+    )
+    with store._connect() as db:
+        total = int(
+            db.execute(
+                "select count(*) from business_project_evidence where project_id=?",
+                (project_id,),
+            ).fetchone()[0]
+        )
+    has_more = offset + len(evidence) < total
+    return ConsoleBusinessProjectEvidenceListEnvelope(
+        items=list(evidence),
+        meta=ApiListMeta(
+            snapshot_at=snapshot_at(),
+            page=page,
+            page_size=page_size,
+            total=total,
+            next_cursor=str(page + 1) if has_more else "",
+            has_more=has_more,
+        ),
     )
