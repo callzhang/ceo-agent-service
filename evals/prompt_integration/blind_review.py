@@ -7,6 +7,25 @@ from pathlib import Path
 import random
 
 
+def common_system_action_contract(baseline, candidate):
+    sections = []
+    for arm, report in (("baseline", baseline), ("candidate", candidate)):
+        for row in report["arms"][arm]["inputs"]:
+            developer = row["developer"]
+            first = "## System Action Contracts"
+            following = "## Pydantic Wire Contract"
+            if developer.count(first) != 1 or developer.count(following) != 1:
+                raise ValueError("actual Developer contract section missing or repeated")
+            start = developer.index(first)
+            end = developer.index(following)
+            if end <= start:
+                raise ValueError("actual Developer contract section order changed")
+            sections.append(developer[start:end])
+    if not sections or len(set(sections)) != 1:
+        raise ValueError("System Action Contracts differ between actual role inputs")
+    return sections[0]
+
+
 def build_packet(baseline, candidate, manifest, *, namespace=""):
     manifest_cases_sha = sha256(
         json.dumps(manifest["cases"], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
@@ -27,10 +46,13 @@ def build_packet(baseline, candidate, manifest, *, namespace=""):
     for rows in (baseline_rows, candidate_rows):
         if len(rows) != len(expected) or {(r["case_id"], r["role"]) for r in rows} != expected:
             raise ValueError("complete manifest cases and roles required for independent review")
+    shared_contract = common_system_action_contract(baseline, candidate)
     rng = random.Random(20261006)
     packet = {
         "cases_sha256": baseline["cases_sha256"],
         "settings": baseline["settings"],
+        "shared_system_action_contract": shared_contract,
+        "shared_system_action_contract_sha256": sha256(shared_contract.encode()).hexdigest(),
         "review_contract": "Score facts, useful deliverable, continuation, applicable timezone and independent Audit from0wrong/1partial/2complete. Never award quality from size alone; inspect all disagreements. Expected outcome screening labels are not truth.",
         "cases": [],
     }

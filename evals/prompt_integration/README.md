@@ -91,6 +91,16 @@ appends missing roles. It records the resume harness SHA and prefix length in
 the existing private report. A native failure is not resumed as if it were a
 completed model result.
 
+When an immutable candidate produces exactly the saved baseline Consumer
+inputs, `--run --arms candidate --reuse-consumer-report BASELINE_NATIVE_REPORT`
+can reuse those 20 native Consumer results. The harness checks the completed
+frozen baseline ref, cases, settings and assembled Consumer inputs; source
+native JSON and strict schema must be valid with zero tool events. Each reused
+result records its source report/input SHA. Reports and compact summaries count
+reused evidence separately from new native calls. Original events, usage and
+elapsed time remain historical evidence, not new candidate provider cost or
+latency. Audit still runs natively.
+
 ## Independent review
 
 Automatic screening measures strict role schema, supported outcome, Consumer
@@ -149,6 +159,9 @@ Use a unique `--namespace` for each new review packet so its opaque output IDs
 cannot be confused with a prior packet's key. The same packet builder accepts
 `--manifest evals/prompt_integration/supplement.v1.json` for the four-case
 matching-source and profile comparisons; each requires its own output and key.
+The packet includes one common System Action Contracts section only after
+checking that exact section in every actual baseline/candidate Consumer/Audit
+Developer input. Arm-specific Developer text remains out of the packet.
 
 The20 frozen cases use a task Skill override rather than the default catalog.
 Their source bindings preserve complete synthetic facts but do not equal the

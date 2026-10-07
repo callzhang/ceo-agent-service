@@ -9,6 +9,7 @@ separate from blinded independent semantic review; size never earns a pass.
 from __future__ import annotations
 import argparse
 from collections import Counter
+from copy import deepcopy
 from hashlib import sha256
 import json
 import os
@@ -266,12 +267,70 @@ def resume_position(previous, prepared, arm, rows):
     return len(results)
 
 
+def reusable_consumer_results(source, source_sha256, prepared, rows):
+    """Attach source provenance only after all saved Consumer inputs match."""
+    if (
+        not source.get("completed")
+        or source.get("mode") != "native_synthetic_tool_free"
+        or source.get("refs") != {"baseline": BASELINE}
+        or source.get("cases_sha256") != prepared["cases_sha256"]
+        or source.get("manifest_sha256") != prepared["manifest_sha256"]
+        or source.get("settings") != prepared["settings"]
+    ):
+        raise ValueError("Consumer source report provenance differs")
+    source_arm = source["arms"]["baseline"]
+    source_inputs = source_arm["inputs"]
+    source_results = source_arm["results"]
+    if (
+        len(source_inputs) != len(rows)
+        or len(source_results) != len(rows)
+        or any(
+            not (
+                (old["case_id"], old["role"])
+                == (new["case_id"], new["role"])
+                == (result["case_id"], result["role"])
+            )
+            for old, new, result in zip(source_inputs, rows, source_results)
+        )
+    ):
+        raise ValueError("Consumer source report cases or role order differ")
+    reusable = {}
+    for old, new, result in zip(source_inputs, rows, source_results):
+        if new["role"] != "consumer":
+            continue
+        # Configuration fingerprints did not exist on the baseline ref. Every
+        # other assembled field, including the actual model wire text, must match.
+        old_input = {k: v for k, v in old.items() if k != "configuration_fingerprints"}
+        new_input = {k: v for k, v in new.items() if k != "configuration_fingerprints"}
+        if old_input != new_input:
+            raise ValueError(f"Consumer input differs: {new['case_id']}")
+        if not result["native"]["ok"] or not result["normalized"]["ok"] or result["native"]["tool_item_types"]:
+            raise ValueError(f"Consumer source native evidence invalid: {new['case_id']}")
+        reused = deepcopy(result)
+        reused["evidence_origin"] = {
+            "kind": "reused_baseline_native",
+            "baseline_ref": BASELINE,
+            "source_report_sha256": source_sha256,
+            "source_input_sha256": fingerprint(old),
+            "candidate_input_sha256": fingerprint(new),
+            "model_input_sha256": {
+                field: sha256(new[field].encode()).hexdigest()
+                for field in ("developer", "task", "runtime_context")
+            },
+        }
+        reusable[new["case_id"]] = reused
+    if len(reusable) * 2 != len(rows):
+        raise ValueError("Consumer source report lacks complete cases")
+    return reusable
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate-ref")
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--run", action="store_true")
     parser.add_argument("--resume", action="store_true", help="Append missing roles to an interrupted exact-input report")
+    parser.add_argument("--reuse-consumer-report", type=Path, help="Reuse exact saved baseline Consumer model evidence")
     parser.add_argument("--probe", action="store_true")
     parser.add_argument("--cases", help="Comma-separated frozen IDs; default all 20")
     parser.add_argument(
@@ -282,6 +341,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.resume and (not args.run or args.cases or args.arms == "both"):
         parser.error("--resume requires --run, one arm, and the complete frozen corpus")
+    if args.reuse_consumer_report and (not args.run or args.cases or args.arms != "candidate"):
+        parser.error("--reuse-consumer-report requires --run, candidate arm, and the complete frozen corpus")
     if args.output is None:
         mode = "probe" if args.probe else ("native" if args.run else "size")
         args.output = args.artifact_root / f"{args.arms}-{mode}.v2.json"
@@ -351,15 +412,32 @@ def main(argv=None):
                     task_sha256=sha256(row["task"].encode()).hexdigest(),
                 )
                 prepared_arm["inputs"].append(row)
+            reusable = {}
+            source_sha256 = None
+            if args.reuse_consumer_report:
+                source_bytes = args.reuse_consumer_report.read_bytes()
+                source_sha256 = sha256(source_bytes).hexdigest()
+                reusable = reusable_consumer_results(
+                    json.loads(source_bytes), source_sha256, report, rows
+                )
             if args.resume:
                 previous = json.loads(args.output.read_text())
                 start = resume_position(previous, {**report, "arms": {arm: prepared_arm}}, arm, rows)
                 report = previous
                 report["resume_harness_sha256"] = sha256(Path(__file__).read_bytes()).hexdigest()
                 report["resumed_after_roles"] = start
+                if args.reuse_consumer_report:
+                    if report.get("model_evidence", {}).get("source_report_sha256") != source_sha256:
+                        raise ValueError("resume Consumer source report changed")
             else:
                 start = 0
                 report["arms"][arm] = prepared_arm
+                if args.reuse_consumer_report:
+                    report["model_evidence"] = {
+                        "source_report_sha256": source_sha256,
+                        "reused_model_evidence": 0,
+                        "new_native_calls": 0,
+                    }
                 save(args.output, report)
             if args.run:
                 workdir = Path(raw) / "native"
@@ -372,7 +450,16 @@ def main(argv=None):
                     case = next(
                         c for c in manifest["cases"] if c["id"] == row["case_id"]
                     )
+                    if row["role"] == "consumer" and reusable:
+                        result = reusable[row["case_id"]]
+                        report["arms"][arm]["results"].append(result)
+                        report["model_evidence"]["reused_model_evidence"] += 1
+                        save(args.output, report)
+                        print(canonical({"arm": arm, "case_id": row["case_id"], "role": row["role"], "evidence": "reused_baseline_native"}), flush=True)
+                        continue
                     native = run_native(row, settings, workdir)
+                    if args.reuse_consumer_report:
+                        report["model_evidence"]["new_native_calls"] += 1
                     normalized = (
                         normalize_role_result(root, row["role"], native["result"])
                         if native["ok"]

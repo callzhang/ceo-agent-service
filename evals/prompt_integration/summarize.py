@@ -11,6 +11,7 @@ def summarize(report):
         output[arm] = {"size_summary": data["size_summary"], "roles": {}}
         for role in ("consumer", "audit"):
             rows = [row for row in data["results"] if row["role"] == role]
+            reused = sum(row.get("evidence_origin", {}).get("kind") == "reused_baseline_native" for row in rows)
             usage = [value for row in rows for value in row["native"].get("usage", [])]
             input_tokens = [
                 value["input_tokens"] for value in usage if "input_tokens" in value
@@ -21,6 +22,8 @@ def summarize(report):
             elapsed = [row["native"]["elapsed_seconds"] for row in rows]
             output[arm]["roles"][role] = {
                 "invocations": len(rows),
+                "new_native_calls": len(rows) - reused,
+                "reused_model_evidence": reused,
                 "native_json_valid": sum(row["native"]["ok"] for row in rows),
                 "strict_schema_valid": sum(row["normalized"]["ok"] for row in rows),
                 "outcome_and_binding_screen_passed": sum(
@@ -35,6 +38,7 @@ def summarize(report):
                     if row["screen"]["errors"]
                 ],
                 "provider_usage_events": len(usage),
+                "provider_usage_includes_reused_history": reused > 0,
                 "provider_input_tokens_total": sum(input_tokens)
                 if input_tokens
                 else None,
@@ -45,15 +49,19 @@ def summarize(report):
                 "elapsed_seconds_mean": sum(elapsed) / len(elapsed)
                 if elapsed
                 else None,
+                "elapsed_seconds_includes_reused_history": reused > 0,
                 "semantic_quality": "pending independent exact-output review",
             }
-    return {
+    result = {
         "completed": report["completed"],
         "refs": report["refs"],
         "settings": report["settings"],
         "cases_sha256": report["cases_sha256"],
         "arms": output,
     }
+    if "model_evidence" in report:
+        result["model_evidence"] = report["model_evidence"]
+    return result
 
 
 if __name__ == "__main__":

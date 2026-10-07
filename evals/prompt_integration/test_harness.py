@@ -146,7 +146,10 @@ def test_blind_packet_supports_four_case_supplement_and_distinct_keys():
     def report(arm):
         return {
             "completed": True, "cases_sha256": cases_sha, "settings": {"model": "fixed"},
-            "arms": {arm: {"results": [
+            "arms": {arm: {"inputs": [
+                {"case_id": "one", "role": role, "developer": "## System Action Contracts\nshared\n## Pydantic Wire Contract\n"}
+                for role in ("consumer", "audit")
+            ], "results": [
                 {"case_id": "one", "role": role, "normalized": {"ok": True, "result": {}}, "native": {"raw": "{}"}}
                 for role in ("consumer", "audit")
             ]}},
@@ -154,9 +157,79 @@ def test_blind_packet_supports_four_case_supplement_and_distinct_keys():
     first, key_first = build_packet(report("baseline"), report("candidate"), manifest, namespace="matching")
     second, key_second = build_packet(report("baseline"), report("candidate"), manifest, namespace="profile")
     assert len(first["cases"]) == 1
+    assert first["shared_system_action_contract"] == "## System Action Contracts\nshared\n"
     assert len(key_first) == 4
     assert set(key_first).isdisjoint(key_second)
     incomplete = report("candidate")
     incomplete["arms"]["candidate"]["results"].pop()
     with pytest.raises(ValueError, match="complete manifest"):
         build_packet(report("baseline"), incomplete, manifest)
+    changed_contract = report("candidate")
+    changed_contract["arms"]["candidate"]["inputs"][0]["developer"] = "## System Action Contracts\ndifferent\n## Pydantic Wire Contract\n"
+    with pytest.raises(ValueError, match="differ between actual role inputs"):
+        build_packet(report("baseline"), changed_contract, manifest)
+
+
+def test_reuse_consumer_evidence_requires_exact_input_and_valid_source():
+    def row(role, fingerprint_value):
+        return {
+            "case_id": "one", "role": role, "developer": "same", "task": "task",
+            "runtime_context": "runtime", "source_bindings": [], "candidate_digest": None,
+            "configuration_fingerprints": fingerprint_value,
+        }
+    old_rows = [row("consumer", None), row("audit", None)]
+    new_rows = [row("consumer", {"developer_template": "sha"}), row("audit", {"developer_template": "sha"})]
+    source = {
+        "completed": True, "mode": "native_synthetic_tool_free",
+        "refs": {"baseline": eval_module.BASELINE}, "cases_sha256": "cases",
+        "manifest_sha256": "manifest", "settings": {"model": "fixed"},
+        "arms": {"baseline": {"inputs": old_rows, "results": [
+            {"case_id": "one", "role": role,
+             "native": {"ok": True, "tool_item_types": [], "result": {}},
+             "normalized": {"ok": True}}
+            for role in ("consumer", "audit")
+        ]}},
+    }
+    prepared = {"cases_sha256": "cases", "manifest_sha256": "manifest", "settings": {"model": "fixed"}}
+    reused = eval_module.reusable_consumer_results(source, "source-sha", prepared, new_rows)
+    assert list(reused) == ["one"]
+    assert reused["one"]["evidence_origin"]["source_report_sha256"] == "source-sha"
+    assert "evidence_origin" not in source["arms"]["baseline"]["results"][0]
+    changed = json.loads(json.dumps(new_rows))
+    changed[0]["developer"] = "different"
+    with pytest.raises(ValueError, match="Consumer input differs"):
+        eval_module.reusable_consumer_results(source, "source-sha", prepared, changed)
+    invalid = json.loads(json.dumps(source))
+    invalid["arms"]["baseline"]["results"][0]["native"]["tool_item_types"] = ["function_call"]
+    with pytest.raises(ValueError, match="native evidence invalid"):
+        eval_module.reusable_consumer_results(invalid, "source-sha", prepared, new_rows)
+    wrong_settings = dict(prepared, settings={"model": "changed"})
+    with pytest.raises(ValueError, match="provenance differs"):
+        eval_module.reusable_consumer_results(source, "source-sha", wrong_settings, new_rows)
+
+
+def test_summary_counts_reused_evidence_separately_from_new_calls():
+    from evals.prompt_integration.summarize import summarize
+
+    def result(role, reused):
+        value = {
+            "role": role, "case_id": "one",
+            "native": {"ok": True, "usage": [{"input_tokens": 2, "output_tokens": 1}], "elapsed_seconds": 3.0, "tool_item_types": []},
+            "normalized": {"ok": True},
+            "screen": {"contract_and_binding_screen_passed": True, "errors": []},
+        }
+        if reused:
+            value["evidence_origin"] = {"kind": "reused_baseline_native"}
+        return value
+
+    report = {
+        "completed": True, "refs": {"candidate": "ref"}, "settings": {}, "cases_sha256": "cases",
+        "model_evidence": {"new_native_calls": 1, "reused_model_evidence": 1},
+        "arms": {"candidate": {"size_summary": {}, "results": [result("consumer", True), result("audit", False)]}},
+    }
+    summary = summarize(report)
+    assert summary["model_evidence"] == report["model_evidence"]
+    assert summary["arms"]["candidate"]["roles"]["consumer"]["new_native_calls"] == 0
+    assert summary["arms"]["candidate"]["roles"]["consumer"]["reused_model_evidence"] == 1
+    assert summary["arms"]["candidate"]["roles"]["consumer"]["provider_usage_includes_reused_history"]
+    assert summary["arms"]["candidate"]["roles"]["audit"]["new_native_calls"] == 1
