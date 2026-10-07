@@ -1,5 +1,22 @@
 # Project-centered work validation
 
+## 页面修复发布检查点：2026-10-07 01:30 PDT
+
+仅 CSS/回归测试修复 `318ef1d6` 与文档 `8dd41d69` 已推送 origin/main；本轮重新
+运行四个前端相关文件 48 passed、TypeScript/Vite build 成功、diff check 通过。
+Task Agent/检索/Skill 与其架构说明候选仍未提交，未混入这次推送。
+
+标准 `python -m app.deploy` 终态退出 1：生产 checkout 的受管跟踪文件
+`data/prompts/developer_prompt.md` 存在本地变化，因此 **nothing was deployed**。
+该已安装文件 SHA 与 `ci/prompt-template-release.json` 的新 Developer SHA 完全一致，
+即 PR #19 的正式模板；没有覆盖、还原它或手动重启。已通知主 Agent 核对该受管
+配置的正式处理路径。不能把已推送代码或生产数据开发预览当成已上线。
+
+Quality run `37593760021` 已实际启动；本检查点仍运行 npm test，尚无通过结论。
+生产真实关注详情 `/tasks/attention/1` 的暗色 390×844 检查：document width=390，
+视觉可读；来源事实、Agent 判断、关联任务 0 分开展示。不是全部详情/主题矩阵的
+完成证据，列表长登记依据的修复仍需部署后实际验证。
+
 ## 当前结论：部分符合，整体业务验收未通过（2026-10-07 01:24 PDT）
 
 本节是当前状态；下方保留的历史检查点不表示今天的全部验收已完成。
