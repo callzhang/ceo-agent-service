@@ -34,6 +34,14 @@ action IDs, including legacy NULL values, are unchanged. An explicit join order 
 SQLite from starting with all processed classifications. Current ActionPlan,
 case-insensitive status, retry-window, ordering and limit rules are unchanged.
 
+Reply-task scheduled recovery uses the required partial expression index
+`idx_scheduled_task_runs_reply_execution`, keyed by the existing integer-cast
+execution link for `execution_kind='reply_task'`. It avoids scanning unrelated
+scheduled history while preserving the original CAST behavior, including legacy
+noncanonical link text. No channel or canonical-text restriction is added to
+that pre-existing recovery rule. Installation uses schema version/manifest
+migration after a verified quiet-deploy backup.
+
 本文档是 CEO Agent Service 当前运行机制与已批准生命周期政策的总览入口。除明确标注为
 “已批准的生命周期政策”的段落外，正文描述当前代码事实；政策段落是后续实现约束，不表示
 对应代码已经切换、部署或在生产启用。`docs/superpowers/` 下被新设计取代的历史 spec/plan

@@ -230,7 +230,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-08.1"
+STORE_SCHEMA_VERSION = "2026-10-08.2"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -381,6 +381,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_scheduled_task_runs_dispatch",
     "idx_scheduled_task_runs_claim",
     "idx_scheduled_task_runs_latest",
+    "idx_scheduled_task_runs_reply_execution",
     "idx_dispatcher_claim_leases_expiry",
     "idx_runtime_skill_bindings_config_order",
     "idx_runtime_skill_load_receipts_config",
@@ -2811,6 +2812,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     on scheduled_task_runs(dispatch_status, scheduled_for, id);
                 create index if not exists idx_scheduled_task_runs_latest
                     on scheduled_task_runs(scheduled_task_id, id desc);
+                create index if not exists idx_scheduled_task_runs_reply_execution
+                    on scheduled_task_runs(
+                        cast(execution_id as integer), scheduled_task_id, id
+                    )
+                    where execution_kind='reply_task';
                 create table if not exists dispatcher_claim_leases (
                     adapter_name text not null,
                     source_id text not null,
