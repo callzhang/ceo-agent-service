@@ -773,7 +773,9 @@ def test_damaged_duplicate_frozen_material_is_not_repaired_or_replaced(tmp_path)
         execution_generation=task.execution_generation,
     )._tool_manager.get_tool("read_task_skill").fn
 
-    with pytest.raises(ValueError, match="material is unavailable"):
+    with pytest.raises(
+        ValueError, match="scheduled execution Skill context is invalid"
+    ):
         read("managed-check")
 
 
