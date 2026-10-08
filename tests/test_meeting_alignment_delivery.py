@@ -274,8 +274,13 @@ def test_group_delivery_uses_first_candidate_and_real_mentions(tmp_path):
     assert result.message_text == dws.sent[0]["text"]
 
     changed = send_decision().model_copy(update={"final_message": "改写后的内容"})
+    with pytest.raises(MeetingDeliveryError, match="prepared meeting body"):
+        deliver_meeting_alignment(
+            changed, meeting_source(), dws, message_sender=sender,
+            delivery_key="meeting-alignment:minutes-1:job-1",
+        )
     replay = deliver_meeting_alignment(
-        changed,
+        send_decision(),
         meeting_source(),
         dws,
         message_sender=sender,
@@ -475,6 +480,32 @@ def test_conflicting_prepared_same_audience_body_fails_before_any_effect(tmp_pat
     sender.prepare(channel="dingtalk", delivery_key="conflict", body="Different immutable body")
     with pytest.raises(MeetingDeliveryError, match="prepared meeting body"):
         deliver_meeting_alignment(decision, meeting_source(), dws, message_sender=sender, delivery_key="conflict")
+    assert dws.sent == []
+
+
+@pytest.mark.parametrize("bad_action", ["primary", "sensitive"])
+def test_different_audience_recovery_rejects_old_disclosure_before_any_effect(tmp_path, bad_action):
+    dws = FakeDws()
+    sender = ServiceMessageSender(store=AutoReplyStore(tmp_path / "meeting.sqlite3"), dingtalk=dws)
+    payload = send_decision(target="direct", mention_names=[]).model_dump()
+    payload["audience_scope"] = "business"
+    payload["sensitive_private_message"] = {
+        "target": {"kind": "direct", "direct_user_id": "u-b", "title": "B", "conversation_id": "", "candidates": []},
+        "message": "RESTRICTED_TO_B", "reason": "Only B owns this issue",
+        "recipient_evidence": ["Verified responsibility and disclosure scope"],
+    }
+    decision = MeetingAlignmentDecision.model_validate(payload)
+    source = meeting_source()
+    key = "old-hr-merge"
+    if bad_action == "primary":
+        body = meeting_alignment_delivery.meeting_followup_message(
+            decision, source, final_message=f"{decision.final_message}\n\nRESTRICTED_TO_B"
+        )
+        sender.prepare(channel="dingtalk", delivery_key=key, body=body)
+    else:
+        sender.prepare(channel="dingtalk", delivery_key=f"{key}:sensitive", body="Unexpected private content")
+    with pytest.raises(MeetingDeliveryError, match="prepared meeting body"):
+        deliver_meeting_alignment(decision, source, dws, message_sender=sender, delivery_key=key)
     assert dws.sent == []
 
 

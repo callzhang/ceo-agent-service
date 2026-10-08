@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.dws_client import DwsError, DwsUserProfile
 from app.feedback_spike import extract_feedback_link_context, prepare_outgoing_reply_text
+from app.outbound_postfix import PreparedOutboundMessage
 from app.meeting_alignment_models import (
     DeliveryTarget,
     MeetingAlignmentDecision,
@@ -295,18 +296,29 @@ def deliver_meeting_alignment(
         body=message_text,
         original_text=source.summary,
     )
-    if same_private_audience and not _prepared_content_matches(prepared, message_text):
+    if not _prepared_content_matches(prepared, message_text):
         # Old split deliveries retain their immutable primary body and action key.
         ordinary_body = meeting_followup_message(
             decision, source, final_message=final_message
         )
-        if not _prepared_content_matches(prepared, ordinary_body):
+        if not same_private_audience or not _prepared_content_matches(prepared, ordinary_body):
             raise MeetingDeliveryError("prepared meeting body does not match the original split or merged content")
         same_private_audience = False
     if same_private_audience and message_sender.store.get_outbound_postfix(
         "dingtalk", f"{delivery_key}:sensitive"
     ) is not None:
         raise MeetingDeliveryError("merged primary conflicts with a prepared sensitive action")
+    sensitive_prepared = None
+    if private_message is not None and not same_private_audience:
+        sensitive_body = meeting_followup_message(
+            decision, source, final_message=private_message.message
+        )
+        sensitive_prepared = message_sender.prepare(
+            channel="dingtalk", delivery_key=f"{delivery_key}:sensitive",
+            body=sensitive_body, original_text=source.summary,
+        )
+        if not _prepared_content_matches(sensitive_prepared, sensitive_body):
+            raise MeetingDeliveryError("prepared meeting body does not match sensitive content")
     message_text = prepared.final_body
     message_title = f"会议跟进｜{source.title}"
     try:
@@ -340,7 +352,7 @@ def deliver_meeting_alignment(
             decision,
             source,
             message_sender=message_sender,
-            delivery_key=f"{delivery_key}:sensitive",
+            prepared=sensitive_prepared,
         )
     elif decision.sensitive_private_message is not None:
         sensitive_private_merged = True
@@ -357,7 +369,7 @@ def deliver_meeting_alignment(
     )
 
 
-def _prepared_content_matches(prepared, body: str) -> bool:
+def _prepared_content_matches(prepared: PreparedOutboundMessage, body: str) -> bool:
     context = extract_feedback_link_context(prepared.final_body)
     expected = prepare_outgoing_reply_text(
         reply_text=body,
@@ -384,7 +396,7 @@ def _deliver_sensitive_private_message(
     source: MeetingSource,
     *,
     message_sender: ServiceMessageSender,
-    delivery_key: str,
+    prepared: PreparedOutboundMessage | None,
 ) -> SensitivePrivateDeliveryResult | None:
     if private_message is None:
         return None
@@ -395,17 +407,8 @@ def _deliver_sensitive_private_message(
         )
     except ValueError as exc:
         raise MeetingDeliveryError(str(exc)) from exc
-    message_text = meeting_followup_message(
-        decision,
-        source,
-        final_message=private_message.message,
-    )
-    prepared = message_sender.prepare(
-        channel="dingtalk",
-        delivery_key=delivery_key,
-        body=message_text,
-        original_text=source.summary,
-    )
+    if prepared is None:
+        raise MeetingDeliveryError("sensitive message requires verified preparation")
     try:
         send_result = message_sender.send_dingtalk_prepared(
             prepared,

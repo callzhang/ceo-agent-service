@@ -20,6 +20,8 @@
   This does not migrate the meeting engine or bypass provider risk refusals.
   Legacy partial split deliveries keep their immutable primary body and
   sensitive action identity; recipient equality alone never proves completion.
+  Both persisted bodies are verified before any effect, including rejecting
+  an old HR-merged primary that discloses another recipient's sensitive text.
   Full roster evidence is scope-validated and deduplicated before counting.
   The meeting Skill and current documentation no longer suggest self fallback.
 
