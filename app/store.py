@@ -18678,13 +18678,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
         Existing meeting alignment runs remain immutable. Only the queue
         projection and retry counter are reset; delivery must be reached again
-        through the current analysis and target-selection path.
+        through the current analysis and target-selection path. A prepared
+        delivery or live owner must use its existing recovery path instead.
         """
         ids = sorted({int(job_id) for job_id in job_ids if int(job_id) > 0})
         if not ids:
             return []
         placeholders = ",".join("?" for _ in ids)
-        with self._connect() as db:
+        with self._immediate_write_transaction() as db:
             rows = db.execute(
                 f"""update meeting_alignment_jobs
                     set status='retry', attempts=0, locked_at=null,
@@ -18693,6 +18694,37 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         mentions_json='[]', final_message='',
                         send_result_json='{{}}', updated_at=current_timestamp
                     where id in ({placeholders}) and status in ('failed', 'no_action')
+                      and coalesce(locked_at,'')=''
+                      and send_result_json='{{}}'
+                      and not exists (
+                        select 1 from outbound_postfixes outbound
+                        where outbound.channel='dingtalk' and outbound.delivery_key in (
+                          'meeting-alignment:' || meeting_alignment_jobs.id || ':' || meeting_alignment_jobs.meeting_id,
+                          'meeting-alignment:' || meeting_alignment_jobs.id || ':' || meeting_alignment_jobs.meeting_id || ':sensitive'
+                        )
+                      )
+                      and not exists (
+                        select 1 from meeting_alignment_delivery_claims delivery
+                        where delivery.job_id=meeting_alignment_jobs.id
+                      )
+                      and not exists (
+                        select 1 from dispatcher_claim_leases claim
+                        where claim.adapter_name='meeting'
+                          and claim.source_id=cast(meeting_alignment_jobs.id as text)
+                          and coalesce(claim.terminal_at,'')=''
+                          and julianday(claim.lease_expires_at)>julianday('now')
+                      )
+                      and not exists (
+                        select 1 from meeting_alignment_runs run
+                        where run.job_id=meeting_alignment_jobs.id and run.status='running'
+                      )
+                      and not exists (
+                        select 1 from agent_runtime_attempts runtime
+                        join meeting_alignment_runs run on runtime.workload_key=cast(run.id as text)
+                        where runtime.workload_kind='meeting'
+                          and run.job_id=meeting_alignment_jobs.id
+                          and runtime.status in ('starting','running')
+                      )
                     returning id""",
                 ids,
             ).fetchall()
