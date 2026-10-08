@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from app.audit_rules import MESSAGE_AUDIENCE_CONTRACT
 from pydantic import ValidationError
 
 from app.meeting_alignment_agent import (
@@ -260,6 +261,81 @@ class FakeMeetingCodex:
         return MeetingAlignmentDecision.model_validate(self.payload)
 
 
+def test_prompt_uses_shared_audience_contract_without_private_fallback():
+    prompt = build_meeting_alignment_prompt(
+        source(), work_profile="", work_profile_source="profile"
+    )
+    assert MESSAGE_AUDIENCE_CONTRACT in prompt
+    assert "没有可确认的 HR/人员负责人时发给当前用户本人" not in prompt
+    assert "使用日历中已确认的会议组织者作为 direct fallback" not in prompt
+    assert "一律是业务内容，必须返回 audience_scope=business" not in prompt
+
+
+def test_prompt_schema_does_not_override_generic_audience_policy():
+    from app.meeting_alignment_models import MeetingAlignmentDecision
+
+    schema = MeetingAlignmentDecision.model_json_schema()
+    properties = schema["properties"]
+    assert "相同已核验且合适受众" in properties["final_message"]["description"]
+    assert "仅当内容需要不同已核验受众" in properties["sensitive_private_message"]["description"]
+    assert "业务私信必须非空" in properties["target"]["description"]
+    assert "业务私信必须非空" in schema["$defs"]["DeliveryTarget"]["properties"]["direct_user_id"]["description"]
+
+
+def test_business_dm_accepts_exact_non_organizer_participant_despite_prior_group():
+    payload = summary_payload()
+    payload["target"] = {
+        "kind": "direct", "conversation_id": "", "direct_user_id": "mina",
+        "title": "Avery", "candidates": [],
+    }
+    payload["audit_summary"] = "Current role and content evidence authorize Avery alone."
+    decision = MeetingAlignmentAgent(FakeMeetingCodex(payload)).decide(
+        source(), group_candidates=[{"verified_recurring_group": True, "title": "Old group"}]
+    )
+    assert decision.target.direct_user_id == "mina"
+
+
+@pytest.mark.parametrize("private", [False, True])
+def test_agent_rejects_principal_as_business_or_sensitive_dm(private):
+    payload = summary_payload()
+    target = {
+        "kind": "direct", "conversation_id": "", "direct_user_id": "derek",
+        "title": "Derek", "candidates": [],
+    }
+    if private:
+        payload["sensitive_private_message"] = {
+            "target": target, "message": "Sensitive content", "reason": "Separate audience",
+            "recipient_evidence": ["Current responsibility evidence"],
+        }
+    else:
+        payload["target"] = target
+    meeting = source().model_copy(update={"creator": source().participants[0]})
+    with pytest.raises(MeetingAlignmentTargetError, match="principal"):
+        MeetingAlignmentAgent(FakeMeetingCodex(payload)).decide(meeting)
+
+
+@pytest.mark.parametrize("problem", ["empty", "duplicate", "title", "inferred_creator", "missing_evidence"])
+def test_business_dm_requires_stable_source_identity_and_evidence(problem):
+    payload = summary_payload()
+    payload["target"] = {
+        "kind": "direct", "conversation_id": "", "direct_user_id": "alex",
+        "title": "Alex", "candidates": [],
+    }
+    meeting = source()
+    if problem == "empty":
+        payload["target"]["direct_user_id"] = ""
+    elif problem == "duplicate":
+        meeting = meeting.model_copy(update={"participants": [*meeting.participants, meeting.participants[1]]})
+    elif problem == "title":
+        payload["target"]["title"] = "Avery"
+    elif problem == "inferred_creator":
+        meeting = meeting.model_copy(update={"participants": [meeting.participants[0], meeting.participants[2]], "attendee_evidence": "transcript"})
+    else:
+        payload["audit_summary"] = "   "
+    with pytest.raises(MeetingAlignmentTargetError):
+        MeetingAlignmentAgent(FakeMeetingCodex(payload)).decide(meeting)
+
+
 class SequencedMeetingCodex:
     last_session_id = "meeting-session"
     last_transcript_start_line = 0
@@ -306,10 +382,10 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "能只靠会议证据解释时，historical_sources 必须为空数组" in prompt
     assert "必须逐字填写 `/configured/work_profile.md`" in prompt
     assert "不得改写、加标题或写成说明性文字" in prompt
-    assert "业务群消息" in prompt and "敏感私聊消息" in prompt
+    assert "业务总结" in prompt and "敏感私聊消息" in prompt
     assert "人员评价、绩效、薪酬、晋升、去留、候选人结论" in prompt
-    assert "群受众不明确" in prompt
-    assert "可以把敏感详情放进 final_message" in prompt
+    assert "缺少披露授权不能用私聊兜底" in prompt
+    assert "相同已核验且合适的受众只生成 final_message" in prompt
     assert "sensitive_private_message" in prompt
     assert "每场会议最多生成一条合并消息" not in prompt
     assert "群内所有人员都必须属于本次会议参会人" not in prompt
@@ -321,16 +397,16 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "`- ` 列表" in prompt
 
 
-def test_prompt_allows_shared_sensitive_content_for_an_automatically_matched_hr_group():
+def test_prompt_allows_shared_sensitive_content_only_for_verified_appropriate_audience():
     prompt = build_meeting_alignment_prompt(
         source(),
         work_profile="重视端到端结果",
         work_profile_source="/configured/work_profile.md",
     )
 
-    assert "HR 专属或已匹配的群" in prompt
-    assert "不是针对未参会的具体个人" in prompt
-    assert "可以把敏感详情放进 final_message" in prompt
+    assert "HR 职务不是自动披露授权" in prompt
+    assert "核对内容与实际披露授权" in prompt
+    assert "相同已核验且合适的受众只生成 final_message" in prompt
     assert "sensitive_private_message=null" in prompt
 
 
@@ -350,8 +426,8 @@ def test_prompt_contains_scheduled_consumer_prompt_and_targeted_skills():
     assert "target.kind=group" in prompt
     assert "audience_scope=personal" in prompt
     assert "完整日历 1:1" in prompt
-    assert "仍没有可核验且可发送的业务群时" in prompt
-    assert "使用日历中已确认的会议组织者作为 direct fallback" in prompt
+    assert "缺少实质受众证据时明确记录缺口" in prompt
+    assert "群不可发送时不得自动转发组织者" in prompt
     assert "不得按姓名模糊搜索目标" in prompt
     assert "只保留 audit_summary 与 confidence" not in prompt
     assert "真实 @" in prompt
@@ -368,17 +444,17 @@ def test_prompt_keeps_each_participant_mention_adjacent_to_concrete_content():
     assert "禁止在消息开头集中列一排 @ 人员" in prompt
 
 
-def test_prompt_makes_business_content_group_first_even_for_one_to_one():
+def test_prompt_decides_business_audience_by_content_even_for_one_to_one():
     prompt = build_meeting_alignment_prompt(
         source(participant_count=2), work_profile="", work_profile_source="profile"
     )
     assert "内容优先于参会人数" in prompt
-    assert "客户、项目、产品、需求、交付、排期、测试、部署、客户沟通或跨团队行动" in prompt
+    assert "实际内容、业务目的和披露范围" in prompt
     assert "audience_scope=business" in prompt
     assert "DWS 做群发现" in prompt
     assert "target.kind=group" in prompt
-    assert "仍没有可核验且可发送的业务群时" in prompt
-    assert "使用日历中已确认的会议组织者作为 direct fallback" in prompt
+    assert "人数和群名称不决定受众" in prompt
+    assert "群不可发送时不得自动转发组织者" in prompt
 
 
 def test_prompt_requires_content_based_group_discovery_before_direct_fallback():
@@ -440,7 +516,7 @@ def test_agent_accepts_business_direct_fallback_to_calendar_organizer():
     assert decision.target.direct_user_id == "alex"
 
 
-def test_agent_rejects_direct_fallback_with_verified_recurring_group():
+def test_agent_does_not_force_recurring_group_over_explicit_verified_recipient():
     direct = {
         "kind": "direct",
         "conversation_id": "",
@@ -473,8 +549,8 @@ def test_agent_rejects_direct_fallback_with_verified_recurring_group():
         ],
     )
     assert decision.target is not None
-    assert decision.target.conversation_id == "cid-project"
-    assert "verified recurring group" in codex.prompts[1]
+    assert decision.target.direct_user_id == "alex"
+    assert len(codex.prompts) == 1
 
 
 def test_agent_does_not_force_a_group_based_only_on_attendee_coverage():
@@ -533,7 +609,7 @@ def test_business_direct_identity_error_is_typed_and_preserves_decision():
         }
     )
 
-    with pytest.raises(MeetingOrganizerIdentityError) as raised:
+    with pytest.raises(MeetingAlignmentTargetError) as raised:
         MeetingAlignmentAgent(
             FakeMeetingCodex(send_payload_with_target(target))
         ).decide(source_without_identity)
@@ -541,9 +617,35 @@ def test_business_direct_identity_error_is_typed_and_preserves_decision():
     assert raised.value.decision is not None
     assert raised.value.decision.target is not None
     assert raised.value.decision.target.direct_user_id == "guessed-user"
+    assert not isinstance(raised.value, MeetingOrganizerIdentityError)
 
 
-def test_business_direct_fallback_can_leave_calendar_organizer_id_for_delivery():
+@pytest.mark.parametrize("problem", ["unverified", "missing", "duplicate", "principal"])
+def test_invalid_business_recipient_is_target_failure_not_human_organizer_gap(problem):
+    payload = summary_payload()
+    payload["target"] = {
+        "kind": "direct", "conversation_id": "", "direct_user_id": "alex",
+        "title": "Alex", "candidates": [],
+    }
+    meeting = source()
+    if problem == "unverified":
+        payload["target"]["direct_user_id"] = "u-unverified"
+    elif problem == "missing":
+        payload["target"]["direct_user_id"] = ""
+    elif problem == "duplicate":
+        meeting = meeting.model_copy(
+            update={"participants": [*meeting.participants, meeting.participants[1]]}
+        )
+    else:
+        payload["target"].update(direct_user_id="derek", title="Derek")
+    with pytest.raises(MeetingAlignmentTargetError) as raised:
+        MeetingAlignmentAgent(FakeMeetingCodex(payload)).decide(meeting)
+    assert not isinstance(raised.value, MeetingOrganizerIdentityError)
+    assert raised.value.decision is not None
+    assert raised.value.decision.target.direct_user_id == payload["target"]["direct_user_id"]
+
+
+def test_business_direct_rejects_empty_id_without_delivery_name_search():
     target = {
         "kind": "direct",
         "conversation_id": "",
@@ -561,19 +663,17 @@ def test_business_direct_fallback_can_leave_calendar_organizer_id_for_delivery()
         }
     )
 
-    decision = MeetingAlignmentAgent(
-        FakeMeetingCodex(send_payload_with_target(target))
-    ).decide(source_without_identity)
-
-    assert decision.target is not None
-    assert decision.target.direct_user_id == ""
+    with pytest.raises(MeetingAlignmentTargetError, match="explicit stable user_id"):
+        MeetingAlignmentAgent(
+            FakeMeetingCodex(send_payload_with_target(target))
+        ).decide(source_without_identity)
 
 
 def test_target_error_preserves_the_generated_decision():
     target = {
         "kind": "direct",
         "conversation_id": "",
-        "direct_user_id": "alex",
+        "direct_user_id": "guessed-id",
         "title": "Alex",
         "candidates": [],
     }
@@ -592,7 +692,7 @@ def test_agent_retries_source_aware_target_error_before_failing():
     invalid_direct = {
         "kind": "direct",
         "conversation_id": "",
-        "direct_user_id": "alex",
+        "direct_user_id": "guessed-id",
         "title": "Alex",
         "candidates": [],
     }
@@ -622,10 +722,10 @@ def test_agent_retries_source_aware_target_error_before_failing():
     assert decision.target.kind == "group"
     assert len(codex.prompts) == 2
     assert "上一次目标选择没有通过实时会议来源校验" in codex.prompts[1]
-    assert "business direct fallback requires a calendar organizer" in codex.prompts[1]
+    assert "one meeting participant or verified calendar organizer" in codex.prompts[1]
 
 
-def test_agent_rejects_business_direct_fallback_without_calendar_organizer():
+def test_agent_accepts_explicit_business_participant_without_calendar_organizer():
     target = {
         "kind": "direct",
         "conversation_id": "",
@@ -634,8 +734,8 @@ def test_agent_rejects_business_direct_fallback_without_calendar_organizer():
         "candidates": [],
     }
     agent = MeetingAlignmentAgent(FakeMeetingCodex(send_payload_with_target(target)))
-    with pytest.raises(MeetingAlignmentTargetError, match="calendar organizer"):
-        agent.decide(source(participant_count=2))
+    decision = agent.decide(source(participant_count=2))
+    assert decision.target.direct_user_id == "alex"
 
 
 def test_agent_accepts_business_group_target_for_incomplete_transcript_roster():

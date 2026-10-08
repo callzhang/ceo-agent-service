@@ -383,8 +383,8 @@ def test_business_summary_to_hr_merges_sensitive_content_into_one_message(tmp_pa
         "target": {
             "kind": "direct",
             "conversation_id": "",
-            "direct_user_id": "u-derek",
-            "title": "Derek",
+            "direct_user_id": "u-a",
+            "title": "A",
             "candidates": [],
         },
         "message": "人员评价：候选人的管理成熟度仍需进一步验证。",
@@ -528,20 +528,142 @@ def test_multi_person_direct_delivery_is_rejected_without_sending():
         )
 
 
-def test_business_direct_delivery_rejects_non_organizer_without_sending():
+@pytest.mark.parametrize("private", [False, True])
+def test_delivery_rejects_principal_before_any_send(private):
+    payload = send_decision(mention_names=[]).model_dump()
+    target = {
+        "kind": "direct", "conversation_id": "", "direct_user_id": "u-derek",
+        "title": "Derek", "candidates": [],
+    }
+    if private:
+        payload["sensitive_private_message"] = {
+            "target": target, "message": "Sensitive content", "reason": "Separate audience",
+            "recipient_evidence": ["Current responsibility evidence"],
+        }
+    else:
+        payload["target"] = target
+    source = meeting_source().model_copy(update={"creator": meeting_source().participants[0]})
+    dws = FakeDws()
+    with pytest.raises(MeetingDeliveryError, match="principal"):
+        deliver_meeting_alignment(MeetingAlignmentDecision.model_validate(payload), source, dws)
+    assert dws.sent == []
+    assert dws.search_queries == []
+
+
+@pytest.mark.parametrize("state", ["unsendable", "incomplete"])
+def test_planned_group_unavailable_never_changes_audience(state):
+    dws = FakeDws()
+    dws.conversation_info["singleChat"] = True if state == "unsendable" else None
+    with pytest.raises(MeetingDeliveryError, match="planned group"):
+        deliver_meeting_alignment(send_decision(mention_names=[]), meeting_source(), dws)
+    assert dws.sent == []
+    assert dws.search_queries == []
+
+
+def test_hr_primary_does_not_absorb_a_different_private_recipient():
+    payload = send_decision(target="direct", mention_names=[]).model_dump()
+    payload["audience_scope"] = "business"
+    payload["sensitive_private_message"] = {
+        "target": {
+            "kind": "direct", "conversation_id": "", "direct_user_id": "u-b",
+            "title": "B", "candidates": [],
+        },
+        "message": "Restricted to B", "reason": "Different verified audience",
+        "recipient_evidence": ["B current role and content authorization"],
+    }
+    dws = FakeDws()
+    dws.hr_user_ids.add("u-a")
+    result = deliver_meeting_alignment(MeetingAlignmentDecision.model_validate(payload), meeting_source(), dws)
+    assert result.sensitive_private_merged is False
+    assert [message["user_id"] for message in dws.sent] == ["u-a", "u-b"]
+    assert "Restricted to B" not in dws.sent[0]["text"]
+
+
+def test_planning_source_does_not_turn_organizer_name_into_delivery_identity():
+    source = meeting_source()
+    organizer = source.creator.model_copy(update={"user_id": "", "open_dingtalk_id": ""})
+    source = source.model_copy(update={"creator": organizer})
+    dws = FakeDws()
+    dws.profiles["A"] = [DwsUserProfile(user_id="guessed-from-name", name="A")]
+    result = meeting_alignment_delivery.resolve_meeting_creator_identity(source, dws)
+    assert result.creator.user_id == ""
+    assert dws.search_queries == []
+
+
+def test_planning_source_resolves_organizer_only_from_exact_source_open_id():
+    source = meeting_source()
+    source = source.model_copy(update={"creator": source.creator.model_copy(update={"user_id": ""})})
+    dws = FakeDws()
+    result = meeting_alignment_delivery.resolve_meeting_creator_identity(source, dws)
+    assert result.creator.user_id == "u-a"
+    assert dws.search_queries == []
+
+
+@pytest.mark.parametrize("alias", [False, True])
+def test_personal_identity_resolution_cannot_send_to_principal(alias):
+    source = meeting_source(one_to_one=True, unresolved_other=True)
+    payload = send_decision(target="direct", mention_names=[]).model_dump()
+    payload["target"]["direct_user_id"] = ""
+    dws = FakeDws()
+    dws.profiles["A"] = [
+        DwsUserProfile(
+            user_id="alias-user" if alias else "u-derek", name="A",
+            open_dingtalk_id="open-derek" if alias else "",
+        )
+    ]
+    with pytest.raises(MeetingDeliveryError, match="principal"):
+        deliver_meeting_alignment(MeetingAlignmentDecision.model_validate(payload), source, dws)
+    assert dws.sent == []
+
+
+@pytest.mark.parametrize("private", [False, True])
+@pytest.mark.parametrize("problem", ["duplicate", "alias", "title", "unknown_principal", "missing_evidence"])
+def test_delivery_identity_and_evidence_gates_run_before_any_send(private, problem):
+    payload = send_decision(mention_names=[]).model_dump()
+    target = {
+        "kind": "direct", "conversation_id": "", "direct_user_id": "u-a",
+        "title": "A", "candidates": [],
+    }
+    if private:
+        payload["sensitive_private_message"] = {
+            "target": target, "message": "Restricted", "reason": "Different audience",
+            "recipient_evidence": ["Current role and content evidence"],
+        }
+    else:
+        payload["target"] = target
+    source = meeting_source()
+    if problem == "duplicate":
+        source = source.model_copy(update={"participants": [*source.participants, source.participants[1]]})
+    elif problem == "alias":
+        source = source.model_copy(update={"participants": [source.participants[0], source.participants[1].model_copy(update={"open_dingtalk_id": "open-derek"}), source.participants[2]]})
+    elif problem == "title":
+        target["title"] = "B"
+    elif problem == "unknown_principal":
+        source = source.model_copy(update={"current_user_id": ""})
+    elif not private:
+        payload["audit_summary"] = "   "
+    decision = MeetingAlignmentDecision.model_validate(payload)
+    if problem == "missing_evidence" and private:
+        decision = decision.model_copy(update={"sensitive_private_message": decision.sensitive_private_message.model_copy(update={"recipient_evidence": []})})
+    dws = FakeDws()
+    with pytest.raises(MeetingDeliveryError):
+        deliver_meeting_alignment(decision, source, dws)
+    assert dws.sent == []
+    assert dws.search_queries == []
+
+
+def test_business_direct_delivery_accepts_exact_verified_non_organizer():
     payload = send_decision(target="direct", mention_names=[]).model_dump()
     payload["audience_scope"] = "business"
     payload["target"].update(direct_user_id="u-b", title="B")
     dws = FakeDws()
 
-    with pytest.raises(MeetingDeliveryError, match="meeting organizer"):
-        deliver_meeting_alignment(
-            MeetingAlignmentDecision.model_validate(payload),
-            meeting_source(),
-            dws,
-        )
-
-    assert dws.sent == []
+    result = deliver_meeting_alignment(
+        MeetingAlignmentDecision.model_validate(payload), meeting_source(), dws,
+    )
+    assert result.target_id == "u-b"
+    assert dws.sent[0]["user_id"] == "u-b"
+    assert dws.search_queries == []
 
 
 def test_business_direct_delivery_sends_to_stable_meeting_organizer():
@@ -565,7 +687,7 @@ def test_business_direct_delivery_sends_to_stable_meeting_organizer():
     assert dws.search_queries == []
 
 
-def test_business_direct_delivery_resolves_empty_organizer_id_by_exact_profile():
+def test_business_direct_delivery_rejects_empty_id_without_profile_search():
     payload = send_decision(target="direct", mention_names=[]).model_dump()
     payload["audience_scope"] = "business"
     payload["target"]["direct_user_id"] = ""
@@ -576,18 +698,13 @@ def test_business_direct_delivery_resolves_empty_organizer_id_by_exact_profile()
     source_payload = meeting_source().model_dump(mode="json")
     source_payload["creator"].update(user_id="", open_dingtalk_id="")
 
-    result = deliver_meeting_alignment(
-        MeetingAlignmentDecision.model_validate(payload),
-        MeetingSource.model_validate(source_payload),
-        dws,
-    )
-
-    assert result.status == "sent"
-    assert result.target_kind == "direct"
-    assert result.target_id == "u-a"
-    assert result.target_title == "A"
-    assert dws.sent[0]["user_id"] == "u-a"
-    assert dws.search_queries == ["A"]
+    with pytest.raises(MeetingDeliveryError, match="explicit stable user_id"):
+        deliver_meeting_alignment(
+            MeetingAlignmentDecision.model_validate(payload),
+            MeetingSource.model_validate(source_payload), dws,
+        )
+    assert dws.sent == []
+    assert dws.search_queries == []
 
 
 def test_personal_direct_delivery_rejects_incomplete_transcript_roster():
@@ -609,56 +726,36 @@ def test_personal_direct_delivery_rejects_incomplete_transcript_roster():
     assert dws.sent == []
 
 
-def test_unsendable_group_sends_to_stable_meeting_organizer_once():
+def test_unsendable_group_fails_closed_on_repeated_attempts():
     dws = FakeDws()
     dws.conversation_info["singleChat"] = True
     sender = ServiceMessageSender(store=_MemoryPostfixStore(), dingtalk=dws)
 
-    result = deliver_meeting_alignment(
-        send_decision(mention_names=[]),
-        meeting_source(),
-        dws,
-        message_sender=sender,
-        delivery_key="meeting-alignment:minutes-1:job-1",
-    )
-    replay = deliver_meeting_alignment(
-        send_decision(mention_names=[]),
-        meeting_source(),
-        dws,
-        message_sender=sender,
-        delivery_key="meeting-alignment:minutes-1:job-1",
-    )
-
-    assert result.status == "sent"
-    assert result.target_kind == "direct"
-    assert result.target_id == "u-a"
-    assert result.target_title == "A"
-    assert replay.send_result == result.send_result
-    assert len(dws.sent) == 1
-    assert dws.sent[0]["conversation_id"] is None
-    assert dws.sent[0]["user_id"] == "u-a"
+    for _ in range(2):
+        with pytest.raises(MeetingDeliveryError, match="planned group"):
+            deliver_meeting_alignment(
+                send_decision(mention_names=[]), meeting_source(), dws,
+                message_sender=sender, delivery_key="meeting-alignment:minutes-1:job-1",
+            )
+    assert dws.sent == []
     assert dws.search_queries == []
 
 
-def test_unsendable_group_uses_organizer_open_id_without_name_lookup():
+def test_unsendable_group_does_not_use_organizer_open_id():
     dws = FakeDws()
     dws.conversation_info["singleChat"] = True
     source_payload = meeting_source().model_dump(mode="json")
     source_payload["creator"]["user_id"] = ""
 
-    result = deliver_meeting_alignment(
-        send_decision(mention_names=[]),
-        MeetingSource.model_validate(source_payload),
-        dws,
-    )
-
-    assert result.target_kind == "direct"
-    assert result.target_id == "open-a"
-    assert dws.sent[0]["open_dingtalk_id"] == "open-a"
+    with pytest.raises(MeetingDeliveryError, match="planned group"):
+        deliver_meeting_alignment(
+            send_decision(mention_names=[]), MeetingSource.model_validate(source_payload), dws,
+        )
+    assert dws.sent == []
     assert dws.search_queries == []
 
 
-def test_unsendable_group_resolves_calendar_organizer_by_exact_profile():
+def test_unsendable_group_does_not_search_calendar_organizer():
     dws = FakeDws()
     dws.conversation_info["singleChat"] = True
     dws.profiles["A"] = [
@@ -667,17 +764,12 @@ def test_unsendable_group_resolves_calendar_organizer_by_exact_profile():
     source_payload = meeting_source().model_dump(mode="json")
     source_payload["creator"].update(user_id="", open_dingtalk_id="")
 
-    result = deliver_meeting_alignment(
-        send_decision(mention_names=[]),
-        MeetingSource.model_validate(source_payload),
-        dws,
-    )
-
-    assert result.status == "sent"
-    assert result.target_kind == "direct"
-    assert result.target_id == "u-a"
-    assert dws.sent[0]["user_id"] == "u-a"
-    assert dws.search_queries == ["A"]
+    with pytest.raises(MeetingDeliveryError, match="planned group"):
+        deliver_meeting_alignment(
+            send_decision(mention_names=[]), MeetingSource.model_validate(source_payload), dws,
+        )
+    assert dws.sent == []
+    assert dws.search_queries == []
 
 
 def test_unresolved_decision_can_reach_agent_selected_business_group():

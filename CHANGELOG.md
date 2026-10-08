@@ -9,6 +9,16 @@
 
 ## Unreleased
 
+- 2026-10-08: Meeting history denials remain typed candidate evidence rather
+  than aborting all audience discovery. Preserve actual full roster IDs/counts;
+  denied discussion remains unknown and does not authorize another recipient.
+  The independent meeting planner now reuses the shared message-audience
+  contract. Stable non-principal source recipients, same-audience merging and
+  no automatic group-to-organizer switching are checked before delivery.
+  Formal analysis reruns reject partial/prepared effects and active ownership
+  transactionally, preserving original meeting identity and historical runs.
+  This does not migrate the meeting engine or bypass provider risk refusals.
+
 - 2026-10-07: Runtime history quality checks resolve the forbidden path
   configuration once per scan rather than once per field. Every row and
   credential/path check remains covered; each new scan rereads configuration.
