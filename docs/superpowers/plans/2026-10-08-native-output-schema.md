@@ -22,3 +22,11 @@ Evidence: existing native tests show simple supported object schema+MCP cold/res
 - Independent review found only stale docs (updatedhere) and2 fixture defects (fixed); final structural review clean. Exact-schema service-API provider matrix remains the pre-release acceptance gate.
 
 Final evidence: /Users/derek/Documents/memory/ceo-agent-service/native-output-schema-final-20261008/REPORT.md; 64 files checksum verified. Canonical Consumer/Audit business model hashes remain unchanged.
+
+## Release disposition
+
+Merged origin/main a8792d21 without conflict; repeated affected tests: 202 passed, 4 skipped in 45.31s. Ruff and diff checks passed. Implementation f7b34120; integration b23e3841.
+
+Configured service-API acceptance is unresolved. codex_api exact Consumer/Audit produced no valid cold output; controls with schema OFF and minimal schema ON both returned provider HTTP 429, so this failure is not attributable to the native schema. Qwen minimal schema is accepted, but exact Consumer/Audit produced no final agent message; schema-OFF/minimal controls also omitted the requested synthetic MCP read. Model-discovery warning is not established as the root cause; no provider-wide output limit was established. Same-session API resumes were not run without a valid cold result. Native environment and configured credential identities matched production. Evidence: /Users/derek/Documents/memory/ceo-agent-service/native-output-schema-providers-20261008/.
+
+Keep as unpublished-to-production draft; no main merge/deploy or successful API-route claim. Next gate: obtain exact Consumer/Audit cold and matching-resume results on both configured service-API providers, preserving the current fixed schemas and canonical validation; investigate Qwen full-schema generation separately from the harmless metadata warning. Do not hide the gap with a fallback or new routing policy.
