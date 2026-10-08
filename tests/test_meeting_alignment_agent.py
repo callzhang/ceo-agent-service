@@ -410,6 +410,19 @@ def test_prompt_allows_shared_sensitive_content_only_for_verified_appropriate_au
     assert "sensitive_private_message=null" in prompt
 
 
+def test_loaded_meeting_skill_keeps_no_self_audience_contract():
+    from pathlib import Path
+
+    skill = (Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-meeting-work/SKILL.md").read_text()
+    prompt = build_meeting_alignment_prompt(
+        source(), work_profile="", work_profile_source="",
+        consumer_prompt="Use $ceo-meeting-work", skill_protocol=skill,
+    )
+    assert "Never send a private split or fallback to the current principal" in prompt
+    assert "direct it to the current principal" not in prompt
+    assert "Titles, HR roles, and private chat are not authorization" in prompt
+
+
 def test_prompt_contains_scheduled_consumer_prompt_and_targeted_skills():
     prompt = build_meeting_alignment_prompt(
         source(),

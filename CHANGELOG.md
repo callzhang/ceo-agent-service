@@ -18,6 +18,10 @@
   Formal analysis reruns reject partial/prepared effects and active ownership
   transactionally, preserving original meeting identity and historical runs.
   This does not migrate the meeting engine or bypass provider risk refusals.
+  Legacy partial split deliveries keep their immutable primary body and
+  sensitive action identity; recipient equality alone never proves completion.
+  Full roster evidence is scope-validated and deduplicated before counting.
+  The meeting Skill and current documentation no longer suggest self fallback.
 
 - 2026-10-07: Runtime history quality checks resolve the forbidden path
   configuration once per scan rather than once per field. Every row and

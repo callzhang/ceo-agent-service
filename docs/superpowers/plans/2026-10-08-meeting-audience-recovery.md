@@ -10,11 +10,11 @@
 
 ## Tasks
 
-- [ ] Add failing tests for candidate-scoped denied history alongside readable candidates, and all-denied evidence.
-- [ ] Implement typed denial evidence and meeting serialization; preserve transient failures and disallow denial-as-empty-history.
-- [ ] Add failing tests for shared meeting audience policy, verified non-principal business recipients, principal rejection, and no automatic delivery recipient switch.
-- [ ] Repair planner and delivery policy using original stable participant identities; keep role/content authorization checks explicit.
-- [ ] Add unsent/receipt/active-claim CAS regressions to the existing formal analysis rerun before using it.
+- [x] Add failing tests for candidate-scoped denied history alongside readable candidates, and all-denied evidence.
+- [x] Implement typed denial evidence and meeting serialization; preserve transient failures and disallow denial-as-empty-history.
+- [x] Add failing tests for shared meeting audience policy, verified non-principal business recipients, principal rejection, and no automatic delivery recipient switch.
+- [x] Repair planner and delivery policy using original stable participant identities; keep role/content authorization checks explicit.
+- [x] Add unsent/receipt/active-claim CAS regressions to the existing formal analysis rerun before using it.
 - [ ] Run focused and related regressions, independent review, and fixed native routing comparison without external effects.
 - [ ] Update runtime documentation and changelog, commit scoped fixes, run exact CI, and deploy through formal quiet/verified-backup gates.
 - [ ] Read current discussion/membership/titles and all existing effects; recover jobs 5556/5812 by original identity and verify final provider receipts or evidence-backed no-action.
