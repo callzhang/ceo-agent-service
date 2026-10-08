@@ -9,6 +9,25 @@
 
 ## Unreleased
 
+- 2026-10-08: Locate scheduled incident source runs by indexed event ID or
+  canonical primary key, preserving exact identity and later same-task terminal
+  recovery checks. Select failed Email action rows before classification payload
+  joins. Both repair measured Attention read amplification without queue caches
+  or business-state changes, with query-plan and instruction-budget regressions.
+
+- 2026-10-08: Add the manifest-required partial unresolved-errors index through
+  the normal schema migration. Attention keeps all current recovery predicates
+  and historical incidents while avoiding resolved-error payload scans. Query
+  plan and SQLite VM-budget regressions cover large settled history.
+
+- 2026-10-08: Reply queue polling no longer acquires a SQLite write lock when
+  the requested channel has no due work. A read-only preview is followed by the
+  original transactional recheck and claim, preserving concurrent ownership,
+  due-time semantics and future arrivals without caching queue state.
+- 2026-10-08: Split slow SQLite context timing into body, commit/rollback and
+  close phases for both stores, without logging SQL parameters or changing
+  transaction/error behavior. Aggregate elapsed time is not lock-hold evidence.
+
 - 2026-10-08: Meeting history denials remain typed candidate evidence rather
   than aborting all audience discovery. Preserve actual full roster IDs/counts;
   denied discussion remains unknown and does not authorize another recipient.

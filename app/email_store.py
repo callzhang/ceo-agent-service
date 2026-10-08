@@ -2859,17 +2859,28 @@ class EmailStore:
     def _connect(self) -> Iterator[sqlite3.Connection]:
         db = self._open_connection()
         started_at = monotonic()
+        body_finished_at = started_at
         try:
             with db:
-                yield db
+                try:
+                    yield db
+                finally:
+                    body_finished_at = monotonic()
         finally:
+            close_started_at = monotonic()
             db.close()
-            elapsed = monotonic() - started_at
+            closed_at = monotonic()
+            elapsed = closed_at - started_at
             if elapsed >= 1.0:
                 caller = sys._getframe(2)
                 logging.getLogger(__name__).warning(
-                    "slow email sqlite context elapsed_seconds=%.3f caller=%s:%s:%s",
+                    "slow email sqlite context elapsed_seconds=%.3f "
+                    "body_seconds=%.3f finish_seconds=%.3f close_seconds=%.3f "
+                    "caller=%s:%s:%s",
                     elapsed,
+                    body_finished_at - started_at,
+                    close_started_at - body_finished_at,
+                    closed_at - close_started_at,
                     Path(caller.f_code.co_filename).name,
                     caller.f_lineno,
                     caller.f_code.co_name,

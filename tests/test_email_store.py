@@ -10331,7 +10331,7 @@ def test_slow_connection_names_caller_without_logging_body_data(
     import app.email_store as module
 
     store = EmailStore(tmp_path / "slow-context.sqlite3")
-    ticks = iter((0.0, 5.0))
+    ticks = iter((0.0, 3.0, 4.0, 5.0))
     monkeypatch.setattr(module, "monotonic", lambda: next(ticks), raising=False)
     private_payload = "private-mail-content"
     with store._connect() as db:

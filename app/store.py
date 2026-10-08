@@ -230,7 +230,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-06.1"
+STORE_SCHEMA_VERSION = "2026-10-08.1"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -336,6 +336,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
 )
 STORE_SCHEMA_REQUIRED_INDEXES = (
     *REVIEWED_CANDIDATE_INDEXES,
+    "idx_errors_unresolved",
     "idx_feedback_processing_items_status",
     "idx_feedback_processing_items_batch",
     "idx_feedback_processing_rounds_feedback",
@@ -2573,22 +2574,32 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return
         connection = self._open_connection()
         started_at = time.monotonic()
+        body_finished_at = started_at
         try:
-            with connection:
-                yield connection
+            try:
+                with connection:
+                    try:
+                        yield connection
+                    finally:
+                        body_finished_at = time.monotonic()
+            finally:
+                close_started_at = time.monotonic()
+                connection.close()
+                closed_at = time.monotonic()
+                elapsed = closed_at - started_at
+                if elapsed >= 1.0:
+                    print(
+                        f"slow sqlite context elapsed_seconds={elapsed:.3f} "
+                        f"body_seconds={body_finished_at - started_at:.3f} "
+                        f"finish_seconds={close_started_at - body_finished_at:.3f} "
+                        f"close_seconds={closed_at - close_started_at:.3f} "
+                        f"callers={_sqlite_caller_chain(sys._getframe(2))}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
         except sqlite3.Error as error:
             _name_sqlite_extended_error(self.path, error)
             raise
-        finally:
-            connection.close()
-            elapsed = time.monotonic() - started_at
-            if elapsed >= 1.0:
-                print(
-                    f"slow sqlite context elapsed_seconds={elapsed:.3f} "
-                    f"callers={_sqlite_caller_chain(sys._getframe(2))}",
-                    file=sys.stderr,
-                    flush=True,
-                )
 
     @contextmanager
     def _optional_connection(
@@ -5471,6 +5482,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     on reply_attempts(
                         conversation_id, trigger_message_id, action, id desc
                     )
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_errors_unresolved
+                    on errors(conversation_id, kind, message_id, id)
+                    where coalesce(resolved_at, '')=''
                 """
             )
             db.execute(
@@ -14302,6 +14320,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, limit: int, now: str | None = None, *, channel: str = "dingtalk"
     ) -> list[ReplyTask]:
         if limit <= 0:
+            return []
+        # Empty polling must not contend with real writes. Recheck below after
+        # acquiring the write transaction; a preview never reserves a task.
+        if not self.peek_reply_tasks(1, now=now, channel=channel):
             return []
         with self._immediate_write_transaction() as db:
             now_expression = "current_timestamp" if now is None else "?"
