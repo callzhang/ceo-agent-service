@@ -29,6 +29,26 @@ function ConfigurationFingerprints({ item }: { item: PromptPreviewItem }) {
   </details>;
 }
 
+function PromptSections({ item }: { item: PromptPreviewItem }) {
+  if (!item.sections?.length) {
+    return <p className="muted">{item.mode === "historical" ? "该历史输入未记录分段来源" : "当前预览未返回分段来源"}</p>;
+  }
+  return <section aria-label="输入分段来源">
+    <h3>输入分段来源与顺序</h3>
+    <p className="muted">顺序来自服务组装记录。字符数按本页返回并显示的已清理文本统计，不含分段之间的拼接分隔符。CLI 自带的系统提示、工具定义或会话历史不在这份分段回执中。</p>
+    <div className="settings-table-wrap"><table className="settings-table" aria-label="输入分段来源与顺序">
+      <thead><tr><th>顺序</th><th>分段</th><th>来源</th><th>提交位置</th><th>字符数</th></tr></thead>
+      <tbody>{item.sections.map((section, index) => <tr key={`${section.placement}-${index}-${section.name}`}>
+        <td data-label="顺序">{index + 1}</td>
+        <td data-label="分段">{section.name}</td>
+        <td data-label="来源">{section.source}</td>
+        <td data-label="提交位置">{section.placement === "developer" ? "Developer" : "Task"}</td>
+        <td data-label="字符数">{section.characters}</td>
+      </tr>)}</tbody>
+    </table></div>
+  </section>;
+}
+
 export function RuntimePromptPreview() {
   const [role, setRole] = useState<PromptPreviewRole>("consumer");
   const [route, setRoute] = useState("");
@@ -125,6 +145,7 @@ export function RuntimePromptPreview() {
       </p>}
       {item.scope && <p className="muted" style={textStyle}>{item.scope}</p>}
       {item.status === "available" && item.reason && <p className="muted" style={textStyle}>{item.reason}</p>}
+      <PromptSections item={item} />
       <ConfigurationFingerprints item={item} />
       {item.status === "unavailable" ? <p role="status">{item.reason || (item.mode === "historical" ? "该运行的历史输入不可用。" : "当前任务预览不可用。")}</p> : <>
         {item.mode === "current" && item.task_id === null && <p className="muted">未绑定任务：展示当前公共上下文，不包含具体任务输入。</p>}

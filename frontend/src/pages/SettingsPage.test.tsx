@@ -459,15 +459,13 @@ describe("SettingsPage", () => {
     getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { developer_template: "Developer" }, preview: { developer: "Developer" } }, meta: {} });
     renderSettings(`/settings?tab=prompts&prompt=${kind}`);
     const overview = await screen.findByRole("region", { name: "提示词作用与上下文顺序" });
-    expect(overview).toHaveTextContent("后台 Consumer");
-    expect(overview).toHaveTextContent("后台 Audit");
-    expect(overview).toHaveTextContent("后台 Audit：Audit Rules → 运行约定与 Skill 职责 → 同一份 Developer 工作原则 → System 动作、输出、能力与角色契约 → 质量要求与 Audit 任务契约");
+    expect(overview).toHaveTextContent("Consumer 与 Audit");
+    expect(overview).toHaveTextContent("实际顺序以“运行输入”的分段回执为准");
     expect(overview).toHaveTextContent("Audit Rules");
     expect(overview).toHaveTextContent("Runtime Context");
-    expect(within(overview).getByRole("row", { name: /Audit Rules/ })).toHaveTextContent("Audit 的 Developer 指令");
-    expect(within(overview).getByRole("row", { name: /Developer Prompt/ })).toHaveTextContent("Consumer 与 Audit");
-    expect(within(overview).getByRole("row", { name: /User Prompt/ })).toHaveTextContent("{{task_context}}");
-    expect(within(overview).getByRole("row", { name: /服务角色与输出契约/ })).toHaveTextContent("只读");
+    expect(within(overview).getByText("Developer Prompt（可配置）").closest("tr")).toHaveTextContent("Consumer 与 Audit");
+    expect(within(overview).getByText("User Prompt（可配置）").closest("tr")).toHaveTextContent("{{task_context}}");
+    expect(within(overview).getByRole("row", { name: /角色指令与契约/ })).toHaveTextContent("由代码定义");
     expect(overview).toHaveTextContent("Workbench、WeChat 独立流程、纯服务命令与 Email 退订");
     expect(overview).toHaveTextContent("CLI 自带的系统提示、工具定义和会话历史不包含在此预览中");
     expect(overview).not.toHaveTextContent("对话模板入口");
@@ -508,12 +506,19 @@ describe("SettingsPage", () => {
     expect(getPromptPreview).not.toHaveBeenCalled();
   });
 
-  it("shows the actual core position of shared principles before action and output contracts", async () => {
+  it("distinguishes configurable templates from complete Developer and Task inputs", async () => {
     getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { developer_template: "Principles" }, preview: { developer: "Principles" } }, meta: {} });
     renderSettings("/settings?tab=prompts&prompt=developer&view=template");
     const overview = await screen.findByRole("region", { name: "提示词作用与上下文顺序" });
-    expect(overview).toHaveTextContent("运行约定与 Skill 职责 → 共同 Developer 工作原则 → System 动作、输出、能力与角色契约");
-    expect(overview).toHaveTextContent("Audit Rules → 运行约定与 Skill 职责 → 同一份 Developer 工作原则 → System 动作、输出、能力与角色契约");
+    expect(overview).toHaveTextContent("Developer Prompt（可配置）");
+    expect(overview).toHaveTextContent("完整 Developer 输入");
+    expect(overview).toHaveTextContent("User Prompt（可配置）");
+    expect(overview).toHaveTextContent("Task 输入");
+    expect(overview).toHaveTextContent("Work Profile");
+    expect(overview).toHaveTextContent("角色指令");
+    expect(within(overview).getByText("Skill").closest("tr")).toHaveTextContent("只列本轮适用名称和读取入口");
+    expect(overview).toHaveTextContent("共同内容与任务专属来源");
+    expect(overview).toHaveTextContent("实际顺序以“运行输入”的分段回执为准");
   });
 
   it.each(["template", "preview"])("keeps an invalid saved User template editable and explains its render error in %s", async (view) => {

@@ -85,6 +85,37 @@ describe("RuntimePromptPreview", () => {
     expect(table.getAllByText("未记录")).toHaveLength(8);
     expect(table.getAllByText("无法比较")).toHaveLength(4);
   });
+  it("shows the returned current section order, source, placement and displayed character count", async () => {
+    getPromptPreview.mockResolvedValueOnce(response({ sections: [
+      { name: "Consumer role instructions", source: "角色与输出契约", placement: "developer", characters: 128 },
+      { name: "Selected Skills", source: "任务 Skill 入口", placement: "task", characters: 37 },
+      { name: "Current task context", source: "当前任务", placement: "task", characters: 412 },
+    ] }));
+    render(<RuntimePromptPreview />);
+    await screen.findByText(item.task_prompt);
+    const table = within(screen.getByRole("table", { name: "输入分段来源与顺序" }));
+    const rows = table.getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toHaveTextContent("1Consumer role instructions角色与输出契约Developer128");
+    expect(rows[1]).toHaveTextContent("2Selected Skills任务 Skill 入口Task37");
+    expect(rows[2]).toHaveTextContent("3Current task context当前任务Task412");
+    expect(screen.getByText(/字符数按本页返回并显示的已清理文本统计/)).toBeInTheDocument();
+    expect(screen.getByText(/CLI 自带的系统提示、工具定义或会话历史不在这份分段回执中/)).toBeInTheDocument();
+    expect(screen.getAllByText((_text, node) => node?.tagName === "PRE" && node.textContent === item.developer_instructions)).toHaveLength(1);
+  });
+  it("does not invent section provenance for historical input that predates the metadata", async () => {
+    getPromptPreview.mockResolvedValueOnce(response({ mode: "historical", run_id: 9, task_id: 42 }));
+    render(<RuntimePromptPreview />);
+    await screen.findByText(item.task_prompt);
+    expect(screen.getByText("该历史输入未记录分段来源")).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "输入分段来源与顺序" })).not.toBeInTheDocument();
+  });
+  it("keeps an unbound current preview explicit when section metadata is not returned", async () => {
+    render(<RuntimePromptPreview />);
+    await screen.findByText(item.task_prompt);
+    expect(screen.getByText("当前预览未返回分段来源")).toBeInTheDocument();
+    expect(screen.getByText(/未绑定任务/)).toBeInTheDocument();
+  });
   it("requests selected role, route and task and shows Claude service input", async () => {
     render(<RuntimePromptPreview />);
     await screen.findByText((_text, node) => node?.tagName === "PRE" && node.textContent === item.developer_instructions);
