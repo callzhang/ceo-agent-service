@@ -1981,6 +1981,29 @@ class DwsClient:
             raise DwsError("conversation-info response is missing conversationInfo")
         return info
 
+    def read_group_members(self, open_conversation_id: str) -> dict[str, Any]:
+        """Read the native users/bots roster with bounded complete pagination.
+
+        Preserve completeness, remaining cursors and provider failures so an
+        incomplete page cannot be mistaken for the full audience.
+        """
+        if not open_conversation_id.strip():
+            raise ValueError("conversation ID is required")
+        return self.run_json([
+            self.dws_bin, "chat", "+chat-members-list", "--conversation-id",
+            open_conversation_id, "--format", "json",
+        ])
+
+    def read_user_profiles(self, user_ids: list[str]) -> dict[str, Any]:
+        """Read exact organization user IDs without fuzzy identity enrichment."""
+        if not user_ids or any(
+            not isinstance(user_id, str) or not user_id.strip()
+            or user_id != user_id.strip() or "," in user_id
+            for user_id in user_ids
+        ):
+            raise ValueError("exact organization user IDs are required")
+        return self.run_json(self.build_get_user_profiles_command(user_ids))
+
     def list_group_member_open_dingtalk_ids(
         self, open_conversation_id: str
     ) -> set[str]:
