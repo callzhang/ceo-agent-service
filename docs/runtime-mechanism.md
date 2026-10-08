@@ -23,6 +23,17 @@ history; a new unresolved incident is visible immediately. Installation follows
 the existing schema-version/manifest startup migration after the quiet-deploy
 backup, not request-time index creation or business-state repair.
 
+Scheduled incident recovery locates the original run through its indexed event
+ID or integer primary key, retaining the exact canonical conversation-ID check
+after parsing. Malformed/noncanonical IDs cannot claim a recovery, and a later
+success must still belong to the same scheduled task with a done/skipped Reply
+execution. Unrelated run history is not scanned to discover the original run.
+Email-action Attention first selects failed rows by internal rowid from the
+compact status index before loading classification payloads; projected business
+action IDs, including legacy NULL values, are unchanged. An explicit join order keeps
+SQLite from starting with all processed classifications. Current ActionPlan,
+case-insensitive status, retry-window, ordering and limit rules are unchanged.
+
 本文档是 CEO Agent Service 当前运行机制与已批准生命周期政策的总览入口。除明确标注为
 “已批准的生命周期政策”的段落外，正文描述当前代码事实；政策段落是后续实现约束，不表示
 对应代码已经切换、部署或在生产启用。`docs/superpowers/` 下被新设计取代的历史 spec/plan

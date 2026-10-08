@@ -3456,6 +3456,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
         ):
             # Mirror the status page: a failed action is attention-worthy only
             # once it is outside its retry window, so both surfaces agree.
+            # Drive compact failed-row selection before large classification
+            # payloads. rowid preserves legacy nullable action IDs unchanged.
             email_action_sql = """
                 select a.action_id as id, a.status,
                        coalesce(nullif(c.sender, ''), a.account_id) as context,
@@ -3466,10 +3468,13 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                        ) as summary,
                        a.updated_at, a.error
                 from email_actions as a
-                join email_classifications as c on c.id=a.classification_id
+                cross join email_classifications as c on c.id=a.classification_id
                 where a.action_plan_id=c.current_action_plan_id
                   and c.status='processed'
-                  and lower(a.status)='failed'
+                  and a.rowid in (
+                      select rowid from email_actions
+                      where lower(status)='failed'
+                  )
                   and not (
                         a.attempt_count < ?
                         and trim(a.next_attempt_at) != ''
@@ -3605,8 +3610,14 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     from scheduled_task_runs as stale_run
                    where (
                          stale_run.event_id=error_event.message_id
-                         or error_event.conversation_id=
-                            'scheduled-task-run:' || cast(stale_run.id as text)
+                         or (
+                             stale_run.id=cast(substr(
+                                 error_event.conversation_id,
+                                 length('scheduled-task-run:') + 1
+                             ) as integer)
+                             and error_event.conversation_id=
+                                 'scheduled-task-run:' || cast(stale_run.id as text)
+                         )
                    )
                      and exists (
                          select 1

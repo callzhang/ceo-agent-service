@@ -9,6 +9,12 @@
 
 ## Unreleased
 
+- 2026-10-08: Locate scheduled incident source runs by indexed event ID or
+  canonical primary key, preserving exact identity and later same-task terminal
+  recovery checks. Select failed Email action rows before classification payload
+  joins. Both repair measured Attention read amplification without queue caches
+  or business-state changes, with query-plan and instruction-budget regressions.
+
 - 2026-10-08: Add the manifest-required partial unresolved-errors index through
   the normal schema migration. Attention keeps all current recovery predicates
   and historical incidents while avoiding resolved-error payload scans. Query
