@@ -386,6 +386,25 @@ def validated_personal_periods(payload: object) -> list[dict]:
     return periods
 
 
+def validated_objective_list(payload: object) -> list[dict]:
+    if not isinstance(payload, dict) or type(payload.get("code")) is not int:
+        raise ValueError("Dingteam objective response lacks a numeric provider code")
+    if payload["code"] != 0:
+        raise RuntimeError(f"Dingteam objective provider failed: code={payload['code']}")
+    data = payload.get("data")
+    if not isinstance(data, dict) or not isinstance(data.get("list"), list):
+        raise ValueError("Dingteam objective response lacks data.list")
+    if (
+        any(type(data.get(key)) is not int for key in ("pageNo", "totalPages", "totalCount"))
+        or data["pageNo"] != 1 or data["totalPages"] not in {0, 1}
+        or data["totalCount"] != len(data["list"])
+        or data.get("hasMore") or data.get("nextCursor")
+        or any(not isinstance(item, dict) for item in data["list"])
+    ):
+        raise ValueError("Dingteam objective response is incomplete or malformed")
+    return data["list"]
+
+
 def fetch_with_headers(user_id: str, period_label: str, headers: dict[str, str]) -> dict:
     periods_payload = _post(
         "/data/okr/person/period/list", {"userId": user_id}, headers
@@ -407,7 +426,7 @@ def fetch_with_headers(user_id: str, period_label: str, headers: dict[str, str])
         },
         headers,
     )
-    objective_list = _as_list(list_payload)
+    objective_list = validated_objective_list(list_payload)
 
     processed_objectives = []
     okr_rows = []
@@ -535,6 +554,7 @@ def fetch_with_headers(user_id: str, period_label: str, headers: dict[str, str])
     return {
         "source": {
             "system": "叮当OKR Dingteam Web (direct API)",
+            "objectiveListReceipt": {"providerCode": 0, "complete": True, "count": len(objective_list)},
             "appId": "40707",
             "suiteId": "9242001",
             "capturedAt": datetime.now(tz=timezone.utc).strftime(

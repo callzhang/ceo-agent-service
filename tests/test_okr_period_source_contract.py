@@ -41,3 +41,32 @@ def test_real_bundled_provider_errors_never_emit_missing_goals(monkeypatch, caps
     assert "failure" in result
     assert "availability" not in result
     assert "processed" not in result
+
+
+@pytest.mark.parametrize("objective_response", [
+    {"code": 401, "data": None},
+    {"code": 0, "data": {"list": [], "pageNo": 1, "totalPages": 1, "totalCount": 1}},
+])
+def test_objective_errors_do_not_become_empty_current_period(monkeypatch, capsys, objective_response):
+    module = bundled_headless(monkeypatch)
+    def post(path, *args):
+        if path.endswith("/person/period/list"):
+            return {"code": 0, "data": {"list": [{"name": "2026 Q4", "okrId": "q4"}]}}
+        return objective_response
+    monkeypatch.setattr(module.browser.direct, "_post", post)
+    assert module._fetch_user_okr(user_id="member", period_label="2026 Q4") == 0
+    result = json.loads(capsys.readouterr().out)
+    assert "failure" in result
+    assert "processed" not in result
+
+
+def test_empty_current_period_has_verified_objective_receipt(monkeypatch, capsys):
+    module = bundled_headless(monkeypatch)
+    def post(path, *args):
+        if path.endswith("/person/period/list"):
+            return {"code": 0, "data": {"list": [{"name": "2026 Q4", "okrId": "q4"}]}}
+        return {"code": 0, "data": {"list": [], "pageNo": 1, "totalPages": 0, "totalCount": 0}}
+    monkeypatch.setattr(module.browser.direct, "_post", post)
+    assert module._fetch_user_okr(user_id="member", period_label="2026 Q4") == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["source"]["objectiveListReceipt"] == {"providerCode": 0, "complete": True, "count": 0}

@@ -47,6 +47,22 @@ def test_complete_personal_period_absence_emits_identity_bound_outcome(monkeypat
     assert "do-not-output" not in output
 
 
+def test_absence_receipt_does_not_include_historical_scores(monkeypatch, capsys):
+    module = load_module()
+    class MissingPeriod(RuntimeError):
+        user_id = "person"
+        period_label = "2026 Q4"
+        periods = [{"name": "2026 Q3", "okrId": "q3", "score": 92, "grade": "private", "avgProgress": 55}]
+    monkeypatch.setattr(module.browser.direct, "MissingOkrPeriod", MissingPeriod, raising=False)
+    monkeypatch.setattr(module, "_get_headless_headers", lambda: {})
+    def absent(*args):
+        raise MissingPeriod()
+    monkeypatch.setattr(module.browser.direct, "fetch_with_headers", absent)
+    assert module._fetch_user_okr(user_id="person", period_label="2026 Q4") == 0
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["periods"] == [{"name": "2026 Q3", "okrId": "q3"}]
+
+
 def test_headless_technical_error_is_not_a_goal_absence(monkeypatch, capsys):
     module = load_module()
     class MissingPeriod(RuntimeError):

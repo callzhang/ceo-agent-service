@@ -353,7 +353,7 @@ def _fetch_user_okr(*, user_id: str, period_label: str) -> int:
                 "providerCode": 0,
                 "periodsComplete": True,
             },
-            "periods": absence.periods,
+            "periods": [{"name": period["name"], "okrId": period["okrId"]} for period in absence.periods],
         }
     except (RuntimeError, ValueError, TimeoutError, URLError) as error:
         cause = error if isinstance(error, HTTPError) else error.__cause__
