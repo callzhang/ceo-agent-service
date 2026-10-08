@@ -336,9 +336,20 @@ def test_two_tasks_can_share_runner_without_crossing_parent_or_context(tmp_path)
     assert len(handler.calls) == 2
 
 
-@pytest.mark.parametrize("code", ["temporary_read_error", "runtime_provider_unreachable", "codex_provider_capacity_exhausted"])
+@pytest.mark.parametrize(
+    ("code", "expected_status"),
+    [
+        ("temporary_read_error", "failed_terminal"),
+        ("runtime_provider_unreachable", "failed_terminal"),
+        ("codex_provider_capacity_exhausted", "failed_terminal"),
+        ("dependency_read_unavailable", "failed_retryable"),
+        ("agent_context_refresh_failed", "failed_retryable"),
+    ],
+)
 @pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
-def test_six_persisted_technical_failures_prevent_another_provider_turn(tmp_path, code, role):
+def test_six_persisted_technical_failures_prevent_another_provider_turn(
+    tmp_path, code, expected_status, role
+):
     store, task, context = task_and_context(tmp_path)
     parent = None
     if role is AgentRole.AUDIT:
@@ -351,8 +362,10 @@ def test_six_persisted_technical_failures_prevent_another_provider_turn(tmp_path
         store.fail_agent_run(claim.run.id, AgentError(code=code, retryable=True, source_code='ROOT_CAUSE').model_dump(mode='json'), owner='test')
     driver, _ = orchestrator(store, ScriptedConsumer(store), ScriptedAudit(store))
     result = driver.process(task, context, refresh_context=lambda: context)
-    assert result.status == 'failed_terminal'
+    assert result.status == expected_status
     assert result.error.code == code
-    assert result.error.source_code == 'ROOT_CAUSE'
-    assert result.error.retryable is False
+    assert result.error.source_code == "ROOT_CAUSE"
+    if expected_status == "failed_retryable":
+        assert "ROOT_CAUSE" in result.summary
+    assert result.error.retryable is (expected_status == "failed_retryable")
     assert len(store.list_agent_runs_for_task_generation(task.id, task.execution_generation)) == (7 if role is AgentRole.AUDIT else 6)

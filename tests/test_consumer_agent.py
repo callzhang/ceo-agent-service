@@ -806,6 +806,8 @@ def test_consumer_prompt_declares_common_quality_fields_and_priority():
     assert "needs_human is valid only when risk is high" not in instructions
     assert "only risk and confidence" not in instructions
     assert "Human choices apply only to the current instance" in instructions
+    assert "dependency_read_unavailable" in instructions
+    assert "successful read returns no match" in instructions
 
 
 def test_consumer_instructions_leave_boundary_assessment_to_audit_model():
