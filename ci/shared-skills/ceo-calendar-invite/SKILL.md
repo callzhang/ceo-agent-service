@@ -16,6 +16,8 @@ Load `dingtalk-calendar` before every calendar read or write. Load `dingtalk-cha
 
 Use the supplied exact event command first. Read the title, time, organizer, attendees, description, comments, linked materials, the principal's current response state, and conflicting accepted events. Reuse confirmed facts from the trigger, conversation, and live results; do not ask for facts already present.
 
+Interpret event and participant times using source-supported timezones and the meeting date, including daylight saving; compare absolute instants. A timestamp offset does not establish a participant’s location.
+
 ## Decide
 
 - Accept when the principal's decision or customer, product, personnel, or cross-team input has clear value.

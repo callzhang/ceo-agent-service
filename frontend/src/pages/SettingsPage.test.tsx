@@ -516,7 +516,9 @@ describe("SettingsPage", () => {
     expect(overview).toHaveTextContent("Task 输入");
     expect(overview).toHaveTextContent("Work Profile");
     expect(overview).toHaveTextContent("角色指令");
-    expect(within(overview).getByText("Skill").closest("tr")).toHaveTextContent("只列本轮适用名称和读取入口");
+    expect(within(overview).getByText("Skill").closest("tr")).toHaveTextContent("只在 Task 中列名称、用途和读取入口");
+    expect(within(overview).getByText("完整 Developer 输入").closest("tr")).not.toHaveTextContent("Skill 入口");
+    expect(within(overview).getByText("Task 输入").closest("tr")).toHaveTextContent("已有 session 也会收到");
     expect(overview).toHaveTextContent("共同内容与任务专属来源");
     expect(overview).toHaveTextContent("实际顺序以“运行输入”的分段回执为准");
   });

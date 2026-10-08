@@ -116,12 +116,12 @@ function PromptOverview() {
       <thead><tr><th>提示词 / 内容</th><th>作用与使用位置</th></tr></thead>
       <tbody>
         <tr><td>Developer Prompt（可配置）</td><td>Consumer 与 Audit 共用的工作原则，如证据、判断与沟通方式；它只是完整 Developer 输入中的一段。</td></tr>
-        <tr><td>完整 Developer 输入</td><td>服务按角色组装共同工作原则、角色指令、输出与动作契约、Work Profile、Skill 入口和 Runtime Context；Audit 还包含 Audit Rules。</td></tr>
+        <tr><td>完整 Developer 输入</td><td>服务按角色组装共同工作原则、角色指令、输出与动作契约、Work Profile 和 Runtime Context；Audit 还包含 Audit Rules。</td></tr>
         <tr><td>User Prompt（可配置）</td><td>只用于组织 Consumer 的 Task 输入；通过 <code>{"{{task_context}}"}</code> 填入服务生成的完整任务上下文。</td></tr>
-        <tr><td>Task 输入</td><td>本轮提交给角色的任务正文。Consumer 使用 User 模板；Audit 使用独立候选审核上下文，不使用 User 模板。</td></tr>
+        <tr><td>Task 输入</td><td>每轮提供任务专属指令、Skill 入口、事实或候选及反馈，已有 session 也会收到。Consumer 使用 User 模板；Audit 使用独立候选审核上下文，不使用 User 模板。</td></tr>
         <tr><td>Work Profile</td><td>工作人格与长期偏好，作为独立分段进入 Consumer 与 Audit 的 Developer 输入。</td></tr>
         <tr><td>角色指令与契约</td><td>角色职责、输出 schema、能力边界与 System 动作契约由代码定义，不能在 Developer Prompt 模板中配置。</td></tr>
-        <tr><td>Skill</td><td>只列本轮适用名称和读取入口；Agent 按入口读取 Skill 正文，不在设置说明中复制正文。</td></tr>
+        <tr><td>Skill</td><td>任务选定 Skill 时，只在 Task 中列名称、用途和读取入口；未选定时提供极简业务发现目录，由 Agent 按需读取正文。</td></tr>
       </tbody>
     </table></div>
     <p>共同内容与任务专属来源会分别标记。实际顺序以“运行输入”的分段回执为准；每行显示服务记录的来源、Developer/Task 提交位置和已清理文本字符数。</p>

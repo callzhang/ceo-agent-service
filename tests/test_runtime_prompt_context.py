@@ -50,8 +50,7 @@ def test_source_task_identity_does_not_follow_channel_or_person_name(monkeypatch
     assert '"scheduled_task_id": 8' in text
     assert '"scheduled_task_run_id": 19' in text
     assert "message-a" in text
-    assert "对方时区" in text and "夏令时" in text
-    assert "参与者时区：以原请求和已读取来源为准" in text
+    assert "参与者时区：以原请求和已读取来源为准" not in text
 
 
 def test_prompt_snapshot_preserves_service_input_without_transport_secrets():
@@ -138,7 +137,7 @@ def test_actual_consumer_submission_matches_persisted_prompt_snapshot(tmp_path, 
     assert snapshot["runtime_context"] in snapshot["developer_instructions"]
     assert snapshot["invocation_facts"]["stage_index"] == 0
     assert any(event.get("type") == "runtime.prompt.invoked" for event in run.tool_events)
-    assert "对方时区" in snapshot["developer_instructions"]
+    assert "参与者时区：以原请求" not in snapshot["developer_instructions"]
     assert store.get_sent_reply(task.conversation_id, task.trigger_message_id) is None
 
 
@@ -202,3 +201,33 @@ def test_context_preserves_every_declared_tool_without_repeating_schema_descript
     current_lines = '\n'.join(f'  - {name}' for name in expected)
     baseline = text.replace(current_lines, '\n'.join(old_lines))
     assert len(text) < len(baseline) * .8
+
+
+def test_snapshot_records_section_sources_without_duplicate_text():
+    data = runtime_prompt_snapshot(role="consumer", route=route(), runtime_attempt_id=7, task=None,
+        developer_instructions="Common\n\nRole\n\nRuntime", task_prompt="Task", runtime_context="Runtime",
+        current_time="2026-10-08T10:00:00+00:00", invocation_facts={"stage_index": 0,
+            "prompt_sections": [
+                {"name": "通用原则", "source": "共同 Developer 工作原则", "placement": "developer", "text": "Common"},
+                {"name": "角色契约", "source": "角色与输出契约", "placement": "developer", "text": "Role"},
+            ]})
+    assert data["sections"] == [
+        {"name": "通用原则", "source": "共同 Developer 工作原则", "placement": "developer", "characters": 6},
+        {"name": "角色契约", "source": "角色与输出契约", "placement": "developer", "characters": 4},
+        {"name": "运行上下文", "source": "实际运行配置", "placement": "developer", "characters": 7},
+        {"name": "任务输入", "source": "当前任务正文", "placement": "task", "characters": 4},
+    ]
+    assert "prompt_sections" not in data["invocation_facts"]
+    assert data["invocation_facts"]["stage_index"] == 0
+    assert data["redacted"] is False
+
+
+def test_snapshot_section_lengths_count_redacted_text():
+    secret_text = 'OPENAI_API_KEY="sk-private-example"'
+    data = runtime_prompt_snapshot(role="consumer", route=route(), runtime_attempt_id=7, task=None,
+        developer_instructions=secret_text, task_prompt="Task", runtime_context="",
+        current_time="2026-10-08T10:00:00+00:00", invocation_facts={"prompt_sections": [
+            {"name": "通用原则", "source": "共同 Developer 工作原则", "placement": "developer", "text": secret_text}]})
+    assert data["sections"][0]["characters"] == len(data["developer_instructions"])
+    assert "sk-private-example" not in json.dumps(data)
+    assert data["redacted"] is True

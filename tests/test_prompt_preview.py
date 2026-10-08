@@ -28,7 +28,8 @@ def test_current_preview_separates_frozen_current_configuration_from_saved_task_
     assert result["task_source_rendered_at"] == saved_time
     assert result["invocation_facts"]["prompt_configuration"] == frozen.fingerprints()
     assert result["invocation_facts"] == {"prompt_configuration": frozen.fingerprints()}
-    assert result["task_prompt"] == "Saved complete Task with old template, materials and receipts"
+    assert result["task_prompt"].endswith("Saved complete Task with old template, materials and receipts")
+    assert any(section["name"] == "已保存任务正文" for section in result["sections"])
     assert "New " not in result["task_prompt"]
     assert loads == [{"create_missing": False, "role": "consumer"}]
     assert len(store.get_agent_run(run.id).tool_events) == 1
@@ -157,7 +158,8 @@ def test_current_task_preview_preserves_original_source_binding(tmp_path, monkey
     assert result["task_id"] == task.id
     assert str(tmp_path / "materials" / "consumer-artifacts" / str(task.id) / "g1") in result["runtime_context"]
     assert "Full materials, receipts and Audit feedback" in result["task_prompt"]
-    assert "Pinned source Skill" in result["developer_instructions"]
+    assert "Pinned source Skill" in result["task_prompt"]
+    assert "Pinned source Skill" not in result["developer_instructions"]
     assert len(store.get_agent_run(run.id).tool_events) == 1
 
 
@@ -177,9 +179,10 @@ def test_current_default_skill_catalog_is_rendered_from_current_configuration(tm
     store.append_agent_run_event(run.id, {"type": "runtime.prompt", "role": "consumer", "rendered_at": "2026-10-05T10:00:00+00:00",
         "task_prompt": "Complete original task", "invocation_facts": {"skill_protocol": "Old default catalog",
         "skill_protocol_source": "runtime_catalog"}}, owner="test")
-    monkeypatch.setattr("app.prompt_preview.default_consumer_skill_protocol", lambda: "Current default catalog")
+    monkeypatch.setattr("app.prompt_preview.render_task_skill_discovery", lambda *args, **kwargs: "Current default catalog")
     result = current_prompt_preview(store, role="consumer", config=load_runtime_config({}), task_id=task.id)
-    assert "Current default catalog" in result["developer_instructions"]
+    assert "Current default catalog" in result["task_prompt"]
+    assert "Current default catalog" not in result["developer_instructions"]
     assert "Old default catalog" not in result["developer_instructions"]
 
 
@@ -231,3 +234,20 @@ def test_history_api_selects_attempt_and_rejects_mismatched_binding(tmp_path):
         assert client.get("/api/console/settings/prompt-preview?runtime_attempt_id=81").status_code == 422
     assert len(store.get_agent_run(run.id).tool_events) == 1
     assert store.get_reply_task(task.id).status == task.status
+
+
+def test_history_keeps_recorded_section_sources_and_does_not_infer_old_sections(tmp_path):
+    store = AutoReplyStore(tmp_path / "section-preview.sqlite3")
+    task, run = task_and_run(store)
+    sections = [{"name": "旧规则", "source": "当时已保存的来源", "placement": "developer", "characters": 3}]
+    event = {"type": "runtime.prompt", "runtime_attempt_id": 81, "role": "consumer", "task_id": task.id,
+        "runtime_kind": "codex_cli", "route_name": "old-route", "model": "old-model",
+        "rendered_at": "2026-10-05T10:00:00+00:00", "developer_instructions": "Old",
+        "task_prompt": "Saved task", "submitted_input": "Saved task", "runtime_context": "",
+        "sections": sections, "redacted": False}
+    store.append_agent_run_event(run.id, event, owner="test")
+    assert historical_prompt_preview(store, run_id=run.id)["sections"] == sections
+    event.pop("sections")
+    event["runtime_attempt_id"] = 82
+    store.append_agent_run_event(run.id, event, owner="test")
+    assert historical_prompt_preview(store, run_id=run.id)["sections"] == []
