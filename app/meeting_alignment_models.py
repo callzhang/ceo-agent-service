@@ -261,7 +261,8 @@ class DeliveryTarget(StrictModel):
     direct_user_id: str = Field(
         description=(
             "收件人的稳定 user_id；group 形态必须写空字符串，direct 形态写对方在"
-            "名册里的真实 user_id，只有名册解析不出 user_id 时才写空字符串。"
+            "来源里的真实 user_id；业务私信必须非空，且不得是当前用户或其已核验别名；"
+            "只有个人完整日历 1:1 名册解析不出 user_id 时才写空字符串。"
         )
     )
     title: str = Field(description="群名或收件人姓名。")
@@ -296,6 +297,48 @@ class SensitivePrivateMessage(StrictModel):
         ):
             raise ValueError(PRIVATE_MESSAGE_EVIDENCE_RULE.message)
         return self
+
+
+def meeting_business_direct_recipient(
+    source: MeetingSource,
+    target: DeliveryTarget,
+    *,
+    participant_only: bool = False,
+) -> MeetingParticipant:
+    """Resolve an explicit audience without directory search or self fallback."""
+    user_id = target.direct_user_id.strip()
+    if not source.current_user_id.strip():
+        raise ValueError("principal identity is required before private delivery")
+    if user_id == source.current_user_id.strip():
+        raise ValueError("private target must not be the principal")
+    if target.kind != "direct" or not user_id:
+        raise ValueError("business direct target requires an explicit stable user_id")
+    matches = [
+        person for person in source.participants if person.user_id.strip() == user_id
+    ]
+    if not participant_only and not matches and source.attendee_evidence == "calendar":
+        organizer = source.creator
+        if organizer is not None and organizer.user_id.strip() == user_id:
+            matches = [organizer]
+    if len(matches) != 1:
+        raise ValueError(
+            "private target must identify one meeting participant or verified calendar organizer"
+        )
+    recipient = matches[0]
+    if " ".join(target.title.split()).casefold() != " ".join(
+        recipient.name.split()
+    ).casefold():
+        raise ValueError("private target title must match the stable source recipient")
+    principal = [
+        person for person in source.participants
+        if person.user_id.strip() == source.current_user_id.strip()
+    ]
+    if recipient.open_dingtalk_id.strip() and any(
+        person.open_dingtalk_id.strip() == recipient.open_dingtalk_id.strip()
+        for person in principal
+    ):
+        raise ValueError("private target must not be a verified alias of the principal")
+    return recipient
 
 
 def _decision_schema_extra(schema: dict[str, Any]) -> None:
@@ -368,19 +411,22 @@ class MeetingAlignmentDecision(StrictModel):
             "非空、candidates 非空且 conversation_id 必须等于 candidates[0]."
             "conversation_id、direct_user_id 必须是 \"\"；kind=direct 时 title 非空、"
             "conversation_id 必须是 \"\"、candidates 必须是 []，direct_user_id 写对方"
-            "在名册里的真实 user_id，只有名册解析不出 user_id 时才写 \"\"。"
+            "在来源里的真实 user_id；业务私信必须非空，唯一匹配来源参会人或已核验日历组织者，"
+            "不得是当前用户或其已核验别名；只有个人完整日历 1:1 名册解析不出 user_id 时才写 \"\"。"
         )
     )
     final_message: str = Field(
         description=(
-            "必须非空；人员敏感内容通常不得出现在这里。若 target 是经实时证据匹配的 HR 群，"
-            "且内容是该 HR 受众共同讨论而非针对具体个人，可以在这里保留敏感详情。"
+            "必须非空；按实际内容、业务目的和披露范围核验近期讨论、完整当前群成员、稳定身份、"
+            "当前职务职责及披露授权；相同已核验且合适受众的内容合并在这里，职务不自动授权。"
         )
     )
     sensitive_private_message: SensitivePrivateMessage | None = Field(
         description=(
-            "没有人员敏感内容时必须是 null；匹配的 HR 群可承接共同讨论的敏感内容并保持 null；"
-            "针对具体个人或受众不明确时才生成独立私聊；非 null 时 audience_scope 必须是 business。"
+            "没有人员敏感内容或内容适合同一已核验受众时必须是 null；仅当内容需要不同已核验受众"
+            "时生成独立私聊；缺少受众授权不能私聊兜底，禁止当前用户及其已核验别名。"
+            "recipient_evidence 记录实时身份、当前职务职责和实际内容披露授权；"
+            "非 null 时 audience_scope 必须是 business。"
         )
     )
     audit_summary: str = Field(min_length=1)

@@ -34,7 +34,6 @@ from app.group_discovery import (
     ParticipantCoverageEvidence,
     ProviderScope,
     RetryableProviderError,
-    is_non_retryable_dingtalk_group_read_denial,
 )
 from app.meeting_alignment_agent import (
     MeetingAlignmentAgent,
@@ -1074,12 +1073,26 @@ def _search_meeting_group_candidates(
             "title": item.group.display_name,
             "summary_title_overlap": int(evidence.title_score or 0),
             "search_query": source.title,
+            "member_count": len(evidence.members) if evidence.members is not None else None,
+            "member_open_dingtalk_ids": sorted({member.external_user_id for member in evidence.members}) if evidence.members is not None else None,
+            "member_roster_complete": evidence.members is not None,
+            "history_read_status": "denied" if evidence.history_read_denial else "read" if provider.capabilities.message_history else "unavailable",
+            "audience_verification_required": (
+                "Before selecting effects, verify live full relevant discussion, full group roster, "
+                "and stable recipient identities and titles. Candidate excerpts and prior deliveries "
+                "do not verify the audience. Denied history is unresolved access evidence, not empty "
+                "discussion, no-group evidence, or permission to send; never use a self fallback."
+            ),
         }
+        if evidence.history_read_denial is not None:
+            candidate.update(
+                history_read_code=evidence.history_read_denial.code,
+                history_read_reason=evidence.history_read_denial.reason,
+            )
         coverage = evidence.participant_coverage
         if coverage is not None:
             candidate.update(
                 attendee_overlap=coverage.matched or 0,
-                member_count=coverage.total or 0,
                 participant_coverage=f"{coverage.matched}/{coverage.total}",
             )
         discussion = evidence.discussion
@@ -1093,7 +1106,7 @@ def _search_meeting_group_candidates(
                 }
                 for excerpt in discussion.excerpts
             ]
-        if item.group.external_group_id in recurring_by_id:
+        if evidence.history_read_denial is None and item.group.external_group_id in recurring_by_id:
             _group_title, sent_count = recurring_by_id[item.group.external_group_id]
             candidate.update(verified_recurring_group=True, prior_sent_count=sent_count)
         candidates.append(candidate)
@@ -1242,9 +1255,6 @@ def _analyze_meeting_job(
     try:
         group_candidates = _search_meeting_group_candidates(dws, source, store)
     except DwsError as exc:
-        if is_non_retryable_dingtalk_group_read_denial(exc):
-            _fail_job(store, job.id, "meeting_group_discovery", exc)
-            return
         _retry_or_fail(
             store,
             job,

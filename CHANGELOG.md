@@ -9,6 +9,26 @@
 
 ## Unreleased
 
+- 2026-10-08: Meeting history denials remain typed candidate evidence rather
+  than aborting all audience discovery. Preserve actual full roster IDs/counts;
+  denied discussion remains unknown and does not authorize another recipient.
+  The independent meeting planner now reuses the shared message-audience
+  contract. Stable non-principal source recipients, same-audience merging and
+  no automatic group-to-organizer switching are checked before delivery.
+  Formal analysis reruns reject partial/prepared effects and active ownership
+  transactionally, preserving original meeting identity and historical runs.
+  This does not migrate the meeting engine or bypass provider risk refusals.
+  Legacy partial split deliveries keep their immutable primary body and
+  sensitive action identity; recipient equality alone never proves completion.
+  Both persisted bodies are verified before any effect, including rejecting
+  an old HR-merged primary that discloses another recipient's sensitive text.
+  Meeting preparation atomically binds each canonical recipient using existing
+  service state, and dispatch verifies it again before reusing any receipt.
+  Legacy preparations without recipient proof remain blocked, never backfilled
+  from a new decision; this introduces no schema migration or history replay.
+  Full roster evidence is scope-validated and deduplicated before counting.
+  The meeting Skill and current documentation no longer suggest self fallback.
+
 - 2026-10-07: Runtime history quality checks resolve the forbidden path
   configuration once per scan rather than once per field. Every row and
   credential/path check remains covered; each new scan rereads configuration.

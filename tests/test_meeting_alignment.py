@@ -2267,7 +2267,7 @@ def test_meeting_group_discovery_failure_does_not_become_direct_fallback(tmp_pat
 
 
 @pytest.mark.parametrize("prior_attempts", [0, 411])
-def test_confidential_group_read_denial_fails_without_retry_or_fallback(tmp_path, prior_attempts):
+def test_confidential_group_read_denial_reaches_agent_without_fallback(tmp_path, prior_attempts):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
     dws.search_conversations = lambda query: [DingTalkConversation(
@@ -2287,18 +2287,62 @@ def test_confidential_group_read_denial_fails_without_retry_or_fallback(tmp_path
     job_id = seed_consumer_job(store, dws)
     with store._connect() as db:
         db.execute("update meeting_alignment_jobs set attempts=? where id=?", (prior_attempts, job_id))
-    runner = FakeMeetingRunner(consumer_send_decision())
+    class UnresolvedAudienceRunner(FakeMeetingRunner):
+        def decide(self, *, prompt, run_id=None):
+            self.calls += 1
+            self.prompts.append(prompt)
+            raise ValueError("Audience unresolved; no effects selected")
+
+    runner = UnresolvedAudienceRunner(consumer_send_decision())
 
     assert consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1) == 1
 
     job = store.get_meeting_alignment_job(job_id)
     assert job.status == "failed"
-    assert json.loads(job.error)["kind"] == "meeting_group_discovery"
-    assert "cid-first" in job.error
+    assert json.loads(job.error)["kind"] == "meeting_agent"
+    assert runner.prompts, job.error
+    assert '"history_read_status":"denied"' in runner.prompts[0]
+    assert '"history_read_code":"1001"' in runner.prompts[0]
+    assert "该群为保密群，无法获取消息记录" in runner.prompts[0]
+    assert "live full relevant discussion" in runner.prompts[0]
     assert job.locked_at is None
-    assert runner.calls == 0
+    assert runner.calls == 1
     assert dws.send_calls == []
     assert consume_meeting_alignment_jobs(store, dws, runner, now=NOW + timedelta(hours=1), limit=1) == 0
+
+
+@pytest.mark.parametrize("roster_complete", [True, False])
+def test_denied_candidate_serializes_actual_roster_not_meeting_audience(roster_complete):
+    source = MeetingSource.model_validate({
+        "meeting_id": "unresolved", "title": "上线项目", "status": "ended",
+        "started_at": "2026-07-14T09:00:00+08:00",
+        "ended_at": "2026-07-14T10:00:00+08:00",
+        "participants": [
+            {"name": "A", "user_id": "a", "open_dingtalk_id": "open-a"},
+            {"name": "B", "user_id": "b", "open_dingtalk_id": "open-b"},
+        ],
+        "attendee_evidence": "calendar", "attendee_roster_complete": roster_complete,
+        "current_user_id": "a", "summary": "上线项目进展", "transcript": [],
+    })
+    dws = ConsumerDws()
+    dws.search_conversations = lambda query: [DingTalkConversation(
+        open_conversation_id="cid-first", title="上线项目群", single_chat=False, unread_point=0,
+    )]
+    dws.list_group_member_open_dingtalk_ids = lambda group: {"open-a", "open-b", "open-other"}
+    def deny(conversation, limit):
+        raise DwsError("read refused", code="1001", business_message="该群为保密群，无法获取消息记录")
+    dws.read_recent_messages = deny
+    store = SimpleNamespace(recurring_meeting_group_targets=lambda title: [("cid-first", "上线项目群", 2)])
+    [candidate] = meeting_alignment._search_meeting_group_candidates(dws, source, store)
+    assert candidate["title"] == "上线项目群"
+    assert candidate["member_count"] == 3
+    assert candidate["member_open_dingtalk_ids"] == ["open-a", "open-b", "open-other"]
+    assert candidate["member_roster_complete"] is True
+    assert candidate["history_read_status"] == "denied"
+    assert candidate["history_read_code"] == "1001"
+    assert candidate["history_read_reason"] == "该群为保密群，无法获取消息记录"
+    assert "topic_discussion_evidence" not in candidate
+    assert candidate.get("verified_recurring_group") is not True
 
 
 def test_calendar_summary_retry_does_not_resend_meeting_message(tmp_path):
@@ -2651,7 +2695,7 @@ def test_source_read_failure_never_degrades_to_creator_direct(tmp_path):
     assert dws.send_calls == []
 
 
-def test_missing_calendar_organizer_identity_becomes_needs_human_without_send(
+def test_unavailable_planned_group_fails_without_organizer_fallback(
     tmp_path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -2674,10 +2718,10 @@ def test_missing_calendar_organizer_identity_becomes_needs_human_without_send(
     )
 
     job = store.get_meeting_alignment_job(job_id)
-    assert job.status == "needs_human"
+    assert job.status == "failed"
     assert json.loads(job.error) == {
-        "kind": "meeting_identity",
-        "message": "meeting organizer identity is unresolved",
+        "kind": "meeting_target",
+        "message": "planned group is unavailable; audience must be reviewed, not redirected",
     }
     assert json.loads(job.decision_json)["action"] == "send"
     assert json.loads(job.decision_json)["target"]["kind"] == "group"
@@ -2687,7 +2731,7 @@ def test_missing_calendar_organizer_identity_becomes_needs_human_without_send(
     assert dws.send_calls == []
 
 
-def test_calendar_organizer_identity_is_resolved_before_agent_decision(tmp_path):
+def test_same_verified_private_audience_receives_one_combined_message(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
     event = dws.calendar_pages[""]["events"][0]
@@ -2749,7 +2793,9 @@ def test_calendar_organizer_identity_is_resolved_before_agent_decision(tmp_path)
     assert job.status == "sent", job.error
     assert runner.calls == 1
     assert '"user_id": "u-mina"' in runner.prompts[0]
-    assert [call.get("user_id") for call in dws.send_calls] == ["u-mina", "u-mina"]
+    assert [call.get("user_id") for call in dws.send_calls] == ["u-mina"]
+    assert decision.final_message in dws.send_calls[0]["text"]
+    assert decision.sensitive_private_message.message in dws.send_calls[0]["text"]
 
 
 def test_consumer_quarantines_corrupt_persisted_send_evidence(tmp_path):
@@ -3258,13 +3304,13 @@ def test_producer_never_reenters_terminal_job(tmp_path):
 
 
 def rejected_direct_decision() -> MeetingAlignmentDecision:
-    """A business send addressed to a participant who is not the organizer."""
+    """A business send addressed to an identity absent from the source."""
     payload = summary_decision().model_dump(mode="json")
     payload["target"] = {
         "kind": "direct",
         "conversation_id": "",
-        "direct_user_id": "u-b",
-        "title": "B",
+        "direct_user_id": "u-unverified",
+        "title": "Unverified",
         "candidates": [],
     }
     return MeetingAlignmentDecision.model_validate(payload)
@@ -3283,6 +3329,6 @@ def test_a_rejected_target_is_kept_with_the_failure(tmp_path):
     assert job.status == "failed"
     assert json.loads(job.error)["kind"] == "meeting_target"
     assert job.target_kind == "direct"
-    assert job.target_id == "u-b"
-    assert job.target_title == "B"
-    assert json.loads(job.decision_json)["target"]["title"] == "B"
+    assert job.target_id == "u-unverified"
+    assert job.target_title == "Unverified"
+    assert json.loads(job.decision_json)["target"]["title"] == "Unverified"

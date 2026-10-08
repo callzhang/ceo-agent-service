@@ -42,6 +42,34 @@ class ServiceMessageSender:
             feedback_base_url=feedback_base_url,
         )
 
+    def prepare_meeting_alignment(
+        self, *, delivery_key: str, body: str, original_text: str = "",
+        target_kind: str, target_id: str, feedback_base_url: str | None = None,
+    ) -> PreparedOutboundMessage:
+        return self.store.prepare_meeting_alignment_message(
+            delivery_key=delivery_key, body=body, original_text=original_text,
+            target_kind=target_kind, target_id=target_id,
+            feedback_base_url=feedback_base_url,
+        )
+
+    def send_meeting_alignment_prepared(
+        self, message: PreparedOutboundMessage, *, conversation_id: str | None, **target: Any,
+    ) -> SendReceipt:
+        if conversation_id is not None:
+            kind, target_id = "group", conversation_id
+            if target.get("user_id") or target.get("open_dingtalk_id"):
+                raise ValueError("meeting target is ambiguous")
+        else:
+            user_id = str(target.get("user_id") or "").strip()
+            open_id = str(target.get("open_dingtalk_id") or "").strip()
+            if bool(user_id) == bool(open_id):
+                raise ValueError("meeting target is ambiguous")
+            kind, target_id = ("user", user_id) if user_id else ("open_user", open_id)
+        self.store.verify_meeting_alignment_target(
+            message.delivery_key, target_kind=kind, target_id=target_id
+        )
+        return self.send_dingtalk_prepared(message, conversation_id=conversation_id, **target)
+
     def send_dingtalk(
         self,
         *,

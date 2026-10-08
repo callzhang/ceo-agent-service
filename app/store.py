@@ -5963,6 +5963,45 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
         db.execute("insert into service_state(key, value) values (?, '1')", (marker,))
 
+    def prepare_meeting_alignment_message(
+        self, *, delivery_key: str, body: str, original_text: str,
+        target_kind: str, target_id: str, feedback_base_url: str | None = None,
+    ) -> PreparedOutboundMessage:
+        """Atomically bind one meeting preparation to its immutable recipient."""
+        _, key = normalize_outbound_postfix_inputs(
+            channel="dingtalk", delivery_key=delivery_key, body=body
+        )
+        if target_kind not in {"group", "user", "open_user"} or not target_id.strip():
+            raise ValueError("meeting delivery target is invalid")
+        state_key = f"meeting_delivery_target:v1:dingtalk:{key}"
+        target_json = json.dumps(
+            {"kind": target_kind, "id": target_id.strip()}, sort_keys=True
+        )
+        with self._immediate_write_transaction() as db:
+            target = db.execute("select value from service_state where key=?", (state_key,)).fetchone()
+            prepared = db.execute(
+                "select 1 from outbound_postfixes where channel='dingtalk' and delivery_key=?", (key,)
+            ).fetchone()
+            if target is not None:
+                if str(target["value"]) != target_json or prepared is None:
+                    raise ValueError("meeting prepared target binding conflicts")
+            elif prepared is not None:
+                # Legacy receipts do not establish their recipient by body equality.
+                raise ValueError("meeting prepared target is unverified")
+            message = self._prepare_outbound_postfix_in_transaction(
+                db, channel="dingtalk", delivery_key=key, body=body,
+                original_text=original_text, feedback_base_url=feedback_base_url,
+            )
+            if target is None:
+                db.execute("insert into service_state(key,value) values (?,?)", (state_key, target_json))
+            return message
+
+    def verify_meeting_alignment_target(self, delivery_key: str, *, target_kind: str, target_id: str) -> None:
+        expected = json.dumps({"kind": target_kind, "id": target_id.strip()}, sort_keys=True)
+        bound = self.get_service_state(f"meeting_delivery_target:v1:dingtalk:{delivery_key.strip()}")
+        if bound != expected:
+            raise ValueError("meeting prepared target binding conflicts")
+
     def prepare_outbound_postfix(
         self,
         channel: str,
@@ -18678,13 +18717,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
         Existing meeting alignment runs remain immutable. Only the queue
         projection and retry counter are reset; delivery must be reached again
-        through the current analysis and target-selection path.
+        through the current analysis and target-selection path. A prepared
+        delivery or live owner must use its existing recovery path instead.
         """
         ids = sorted({int(job_id) for job_id in job_ids if int(job_id) > 0})
         if not ids:
             return []
         placeholders = ",".join("?" for _ in ids)
-        with self._connect() as db:
+        with self._immediate_write_transaction() as db:
             rows = db.execute(
                 f"""update meeting_alignment_jobs
                     set status='retry', attempts=0, locked_at=null,
@@ -18693,6 +18733,37 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         mentions_json='[]', final_message='',
                         send_result_json='{{}}', updated_at=current_timestamp
                     where id in ({placeholders}) and status in ('failed', 'no_action')
+                      and coalesce(locked_at,'')=''
+                      and send_result_json='{{}}'
+                      and not exists (
+                        select 1 from outbound_postfixes outbound
+                        where outbound.channel='dingtalk' and outbound.delivery_key in (
+                          'meeting-alignment:' || meeting_alignment_jobs.id || ':' || meeting_alignment_jobs.meeting_id,
+                          'meeting-alignment:' || meeting_alignment_jobs.id || ':' || meeting_alignment_jobs.meeting_id || ':sensitive'
+                        )
+                      )
+                      and not exists (
+                        select 1 from meeting_alignment_delivery_claims delivery
+                        where delivery.job_id=meeting_alignment_jobs.id
+                      )
+                      and not exists (
+                        select 1 from dispatcher_claim_leases claim
+                        where claim.adapter_name='meeting'
+                          and claim.source_id=cast(meeting_alignment_jobs.id as text)
+                          and coalesce(claim.terminal_at,'')=''
+                          and julianday(claim.lease_expires_at)>julianday('now')
+                      )
+                      and not exists (
+                        select 1 from meeting_alignment_runs run
+                        where run.job_id=meeting_alignment_jobs.id and run.status='running'
+                      )
+                      and not exists (
+                        select 1 from agent_runtime_attempts runtime
+                        join meeting_alignment_runs run on runtime.workload_key=cast(run.id as text)
+                        where runtime.workload_kind='meeting'
+                          and run.job_id=meeting_alignment_jobs.id
+                          and runtime.status in ('starting','running')
+                      )
                     returning id""",
                 ids,
             ).fetchall()
