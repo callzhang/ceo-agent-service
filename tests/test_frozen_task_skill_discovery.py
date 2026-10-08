@@ -191,3 +191,12 @@ def test_role_command_replaces_selected_native_skill_config_with_empty_selection
         and command[index + 1].startswith("mcp_servers.agent_cli.enabled_tools=")
     )
     assert '"read_task_skill"' in enabled_tools
+
+
+def test_role_prompt_carries_current_frozen_skill_catalog_without_body():
+    material = ServiceCommandSkillMaterial(name="ceo-calendar-invite", content="FROZEN BODY")
+    context = _context(material)
+    assert context.role_prompt() == context.prompt + "\n\n" + context.skill_protocol
+    assert "read_task_skill" in context.role_prompt()
+    assert "FROZEN BODY" not in context.role_prompt()
+    assert _context().role_prompt() == _context().prompt

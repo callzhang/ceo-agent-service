@@ -59,6 +59,12 @@ class ServiceCommandConsumerContext:
     skill_protocol: str
     skill_materials: tuple[ServiceCommandSkillMaterial, ...] = ()
 
+    def role_prompt(self) -> str:
+        """Carry this task's short frozen-Skill discovery on every role turn."""
+        if self.skill_materials:
+            return self.prompt + "\n\n" + self.skill_protocol
+        return self.prompt
+
     def materialized_skill_protocol(self) -> str:
         """Return frozen blocks when present, otherwise the saved inline protocol."""
         if not self.skill_materials:

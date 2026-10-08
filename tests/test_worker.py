@@ -1765,9 +1765,12 @@ def test_scheduled_service_trigger_persists_consumer_context_on_new_reply_task(
     assert payload["raw_payload"]["scheduled_consumer"] == context.to_payload()
 
 
+@pytest.mark.parametrize("frozen", [False, True])
 def test_worker_restores_finance_oa_scheduled_consumer_snapshot(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, frozen
 ):
+    from app.agent_cron.commands import ServiceCommandSkillMaterial
+
     worker = make_worker(tmp_path, FakeDws([], {}), FakeCodex([]), monkeypatch)
     scheduled_consumer = ServiceCommandConsumerContext(
         scheduled_task_id=7,
@@ -1777,7 +1780,11 @@ def test_worker_restores_finance_oa_scheduled_consumer_snapshot(
             "审阅真实 DingTalk OA。"
         ),
         skill_names=("dingtalk-oa-approval", "stardust-oa-finance-review"),
-        skill_protocol="# Stardust finance OA review",
+        skill_protocol="Read agent_cli.read_task_skill for selected Skills." if frozen else "# Stardust finance OA review",
+        skill_materials=tuple(
+            ServiceCommandSkillMaterial(name=name, content="FROZEN RULE BODY")
+            for name in ("dingtalk-oa-approval", "stardust-oa-finance-review")
+        ) if frozen else (),
     )
     trigger = message("请处理财务 OA", message_id="oa-message-1")
     trigger.raw_payload["scheduled_consumer"] = scheduled_consumer.to_payload()
@@ -1801,7 +1808,10 @@ def test_worker_restores_finance_oa_scheduled_consumer_snapshot(
         context_messages=[trigger],
     )
 
-    assert context.consumer_prompt == scheduled_consumer.prompt
+    assert context.consumer_prompt == scheduled_consumer.role_prompt()
+    assert "FROZEN RULE BODY" not in context.consumer_prompt
+    if frozen:
+        assert "agent_cli.read_task_skill" in context.consumer_prompt
     assert context.skill_protocol_override == scheduled_consumer.skill_protocol
     assert context.skill_names == scheduled_consumer.skill_names
     assert "scheduled_consumer" not in context.trigger_raw_payload
@@ -12547,7 +12557,7 @@ def test_resume_prompt_only_includes_turn_message_without_repeating_thread_promp
     prompt = agent_prompt(worker)
     assert agent_runner(worker).calls[0][3] == ""
     assert codex.calls == []
-    assert "1. [role_boundary] Consumer Agent A forms the candidate" not in prompt
+    assert "1. [role_boundary] Consumer Agent A forms the candidate" in prompt
     assert "CEO Agent Prompt" not in prompt
     assert "你是 Alex 的钉钉自动回复分身" not in prompt
     assert "回答任何问题前，先检索本地 workspace" not in prompt
@@ -13228,7 +13238,7 @@ def test_force_new_rerun_starts_fresh_codex_session(tmp_path: Path, monkeypatch)
     )
     assert run is not None
     assert run.codex_session_id != "old-session"
-    assert "1. [role_boundary] Consumer Agent A forms the candidate" not in agent_prompt(worker)
+    assert "1. [role_boundary] Consumer Agent A forms the candidate" in agent_prompt(worker)
     assert "你是 Alex 的钉钉自动回复分身" not in agent_prompt(worker)
 
 
@@ -13440,7 +13450,7 @@ def test_prompt_includes_dynamic_similar_corpus_examples_without_static_style_pr
     assert "先看岗位匹配" not in prompt
     assert "cid-style-1" not in prompt
     assert '"conversation_title": "Friday"' in prompt
-    assert "1. [role_boundary] Consumer Agent A forms the candidate" not in prompt
+    assert "1. [role_boundary] Consumer Agent A forms the candidate" in prompt
 
 
 def test_prompt_includes_similar_human_feedback_examples(tmp_path: Path, monkeypatch):

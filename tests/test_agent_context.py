@@ -413,7 +413,7 @@ def test_context_renders_one_canonical_instant_for_naive_dingtalk_times():
 def test_context_contains_runtime_invariants_without_business_rules():
     rendered = _context().render()
 
-    assert "## Application Result Contract" not in rendered
+    assert "## Application Result Contract" in rendered
     assert "do not invent a `--task-id` argument" not in rendered
     assert "internal_personnel" not in rendered
     assert "HR conversation may skip counterpart identity matching" not in rendered
@@ -655,7 +655,7 @@ def test_consumer_context_reuses_supplied_facts_without_application_read_only_po
     rendered = _context().render()
 
     assert "Consumer Agent A" in _CONSUMER_AGENT_RULES
-    assert "Consumer Agent A" not in rendered
+    assert "Consumer Agent A" in rendered
     assert "read-only" not in rendered
     assert "A cannot write" not in rendered
     assert "Raw material references and exact read commands" in rendered

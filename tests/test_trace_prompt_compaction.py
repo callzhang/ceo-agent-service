@@ -47,7 +47,7 @@ def test_wire_schema_compaction_retains_validation_constraints():
         model.model_validate_json(json.dumps(valid))
 
 
-def test_task_context_has_facts_and_stage_without_duplicate_result_rules():
+def test_task_context_retains_original_result_rules_facts_and_stage():
     context = AgentTaskContext(
         task_id=1, channel="dingtalk", conversation_id="conversation", conversation_title="fixture",
         single_chat=True, trigger_message_id="message", trigger_sender="sender",
@@ -55,7 +55,7 @@ def test_task_context_has_facts_and_stage_without_duplicate_result_rules():
         messages=(), materials=(), prior_receipts=(), trigger_raw_payload={"source_fact": "KEEP"},
     )
     rendered = context.render(current_time="2026-10-07T10:00:00+08:00")
-    assert "## Application Result Contract" not in rendered
+    assert rendered.count("## Application Result Contract") == 1
     assert "UNMODIFIED_SOURCE" in rendered
     assert '"source_fact": "KEEP"' in rendered
     assert "### Execution stage" in rendered

@@ -2819,7 +2819,7 @@ class DingTalkAutoReplyWorker:
             image_sha256s=tuple(
                 hashlib.sha256(path.read_bytes()).hexdigest() for path in image_paths
             ),
-            consumer_prompt=(scheduled_consumer.prompt if scheduled_consumer else ""),
+            consumer_prompt=(scheduled_consumer.role_prompt() if scheduled_consumer else ""),
             skill_protocol_override=(
                 scheduled_consumer.skill_protocol if scheduled_consumer else None
             ),
