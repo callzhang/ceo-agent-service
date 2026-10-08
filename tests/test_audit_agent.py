@@ -290,3 +290,51 @@ def test_actual_audit_runner_uses_production_review_instructions(setup):
     assert task_rules == ""
     assert rendered_rules not in executor.prompts[0]
     assert "只读审核" in snapshot["runtime_context"]
+
+
+def test_audit_task_carries_selected_frozen_skill_discovery_on_every_turn(setup):
+    store, task, parent, context, _config, _router = setup
+    context = replace(
+        context,
+        task=replace(
+            context.task,
+            skill_names=("ceo-document-review",),
+            skill_protocol_override="OLD SELECTED PROTOCOL MUST NOT BE PRELOADED",
+        ),
+    )
+    executor = CapturingExecutor(_wire(context.candidate_digest))
+    runner = _runner(setup, executor)
+    runner.skill_protocol_override = "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED"
+    selected_task = task.model_copy(update={
+        "trigger_message_json": json.dumps({
+            "raw_payload": {
+                "scheduled_consumer": {
+                    "skill_materials": [
+                        {"name": "ceo-document-review", "content": "FROZEN BODY"}
+                    ]
+                }
+            }
+        })
+    })
+
+    runner.run(selected_task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    assert "ceo-document-review" in executor.prompts[0]
+    assert "agent_cli.read_task_skill(name)" in executor.prompts[0]
+    assert "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED" not in executor.prompts[0]
+    developer_setting = next(
+        value for value in executor.commands[0] if value.startswith("developer_instructions=")
+    )
+    assert "ceo-document-review" not in json.loads(developer_setting.split("=", 1)[1])
+    [snapshot] = [
+        event for event in store.list_agent_runs_for_task_generation(
+            task.id, task.execution_generation
+        )[-1].tool_events
+        if event.get("type") == "runtime.prompt"
+    ]
+    task_sections = [
+        section for section in snapshot["sections"] if section["placement"] == "task"
+    ]
+    assert any(section["name"] == "任务 Skill 入口" for section in task_sections)
+    assert snapshot["invocation_facts"]["skill_protocol_source"] == "frozen_task_skills"
+    assert snapshot["invocation_facts"]["skill_protocol"] == ""

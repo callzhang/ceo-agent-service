@@ -130,19 +130,107 @@ class AuditAgentRunner:
         run: AgentRun,
         rendered_rules: str,
     ) -> AgentTurnRunResult[AuditAgentResult]:
-        prompt = context.render() + result_correction_prompt(
+        correction = result_correction_prompt(
             self.store,
             task,
             role=AgentRole.AUDIT,
             proposal_revision=context.proposal_revision,
         )
-        from app.consumer_agent import audit_developer_instructions
-        from app.prompt_composition import load_prompt_configuration
+        from app.business_skills import frozen_task_skill_names, render_task_skill_discovery
+        from app.consumer_agent import audit_developer_sections, default_task_skill_catalog
+        from app.prompt_composition import (
+            PromptSection,
+            compose_plain_task_assembly,
+            load_prompt_configuration,
+            prompt_section_facts,
+            render_prompt_sections,
+        )
 
         configuration = load_prompt_configuration(role="audit")
-        developer_instructions = audit_developer_instructions(rendered_rules, runtime_context="", prompt_configuration=configuration)
-        if self.skill_protocol_override:
-            developer_instructions += "\n\n" + self.skill_protocol_override
+        developer_sections = audit_developer_sections(
+            rendered_rules,
+            runtime_context="",
+            prompt_configuration=configuration,
+        )
+        frozen_names = frozen_task_skill_names(
+            task.trigger_message_json, context.task.skill_names,
+        )
+        unfrozen_names = tuple(
+            name for name in context.task.skill_names if name not in frozen_names
+        )
+        if context.task.skill_names:
+            task_skill_text = render_task_skill_discovery(
+                context.task.skill_names,
+                catalog=default_task_skill_catalog(context.task.skill_names),
+                frozen_names=frozen_names,
+            )
+            if unfrozen_names and self.skill_protocol_override:
+                task_skill_text += (
+                    "\n\n## Saved Task Skill Instructions\n"
+                    + self.skill_protocol_override
+                )
+            if frozen_names and unfrozen_names:
+                task_skill_source = (
+                    "任务冻结与当前 Skill 选择 + 已保存任务约定"
+                    if self.skill_protocol_override
+                    else "任务冻结与当前 Skill 选择"
+                )
+            elif frozen_names:
+                task_skill_source = "任务冻结 Skill 选择 + 当前 Skill 用途目录"
+            else:
+                task_skill_source = (
+                    "当前选中 Skill 用途目录 + 已保存任务约定"
+                    if self.skill_protocol_override
+                    else "当前选中 Skill 用途目录"
+                )
+        elif self.skill_protocol_override:
+            task_skill_text = self.skill_protocol_override
+            task_skill_source = "已保存自定义 Task Skill 约定"
+        else:
+            task_skill_text = render_task_skill_discovery(
+                (), catalog=default_task_skill_catalog()
+            )
+            task_skill_source = "当前 Skill 用途目录"
+        if context.task.skill_names:
+            skill_protocol_fact = (
+                self.skill_protocol_override or "" if unfrozen_names else ""
+            )
+            skill_protocol_source = (
+                "selected_installed_skills"
+                if unfrozen_names
+                else "frozen_task_skills"
+            )
+        else:
+            skill_protocol_fact = self.skill_protocol_override or ""
+            skill_protocol_source = (
+                "task_override"
+                if self.skill_protocol_override is not None
+                else "runtime_catalog"
+            )
+        task_sections = [
+            PromptSection(
+                "任务 Skill 入口",
+                task_skill_source,
+                "task",
+                task_skill_text,
+            ),
+            PromptSection(
+                "当前审核任务",
+                "当前任务与候选",
+                "task",
+                context.render(),
+            ),
+        ]
+        if correction:
+            task_sections.append(
+                PromptSection(
+                    "本轮结果修正",
+                    "当前运行修正",
+                    "task",
+                    correction.strip("\n"),
+                )
+            )
+        task_assembly = compose_plain_task_assembly(*task_sections)
         process = AgentTurnProcess[AuditAgentResult](
             store=self.store,
             task=task,
@@ -171,14 +259,22 @@ class AuditAgentRunner:
 
         return process.execute(
             run=run,
-            invocation_facts={"stage_index": context.task.stage_index, "skill_protocol": self.skill_protocol_override or "",
-                              "skill_protocol_source": "task_override" if self.skill_protocol_override is not None else "runtime_catalog",
+            invocation_facts={"stage_index": context.task.stage_index,
+                              "skill_protocol": skill_protocol_fact,
+                              "skill_protocol_source": skill_protocol_source,
                               "participant_timezones": explicit_participant_timezones(context.task.trigger_raw_payload),
-                              "prompt_configuration": configuration.fingerprints()},
+                              "prompt_configuration": configuration.fingerprints(),
+                              "prompt_sections": prompt_section_facts(
+                                  developer_sections, task_assembly.sections,
+                              )},
             skill_names=context.task.skill_names,
-            prompt=prompt,
+            prompt=task_assembly.text,
             session_id=run.codex_session_id or None,
-            developer_instructions=developer_instructions,
+            developer_instructions=render_prompt_sections(
+                developer_sections,
+                placement="developer",
+                omit_empty=False,
+            ),
             configure_command=lambda command: make_audit_agent_command(
                 command,
                 controlled_cli=ControlledCliConfig(

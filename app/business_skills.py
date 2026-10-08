@@ -405,6 +405,86 @@ def render_business_skill_protocol(
     )
 
 
+def render_task_skill_discovery(
+    selected_names: Iterable[str],
+    *,
+    catalog: tuple[BusinessSkillCatalogEntry, ...],
+    frozen_names: Iterable[str] = (),
+) -> str:
+    """Render name/use/read-only discovery without preloading Skill bodies."""
+    selected = tuple(dict.fromkeys(name for name in selected_names if name))
+    frozen = frozenset(name for name in frozen_names if name in selected)
+    by_name = {entry.name: entry for entry in catalog}
+    if selected:
+        entries = tuple(
+            by_name.get(name, BusinessSkillCatalogEntry(name, Path(".")))
+            for name in selected
+        )
+        heading = "## Selected Task Skills"
+        instructions: list[str] = []
+        if frozen:
+            names = ", ".join(f"`{name}`" for name in selected if name in frozen)
+            instructions.append(
+                f"For the task-frozen selection {names}, call "
+                "`agent_cli.read_task_skill(name)` before deciding or reviewing. "
+                "That lookup returns this task's exact frozen content; do not "
+                "substitute a similarly named installed Skill."
+            )
+        installed = tuple(name for name in selected if name not in frozen)
+        if installed:
+            names = ", ".join(f"`{name}`" for name in installed)
+            instructions.append(
+                f"For the installed selection {names}, call "
+                "`agent_cli.read_skill(name)` before deciding or reviewing."
+            )
+        read_instruction = " ".join(instructions)
+    else:
+        entries = tuple(dict.fromkeys(catalog))
+        heading = "## Skill Discovery"
+        read_instruction = (
+            "No task Skill was selected. When the task needs business or operation "
+            "guidance, choose the applicable entry below and call "
+            "`agent_cli.read_skill(name)` before applying it. Read additional applicable "
+            "Skills on demand; do not infer a domain from keywords in the task text."
+        )
+    lines = [heading]
+    for entry in entries:
+        use = " ".join(entry.description.split()) or "Selected for this task."
+        lines.append(f"- `{entry.name}`: {use}")
+    lines.append(read_instruction)
+    return "\n".join(lines)
+
+
+def frozen_task_skill_names(
+    trigger_message_json: str,
+    selected_names: Iterable[str],
+) -> tuple[str, ...]:
+    """Return selected names with exactly one structured frozen task material."""
+    selected = tuple(dict.fromkeys(name for name in selected_names if name))
+    try:
+        trigger = json.loads(trigger_message_json)
+    except (TypeError, json.JSONDecodeError):
+        return ()
+    raw_payload = trigger.get("raw_payload") if isinstance(trigger, dict) else None
+    scheduled = (
+        raw_payload.get("scheduled_consumer")
+        if isinstance(raw_payload, dict)
+        else None
+    )
+    materials = scheduled.get("skill_materials") if isinstance(scheduled, dict) else None
+    if not isinstance(materials, list):
+        return ()
+    material_names = [
+        material.get("name")
+        for material in materials
+        if isinstance(material, dict)
+        and isinstance(material.get("name"), str)
+        and isinstance(material.get("content"), str)
+        and material["content"].strip()
+    ]
+    return tuple(name for name in selected if material_names.count(name) == 1)
+
+
 def expand_skill_dependencies(
     names: Iterable[str], *, target_root: Path | None = None
 ) -> tuple[str, ...]:

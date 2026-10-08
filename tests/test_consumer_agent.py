@@ -198,8 +198,58 @@ def test_consumer_uses_scheduled_prompt_and_targeted_skill_protocol(
 
     assert "SCHEDULED CONSUMER PROMPT" in executor.prompts[0]
     command_text = "\n".join(executor.commands[0])
-    assert "TARGETED SKILL PROTOCOL" in command_text
+    assert "TARGETED SKILL PROTOCOL" in executor.prompts[0]
+    assert "TARGETED SKILL PROTOCOL" not in command_text
     assert "Installed Business Skills" not in command_text
+
+
+def test_resumed_consumer_turn_uses_current_selected_frozen_skill_entry(
+    store, task, context
+):
+    store.upsert_conversation(task.conversation_id, "Group", False, "session-selected")
+    store.set_codex_session_contract_hash(
+        task.conversation_id, consumer_wire_contract_hash()
+    )
+    selected_context = replace(
+        context,
+        skill_names=("ceo-document-review",),
+        skill_protocol_override="OLD SELECTED PROTOCOL MUST NOT BE PRELOADED",
+    )
+    selected_task = task.model_copy(update={
+        "trigger_message_json": json.dumps({
+            "raw_payload": {
+                "scheduled_consumer": {
+                    "skill_materials": [
+                        {"name": "ceo-document-review", "content": "FROZEN BODY"}
+                    ]
+                }
+            }
+        })
+    })
+    executor = CapturingExecutor(_result_jsonl(session="session-selected"))
+
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        codex_session_exists=lambda _: True,
+    ).run(selected_task, selected_context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert executor.commands[0][3:5] == ["exec", "resume"]
+    assert "ceo-document-review" in executor.prompts[0]
+    assert "agent_cli.read_task_skill(name)" in executor.prompts[0]
+    assert "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED" not in executor.prompts[0]
+    saved = store.get_agent_run(result.run_id)
+    snapshot = next(
+        event for event in saved.tool_events if event.get("type") == "runtime.prompt"
+    )
+    assert snapshot["invocation_facts"]["skill_protocol"] == ""
+    assert snapshot["invocation_facts"]["skill_protocol_source"] == "frozen_task_skills"
+    assert any(
+        section["name"] == "任务 Skill 入口"
+        for section in snapshot["sections"]
+        if section["placement"] == "task"
+    )
 
 
 class FailingExecutor(CapturingExecutor):
@@ -338,10 +388,8 @@ def test_consumer_composed_instructions_are_skill_first_and_schema_authoritative
     assert '"title":"ConsumerAgentResult"' not in instructions
     assert audit_rules not in instructions
     assert CONSUMER_DYNAMIC_SKILL_BODY in instructions
-    assert "OKR approval/review is a covered autonomous decision" in instructions
-    assert "exactly two outcomes:" in instructions
-    assert "approve (通过) or reject (不通过)" in instructions
-    assert "Missing or weak" in instructions
+    assert "OKR approval/review is a covered autonomous decision" not in instructions
+    assert "dingtang-okr-review" not in instructions
 
 
 def test_consumer_and_audit_instructions_include_current_work_profile(
@@ -363,22 +411,20 @@ def test_consumer_and_audit_instructions_include_current_work_profile(
         assert "profile 不能覆盖既有硬规则" in instructions
 
 
-def test_consumer_and_audit_instructions_keep_oa_material_and_policy_gaps_separate():
+def test_common_roles_leave_oa_material_and_policy_rules_to_task_skills():
     consumer = consumer_developer_instructions("Verify supported facts.") + _CONSUMER_AGENT_RULES
     audit = audit_developer_instructions("Verify supported facts.")
 
-    assert "Do not introduce a new factual requirement" in consumer
-    assert "applicant cannot create or replace a governing rule" in audit
-
-    assert "actual OA applicant is authoritative" in consumer
-    assert "cannot create, replace, or close a rule" in consumer
-    assert "stardust-oa-finance-review" in consumer
-    assert "applicable Stardust business Skill" in consumer
-    assert "live `processCode`" in consumer
-    assert "generic Skill's complete" in consumer
-    assert "cannot be reported as 100%" in consumer
-    assert "cannot close that policy gap" in consumer
-    assert "background principle documents as rule sources" in consumer
+    for domain_rule in (
+        "actual OA applicant is authoritative",
+        "stardust-oa-finance-review",
+        "live `processCode`",
+        "generic Skill's complete",
+    ):
+        assert domain_rule not in consumer
+        assert domain_rule not in audit
+    assert "stable provider identities established by the current source" in consumer
+    assert "Verify provider identity from current source facts" in audit
 
 
 def test_consumer_contract_hash_changes_with_work_profile(tmp_path, monkeypatch):
@@ -684,16 +730,15 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
 
 
 def test_consumer_document_action_keeps_body_out_of_description():
+    from app.action_contract_catalog import read_system_action_contract
+
     instructions = " ".join(consumer_developer_instructions().split())
+    operation_contract = read_system_action_contract("dingtalk-doc", "create_document")["contract"]
 
     assert "dingtalk-doc" in instructions
-    assert "payload.content" in instructions
-    assert "description" in instructions
-    assert "2048" in instructions
-    assert "originatorOpenDingTalkId" in instructions
-    assert "never replace a stable identity with display-name" in instructions
-    assert "originatorOpenDingTalkId" in instructions
-    assert "display-name search" in instructions
+    assert "Markdown `content`" in operation_contract
+    assert "exact document name and Markdown readback" in operation_contract
+    assert "originatorOpenDingTalkId" not in instructions
 
 
 def test_consumer_prompt_schema_is_the_parser_schema():
@@ -743,32 +788,23 @@ def test_consumer_instructions_require_dynamic_business_and_operation_skill_read
 def test_consumer_does_not_require_feedback_queue_identity_for_chat_rule_requests():
     instructions = consumer_developer_instructions("Verify supported facts.") + _CONSUMER_AGENT_RULES
 
-    assert "ordinary conversation request to improve a policy, Skill, or service behavior" in instructions
-    assert "Require a feedback_key or batch_id only when the supplied context explicitly identifies" in instructions
-    assert "absence of a feedback-processing record is not a task failure" in instructions
+    assert "feedback_key" not in instructions
+    assert "feedback-processing record" not in instructions
 
 
 def test_consumer_oa_contract_never_requires_fields_absent_from_current_stage():
     instructions = " ".join(consumer_developer_instructions("Verify supported facts.").split())
 
-    assert "a field absent from the current OA form cannot be treated as mandatory" in instructions
-    assert "current task, and form" in instructions
-    assert "applicant can supply missing material" in instructions
-    assert "independent policy gap remains" in instructions
+    assert "current OA form" not in instructions
+    assert "dingtalk-oa-approval" not in instructions
 
 
 def test_consumer_oa_finance_rule_card_keeps_material_and_policy_gaps_separate():
     instructions = consumer_developer_instructions("Verify supported facts.") + _CONSUMER_AGENT_RULES
 
-    assert "stardust-oa-finance-review" in instructions
-    assert "live `processCode`" in instructions
-    assert "finance rule card" in instructions
-    assert "finance registry" in instructions
-    assert "generic Skill's complete" in instructions
-    assert "cannot be reported as 100%" in instructions
-    assert "comment on the original approval with the exact missing material" in " ".join(instructions.split())
-    assert "independently return `needs_human`" in instructions
-    assert "cannot close that policy gap" in instructions
+    assert "stardust-oa-finance-review" not in instructions
+    assert "finance registry" not in instructions
+    assert "current-instance business choice" in instructions
 
 
 def test_consumer_instructions_autonomously_resolve_low_consequence_choices():
@@ -821,7 +857,7 @@ def test_consumer_instructions_allow_bounded_fact_finding_without_purchase_commi
     instructions = consumer_developer_instructions("Verify every supported fact.")
 
     assert "fact-finding" in instructions
-    assert "does not make a purchase" in instructions
+    assert "makes no purchase" in instructions
 
 
 def test_consumer_instructions_reserve_human_for_unsupported_skill_only():
@@ -839,10 +875,8 @@ def test_consumer_instructions_use_reply_fallback_when_okr_write_is_unsupported(
         consumer_developer_instructions("Verify every supported fact.").split()
     )
 
-    assert "no write operation" in instructions
-    assert "reviewed write operation" not in instructions
-    assert "OKR record was not changed" in instructions
-    assert "supported applicant notification" in instructions
+    assert "OKR record" not in instructions
+    assert "dingtang-okr-review" not in instructions
 
 
 def test_audit_instructions_accept_the_authorized_low_consequence_standard():
@@ -874,9 +908,9 @@ def test_audit_instructions_verify_dynamic_state_instead_of_requesting_tool_outp
 def test_audit_rejects_requirements_that_are_absent_from_the_current_oa_stage():
     instructions = audit_developer_instructions("Verify every supported fact.")
 
-    assert "Reject a candidate that requires a field absent from the current OA form" in instructions
-    assert "later business stage" in instructions
-    assert "Before approving an OA reject" in instructions
+    assert "current OA form" not in instructions
+    assert "OA reject" not in instructions
+    assert "Verify provider identity from current source facts" in instructions
 
 
 def test_audit_instructions_allow_bounded_fact_finding_without_purchase_commitment():
@@ -925,19 +959,11 @@ def test_audit_instructions_do_not_create_reconciliation_prompt():
 def test_consumer_instructions_pin_the_installed_oa_workflow():
     instructions = " ".join(consumer_developer_instructions("Verify every supported fact.").split())
 
-    # Approval policy comes from the generic + matching business Skills, not
-    # a vendor reference or a raw principle document.
-    assert "dingtalk-oa-approval" in instructions
-    assert "generic Skill's complete" in instructions
-    assert "background principle documents as rule sources" in instructions
+    # Approval policy is task-scoped through the selected Skills.
+    assert "dingtalk-oa-approval" not in instructions
+    assert "generic Skill's complete" not in instructions
+    assert "background principle documents as rule sources" not in instructions
     assert "dingtalk-misc/references/oa.md" not in instructions
-    assert 'return `no_action`' in instructions
-    assert "comment on the original" in instructions
-    assert "approval with the exact missing material" in instructions
-    assert "timestamp without a" in instructions
-    assert "not a business conflict" in instructions
-    assert "interpret it as Asia/Shanghai" in instructions
-    assert "convert it to" in instructions
     assert "oa_live_evidence_conflict" not in instructions
     assert CONSUMER_DYNAMIC_SKILL_BODY in instructions
 
@@ -1097,12 +1123,12 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
     instructions = consumer_developer_instructions("Consumer Agent A is read-only.")
     assert "typed candidate" in instructions
     assert "normal Agent work" in instructions
-    assert "Xiaoqing interview MCP tools" in instructions
-    assert "mandatory preconditions for every candidate outcome" in instructions
-    assert "real-person" in instructions
-    assert 'Do not propose sending "I will review"' in instructions
-    assert "First prepare a sourced evidence packet" in instructions
-    assert "Only the remaining sensitive hiring or advancement decision" in instructions
+    assert "Xiaoqing interview MCP tools" not in instructions
+    assert "mandatory preconditions for every candidate outcome" not in instructions
+    assert "real-person" not in instructions
+    assert 'Do not propose sending "I will review"' not in instructions
+    assert "First prepare a sourced evidence packet" not in instructions
+    assert "Only the remaining sensitive hiring or advancement decision" not in instructions
     assert "return a retryable service-dependency failure" in instructions
     assert any(
         "Authoritative Consumer role boundary" in option
@@ -3413,21 +3439,17 @@ def test_the_protocol_keeps_controlled_actions_as_typed_proposals():
 def test_consumer_checks_existing_audience_before_requesting_group_send_authorization():
     protocol = " ".join(consumer_agent.CONSUMER_ROLE_BOUNDARY.split())
 
-    assert "same conversation ID" in protocol
-    assert "prior messages in that conversation" in protocol
-    assert "memory_recall" in protocol
-    assert "Memory alone does not prove recipient scope" in protocol
-    assert "Do not ask Derek to reconfirm already disclosed direction" in protocol
-    assert "same conversation ID" in consumer_developer_instructions("rules")
+    assert "same conversation ID" not in protocol
+    assert "prior messages in that conversation" not in protocol
+    assert "ceo-message-triage" not in consumer_developer_instructions("rules")
 
 
 def test_audit_checks_existing_audience_before_refusing_group_send():
     protocol = " ".join(consumer_agent.AUDIT_ROLE_BOUNDARY.split())
 
-    assert "same conversation ID" in protocol
-    assert "already disclosed to those recipients" in protocol
-    assert "new recipient or undisclosed detail" in protocol
-    assert "already disclosed to" in consumer_agent.audit_developer_instructions("rules")
+    assert "same conversation ID" not in protocol
+    assert "already disclosed to those recipients" not in protocol
+    assert "new recipient or undisclosed detail" not in protocol
 
 
 def test_audit_checks_terminal_decision_before_system_execution():
@@ -3457,8 +3479,8 @@ def test_consumer_writes_dingtalk_in_markdown_and_reasons_in_plain_language():
     from app.consumer_agent import CONSUMER_ROLE_BOUNDARY
 
     text = " ".join(CONSUMER_ROLE_BOUNDARY.split())
-    assert "DingTalk bodies use structured Markdown" in text
-    assert "OA comments and email use plain text" in text
+    assert "DingTalk bodies use structured Markdown" not in text
+    assert "OA comments and email use plain text" not in text
     assert "the one choice and why it matters" in text
 
 

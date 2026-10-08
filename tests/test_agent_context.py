@@ -45,9 +45,11 @@ def _candidate(proposal: ConsumerProposal) -> ConsumerAgentResult:
 def test_role_boundary_invariant_is_complete_across_all_core_prompts():
     assert "Consumer Agent A forms the candidate; Audit Agent B reviews it" in _CONSUMER_AGENT_RULES
     assert "Audit reads and judges it without executing actions" in _AUDIT_AGENT_RULES
-    assert "personal blocked or sleep hold" in _AUDIT_AGENT_RULES
-    assert "sourced importance comparison" in _AUDIT_AGENT_RULES
-    assert "request for the missing reason" in _AUDIT_AGENT_RULES
+    assert "Verify provider identity from current source facts" in _AUDIT_AGENT_RULES
+    assert "Review complete effects" in _AUDIT_AGENT_RULES
+    assert "future source update" in _AUDIT_AGENT_RULES
+    assert "personal blocked or sleep hold" not in _AUDIT_AGENT_RULES
+    assert "sourced importance comparison" not in _AUDIT_AGENT_RULES
     assert "Consumer Agent A gathers facts and proposes a typed candidate" in consumer_developer_instructions()
     assert "## 原请求与取证" in SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
 
@@ -57,9 +59,10 @@ def test_consumer_core_prompt_contains_only_runtime_invariants():
     assert text.startswith("## Application Result Contract\n")
     assert "## Dynamic Skill" in text
     assert "proposal_json" not in text
-    assert "result.values" in text
-    assert "dws auth status.user_id" in text
-    assert "without start/end filters" in text
+    assert "stable action_identity" in text
+    assert "result.values" not in text
+    assert "dws auth status.user_id" not in text
+    assert "without start/end filters" not in text
 
 
 def test_audit_core_prompt_contains_only_runtime_invariants():
@@ -68,7 +71,7 @@ def test_audit_core_prompt_contains_only_runtime_invariants():
     assert "## Dynamic Skill" in text
     assert "candidate_digest" in text
     assert "without executing actions" in text
-    assert "current-instance ownership" in text
+    assert "current-instance-bound" in text
 
 
 @pytest.mark.parametrize(
