@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.dws_client import DwsError, DwsUserProfile
+from app.feedback_spike import extract_feedback_link_context, prepare_outgoing_reply_text
 from app.meeting_alignment_models import (
     DeliveryTarget,
     MeetingAlignmentDecision,
@@ -294,6 +295,18 @@ def deliver_meeting_alignment(
         body=message_text,
         original_text=source.summary,
     )
+    if same_private_audience and not _prepared_content_matches(prepared, message_text):
+        # Old split deliveries retain their immutable primary body and action key.
+        ordinary_body = meeting_followup_message(
+            decision, source, final_message=final_message
+        )
+        if not _prepared_content_matches(prepared, ordinary_body):
+            raise MeetingDeliveryError("prepared meeting body does not match the original split or merged content")
+        same_private_audience = False
+    if same_private_audience and message_sender.store.get_outbound_postfix(
+        "dingtalk", f"{delivery_key}:sensitive"
+    ) is not None:
+        raise MeetingDeliveryError("merged primary conflicts with a prepared sensitive action")
     message_text = prepared.final_body
     message_title = f"会议跟进｜{source.title}"
     try:
@@ -342,6 +355,16 @@ def deliver_meeting_alignment(
         sensitive_private_delivery=sensitive_delivery,
         sensitive_private_merged=sensitive_private_merged,
     )
+
+
+def _prepared_content_matches(prepared, body: str) -> bool:
+    context = extract_feedback_link_context(prepared.final_body)
+    expected = prepare_outgoing_reply_text(
+        reply_text=body,
+        feedback_base_url=context.vercel_base_url if context is not None else "",
+        feedback_token=prepared.feedback_token,
+    )
+    return prepared.final_body == expected.text
 
 
 def _primary_message_content(
