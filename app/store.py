@@ -230,7 +230,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-06.1"
+STORE_SCHEMA_VERSION = "2026-10-08.1"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -336,6 +336,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
 )
 STORE_SCHEMA_REQUIRED_INDEXES = (
     *REVIEWED_CANDIDATE_INDEXES,
+    "idx_errors_unresolved",
     "idx_feedback_processing_items_status",
     "idx_feedback_processing_items_batch",
     "idx_feedback_processing_rounds_feedback",
@@ -5481,6 +5482,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     on reply_attempts(
                         conversation_id, trigger_message_id, action, id desc
                     )
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_errors_unresolved
+                    on errors(conversation_id, kind, message_id, id)
+                    where coalesce(resolved_at, '')=''
                 """
             )
             db.execute(

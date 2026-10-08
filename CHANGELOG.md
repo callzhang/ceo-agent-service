@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-08: Add the manifest-required partial unresolved-errors index through
+  the normal schema migration. Attention keeps all current recovery predicates
+  and historical incidents while avoiding resolved-error payload scans. Query
+  plan and SQLite VM-budget regressions cover large settled history.
+
 - 2026-10-08: Reply queue polling no longer acquires a SQLite write lock when
   the requested channel has no due work. A read-only preview is followed by the
   original transactional recheck and claim, preserving concurrent ownership,

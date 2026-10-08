@@ -15,6 +15,14 @@ waiting to acquire a transaction, so it is not automatically write-lock hold
 time. Logs keep call sites and elapsed durations, not SQL parameters or business
 payloads. Transaction behavior and existing error propagation are unchanged.
 
+The required `idx_errors_unresolved` partial index contains only incidents whose
+`coalesce(resolved_at, '')` is empty. Attention retains the same recovery,
+supersession, ordering and current-state predicates, but does not scan resolved
+incident payloads. Resolving an incident removes its index entry without deleting
+history; a new unresolved incident is visible immediately. Installation follows
+the existing schema-version/manifest startup migration after the quiet-deploy
+backup, not request-time index creation or business-state repair.
+
 本文档是 CEO Agent Service 当前运行机制与已批准生命周期政策的总览入口。除明确标注为
 “已批准的生命周期政策”的段落外，正文描述当前代码事实；政策段落是后续实现约束，不表示
 对应代码已经切换、部署或在生产启用。`docs/superpowers/` 下被新设计取代的历史 spec/plan
