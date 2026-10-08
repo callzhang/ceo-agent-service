@@ -133,6 +133,12 @@ commands or a different channel to reach an unavailable operation.
 Call direct read MCP tools where available. Use memory_recall for relevant
 stable context; memory never proves current external state or recipient scope.
 Preserve concrete provider error codes and source context when a read fails.
+When a required DWS, MCP, or other external-source read actually fails because
+the dependency is unavailable, return failed with error_code
+`dependency_read_unavailable` and preserve the exact underlying error in the
+summary. Do not use this code when a successful read returns no match, evidence
+is incomplete or ambiguous, or a governing rule is missing; those are evidence
+or business-rule outcomes, not infrastructure outages.
 Technical/provider authentication or schema errors are failed, not fabricated
 business questions. An unresolved provider-risk refusal for the current
 intended action remains failed with its original error code and no retry;

@@ -26,6 +26,9 @@ MAX_TURNS_PER_PROCESS = 32
 MAX_CONTENT_FEEDBACK_CYCLES = 3
 MAX_ROLE_ATTEMPTS_PER_PROCESS = 2
 MAX_CONSECUTIVE_FAILED_TURNS = MAX_ROLE_ATTEMPTS_PER_PROCESS * 3
+EXTERNAL_DEPENDENCY_WAIT_ERRORS = frozenset(
+    {"dependency_read_unavailable", "agent_context_refresh_failed"}
+)
 MAX_EXECUTION_STAGES = 16
 
 
@@ -654,6 +657,16 @@ class AgentOrchestrator:
         error = _run_error(run)
         if error.code == "provider_risk_rejected" or error.source_code == "provider_risk_rejected":
             return self._run_terminal(run, "failed_terminal", error.model_copy(update={"retryable":False}), cycles)
+        if error.code in EXTERNAL_DEPENDENCY_WAIT_ERRORS and error.retryable:
+            if task.error != error.code:
+                return _Deferred(
+                    run,
+                    error.code,
+                    cycles,
+                    error.source_code or error.code,
+                    error,
+                )
+            return self._run_terminal(run, "failed_retryable", error, cycles)
         if error.retryable and not error.authorization_required:
             runs = self.store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
             failed_turns = _consecutive_failed_turns([
@@ -908,6 +921,7 @@ def _is_waiting_failure(error: AgentError) -> bool:
     """A failure that waits for the runtime or a person, not the Agent's fault."""
     return (
         error.authorization_required
+        or error.code in EXTERNAL_DEPENDENCY_WAIT_ERRORS
         or error.code
         in {
             "runtime_execution_failed",
@@ -925,7 +939,10 @@ def _consecutive_failed_turns(role_runs: list[AgentRun]) -> int:
         role_runs, key=lambda item: (item.turn_attempt, item.id), reverse=True
     )
     for run in newest_first:
-        if run.status != "failed":
+        if (
+            run.status != "failed"
+            or _run_error(run).code in EXTERNAL_DEPENDENCY_WAIT_ERRORS
+        ):
             break
         count += 1
     return count

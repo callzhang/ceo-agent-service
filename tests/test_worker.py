@@ -6340,6 +6340,101 @@ def test_runtime_provider_unreachable_run_is_deferred_after_retry_budget(
     assert browser_notifications == []
 
 
+def test_dependency_read_unavailable_run_is_deferred_after_retry_budget(
+    tmp_path: Path,
+    monkeypatch,
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex([]),
+        monkeypatch,
+    )
+    worker.produce_once()
+    task = worker.store.claim_reply_tasks(limit=1)[0]
+    worker.max_task_attempts = task.attempts
+    run = _claim_audit_run(
+        worker.store,
+        task.id,
+        task.execution_generation,
+        owner="dependency-read-run",
+    ).run
+    worker.store.fail_agent_run(
+        run.id,
+        {
+            "code": "dependency_read_unavailable",
+            "retryable": True,
+            "source": "agent",
+            "source_code": "audience_membership_evidence_unavailable",
+        },
+        owner="dependency-read-run",
+    )
+
+    completed = worker._apply_orchestration_result(
+        task,
+        OrchestrationResult(
+            status="failed_retryable",
+            final_run_id=run.id,
+            final_role=AgentRole.AUDIT,
+            summary="the DWS dependency could not provide current group membership",
+            error=AgentError(
+                code="dependency_read_unavailable",
+                retryable=True,
+                source="agent",
+                source_code="audience_membership_evidence_unavailable",
+            ),
+            feedback_cycles=0,
+        ),
+    )
+
+    persisted = worker.store.get_reply_task(task.id)
+    assert not completed
+    assert persisted is not None and persisted.status == "pending"
+    assert persisted.error == "dependency_read_unavailable"
+    assert persisted.available_at
+    assert persisted.attempts == task.attempts - 1
+
+
+@pytest.mark.parametrize(
+    "error_code", ["dependency_read_unavailable", "agent_context_refresh_failed"]
+)
+def test_external_dependency_wait_without_run_preserves_retry_budget(
+    tmp_path: Path,
+    monkeypatch,
+    error_code: str,
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex([]),
+        monkeypatch,
+    )
+    worker.produce_once()
+    task = worker.store.claim_reply_tasks(limit=1)[0]
+    worker.max_task_attempts = task.attempts
+
+    completed = worker._apply_orchestration_result(
+        task,
+        OrchestrationResult(
+            status="failed_retryable",
+            final_run_id=0,
+            final_role=AgentRole.CONSUMER,
+            summary="the required external source is temporarily unavailable",
+            error=AgentError(code=error_code, retryable=True),
+            feedback_cycles=0,
+        ),
+    )
+
+    persisted = worker.store.get_reply_task(task.id)
+    assert not completed
+    assert persisted is not None and persisted.status == "pending"
+    assert persisted.error == error_code
+    assert persisted.available_at
+    assert persisted.attempts == task.attempts - 1
+
+
 def test_invalid_result_run_stays_bounded_after_retry_budget(
     tmp_path: Path,
     monkeypatch,
@@ -17007,20 +17102,20 @@ def test_audit_result_without_consumer_payload_uses_canonical_execution_projecti
 
 
 
-def test_real_no_run_refresh_failures_use_three_task_attempts(tmp_path, monkeypatch):
+def test_retryable_context_refresh_infra_failures_do_not_exhaust_task_attempts(
+    tmp_path, monkeypatch
+):
     trigger = message('@Alex Chen(明哥) synthetic retry test')
     worker = make_worker(tmp_path, FakeDws([conversation()], {'cid-1':[trigger]}), FakeCodex([]), monkeypatch)
     worker.produce_once()
     result = OrchestrationResult(status='failed_retryable',final_run_id=0,
         final_role=AgentRole.CONSUMER,summary='source read failed CTX503',
         error=AgentError(code='agent_context_refresh_failed',retryable=True,source_code='CTX503'),feedback_cycles=0)
-    for expected in range(1,4):
+    for _ in range(3):
         task = worker.store.claim_reply_tasks(1,now='2099-01-01 00:00:00')[0]
-        assert task.attempts == expected
         assert worker._apply_orchestration_result(task,result) is False
         current = worker.store.get_reply_task(task.id)
-        assert current.attempts == expected
-        assert current.status == ('failed' if expected==3 else 'pending')
-    assert worker.store.claim_reply_tasks(1,now='2099-01-02 00:00:00') == []
-    failed = worker.store.get_latest_reply_attempt_for_trigger('cid-1','msg-1')
-    assert failed.send_status == 'failed' and 'CTX503' in failed.audit_summary
+        assert current.attempts == 0
+        assert current.status == 'pending'
+        assert current.error == 'agent_context_refresh_failed'
+    assert worker.store.claim_reply_tasks(1,now='2099-01-02 00:00:00')
