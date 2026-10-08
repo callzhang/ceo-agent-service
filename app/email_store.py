@@ -15967,79 +15967,16 @@ class EmailStore:
             )
             if not account_ids:
                 return None
+        # A read probe is not a reservation; recheck all dependencies under the
+        # writer lock before claiming. Idle polls must not join the writer queue.
+        with self._connect() as db:
+            if self._next_direct_action_row(db, claimed_at, account_ids) is None:
+                return None
         with self._connect() as db:
             db.execute("begin immediate")
-            rows = db.execute(
-                """
-                select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
-                       c.thread_id, c.stable_message_identity,
-                       c.current_action_plan_id, p.actions_json,
-                       p.action_plan_version
-                from email_actions as a
-                join email_classifications as c on c.id=a.classification_id
-                join email_action_plans as p on p.action_plan_id=a.action_plan_id
-                where c.status='processed'
-                  and a.classification_id in (
-                      select classification_id from email_actions
-                      where status in ('pending', 'failed')
-                  )
-                """
-            ).fetchall()
-            if not rows:
+            row = self._next_direct_action_row(db, claimed_at, account_ids)
+            if row is None:
                 return None
-            rows_by_classification: dict[int, list[sqlite3.Row]] = {}
-            for candidate in rows:
-                rows_by_classification.setdefault(
-                    int(candidate["classification_id"]),
-                    [],
-                ).append(candidate)
-            eligible: list[sqlite3.Row] = []
-            for siblings in rows_by_classification.values():
-                if any(sibling["status"] == "processing" for sibling in siblings):
-                    continue
-                if account_ids is not None and any(
-                    sibling["account_id"] not in account_ids for sibling in siblings
-                ):
-                    continue
-                current_siblings = [
-                    sibling
-                    for sibling in siblings
-                    if sibling["action_plan_id"] == sibling["current_action_plan_id"]
-                ]
-                unfinished = [
-                    sibling
-                    for sibling in current_siblings
-                    if (
-                        sibling["status"] == "pending"
-                        or _direct_action_failed_retryable(
-                            sibling,
-                            claimed_at=claimed_at,
-                        )
-                    )
-                    and self._direct_action_predecessors_done(db, sibling)
-                    and self._direct_action_dependency_satisfied(db, sibling)
-                ]
-                if not unfinished:
-                    continue
-                eligible.append(
-                    min(
-                        unfinished,
-                        key=lambda sibling: (
-                            _DIRECT_ACTION_PRIORITY[sibling["action_type"]],
-                            sibling["action_id"],
-                        ),
-                    )
-                )
-            if not eligible:
-                return None
-            row = min(
-                eligible,
-                key=lambda candidate: (
-                    candidate["updated_at"],
-                    candidate["classification_id"],
-                    candidate["action_id"],
-                ),
-            )
             attempt_number = int(row["attempt_count"]) + 1
             updated = db.execute(
                 """
@@ -16067,6 +16004,77 @@ class EmailStore:
                 attempt_number=attempt_number,
                 claimed_at=claimed_at,
             )
+
+    def _next_direct_action_row(
+        self,
+        db: sqlite3.Connection,
+        claimed_at: str,
+        account_ids: Sequence[str] | None,
+    ) -> sqlite3.Row | None:
+        rows = db.execute(
+            """
+            select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
+                   c.thread_id, c.stable_message_identity,
+                   c.current_action_plan_id, p.actions_json,
+                   p.action_plan_version
+            from email_actions as a
+            join email_classifications as c on c.id=a.classification_id
+            join email_action_plans as p on p.action_plan_id=a.action_plan_id
+            where c.status='processed'
+              and a.classification_id in (
+                  select classification_id from email_actions
+                  where status in ('pending', 'failed')
+              )
+            """
+        ).fetchall()
+        rows_by_classification: dict[int, list[sqlite3.Row]] = {}
+        for candidate in rows:
+            rows_by_classification.setdefault(
+                int(candidate["classification_id"]),
+                [],
+            ).append(candidate)
+        eligible: list[sqlite3.Row] = []
+        for siblings in rows_by_classification.values():
+            if any(sibling["status"] == "processing" for sibling in siblings):
+                continue
+            if account_ids is not None and any(
+                sibling["account_id"] not in account_ids for sibling in siblings
+            ):
+                continue
+            current_siblings = [
+                sibling
+                for sibling in siblings
+                if sibling["action_plan_id"] == sibling["current_action_plan_id"]
+            ]
+            unfinished = [
+                sibling
+                for sibling in current_siblings
+                if (
+                    sibling["status"] == "pending"
+                    or _direct_action_failed_retryable(sibling, claimed_at=claimed_at)
+                )
+                and self._direct_action_predecessors_done(db, sibling)
+                and self._direct_action_dependency_satisfied(db, sibling)
+            ]
+            if unfinished:
+                eligible.append(
+                    min(
+                        unfinished,
+                        key=lambda sibling: (
+                            _DIRECT_ACTION_PRIORITY[sibling["action_type"]],
+                            sibling["action_id"],
+                        ),
+                    )
+                )
+        return min(
+            eligible,
+            key=lambda candidate: (
+                candidate["updated_at"],
+                candidate["classification_id"],
+                candidate["action_id"],
+            ),
+            default=None,
+        )
 
     def direct_action_ids_for_plan(self, action_plan_id: str) -> tuple[str, ...]:
         """Return only the direct action IDs owned by one immutable plan."""
