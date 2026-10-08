@@ -121,6 +121,62 @@ def test_roster_is_unique_and_same_scope(foreign_scope):
         assert result.candidates[0].evidence.members == (member,)
 
 
+def test_incomplete_audience_skips_reads_of_title_discarded_groups():
+    scope = ProviderScope("dingtalk", "workspace-a")
+    groups = tuple(GroupRef(scope, str(i), "Other discussion") for i in range(750)) + (
+        GroupRef(scope, "relevant", "Business"),
+    )
+    member = MemberRef(scope, "u1")
+    provider = FakeProvider(
+        scope, groups, {"relevant": (member,)}, {"relevant": (Message("Business"),)},
+    )
+    result = GroupDiscoveryService(provider, FakePolicy()).discover(
+        GroupDiscoveryRequest(scope, "Business", audience=(member,), audience_is_complete=False)
+    )
+    assert result.outcome == GroupDiscoveryOutcome.VERIFIED
+    assert [candidate.group.external_group_id for candidate in result.candidates] == ["relevant"]
+    assert result.candidates[0].evidence.members == (member,)
+    assert [call for call in provider.calls if call[0] in {"members", "messages"}] == [
+        ("members", "relevant"), ("messages", "relevant"),
+    ]
+    assert len([call for call in provider.calls if call[0] == "sendability"]) == len(groups)
+
+
+def test_complete_audience_still_filters_coverage_before_title():
+    scope = ProviderScope("dingtalk", "workspace-a")
+    audience = (MemberRef(scope, "u1"), MemberRef(scope, "u2"))
+    provider = FakeProvider(
+        scope,
+        (GroupRef(scope, "named", "Business"), GroupRef(scope, "covered", "Other")),
+        {"named": audience[:1], "covered": audience},
+        {"covered": (Message("Business"),)},
+    )
+    result = GroupDiscoveryService(provider, FakePolicy()).discover(
+        GroupDiscoveryRequest(scope, "Business", audience=audience, audience_is_complete=True)
+    )
+    assert [candidate.group.external_group_id for candidate in result.candidates] == ["covered"]
+    assert [call for call in provider.calls if call[0] == "members"] == [
+        ("members", "named"), ("members", "covered"),
+    ]
+
+
+def test_incomplete_audience_filters_sendability_before_title():
+    scope = ProviderScope("dingtalk", "workspace-a")
+    member = MemberRef(scope, "u1")
+    provider = FakeProvider(
+        scope,
+        (GroupRef(scope, "closed", "Business"), GroupRef(scope, "open", "Other")),
+        {"closed": (member,), "open": (member,)},
+        {"open": (Message("Business"),)},
+    )
+    provider.get_group_sendability = lambda group: Sendability(group.external_group_id == "open")
+    result = GroupDiscoveryService(provider, FakePolicy()).discover(
+        GroupDiscoveryRequest(scope, "Business")
+    )
+    assert result.outcome == GroupDiscoveryOutcome.VERIFIED
+    assert [candidate.group.external_group_id for candidate in result.candidates] == ["open"]
+
+
 def test_provider_failure_does_not_become_no_group():
     scope = ProviderScope("dingtalk", "workspace-a")
     provider = FakeProvider(scope, (), {}, {})
