@@ -102,6 +102,25 @@ def test_staged_discovery_filters_roster_and_title_before_message_reads(platform
     assert [call for call in provider.calls if call[0] == "messages"] == [("messages", "right")]
 
 
+@pytest.mark.parametrize("foreign_scope", [False, True])
+def test_roster_is_unique_and_same_scope(foreign_scope):
+    scope = ProviderScope("dingtalk", "workspace-a")
+    group = GroupRef(scope, "cid", "Business")
+    member = MemberRef(scope, "u1")
+    members = [member, member]
+    if foreign_scope:
+        members.append(MemberRef(ProviderScope("dingtalk", "workspace-b"), "u2"))
+    provider = FakeProvider(scope, (group,), {"cid": members}, {"cid": (Message("Business"),)})
+    service = GroupDiscoveryService(provider, FakePolicy())
+    request = GroupDiscoveryRequest(scope, "Business")
+    if foreign_scope:
+        with pytest.raises(ValueError, match="member scope"):
+            service.discover(request)
+    else:
+        result = service.discover(request)
+        assert result.candidates[0].evidence.members == (member,)
+
+
 def test_provider_failure_does_not_become_no_group():
     scope = ProviderScope("dingtalk", "workspace-a")
     provider = FakeProvider(scope, (), {}, {})

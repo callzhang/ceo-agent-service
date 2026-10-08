@@ -239,7 +239,12 @@ class GroupDiscoveryService:
                 coverage: ParticipantCoverageEvidence | None = None
                 members: tuple[MemberRef, ...] | None = None
                 if self.provider.capabilities.member_lists:
-                    members = tuple(self.provider.list_group_members(group))
+                    unique_members: dict[tuple[str, str, str], MemberRef] = {}
+                    for member in self.provider.list_group_members(group):
+                        if member.provider_scope != request.provider_scope:
+                            raise ValueError("group member scope does not match request")
+                        unique_members.setdefault(member.scoped_key, member)
+                    members = tuple(unique_members.values())
                     reads += 1
                 if request.audience_is_complete:
                     if not self.provider.capabilities.member_lists:
