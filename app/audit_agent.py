@@ -138,7 +138,10 @@ class AuditAgentRunner:
             role=AgentRole.AUDIT,
             proposal_revision=context.proposal_revision,
         )
-        from app.business_skills import frozen_task_skill_names, render_task_skill_discovery
+        from app.business_skills import (
+            frozen_task_skill_names,
+            render_task_skill_discovery,
+        )
         from app.consumer_agent import audit_developer_sections, default_task_skill_catalog
         from app.prompt_composition import (
             PromptSection,
@@ -281,14 +284,19 @@ class AuditAgentRunner:
 
         return process.execute(
             run=run,
-            invocation_facts={"stage_index": context.task.stage_index,
-                              "skill_protocol": skill_protocol_fact,
-                              "skill_protocol_source": skill_protocol_source,
-                              "participant_timezones": explicit_participant_timezones(context.task.trigger_raw_payload),
-                              "prompt_configuration": configuration.fingerprints(),
-                              "prompt_sections": prompt_section_facts(
-                                  developer_sections, task_assembly.sections,
-                              )},
+            invocation_facts={
+                "stage_index": context.task.stage_index,
+                "skill_names": list(context.task.skill_names),
+                "skill_protocol": skill_protocol_fact,
+                "skill_protocol_source": skill_protocol_source,
+                "participant_timezones": explicit_participant_timezones(
+                    context.task.trigger_raw_payload
+                ),
+                "prompt_configuration": configuration.fingerprints(),
+                "prompt_sections": prompt_section_facts(
+                    developer_sections, task_assembly.sections
+                ),
+            },
             skill_names=context.task.skill_names,
             prompt=task_assembly.text,
             session_id=run.codex_session_id or None,

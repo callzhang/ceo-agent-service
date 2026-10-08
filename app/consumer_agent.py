@@ -584,14 +584,19 @@ class ConsumerAgentRunner:
         result = process.execute(
                 run=claim.run,
                 skill_names=context.skill_names,
-                invocation_facts={"stage_index": context.stage_index,
-                                  "skill_protocol": skill_protocol_fact,
-                                  "skill_protocol_source": skill_protocol_source,
-                                  "participant_timezones": explicit_participant_timezones(context.trigger_raw_payload),
-                                  "prompt_configuration": configuration.fingerprints(),
-                                  "prompt_sections": prompt_section_facts(
-                                      developer_sections, task_assembly.sections,
-                                  )},
+                invocation_facts={
+                    "stage_index": context.stage_index,
+                    "skill_names": list(context.skill_names),
+                    "skill_protocol": skill_protocol_fact,
+                    "skill_protocol_source": skill_protocol_source,
+                    "participant_timezones": explicit_participant_timezones(
+                        context.trigger_raw_payload
+                    ),
+                    "prompt_configuration": configuration.fingerprints(),
+                    "prompt_sections": prompt_section_facts(
+                        developer_sections, task_assembly.sections
+                    ),
+                },
                 prompt=task_assembly.text,
                 session_id=session_id,
                 developer_instructions=render_prompt_sections(
@@ -816,12 +821,13 @@ def default_consumer_skill_protocol() -> str:
     )
 
 
-def default_task_skill_catalog(selected_names: tuple[str, ...] = ()):
-    catalog = (
-        installed_runtime_skills(names=selected_names)
-        if selected_names
-        else installed_runtime_skills(names=BUNDLED_BUSINESS_SKILL_NAMES)
-    ) + default_skill_catalog()
+def default_task_skill_catalog(
+    selected_names: tuple[str, ...] = (), *, target_root: Path | None = None
+):
+    if selected_names:
+        catalog = installed_runtime_skills(target_root, names=selected_names)
+    else:
+        catalog = ()
     return tuple(dict((entry.name, entry) for entry in catalog).values())
 
 

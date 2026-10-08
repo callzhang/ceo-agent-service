@@ -128,16 +128,17 @@ def test_unknown_task_gets_minimal_on_demand_skill_discovery(tmp_path):
     assert "Required Skill protocol" not in rendered
 
 
-def test_default_unknown_task_catalog_is_limited_to_service_business_skills():
+def test_default_unknown_task_uses_active_body_free_skill_discovery():
     from app.consumer_agent import default_task_skill_catalog
-    from app.business_skills import BUNDLED_BUSINESS_SKILL_NAMES, render_task_skill_discovery
+    from app.business_skills import render_task_skill_discovery
 
     catalog = default_task_skill_catalog()
-    names = {entry.name for entry in catalog}
-    assert names >= set(BUNDLED_BUSINESS_SKILL_NAMES)
-    assert "brainstorming" not in names
-    assert "derek-movie-recommendation" not in names
-    assert len(render_task_skill_discovery((), catalog=catalog)) < 12_000
+    rendered = render_task_skill_discovery((), catalog=catalog)
+
+    assert catalog == ()
+    assert "agent_cli.read_skill()" in rendered
+    assert "agent_cli.read_skill(path=" not in rendered
+    assert "ceo-calendar-invite" not in rendered
 
 
 def test_consumer_task_assembly_places_current_skill_entry_on_cold_and_resume_turns(tmp_path, monkeypatch):

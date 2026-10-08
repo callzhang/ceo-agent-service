@@ -12,6 +12,10 @@ from app.agent_context import (
     AuditTurnContext,
     MaterialReference,
 )
+from app.agent_cron.commands import (
+    ServiceCommandConsumerContext,
+    ServiceCommandSkillMaterial,
+)
 from app.agent_contracts import ConsumerAgentResult, ConsumerProposal
 from app.agent_result import ResultParseError
 from app.agent_wire_contracts import (
@@ -201,6 +205,42 @@ def test_consumer_uses_scheduled_prompt_and_targeted_skill_protocol(
     assert "TARGETED SKILL PROTOCOL" in executor.prompts[0]
     assert "TARGETED SKILL PROTOCOL" not in command_text
     assert "Installed Business Skills" not in command_text
+    [saved] = store.list_agent_runs_for_task_generation(
+        task.id, task.execution_generation
+    )
+    snapshot = next(
+        event for event in saved.tool_events if event.get("type") == "runtime.prompt"
+    )
+    assert snapshot["invocation_facts"]["skill_names"] == []
+
+
+def test_consumer_without_selected_skill_uses_active_discovery(store, task, context):
+    executor = CapturingExecutor(_result_jsonl())
+    discovery_context = replace(
+        context,
+        skill_protocol_override="",
+        skill_protocol_source="generated_discovery",
+    )
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(
+        task,
+        discovery_context,
+        proposal_revision=0,
+        parent_agent_run_id=None,
+    )
+
+    assert "agent_cli.read_skill()" in executor.prompts[0]
+    [saved] = store.list_agent_runs_for_task_generation(
+        task.id, task.execution_generation
+    )
+    snapshot = next(
+        event for event in saved.tool_events if event.get("type") == "runtime.prompt"
+    )
+    assert snapshot["invocation_facts"]["skill_names"] == []
 
 
 @pytest.mark.parametrize(
@@ -233,11 +273,17 @@ def test_resumed_consumer_turn_uses_current_selected_frozen_skill_entry(
     selected_task = task.model_copy(update={
         "trigger_message_json": json.dumps({
             "raw_payload": {
-                "scheduled_consumer": {
-                    "skill_materials": [
-                        {"name": "ceo-document-review", "content": "FROZEN BODY"}
-                    ]
-                }
+                "scheduled_consumer": ServiceCommandConsumerContext(
+                    scheduled_task_id=11,
+                    scheduled_task_run_id=29,
+                    prompt="Review the selected document.",
+                    skill_names=("ceo-document-review",),
+                    skill_protocol="Read the selected frozen Skill.",
+                    skill_protocol_source=protocol_source,
+                    skill_materials=(ServiceCommandSkillMaterial(
+                        name="ceo-document-review", content="FROZEN BODY"
+                    ),),
+                ).to_payload()
             }
         })
     })
@@ -264,6 +310,7 @@ def test_resumed_consumer_turn_uses_current_selected_frozen_skill_entry(
         "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED" if protocol_present else ""
     )
     assert snapshot["invocation_facts"]["skill_protocol_source"] == fact_source
+    assert snapshot["invocation_facts"]["skill_names"] == ["ceo-document-review"]
     assert any(
         section["name"] == "任务 Skill 入口"
         for section in snapshot["sections"]
