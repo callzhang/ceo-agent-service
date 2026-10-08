@@ -4015,20 +4015,21 @@ def test_immediate_write_transaction_preserves_body_lock_error(tmp_path: Path, m
 def test_slow_sqlite_context_names_caller_without_local_values(tmp_path: Path, monkeypatch, capsys):
     from app import store as module
     store = AutoReplyStore(tmp_path / "slow-context.sqlite3")
-    ticks = iter((0.0, 5.0))
+    ticks = iter((0.0, 3.0, 4.0, 5.0))
     monkeypatch.setattr(module.time, "monotonic", lambda: next(ticks))
     private_value = "private-context-body"
     with store._connect() as db:
         db.execute("select ?", (private_value,)).fetchone()
     output = capsys.readouterr().err
     assert "elapsed_seconds=5.000" in output
+    assert "body_seconds=3.000 finish_seconds=1.000 close_seconds=1.000" in output
     assert "test_slow_sqlite_context_names_caller" in output
     assert private_value not in output
 
 
 def test_slow_transaction_names_business_caller_through_wrapper(tmp_path: Path, monkeypatch, capsys):
     store = AutoReplyStore(tmp_path / "wrapped-context.sqlite3")
-    ticks = iter((0.0, 5.0))
+    ticks = iter((0.0, 3.0, 4.0, 5.0))
     monkeypatch.setattr(store_module.time, "monotonic", lambda: next(ticks))
     with store._immediate_write_transaction() as db:
         db.execute("select 1").fetchone()
