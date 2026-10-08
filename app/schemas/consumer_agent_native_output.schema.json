@@ -1,0 +1,680 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "error_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error_retryable": {
+      "type": "boolean"
+    },
+    "error_authorization_required": {
+      "type": "boolean"
+    },
+    "risk": {
+      "$ref": "#/$defs/RiskLevel"
+    },
+    "confidence": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "type": "number"
+    },
+    "rule_coverage": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "type": "number"
+    },
+    "information_completeness": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "type": "number"
+    },
+    "durable_memories": {
+      "description": "Before you finish, check whether this turn confirmed anything durable: a person's preference, a decision that was made, a reusable rule or convention, an accepted project rule, a stable business fact, long-term context, or the explicit next step of unfinished work. If it did, list each one as its own item here. Skip temporary tasks, logs, code, one-off errors, unconfirmed guesses, sensitive original text, secrets or tokens, unauthorized document content, and anything already in Memory. An empty list is the right answer when nothing durable came up this turn -- but check every turn, don't default to empty.",
+      "items": {
+        "$ref": "#/$defs/DurableMemory"
+      },
+      "type": "array"
+    },
+    "outcome": {
+      "enum": [
+        "proposal",
+        "needs_human",
+        "no_action",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "proposal": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ConsumerProposal"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "decision_options": {
+      "items": {
+        "$ref": "#/$defs/DecisionOption"
+      },
+      "maxItems": 4,
+      "type": "array"
+    },
+    "requested_input": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "needs_human_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "decision_basis": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DecisionBasis"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "stage_index": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "predecessor_review_id": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "continue_after_execution": {
+      "type": "boolean"
+    },
+    "summary": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "error_code",
+    "error_retryable",
+    "error_authorization_required",
+    "risk",
+    "confidence",
+    "rule_coverage",
+    "information_completeness",
+    "durable_memories",
+    "outcome",
+    "proposal",
+    "decision_options",
+    "requested_input",
+    "needs_human_reason",
+    "decision_basis",
+    "stage_index",
+    "predecessor_review_id",
+    "continue_after_execution",
+    "summary"
+  ],
+  "type": "object",
+  "$defs": {
+    "ConsumerProposal": {
+      "additionalProperties": false,
+      "properties": {
+        "objective": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "sourced_facts": {
+          "items": {
+            "$ref": "#/$defs/ProposalFact"
+          },
+          "type": "array"
+        },
+        "authored_judgment": {
+          "type": "string"
+        },
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/ProposedAction"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "objective",
+        "sourced_facts",
+        "authored_judgment",
+        "actions"
+      ],
+      "type": "object"
+    },
+    "DecisionBasis": {
+      "additionalProperties": false,
+      "description": "The compact evidence chain a person needs to assess an escalation.",
+      "properties": {
+        "verified_facts": {
+          "items": {
+            "$ref": "#/$defs/ProposalFact"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "rule_evidence": {
+          "items": {
+            "$ref": "#/$defs/ProposalFact"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "quality_explanation": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "no_external_action_evidence": {
+          "items": {
+            "$ref": "#/$defs/ProposalFact"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "conclusion": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "verified_facts",
+        "rule_evidence",
+        "quality_explanation",
+        "no_external_action_evidence",
+        "conclusion"
+      ],
+      "type": "object"
+    },
+    "DecisionOption": {
+      "additionalProperties": false,
+      "description": "One bound choice for the current business instance.",
+      "properties": {
+        "key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "label": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "instruction": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "consequence": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "plan": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConsumerProposal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terminal_outcome": {
+          "anyOf": [
+            {
+              "const": "skipped",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "instruction",
+        "consequence",
+        "plan",
+        "terminal_outcome",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "DurableMemory": {
+      "additionalProperties": false,
+      "description": "Only information this turn confirmed that should outlive it: a person's preference, a decision that was made, a reusable rule or convention, a stable business fact, or the explicit next step of unfinished work. Never temporary tasks, logs, code, one-off errors, unconfirmed guesses, sensitive original text, secrets or tokens, unauthorized document content, or anything already in Memory. Name people by name, never 'the user'.",
+      "properties": {
+        "title": {
+          "description": "One-line title.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "content": {
+          "description": "One to three sentences of plain language about one thing.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "source_time": {
+          "description": "ISO-8601 time the information arose in its source (the message, meeting or document), not the time of this turn.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "source_refs": {
+          "description": "Where it came from: message ids, document links, approval ids.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "subject": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DurableMemorySubject"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The main person, project, customer or organization."
+        }
+      },
+      "required": [
+        "title",
+        "content",
+        "source_time",
+        "source_refs",
+        "subject"
+      ],
+      "type": "object"
+    },
+    "DurableMemorySubject": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "Person",
+            "Project",
+            "Customer",
+            "Organization"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ],
+      "type": "object"
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/JsonValue"
+                  }
+                },
+                "required": [
+                  "key",
+                  "value"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "entries"
+          ],
+          "additionalProperties": false,
+          "description": "Lossless JSON object: entries contains each original key and its value. Nested JSON objects use the same representation."
+        }
+      ]
+    },
+    "ProposalFact": {
+      "additionalProperties": false,
+      "properties": {
+        "assertion": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "references": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "assertion",
+        "references"
+      ],
+      "type": "object"
+    },
+    "ProposedAction": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "action_identity": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "capability": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "operation": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "target": {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/JsonValue"
+                  }
+                },
+                "required": [
+                  "key",
+                  "value"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 1
+            }
+          },
+          "required": [
+            "entries"
+          ],
+          "additionalProperties": false,
+          "description": "Lossless JSON object: entries contains each original key and its value. Nested JSON objects use the same representation."
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/JsonValue"
+                  }
+                },
+                "required": [
+                  "key",
+                  "value"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "entries"
+          ],
+          "additionalProperties": false,
+          "description": "Lossless JSON object: entries contains each original key and its value. Nested JSON objects use the same representation."
+        },
+        "effect": {
+          "description": "external when performing this action changes something outside the service and a provider must accept it; none when it changes nothing -- a verification, or a state already in place. An action that carries a message body is always external.",
+          "enum": [
+            "external",
+            "none"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "description",
+        "action_identity",
+        "capability",
+        "operation",
+        "target",
+        "payload",
+        "effect"
+      ],
+      "type": "object"
+    },
+    "RiskLevel": {
+      "description": "Estimated consequence if the proposed result is acted on incorrectly.",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "type": "string"
+    },
+    "_ConsumerWire": {
+      "additionalProperties": false,
+      "properties": {
+        "error_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error_retryable": {
+          "type": "boolean"
+        },
+        "error_authorization_required": {
+          "type": "boolean"
+        },
+        "risk": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "rule_coverage": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "information_completeness": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "durable_memories": {
+          "description": "Before you finish, check whether this turn confirmed anything durable: a person's preference, a decision that was made, a reusable rule or convention, an accepted project rule, a stable business fact, long-term context, or the explicit next step of unfinished work. If it did, list each one as its own item here. Skip temporary tasks, logs, code, one-off errors, unconfirmed guesses, sensitive original text, secrets or tokens, unauthorized document content, and anything already in Memory. An empty list is the right answer when nothing durable came up this turn -- but check every turn, don't default to empty.",
+          "items": {
+            "$ref": "#/$defs/DurableMemory"
+          },
+          "type": "array"
+        },
+        "outcome": {
+          "enum": [
+            "proposal",
+            "needs_human",
+            "no_action",
+            "failed"
+          ],
+          "type": "string"
+        },
+        "proposal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConsumerProposal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decision_options": {
+          "items": {
+            "$ref": "#/$defs/DecisionOption"
+          },
+          "maxItems": 4,
+          "type": "array"
+        },
+        "requested_input": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "needs_human_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decision_basis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DecisionBasis"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stage_index": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "predecessor_review_id": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "continue_after_execution": {
+          "type": "boolean"
+        },
+        "summary": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "error_retryable",
+        "error_authorization_required",
+        "risk",
+        "confidence",
+        "rule_coverage",
+        "information_completeness",
+        "durable_memories",
+        "outcome",
+        "proposal",
+        "decision_options",
+        "requested_input",
+        "needs_human_reason",
+        "decision_basis",
+        "stage_index",
+        "predecessor_review_id",
+        "continue_after_execution",
+        "summary"
+      ],
+      "type": "object"
+    }
+  }
+}

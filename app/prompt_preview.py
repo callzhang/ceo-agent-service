@@ -12,6 +12,7 @@ from app.consumer_agent import consumer_developer_instructions, audit_developer_
 from app.prompt_composition import append_runtime_context, load_prompt_configuration
 from app.runtime_prompt_context import render_runtime_context, runtime_prompt_snapshot
 from app.store import AgentRole, AutoReplyStore
+from app.native_agent_output import native_output_schema_path, native_task_prompt
 
 
 PROMPT_SCOPE = "服务提交的 Developer 与 Task 输入；不包含 CLI 自行生成的系统提示、工具 schema 或会话历史。凭据脱敏处标记 [REDACTED]。"
@@ -111,15 +112,20 @@ def current_prompt_preview(
         if facts.get("skill_protocol_source") == "task_override" and facts.get("skill_protocol"):
             developer += "\n\n" + facts["skill_protocol"]
     prompt = source_snapshot["task_prompt"] if source_snapshot else "未绑定任务和候选：仅预览当前角色公共指令与环境。"
+    source_format = facts.get("native_output_format")
+    if source_snapshot and source_format:
+        prompt = prompt[:source_format["business_task_length"]]
     if task and source_snapshot is None:
         result.update(status="unavailable", reason="该任务未保存所选角色的完整上下文输入；不以省略材料、反馈或回执的原触发拼装结果冒充完整 prompt，也不重跑补齐。")
         prompt = ""
     workspace = workspace_path()
     cwd = workspace / "consumer-artifacts" / str(task.id) / task.execution_generation if task and role == "consumer" else workspace
     if route.runtime_kind is RuntimeKind.CODEX_CLI:
+        if result["status"] == "available":
+            prompt = native_task_prompt(prompt, role)
         command = CodexRuntimeAdapter(workspace=workspace, config=config).build_command(
-            route=route, prompt=prompt, session_id=None, image_paths=None, output_schema_path=None,
-            use_output_schema=False, approval_policy="on-failure", developer_instructions=developer, use_approval_bypass=False)
+            route=route, prompt=prompt, session_id=None, image_paths=None, output_schema_path=native_output_schema_path(role),
+            use_output_schema=True, approval_policy="on-failure", developer_instructions=developer, use_approval_bypass=False)
         make_role_agent_command(command, role=role, task_workspace=str(cwd) if role == "consumer" else None,
             controlled_cli=ControlledCliConfig(command=sys.executable, args=("-m", "app.agent_cli", "--role", role), cwd=str(Path(__file__).resolve().parent.parent)))
     else:
