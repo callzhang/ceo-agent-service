@@ -252,7 +252,11 @@ def sanitize_source_feedback_links(
         if isinstance(decoded, (dict, list)):
             return sanitize_source_feedback_links(decoded,
                     vercel_base_url=vercel_base_url, depth=depth + 1)
-    urls = [child.attrGet("href") for token in MarkdownIt().parse(value)
+    source_parser = MarkdownIt()
+    # Preserve source spelling: href normalization percent-encodes Unicode,
+    # making the inspected URL impossible to replace in the original text.
+    source_parser.normalizeLink = lambda url: url
+    urls = [child.attrGet("href") for token in source_parser.parse(value)
             for child in (token.children or []) if child.type == "link_open"
             and FEEDBACK_CALLBACK_PATH in (child.attrGet("href") or "")]
     if len(urls) != 2:
@@ -263,9 +267,12 @@ def sanitize_source_feedback_links(
                expected_path=expected_path, expected_rating=rating)
                for url, rating in zip(urls, ("up", "down"), strict=True)]
     up, down = queries
+    # Legacy callbacks carry text previews that provider rendering can alter.
+    # Each URL's fields are checked above; the token and attempt identify the
+    # pair, while preview prose does not. Current outgoing pairs stay exact.
     if (up is None or down is None
-            or {key: item for key, item in up.items() if key != "rating"}
-            != {key: item for key, item in down.items() if key != "rating"}
+            or up["feedback_token"] != down["feedback_token"]
+            or up.get("attempt_id") != down.get("attempt_id")
             or not _is_generated_feedback_token(up["feedback_token"])):
         raise ValueError("feedback_callback_pair_invalid")
     inspected = value

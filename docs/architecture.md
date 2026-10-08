@@ -1425,7 +1425,7 @@ Codex Agent 可以通过 `agent_cli.read_skill` 读取 Skill；Skill 读取属�
 
 Consumer 完成候选准备时，把原 trigger、消息/材料和计划涉及的 OA 原表单或文档源事实保存为 source_bindings，参与 candidate digest。System Executor 在每个尚未核验动作派发之前重新读取相同原对象，包括首次执行、同次后续动作和恢复部分执行。OA 已完成动作造成的 task 状态/操作记录变化由具名处理器核验，不作为原表单变化；真实表单、文档或上下文变化使该 review 失效，保留已核验动作回执和原人工回答，在同阶段形成新的完整候选并重审。来源读取失败属于可重试技术失败，不执行旧分支。
 
-来源快照中的历史反馈正文仅在结果检查副本中规范化反馈后缀前的段落空白，并对真正的序列化来源容器递归检查，再沿用同一严格的签名、当前配置 host/path/query、生成 token 和上下链接配对验证。普通方括号或花括号开头的完整正文先按真实反馈结构识别，不按前缀推断它是 JSON。当前待发送正文仍要求原始严格格式；原 source_bindings、候选 digest、持久化结果与发送前来源回读比较不变，其他来源字段继续接受原有敏感值、深度和大小检查。确定性的来源结果验证失败记录 runtime_result_source_invalid、stage=result、source=service、retryable=false、session_continuable=false；不归为 CLI/provider 失败并反复恢复同一会话。
+来源快照中的历史反馈正文只在结果检查副本中解析 Markdown 链接，并对真正的序列化来源容器递归检查。历史来源不要求当前发送者的签名、链接标签或段落格式；两个链接各自必须通过当前配置 host/path/query、评分、生成 token 和敏感值检查，并具有相同 feedback_token 与 attempt_id。旧链接中的 original_text/reply_text 是预览文案，不作为配对身份；提供方渲染后两份预览可能不同。解析保留链接原文拼写，避免 Unicode URL 规范化后无法从检查副本中移除。当前待发送正文仍要求原始严格格式及完整 query 配对；原 source_bindings、候选 digest、持久化结果与发送前来源回读比较不变，其他来源字段继续接受原有敏感值、深度和大小检查。确定性的来源结果验证失败记录 runtime_result_source_invalid、stage=result、source=service、retryable=false、session_continuable=false；不归为 CLI/provider 失败并反复恢复同一会话。
 
 Attempt 详情的 system_execution 按 candidate、review、selection 绑定显示当前及历史阶段、声明顺序、未开始动作、失败/不确定状态和 provider 回执。只有 canonical action ledger 中核验成功的动作计为 verified；Audit approve 和用户选择都不能显示为已经执行。
 

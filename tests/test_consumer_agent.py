@@ -2369,8 +2369,36 @@ def test_consumer_source_callbacks_do_not_require_principal_signature_or_labels(
         sanitize_configured_feedback_links(historical, vercel_base_url=base)
 
 
+@pytest.mark.parametrize("preview_field", ["original_text", "reply_text"])
+@pytest.mark.parametrize("rendered_preview", ["Rendered+preview", "%E5%场景+preview"])
+def test_consumer_source_callback_pair_uses_identity_not_preview_text(
+    store, task, context, monkeypatch, preview_field, rendered_preview,
+):
+    from app.feedback_spike import build_callback_url, sanitize_configured_feedback_links
+
+    base = "https://feedback.example.com"
+    monkeypatch.setenv("CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", base)
+    up = build_callback_url(base, feedback_token="spike_1780000000_deadbeef",
+                            rating="up", attempt_id=1) + f"&{preview_field}=Original+preview"
+    down = build_callback_url(base, feedback_token="spike_1780000000_deadbeef",
+                              rating="down", attempt_id=1) + f"&{preview_field}={rendered_preview}"
+    source = f"Historical notice.\n[Positive]({up}) | [Negative]({down})"
+    context = replace(context, messages=(AgentContextMessage(
+        message_id="historical-preview", sender="Participant", text=source,
+        create_time="2026-10-06T00:00:00Z",
+    ),))
+    result = ConsumerAgentRunner(
+        store=store, workspace=Path("/workspace"), executor=CapturingExecutor(_result_jsonl()),
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    assert result.result.outcome == "no_action"
+    assert result.result.source_bindings[0].value["messages"][0]["text"] == source
+    # Current outgoing text retains its exact-pair requirement.
+    with pytest.raises(ValueError, match="feedback_callback_pair_invalid"):
+        sanitize_configured_feedback_links(source, vercel_base_url=base)
+
+
 @pytest.mark.parametrize("change", ["mixed_tokens", "mixed_attempts", "duplicate_rating",
-                                    "extra_query", "extra_url", "outside_credential"])
+                                    "extra_query", "extra_url", "outside_credential", "preview_credential"])
 def test_participant_callback_format_cannot_bypass_source_security(
     store, task, context, monkeypatch, change,
 ):
@@ -2388,6 +2416,8 @@ def test_participant_callback_format_cannot_bypass_source_security(
         down = down.replace("rating=down", "rating=up")
     elif change == "extra_query":
         down += "&access_token=secret"
+    elif change == "preview_credential":
+        down += "&reply_text=Authorization%3A+Bearer+abcdef1234567890"
     source = f"Participant notice.\n[Positive]({up}) | [Negative]({down})"
     if change == "extra_url":
         source += f"\nUnpaired URL: {up}"

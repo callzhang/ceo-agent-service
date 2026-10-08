@@ -79,6 +79,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-fix-attempt-15090 | app/feedback_spike.py (historical callback identity only), tests/test_consumer_agent.py (historical preview mismatch regressions), docs/runtime-mechanism.md, docs/architecture.md | Repair false rejection of valid historical callback pairs whose preview text differs; preserve authored outgoing validation and source checks. | done 2026-10-07 |
+
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
