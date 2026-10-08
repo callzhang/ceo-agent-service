@@ -2265,6 +2265,13 @@
 - Clarify reconciled invalid `needs_human` projections as technical failures in Attention, so malformed historical decision payloads cannot be mistaken for live human authorization requests.
 # Unreleased
 
+- Count live dispatcher leases, meeting preparation and claimed meeting delivery
+  in the deployment quiet gate, including before an Agent runtime is created.
+
+- Avoid reading title-discarded group rosters for transcript-only meeting
+  audiences. Preserve sendability-first selection, authoritative attendee
+  coverage ordering, and full evidence checks on every retained candidate.
+
 - Isolate weekly OKR member collection and terminal result-validation gaps with
   system-owned UID binding and full-roster unscored sections. Shared or untrusted
   source failures still block publication. Require verified period/objective-list

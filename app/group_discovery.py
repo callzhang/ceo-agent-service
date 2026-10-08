@@ -233,9 +233,36 @@ class GroupDiscoveryService:
                     groups.setdefault(group.dedup_key, group)
                     reads += 1
 
+            candidate_groups = tuple(groups.values())
+            prechecked_sendability: dict[tuple[str, str, str], Sendability] = {}
+            # With no authoritative attendee filter, title selection is
+            # independent of member reads. Do not fetch discarded rosters.
+            if not request.audience_is_complete:
+                for group in candidate_groups:
+                    sendability = (
+                        self.provider.get_group_sendability(group)
+                        if self.provider.capabilities.sendability
+                        else Sendability(None, "unavailable")
+                    )
+                    if self.provider.capabilities.sendability:
+                        reads += 1
+                    if sendability.allowed is not False:
+                        prechecked_sendability[group.dedup_key] = sendability
+                candidate_groups = tuple(
+                    group for group in candidate_groups
+                    if group.dedup_key in prechecked_sendability
+                )
+                threshold = self.policy.minimum_title_score(request)
+                title_selected = tuple(
+                    group for group in candidate_groups
+                    if self.policy.title_score(request, group.display_name) >= threshold
+                )
+                if title_selected:
+                    candidate_groups = title_selected
+
             staged: list[tuple[GroupRef, GroupEvidence]] = []
             audience_keys = {member.scoped_key for member in request.audience}
-            for group in groups.values():
+            for group in candidate_groups:
                 coverage: ParticipantCoverageEvidence | None = None
                 members: tuple[MemberRef, ...] | None = None
                 if self.provider.capabilities.member_lists:
@@ -260,7 +287,9 @@ class GroupDiscoveryService:
 
                 title_score = self.policy.title_score(request, group.display_name)
                 sendability: Sendability | None = None
-                if self.provider.capabilities.sendability:
+                if not request.audience_is_complete:
+                    sendability = prechecked_sendability[group.dedup_key]
+                elif self.provider.capabilities.sendability:
                     sendability = self.provider.get_group_sendability(group)
                     reads += 1
                     if sendability.allowed is False:
