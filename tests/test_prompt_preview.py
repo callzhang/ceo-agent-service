@@ -28,7 +28,8 @@ def test_current_preview_separates_frozen_current_configuration_from_saved_task_
     assert result["task_source_rendered_at"] == saved_time
     assert result["invocation_facts"]["prompt_configuration"] == frozen.fingerprints()
     assert result["invocation_facts"] == {"prompt_configuration": frozen.fingerprints()}
-    assert result["task_prompt"] == "Saved complete Task with old template, materials and receipts"
+    from app.native_agent_output import native_task_prompt
+    assert result["task_prompt"] == native_task_prompt("Saved complete Task with old template, materials and receipts", "consumer")
     assert "New " not in result["task_prompt"]
     assert loads == [{"create_missing": False, "role": "consumer"}]
     assert len(store.get_agent_run(run.id).tool_events) == 1
@@ -231,3 +232,23 @@ def test_history_api_selects_attempt_and_rejects_mismatched_binding(tmp_path):
         assert client.get("/api/console/settings/prompt-preview?runtime_attempt_id=81").status_code == 422
     assert len(store.get_agent_run(run.id).tool_events) == 1
     assert store.get_reply_task(task.id).status == task.status
+
+
+def test_current_preview_adds_native_format_once_and_removes_it_for_claude(tmp_path):
+    from app.native_agent_output import native_task_prompt
+    store = AutoReplyStore(tmp_path / "native-preview.sqlite3")
+    task, run = task_and_run(store)
+    business = "Original facts, feedback and stage bindings."
+    store.append_agent_run_event(run.id, {
+        "type": "runtime.prompt", "role": "consumer", "rendered_at": "2026-10-08T10:00:00Z",
+        "task_prompt": native_task_prompt(business, "consumer"),
+        "invocation_facts": {"native_output_format": {
+            "name": "json-entries-v1", "business_task_length": len(business),
+        }},
+    }, owner="test")
+    config = load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,claude_oauth"})
+    codex = current_prompt_preview(store, role="consumer", config=config, route_name="codex_oauth", task_id=task.id)
+    assert codex["task_prompt"] == native_task_prompt(business, "consumer")
+    assert codex["task_prompt"].count("## Native structured output") == 1
+    claude = current_prompt_preview(store, role="consumer", config=config, route_name="claude_oauth", task_id=task.id)
+    assert claude["task_prompt"] == business
