@@ -2575,29 +2575,30 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         started_at = time.monotonic()
         body_finished_at = started_at
         try:
-            with connection:
-                try:
-                    yield connection
-                finally:
-                    body_finished_at = time.monotonic()
+            try:
+                with connection:
+                    try:
+                        yield connection
+                    finally:
+                        body_finished_at = time.monotonic()
+            finally:
+                close_started_at = time.monotonic()
+                connection.close()
+                closed_at = time.monotonic()
+                elapsed = closed_at - started_at
+                if elapsed >= 1.0:
+                    print(
+                        f"slow sqlite context elapsed_seconds={elapsed:.3f} "
+                        f"body_seconds={body_finished_at - started_at:.3f} "
+                        f"finish_seconds={close_started_at - body_finished_at:.3f} "
+                        f"close_seconds={closed_at - close_started_at:.3f} "
+                        f"callers={_sqlite_caller_chain(sys._getframe(2))}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
         except sqlite3.Error as error:
             _name_sqlite_extended_error(self.path, error)
             raise
-        finally:
-            close_started_at = time.monotonic()
-            connection.close()
-            closed_at = time.monotonic()
-            elapsed = closed_at - started_at
-            if elapsed >= 1.0:
-                print(
-                    f"slow sqlite context elapsed_seconds={elapsed:.3f} "
-                    f"body_seconds={body_finished_at - started_at:.3f} "
-                    f"finish_seconds={close_started_at - body_finished_at:.3f} "
-                    f"close_seconds={closed_at - close_started_at:.3f} "
-                    f"callers={_sqlite_caller_chain(sys._getframe(2))}",
-                    file=sys.stderr,
-                    flush=True,
-                )
 
     @contextmanager
     def _optional_connection(
