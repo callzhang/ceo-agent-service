@@ -1517,6 +1517,8 @@ Prompts 的 Developer/User/Profile 各自保留 Template 与 Rendered preview �
 
 Developer Prompt 是 Consumer 与 Audit 共用的工作原则，渲染后的冻结正文在两角色核心 Developer 的 Dynamic Skill 之后、System Action Contracts 与 Wire Schema 之前各插入一次；默认正文即原有的中文取证与日历时区原则，不再从代码常量或后续 Shared 段重复注入。User Prompt 是 Consumer 的完整任务模板，必须包含恰好一个 `{{task_context}}`，仅支持普通文本和这个插槽。任务来源、定时要求、stage、反馈、既有回执及 continuation 先由服务组装成完整上下文，再填入插槽；不将旧消息块模板叠加到后台任务。工作人格仍注入两角色，Audit Rules 只进入 Audit。角色、输出 schema、System action contract 与能力职责继续由代码提供。Workbench、独立 WeChat、纯服务命令及 Email 退订保留各自入口和显式指令。
 
+服务组装的 Consumer/Audit Developer Prompt 不再读取或复制本机 `~/.agents/AGENT.md` 开发规则，也不注入缺失文件的占位段或旧的重读提示。业务角色、能力、输出契约和后台 Memory bootstrap 说明仍由原有代码提供；本机原生 CLI 的指令加载与开发 Agent 的 AGENTS.md 文件不在此变更范围。
+
 一次角色 invocation 只读取一次 Developer/User/Profile 正文，供组装、静态指纹与重试共用；Audit 不读取无关 User 模板。实际路线和工具命令确定后，再追加 Runtime Context。静态配置 SHA 写入现有 runtime.prompt invocation facts，仅作来源回执；Consumer 继续按 `conversation_id + route` 复用原 session，配置或 contract hash 变化不创建新会话，Audit 的独立 session 不与 Consumer 合并。
 
 默认 User 的 Rendered preview 使用明确标记的合成完整任务，不读取业务材料；Developer/Profile 渲染同一份已保存正文。完整运行输入仍在独立只读页签，当前配置 Developer 与所选已保存历史 Task 的来源分别标注，历史模式不重新渲染。读取设置/预览不创建或覆盖配置文件。已存在模板不在读取时自动升级；部署使用 `python -m app.deploy --publish-prompt-templates`，仅在既有停止/备份窗口根据 `ci/prompt-template-release.json` 的精确旧/新 SHA 发布默认 Developer/User。自定义模板须明确迁移，不能覆盖；文件备份、发布与回退沿用 RepositoryUpdater 的 publication 协议。该发布不修改工作人格。

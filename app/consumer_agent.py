@@ -110,7 +110,6 @@ alone does not complete a response to substantive input that calls for the
 principal's engagement. Return return or reject when the candidate must be
 regenerated; do not rewrite it yourself.
 """.strip()
-SHARED_RULES_PATH = Path.home() / ".agents" / "AGENT.md"
 AGENT_CAPABILITY_INSTRUCTIONS = """
 Use the role's actual declared tools to read the sources needed for this task.
 Consumer may use its ordinary work tools for documents, artifacts, research,
@@ -942,26 +941,10 @@ def _role_developer_instructions(
     capability_instructions: str,
     role_boundary: str,
 ) -> str:
-    shared = (
-        SHARED_RULES_PATH.read_text(encoding="utf-8").strip()
-        if SHARED_RULES_PATH.is_file()
-        else ""
-    )
     instructions = (
         role_instruction
         + "\n\n## Capability Instructions\n"
         + capability_instructions
-    )
-    quoted_shared = (
-        "\n".join(f"> {line}" for line in shared.splitlines())
-        if shared
-        else "> No host-specific shared agent rules are installed."
-    )
-    instructions += "\n\n## Shared Agent Rules\n" + quoted_shared
-    instructions += (
-        "\n\nThe shared-rules section above is the complete service-provided context "
-        "for this turn. Do not reopen AGENT.md with shell, Python, or a native "
-        "command tool; use the selected Skill capability for additional material."
     )
     instructions += (
         "\n\nThis is a background service turn, not an interactive Codex session. "
