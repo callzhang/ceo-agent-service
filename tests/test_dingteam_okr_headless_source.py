@@ -6,6 +6,7 @@ import signal
 import subprocess
 import time
 from pathlib import Path
+from urllib.error import URLError
 
 import pytest
 
@@ -21,6 +22,126 @@ def load_module():
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def test_complete_personal_period_absence_emits_identity_bound_outcome(monkeypatch, capsys):
+    module = load_module()
+    class MissingPeriod(RuntimeError):
+        user_id = "person"
+        period_label = "2026 Q4"
+        periods = [{"name": "2026 Q3", "okrId": "q3"}]
+    monkeypatch.setattr(module.browser.direct, "MissingOkrPeriod", MissingPeriod, raising=False)
+    monkeypatch.setattr(module, "_get_headless_headers", lambda: {"private-auth": "do-not-output"})
+    def absent(*args):
+        raise MissingPeriod("period absent")
+    monkeypatch.setattr(module.browser.direct, "fetch_with_headers", absent)
+
+    assert module._fetch_user_okr(user_id="person", period_label="2026 Q4") == 0
+    output = capsys.readouterr().out
+    result = json.loads(output)
+    assert result["userId"] == "person"
+    assert result["periodLabel"] == "2026 Q4"
+    assert result["availability"] == {"status": "goals_not_established", "providerCode": 0, "periodsComplete": True}
+    assert result["periods"] == MissingPeriod.periods
+    assert "processed" not in result
+    assert "do-not-output" not in output
+
+
+def test_absence_receipt_does_not_include_historical_scores(monkeypatch, capsys):
+    module = load_module()
+    class MissingPeriod(RuntimeError):
+        user_id = "person"
+        period_label = "2026 Q4"
+        periods = [{"name": "2026 Q3", "okrId": "q3", "score": 92, "grade": "private", "avgProgress": 55}]
+    monkeypatch.setattr(module.browser.direct, "MissingOkrPeriod", MissingPeriod, raising=False)
+    monkeypatch.setattr(module, "_get_headless_headers", lambda: {})
+    def absent(*args):
+        raise MissingPeriod()
+    monkeypatch.setattr(module.browser.direct, "fetch_with_headers", absent)
+    assert module._fetch_user_okr(user_id="person", period_label="2026 Q4") == 0
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["periods"] == [{"name": "2026 Q3", "okrId": "q3"}]
+
+
+def test_headless_technical_error_is_not_a_goal_absence(monkeypatch, capsys):
+    module = load_module()
+    class MissingPeriod(RuntimeError):
+        pass
+    monkeypatch.setattr(module.browser.direct, "MissingOkrPeriod", MissingPeriod, raising=False)
+    monkeypatch.setattr(module, "_get_headless_headers", lambda: {})
+    def unavailable(*args):
+        raise RuntimeError("source authorization failed")
+    monkeypatch.setattr(module.browser.direct, "fetch_with_headers", unavailable)
+    assert module._fetch_user_okr(user_id="person", period_label="2026 Q4") == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["failure"]["scope"] == "shared"
+    assert "source authorization failed" in result["failure"]["detail"]
+    assert "availability" not in result
+
+
+@pytest.mark.parametrize("http_code,scope", [(401, "shared"), (403, "member")])
+def test_source_http_failure_scope_uses_typed_cause(monkeypatch, capsys, http_code, scope):
+    from urllib.error import HTTPError
+    module = load_module()
+    monkeypatch.setattr(module, "_get_headless_headers", lambda: {})
+    def failed(*args):
+        error = RuntimeError("source read failed")
+        error.__cause__ = HTTPError("https://example.invalid", http_code, "error", {}, None)
+        raise error
+    monkeypatch.setattr(module.browser.direct, "fetch_with_headers", failed)
+    assert module._fetch_user_okr(user_id="person", period_label="2026 Q4") == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["failure"]["scope"] == scope
+    assert result["failure"]["code"] == f"okr_source_http_{http_code}"
+    assert "processed" not in result
+
+
+def test_authentication_readiness_failure_is_shared_and_redacted(monkeypatch, capsys):
+    module = load_module()
+    def failed():
+        raise RuntimeError("session unavailable; Bearer secretcredential123456")
+    monkeypatch.setattr(module, "_get_headless_headers", failed)
+    assert module._fetch_user_okr(user_id="person", period_label="2026 Q4") == 0
+    output = capsys.readouterr().out
+    result = json.loads(output)
+    assert result["failure"]["scope"] == "shared"
+    assert result["failure"]["code"] == "okr_authentication_readiness_failed"
+    assert "secretcredential123456" not in output
+
+
+def test_headless_entrypoint_runs_without_inherited_pythonpath(tmp_path):
+    import sys
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    result = subprocess.run([sys.executable, str(SCRIPT_PATH), "--help"], cwd=tmp_path,
+                            env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert "--period-label" in result.stdout
+
+
+@pytest.mark.parametrize("transport", [TimeoutError("request timeout"), URLError("network unavailable")])
+def test_fetch_transport_failure_is_a_scoped_source_result(monkeypatch, capsys, transport):
+    module = load_module()
+    monkeypatch.setattr(module, "_get_headless_headers", lambda: {})
+    def failed(*args):
+        raise transport
+    monkeypatch.setattr(module.browser.direct, "fetch_with_headers", failed)
+    assert module._fetch_user_okr(user_id="person", period_label="2026 Q4") == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["failure"]["scope"] == "member"
+    assert result["failure"]["code"] == "okr_source_transport_failed"
+
+
+@pytest.mark.parametrize("detail", [
+    '{"accessToken":"short-secret","reason":"permission denied"}',
+    'HTTP body {"accessToken":"short-secret","reason":"permission denied"}',
+    'HTTP body {"accessToken":"short-secret",',
+    '{"error":"{\\"accessToken\\":\\"short-secret\\",\\"reason\\":\\"denied\\"}"}',
+])
+def test_json_credentials_cannot_enter_source_failure_details(detail):
+    module = load_module()
+    result = module._source_failure(RuntimeError(detail), user_id="person", period_label="2026 Q4",
+                                    scope="shared", code="failed")
+    assert "short-secret" not in result["failure"]["detail"]
 
 
 def test_shared_source_respects_configured_skills_root(monkeypatch, tmp_path):

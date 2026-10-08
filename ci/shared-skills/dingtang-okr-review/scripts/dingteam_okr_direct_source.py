@@ -355,17 +355,67 @@ def _merge_updates(history_agg: str, comment_agg: str) -> str:
     return "\n".join(pieces) if pieces else "[未撰写进度]"
 
 
+class MissingOkrPeriod(RuntimeError):
+    """Authoritative absence from a successful complete personal-period read."""
+
+    def __init__(self, user_id: str, period_label: str, periods: list[dict]):
+        super().__init__(f"Dingteam OKR period not found: {period_label}")
+        self.user_id = user_id
+        self.period_label = period_label
+        self.periods = periods
+
+
+def validated_personal_periods(payload: object) -> list[dict]:
+    if not isinstance(payload, dict) or type(payload.get("code")) is not int:
+        raise ValueError("Dingteam personal-period response lacks a numeric provider code")
+    if payload["code"] != 0:
+        raise RuntimeError(f"Dingteam personal-period provider failed: code={payload['code']}")
+    data = payload.get("data")
+    if not isinstance(data, dict) or not isinstance(data.get("list"), list):
+        raise ValueError("Dingteam personal-period response lacks data.list")
+    if data.get("hasMore") or data.get("nextCursor"):
+        raise RuntimeError("Dingteam personal-period response is incomplete")
+    periods = data["list"]
+    if any(
+        not isinstance(period, dict)
+        or not isinstance(period.get("name"), str) or not period["name"].strip()
+        or not isinstance(period.get("okrId"), str) or not period["okrId"].strip()
+        for period in periods
+    ):
+        raise ValueError("Dingteam personal-period response contains invalid period identities")
+    return periods
+
+
+def validated_objective_list(payload: object) -> list[dict]:
+    if not isinstance(payload, dict) or type(payload.get("code")) is not int:
+        raise ValueError("Dingteam objective response lacks a numeric provider code")
+    if payload["code"] != 0:
+        raise RuntimeError(f"Dingteam objective provider failed: code={payload['code']}")
+    data = payload.get("data")
+    if not isinstance(data, dict) or not isinstance(data.get("list"), list):
+        raise ValueError("Dingteam objective response lacks data.list")
+    if (
+        any(type(data.get(key)) is not int for key in ("pageNo", "totalPages", "totalCount"))
+        or data["pageNo"] != 1 or data["totalPages"] not in {0, 1}
+        or data["totalCount"] != len(data["list"])
+        or data.get("hasMore") or data.get("nextCursor")
+        or any(not isinstance(item, dict) for item in data["list"])
+    ):
+        raise ValueError("Dingteam objective response is incomplete or malformed")
+    return data["list"]
+
+
 def fetch_with_headers(user_id: str, period_label: str, headers: dict[str, str]) -> dict:
     periods_payload = _post(
         "/data/okr/person/period/list", {"userId": user_id}, headers
     )
-    periods = _as_list(periods_payload)
+    periods = validated_personal_periods(periods_payload)
     period_key = normalized_period(period_label)
     period = next(
         (p for p in periods if normalized_period(p.get("name")) == period_key), None
     )
     if period is None:
-        raise RuntimeError(f"Dingteam OKR period not found: {period_label}")
+        raise MissingOkrPeriod(user_id, period_label, periods)
 
     list_payload = _post(
         "/data/okr/objective/showListView/v2",
@@ -376,7 +426,7 @@ def fetch_with_headers(user_id: str, period_label: str, headers: dict[str, str])
         },
         headers,
     )
-    objective_list = _as_list(list_payload)
+    objective_list = validated_objective_list(list_payload)
 
     processed_objectives = []
     okr_rows = []
@@ -504,6 +554,7 @@ def fetch_with_headers(user_id: str, period_label: str, headers: dict[str, str])
     return {
         "source": {
             "system": "叮当OKR Dingteam Web (direct API)",
+            "objectiveListReceipt": {"providerCode": 0, "complete": True, "count": len(objective_list)},
             "appId": "40707",
             "suiteId": "9242001",
             "capturedAt": datetime.now(tz=timezone.utc).strftime(

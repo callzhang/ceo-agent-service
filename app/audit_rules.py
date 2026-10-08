@@ -53,6 +53,26 @@ PUBLICATION_SCOPE_CONTRACT = (
     "Public visibility does not establish factual accuracy: do not invent "
     "unconfirmed conclusions or completion dates, or turn progress into a new commitment."
 )
+MESSAGE_AUDIENCE_CONTRACT = (
+    "For any message publication, establish the audience from relevant current discussion, "
+    "complete current group membership, stable member identities, and current titles and responsibilities. "
+    "Assess the actual content, business purpose and disclosure scope together. "
+    "Titles are evidence, not automatic disclosure authorization; a group name or sensitive-topic "
+    "keyword is not a routing rule. A direct message is not inherently safe. "
+    "If all content fits one verified audience, propose one message. Only when different content "
+    "sections require different audiences, use the existing multi-action proposal with exact "
+    "group and direct-message bodies, recipient evidence and separate action identities. "
+    "Do not send the split private section to the principal: compare stable identities and verified aliases, "
+    "not display names alone. The relevant counterpart must be independently verified; the principal is "
+    "not a self-copy or fallback recipient when that counterpart is unknown. This restriction concerns "
+    "split-message routing, not a separately requested report or notification addressed to the principal. "
+    "Missing material audience evidence remains a concrete gap, not a guessed recipient or replacement group. "
+    "Consumer prepares the whole plan; Audit checks each exact body, target and supporting evidence "
+    "without rewriting or sending it. System executes only the persisted approved plan. "
+    "Reconcile each action's exact receipt and external readback before recovery; resume only unfinished actions. "
+    "Splitting does not bypass a historical risk refusal or authorize distributing refused content "
+    "through another tool or recipient; a materially safer new candidate uses the formal review path."
+)
 # Asked of both roles, at the end of the turn. Reading from Memory was always
 # instructed and is healthy -- 144 Consumer recalls and 30 Audit recalls over
 # the fourteen days to 2026-09-19 -- but nothing ever asked a turn to write,
@@ -193,7 +213,10 @@ def render_audit_rules(role: AgentRole, path: Path | None = None, *, create_miss
         if role is AgentRole.CONSUMER
         else AUDIT_RULE_WRAPPER
     )
-    sections = [wrapper, BUSINESS_CONTEXT_CONTRACT, PUBLICATION_SCOPE_CONTRACT, custom]
+    sections = [
+        wrapper, BUSINESS_CONTEXT_CONTRACT, PUBLICATION_SCOPE_CONTRACT,
+        MESSAGE_AUDIENCE_CONTRACT, custom,
+    ]
     if role is AgentRole.CONSUMER:
         sections.append(memory_write_reminder())
     return "\n\n".join(sections)

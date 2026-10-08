@@ -14,6 +14,25 @@ from app.store import AgentRole
 
 
 @pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
+@pytest.mark.parametrize("saved_rules", ["Check exact publication targets.", ""])
+def test_audience_split_contract_survives_saved_and_empty_rules(tmp_path, role, saved_rules):
+    path = tmp_path / "rules.md"
+    path.write_text(saved_rules, encoding="utf-8")
+    rendered = render_audit_rules(role, path)
+
+    assert "complete current group membership" in rendered
+    assert "current titles and responsibilities" in rendered
+    assert "Titles are evidence, not automatic disclosure authorization" in rendered
+    assert "A direct message is not inherently safe" in rendered
+    assert "existing multi-action proposal" in rendered
+    assert "Do not send the split private section to the principal" in rendered
+    assert "stable identities and verified aliases" in rendered
+    assert "not a self-copy or fallback recipient" in rendered
+    assert "resume only unfinished actions" in rendered
+    assert "historical risk refusal" in rendered
+
+
+@pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
 def test_publication_scope_contract_is_present_even_with_saved_rules(tmp_path, role):
     path = tmp_path / "rules.md"
     path.write_text("Distinguish access from publication authority.")

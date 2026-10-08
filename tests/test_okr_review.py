@@ -1023,6 +1023,31 @@ def test_dws_live_okr_source_uses_configured_timeout():
     assert dws.isolated_process_groups == [True]
 
 
+@pytest.mark.parametrize("scope", ["shared", "member"])
+def test_live_okr_failure_receipt_retains_structured_scope(scope):
+    dws = FakeDwsForOkr(payload={
+        "userId": "member", "periodLabel": "2026 Q4",
+        "failure": {"scope": scope, "code": "source_failure", "detail": "verified source error"},
+    })
+    source = DwsLiveOkrSource(dws=dws, command_template=["read", "{user_id}"])
+    with pytest.raises(RuntimeError) as failure:
+        source.fetch_user_okr(user_id="member", period_label="2026 Q4")
+    assert type(failure.value).__name__ == "OkrLiveSourceError"
+    assert failure.value.scope == scope
+    assert failure.value.code == "source_failure"
+    assert failure.value.user_id == "member"
+
+
+def test_live_okr_failure_receipt_cannot_change_requested_identity():
+    dws = FakeDwsForOkr(payload={
+        "userId": "other", "periodLabel": "2026 Q4",
+        "failure": {"scope": "shared", "code": "auth", "detail": "failed"},
+    })
+    source = DwsLiveOkrSource(dws=dws, command_template=["read", "{user_id}"])
+    with pytest.raises(ValueError, match="identity"):
+        source.fetch_user_okr(user_id="member", period_label="2026 Q4")
+
+
 def test_dws_live_okr_source_retries_then_reraises_source_error():
     dws = FakeDwsForOkr(error=RuntimeError("okr unavailable"))
     source = DwsLiveOkrSource(

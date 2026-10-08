@@ -1,0 +1,14 @@
+{
+  "version": "message-audience.v3-text-clarity",
+  "baseline_ref": "4750e1860c2a9d190a22dc4fea02caba4b93890b",
+  "settings": {"model": "gpt-5.6-sol", "reasoning_effort": "high", "concurrency": 1, "timeout_seconds_per_case": 180, "tools": "none", "external_facts": "synthetic-inline-only"},
+  "revision_reason": "V2's first source text was undelimited prose, so both models reasonably omitted its sentence-ending period. Preserve V2's strict failure and rerun only this explicitly delimited case, not a new complete V2 suite.",
+  "cases": [{
+    "id": "one_verified_audience_explicit_source_text",
+    "trigger": "Answer the operational group's checkpoint question using the exact verified message body.",
+    "facts": "Principal P-1. Complete membership of G-1: P-1, U-1 operations director, U-2 delivery manager. Current thread: U-1 asks whether checkpoint C is ready; U-2 discusses C's completion evidence. The authoritative message body is supplied as a JSON string: {\"message_body\":\"Checkpoint ready.\"}. The period inside the quoted string is part of the body. All underlying C records are already shared in this conversation. No additional detail is requested.",
+    "skill_excerpt": "dingtalk-chat send_message takes conversation_id for groups or open_dingtalk_id for direct participants. Exact verified status text may be used in a proposal; Consumer does not execute it.",
+    "expected_consumer": "proposal", "required_concepts": [], "forbidden_concepts": [],
+    "expected_deliveries": [{"target": {"conversation_id": "G-1"}, "content": "Checkpoint ready."}]
+  }]
+}
