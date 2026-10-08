@@ -81,6 +81,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-dws-dependency-wait-retry | app/agent_orchestrator.py (external dependency wait classification only), app/worker.py (dependency wait queue delay and attempt-budget refund only), tests/test_agent_orchestrator.py and tests/test_worker.py (dependency wait regression cases only), app/consumer_agent.py (shared failure-code instruction only), tests/test_consumer_agent.py (that prompt assertion only), docs/architecture.md, docs/runtime-mechanism.md and docs/error-catalog.md (dependency retry behavior only), docs/agent-claims.md (this row only) | Keep DWS/source-read infrastructure failures queued with backoff without consuming bounded content-failure budget; ordinary runtime/content failures remain bounded. No OA/business decision or external-effect behavior change. | 2026-10-08 |
+
 | codex-fix-attempt-15090 | app/feedback_spike.py (historical callback identity only), tests/test_consumer_agent.py (historical preview mismatch regressions), docs/runtime-mechanism.md, docs/architecture.md | Repair false rejection of valid historical callback pairs whose preview text differs; preserve authored outgoing validation and source checks. | done 2026-10-07 |
 
 
