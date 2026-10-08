@@ -15,12 +15,16 @@ import time
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
-from app.leak_check import redact_credentials
+SERVICE_ROOT = Path(__file__).resolve().parents[1]
+if str(SERVICE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SERVICE_ROOT))
+
+from app.leak_check import redact_credentials, redact_credentials_in_value  # noqa: E402 - direct script entry
 
 
 SCRIPT_DIR = Path(
@@ -351,11 +355,13 @@ def _fetch_user_okr(*, user_id: str, period_label: str) -> int:
             },
             "periods": absence.periods,
         }
-    except (RuntimeError, ValueError) as error:
-        cause = error.__cause__
+    except (RuntimeError, ValueError, TimeoutError, URLError) as error:
+        cause = error if isinstance(error, HTTPError) else error.__cause__
         if isinstance(cause, HTTPError):
             scope = "shared" if cause.code == 401 else "member"
             code = f"okr_source_http_{cause.code}"
+        elif isinstance(error, (TimeoutError, URLError)) or isinstance(cause, (TimeoutError, URLError)):
+            scope, code = "member", "okr_source_transport_failed"
         elif isinstance(error, ValueError):
             scope, code = "member", "okr_source_invalid_response"
         else:
@@ -374,9 +380,40 @@ def _source_failure(error: Exception, *, user_id: str, period_label: str, scope:
         "failure": {
             "scope": scope,
             "code": code,
-            "detail": f"{type(error).__name__}: {redact_credentials(str(error))[:300]}",
+            "detail": f"{type(error).__name__}: {_safe_source_error_detail(str(error))[:300]}",
         },
     }
+
+
+def _safe_source_error_detail(text: str) -> str:
+    """Preserve diagnostic context without transporting structured credentials."""
+    decoder = json.JSONDecoder()
+    parts: list[str] = []
+    index = 0
+    while index < len(text):
+        if text[index] not in "{[":
+            parts.append(text[index])
+            index += 1
+            continue
+        try:
+            value, end = decoder.raw_decode(text, index)
+        except json.JSONDecodeError:
+            parts.append("[unparseable structured diagnostic omitted]")
+            break
+        safe = redact_credentials_in_value(_sanitize_embedded_diagnostics(value))
+        parts.append(json.dumps(safe, ensure_ascii=False))
+        index = end
+    return redact_credentials("".join(parts), credential_context=True)
+
+
+def _sanitize_embedded_diagnostics(value):
+    if isinstance(value, dict):
+        return {key: _sanitize_embedded_diagnostics(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_embedded_diagnostics(item) for item in value]
+    if isinstance(value, str):
+        return _safe_source_error_detail(value)
+    return value
 
 
 def main() -> int:

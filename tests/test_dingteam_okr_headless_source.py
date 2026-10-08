@@ -6,6 +6,7 @@ import signal
 import subprocess
 import time
 from pathlib import Path
+from urllib.error import URLError
 
 import pytest
 
@@ -90,6 +91,41 @@ def test_authentication_readiness_failure_is_shared_and_redacted(monkeypatch, ca
     assert result["failure"]["scope"] == "shared"
     assert result["failure"]["code"] == "okr_authentication_readiness_failed"
     assert "secretcredential123456" not in output
+
+
+def test_headless_entrypoint_runs_without_inherited_pythonpath(tmp_path):
+    import sys
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    result = subprocess.run([sys.executable, str(SCRIPT_PATH), "--help"], cwd=tmp_path,
+                            env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert "--period-label" in result.stdout
+
+
+@pytest.mark.parametrize("transport", [TimeoutError("request timeout"), URLError("network unavailable")])
+def test_fetch_transport_failure_is_a_scoped_source_result(monkeypatch, capsys, transport):
+    module = load_module()
+    monkeypatch.setattr(module, "_get_headless_headers", lambda: {})
+    def failed(*args):
+        raise transport
+    monkeypatch.setattr(module.browser.direct, "fetch_with_headers", failed)
+    assert module._fetch_user_okr(user_id="person", period_label="2026 Q4") == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["failure"]["scope"] == "member"
+    assert result["failure"]["code"] == "okr_source_transport_failed"
+
+
+@pytest.mark.parametrize("detail", [
+    '{"accessToken":"short-secret","reason":"permission denied"}',
+    'HTTP body {"accessToken":"short-secret","reason":"permission denied"}',
+    'HTTP body {"accessToken":"short-secret",',
+    '{"error":"{\\"accessToken\\":\\"short-secret\\",\\"reason\\":\\"denied\\"}"}',
+])
+def test_json_credentials_cannot_enter_source_failure_details(detail):
+    module = load_module()
+    result = module._source_failure(RuntimeError(detail), user_id="person", period_label="2026 Q4",
+                                    scope="shared", code="failed")
+    assert "short-secret" not in result["failure"]["detail"]
 
 
 def test_shared_source_respects_configured_skills_root(monkeypatch, tmp_path):
