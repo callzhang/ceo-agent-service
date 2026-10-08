@@ -2245,6 +2245,12 @@
 - Clarify reconciled invalid `needs_human` projections as technical failures in Attention, so malformed historical decision payloads cannot be mistaken for live human authorization requests.
 # Unreleased
 
+- Isolate weekly OKR member collection and terminal result-validation gaps with
+  system-owned UID binding and full-roster unscored sections. Shared or untrusted
+  source failures still block publication. Require verified period/objective-list
+  source receipts; never manufacture zero scores or reuse another quarter. Keep
+  raw diagnostics private and preserve scoring, cache, leases and delivery keys.
+
 - Add a shared Consumer/Audit message-audience contract for discussion and member
   responsibility evidence, audience-specific multi-action plans and no split-message
   self-delivery. Saved custom rules retain the fixed contract. Historical risk guards

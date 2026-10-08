@@ -8,17 +8,23 @@ import shlex
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from threading import Event, Thread
 from typing import Any, Literal, Protocol
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
 
 from app.dws_client import DwsClient, DwsError
-from app.okr_review import DwsLiveOkrSource, current_quarter_period, requested_okr_period
+from app.okr_review import (
+    DwsLiveOkrSource,
+    OkrLiveSourceError,
+    _explicit_okr_quarter,
+    current_quarter_period,
+    requested_okr_period,
+)
 from app.service_message_sender import ServiceMessageSender
 
 DEFAULT_GROUP_NAME = "CEO-2 管理群"
@@ -65,6 +71,13 @@ class DimensionScoreReview(BaseModel):
 
 
 class ManagerReportAnalysis(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    _user_id: str = PrivateAttr(default="")
+
+    @property
+    def user_id(self) -> str:
+        return self._user_id
+
     name: str
     role_level: Literal["专业贡献者", "经理", "总监", "VP", "CXO", "职级待确认"]
     role_level_evidence: str
@@ -87,13 +100,30 @@ class CeoAttentionItem(BaseModel):
     recommended_decision: str
 
 
+@dataclass(frozen=True)
+class MemberGap:
+    user_id: str
+    stage: Literal["collection", "analysis"]
+    kind: Literal["goals_missing", "source_failed", "analysis_failed"]
+    evidence: str
+    diagnostic: str = ""
+
+
 class WeeklyOkrAnalysis(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     executive_summary: str
     company_progress: list[str] = Field(default_factory=list)
     ceo_attention_items: list[CeoAttentionItem] = Field(default_factory=list)
     manager_reviews: list[ManagerReportAnalysis]
     source_coverage: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    # Only orchestration creates gaps; model output and cached reviews cannot.
+    _member_gaps: tuple[MemberGap, ...] = PrivateAttr(default=())
+
+    @property
+    def member_gaps(self) -> tuple[MemberGap, ...]:
+        return self._member_gaps
 
 
 @dataclass(frozen=True)
@@ -302,6 +332,12 @@ class CodexWeeklyOkrAgent:
         source_managers = source_payload.get("managers")
         if not isinstance(source_managers, list):
             raise ValueError("weekly OKR source has no manager payloads")
+        _validate_roster_ids(managers)
+        source_ids = [item.get("manager", {}).get("userId") for item in source_managers]
+        if any(not user_id for user_id in source_ids) or len(source_ids) != len(
+            set(source_ids)
+        ):
+            raise ValueError("weekly OKR source has missing or duplicate user IDs")
         payload_by_user_id = {
             str(item.get("manager", {}).get("userId") or ""): item
             for item in source_managers
@@ -343,35 +379,43 @@ class CodexWeeklyOkrAgent:
             for manager, manager_source, analysis_path, source_hash in jobs
         }
         results: list[WeeklyOkrAnalysis] = []
-        unanalyzed: list[tuple[ManagerIdentity, str]] = []
+        gaps: list[MemberGap] = []
+        from app.agent_runtime_contracts import RuntimeFailureClass
+        from app.agent_runtime_router import (
+            RoutedCodexExecutionError,
+            RoutedResultValidationError,
+        )
+
         try:
             for manager in managers:
                 try:
                     results.append(futures[manager.user_id].result())
                 except WeeklyOkrAnalysisInProgress:
                     raise
-                except Exception as exc:
-                    # One member the model cannot score is a gap in that
-                    # member's section, not a reason to withhold the report for
-                    # everyone: on 2026-09-12 three members failed this way and
-                    # the other fifteen were never written.
-                    unanalyzed.append((manager, str(exc)[:200]))
+                except (RoutedResultValidationError, RoutedCodexExecutionError) as exc:
+                    if (
+                        isinstance(exc, RoutedCodexExecutionError)
+                        and exc.failure_class != RuntimeFailureClass.RESULT
+                    ):
+                        raise
+                    gaps.append(
+                        MemberGap(
+                            manager.user_id, "analysis", "analysis_failed",
+                            f"{period_label} 逐 KR 分析未完成，暂不形成评分（代码 analysis_failed）。",
+                            str(exc),
+                        )
+                    )
         except BaseException:
             for future in futures.values():
                 future.cancel()
             executor.shutdown(wait=False, cancel_futures=True)
             raise
         executor.shutdown(wait=True)
-        if unanalyzed:
-            raise RuntimeError(
-                "weekly OKR analysis did not cover every roster member: "
-                + "; ".join(f"{manager.name}: {reason}" for manager, reason in unanalyzed)
-            )
-        return WeeklyOkrAnalysis(
+        analysis = WeeklyOkrAnalysis(
             executive_summary=(
                 f"已完成 {len(results)} / {len(managers)} 位 CEO-2 成员的逐 KR 综合证据评分；"
                 "系统进度仅作为线索，最终判断以评论/进展、独立证据、实际效果和完成时间为准；"
-                "没有本周进展的成员仍保留完整评分区块，并按无新增进展和证据缺口评分。"
+                "未完成评分的成员保留缺口区块，不形成分数。"
             ),
             company_progress=_unique_strings(
                 item for result in results for item in result.company_progress[:1]
@@ -385,6 +429,9 @@ class CodexWeeklyOkrAgent:
             ),
             warnings=_unique_strings(item for result in results for item in result.warnings),
         )
+        analysis._member_gaps = tuple(gaps)
+        _validate_manager_coverage(analysis, managers)
+        return analysis
 
     def _analyze_one(
         self,
@@ -399,7 +446,7 @@ class CodexWeeklyOkrAgent:
     ) -> WeeklyOkrAnalysis:
         filtered_payload = json.loads(source_path.read_text(encoding="utf-8"))
         expected_kr_count = len(
-            _live_kr_rows(filtered_payload["managers"], manager.name)
+            _live_kr_rows(filtered_payload["managers"], manager.user_id)
         )
         manager_user_id = manager.user_id.strip()
         job_values = {
@@ -526,6 +573,7 @@ class CodexWeeklyOkrAgent:
                 ),
             )
             analysis = WeeklyOkrAnalysis.model_validate_json(routed.value)
+            _validate_manager_coverage(analysis, [manager])
             analysis_path.write_text(
                 json.dumps(
                     {"source_hash": source_hash, "analysis": analysis.model_dump()},
@@ -1153,6 +1201,7 @@ def run_weekly_okr_report(
     roster = gateway.resolve_group_roster(group_name)
     if not roster.managers:
         raise RuntimeError("CEO-2 manager roster is empty")
+    _validate_roster_ids(roster.managers)
 
     period = (
         requested_okr_period(period_label.strip(), today=local_now.date().isoformat())
@@ -1173,22 +1222,73 @@ def run_weekly_okr_report(
     report_path = run_dir / "管理者OKR进度周报.md"
 
     manager_payloads: list[dict[str, Any]] = []
+    collection_gaps: list[MemberGap] = []
+    shared_source_failures: list[MemberGap] = []
     for manager in roster.managers:
-        payload = source.fetch_user_okr(
-            user_id=manager.user_id,
-            period_label=resolved_period,
-        )
-        _validate_live_okr_payload(payload, manager=manager)
-        manager_payloads.append(
-            {
-                "manager": {
-                    "name": manager.name,
-                    "title": manager.title,
-                    "userId": manager.user_id,
-                },
-                "liveOkr": payload,
+        item: dict[str, Any] = {
+            "manager": {
+                "name": manager.name,
+                "title": manager.title,
+                "userId": manager.user_id,
             }
-        )
+        }
+        failure_scope = "shared"
+        validation_phase = "fetch"
+        try:
+            payload = source.fetch_user_okr(
+                user_id=manager.user_id, period_label=resolved_period
+            )
+            validation_phase = "receipt"
+            gap = None
+            if isinstance(payload, dict) and "availability" in payload:
+                gap = _verified_missing_period_gap(
+                    payload, manager=manager, period_label=resolved_period
+                )
+                item["availabilityReceipt"] = payload
+            else:
+                _validate_live_okr_receipt(
+                    payload, manager=manager, period_label=resolved_period
+                )
+                failure_scope = "member"
+                validation_phase = "member_data"
+                _validate_live_okr_payload(payload, manager=manager)
+                item["liveOkr"] = payload
+                if (
+                    not payload["processed"]["objectives"]
+                    and not payload["processed"]["okrRows"]
+                ):
+                    gap = MemberGap(
+                        manager.user_id, "collection", "goals_missing",
+                        f"{resolved_period} 周期已建立；完整实时目标列表为空，当前尚无目标。",
+                    )
+        except (RuntimeError, ValueError, OSError) as exc:
+            if isinstance(exc, OkrLiveSourceError):
+                if exc.user_id == manager.user_id and exc.period_label == resolved_period:
+                    failure_scope = exc.scope
+                else:
+                    failure_scope = "shared"
+            gap = MemberGap(
+                manager.user_id, "collection", "source_failed",
+                f"{resolved_period} 数据采集未完成，暂不形成评分"
+                f"（代码 {_public_source_failure_code(exc)}）。",
+                f"{type(exc).__name__}: {exc}",
+            )
+            if failure_scope == "shared":
+                shared_source_failures.append(gap)
+        if gap is not None:
+            collection_gaps.append(gap)
+            item["sourceOutcome"] = asdict(gap)
+            if gap.kind == "source_failed":
+                item["sourceOutcome"]["scope"] = failure_scope
+                item["sourceOutcome"]["validationPhase"] = validation_phase
+        else:
+            item["sourceOutcome"] = {
+                "user_id": manager.user_id,
+                "stage": "collection",
+                "kind": "collected",
+                "evidence": "Validated live payload",
+            }
+        manager_payloads.append(item)
     raw_path.write_text(
         json.dumps(
             {
@@ -1206,15 +1306,31 @@ def run_weekly_okr_report(
         ),
         encoding="utf-8",
     )
+    source_failures = [gap for gap in collection_gaps if gap.kind == "source_failed"]
+    if shared_source_failures:
+        raise RuntimeError(
+            "weekly OKR source collection failed; see live_okr.json: "
+            + "; ".join(f"{gap.user_id}: {gap.evidence}" for gap in source_failures)
+        )
+    missing_ids = {gap.user_id for gap in collection_gaps}
+    scoring_managers = [
+        manager for manager in roster.managers if manager.user_id not in missing_ids
+    ]
 
     try:
-        analysis = agent.analyze(
-            source_path=raw_path,
-            managers=roster.managers,
-            period_label=resolved_period,
-            week_start=week_start,
-            week_end=week_end,
-        )
+        if scoring_managers:
+            analysis = agent.analyze(
+                source_path=raw_path,
+                managers=scoring_managers,
+                period_label=resolved_period,
+                week_start=week_start,
+                week_end=week_end,
+            )
+        else:
+            analysis = WeeklyOkrAnalysis(
+                executive_summary="本次未形成评分；逐人成员状态与来源证据见缺口区块。",
+                manager_reviews=[],
+            )
     except WeeklyOkrAnalysisInProgress:
         return WeeklyOkrReportResult(
             status="analysis_in_progress",
@@ -1222,16 +1338,11 @@ def run_weekly_okr_report(
             period_label=resolved_period,
             manager_count=len(roster.managers),
         )
+    _validate_manager_coverage(analysis, scoring_managers)
+    analysis._member_gaps += tuple(collection_gaps)
     _validate_manager_coverage(analysis, roster.managers)
     _validate_kr_coverage(analysis, manager_payloads)
-    # A member analyze() isolated has no review to render: everything below
-    # renders and appendices *from* analysis.manager_reviews, so it must walk
-    # only the managers actually present in it, not the requested roster --
-    # the gap itself is already visible in executive_summary and warnings.
-    analyzed_names = {review.name for review in analysis.manager_reviews}
-    analyzed_managers = [
-        manager for manager in roster.managers if manager.name in analyzed_names
-    ]
+    report_managers = roster.managers
     report_title = (
         f"CEO-2 管理者 OKR 进度周报（{resolved_period} 至今："
         f"{score_start.isoformat()}—{week_end.isoformat()}）"
@@ -1240,7 +1351,7 @@ def run_weekly_okr_report(
         title=report_title,
         period_label=resolved_period,
         analysis=analysis,
-        managers=analyzed_managers,
+        managers=report_managers,
         manager_payloads=manager_payloads,
     )
     master_path = run_dir / "管理者OKR进度周报-完整底稿.md"
@@ -1249,22 +1360,22 @@ def run_weekly_okr_report(
         report_markdown,
         title=report_title,
         period_label=resolved_period,
-        managers=analyzed_managers,
+        managers=report_managers,
     )
     appendix_dir = run_dir / "评分附录"
     appendix_dir.mkdir(parents=True, exist_ok=True)
     appendix_paths: dict[str, Path] = {}
-    for manager in analyzed_managers:
+    for manager in report_managers:
         appendix_path = appendix_dir / (
             f"manager-{hashlib.sha256(manager.user_id.encode('utf-8')).hexdigest()[:16]}.md"
         )
-        appendix_path.write_text(appendices[manager.name], encoding="utf-8")
-        appendix_paths[manager.name] = appendix_path
+        appendix_path.write_text(appendices[manager.user_id], encoding="utf-8")
+        appendix_paths[manager.user_id] = appendix_path
     report_path.write_text(
         _render_management_report(
             summary_prefix=summary_prefix,
             limits_section=limits_section,
-            managers=analyzed_managers,
+            managers=report_managers,
             appendix_documents={},
         ),
         encoding="utf-8",
@@ -1289,20 +1400,21 @@ def run_weekly_okr_report(
         name=report_title,
     )
     appendix_documents: dict[str, PublishedDocument] = {}
-    for manager in analyzed_managers:
-        appendix_documents[manager.name] = gateway.publish_document(
+    for manager in report_managers:
+        label = _member_label(manager, report_managers)
+        appendix_documents[manager.user_id] = gateway.publish_document(
             workspace_id=workspace_id,
             folder_id=document.node_id,
-            name=f"{report_title}｜评分附录｜{manager.name}",
-            content_file=appendix_paths[manager.name],
-            verification_marker=f"附录校验：{manager.name}",
+            name=f"{report_title}｜评分附录｜{label}",
+            content_file=appendix_paths[manager.user_id],
+            verification_marker=f"附录校验：{label}",
             migration_folder_id=folder_id,
         )
     report_path.write_text(
         _render_management_report(
             summary_prefix=summary_prefix,
             limits_section=limits_section,
-            managers=analyzed_managers,
+            managers=report_managers,
             appendix_documents=appendix_documents,
         ),
         encoding="utf-8",
@@ -1508,11 +1620,14 @@ def render_weekly_okr_report(
     managers: list[ManagerIdentity],
     manager_payloads: list[dict[str, Any]],
 ) -> str:
+    _validate_manager_coverage(analysis, managers)
     stats = {
-        item["manager"]["name"]: _okr_stats(item["liveOkr"])
+        item["manager"]["userId"]: _okr_stats(item["liveOkr"])
         for item in manager_payloads
+        if "liveOkr" in item
     }
-    reviews = {review.name: review for review in analysis.manager_reviews}
+    reviews = {review.user_id: review for review in analysis.manager_reviews}
+    gaps = {gap.user_id: gap for gap in analysis.member_gaps}
     scorecards = _manager_scorecards(analysis, manager_payloads)
     finalized_scores = [
         card.final_score for card in scorecards.values() if card.final_score is not None
@@ -1562,10 +1677,18 @@ def render_weekly_okr_report(
         ]
     )
     for manager in managers:
-        review = reviews[manager.name]
-        scorecard = scorecards[manager.name]
+        label = _member_label(manager, managers)
+        if manager.user_id in gaps:
+            gap = gaps[manager.user_id]
+            lines.append(
+                f"| {_md_cell(label)} | 暂不形成 / {gap.kind} | — | "
+                f"{_md_cell(gap.evidence)} | — |"
+            )
+            continue
+        review = reviews[manager.user_id]
+        scorecard = scorecards[manager.user_id]
         lines.append(
-            f"| {_md_cell(manager.name)} | "
+            f"| {_md_cell(label)} | "
             f"{_score_text(scorecard.final_score)} / {_md_cell(scorecard.final_status)} | "
             f"{_brief_cell(review.key_progress)} | {_brief_cell(review.risks)} | "
             f"{_brief_cell(review.next_week_focus)} |"
@@ -1579,10 +1702,17 @@ def render_weekly_okr_report(
         ]
     )
     for manager in managers:
-        review = reviews[manager.name]
-        scorecard = scorecards[manager.name]
+        label = _member_label(manager, managers)
+        if manager.user_id in gaps:
+            lines.append(
+                f"| {_md_cell(label)} | — | — | — | — | — | — | "
+                f"{gaps[manager.user_id].kind} |"
+            )
+            continue
+        review = reviews[manager.user_id]
+        scorecard = scorecards[manager.user_id]
         lines.append(
-            f"| {_md_cell(manager.name)} | {_md_cell(review.role_level)} | "
+            f"| {_md_cell(label)} | {_md_cell(review.role_level)} | "
             f"{_score_text(scorecard.business_score)} | "
             f"{_score_text(scorecard.leadership_score)} | "
             f"{_score_text(scorecard.culture_score)} | "
@@ -1592,13 +1722,27 @@ def render_weekly_okr_report(
 
     lines.extend(["", "## 附录：逐人证据与逐 KR 评分", ""])
     for manager in managers:
-        review = reviews[manager.name]
-        manager_stats = stats[manager.name]
-        scorecard = scorecards[manager.name]
+        label = _member_label(manager, managers)
+        if manager.user_id in gaps:
+            gap = gaps[manager.user_id]
+            lines.extend(
+                [
+                    f"### {label}｜{manager.title}", "",
+                    f"- 成员 ID：{manager.user_id}",
+                    f"- 状态：{gap.kind}；暂不形成评分，不按零分处理。",
+                    f"- 阶段：{gap.stage}",
+                    f"- 证据：{gap.evidence}", "",
+                ]
+            )
+            continue
+        review = reviews[manager.user_id]
+        manager_stats = stats[manager.user_id]
+        scorecard = scorecards[manager.user_id]
         lines.extend(
             [
-                f"### {manager.name}｜{manager.title}",
+                f"### {label}｜{manager.title}",
                 "",
+                f"- 成员 ID：{manager.user_id}",
                 f"- 系统概况：{manager_stats['objective_count']} 个 O，"
                 f"{manager_stats['kr_count']} 个 KR，当前 KR 平均进度 "
                 f"{manager_stats['average_progress']}",
@@ -1648,7 +1792,7 @@ def render_weekly_okr_report(
                 "| --- | ---: | --- | --- | --- | ---: | --- |",
             ]
         )
-        row_by_id = _live_kr_rows(manager_payloads, manager.name)
+        row_by_id = _live_kr_rows(manager_payloads, manager.user_id)
         for kr in review.kr_reviews:
             live_row = row_by_id[kr.kr_id]
             weight = f"O {live_row.get('objectiveWeight', 0)}% × KR {live_row.get('krWeight', 0)}%"
@@ -1682,7 +1826,7 @@ def render_group_summary(
         f"## {title}",
         "",
         "已按综合证据口径更新：系统进度仅作线索，结合评论/进展和独立证据逐 KR 评分。",
-        f"评分概览：{manager_count} 人中 {len(finalized)} 人形成最终分，{pending} 人因职级或维度证据待补充暂不形成最终分"
+        f"评分概览：{manager_count} 人中 {len(finalized)} 人形成最终分，{pending} 人暂不形成最终分（来源/分析缺口或职级、维度证据待补充）"
         + (f"；已形成最终分的平均值为 {sum(finalized) / len(finalized):.1f}。" if finalized else "。"),
     ]
     if analysis.company_progress:
@@ -1699,6 +1843,12 @@ def render_group_summary(
             )
     lines.extend(["", f"完整周报：[打开完整周报]({document_url})"])
     return "\n".join(lines)
+
+
+def _member_label(manager: ManagerIdentity, managers: list[ManagerIdentity]) -> str:
+    if sum(member.name == manager.name for member in managers) == 1:
+        return manager.name
+    return f"{manager.name} [{manager.user_id}]"
 
 
 def _report_publication_parts(
@@ -1721,12 +1871,13 @@ def _report_publication_parts(
 
     appendices: dict[str, str] = {}
     for index, manager in enumerate(managers):
-        start_marker = f"### {manager.name}｜"
+        label = _member_label(manager, managers)
+        start_marker = f"### {label}｜"
         start = manager_details.find(start_marker)
         if start < 0:
             raise ValueError(f"weekly OKR report is missing appendix for {manager.name}")
         if index + 1 < len(managers):
-            next_marker = f"### {managers[index + 1].name}｜"
+            next_marker = f"### {_member_label(managers[index + 1], managers)}｜"
             end = manager_details.find(next_marker, start + len(start_marker))
             if end < 0:
                 raise ValueError(
@@ -1735,12 +1886,12 @@ def _report_publication_parts(
         else:
             end = len(manager_details)
         section = manager_details[start:end].strip()
-        appendices[manager.name] = (
-            f"# {title}｜评分附录｜{manager.name}\n\n"
+        appendices[manager.user_id] = (
+            f"# {title}｜评分附录｜{label}\n\n"
             f"- OKR 周期：{period_label}\n"
             "- 评分口径：综合系统评论/进展、独立证据、实际效果和完成时间；系统进度仅作为线索\n\n"
             f"{section}\n\n"
-            f"## 附录校验：{manager.name}\n"
+            f"## 附录校验：{label}\n"
         )
     limits_section = f"## 数据覆盖与限制{limits_body}".strip() + "\n"
     return summary_prefix.strip() + "\n", limits_section, appendices
@@ -1755,8 +1906,8 @@ def _render_management_report(
 ) -> str:
     lines = [summary_prefix.rstrip(), "", "## 逐人评分附录", ""]
     for manager in managers:
-        label = f"{manager.name}｜{manager.title}"
-        document = appendix_documents.get(manager.name)
+        label = f"{_member_label(manager, managers)}｜{manager.title}"
+        document = appendix_documents.get(manager.user_id)
         if document is None:
             lines.append(f"- {label}（发布时生成线上链接）")
         else:
@@ -1824,6 +1975,9 @@ def _validate_live_okr_payload(payload: object, *, manager: ManagerIdentity) -> 
         raise ValueError(
             f"live OKR payload for {manager.name} lacks objectives or okrRows"
         )
+    if not objectives and not rows and payload.get("objectiveList"):
+        raise ValueError("empty processed OKR contradicts verified raw objectiveList")
+    kr_ids: set[str] = set()
     for row in rows:
         if not isinstance(row, dict):
             raise ValueError(f"live OKR row for {manager.name} is not an object")
@@ -1845,6 +1999,132 @@ def _validate_live_okr_payload(payload: object, *, manager: ManagerIdentity) -> 
             raise ValueError(
                 f"live OKR KR row for {manager.name} is missing {', '.join(missing)}"
             )
+        kr_id = str(row.get("krId") or "").strip()
+        if not kr_id or kr_id in kr_ids:
+            raise ValueError(f"live OKR contains blank or duplicate KR ID for {manager.name}")
+        kr_ids.add(kr_id)
+
+
+def _verified_missing_period_gap(
+    payload: dict[str, Any], *, manager: ManagerIdentity, period_label: str
+) -> MemberGap:
+    """Accept only the producer's complete personal-period absence receipt."""
+    if set(payload) != {"source", "userId", "periodLabel", "availability", "periods"}:
+        raise ValueError("invalid personal-period absence envelope fields")
+    if payload["userId"] != manager.user_id or payload["periodLabel"] != period_label:
+        raise ValueError("personal-period absence receipt does not match requested identity")
+    source = payload["source"]
+    if (
+        not isinstance(source, dict)
+        or set(source) != {"system", "capturedAt"}
+        or source["system"] != "Dingteam personal-period API"
+        or not isinstance(source["capturedAt"], str)
+    ):
+        raise ValueError("invalid personal-period absence source authority")
+    if datetime.fromisoformat(source["capturedAt"]).utcoffset() != timedelta(0):
+        raise ValueError("personal-period absence capture timestamp must be UTC")
+    availability = payload["availability"]
+    if (
+        not isinstance(availability, dict)
+        or set(availability) != {"status", "providerCode", "periodsComplete"}
+        or availability["status"] != "goals_not_established"
+        or type(availability["providerCode"]) is not int
+        or availability["providerCode"] != 0
+        or availability["periodsComplete"] is not True
+    ):
+        raise ValueError("personal-period absence is not a verified complete provider result")
+    periods = payload["periods"]
+    if not isinstance(periods, list):
+        raise ValueError("personal-period absence receipt has no period list")
+    for period in periods:
+        if (
+            not isinstance(period, dict)
+            or not isinstance(period.get("name"), str)
+            or not period["name"].strip()
+            or not isinstance(period.get("okrId"), (str, int))
+            or isinstance(period["okrId"], bool)
+            or not period["okrId"]
+            or not str(period["okrId"]).strip()
+        ):
+            raise ValueError("personal-period absence contains an invalid period identity")
+        if _matches_requested_period(period["name"], period_label):
+            raise ValueError("personal-period absence contains the requested period or an unresolved name")
+    return MemberGap(
+        manager.user_id, "collection", "goals_missing",
+        f"{period_label} 个人周期尚未建立；尚无法读取该周期目标。",
+    )
+
+
+def _validate_live_okr_receipt(
+    payload: object, *, manager: ManagerIdentity, period_label: str
+) -> None:
+    """Verify the existing Dingteam live-source receipt before using its data."""
+    if not isinstance(payload, dict):
+        raise ValueError("live OKR receipt is not an object")
+    if payload.get("userId") != manager.user_id or payload.get("periodLabel") != period_label:
+        raise ValueError("live OKR receipt does not match requested userId / periodLabel")
+    source = payload.get("source")
+    if (
+        not isinstance(source, dict)
+        or source.get("system") != "叮当OKR Dingteam Web (direct API)"
+    ):
+        raise ValueError("live OKR receipt is missing source authority")
+    captured_at = source.get("capturedAt")
+    if not isinstance(captured_at, str) or not captured_at:
+        raise ValueError("live OKR receipt is missing source.capturedAt")
+    if datetime.fromisoformat(captured_at).tzinfo is None:
+        raise ValueError("live OKR receipt source.capturedAt has no timezone")
+    period = payload.get("period")
+    periods = payload.get("periods")
+    if (
+        not isinstance(period, dict)
+        or not isinstance(period.get("name"), str)
+        or not period.get("okrId")
+        or not isinstance(periods, list)
+        or period not in periods
+        or not _matches_requested_period(period["name"], period_label)
+    ):
+        raise ValueError("live OKR receipt has no verified requested period")
+    objectives = payload.get("objectiveList")
+    if not isinstance(objectives, list):
+        raise ValueError("live OKR receipt is missing raw objectiveList")
+    objective_receipt = source.get("objectiveListReceipt")
+    if (
+        not isinstance(objective_receipt, dict)
+        or set(objective_receipt) != {"providerCode", "complete", "count"}
+        or type(objective_receipt["providerCode"]) is not int
+        or objective_receipt["providerCode"] != 0
+        or objective_receipt["complete"] is not True
+        or type(objective_receipt["count"]) is not int
+        or objective_receipt["count"] != len(objectives)
+    ):
+        raise ValueError("live OKR objective list lacks verified complete provider receipt")
+
+
+def _public_source_failure_code(exc: Exception) -> str:
+    if (
+        isinstance(exc, OkrLiveSourceError)
+        and exc.code.isascii()
+        and exc.code.isdecimal()
+        and len(exc.code) <= 6
+    ):
+        return exc.code
+    return "source_failed"
+
+
+def _matches_requested_period(name: str, period_label: str) -> bool:
+    requested = _explicit_okr_quarter(period_label)
+    observed = _explicit_okr_quarter(name)
+    if requested is None or requested[0] is None or observed is None:
+        raise ValueError("unresolved OKR period identity")
+    year, quarter = observed
+    return (year or requested[0], quarter) == requested
+
+
+def _validate_roster_ids(managers: list[ManagerIdentity]) -> None:
+    ids = [manager.user_id for manager in managers]
+    if any(not user_id.strip() for user_id in ids) or len(ids) != len(set(ids)):
+        raise ValueError("weekly OKR roster has missing or duplicate user IDs")
 
 
 def _validate_manager_coverage(
@@ -1852,8 +2132,33 @@ def _validate_manager_coverage(
     managers: list[ManagerIdentity],
 ) -> None:
     """Reject rows the model invented, duplicated, or dropped."""
-    expected = {manager.name for manager in managers}
-    actual = [review.name for review in analysis.manager_reviews]
+    _validate_roster_ids(managers)
+    expected = {manager.user_id for manager in managers}
+    names_by_id = {manager.user_id: manager.name for manager in managers}
+    for review in analysis.manager_reviews:
+        if not review.user_id:
+            candidates = [member.user_id for member in managers if member.name == review.name]
+            if len(candidates) != 1:
+                raise ValueError("weekly OKR analysis manager coverage mismatch: unbound review identity")
+            review._user_id = candidates[0]
+        if names_by_id.get(review.user_id) != review.name:
+            raise ValueError("weekly OKR analysis manager coverage mismatch: review identity")
+    actual = [review.user_id for review in analysis.manager_reviews]
+    gap_ids = [gap.user_id for gap in analysis.member_gaps]
+    if len(gap_ids) != len(set(gap_ids)) or set(gap_ids) - set(names_by_id):
+        raise ValueError("weekly OKR analysis has duplicate or unknown member gaps")
+    if any(
+        not gap.evidence
+        or (gap.stage, gap.kind)
+        not in {
+            ("collection", "goals_missing"),
+            ("collection", "source_failed"),
+            ("analysis", "analysis_failed"),
+        }
+        for gap in analysis.member_gaps
+    ):
+        raise ValueError("weekly OKR analysis has invalid member gap evidence")
+    actual.extend(gap_ids)
     if len(actual) != len(set(actual)):
         raise ValueError("weekly OKR analysis contains duplicate manager rows")
     extra = sorted(set(actual) - expected)
@@ -1868,9 +2173,9 @@ def _validate_kr_coverage(
     analysis: WeeklyOkrAnalysis,
     manager_payloads: list[dict[str, Any]],
 ) -> None:
-    payloads = {item["manager"]["name"]: item for item in manager_payloads}
+    payloads = {item["manager"]["userId"]: item for item in manager_payloads}
     for review in analysis.manager_reviews:
-        expected_rows = _live_kr_rows(manager_payloads, review.name)
+        expected_rows = _live_kr_rows(manager_payloads, _review_user_id(review, manager_payloads))
         _bind_kr_reviews_to_live_rows(review, expected_rows)
         actual_ids = [item.kr_id for item in review.kr_reviews]
         if len(actual_ids) != len(set(actual_ids)):
@@ -1896,7 +2201,7 @@ def _validate_kr_coverage(
             raise ValueError(
                 f"candidate leadership scoring must contain zero or four dimensions for {review.name}"
             )
-        if review.name not in payloads:
+        if review.user_id not in payloads:
             raise ValueError(f"missing live OKR payload for {review.name}")
 
 
@@ -1967,7 +2272,7 @@ def _manager_scorecards(
 ) -> dict[str, ManagerScorecard]:
     cards: dict[str, ManagerScorecard] = {}
     for review in analysis.manager_reviews:
-        live_rows = _live_kr_rows(manager_payloads, review.name)
+        live_rows = _live_kr_rows(manager_payloads, _review_user_id(review, manager_payloads))
         weighted_scores: list[tuple[float, float]] = []
         for kr in review.kr_reviews:
             if kr.category != "业务OKR":
@@ -2002,7 +2307,7 @@ def _manager_scorecards(
             status = "已形成最终分（专业贡献者公式）"
         else:
             status = "职级待确认，暂不形成最终分"
-        cards[review.name] = ManagerScorecard(
+        cards[review.user_id] = ManagerScorecard(
             business_score=_rounded(business_score),
             leadership_score=_rounded(leadership_score),
             culture_score=_rounded(culture_score),
@@ -2013,12 +2318,24 @@ def _manager_scorecards(
     return cards
 
 
+def _review_user_id(review: ManagerReportAnalysis, manager_payloads: list[dict[str, Any]]) -> str:
+    identities = [item["manager"] for item in manager_payloads]
+    if review.user_id:
+        matches = [identity for identity in identities if identity["userId"] == review.user_id]
+    else:
+        matches = [identity for identity in identities if identity["name"] == review.name]
+    if len(matches) != 1 or matches[0]["name"] != review.name:
+        raise ValueError(f"unresolved live OKR identity for {review.name}")
+    review._user_id = matches[0]["userId"]
+    return review.user_id
+
+
 def _live_kr_rows(
     manager_payloads: list[dict[str, Any]],
-    manager_name: str,
+    manager_user_id: str,
 ) -> dict[str, dict[str, Any]]:
     for item in manager_payloads:
-        if item.get("manager", {}).get("name") != manager_name:
+        if item.get("manager", {}).get("userId") != manager_user_id:
             continue
         rows = item.get("liveOkr", {}).get("processed", {}).get("okrRows", [])
         result: dict[str, dict[str, Any]] = {}
@@ -2027,12 +2344,12 @@ def _live_kr_rows(
                 continue
             kr_id = str(row.get("krId") or "").strip()
             if not kr_id:
-                raise ValueError(f"live OKR KR row for {manager_name} is missing krId")
+                raise ValueError(f"live OKR KR row for {manager_user_id} is missing krId")
             if kr_id in result:
-                raise ValueError(f"live OKR contains duplicate KR {kr_id} for {manager_name}")
+                raise ValueError(f"live OKR contains duplicate KR {kr_id} for {manager_user_id}")
             result[kr_id] = row
         return result
-    raise ValueError(f"missing live OKR payload for {manager_name}")
+    raise ValueError(f"missing live OKR payload for {manager_user_id}")
 
 
 def refresh_company_okr_archive(
