@@ -1285,8 +1285,11 @@ and command must match the trigger snapshot; mismatches remain errors. This
 closes the result-persisted/source-pending crash window without replaying effects.
 
 Production deployment is serialized at both the repository and service
-boundaries. The deployer first waits for the persisted work leases to drain,
-then bootstraps no new claims by stopping the launchd service before taking a
+boundaries. The deployer first waits for the persisted work leases to drain.
+This includes valid dispatcher leases before an Agent runtime exists, meeting
+preparation, and already-claimed meeting deliveries. Expired or terminal claims
+and unclaimed ready-to-send work do not count as active execution.
+It then bootstraps no new claims by stopping the launchd service before taking a
 database backup or changing the production checkout. It starts the service
 again with launchd `bootstrap` after verification, then performs the normal
 health and queue readback. This prevents the deployment process and worker

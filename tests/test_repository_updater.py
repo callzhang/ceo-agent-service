@@ -265,6 +265,46 @@ def test_quiet_wait_returns_once_work_drains():
     )
 
 
+@pytest.mark.parametrize("status,locked_at,expected", [
+    ("processing", "2026-01-01 00:00:00", 1),
+    ("ready_to_send", "2026-01-01 00:00:00", 1),
+    ("ready_to_send", None, 0),
+    ("retry", None, 0),
+    ("sent", None, 0),
+])
+def test_quiet_counts_meeting_preparation_and_claimed_delivery(tmp_path, status, locked_at, expected):
+    from app.repository_updater import in_flight_work
+    from app.store import AutoReplyStore
+
+    path = tmp_path / "meeting-quiet.sqlite3"
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "insert into meeting_alignment_jobs(meeting_id,status,locked_at) values (?,?,?)",
+            ("meeting", status, locked_at),
+        )
+    assert in_flight_work(path) == expected
+
+
+@pytest.mark.parametrize("lease,terminal,expected", [
+    ("2999-01-01T00:00:00+08:00", "", 1),
+    ("2000-01-01T00:00:00+00:00", "", 0),
+    ("2999-01-01T00:00:00+00:00", "completed", 0),
+])
+def test_quiet_counts_live_dispatcher_claim_before_runtime_exists(tmp_path, lease, terminal, expected):
+    from app.repository_updater import in_flight_work
+    from app.store import AutoReplyStore
+
+    path = tmp_path / "claim-quiet.sqlite3"
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "insert into dispatcher_claim_leases(adapter_name,source_id,lease_expires_at,terminal_at) "
+            "values ('meeting','42',?,?)", (lease, terminal),
+        )
+    assert in_flight_work(path) == expected
+
+
 def test_health_waits_for_a_slow_start_instead_of_rolling_back():
     from app.repository_updater import wait_for_health
 

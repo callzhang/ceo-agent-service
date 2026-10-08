@@ -221,6 +221,11 @@ def in_flight_work(database_path: Path) -> int:
             "        where status not in ('completed','failed','superseded'))"
             " + (select count(*) from reply_tasks where status='processing')"
             " + (select count(*) from work_summary_inputs where status='processing')"
+            " + (select count(*) from meeting_alignment_jobs where status='processing'"
+            "    or (status='ready_to_send' and coalesce(locked_at,'')<>''))"
+            " + (select count(*) from dispatcher_claim_leases"
+            "    where coalesce(terminal_at,'')=''"
+            "    and julianday(lease_expires_at)>julianday('now'))"
             " + (select count(*) from scheduled_task_runs where dispatch_status='pending'"
             "    and lease_owner<>'' and lease_expires_at>strftime('%Y-%m-%dT%H:%M:%S+00:00','now'))"
         ).fetchone()[0])
