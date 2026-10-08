@@ -305,8 +305,8 @@ def test_checked_release_manifest_pins_baseline_and_current_two_defaults():
     assert manifest['version'] == 1
     expected = {
         'developer_prompt': (
-            'b2bb8ed69298c7fa57bf95c54fa6693fa76d265e90d07cb666ab05e35cfe2623',
             '3ccd6261291b6610aa95a4764d4fd81b7c232011f8ca7dbc52b18639703fb457',
+            '74458f269c6cd80af4b901be9b6ab625e96ec1b0291f435a7f3a6e7c2e7c59b3',
         ),
         'user_prompt': (
             '5106c30c0ea2cbf133ec537a600d3250b699659c786892eaa46434cdb6eff398',
@@ -327,3 +327,16 @@ def test_tracked_common_developer_template_matches_approved_release_default():
     tracked = root / 'data/prompts/developer_prompt.md'
     source = root / 'app/defaults/developer_prompt.md'
     assert tracked.read_bytes() == source.read_bytes()
+
+
+def test_calendar_default_instruction_moves_to_skill_without_changing_user_default():
+    repo = Path(__file__).resolve().parents[1]
+    manifest = json.loads((repo / "ci/prompt-template-release.json").read_text())
+    developer = (repo / "app/defaults/developer_prompt.md").read_text()
+    calendar = (repo / "ci/shared-skills/ceo-calendar-invite/SKILL.md").read_text()
+    assert "日历任务与参与者时区" not in developer
+    assert "按每个候选的具体日期分别核实双方命名时区的 UTC 偏移" in calendar
+    assert "对方时区仍未知时标明待确认" in calendar
+    assert "缺值如实写未提供" in developer
+    for entry in manifest["files"]:
+        assert _digest((repo / entry["source"]).read_bytes()) == entry["new_sha256"]
