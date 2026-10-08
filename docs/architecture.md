@@ -6,6 +6,13 @@
 
 ## 当前任务运行机制
 
+Consumer 与 Audit 的实际只读工具目录提供 `read_dingtalk_group_members` 和
+`read_dingtalk_user_profiles`。群成员读取使用 DWS 原生有界自动分页，原样保留真人、
+机器人、完整性、桶、续页和失败信息；企业资料读取只接收已核实的组织 userId，
+保留原始组织资料字段，不按姓名自动补全，也不假设每份资料都含 title。群 openDingtalkId 不能当作组织
+userId；身份关联必须由同一账号返回的稳定 ID 证明，空资料或 partial 仍是证据缺口。
+这些读取不新增审核、发送门禁或业务来源绑定，也不改变既有外部动作权限。
+
 本节描述实际进入 AgentOrchestrator 的运行契约。进入 AgentOrchestrator 的业务任务遵循“执行 Agent → 审核 Agent → 反馈/修正 → 再审核”的生命周期；领域任务替换输入和工具能力。WeChat task 3 保留 DecisionRunner/persistent Sender，Email 退订和确定性技术命令沿用独立系统直接路径。Consumer 可按业务 Skill 读取事实、准备材料并执行普通工具工作；系统注册的受控外部动作由 System Executor 根据持久化且审核通过的精确方案执行和回读。服务保存候选、审核、选择、执行及回执事实。
 
 ```text

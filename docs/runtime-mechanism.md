@@ -7,6 +7,14 @@
 
 ## 运行角色
 
+两角色都可通过 `read_dingtalk_group_members` 读取精确群 ID 的 DWS 真人/机器人
+成员桶和原生有界自动分页结果；调用方检查 complete、hasMore、buckets 和 failures。
+`read_dingtalk_user_profiles` 按已验证的组织 userId 批量读取原始资料，不进行姓名搜索
+或身份补全，并保留原始组织字段和空资料；title 必须由真实返回证据确认。群 openDingtalkId
+不能直接传为组织 userId；姓名搜索只发现候选，须按稳定 open ID 关联后才能读企业资料。
+工具在 Consumer/Audit 的实际目录及原生 CLI enabled_tools 中一致注册为只读，Audit
+仍没有写能力。本修复仅补齐读取能力，不新增成员变化门禁或来源绑定策略。
+
 微信 Reader Skill 的 `status`、`read-recent` 和 `produce-once` 都必须显式接收调用方提供的
 绝对服务数据库路径，并原样传给受控 IPC CLI。缺少 `--db` 时在启动 IPC 前拒绝执行，
 不能从工作树的 `data/` 推断生产账号就绪状态。该路径修正不改变 Sender、目标选择、

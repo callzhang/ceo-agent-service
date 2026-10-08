@@ -58,6 +58,8 @@ AGENT_CLI_READ_TOOLS = (
     "read_dingtalk_calendar_event",
     "list_dingtalk_calendar_events",
     "search_dingtalk_contacts",
+    "read_dingtalk_group_members",
+    "read_dingtalk_user_profiles",
     "search_dingtalk_documents",
     "read_dingtalk_messages",
     "search_dingtalk_messages",

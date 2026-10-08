@@ -1384,6 +1384,28 @@ def build_role_server(
         events = DwsClient().list_calendar_events(start, end)
         return {"events": [item.model_dump(mode="json") for item in events]}
 
+    def read_dingtalk_group_members(conversation_id: str) -> dict[str, object]:
+        """Read the complete bounded users/bots roster for an exact group ID.
+
+        Check complete, hasMore, buckets and failures. Partial results are not
+        a complete audience. openDingtalkId is not an organization userId;
+        correlate stable identifiers before reading enterprise profiles.
+        """
+        from app.dws_client import DwsClient
+        return DwsClient().read_group_members(conversation_id)
+
+    def read_dingtalk_user_profiles(user_ids: list[str]) -> dict[str, object]:
+        """Read exact organization userId profiles and original organization fields.
+
+        Supply verified organization userIds, not display names or group
+        openDingtalkIds. Preserve empty profiles as missing evidence; a native
+        success flag does not prove identity or title. Preserve native depts,
+        labels and manager fields; verify title evidence from actual returned
+        data rather than assuming every profile contains a title.
+        """
+        from app.dws_client import DwsClient
+        return DwsClient().read_user_profiles(user_ids)
+
     def search_dingtalk_contacts(query: str) -> dict[str, object]:
         """Find current organization users by name or stable identifier."""
         from app.dws_client import DwsClient
@@ -1567,6 +1589,8 @@ def build_role_server(
         ("read_dingtalk_calendar_event", read_dingtalk_calendar_event),
         ("list_dingtalk_calendar_events", list_dingtalk_calendar_events),
         ("search_dingtalk_contacts", search_dingtalk_contacts),
+        ("read_dingtalk_group_members", read_dingtalk_group_members),
+        ("read_dingtalk_user_profiles", read_dingtalk_user_profiles),
         ("search_dingtalk_documents", search_dingtalk_documents),
         ("read_dingtalk_messages", read_dingtalk_messages),
         ("search_dingtalk_messages", search_dingtalk_messages),

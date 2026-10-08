@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+<!-- codex-dingtalk-audience-reads: app/agent_cli.py (two read tools only), app/dws_client.py (new native member/profile reads only), app/wechat/codex_safety.py (read-tool catalogue only), tests/test_dingtalk_audience_reads.py, docs/architecture.md and docs/runtime-mechanism.md (read capability only), docs/audience-source-binding-proposal.md (unimplemented proposal). Fix missing complete roster and exact user-ID reads; preserve native partial/failure evidence and existing discovery implementation. No new review, source-binding or execution policy. -->
+
 <!-- codex-quality-gate-scan-cost-20261007: app/quality_gate.py runtime evidence leak scan, app/leak_check.py explicit per-scan path prefixes, tests/test_quality_gate_scan_cost.py, docs/runtime-mechanism.md, CHANGELOG.md. Resolve configuration once per scan while preserving every field, credentials, fixed paths and next-scan configuration changes; no security-policy change, global/result cache or migration. -->
 
 <!-- codex-attention-query-cost-20261007: app/audit_web.py scheduled recovery EXISTS queries only, tests/test_attention_query_cost.py, docs/runtime-mechanism.md, CHANGELOG.md. Repair confirmed join-order cost using SQLite VM-budget regressions; preserve same-object recovery semantics, immutable facts and policy; no cache. -->
