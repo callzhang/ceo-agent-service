@@ -9,7 +9,7 @@ from app.agent_runtime_contracts import RuntimeKind
 from app.audit_rules import render_audit_rules
 from app.config import workspace_path
 from app.consumer_agent import consumer_developer_sections, audit_developer_sections, default_task_skill_catalog
-from app.business_skills import render_task_skill_discovery
+from app.business_skills import frozen_task_skill_names, render_task_skill_discovery
 from app.prompt_composition import (PromptSection, append_runtime_context, load_prompt_configuration,
     prompt_section_facts, render_prompt_sections)
 from app.runtime_prompt_context import render_runtime_context, runtime_prompt_snapshot
@@ -121,9 +121,13 @@ def current_prompt_preview(
         # current task guidance is a separately identified prefix, not a rewrite
         # or a reconstruction of what the historic Agent received.
         selected_names = facts.get("skill_names", ())
+        frozen_names = frozen_task_skill_names(task.trigger_message_json, selected_names)
         guidance = (facts.get("skill_protocol", "") if facts.get("skill_protocol_source") == "task_override"
-                    else render_task_skill_discovery(selected_names, catalog=default_task_skill_catalog(tuple(selected_names))))
-        task_sections = (PromptSection("任务 Skill 入口", "已保存任务 Skill override" if facts.get("skill_protocol_source") == "task_override" else "当前 Skill 目录", "task", guidance),
+                    else render_task_skill_discovery(selected_names, catalog=default_task_skill_catalog(tuple(selected_names)), frozen_names=frozen_names))
+        guidance_source = ("已保存任务 Skill override" if facts.get("skill_protocol_source") == "task_override"
+                           else "任务冻结与当前 Skill 元数据" if frozen_names and set(frozen_names) != set(selected_names)
+                           else "任务冻结 Skill 元数据" if frozen_names else "当前 Skill 目录")
+        task_sections = (PromptSection("任务 Skill 入口", guidance_source, "task", guidance),
                          PromptSection("已保存任务正文", "历史输入快照", "task", prompt))
         prompt = render_prompt_sections(task_sections, placement="task")
     workspace = workspace_path()

@@ -47,7 +47,8 @@ def test_current_preview_renders_full_role_without_creating_profile_or_rule_file
     assert consumer["runtime_context"] in consumer["developer_instructions"]
     assert "所选 runtime 的配置预览" in consumer["runtime_context"]
     assert "实际 runtime：" not in consumer["runtime_context"]
-    assert "对方时区" in consumer["developer_instructions"]
+    assert "日历任务与参与者时区" not in consumer["developer_instructions"]
+    assert "不用机器时区、公司所在地、姓名或消息时间戳代替对方时区" not in consumer["developer_instructions"]
     assert "agent_cli.consumer_artifact_write" in consumer["runtime_context"]
     assert "agent_cli.consumer_artifact_write" not in audit["runtime_context"]
     assert "只读审核" in audit["runtime_context"]
@@ -58,10 +59,11 @@ def test_current_preview_renders_full_role_without_creating_profile_or_rule_file
     assert not (tmp_path / "materials").exists()
 
 
-def task_and_run(store):
+def task_and_run(store, *, trigger_message_json="{}"):
     store.enqueue_reply_task(conversation_id="g", conversation_title="Group", single_chat=False,
         trigger_message_id="m", trigger_create_time="2026-10-05T12:00:00+00:00",
-        trigger_sender="Source", trigger_text="Original request", execution_generation="g1")
+        trigger_sender="Source", trigger_text="Original request", execution_generation="g1",
+        trigger_message_json=trigger_message_json)
     task = store.claim_reply_tasks(limit=1)[0]
     run = store.claim_agent_run(task.id, task.execution_generation, role=AgentRole.CONSUMER,
         proposal_revision=0, turn_attempt=0, parent_agent_run_id=None, operation_id="", owner="test").run
@@ -267,3 +269,21 @@ def test_new_saved_task_sections_keep_exact_task_without_current_prefix(tmp_path
     assert result["task_prompt"] == saved_task
     assert [section for section in result["sections"] if section["placement"] == "task"] == task_sections
     assert "当前 Skill 目录" not in [section["source"] for section in result["sections"]]
+
+
+def test_legacy_task_preview_uses_saved_frozen_skill_entry(tmp_path, monkeypatch):
+    import json
+
+    store = AutoReplyStore(tmp_path / "frozen-preview.sqlite3")
+    task, run = task_and_run(store, trigger_message_json=json.dumps({"raw_payload": {
+        "scheduled_consumer": {"skill_names": ["frozen-managed-example"],
+            "skill_materials": [{"name": "frozen-managed-example", "content": "EXACT SAVED SKILL BODY"}]}}}))
+    store.append_agent_run_event(run.id, {"type": "runtime.prompt", "role": "consumer",
+        "rendered_at": "2026-10-05T10:00:00+00:00", "task_prompt": "Complete saved Task",
+        "invocation_facts": {"skill_names": ["frozen-managed-example"]}}, owner="test")
+    monkeypatch.setattr("app.prompt_preview.default_task_skill_catalog", lambda _names: ())
+    result = current_prompt_preview(store, role="consumer", config=load_runtime_config({}), task_id=task.id)
+    assert "agent_cli.read_task_skill" in result["task_prompt"]
+    assert "EXACT SAVED SKILL BODY" not in result["task_prompt"]
+    assert result["task_prompt"].endswith("Complete saved Task")
+    assert result["sections"][-2]["source"] == "任务冻结 Skill 元数据"
