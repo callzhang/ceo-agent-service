@@ -292,7 +292,16 @@ def test_actual_audit_runner_uses_production_review_instructions(setup):
     assert "只读审核" in snapshot["runtime_context"]
 
 
-def test_audit_task_carries_selected_frozen_skill_discovery_on_every_turn(setup):
+@pytest.mark.parametrize(
+    ("protocol_source", "protocol_present", "fact_source"),
+    (
+        ("generated_discovery", False, "frozen_task_skills"),
+        ("explicit_custom", True, "explicit_custom"),
+    ),
+)
+def test_audit_task_carries_selected_frozen_skill_discovery_on_every_turn(
+    setup, protocol_source, protocol_present, fact_source
+):
     store, task, parent, context, _config, _router = setup
     context = replace(
         context,
@@ -300,6 +309,7 @@ def test_audit_task_carries_selected_frozen_skill_discovery_on_every_turn(setup)
             context.task,
             skill_names=("ceo-document-review",),
             skill_protocol_override="OLD SELECTED PROTOCOL MUST NOT BE PRELOADED",
+            skill_protocol_source=protocol_source,
         ),
     )
     executor = CapturingExecutor(_wire(context.candidate_digest))
@@ -321,7 +331,9 @@ def test_audit_task_carries_selected_frozen_skill_discovery_on_every_turn(setup)
 
     assert "ceo-document-review" in executor.prompts[0]
     assert "agent_cli.read_task_skill(name)" in executor.prompts[0]
-    assert "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED" not in executor.prompts[0]
+    assert (
+        "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED" in executor.prompts[0]
+    ) is protocol_present
     developer_setting = next(
         value for value in executor.commands[0] if value.startswith("developer_instructions=")
     )
@@ -336,5 +348,7 @@ def test_audit_task_carries_selected_frozen_skill_discovery_on_every_turn(setup)
         section for section in snapshot["sections"] if section["placement"] == "task"
     ]
     assert any(section["name"] == "任务 Skill 入口" for section in task_sections)
-    assert snapshot["invocation_facts"]["skill_protocol_source"] == "frozen_task_skills"
-    assert snapshot["invocation_facts"]["skill_protocol"] == ""
+    assert snapshot["invocation_facts"]["skill_protocol_source"] == fact_source
+    assert snapshot["invocation_facts"]["skill_protocol"] == (
+        "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED" if protocol_present else ""
+    )

@@ -203,17 +203,32 @@ def test_consumer_uses_scheduled_prompt_and_targeted_skill_protocol(
     assert "Installed Business Skills" not in command_text
 
 
+@pytest.mark.parametrize(
+    ("protocol_source", "protocol_present", "fact_source"),
+    (
+        ("generated_discovery", False, "frozen_task_skills"),
+        ("explicit_custom", True, "explicit_custom"),
+    ),
+)
 def test_resumed_consumer_turn_uses_current_selected_frozen_skill_entry(
-    store, task, context
+    store, task, context, protocol_source, protocol_present, fact_source
 ):
     store.upsert_conversation(task.conversation_id, "Group", False, "session-selected")
     store.set_codex_session_contract_hash(
-        task.conversation_id, consumer_wire_contract_hash()
+        task.conversation_id,
+        consumer_wire_contract_hash(
+            skill_protocol_override=(
+                "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED"
+                if protocol_present
+                else None
+            )
+        ),
     )
     selected_context = replace(
         context,
         skill_names=("ceo-document-review",),
         skill_protocol_override="OLD SELECTED PROTOCOL MUST NOT BE PRELOADED",
+        skill_protocol_source=protocol_source,
     )
     selected_task = task.model_copy(update={
         "trigger_message_json": json.dumps({
@@ -238,13 +253,17 @@ def test_resumed_consumer_turn_uses_current_selected_frozen_skill_entry(
     assert executor.commands[0][3:5] == ["exec", "resume"]
     assert "ceo-document-review" in executor.prompts[0]
     assert "agent_cli.read_task_skill(name)" in executor.prompts[0]
-    assert "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED" not in executor.prompts[0]
+    assert (
+        "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED" in executor.prompts[0]
+    ) is protocol_present
     saved = store.get_agent_run(result.run_id)
     snapshot = next(
         event for event in saved.tool_events if event.get("type") == "runtime.prompt"
     )
-    assert snapshot["invocation_facts"]["skill_protocol"] == ""
-    assert snapshot["invocation_facts"]["skill_protocol_source"] == "frozen_task_skills"
+    assert snapshot["invocation_facts"]["skill_protocol"] == (
+        "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED" if protocol_present else ""
+    )
+    assert snapshot["invocation_facts"]["skill_protocol_source"] == fact_source
     assert any(
         section["name"] == "任务 Skill 入口"
         for section in snapshot["sections"]

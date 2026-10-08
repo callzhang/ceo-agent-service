@@ -129,10 +129,14 @@ def compose_consumer_task_assembly(
     skill_names: tuple[str, ...] = (),
     frozen_skill_names: tuple[str, ...] = (),
     skill_protocol: str = "",
+    skill_protocol_is_custom: bool = True,
     skill_catalog=(),
 ) -> PromptAssembly:
     """Render the Consumer Task with current instructions and Skill discovery."""
     from app.business_skills import render_task_skill_discovery
+    from app.developer_prompt import validate_consumer_task_template
+
+    validate_consumer_task_template(configuration.user_template)
 
     if skill_protocol:
         appended = "\n\n" + skill_protocol
@@ -145,23 +149,27 @@ def compose_consumer_task_assembly(
             frozen_names=frozen_skill_names,
         )
         unfrozen = tuple(name for name in skill_names if name not in frozen_skill_names)
-        if unfrozen and skill_protocol:
+        if skill_protocol_is_custom and skill_protocol:
             skill_discovery += "\n\n## Saved Task Skill Instructions\n" + skill_protocol
         if frozen_skill_names and unfrozen:
             skill_source = (
                 "任务冻结与当前 Skill 选择 + 已保存任务约定"
-                if skill_protocol
+                if skill_protocol_is_custom and skill_protocol
                 else "任务冻结与当前 Skill 选择"
             )
         elif frozen_skill_names:
-            skill_source = "任务冻结 Skill 选择 + 当前 Skill 用途目录"
+            skill_source = (
+                "任务冻结 Skill 选择 + 已保存任务约定"
+                if skill_protocol_is_custom and skill_protocol
+                else "任务冻结 Skill 选择 + 当前 Skill 用途目录"
+            )
         else:
             skill_source = (
                 "当前选中 Skill 用途目录 + 已保存任务约定"
-                if skill_protocol
+                if skill_protocol_is_custom and skill_protocol
                 else "当前选中 Skill 用途目录"
             )
-    elif skill_protocol:
+    elif skill_protocol and skill_protocol_is_custom:
         skill_discovery = skill_protocol
         skill_source = "已保存自定义 Task Skill 约定"
     else:
@@ -175,11 +183,7 @@ def compose_consumer_task_assembly(
         continuation=continuation,
     )
     content = render_prompt_sections(content_sections, placement="task")
-    prefix, marker, suffix = configuration.user_template.partition("{{task_context}}")
-    if not marker:
-        # Runtime configuration validation normally catches this first. Keep this
-        # helper strict for direct callers as well.
-        raise ValueError("Consumer User Prompt is missing {{task_context}}")
+    prefix, _marker, suffix = configuration.user_template.partition("{{task_context}}")
     sections = (
         PromptSection(
             "用户模板前缀", "已保存 User 模板", "task", prefix.lstrip("\n")
@@ -280,6 +284,7 @@ def compose_consumer_task(configuration: PromptConfiguration, *, task_context: s
                           scheduled_prompt: str = '', continuation: str = '',
                           skill_names: tuple[str, ...] = (),
                           frozen_skill_names: tuple[str, ...] = (), skill_protocol: str = '',
+                          skill_protocol_is_custom: bool = True,
                           skill_catalog=()) -> str:
     return compose_consumer_task_assembly(
         configuration,
@@ -289,6 +294,7 @@ def compose_consumer_task(configuration: PromptConfiguration, *, task_context: s
         skill_names=skill_names,
         frozen_skill_names=frozen_skill_names,
         skill_protocol=skill_protocol,
+        skill_protocol_is_custom=skill_protocol_is_custom,
         skill_catalog=skill_catalog,
     ).text
 
@@ -296,11 +302,16 @@ def compose_consumer_task(configuration: PromptConfiguration, *, task_context: s
 def example_consumer_task(configuration: PromptConfiguration | RawPromptConfiguration) -> str:
     """Render the saved User template using explicit synthetic complete facts."""
     from app.agent_context import AgentTaskContext
-    from app.developer_prompt import render_consumer_task_template
+    from app.consumer_agent import default_task_skill_catalog
 
     context = AgentTaskContext(task_id=0, channel="example", conversation_id="example-conversation",
         conversation_title="Synthetic example", single_chat=True, trigger_message_id="fixture-message",
         trigger_sender="Example sender", trigger_text="Review the supplied document.",
         trigger_create_time="2026-01-01T12:00:00+00:00", messages=(), materials=(), prior_receipts=())
-    complete = assemble_consumer_task(task_context=context.render(current_time="2026-01-01T12:00:00+00:00"))
-    return render_consumer_task_template(configuration.user_template, complete).strip('\n')
+    selected = ("ceo-document-review",)
+    return compose_consumer_task_assembly(
+        configuration,
+        task_context=context.render(current_time="2026-01-01T12:00:00+00:00"),
+        skill_names=selected,
+        skill_catalog=default_task_skill_catalog(selected),
+    ).text

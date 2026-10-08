@@ -1,3 +1,5 @@
+import pytest
+
 from app.prompt_composition import append_runtime_context, assemble_consumer_task, join_developer_sections
 
 
@@ -56,30 +58,59 @@ def test_developer_sections_are_named_and_keep_canonical_contracts():
     assert _AUDIT_AGENT_RULES in render_prompt_sections(audit_sections, placement="developer", omit_empty=False)
 
 
-def test_selected_task_skills_stay_in_task_and_do_not_inject_other_flows(tmp_path):
+def test_selected_task_skills_stay_in_task_and_do_not_inject_other_flows(
+    tmp_path, monkeypatch
+):
+    import json
+    import re
+
+    from app import agent_cli
     from app.business_skills import BusinessSkillCatalogEntry, render_task_skill_discovery
 
-    catalog = tuple(
-        BusinessSkillCatalogEntry(name, tmp_path / name / "SKILL.md", use)
-        for name, use in (
-            ("ceo-calendar-invite", "Review calendar invitations."),
-            ("ceo-mail-review", "Review mail."),
-            ("ceo-document-review", "Review documents."),
-            ("ceo-work-tracking", "Track work."),
-        )
-    )
+    root = tmp_path / "skills"
+    entries = []
+    for name, use in (
+        ("ceo-calendar-invite", "Review calendar invitations."),
+        ("ceo-mail-review", "Review mail."),
+        ("ceo-document-review", "Review documents."),
+        ("ceo-work-tracking", "Track work."),
+    ):
+        path = root / name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(f"# {name}\n", encoding="utf-8")
+        entries.append(BusinessSkillCatalogEntry(name, path, use))
+    catalog = tuple(entries)
+    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (root,))
     for selected, expected, excluded in (
         (("ceo-calendar-invite",), "Review calendar invitations.", "Review mail."),
         (("ceo-mail-review",), "Review mail.", "Review documents."),
         (("ceo-document-review",), "Review documents.", "Track work."),
         (("ceo-work-tracking",), "Track work.", "Review calendar invitations."),
     ):
-        rendered = render_task_skill_discovery(
-            selected, catalog=catalog, frozen_names=selected,
-        )
+        rendered = render_task_skill_discovery(selected, catalog=catalog)
         assert expected in rendered
         assert excluded not in rendered
-        assert "agent_cli.read_task_skill(name)" in rendered
+        assert "agent_cli.read_task_skill(name)" not in rendered
+        match = re.search(r"agent_cli\.read_skill\(path=(\"[^\n]+\")\)", rendered)
+        assert match is not None
+        rendered_path = json.loads(match.group(1))
+        result = agent_cli.read_skill(rendered_path)
+        assert result["name"] == selected[0]
+        assert result["path"] == str((root / selected[0] / "SKILL.md").resolve())
+
+
+def test_frozen_selected_skill_uses_name_lookup_without_installed_path(tmp_path):
+    from app.business_skills import render_task_skill_discovery
+
+    rendered = render_task_skill_discovery(
+        ("removed-installed-skill",),
+        catalog=(),
+        frozen_names=("removed-installed-skill",),
+    )
+
+    assert "agent_cli.read_task_skill(name)" in rendered
+    assert "removed-installed-skill" in rendered
+    assert "agent_cli.read_skill(path=" not in rendered
 
 
 def test_unknown_task_gets_minimal_on_demand_skill_discovery(tmp_path):
@@ -90,9 +121,10 @@ def test_unknown_task_gets_minimal_on_demand_skill_discovery(tmp_path):
         BusinessSkillCatalogEntry("ceo-mail-review", tmp_path / "mail" / "SKILL.md", "Review mail."),
     )
     rendered = render_task_skill_discovery((), catalog=catalog)
-    assert "agent_cli.read_skill(name)" in rendered
+    assert "agent_cli.read_skill(path=" in rendered
     assert "Review invitations." in rendered and "Review mail." in rendered
-    assert "SKILL.md" not in rendered
+    assert str((tmp_path / "calendar" / "SKILL.md").resolve()) in rendered
+    assert str((tmp_path / "mail" / "SKILL.md").resolve()) in rendered
     assert "Required Skill protocol" not in rendered
 
 
@@ -166,7 +198,7 @@ def test_legacy_selected_skill_uses_installed_lookup_and_preserves_saved_protoco
         ),
     )
 
-    assert "agent_cli.read_skill(name)" in assembly.text
+    assert "agent_cli.read_skill(path=" in assembly.text
     assert "agent_cli.read_task_skill(name)" not in assembly.text
     assert "LEGACY INLINE TASK INSTRUCTIONS" in assembly.text
 
@@ -191,6 +223,43 @@ def test_frozen_lookup_is_derived_from_structured_task_materials_only():
     assert frozen_task_skill_names("{}", selected) == ()
 
 
+def test_declared_but_damaged_frozen_material_never_falls_back_to_installed():
+    import json
+    from pathlib import Path
+
+    from app.business_skills import (
+        BusinessSkillCatalogEntry,
+        frozen_task_skill_names,
+        render_task_skill_discovery,
+    )
+
+    selected = ("ceo-calendar-invite",)
+    task_input = json.dumps({
+        "schema": "scheduled_agent_execution.v1",
+        "skill_names": list(selected),
+        "skill_materials": [
+            {"name": "ceo-calendar-invite", "content": ""},
+        ],
+    })
+
+    frozen = frozen_task_skill_names(task_input, selected)
+    rendered = render_task_skill_discovery(
+        selected,
+        catalog=(
+            BusinessSkillCatalogEntry(
+                "ceo-calendar-invite",
+                Path("/currently-installed/SKILL.md"),
+                "Calendar work.",
+            ),
+        ),
+        frozen_names=frozen,
+    )
+
+    assert frozen == selected
+    assert "agent_cli.read_task_skill(name)" in rendered
+    assert "agent_cli.read_skill(path=" not in rendered
+
+
 def test_explicit_custom_task_protocol_is_preserved_without_selected_names(tmp_path, monkeypatch):
     from app.prompt_composition import compose_consumer_task_assembly, load_prompt_configuration
 
@@ -207,6 +276,88 @@ def test_explicit_custom_task_protocol_is_preserved_without_selected_names(tmp_p
     assert "EXPLICIT CUSTOM TASK PROTOCOL" in assembly.text
     skill_section = next(section for section in assembly.sections if section.name == "任务 Skill 入口")
     assert skill_section.source == "已保存自定义 Task Skill 约定"
+
+
+def test_explicit_custom_protocol_is_preserved_with_fully_frozen_selection(
+    tmp_path, monkeypatch
+):
+    from app.prompt_composition import compose_consumer_task_assembly, load_prompt_configuration
+
+    user = tmp_path / "user.md"
+    user.write_text("{{task_context}}", encoding="utf-8")
+    monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(user))
+    assembly = compose_consumer_task_assembly(
+        load_prompt_configuration(create_missing=False),
+        task_context="CURRENT FACTS",
+        skill_names=("frozen-skill",),
+        frozen_skill_names=("frozen-skill",),
+        skill_protocol="EXPLICIT CUSTOM TASK PROTOCOL",
+        skill_protocol_is_custom=True,
+        skill_catalog=(),
+    )
+    generated = compose_consumer_task_assembly(
+        load_prompt_configuration(create_missing=False),
+        task_context="CURRENT FACTS",
+        skill_names=("frozen-skill",),
+        frozen_skill_names=("frozen-skill",),
+        skill_protocol="GENERATED DISCOVERY MUST NOT REPEAT",
+        skill_protocol_is_custom=False,
+        skill_catalog=(),
+    )
+
+    assert "EXPLICIT CUSTOM TASK PROTOCOL" in assembly.text
+    assert "GENERATED DISCOVERY MUST NOT REPEAT" not in generated.text
+    skill_section = next(
+        section for section in assembly.sections if section.name == "任务 Skill 入口"
+    )
+    assert skill_section.source == "任务冻结 Skill 选择 + 已保存任务约定"
+
+
+def test_example_consumer_task_uses_runtime_assembler_and_validates_one_slot():
+    from app.agent_context import AgentTaskContext
+    from app.consumer_agent import default_task_skill_catalog
+    from app.developer_prompt import DeveloperPromptTemplateError
+    from app.prompt_composition import (
+        RawPromptConfiguration,
+        compose_consumer_task_assembly,
+        example_consumer_task,
+    )
+
+    configuration = RawPromptConfiguration("", "Before\n{{task_context}}\nAfter", "")
+    context = AgentTaskContext(
+        task_id=0,
+        channel="example",
+        conversation_id="example-conversation",
+        conversation_title="Synthetic example",
+        single_chat=True,
+        trigger_message_id="fixture-message",
+        trigger_sender="Example sender",
+        trigger_text="Review the supplied document.",
+        trigger_create_time="2026-01-01T12:00:00+00:00",
+        messages=(),
+        materials=(),
+        prior_receipts=(),
+    )
+    selected = ("ceo-document-review",)
+    expected = compose_consumer_task_assembly(
+        configuration,
+        task_context=context.render(current_time="2026-01-01T12:00:00+00:00"),
+        skill_names=selected,
+        skill_catalog=default_task_skill_catalog(selected),
+    ).text
+
+    rendered = example_consumer_task(configuration)
+    assert rendered == expected
+    assert "agent_cli.read_skill(path=" in rendered
+    assert "ceo-document-review" in rendered
+    assert "## Skill:" not in rendered
+    with pytest.raises(DeveloperPromptTemplateError, match="exactly one"):
+        compose_consumer_task_assembly(
+            RawPromptConfiguration(
+                "", "{{task_context}}\n{{task_context}}", ""
+            ),
+            task_context="facts",
+        )
 
 
 def test_common_developer_does_not_inject_domain_workflows_into_unrelated_tasks():

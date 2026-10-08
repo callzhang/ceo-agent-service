@@ -99,6 +99,7 @@ class AgentTaskContext:
     image_sha256s: tuple[str, ...] = ()
     consumer_prompt: str = ""
     skill_protocol_override: str | None = None
+    skill_protocol_source: str = "explicit_custom"
     skill_names: tuple[str, ...] = ()
     stage_index: int = 0
     predecessor_review_id: int | None = None

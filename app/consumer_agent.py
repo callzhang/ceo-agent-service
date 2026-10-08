@@ -275,6 +275,7 @@ class ConsumerAgentRunner:
         forced_runtime_route=None,
         reasoning_effort: str = "",
         skill_protocol_override: str | None = None,
+        skill_protocol_source: str = "explicit_custom",
         execution_environment: Mapping[str, str] | None = None,
         source_client=None,
     ) -> None:
@@ -297,6 +298,7 @@ class ConsumerAgentRunner:
         self.forced_runtime_route = forced_runtime_route
         self.reasoning_effort = reasoning_effort
         self.skill_protocol_override = skill_protocol_override
+        self.skill_protocol_source = skill_protocol_source
         self.execution_environment = dict(execution_environment or {})
 
     def _configured_route_names(self) -> tuple[str, ...]:
@@ -414,10 +416,20 @@ class ConsumerAgentRunner:
             if context.skill_protocol_override is not None
             else self.skill_protocol_override
         )
+        context_skill_protocol_source = (
+            context.skill_protocol_source
+            if context.skill_protocol_override is not None
+            else self.skill_protocol_source
+        )
+        skill_protocol_is_custom = (
+            context_skill_protocol_source == "explicit_custom"
+        )
         configuration = load_prompt_configuration()
         contract_hash = consumer_wire_contract_hash(
             self.runtime_skill_snapshot,
-            skill_protocol_override=context_skill_protocol,
+            skill_protocol_override=(
+                context_skill_protocol if skill_protocol_is_custom else None
+            ),
             prompt_configuration=configuration,
         )
         route_sessions = self._consumer_route_sessions(task.conversation_id)
@@ -536,19 +548,23 @@ class ConsumerAgentRunner:
         if context.skill_names:
             skill_protocol_fact = (
                 context_skill_protocol or ""
-                if unfrozen_skill_names_for_task
+                if skill_protocol_is_custom
                 else ""
             )
             skill_protocol_source = (
-                "selected_installed_skills"
+                "explicit_custom"
+                if skill_protocol_is_custom and context_skill_protocol
+                else "selected_installed_skills"
                 if unfrozen_skill_names_for_task
                 else "frozen_task_skills"
             )
         else:
-            skill_protocol_fact = context_skill_protocol or ""
+            skill_protocol_fact = (
+                context_skill_protocol or "" if skill_protocol_is_custom else ""
+            )
             skill_protocol_source = (
                 "task_override"
-                if context_skill_protocol is not None
+                if skill_protocol_is_custom and context_skill_protocol is not None
                 else "runtime_catalog"
             )
         task_assembly = compose_consumer_task_assembly(
@@ -562,6 +578,7 @@ class ConsumerAgentRunner:
             skill_names=context.skill_names,
             frozen_skill_names=frozen_skill_names_for_task,
             skill_protocol=context_skill_protocol or "",
+            skill_protocol_is_custom=skill_protocol_is_custom,
             skill_catalog=default_task_skill_catalog(context.skill_names),
         )
         result = process.execute(

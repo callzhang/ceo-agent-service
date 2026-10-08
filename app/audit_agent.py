@@ -54,6 +54,7 @@ class AuditAgentRunner:
         forced_runtime_route=None,
         reasoning_effort: str = "",
         skill_protocol_override: str = "",
+        skill_protocol_source: str = "explicit_custom",
         execution_environment: Mapping[str, str] | None = None,
     ) -> None:
         self.store = store
@@ -70,6 +71,7 @@ class AuditAgentRunner:
         self.forced_runtime_route = forced_runtime_route
         self.reasoning_effort = reasoning_effort
         self.skill_protocol_override = skill_protocol_override
+        self.skill_protocol_source = skill_protocol_source
         self.execution_environment = dict(execution_environment or {})
 
     @staticmethod
@@ -158,33 +160,50 @@ class AuditAgentRunner:
         unfrozen_names = tuple(
             name for name in context.task.skill_names if name not in frozen_names
         )
+        task_skill_protocol = (
+            context.task.skill_protocol_override
+            if context.task.skill_protocol_override is not None
+            else self.skill_protocol_override
+        )
+        task_skill_protocol_source = (
+            context.task.skill_protocol_source
+            if context.task.skill_protocol_override is not None
+            else self.skill_protocol_source
+        )
+        task_skill_protocol_is_custom = (
+            task_skill_protocol_source == "explicit_custom"
+        )
         if context.task.skill_names:
             task_skill_text = render_task_skill_discovery(
                 context.task.skill_names,
                 catalog=default_task_skill_catalog(context.task.skill_names),
                 frozen_names=frozen_names,
             )
-            if unfrozen_names and self.skill_protocol_override:
+            if task_skill_protocol_is_custom and task_skill_protocol:
                 task_skill_text += (
                     "\n\n## Saved Task Skill Instructions\n"
-                    + self.skill_protocol_override
+                    + task_skill_protocol
                 )
             if frozen_names and unfrozen_names:
                 task_skill_source = (
                     "任务冻结与当前 Skill 选择 + 已保存任务约定"
-                    if self.skill_protocol_override
+                    if task_skill_protocol_is_custom and task_skill_protocol
                     else "任务冻结与当前 Skill 选择"
                 )
             elif frozen_names:
-                task_skill_source = "任务冻结 Skill 选择 + 当前 Skill 用途目录"
+                task_skill_source = (
+                    "任务冻结 Skill 选择 + 已保存任务约定"
+                    if task_skill_protocol_is_custom and task_skill_protocol
+                    else "任务冻结 Skill 选择 + 当前 Skill 用途目录"
+                )
             else:
                 task_skill_source = (
                     "当前选中 Skill 用途目录 + 已保存任务约定"
-                    if self.skill_protocol_override
+                    if task_skill_protocol_is_custom and task_skill_protocol
                     else "当前选中 Skill 用途目录"
                 )
-        elif self.skill_protocol_override:
-            task_skill_text = self.skill_protocol_override
+        elif task_skill_protocol and task_skill_protocol_is_custom:
+            task_skill_text = task_skill_protocol
             task_skill_source = "已保存自定义 Task Skill 约定"
         else:
             task_skill_text = render_task_skill_discovery(
@@ -193,18 +212,21 @@ class AuditAgentRunner:
             task_skill_source = "当前 Skill 用途目录"
         if context.task.skill_names:
             skill_protocol_fact = (
-                self.skill_protocol_override or "" if unfrozen_names else ""
+                task_skill_protocol or "" if task_skill_protocol_is_custom else ""
             )
             skill_protocol_source = (
-                "selected_installed_skills"
-                if unfrozen_names
+                "explicit_custom"
+                if task_skill_protocol_is_custom and task_skill_protocol
+                else "selected_installed_skills" if unfrozen_names
                 else "frozen_task_skills"
             )
         else:
-            skill_protocol_fact = self.skill_protocol_override or ""
+            skill_protocol_fact = (
+                task_skill_protocol or "" if task_skill_protocol_is_custom else ""
+            )
             skill_protocol_source = (
                 "task_override"
-                if self.skill_protocol_override is not None
+                if task_skill_protocol_is_custom and task_skill_protocol
                 else "runtime_catalog"
             )
         task_sections = [

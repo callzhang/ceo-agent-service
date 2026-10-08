@@ -273,11 +273,16 @@ def test_new_saved_task_sections_keep_exact_task_without_current_prefix(tmp_path
 
 def test_legacy_task_preview_uses_saved_frozen_skill_entry(tmp_path, monkeypatch):
     import json
+    from app.agent_cron.commands import ServiceCommandConsumerContext, ServiceCommandSkillMaterial
 
     store = AutoReplyStore(tmp_path / "frozen-preview.sqlite3")
+    scheduled = ServiceCommandConsumerContext(
+        scheduled_task_id=1, scheduled_task_run_id=2, prompt="Saved task requirement",
+        skill_names=("frozen-managed-example",), skill_protocol="Read the selected frozen Skill",
+        skill_materials=(ServiceCommandSkillMaterial(name="frozen-managed-example", content="EXACT SAVED SKILL BODY"),),
+    )
     task, run = task_and_run(store, trigger_message_json=json.dumps({"raw_payload": {
-        "scheduled_consumer": {"skill_names": ["frozen-managed-example"],
-            "skill_materials": [{"name": "frozen-managed-example", "content": "EXACT SAVED SKILL BODY"}]}}}))
+        "scheduled_consumer": scheduled.to_payload()}}))
     store.append_agent_run_event(run.id, {"type": "runtime.prompt", "role": "consumer",
         "rendered_at": "2026-10-05T10:00:00+00:00", "task_prompt": "Complete saved Task",
         "invocation_facts": {"skill_names": ["frozen-managed-example"]}}, owner="test")

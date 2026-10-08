@@ -163,6 +163,23 @@ class BusinessSkillCatalogEntry:
     description: str = ""
 
 
+@dataclass(frozen=True)
+class FrozenTaskSkillMaterial:
+    """One exact Skill body saved in a reply task's structured input."""
+
+    name: str
+    content: str
+
+
+@dataclass(frozen=True)
+class FrozenTaskSkillBinding:
+    """Structured frozen-Skill declaration and readable saved materials."""
+
+    declared: bool
+    declared_names: tuple[str, ...]
+    materials: tuple[FrozenTaskSkillMaterial, ...]
+
+
 @dataclass
 class _SwapState:
     staged_dir: Path
@@ -416,10 +433,15 @@ def render_task_skill_discovery(
     frozen = frozenset(name for name in frozen_names if name in selected)
     by_name = {entry.name: entry for entry in catalog}
     if selected:
-        entries = tuple(
-            by_name.get(name, BusinessSkillCatalogEntry(name, Path(".")))
-            for name in selected
+        missing_installed = tuple(
+            name for name in selected if name not in frozen and name not in by_name
         )
+        if missing_installed:
+            raise ValueError(
+                "selected installed Skill metadata is unavailable: "
+                + ", ".join(missing_installed)
+            )
+        entries = tuple((name, by_name.get(name)) for name in selected)
         heading = "## Selected Task Skills"
         instructions: list[str] = []
         if frozen:
@@ -432,25 +454,34 @@ def render_task_skill_discovery(
             )
         installed = tuple(name for name in selected if name not in frozen)
         if installed:
-            names = ", ".join(f"`{name}`" for name in installed)
             instructions.append(
-                f"For the installed selection {names}, call "
-                "`agent_cli.read_skill(name)` before deciding or reviewing."
+                "For each installed selection, call its exact "
+                "`agent_cli.read_skill(path=...)` entry below before deciding "
+                "or reviewing."
             )
         read_instruction = " ".join(instructions)
     else:
-        entries = tuple(dict.fromkeys(catalog))
+        entries = tuple((entry.name, entry) for entry in dict.fromkeys(catalog))
         heading = "## Skill Discovery"
         read_instruction = (
             "No task Skill was selected. When the task needs business or operation "
-            "guidance, choose the applicable entry below and call "
-            "`agent_cli.read_skill(name)` before applying it. Read additional applicable "
+            "guidance, choose the applicable entry below and call its exact "
+            "`agent_cli.read_skill(path=...)` command before applying it. Read additional applicable "
             "Skills on demand; do not infer a domain from keywords in the task text."
         )
     lines = [heading]
-    for entry in entries:
-        use = " ".join(entry.description.split()) or "Selected for this task."
-        lines.append(f"- `{entry.name}`: {use}")
+    for name, entry in entries:
+        use = (
+            " ".join(entry.description.split())
+            if entry is not None
+            else "Selected for this task."
+        ) or "Selected for this task."
+        line = f"- `{name}`: {use}"
+        if name not in frozen:
+            assert entry is not None
+            path = json.dumps(str(entry.skill_path.resolve()), ensure_ascii=False)
+            line += f" Read with `agent_cli.read_skill(path={path})`."
+        lines.append(line)
     lines.append(read_instruction)
     return "\n".join(lines)
 
@@ -459,30 +490,82 @@ def frozen_task_skill_names(
     trigger_message_json: str,
     selected_names: Iterable[str],
 ) -> tuple[str, ...]:
-    """Return selected names with exactly one structured frozen task material."""
+    """Return selected names declared as task-frozen in structured input."""
     selected = tuple(dict.fromkeys(name for name in selected_names if name))
+    binding = frozen_task_skill_binding(trigger_message_json)
+    if not binding.declared:
+        return ()
+    declared = frozenset(binding.declared_names)
+    return tuple(name for name in selected if name in declared)
+
+
+def frozen_task_skill_binding(trigger_message_json: str) -> FrozenTaskSkillBinding:
+    """Read one task's structured frozen declaration without repairing it."""
+    empty = FrozenTaskSkillBinding(False, (), ())
     try:
         trigger = json.loads(trigger_message_json)
     except (TypeError, json.JSONDecodeError):
-        return ()
-    raw_payload = trigger.get("raw_payload") if isinstance(trigger, dict) else None
-    scheduled = (
-        raw_payload.get("scheduled_consumer")
-        if isinstance(raw_payload, dict)
-        else None
+        return empty
+    if not isinstance(trigger, dict):
+        return empty
+    if trigger.get("schema") == "scheduled_agent_execution.v1":
+        container = trigger
+    else:
+        raw_payload = trigger.get("raw_payload")
+        container = (
+            raw_payload.get("scheduled_consumer")
+            if isinstance(raw_payload, dict)
+            else None
+        )
+    if not isinstance(container, dict) or "skill_materials" not in container:
+        return empty
+    raw_names = container.get("skill_names")
+    declared_names = (
+        tuple(name for name in raw_names if isinstance(name, str) and name)
+        if isinstance(raw_names, list)
+        else ()
     )
-    materials = scheduled.get("skill_materials") if isinstance(scheduled, dict) else None
+    materials = container.get("skill_materials")
     if not isinstance(materials, list):
-        return ()
-    material_names = [
+        return FrozenTaskSkillBinding(True, declared_names, ())
+    raw_material_names = tuple(
         material.get("name")
         for material in materials
         if isinstance(material, dict)
         and isinstance(material.get("name"), str)
+        and material["name"]
+    )
+    if not declared_names:
+        declared_names = tuple(dict.fromkeys(raw_material_names))
+    valid_materials = all(
+        isinstance(material, dict)
+        and set(material) == {"name", "content"}
+        and isinstance(material.get("name"), str)
+        and material["name"].strip() == material["name"]
+        and bool(material["name"])
         and isinstance(material.get("content"), str)
-        and material["content"].strip()
-    ]
-    return tuple(name for name in selected if material_names.count(name) == 1)
+        and bool(material["content"].strip())
+        for material in materials
+    )
+    readable = (
+        tuple(
+            FrozenTaskSkillMaterial(
+                name=material["name"],
+                content=material["content"],
+            )
+            for material in materials
+        )
+        if valid_materials
+        else ()
+    )
+    return FrozenTaskSkillBinding(True, declared_names, readable)
+
+
+def frozen_task_skill_materials(
+    trigger_message_json: str,
+) -> tuple[FrozenTaskSkillMaterial, ...]:
+    """Read frozen materials from service-command or generic scheduled input."""
+    return frozen_task_skill_binding(trigger_message_json).materials
 
 
 def expand_skill_dependencies(

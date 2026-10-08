@@ -58,6 +58,9 @@ class ServiceCommandConsumerContext:
     skill_names: tuple[str, ...]
     skill_protocol: str
     skill_materials: tuple[ServiceCommandSkillMaterial, ...] = ()
+    skill_protocol_source: Literal["generated_discovery", "explicit_custom"] = (
+        "explicit_custom"
+    )
 
     def role_prompt(self) -> str:
         """Carry this task's short frozen-Skill discovery on every role turn."""
@@ -83,6 +86,7 @@ class ServiceCommandConsumerContext:
             "prompt": self.prompt,
             "skill_names": list(self.skill_names),
             "skill_protocol": self.skill_protocol,
+            "skill_protocol_source": self.skill_protocol_source,
         }
         if self.skill_materials:
             payload["skill_materials"] = [
@@ -105,6 +109,9 @@ class ServiceCommandConsumerContext:
         prompt = value.get("prompt")
         skill_names = value.get("skill_names")
         skill_protocol = value.get("skill_protocol")
+        skill_protocol_source = value.get(
+            "skill_protocol_source", "explicit_custom"
+        )
         skill_materials = value.get("skill_materials", [])
         if (
             not isinstance(task_id, int)
@@ -120,6 +127,9 @@ class ServiceCommandConsumerContext:
             )
             or not isinstance(skill_protocol, str)
             or not skill_protocol.strip()
+            or skill_protocol_source not in {
+                "generated_discovery", "explicit_custom",
+            }
             or not isinstance(skill_materials, list)
             or any(
                 not isinstance(material, dict)
@@ -138,6 +148,7 @@ class ServiceCommandConsumerContext:
             prompt=prompt,
             skill_names=tuple(skill_names),
             skill_protocol=skill_protocol,
+            skill_protocol_source=skill_protocol_source,
             skill_materials=tuple(
                 ServiceCommandSkillMaterial(
                     name=material["name"], content=material["content"]
