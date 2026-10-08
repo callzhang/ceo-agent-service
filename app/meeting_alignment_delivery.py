@@ -290,12 +290,14 @@ def deliver_meeting_alignment(
     )
     if not delivery_key.strip():
         raise ValueError("meeting delivery key is required")
-    prepared = message_sender.prepare(
-        channel="dingtalk",
-        delivery_key=delivery_key,
-        body=message_text,
-        original_text=source.summary,
-    )
+    try:
+        prepared = message_sender.prepare_meeting_alignment(
+            delivery_key=delivery_key, body=message_text, original_text=source.summary,
+            target_kind="group" if target_kind == "group" else "user" if direct_user_id else "open_user",
+            target_id=target_id,
+        )
+    except ValueError as exc:
+        raise MeetingDeliveryError(str(exc)) from exc
     if not _prepared_content_matches(prepared, message_text):
         # Old split deliveries retain their immutable primary body and action key.
         ordinary_body = meeting_followup_message(
@@ -313,17 +315,21 @@ def deliver_meeting_alignment(
         sensitive_body = meeting_followup_message(
             decision, source, final_message=private_message.message
         )
-        sensitive_prepared = message_sender.prepare(
-            channel="dingtalk", delivery_key=f"{delivery_key}:sensitive",
-            body=sensitive_body, original_text=source.summary,
-        )
+        try:
+            sensitive_prepared = message_sender.prepare_meeting_alignment(
+                delivery_key=f"{delivery_key}:sensitive",
+                body=sensitive_body, original_text=source.summary,
+                target_kind="user", target_id=private_message.target.direct_user_id,
+            )
+        except ValueError as exc:
+            raise MeetingDeliveryError(str(exc)) from exc
         if not _prepared_content_matches(sensitive_prepared, sensitive_body):
             raise MeetingDeliveryError("prepared meeting body does not match sensitive content")
     message_text = prepared.final_body
     message_title = f"会议跟进｜{source.title}"
     try:
         if target_kind == "group":
-            send_result = message_sender.send_dingtalk_prepared(
+            send_result = message_sender.send_meeting_alignment_prepared(
                 prepared,
                 conversation_id=target_id,
                 at_open_dingtalk_ids=mention_ids,
@@ -336,7 +342,7 @@ def deliver_meeting_alignment(
                 if direct_user_id
                 else {"open_dingtalk_id": direct_open_dingtalk_id}
             )
-            send_result = message_sender.send_dingtalk_prepared(
+            send_result = message_sender.send_meeting_alignment_prepared(
                 prepared,
                 conversation_id=None,
                 **direct_target,
@@ -410,7 +416,7 @@ def _deliver_sensitive_private_message(
     if prepared is None:
         raise MeetingDeliveryError("sensitive message requires verified preparation")
     try:
-        send_result = message_sender.send_dingtalk_prepared(
+        send_result = message_sender.send_meeting_alignment_prepared(
             prepared,
             conversation_id=None,
             user_id=recipient.user_id.strip(),

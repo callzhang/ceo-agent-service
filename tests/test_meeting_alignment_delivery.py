@@ -21,6 +21,22 @@ class _MemoryPostfixStore:
     def __init__(self):
         self.messages = {}
         self.receipts = {}
+        self.targets = {}
+
+    def prepare_meeting_alignment_message(self, *, delivery_key, target_kind, target_id, body, original_text, **kwargs):
+        key = ("dingtalk", delivery_key)
+        target = (target_kind, target_id.strip())
+        if key in self.targets and self.targets[key] != target:
+            raise ValueError("meeting prepared target binding conflicts")
+        if key in self.messages and key not in self.targets:
+            raise ValueError("meeting prepared target is unverified")
+        prepared = self.prepare_outbound_postfix("dingtalk", delivery_key, body, original_text, **kwargs)
+        self.targets[key] = target
+        return prepared
+
+    def verify_meeting_alignment_target(self, delivery_key, *, target_kind, target_id):
+        if self.targets.get(("dingtalk", delivery_key)) != (target_kind, target_id.strip()):
+            raise ValueError("meeting prepared target binding conflicts")
 
     def prepare_outbound_postfix(self, channel, delivery_key, body, original_text, **_):
         key = (channel, delivery_key)
@@ -371,7 +387,7 @@ def test_mixed_recruiting_summary_sends_sanitized_group_message_and_private_hr_n
 
 @pytest.mark.parametrize("primary_receipt", [False, True])
 @pytest.mark.parametrize("feedback_base_url", ["", "https://feedback.example"])
-def test_same_audience_recovery_preserves_prepared_split(tmp_path, primary_receipt, feedback_base_url):
+def test_same_audience_recovery_preserves_bound_split(tmp_path, primary_receipt, feedback_base_url):
     dws = FakeDws()
     store = AutoReplyStore(tmp_path / "meeting.sqlite3")
     sender = ServiceMessageSender(store=store, dingtalk=dws)
@@ -387,7 +403,7 @@ def test_same_audience_recovery_preserves_prepared_split(tmp_path, primary_recei
     source = meeting_source()
     key = "meeting-alignment:legacy-split"
     ordinary = meeting_alignment_delivery.meeting_followup_message(decision, source)
-    prepared = sender.prepare(channel="dingtalk", delivery_key=key, body=ordinary,
+    prepared = sender.prepare_meeting_alignment(target_kind="user", target_id="u-a", delivery_key=key, body=ordinary,
                               feedback_base_url=feedback_base_url)
     if primary_receipt:
         sender.send_dingtalk_prepared(prepared, conversation_id=None, user_id="u-a")
@@ -444,7 +460,7 @@ def test_business_summary_to_hr_merges_sensitive_content_into_one_message(tmp_pa
         decision, source,
         final_message=f"{decision.final_message}\n\n{decision.sensitive_private_message.message}",
     )
-    sender.prepare(channel="dingtalk", delivery_key=key, body=merged,
+    sender.prepare_meeting_alignment(target_kind="user", target_id="u-a", delivery_key=key, body=merged,
                    feedback_base_url=feedback_base_url)
 
     result = deliver_meeting_alignment(
@@ -477,7 +493,7 @@ def test_conflicting_prepared_same_audience_body_fails_before_any_effect(tmp_pat
         "reason": "Verified business need", "recipient_evidence": ["Current owner"],
     }
     decision = MeetingAlignmentDecision.model_validate(payload)
-    sender.prepare(channel="dingtalk", delivery_key="conflict", body="Different immutable body")
+    sender.prepare_meeting_alignment(target_kind="user", target_id="u-a", delivery_key="conflict", body="Different immutable body")
     with pytest.raises(MeetingDeliveryError, match="prepared meeting body"):
         deliver_meeting_alignment(decision, meeting_source(), dws, message_sender=sender, delivery_key="conflict")
     assert dws.sent == []
@@ -501,12 +517,87 @@ def test_different_audience_recovery_rejects_old_disclosure_before_any_effect(tm
         body = meeting_alignment_delivery.meeting_followup_message(
             decision, source, final_message=f"{decision.final_message}\n\nRESTRICTED_TO_B"
         )
-        sender.prepare(channel="dingtalk", delivery_key=key, body=body)
+        sender.prepare_meeting_alignment(target_kind="user", target_id="u-a", delivery_key=key, body=body)
     else:
-        sender.prepare(channel="dingtalk", delivery_key=f"{key}:sensitive", body="Unexpected private content")
+        sender.prepare_meeting_alignment(target_kind="user", target_id="u-b", delivery_key=f"{key}:sensitive", body="Unexpected private content")
     with pytest.raises(MeetingDeliveryError, match="prepared meeting body"):
         deliver_meeting_alignment(decision, source, dws, message_sender=sender, delivery_key=key)
     assert dws.sent == []
+
+
+@pytest.mark.parametrize("slot", ["primary", "sensitive"])
+def test_recovery_never_borrows_receipt_for_a_different_target(tmp_path, slot):
+    dws = FakeDws()
+    sender = ServiceMessageSender(store=AutoReplyStore(tmp_path / "meeting.sqlite3"), dingtalk=dws)
+    payload = send_decision(target="direct", mention_names=[]).model_dump()
+    payload["audience_scope"] = "business"
+    payload["sensitive_private_message"] = {
+        "target": {"kind": "direct", "direct_user_id": "u-b", "title": "B", "conversation_id": "", "candidates": []},
+        "message": "Private section", "reason": "Verified owner",
+        "recipient_evidence": ["Verified current scope"],
+    }
+    first = MeetingAlignmentDecision.model_validate(payload)
+    deliver_meeting_alignment(first, meeting_source(), dws, message_sender=sender, delivery_key="target-binding")
+    if slot == "primary":
+        payload["target"] = payload["sensitive_private_message"]["target"]
+    else:
+        payload["sensitive_private_message"]["target"] = payload["target"]
+    changed = MeetingAlignmentDecision.model_validate(payload)
+    with pytest.raises(MeetingDeliveryError, match="target"):
+        deliver_meeting_alignment(changed, meeting_source(), dws, message_sender=sender, delivery_key="target-binding")
+    assert len(dws.sent) == 2
+
+
+def test_legacy_prepared_target_is_not_backfilled_from_a_new_decision(tmp_path):
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "meeting.sqlite3")
+    sender = ServiceMessageSender(store=store, dingtalk=dws)
+    decision = send_decision(target="direct", mention_names=[]).model_copy(update={"audience_scope": "business"})
+    body = meeting_alignment_delivery.meeting_followup_message(decision, meeting_source())
+    prepared = sender.prepare(channel="dingtalk", delivery_key="legacy", body=body)
+    with pytest.raises(MeetingDeliveryError, match="target is unverified"):
+        deliver_meeting_alignment(decision, meeting_source(), dws, message_sender=sender, delivery_key="legacy")
+    assert store.get_outbound_postfix("dingtalk", "legacy") == prepared
+    assert store.get_service_state("meeting_delivery_target:v1:dingtalk:legacy") is None
+    assert dws.sent == []
+
+
+def test_target_binding_and_preparation_rollback_together(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "meeting.sqlite3")
+    original = store._prepare_outbound_postfix_in_transaction
+    def fail_after_preparing(db, **kwargs):
+        original(db, **kwargs)
+        raise RuntimeError("Interrupted preparation")
+    monkeypatch.setattr(store, "_prepare_outbound_postfix_in_transaction", fail_after_preparing)
+    with pytest.raises(RuntimeError, match="Interrupted"):
+        store.prepare_meeting_alignment_message(delivery_key="atomic", body="Body", original_text="",
+                                                target_kind="user", target_id="u-a")
+    assert store.get_outbound_postfix("dingtalk", "atomic") is None
+    assert store.get_service_state("meeting_delivery_target:v1:dingtalk:atomic") is None
+
+
+def test_concurrent_preparation_cannot_replace_another_recipient(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    import json
+    from threading import Barrier
+
+    store = AutoReplyStore(tmp_path / "meeting.sqlite3")
+    barrier = Barrier(2)
+    def prepare(target_id):
+        barrier.wait()
+        try:
+            store.prepare_meeting_alignment_message(
+                delivery_key="race", body="Same body", original_text="",
+                target_kind="user", target_id=target_id,
+            )
+            return target_id
+        except ValueError:
+            return None
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(prepare, ["u-a", "u-b"]))
+    winners = [value for value in results if value is not None]
+    assert len(winners) == 1
+    assert json.loads(store.get_service_state("meeting_delivery_target:v1:dingtalk:race")) == {"kind": "user", "id": winners[0]}
 
 
 def test_private_retry_reuses_successful_group_delivery(tmp_path):

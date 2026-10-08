@@ -22,6 +22,10 @@
   sensitive action identity; recipient equality alone never proves completion.
   Both persisted bodies are verified before any effect, including rejecting
   an old HR-merged primary that discloses another recipient's sensitive text.
+  Meeting preparation atomically binds each canonical recipient using existing
+  service state, and dispatch verifies it again before reusing any receipt.
+  Legacy preparations without recipient proof remain blocked, never backfilled
+  from a new decision; this introduces no schema migration or history replay.
   Full roster evidence is scope-validated and deduplicated before counting.
   The meeting Skill and current documentation no longer suggest self fallback.
 
