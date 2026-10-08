@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-08: Reply queue polling no longer acquires a SQLite write lock when
+  the requested channel has no due work. A read-only preview is followed by the
+  original transactional recheck and claim, preserving concurrent ownership,
+  due-time semantics and future arrivals without caching queue state.
+
 - 2026-10-08: Meeting history denials remain typed candidate evidence rather
   than aborting all audience discovery. Preserve actual full roster IDs/counts;
   denied discussion remains unknown and does not authorize another recipient.

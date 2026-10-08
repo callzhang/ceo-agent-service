@@ -14303,6 +14303,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> list[ReplyTask]:
         if limit <= 0:
             return []
+        # Empty polling must not contend with real writes. Recheck below after
+        # acquiring the write transaction; a preview never reserves a task.
+        if not self.peek_reply_tasks(1, now=now, channel=channel):
+            return []
         with self._immediate_write_transaction() as db:
             now_expression = "current_timestamp" if now is None else "?"
             args: list[str | int] = [channel]
