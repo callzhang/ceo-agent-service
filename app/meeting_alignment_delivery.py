@@ -350,6 +350,8 @@ def deliver_meeting_alignment(
             ).provider_result
     except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
         raise MeetingDeliveryRetry(f"meeting send failed: {exc}") from exc
+    if send_result.get("success") is False:
+        raise MeetingDeliveryError("provider rejected primary meeting message")
     sensitive_delivery = None
     sensitive_private_merged = False
     if decision.sensitive_private_message is not None and not same_private_audience:
@@ -424,6 +426,8 @@ def _deliver_sensitive_private_message(
         ).provider_result
     except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
         raise MeetingDeliveryRetry("sensitive meeting message send failed") from exc
+    if send_result.get("success") is False:
+        raise MeetingDeliveryError("provider rejected sensitive meeting message")
     return SensitivePrivateDeliveryResult(
         target_id=recipient.user_id,
         target_title=recipient.name,

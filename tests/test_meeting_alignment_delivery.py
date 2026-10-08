@@ -600,6 +600,31 @@ def test_concurrent_preparation_cannot_replace_another_recipient(tmp_path):
     assert json.loads(store.get_service_state("meeting_delivery_target:v1:dingtalk:race")) == {"kind": "user", "id": winners[0]}
 
 
+@pytest.mark.parametrize("refused_call", [1, 2])
+def test_provider_refusal_is_not_reported_as_meeting_sent(tmp_path, refused_call):
+    dws = FakeDws()
+    original_send = dws.send_message
+    def send(*args, **kwargs):
+        result = original_send(*args, **kwargs)
+        return {"success": False} if len(dws.sent) == refused_call else result
+    dws.send_message = send
+    store = AutoReplyStore(tmp_path / "meeting.sqlite3")
+    sender = ServiceMessageSender(store=store, dingtalk=dws)
+    payload = send_decision(target="direct", mention_names=[]).model_dump()
+    payload["audience_scope"] = "business"
+    payload["sensitive_private_message"] = {
+        "target": {"kind": "direct", "direct_user_id": "u-b", "title": "B", "conversation_id": "", "candidates": []},
+        "message": "Private section", "reason": "Verified owner",
+        "recipient_evidence": ["Verified current scope"],
+    }
+    with pytest.raises(MeetingDeliveryError, match="provider rejected"):
+        deliver_meeting_alignment(MeetingAlignmentDecision.model_validate(payload), meeting_source(), dws,
+                                 message_sender=sender, delivery_key="refused")
+    assert len(dws.sent) == refused_call
+    refused_key = "refused" if refused_call == 1 else "refused:sensitive"
+    assert store.get_outbound_postfix_receipt("dingtalk", refused_key) is None
+
+
 def test_private_retry_reuses_successful_group_delivery(tmp_path):
     class PrivateFailsOnceDws(FakeDws):
         def __init__(self):
