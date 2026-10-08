@@ -24,7 +24,11 @@ from app.agent_context import (
     PriorReceipt,
 )
 from app.agent_contracts import AuditAgentResult, AuditOutcome, ConsumerAgentResult
-from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
+from app.agent_orchestrator import (
+    EXTERNAL_DEPENDENCY_WAIT_ERRORS,
+    AgentOrchestrator,
+    OrchestrationResult,
+)
 from app.system_executor import SystemExecutor
 from app.agent_runtime_contracts import RuntimeFailureClass
 from app.audit_agent import AuditAgentRunner
@@ -2383,6 +2387,7 @@ class DingTalkAutoReplyWorker:
             error_code = CODEX_PROVIDER_CAPACITY_EXHAUSTED
         provider_recovery = _is_codex_provider_recovery_wait_reason(error_code)
         runtime_outage_wait = error_code in RUNTIME_OUTAGE_WAIT_ERRORS
+        dependency_read_wait = error_code in EXTERNAL_DEPENDENCY_WAIT_ERRORS
         capacity_exhausted = is_codex_capacity_exhausted(error_code)
         authorization_wait = result.error.authorization_required
         active_recovery_wait = result.error.code in {
@@ -2395,6 +2400,7 @@ class DingTalkAutoReplyWorker:
             if (
                 provider_recovery
                 or runtime_outage_wait
+                or dependency_read_wait
                 or authorization_wait
                 or active_recovery_wait
                 or task.attempts < self.max_task_attempts
@@ -2429,6 +2435,7 @@ class DingTalkAutoReplyWorker:
                     refund_attempt=(
                         provider_recovery
                         or runtime_outage_wait
+                        or dependency_read_wait
                         or authorization_wait
                         or active_recovery_wait
                     ),
@@ -2469,6 +2476,7 @@ class DingTalkAutoReplyWorker:
             and task.attempts >= self.max_task_attempts
             and not provider_recovery
             and not runtime_outage_wait
+            and not dependency_read_wait
             and not authorization_wait
             and not active_recovery_wait
         ):
@@ -2547,6 +2555,7 @@ class DingTalkAutoReplyWorker:
             preserve_attempt_budget=(
                 provider_recovery
                 or runtime_outage_wait
+                or dependency_read_wait
                 or authorization_wait
                 or active_recovery_wait
             )
