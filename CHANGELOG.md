@@ -13,6 +13,9 @@
   the requested channel has no due work. A read-only preview is followed by the
   original transactional recheck and claim, preserving concurrent ownership,
   due-time semantics and future arrivals without caching queue state.
+- 2026-10-08: Split slow SQLite context timing into body, commit/rollback and
+  close phases for both stores, without logging SQL parameters or changing
+  transaction/error behavior. Aggregate elapsed time is not lock-hold evidence.
 
 - 2026-10-08: Meeting history denials remain typed candidate evidence rather
   than aborting all audience discovery. Preserve actual full roster IDs/counts;
