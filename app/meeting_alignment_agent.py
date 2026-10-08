@@ -5,6 +5,7 @@ from typing import Any, Protocol
 from pydantic import ValidationError
 
 from app.agent_result import agent_message_json_objects
+from app.audit_rules import MESSAGE_AUDIENCE_CONTRACT
 from app.agent_runtime_router import (
     CodexCommandFactory,
     BACKGROUND_AGENT_RUNTIME_BOUNDARY,
@@ -17,10 +18,10 @@ from app.agent_runtime_router import (
 from app.config import principal_display_name, work_profile_path
 from app.external_retry import ExternalDependencyError
 from app.meeting_alignment_models import (
-    DeliveryTarget,
     MeetingAlignmentDecision,
     MeetingSource,
     meeting_alignment_rule_for_message,
+    meeting_business_direct_recipient,
     render_meeting_alignment_cross_field_rules,
 )
 from app.prompt import work_profile_instruction
@@ -348,15 +349,15 @@ def build_meeting_alignment_prompt(
         source.model_dump(mode="json"), ensure_ascii=False, indent=2
     )
     target_contract = """每场会议都必须生成并发送一条会议总结，action 只能是 send；不得返回 no_action。
-- 内容优先于参会人数：客户、项目、产品、需求、交付、排期、测试、部署、客户沟通或跨团队行动一律是业务内容，必须返回 audience_scope=business，并使用 DWS 做群发现、按业务承接证据给候选群排序，以最强候选作为 target.kind=group。
+- 业务内容返回 audience_scope=business。使用 DWS 做群发现，以实际内容、业务目的和披露范围决定 target.kind=group 或 target.kind=direct；人数和群名称不决定受众。
 - 会议标题只是线索。优先核对会议材料中明确提及或分享的讨论群，再从会议结论、行动项和负责人提炼业务主题与预期受众。审阅下方预置候选，同时使用原文中的中文业务词与英文术语分别搜索 DWS，搜索会议标题和核心议题对应的群消息；必要时按工作线、项目、交付对象或行动负责人交叉搜索。没有预置候选或首次搜索零命中，不等于业务群发现失败。
 - 对每个可能的群，核对群内近期消息是否讨论同一工作线、谁在承接本次行动、群成员是否属于该议题的合理受众，以及群当前是否可发送。为每个有效候选写清候选群的来源、业务承接关系和受众证据；排除仅名称相似、成员重合但业务不符的群。多个合理群按本次议题和行动的实际归属排序，不按群规模或搜索顺序决定。不得为完成发送而选择宽泛群；候选群中含非授权受众时，不得把敏感内容带入群消息。
-- 只有在不同业务线索均已搜索、候选的消息与受众证据均已核对，仍没有可核验且可发送的业务群时，才算业务群发现失败；在 audit_summary 简述已核对的线索和排除原因，然后使用日历中已确认的会议组织者作为 direct fallback。不得因 1:1 或未搜索就私信，也不得按姓名模糊搜索目标。
+- 在 audit_summary 写清实际内容、近期讨论、完整当前群成员、稳定身份、当前职务和职责、披露授权及排除原因；缺少实质受众证据时明确记录缺口，不猜测接收人。业务私信只能显式选择来源中稳定 user_id 唯一匹配的参会人或已核验的日历组织者，且不得是 current_user_id 或其已核验别名。不得按姓名模糊搜索目标，也不得从发言人推断组织者；群不可发送时不得自动转发组织者。
 - 候选标记 verified_recurring_group 时，表示同名会议已多次成功投递到该群，且本次完整日历名册中多数可核验参会人仍在群内；仍须比较本次实际议题与群内近期讨论，不得仅凭历史投递或参会人覆盖率选群。
 - topic_discussion_evidence 是群内近期消息与本次会议摘要的词项交集线索，必须阅读其具体内容、时间和业务负责人，再判断是否承接本次议题。参会人覆盖率只用于核对受众，不证明业务归属；群成员多不代表更合适。优先选择讨论过同一工作线、负责本次行动且受众合适的群。
 - personal 只适用于整场会议均为个人事项，必须返回 audience_scope=personal；只有完整日历 1:1（attendee_evidence=calendar、attendee_roster_complete=true、恰好两名参会人）时，才可以使用 target.kind=direct，目标只能是另一位参会人。
-- 业务会议中出现人员评价、绩效、薪酬、晋升、去留、候选人结论、健康或请假等人员敏感内容时，先按受众决定是否拆分：如果 DWS 实时群发现证明目标是 HR 专属或已匹配的群，且讨论是会议中 HR 参会人的共同事项、不是针对未参会的具体个人，可以把敏感详情放进 final_message，并将 sensitive_private_message=null；只要群受众不明确、含非授权成员，或讨论针对具体个人，就必须去掉群消息中的敏感详情，写入 sensitive_private_message。
-- sensitive_private_message.target 必须是 direct，并使用参会人中经 DWS 实时身份和职责确认的 HR/人员负责人稳定 user_id；没有可确认的 HR/人员负责人时发给当前用户本人。recipient_evidence 写清实时身份或职责依据。不得按姓名猜测接收人，也不得发给被评价人或无关参会人。
+- 业务会议中出现人员评价、绩效、薪酬、晋升、去留、候选人结论、健康或请假等人员敏感内容时，核对内容与实际披露授权；相同合适受众只生成一条消息，sensitive_private_message=null，仅当内容需要不同受众时拆成业务总结与敏感私聊。HR 职务不是自动披露授权，私信不天然安全。
+- sensitive_private_message.target 必须是 direct，稳定 user_id 必须唯一匹配来源参会人，禁止 current_user_id 及其已核验别名。recipient_evidence 必须记录实时身份、当前职务职责及实际内容的披露授权。接收人无法核验时记录缺口，不得按姓名猜测，不得私聊本人兜底。
 - 普通的工作分工、交付进展、项目风险和业务结果不是人员敏感内容，不得因为出现姓名就从群消息中删除。
 - 没有实质观点分歧时，仍须发送简短的会议结论、已确认事项和下一步；不得因议题平稳而跳过。"""
 
@@ -383,7 +384,11 @@ def build_meeting_alignment_prompt(
 - 措辞不同、补充信息、探索性讨论或已经自然顺畅推进，不算实质分歧。
 - 沉默不算对齐。只有相关各方明确同意、承诺或复述一致，才把议题标为 aligned；主持人单方面宣布结论不够。
 - topics 中有 aligned 时，trigger_reasons 必须包含 aligned_disagreement；topics 中有 unresolved 时，trigger_reasons 必须包含 unresolved_disagreement。两类议题同时存在时两个 trigger 都必须包含。
-- 每场会议最多生成一条业务群消息与一条敏感私聊消息；同一受众的多个议题必须合并，不得按议题拆成多条。HR 群可以承接其共同受众的敏感内容，此时只生成一条 HR 群消息，不再重复生成敏感私聊。
+- 每场会议最多生成一条业务总结与一条敏感私聊消息；同一合适受众的多个议题必须合并，不得按议题拆成多条，仅当受众不同时拆分。
+
+共享消息受众合同：
+{MESSAGE_AUDIENCE_CONTRACT}
+本路径仍是独立 Meeting Alignment planner/delivery，不是通用 Consumer/Audit 执行引擎；共享合同不新增操作权限，不绕过历史风险拒绝或正式复核。
 
 内容合同：
 - aligned 议题：简述各方观点，并总结最终结论及对齐原因。
@@ -405,7 +410,7 @@ def build_meeting_alignment_prompt(
 输出合同：
 - 只输出 MeetingAlignmentDecision JSON，严格遵守下方 schema，不添加字段。
 - action 固定为 send；final_message、trigger_reasons、audience_scope 和明确 target 必须完整，并遵守内容优先于参会人数的目标合同。
-- 没有人员敏感内容时 sensitive_private_message 必须为 null；存在混合内容时，按目标群的受众边界选择：匹配的 HR 群共同讨论可将敏感详情放在 final_message 并把 sensitive_private_message 设为 null；针对具体个人或受众不明确时，生成脱敏后的 final_message 和独立 sensitive_private_message。
+- 没有人员敏感内容时 sensitive_private_message 必须为 null；存在混合内容时，相同已核验且合适的受众只生成 final_message；仅当内容需要不同已核验受众时，生成脱敏后的 final_message 和独立 sensitive_private_message。缺少披露授权不能用私聊兜底。
 
 {render_meeting_alignment_cross_field_rules()}
 
@@ -634,34 +639,31 @@ def _validate_source_aware_target(
         raise MeetingAlignmentTargetError("send requires an explicit delivery target")
     if decision.audience_scope == "business":
         if target.kind == "direct":
-            verified_groups = [
-                candidate
-                for candidate in group_candidates or []
-                if candidate.get("verified_recurring_group") is True
-            ]
-            if verified_groups:
+            try:
+                meeting_business_direct_recipient(source, target)
+            except ValueError as exc:
+                raise MeetingAlignmentTargetError(str(exc)) from exc
+            if not decision.audit_summary.strip():
                 raise MeetingAlignmentTargetError(
-                    "business direct fallback is invalid with verified recurring group: "
-                    + ", ".join(
-                        str(candidate["title"]) for candidate in verified_groups
-                    )
+                    "business direct requires audience evidence in audit_summary"
                 )
-            _validate_business_direct_fallback(source, target)
         elif target.kind != "group":
             raise MeetingAlignmentTargetError(
-                "business send requires a group target or calendar organizer fallback"
+                "business send requires an explicit verified audience"
             )
         private_message = decision.sensitive_private_message
         if private_message is not None:
-            matches = [
-                participant
-                for participant in source.participants
-                if participant.user_id
-                == private_message.target.direct_user_id
-            ]
-            if len(matches) != 1:
+            try:
+                meeting_business_direct_recipient(
+                    source, private_message.target, participant_only=True
+                )
+            except ValueError as exc:
+                raise MeetingAlignmentTargetError(str(exc)) from exc
+            if not private_message.recipient_evidence or any(
+                not evidence.strip() for evidence in private_message.recipient_evidence
+            ):
                 raise MeetingAlignmentTargetError(
-                    "sensitive private target must identify one meeting participant"
+                    "sensitive private target requires recipient evidence"
                 )
         return
     if (
@@ -706,31 +708,6 @@ def _validate_source_aware_target(
                 f"participant: expected {counterpart.name!r}, "
                 f"got {target.title!r}"
             )
-
-
-def _validate_business_direct_fallback(
-    source: MeetingSource,
-    target: DeliveryTarget,
-) -> None:
-    organizer = source.creator
-    if organizer is None or not organizer.name.strip():
-        raise MeetingAlignmentTargetError(
-            "business direct fallback requires a calendar organizer"
-        )
-    if _canonical_person_name(target.title) != _canonical_person_name(organizer.name):
-        raise MeetingAlignmentTargetError(
-            "business direct fallback must target the calendar organizer"
-        )
-    if organizer.user_id.strip():
-        if target.direct_user_id != organizer.user_id.strip():
-            raise MeetingAlignmentTargetError(
-                "business direct fallback must use the calendar organizer user_id"
-            )
-        return
-    if target.direct_user_id:
-        raise MeetingOrganizerIdentityError(
-            "business direct fallback cannot supply a guessed user_id"
-        )
 
 
 def _canonical_person_name(value: str) -> str:

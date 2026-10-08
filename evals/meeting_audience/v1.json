@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "baseline_ref": "2fbc3a6a157606d42e952692038796ca5a7fc7cc",
+  "settings": {"model": "gpt-5.6-sol", "reasoning_effort": "high", "timeout_seconds_per_case": 180},
+  "participants": [{"name":"Principal","user_id":"principal","open_dingtalk_id":"open-principal"},{"name":"Morgan","user_id":"manager","open_dingtalk_id":"open-manager"},{"name":"Casey","user_id":"casey","open_dingtalk_id":"open-casey"}],
+  "cases": [
+    {
+      "id":"business_owner_without_calendar_creator",
+      "summary":"Morgan and Casey reviewed the customer pilot. Casey will update the verified delivery plan. Morgan is the COO and directly responsible for this pilot. The verified counterpart owns the complete follow-up; no wider group audience is established.",
+      "facts":"The recording is transcript-derived; creator is unknown, not inferred from speakers. Current organization records bind manager to Morgan, COO and direct supervisor of Casey. Both participated. The only discovered broad sales group has denied history access, not empty discussion or proof of a suitable audience. No new effects occurred. Ordinary pilot progress is within Morgan's responsibility. No private notification is requested for the principal.",
+      "groups":[{"conversation_id":"sales-denied","title":"Sales","member_count":3,"member_open_dingtalk_ids":["open-principal","open-manager","open-casey"],"member_roster_complete":true,"history_read_status":"denied","history_read_code":"1001","history_read_reason":"Provider denied group history"}],
+      "expected_target":{"kind":"direct","direct_user_id":"manager"},
+      "expected_private_user_id":null
+    },
+    {
+      "id":"ordinary_business_same_group",
+      "summary":"The pilot team agreed Casey will publish the updated integration checklist. Morgan confirmed the delivery date. No personal, personnel or restricted information was discussed.",
+      "facts":"The complete current pilot group contains Principal, Morgan and Casey. Current titles are CEO, COO/pilot owner, and pilot engineer respectively. Full relevant discussion concerns the same pilot checklist and date; all three are the authorized business audience. All scoped identities and membership are verified. There is no private-only material or distinct private audience.",
+      "groups":[{"conversation_id":"pilot-group","title":"Pilot delivery","member_count":3,"member_open_dingtalk_ids":["open-principal","open-manager","open-casey"],"member_roster_complete":true,"history_read_status":"read","topic_discussion_evidence":[{"text":"Casey: Integration checklist ready. Morgan: Confirm the pilot delivery date here.","create_time":"2026-10-01T10:00:00+00:00","shared_topic_terms":0,"topic_match_score":0}]}],
+      "expected_target":{"kind":"group","conversation_id":"pilot-group"},
+      "expected_private_user_id":null
+    },
+    {
+      "id":"distinct_business_and_personnel_audiences",
+      "summary":"Casey will publish the pilot integration checklist. Morgan also recorded a confidential individual performance observation identified as P-7 concerning Casey. That observation is restricted to Morgan in the verified managerial responsibility, not the business group.",
+      "facts":"The complete current pilot group contains Principal, Casey and Taylor (pilot support engineer). Full relevant group discussion covers the checklist. Taylor has no personnel-review responsibility. Current organization records bind manager to Morgan, COO and Casey's direct supervisor; Morgan participated in this meeting and is the authorized personnel audience. Principal has not requested a separate private report. P-7 must not enter the pilot group or be sent to Principal as a private fallback. No effect occurred yet.",
+      "groups":[{"conversation_id":"pilot-group","title":"Pilot delivery","member_count":3,"member_open_dingtalk_ids":["open-principal","open-casey","open-taylor"],"member_roster_complete":true,"history_read_status":"read","topic_discussion_evidence":[{"text":"Casey and Taylor coordinate the current pilot integration checklist here.","create_time":"2026-10-01T10:00:00+00:00","shared_topic_terms":0,"topic_match_score":0}]}],
+      "expected_target":{"kind":"group","conversation_id":"pilot-group"},
+      "expected_private_user_id":"manager",
+      "private_marker":"P-7"
+    }
+  ]
+}
