@@ -251,3 +251,19 @@ def test_history_keeps_recorded_section_sources_and_does_not_infer_old_sections(
     event["runtime_attempt_id"] = 82
     store.append_agent_run_event(run.id, event, owner="test")
     assert historical_prompt_preview(store, run_id=run.id)["sections"] == []
+
+
+
+def test_new_saved_task_sections_keep_exact_task_without_current_prefix(tmp_path):
+    store = AutoReplyStore(tmp_path / "new-section-preview.sqlite3")
+    task, run = task_and_run(store)
+    task_sections = [{"name": "任务 Skill 入口", "source": "任务冻结 Skill 元数据", "placement": "task", "characters": 6},
+                     {"name": "当前任务事实", "source": "历史输入快照", "placement": "task", "characters": 5}]
+    saved_task = "FROZEN\n\nFACTS"
+    store.append_agent_run_event(run.id, {"type": "runtime.prompt", "role": "consumer", "rendered_at": "2026-10-05T10:00:00+00:00",
+        "task_prompt": saved_task, "sections": task_sections,
+        "invocation_facts": {"skill_protocol_source": "frozen_task_skills", "skill_names": ["ceo-calendar-invite"]}}, owner="test")
+    result = current_prompt_preview(store, role="consumer", config=load_runtime_config({}), task_id=task.id)
+    assert result["task_prompt"] == saved_task
+    assert [section for section in result["sections"] if section["placement"] == "task"] == task_sections
+    assert "当前 Skill 目录" not in [section["source"] for section in result["sections"]]

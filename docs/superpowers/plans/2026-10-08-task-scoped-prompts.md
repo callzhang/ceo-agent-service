@@ -12,9 +12,14 @@
 
 ## 当前证据
 
-先前 native PR31 OAuth 验证与202 passed4 skipped属于原生修复版本，不能代替本次精简验收。codex_api 429控制证明当时capacity失败；Qwen minimal成功但exact无final，警告不是确认根因。私有完整工作证据保存于 /Users/derek/Documents/memory/ceo-agent-service/task-scoped-prompts-20261008/，不发布用户原始内容。
+先前 native PR31 OAuth 验证与202 passed4 skipped属于原生修复版本，不能代替本次精简验收。codex_api 控制请求返回 HTTP 429，具体容量、配额或限流原因未查实，不作为 schema 缺陷。私有完整工作证据保存于 /Users/derek/Documents/memory/ceo-agent-service/task-scoped-prompts-20261008/，不发布用户原始内容。
+
+输入统计覆盖403份已保存的 runtime.prompt；完整真实 trajectory 当前只确认日历样本，不能用快照统计替代四类任务的完整轨迹。其余类别使用固定匿名场景补充验证，并分别注明生产证据与受控证据。
+
+Qwen 工具缺失已定位到工具格式：Codex CodeModeOnly 将 MCP 包装为 custom/freeform exec，而当前 vLLM Responses 转换保留 function 工具、过滤 custom 工具。原生 Direct function 模式的独立修复正在进行完整 schema + 只读 MCP 的冷启动/续会话验证；没有有效结果的冷启动不得计入通过。早期固定场景运行发现 fixture 缺少依赖工具、read_skill 参数与真实接口不一致，已保留并标记失效；不能作为最终对照验收。最终对照须先冻结实际装配输入与真实工具 schema。
 
 ## 实施记录
 
 - 项目规则提交 edda635f；共享文件只移除本次四条，其他规则保持原样。
 - Settings sections 元数据接口：name/source（显示就绪）、placement(developer/task)、characters（脱敏文本字符数，不含段间分隔符），数组顺序即装配顺序；不重复保存段全文。
+- 独立审查发现两处调用链缺陷，正在补回归修复：安装 Skill 入口须提交真实 read_skill(path)；通用 Scheduled Agent 须保存并按需读取冻结正文，不能在 Task 中全量展开。显式自定义任务约定与自动生成目录通过结构化来源区分。
