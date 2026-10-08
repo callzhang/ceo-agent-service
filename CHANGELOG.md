@@ -9,6 +9,16 @@
 
 ## Unreleased
 
+- 2026-10-08: Probe direct Email action eligibility without a SQLite writer
+  lock. Empty, settled, account-excluded and retry-blocked polls remain reads;
+  actual claims recompute all plan and dependency checks under BEGIN IMMEDIATE.
+  Held-writer and intervening-claim regressions preserve exclusive delivery.
+
+- 2026-10-08: Index the existing integer-cast scheduled Reply execution link
+  so current failed Reply recovery does not scan unrelated scheduled history.
+  The partial expression index preserves existing conversion and recovery
+  semantics; VM-budget and legacy-link regressions cover the remaining scan.
+
 - 2026-10-08: Locate scheduled incident source runs by indexed event ID or
   canonical primary key, preserving exact identity and later same-task terminal
   recovery checks. Select failed Email action rows before classification payload

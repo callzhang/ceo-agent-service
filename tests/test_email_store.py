@@ -6552,6 +6552,67 @@ def test_direct_action_claim_does_not_materialize_settled_history(tmp_path: Path
     assert fetch_sizes == [0]
 
 
+@pytest.mark.parametrize("queue", ["empty", "settled", "other_account", "blocked"])
+def test_idle_direct_action_poll_does_not_wait_for_writer(tmp_path, monkeypatch, queue):
+    database = tmp_path / "idle-direct-action.sqlite3"
+    store = EmailStore(database)
+    if queue != "empty":
+        _persist_scan(
+            store, _classification(status=EmailClassificationStatus.PROCESSED)
+        )
+        with store._connect() as db:
+            if queue == "settled":
+                db.execute("update email_actions set status='done'")
+            elif queue == "blocked":
+                db.execute(
+                    "update email_actions set status='failed', next_attempt_at=?",
+                    ("2026-09-01T12:00:00+00:00",),
+                )
+    open_connection = store._open_connection
+
+    def no_wait_connection():
+        db = open_connection()
+        db.execute("pragma busy_timeout=0")
+        return db
+
+    monkeypatch.setattr(store, "_open_connection", no_wait_connection)
+    writer = sqlite3.connect(database, timeout=0)
+    try:
+        writer.execute("begin immediate")
+        assert (
+            store.claim_next_direct_action(
+                claimed_at="2026-08-30T12:00:00+00:00",
+                account_ids=("unrelated",) if queue == "other_account" else None,
+            )
+            is None
+        )
+    finally:
+        writer.rollback()
+        writer.close()
+
+
+def test_direct_action_probe_is_not_a_reservation(tmp_path, monkeypatch):
+    database = tmp_path / "probe-is-not-reservation.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(store, _classification(status=EmailClassificationStatus.PROCESSED))
+    other = EmailStore(database)
+    select = store._next_direct_action_row
+    probes = []
+
+    def claim_between_probe_and_transaction(db, claimed_at, account_ids):
+        row = select(db, claimed_at, account_ids)
+        probes.append(db.in_transaction)
+        if len(probes) == 1:
+            assert other.claim_next_direct_action(claimed_at=claimed_at) is not None
+        return row
+
+    monkeypatch.setattr(store, "_next_direct_action_row", claim_between_probe_and_transaction)
+    assert store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00") is None
+    assert probes == [False, True]
+    rows = _fetchall(database, "select status from email_actions")
+    assert [row["status"] for row in rows] == ["processing"]
+
+
 def test_claim_direct_action_uses_current_immutable_plan_and_stable_locator(
     tmp_path: Path,
 ):
