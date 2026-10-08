@@ -6,7 +6,10 @@ from pathlib import Path
 from typing import Protocol
 
 from app.agent_context import AgentTaskContext
-from app.agent_cron.commands import ServiceCommandConsumerContext
+from app.agent_cron.commands import (
+    ServiceCommandConsumerContext,
+    ServiceCommandSkillMaterial,
+)
 from app.agent_cron.models import ScheduledTaskRun
 from app.agent_runtime_contracts import RuntimeKind, RuntimeRoute
 from app.managed_skills import ManagedSkillRevision
@@ -146,12 +149,24 @@ class ScheduledAgentContextBuilder:
         if not snapshot.prompt and not snapshot.skill_refs:
             return None
         protocols, _skill_facts = self._materialize_skills(snapshot.skill_refs)
+        skill_names = tuple(ref.skill_name for ref in snapshot.skill_refs)
+        selected = ", ".join(f"`{name}`" for name in skill_names)
         return ServiceCommandConsumerContext(
             scheduled_task_id=snapshot.task_id,
             scheduled_task_run_id=run.id,
             prompt=snapshot.prompt,
-            skill_names=tuple(ref.skill_name for ref in snapshot.skill_refs),
-            skill_protocol="\n\n".join(protocols),
+            skill_names=skill_names,
+            skill_protocol=(
+                f"Selected frozen task Skills: {selected}. Before applying or "
+                "reviewing an applicable selected Skill, call "
+                "`agent_cli.read_task_skill(name)` to read its exact task-bound "
+                "content. You must read each applicable selected Skill before "
+                "deciding or reviewing the task."
+            ),
+            skill_materials=tuple(
+                ServiceCommandSkillMaterial(name=name, content=content)
+                for name, content in zip(skill_names, protocols, strict=True)
+            ),
         )
 
     def _materialize_skills(self, refs):

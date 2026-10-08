@@ -137,7 +137,8 @@ def test_shared_source_bundle_includes_current_source_once_and_preserves_metadat
                 "sender": "张三",
             },
             "task_signals": {"possible_task_update": True},
-            "scheduled_consumer": {"prompt": "业务范围", "skill_protocol": "旧契约"},
+            "scheduled_consumer": {"prompt": "业务范围", "skill_protocol": "旧契约",
+                "skill_materials": [{"name": "ceo-work-tracking", "content": "FROZEN SKILL BODY"}]},
         }
     )
     id = store.create_business_task_signal(
@@ -163,6 +164,7 @@ def test_shared_source_bundle_includes_current_source_once_and_preserves_metadat
     assert current["scheduled_consumer"] == {"prompt": "业务范围"}
     assert json.dumps(bundle, ensure_ascii=False).count(item.summary) == 1
     assert item.scheduled_consumer["skill_protocol"] == "旧契约"
+    assert item.scheduled_consumer["skill_materials"][0]["content"] == "FROZEN SKILL BODY"
     later = item.model_copy(update={"summary": "本次不同版本正文"})
     assert (
         len(

@@ -1289,7 +1289,7 @@ def _analyze_meeting_job(
                 scheduled_consumer.prompt if scheduled_consumer is not None else ""
             ),
             skill_protocol=(
-                scheduled_consumer.skill_protocol
+                scheduled_consumer.materialized_skill_protocol()
                 if scheduled_consumer is not None
                 else ""
             ),

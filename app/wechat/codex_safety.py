@@ -8,6 +8,7 @@ import tomllib
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+from app.business_skills import codex_skill_config_override
 from app.codex_runner import (
     CODEX_BYPASS_APPROVALS_AND_SANDBOX,
     _config_string,
@@ -36,6 +37,8 @@ WECHAT_MEMORY_READ_TOOLS = (
 )
 
 AGENT_CLI_READ_TOOLS = (
+    "read_system_action_contract",
+    "read_task_skill",
     "read_skill",
     "read_text_file",
     "read_spreadsheet",
@@ -221,9 +224,11 @@ def make_role_agent_command(
             "features.code_mode=", "features.code_mode_only=",
             "features.code_mode.excluded_tool_namespaces=",
             "features.code_mode.direct_only_tool_namespaces=",
+            "skills.config=", "project_doc_max_bytes=",
         ),
     )
     options = [
+        "-c", "project_doc_max_bytes=0",
         *(option for feature in ROLE_DISABLED_NATIVE_FEATURES
           if feature != "code_mode_host" and not (
               role == "consumer" and feature in {"shell_tool", "unified_exec"}
@@ -249,6 +254,9 @@ def make_role_agent_command(
         "-c",
         'approval_policy="never"',
     ]
+    skill_override = codex_skill_config_override(())
+    if skill_override:
+        options.extend(("-c", skill_override))
     if role == "consumer":
         options.extend([
             "--skip-git-repo-check",

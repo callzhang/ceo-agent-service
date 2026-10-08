@@ -26,6 +26,7 @@ from mcp.types import ToolAnnotations
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
+from app.action_contract_catalog import read_system_action_contract as load_system_action_contract
 from app.agent_result import EffectKind
 from app.agent_effects import McpToolEffectRegistry
 from app.agent_skill_usage import resolve_authorized_skill_path
@@ -918,6 +919,63 @@ def _current_task_generation(db_path: Path | None, task_id: int | None) -> str:
     return row[0]
 
 
+def _read_bound_task_skill(
+    db_path: Path | None,
+    task_id: int | None,
+    expected_generation: str | None,
+    name: str,
+) -> dict[str, str]:
+    """Read one exact frozen Skill block from the bound task's original input."""
+    if not isinstance(name, str) or not name.strip() or name != name.strip():
+        raise ValueError("task Skill name is invalid")
+    if db_path is None or type(task_id) is not int or task_id <= 0:
+        raise ValueError("task Skill binding is missing")
+    database = Path(db_path).resolve()
+    try:
+        with closing(
+            sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True)
+        ) as connection:
+            row = connection.execute(
+                "select execution_generation, trigger_message_json "
+                "from reply_tasks where id=?",
+                (task_id,),
+            ).fetchone()
+    except sqlite3.Error as exc:
+        raise ValueError("task Skill binding is unavailable") from exc
+    if row is None:
+        raise ValueError("task Skill binding is unavailable")
+    if row[0] != expected_generation:
+        raise ValueError("task Skill generation changed")
+    try:
+        trigger = json.loads(row[1])
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("task Skill material is unavailable") from exc
+    raw_payload = trigger.get("raw_payload") if isinstance(trigger, dict) else None
+    scheduled = (
+        raw_payload.get("scheduled_consumer")
+        if isinstance(raw_payload, dict)
+        else None
+    )
+    from app.agent_cron.commands import ServiceCommandConsumerContext
+
+    context = ServiceCommandConsumerContext.from_payload(scheduled)
+    if context is None or not context.skill_materials:
+        raise ValueError("task Skill material is unavailable")
+    matches = [
+        material for material in context.skill_materials if material.name == name
+    ]
+    if not matches:
+        raise ValueError(f"unknown task Skill material: {name}")
+    if len(matches) != 1:
+        raise ValueError(f"ambiguous task Skill material: {name}")
+    content = matches[0].content
+    return {
+        "name": name,
+        "content": content,
+        "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+    }
+
+
 def _task_file_root(
     db_path: Path | None, task_id: int | None, generation: str | None, *, create: bool,
 ) -> Path:
@@ -1153,6 +1211,35 @@ def build_role_server(
     bound.add_tool(read_skill_tool, name="read_skill", annotations=read)
     bound.add_tool(read_text_file_tool, name="read_text_file", annotations=read)
     bound.add_tool(read_spreadsheet_tool, name="read_spreadsheet", annotations=read)
+
+    def read_system_action_contract(
+        capability: str,
+        operation: str | None = None,
+    ) -> dict[str, object]:
+        """Read the complete canonical contract for an exact reviewed system action.
+
+        Pass a capability from the prompt catalog and optionally one of its
+        operations. The result retains every shared, role, identity, payload,
+        target, and completion-evidence rule from the canonical contract.
+        """
+        return load_system_action_contract(capability, operation)
+
+    bound.add_tool(
+        read_system_action_contract,
+        name="read_system_action_contract",
+        annotations=read,
+    )
+
+    def read_task_skill(name: str) -> dict[str, str]:
+        """Read an exact selected Skill frozen in this task's original input.
+
+        Pass a Skill name from the scheduled prompt catalog. The returned content
+        is the immutable managed revision or operation snapshot saved when the
+        scheduled command ran; this lookup never rereads an installed Skill file.
+        """
+        return _read_bound_task_skill(db_path, task_id, artifact_generation, name)
+
+    bound.add_tool(read_task_skill, name="read_task_skill", annotations=read)
 
     def read_task_artifact(name: str) -> dict[str, str]:
         """Read a text artifact from this task's current execution generation."""

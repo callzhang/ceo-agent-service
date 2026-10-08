@@ -12547,7 +12547,7 @@ def test_resume_prompt_only_includes_turn_message_without_repeating_thread_promp
     prompt = agent_prompt(worker)
     assert agent_runner(worker).calls[0][3] == ""
     assert codex.calls == []
-    assert "1. [role_boundary] Consumer Agent A forms the candidate" in prompt
+    assert "1. [role_boundary] Consumer Agent A forms the candidate" not in prompt
     assert "CEO Agent Prompt" not in prompt
     assert "你是 Alex 的钉钉自动回复分身" not in prompt
     assert "回答任何问题前，先检索本地 workspace" not in prompt
@@ -13228,7 +13228,7 @@ def test_force_new_rerun_starts_fresh_codex_session(tmp_path: Path, monkeypatch)
     )
     assert run is not None
     assert run.codex_session_id != "old-session"
-    assert "1. [role_boundary] Consumer Agent A forms the candidate" in agent_prompt(worker)
+    assert "1. [role_boundary] Consumer Agent A forms the candidate" not in agent_prompt(worker)
     assert "你是 Alex 的钉钉自动回复分身" not in agent_prompt(worker)
 
 
@@ -13440,7 +13440,7 @@ def test_prompt_includes_dynamic_similar_corpus_examples_without_static_style_pr
     assert "先看岗位匹配" not in prompt
     assert "cid-style-1" not in prompt
     assert '"conversation_title": "Friday"' in prompt
-    assert "1. [role_boundary] Consumer Agent A forms the candidate" in prompt
+    assert "1. [role_boundary] Consumer Agent A forms the candidate" not in prompt
 
 
 def test_prompt_includes_similar_human_feedback_examples(tmp_path: Path, monkeypatch):

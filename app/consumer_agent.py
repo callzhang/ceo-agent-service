@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.agent_context import _AUDIT_AGENT_RULES, _CONSUMER_AGENT_RULES, AgentTaskContext
+from app.action_contract_catalog import action_contract_catalog, system_action_contract_document
 from app.agent_contracts import (
     DINGTALK_MESSAGE_CHANNELS,
     AuditAgentResult,
@@ -161,7 +162,7 @@ do not return a nested error object. Match the supplied wire schema exactly.
 
 
 def system_action_contracts_text() -> str:
-    return (SERVICE_ROOT / "docs" / "system-action-contracts.md").read_text(encoding="utf-8").strip()
+    return action_contract_catalog()
 
 
 def consumer_wire_contract_hash(
@@ -174,7 +175,7 @@ def consumer_wire_contract_hash(
     contract = {
         "consumer_rules": _CONSUMER_AGENT_RULES,
         "role_boundary": CONSUMER_ROLE_BOUNDARY,
-        "system_action_contracts": system_action_contracts_text(),
+        "system_action_contracts": system_action_contract_document(),
         "agent_capability_instructions": AGENT_CAPABILITY_INSTRUCTIONS,
         # The runtime Skill tree is the single source the Agent reads; the
         # snapshot below records which revisions were in force, it is not the
@@ -929,10 +930,33 @@ def _schema_json(
     ],
 ) -> str:
     return json.dumps(
-        model.model_json_schema(),
+        _compact_prompt_schema(model.model_json_schema()),
         ensure_ascii=False,
         separators=(",", ":"),
     )
+
+
+def _compact_prompt_schema(value):
+    """Omit schema annotations, preserving property/definition names and assertions."""
+    if isinstance(value, list):
+        return [_compact_prompt_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {}
+    for key, item in value.items():
+        if key in {"title", "default"}:
+            continue
+        if key in {"properties", "$defs", "definitions", "patternProperties", "dependentSchemas"}:
+            result[key] = {name: _compact_prompt_schema(schema) for name, schema in item.items()}
+        elif key in {
+            "allOf", "anyOf", "oneOf", "prefixItems", "items", "additionalProperties",
+            "additionalItems", "contains", "not", "if", "then", "else", "propertyNames",
+            "unevaluatedProperties", "unevaluatedItems", "contentSchema",
+        }:
+            result[key] = _compact_prompt_schema(item)
+        else:
+            result[key] = item
+    return result
 
 
 def _role_developer_instructions(

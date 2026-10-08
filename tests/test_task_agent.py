@@ -2295,11 +2295,13 @@ def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill(
         "prompt": "只处理 $ceo-work-tracking 能确认的真实工作项。",
         "skill_names": ["ceo-work-tracking"],
         "skill_protocol": "# Old Work Tracking Snapshot\nReturn update_project with todo_changes.",
+        "skill_materials": [{"name": "ceo-work-tracking", "content": "FROZEN HISTORICAL SKILL BODY"}],
     }
     item = WorkItem.model_validate(payload)
     original = item.scheduled_consumer.copy()
     prompt = build_task_agent_prompt(item, "无候选项目")
     assert "## Scheduled Consumer Prompt\n只处理" in prompt
+    assert "FROZEN HISTORICAL SKILL BODY" not in prompt
     assert "# Old Work Tracking Snapshot" not in prompt
     assert "Return update_project with todo_changes." not in prompt
     assert '"scheduled_task_run_id": 11' in prompt

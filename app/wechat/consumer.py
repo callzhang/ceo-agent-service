@@ -178,7 +178,7 @@ class WechatReplyConsumer:
                 "## Scheduled Consumer Prompt\n"
                 f"{scheduled_consumer.prompt}\n\n"
                 "## Scheduled Consumer Skills\n"
-                f"{scheduled_consumer.skill_protocol}\n\n"
+                f"{scheduled_consumer.materialized_skill_protocol()}\n\n"
                 f"{prompt}"
             )
         self.store.mark_wechat_read_only_decision_started(

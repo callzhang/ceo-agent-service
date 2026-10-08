@@ -519,8 +519,29 @@ def test_command_trigger_passes_only_snapshot_consumer_prompt_and_skills(tmp_pat
     assert registry.context is not None
     assert registry.context.prompt == command_task.prompt
     assert registry.context.skill_names == ("managed-check", "operation-check")
-    assert "EXACT MANAGED BODY" in registry.context.skill_protocol
-    assert "EXACT OPERATION BODY" in registry.context.skill_protocol
+    assert "agent_cli.read_task_skill(name)" in registry.context.skill_protocol
+    assert "managed-check" in registry.context.skill_protocol
+    assert "operation-check" in registry.context.skill_protocol
+    assert "EXACT MANAGED BODY" not in registry.context.skill_protocol
+    assert "EXACT OPERATION BODY" not in registry.context.skill_protocol
+    assert [material.name for material in registry.context.skill_materials] == [
+        "managed-check",
+        "operation-check",
+    ]
+    assert (
+        "## Managed Skill: managed-check"
+        in registry.context.skill_materials[0].content
+    )
+    assert "revision_id:" in registry.context.skill_materials[0].content
+    assert "sha256:" in registry.context.skill_materials[0].content
+    assert "EXACT MANAGED BODY" in registry.context.skill_materials[0].content
+    assert (
+        "## Operation Skill: operation-check"
+        in registry.context.skill_materials[1].content
+    )
+    assert "source:" in registry.context.skill_materials[1].content
+    assert "sha256:" in registry.context.skill_materials[1].content
+    assert "EXACT OPERATION BODY" in registry.context.skill_materials[1].content
 
 
 def test_command_trigger_failure_ends_the_trigger_and_raises_attention(tmp_path):

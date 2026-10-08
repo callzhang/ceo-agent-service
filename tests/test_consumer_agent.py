@@ -334,7 +334,7 @@ def test_consumer_composed_instructions_are_skill_first_and_schema_authoritative
     assert "## Pydantic Wire Contract" in instructions
     assert "## Pydantic Result Contract" not in instructions
     assert CONSUMER_DYNAMIC_SKILL_BODY in instructions
-    assert '"title":"ConsumerAgentWireResult"' in instructions
+    assert '"$ref":"#/$defs/_ConsumerWire"' in instructions
     assert '"title":"ConsumerAgentResult"' not in instructions
     assert audit_rules not in instructions
     assert CONSUMER_DYNAMIC_SKILL_BODY in instructions
@@ -668,7 +668,7 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
     instructions = consumer_developer_instructions("Verify every supported fact.")
 
     assert "## Pydantic Wire Contract" in instructions
-    assert '"title":"ConsumerAgentWireResult"' in instructions
+    assert '"$ref":"#/$defs/_ConsumerWire"' in instructions
     assert "## Pydantic Result Contract" not in instructions
     assert '"title":"ConsumerAgentResult"' not in instructions
     assert '"objective"' in instructions
@@ -701,7 +701,9 @@ def test_consumer_prompt_schema_is_the_parser_schema():
     schema_text = instructions.split("## Pydantic Wire Contract\n", 1)[1]
     prompt_schema = json.loads(schema_text.split("\n\n", 1)[0])
 
-    assert prompt_schema == ConsumerAgentWireResult.model_json_schema()
+    assert prompt_schema == consumer_agent._compact_prompt_schema(
+        ConsumerAgentWireResult.model_json_schema()
+    )
     assert (
         consumer_agent.parse_consumer_agent_wire_result
         is parse_consumer_agent_wire_result

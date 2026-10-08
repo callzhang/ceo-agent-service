@@ -65,8 +65,9 @@ def test_send_reply_creates_ready_delivery(fake_codex, consumer, store):
     assert "memory_recall" in fake_codex.prompts[0]
 
 
+@pytest.mark.parametrize("frozen_material", [False, True], ids=("inline", "frozen"))
 def test_consumer_applies_scheduled_prompt_and_targeted_skill_protocol(
-    store, fake_codex, account
+    store, fake_codex, account, frozen_material
 ):
     trigger = WechatMessage(
         account_id="acct-1",
@@ -86,7 +87,23 @@ def test_consumer_applies_scheduled_prompt_and_targeted_skill_protocol(
             "scheduled_task_run_id": 8,
             "prompt": "SCHEDULED WECHAT PROMPT",
             "skill_names": ["ceo-wechat"],
-            "skill_protocol": "TARGETED WECHAT SKILL",
+            "skill_protocol": (
+                "SHORT CATALOG MUST NOT SUBSTITUTE"
+                if frozen_material
+                else "TARGETED WECHAT SKILL"
+            ),
+            **(
+                {
+                    "skill_materials": [
+                        {
+                            "name": "ceo-wechat",
+                            "content": "TARGETED WECHAT SKILL",
+                        }
+                    ]
+                }
+                if frozen_material
+                else {}
+            ),
         },
     )
     store.enqueue_reply_task(
@@ -111,6 +128,7 @@ def test_consumer_applies_scheduled_prompt_and_targeted_skill_protocol(
     assert consumer.run_once(limit=1) == 1
     assert "SCHEDULED WECHAT PROMPT" in fake_codex.prompts[0]
     assert "TARGETED WECHAT SKILL" in fake_codex.prompts[0]
+    assert "SHORT CATALOG MUST NOT SUBSTITUTE" not in fake_codex.prompts[0]
 
 
 def test_consumer_marks_manual_rerun_in_prompt(store, fake_codex, account):

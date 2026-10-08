@@ -12,6 +12,7 @@ from app.agent_cron.commands import (
     SERVICE_COMMAND_OPTIONS,
     ServiceCommandConsumerContext,
     ServiceCommandRegistry,
+    ServiceCommandSkillMaterial,
 )
 from app.agent_runtime_contracts import RuntimeFailureClass
 from app.agent_runtime_router import RoutedCodexExecutionError
@@ -1335,6 +1336,39 @@ def test_consumer_delivers_summary_when_there_is_no_disagreement(tmp_path):
     assert run.codex_transcript_start_line == 4
     assert run.codex_transcript_end_line == 19
     assert json.loads(run.audit_tool_events_json)[0]["tool"] == "dws"
+
+
+def test_consumer_uses_frozen_scheduled_skill_instead_of_short_catalog(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    context = ServiceCommandConsumerContext(
+        scheduled_task_id=3,
+        scheduled_task_run_id=5,
+        prompt="使用 $ceo-meeting-work 处理真实会议。",
+        skill_names=("ceo-meeting-work",),
+        skill_protocol="SHORT CATALOG MUST NOT SUBSTITUTE",
+        skill_materials=(
+            ServiceCommandSkillMaterial(
+                name="ceo-meeting-work", content="FROZEN MEETING SKILL BODY"
+            ),
+        ),
+    )
+    implementations = {
+        option.name: lambda: "unused" for option in SERVICE_COMMAND_OPTIONS
+    }
+    implementations["scan-meetings-once"] = lambda: str(
+        produce_meeting_alignment_jobs(store, dws, now=NOW)
+    )
+    ServiceCommandRegistry(implementations).run(
+        "scan-meetings-once", consumer_context=context
+    )
+    runner = FakeMeetingRunner(summary_decision())
+
+    assert consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1) == 1
+
+    [prompt] = runner.prompts
+    assert "FROZEN MEETING SKILL BODY" in prompt
+    assert "SHORT CATALOG MUST NOT SUBSTITUTE" not in prompt
 
 
 def test_consumer_injects_similar_codex_sessions_into_meeting_prompt(tmp_path):

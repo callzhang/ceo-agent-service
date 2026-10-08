@@ -402,6 +402,18 @@ class EmailClassifierAgent:
             raise ValueError(
                 "scheduled Email classifier requires exactly ceo-email-classifier"
             )
+        scheduled_skill_text = ""
+        if scheduled_consumer is not None:
+            if scheduled_consumer.skill_materials:
+                material_names = tuple(
+                    material.name for material in scheduled_consumer.skill_materials
+                )
+                if material_names != scheduled_consumer.skill_names:
+                    raise ValueError(
+                        "scheduled Email classifier frozen materials must exactly "
+                        "match its selected Skill set"
+                    )
+            scheduled_skill_text = scheduled_consumer.materialized_skill_protocol()
         payload["message"] = dict(current_message)
         if unsubscribe_candidate_metadata:
             if len(unsubscribe_candidate_metadata) != len(unsubscribe_candidates):
@@ -419,7 +431,7 @@ class EmailClassifierAgent:
         prompt = build_agent_classification_prompt(
             payload,
             skill_text=(
-                scheduled_consumer.skill_protocol
+                scheduled_skill_text
                 if scheduled_consumer is not None
                 else f"{self.skill_receipt}\n{self.skill_text}"
             ),

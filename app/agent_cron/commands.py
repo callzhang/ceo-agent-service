@@ -41,6 +41,14 @@ class ServiceCommandOption:
 
 
 @dataclass(frozen=True)
+class ServiceCommandSkillMaterial:
+    """Exact Skill protocol block frozen when one scheduled command runs."""
+
+    name: str
+    content: str
+
+
+@dataclass(frozen=True)
 class ServiceCommandConsumerContext:
     """Immutable prompt and exact Skill material for outputs of one Cron run."""
 
@@ -49,9 +57,20 @@ class ServiceCommandConsumerContext:
     prompt: str
     skill_names: tuple[str, ...]
     skill_protocol: str
+    skill_materials: tuple[ServiceCommandSkillMaterial, ...] = ()
+
+    def materialized_skill_protocol(self) -> str:
+        """Return frozen blocks when present, otherwise the saved inline protocol."""
+        if not self.skill_materials:
+            return self.skill_protocol
+        if tuple(material.name for material in self.skill_materials) != self.skill_names:
+            raise ValueError(
+                "scheduled consumer Skill materials do not match selected Skills"
+            )
+        return "\n\n".join(material.content for material in self.skill_materials)
 
     def to_payload(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "schema": "scheduled_consumer.v1",
             "scheduled_task_id": self.scheduled_task_id,
             "scheduled_task_run_id": self.scheduled_task_run_id,
@@ -59,6 +78,12 @@ class ServiceCommandConsumerContext:
             "skill_names": list(self.skill_names),
             "skill_protocol": self.skill_protocol,
         }
+        if self.skill_materials:
+            payload["skill_materials"] = [
+                {"name": material.name, "content": material.content}
+                for material in self.skill_materials
+            ]
+        return payload
 
     @classmethod
     def from_payload(cls, value: object) -> ServiceCommandConsumerContext | None:
@@ -74,6 +99,7 @@ class ServiceCommandConsumerContext:
         prompt = value.get("prompt")
         skill_names = value.get("skill_names")
         skill_protocol = value.get("skill_protocol")
+        skill_materials = value.get("skill_materials", [])
         if (
             not isinstance(task_id, int)
             or task_id <= 0
@@ -88,6 +114,16 @@ class ServiceCommandConsumerContext:
             )
             or not isinstance(skill_protocol, str)
             or not skill_protocol.strip()
+            or not isinstance(skill_materials, list)
+            or any(
+                not isinstance(material, dict)
+                or set(material) != {"name", "content"}
+                or not isinstance(material["name"], str)
+                or not material["name"].strip()
+                or not isinstance(material["content"], str)
+                or not material["content"].strip()
+                for material in skill_materials
+            )
         ):
             raise ValueError("scheduled consumer context is invalid")
         return cls(
@@ -96,6 +132,12 @@ class ServiceCommandConsumerContext:
             prompt=prompt,
             skill_names=tuple(skill_names),
             skill_protocol=skill_protocol,
+            skill_materials=tuple(
+                ServiceCommandSkillMaterial(
+                    name=material["name"], content=material["content"]
+                )
+                for material in skill_materials
+            ),
         )
 
 

@@ -126,7 +126,6 @@ class AgentTaskContext:
         current_time: str | None = None,
     ) -> str:
         sections = [
-            _CONSUMER_AGENT_RULES,
             self.render_business_context(current_time=current_time),
             "### Execution stage\n" + _json({"stage_index": self.stage_index, "predecessor_review_id": self.predecessor_review_id}) + "\nEcho these stage bindings unchanged. A later stage forms a new complete candidate from verified prior receipts.",
         ]

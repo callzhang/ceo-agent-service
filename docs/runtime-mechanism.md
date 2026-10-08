@@ -1662,6 +1662,10 @@ Developer Prompt 是 Consumer 与 Audit 共用的工作原则，渲染后的冻�
 
 服务组装的 Consumer/Audit Developer Prompt 不再读取或复制本机 `~/.agents/AGENT.md` 开发规则，也不注入缺失文件的占位段或旧的重读提示。业务角色、能力、输出契约和后台 Memory bootstrap 说明仍由原有代码提供；本机原生 CLI 的指令加载与开发 Agent 的 AGENTS.md 文件不在此变更范围。
 
+后台 Consumer/Audit 使用原生 skills.config 禁用专项 Skill 的自动正文注入，避免原生加载、Developer inline 与工具读取三份重复。原生 project_doc_max_bytes=0 只关闭项目目录 AGENTS.md；全局 ~/.codex/AGENTS.md 仍由 CLI 加载，服务不修改原生 home 或全局规则文件。此设置仅适用于后台角色命令。
+
+System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；agent_cli.read_system_action_contract(capability, operation) 返回完整规范，包含原有角色、identity、payload、target、回执和完成条件。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。原生 output-schema 保持关闭：实际探测显示现有 RootModel 顶层 $ref 被拒绝，等价展开后 Consumer 的 oneOf 与 Audit 可选字段仍不满足原生 strict schema 限制；未通过弱化业务契约来适配。
+
 一次角色 invocation 只读取一次 Developer/User/Profile 正文，供组装、静态指纹与重试共用；Audit 不读取无关 User 模板。实际路线和工具命令确定后，再追加 Runtime Context。静态配置 SHA 写入现有 runtime.prompt invocation facts，仅作来源回执；Consumer 继续按 `conversation_id + route` 复用原 session，配置或 contract hash 变化不创建新会话，Audit 的独立 session 不与 Consumer 合并。
 
 默认 User 的 Rendered preview 使用明确标记的合成完整任务，不读取业务材料；Developer/Profile 渲染同一份已保存正文。完整运行输入仍在独立只读页签，当前配置 Developer 与所选已保存历史 Task 的来源分别标注，历史模式不重新渲染。读取设置/预览不创建或覆盖配置文件。已存在模板不在读取时自动升级；部署使用 `python -m app.deploy --publish-prompt-templates`，仅在既有停止/备份窗口根据 `ci/prompt-template-release.json` 的精确旧/新 SHA 发布默认 Developer/User。自定义模板须明确迁移，不能覆盖；文件备份、发布与回退沿用 RepositoryUpdater 的 publication 协议。该发布不修改工作人格。
@@ -1672,7 +1676,7 @@ Developer Prompt 是 Consumer 与 Audit 共用的工作原则，渲染后的冻�
 
 Prompts 设置读取先返回 Developer/User 的已保存原文；某份模板验证或渲染失败时，仅该份渲染预览为空并返回明确的 `preview_errors`，编辑器仍显示原文供修正。保存仍需通过现有验证，后台角色调用仍严格验证，不自动迁移或覆盖旧模板。
 
-精简仅去除经固定模型比较确认不会损失质量的重复文本：Consumer 原有 Application Result Contract 同时保留在 Developer 与完整 Task；Audit Developer 保留原有两处 Application Result Contract（核心角色边界内一处，Decision Evidence 后一处），Audit Task 开头保留同一合同并原样呈现 `AuditTurnContext.audit_rules`。配置化 Audit Rules 仍由 Audit Developer 携带；生产编排沿用原有空 Task 字段，不把 Developer 规则复制进 Task。固定模型比较发现同时删除这些指令副本的候选出现错误的日历 rollover 返回，当前保留原有完整指令，没有删除或改写合同条款。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。标准 Skill 目录使用 TSV 与路径根别名，保留所有名称、完整用途说明、读取路径和顺序；定时专项 Skill 正文不改。Runtime Context 缩短工具说明，保留原有准确 server.tool 名称和其他环境事实。无业务调用的旧 build_turn_prompt、ceo_agent_thread_prompt 及 CodexRunner 的隐含业务 Developer 默认入口已退休；底层 native 指令保留模式及真实调用者显式指令不变。
+精简仅去除经固定模型比较确认不会损失质量的重复文本：Consumer 的 Application Result Contract 完整保留在 Developer，Task 只承载完整业务事实，不再重复同一合同；Audit Developer 保留原有两处 Application Result Contract（核心角色边界内一处，Decision Evidence 后一处），Audit Task 开头保留同一合同并原样呈现 `AuditTurnContext.audit_rules`。配置化 Audit Rules 仍由 Audit Developer 携带；生产编排沿用原有空 Task 字段，不把 Developer 规则复制进 Task。先前同时删除多个指令副本的候选出现过错误的日历 rollover；本次仅去除 Consumer Task 的同文副本，Audit 副本保持原样，合同条款不删改，跨日期时区与冲突判断仍需固定场景验证。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。标准 Skill 目录使用 TSV 与路径根别名，保留所有名称、完整用途说明、读取路径和顺序；定时服务命令将专项 Skill 的完整 managed revision 或 operation snapshot 冻结在原任务的 scheduled_consumer.skill_materials 中；Developer 只列选中名称和 agent_cli.read_task_skill(name) 入口，Consumer/Audit 必须先读取适用 Skill。读取返回原冻结正文与 SHA，不随本机 Skill 文件后续修改漂移。旧任务及自定义 inline protocol 保持原样。Email 分类、Meeting Alignment 与独立 WeChat 没有任务内读取工具，仍直接使用完整冻结正文；通用 Scheduled Agent 输入不变，Task Agent 的 prompt 与来源投影继续排除历史 skill_protocol 及 skill_materials，只保留原有定时业务事实。Runtime Context 缩短工具说明，保留原有准确 server.tool 名称和其他环境事实。无业务调用的旧 build_turn_prompt、ceo_agent_thread_prompt 及 CodexRunner 的隐含业务 Developer 默认入口已退休；底层 native 指令保留模式及真实调用者显式指令不变。
 
 Developer 保存先以现有渲染器验证，未知变量或不可渲染内容返回具体错误且不覆盖已保存正文；该检查属于配置格式合同。
 

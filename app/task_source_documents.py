@@ -201,6 +201,7 @@ def source_bundle(
         current = item.model_dump(mode="json")
         current.pop("summary")
         current["scheduled_consumer"].pop("skill_protocol", None)
+        current["scheduled_consumer"].pop("skill_materials", None)
         current["document_id"] = id
     rendered = [
         {
