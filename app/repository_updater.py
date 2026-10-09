@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -215,11 +216,22 @@ def wait_for_health(
 
 def in_flight_work(database_path: Path) -> int:
     """Count work a restart would cut off: running turns and claimed items."""
-    with sqlite3.connect(f"file:{database_path}?mode=ro", uri=True, timeout=30) as db:
+    with closing(sqlite3.connect(
+        f"file:{database_path}?mode=ro", uri=True, timeout=30
+    )) as db:
         return int(db.execute(
             "select (select count(*) from agent_runtime_attempts "
             "        where status not in ('completed','failed','superseded'))"
-            " + (select count(*) from reply_tasks where status='processing')"
+            " + (select count(*) from reply_tasks as task "
+            "    where task.status='processing' and ("
+            "      exists (select 1 from agent_runs as runs "
+            "        where runs.reply_task_id=task.id "
+            "          and runs.status in ('starting','running')) "
+            "      or exists (select 1 from dispatcher_claim_leases as claim "
+            "        where claim.adapter_name='reply' "
+            "          and claim.source_id=cast(task.id as text) "
+            "          and coalesce(claim.terminal_at,'')='' "
+            "          and julianday(claim.lease_expires_at)>julianday('now'))))"
             " + (select count(*) from work_summary_inputs where status='processing')"
             " + (select count(*) from meeting_alignment_jobs as jobs "
             "    where (jobs.status='processing' and ("

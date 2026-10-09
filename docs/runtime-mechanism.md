@@ -1027,10 +1027,12 @@ Agent Cron Scheduler 在保存触发记录时遇到 SQLite `BUSY`/`LOCKED`，且
 常驻组件 `runtime-attempt-reclaim` 上，每 5 分钟跑一次，和 `database-backup`、探针一样是
 命名、受心跳监控的基础设施循环，不是隐藏循环。
 
-部署静默检查对 `meeting_alignment_jobs.status='processing'` 也核验 owner：只有对应的
-meeting dispatcher 租约仍有效，或 `meeting_alignment_runs` 有 `running` 记录时才阻塞部署。
-失去两类 owner 证据的 processing 行是启动恢复可以重新排队的孤儿行，不会无限卡住部署；
-`ready_to_send` 且仍锁定的会议投递仍计为在途工作。
+部署静默检查对 `meeting_alignment_jobs.status='processing'` 和 `reply_tasks.status='processing'`
+核验 owner：会议任务须有有效的 meeting dispatcher 租约或 `meeting_alignment_runs` 的 `running`
+记录；回复任务须有有效的 reply dispatcher 租约或 `agent_runs` 的 `starting`/`running` 记录。
+失去 owner 证据的 processing 行由服务启动时既有恢复逻辑重新排队，不会无限卡住部署；
+`ready_to_send` 且仍锁定的会议投递仍计为在途工作。每次静默计数结束都会关闭只读 SQLite
+连接，避免长时间轮询累积文件描述符。
 
 ## 进程、租约和恢复
 
