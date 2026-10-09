@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -17,6 +18,8 @@ from app.repository_upgrade import GitRepository
 
 
 UPGRADE_OPERATION_STATE_KEY = "repository_upgrade_operation:v1"
+UPGRADE_STATE_WRITE_RETRY_ATTEMPTS = 3
+UPGRADE_STATE_WRITE_RETRY_DELAY_SECONDS = 0.25
 
 
 class UpgradePreconditionError(RuntimeError):
@@ -52,16 +55,29 @@ class ExistingSchemaUpgradeStateStore:
             return None if row is None else str(row[0])
 
     def set_service_state(self, key: str, value: str) -> None:
-        with sqlite3.connect(
-            f"file:{self.database_path}?mode=rw", uri=True, timeout=30
-        ) as db:
-            db.execute(
-                """insert into service_state (key, value, updated_at)
-                   values (?, ?, current_timestamp)
-                   on conflict(key) do update set
-                     value=excluded.value, updated_at=current_timestamp""",
-                (key, value),
-            )
+        for attempt in range(UPGRADE_STATE_WRITE_RETRY_ATTEMPTS):
+            try:
+                with sqlite3.connect(
+                    f"file:{self.database_path}?mode=rw", uri=True, timeout=30
+                ) as db:
+                    db.execute("begin immediate")
+                    db.execute(
+                        """insert into service_state (key, value, updated_at)
+                           values (?, ?, current_timestamp)
+                           on conflict(key) do update set
+                             value=excluded.value, updated_at=current_timestamp""",
+                        (key, value),
+                    )
+                return
+            except sqlite3.OperationalError as exc:
+                message = str(exc).casefold()
+                is_lock_error = "locked" in message or "busy" in message
+                if (
+                    not is_lock_error
+                    or attempt + 1 >= UPGRADE_STATE_WRITE_RETRY_ATTEMPTS
+                ):
+                    raise
+                time.sleep(UPGRADE_STATE_WRITE_RETRY_DELAY_SECONDS * (attempt + 1))
 
 
 class UpgradePublication(Protocol):
@@ -215,14 +231,34 @@ def wait_for_health(
 
 def in_flight_work(database_path: Path) -> int:
     """Count work a restart would cut off: running turns and claimed items."""
-    with sqlite3.connect(f"file:{database_path}?mode=ro", uri=True, timeout=30) as db:
+    with closing(sqlite3.connect(
+        f"file:{database_path}?mode=ro", uri=True, timeout=30
+    )) as db:
         return int(db.execute(
             "select (select count(*) from agent_runtime_attempts "
             "        where status not in ('completed','failed','superseded'))"
-            " + (select count(*) from reply_tasks where status='processing')"
+            " + (select count(*) from reply_tasks as task "
+            "    where task.status='processing' and ("
+            "      exists (select 1 from agent_runs as runs "
+            "        where runs.reply_task_id=task.id "
+            "          and runs.status in ('starting','running')) "
+            "      or exists (select 1 from dispatcher_claim_leases as claim "
+            "        where claim.adapter_name='reply' "
+            "          and claim.source_id=cast(task.id as text) "
+            "          and coalesce(claim.terminal_at,'')='' "
+            "          and julianday(claim.lease_expires_at)>julianday('now'))))"
             " + (select count(*) from work_summary_inputs where status='processing')"
-            " + (select count(*) from meeting_alignment_jobs where status='processing'"
-            "    or (status='ready_to_send' and coalesce(locked_at,'')<>''))"
+            " + (select count(*) from meeting_alignment_jobs as jobs "
+            "    where (jobs.status='processing' and ("
+            "      exists (select 1 from meeting_alignment_runs as runs "
+            "        where runs.job_id=jobs.id and runs.status='running') "
+            "      or exists (select 1 from dispatcher_claim_leases as claim "
+            "        where claim.adapter_name='meeting' "
+            "          and claim.source_id=cast(jobs.id as text) "
+            "          and coalesce(claim.terminal_at,'')='' "
+            "          and julianday(claim.lease_expires_at)>julianday('now')))) "
+            "    or (jobs.status='ready_to_send' "
+            "      and coalesce(jobs.locked_at,'')<>''))"
             " + (select count(*) from dispatcher_claim_leases"
             "    where coalesce(terminal_at,'')=''"
             "    and julianday(lease_expires_at)>julianday('now'))"
@@ -344,10 +380,8 @@ class RepositoryUpdater:
 
     def execute(self, operation: UpgradeOperation) -> UpgradeResult:
         with self.repository.mutex():
-            self._persist(operation, "preparing")
             self.repository.fetch(self.remote)
             records = self._recheck(operation)
-            self._persist(operation, "waiting_for_idle")
             self.wait_for_quiet()
             self.stop()
             backup_path = self._backup(operation)

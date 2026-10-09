@@ -80,7 +80,9 @@ headless source 还会在调用 OKR API 前校验新捕获凭据的有效期；�
 用户可见的定时任务是 `任务描述 + Cron + Agent 能力（结构化 Skill 引用）+ Runtime`。任务描述是所有
 定时任务共有的可读用途说明；Agent 任务另有执行提示词，服务命令不把描述伪装成 Agent prompt。Scheduler 只计算
 当前时间之后的下一个触发点，并把一次触发保存为 `scheduled_task_run`；它不执行领域业务，
-也不把 Consumer/Audit 的完成或失败复制回调度记录。Dispatcher 先领取该 trigger，原子创建
+也不把 Consumer/Audit 的完成或失败复制回调度记录。若 SQLite 写入因 `BUSY`/`LOCKED` 冲突在
+存储层有限重试后仍失败，Scheduler 保留该触发点，等待 1 秒再重试；该数据库错误不会被记录为
+运行结果，也不会让 Service worker 退出。Dispatcher 先领取该 trigger，原子创建
 唯一的 `channel=scheduled` execution source，并在 trigger 上保存
 `execution_kind + execution_id`。之后 Scheduled Agent Consumer 从这条不可变输入进入标准
 Consumer → Audit → feedback revision 生命周期：
@@ -255,6 +257,12 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
 但不得删除旧输入、run、session、tool event、provider 结果或错误事件。当前投影修正不能被解释为
 “历史从未失败过”。
 
+服务启动时，`reconcile_done_reply_tasks_with_failed_current_run` 只把当前执行代的最新 run 确为
+`failed`、且没有成功外部动作或已收口错误的 `done` task 改回真实失败投影。此恢复按
+`external_action_results.business_object_key`、`sent_replies.external_action_key` 和
+`errors(conversation_id, message_id, kind)` 索引反查，不在写事务中为每条 task 扫描整张回执和
+错误表；原有状态条件及历史保留规则不变。
+
 旧版本曾在同一个 `reply_task` 的不同 generation 各写入一条 `reply_attempt` 投影。此类遗留行仍
 保留其 `agent_run` 作为执行事实，但 History（包括 Console API）只展示该 task 的最新 Attempt；它们
 不是多个独立业务事项，也不能重复计数或形成多张处理卡片。History 图表仍在每条原始 Attempt 的
@@ -358,6 +366,8 @@ Python 的 email 包无法解析的结构化邮件头）只跳过这一条、游
 但 junk 始终抑制 important。控制台详情页的 Star / Flag 图标是主人本人的手动点击，直接让服务连上邮箱增删 `\Flagged` / `$Important` 这一个关键字并读回确认，不经过 ActionPlan；观察到的状态随后更新，下一轮扫描再对账。分类确认只保存最终类别、训练反馈和不可变 `ActionPlan`。确定性动作清单是
 `label`、`mark_read`、`archive`、`move`、`trash`、`flag_important`；它们属于 Email 子系统，由独立
 Email worker 领取、执行动作，并以服务器的应答为结果（Derek, 2026-09-25：不需要回读，服务器接受就够了）。
+每次 provider observation scan 在同一 SQLite 事务中发布消息状态、authoritative folder 的缺失对账和 folder generation 时间；generation 时间单独按账号/文件夹保存，读取仍返回该文件夹最近一次完整扫描时间。相同消息状态不重复写消息行或其索引，扫描成员先写入连接级临时表再用索引对账，避免在共享数据库写锁期间构造超长身份列表。这样保留整代原子可见性，同时限制 Email worker 对共享 SQLite 的写锁占用。
+直接邮件动作领取先从状态索引找出含 pending/failed 动作的分类，再通过 `(classification_id, action_plan_id)` 索引读取该分类的动作组；候选探测与 `BEGIN IMMEDIATE` 内的重核都使用这条路径。状态、当前 ActionPlan、同组 processing 阻塞、账号范围、重试时间、依赖、动作优先级和条件更新保持不变，不在写锁内遍历整张 `email_actions`。
 执行前仍先读一次当前状态，已满足就不写。改标记的动作（标已读、标星、贴标签）在服务器接受 STORE 后即完成；
 移动、归档、删除在服务器回了 `COPYUID`（新位置已知）时同样即完成。只有服务器没说邮件去了哪里时，
 才保留一次回读，用同一账号共享的连接去找新位置并确认。进程内每一个会碰 IMAP 的调用点——直接动作
@@ -498,8 +508,9 @@ Email Console 的“模型训练”页读取后端统一计算的晋升资格。
 服务周期性读取配置的 `origin/main`，只识别可安全 fast-forward 的更新；分叉、状态指纹变化或
 脏工作树不会被静默覆盖。History 页面只展示状态并启动带 operation ID 的 detached updater；
 updater 在共享 Git 锁内重新校验指纹，必要时按用户确认的分支名和提交信息保存本地改动，创建
-SQLite 在线备份并只保留一个最新快照（同时清理 SQLite sidecar；Derek 2026-09-25：备份不用临时文件，每次备份前先删掉之前所有备份，副本直接写成最终文件名，通过完整性检查后才盖上完成标记（`application_id`），失败或被打断的半成品当场或下次备份时删除，不算「今天已备份」；文件夹级别的锁让两个备份互不删除对方；此前每次备份被重启打断都会留下 2.9 GB 的隐藏临时文件，一天堆到 30 GB 写满磁盘），执行依赖同步和测试，重启
+SQLite 在线备份并只保留一个最新的已验证日备份；每小时备份循环在确认当天副本完整后，也清理数据库目录中超过 24 小时的 `auto-reply.sqlite3.pre-*` 快照及 SQLite sidecar。备份不用临时文件，每次正式备份前先删掉备份目录里的旧副本，直接写成最终文件名，通过完整性检查后才盖上完成标记（`application_id`），失败或被打断的半成品当场或下次备份时删除，不算「今天已备份」；文件夹级别的锁让两个备份互不删除对方；此前每次备份被重启打断都会留下 2.9 GB 的隐藏临时文件，一天堆到 30 GB 写满磁盘。随后执行依赖同步和测试，重启
 launchd 后验证新 PID、HTTP 健康与 Store 可读性。
+等待静默期间，updater 不向共享 SQLite 写部署进度，避免与仍在运行的业务写事务争锁；服务静默并停止后，才用不触发 schema 初始化的窄状态存储记录后续阶段。该短写仍对意外的并发 SQLite 锁做有限次数重试。
 升级后验证失败时只对本次安装的精确 commit 做 compare-and-swap 回滚；无法证明仓库仍归本次
 操作所有时进入 `needs_manual`，不执行破坏性 Git 操作。MCP 配置不由该流程探测、禁用或覆盖，
 直接沿用用户当前 Codex 配置。
@@ -511,6 +522,10 @@ launchd 后验证新 PID、HTTP 健康与 Store 可读性。
 复用上面的 updater，先等没有进行中的 Agent 回合和已领取的条目（30 分钟内不空闲就什么都不改），
 再备份数据库、fast-forward、控制台不是从检出当前的 `frontend/` 构建的时重建（比较构建戳 `app/static/workbench/.built-from` 与 `HEAD:frontend` 的树，而不是看本次部署的差异——中途停下的部署或别的会话插进来的部署会让下一次差异里没有前端改动，控制台就停在旧版本）、检查 import、重启，并轮询健康最多
 15 分钟（重启要重读数 GB 的数据库，负载高时曾用 8 分钟，只探一次会把正常升级误判回滚）。
+静默检查将会议和回复任务处于 `processing` 视为在途工作，仅当它们有有效的对应 dispatcher 租约，
+或分别存在运行中的 meeting alignment / Agent 运行记录时阻止部署；没有这些 owner 证据的孤儿行
+由服务启动时现有的恢复逻辑重新排队。仍锁定的会议投递继续阻止部署。静默轮询每次只读计数后
+关闭数据库连接，避免长等待累积 SQLite 句柄。
 两个会话同时部署由仓库锁串行，后到的发现检出已前进就停止。只改了设置、没有提交要部署时（有些设置，比如邮箱账号，是 worker 启动时才读），用 `python -m app.deploy --restart`：同样先等没有进行中的工作，再经 launchd 重启并等健康，不手动 `launchctl kickstart`。生产检出里不能提交也不能跑测试（Derek 2026-09-25，此前有会话在那里跑测试并就地提交，检出与 main 分叉，之后所有部署都停下）：部署时装上 `pre-commit` / `pre-merge-commit` / `pre-rebase` 钩子，一律拒绝并提示去开发树改；`tests/conftest.py` 发现自己在生产检出里就退出。部署只做 fast-forward，不触发这些钩子。检出若已分叉，部署停下并列出只在生产里的提交，不会自动丢弃。`app/`、`frontend/src/`、`tests/` 在两次部署之间还是 chmod 只读（Derek 2026-09-28：上面三层防的是"改动悄悄上线"，这层防的是"改动被写下来"本身）；部署把这几棵源码树的解锁窗口精确框在 checkout+构建+校验期间，`finally` 里无论成功、回滚还是异常都重新上锁。`data/`、`.env` 和这三棵树以外的构建产物（`app/static/workbench`、`frontend/dist`、`frontend/node_modules`）保持可写——服务运行时和构建步骤本来就要写它们；`app/static/workbench` 虽然物理上在 `app/` 里，但只有构建步骤会碰它，而构建步骤总是在解锁窗口内跑。
 
 ### 会议投递目标

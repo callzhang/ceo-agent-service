@@ -349,11 +349,15 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_oa_notification_events_claim",
     "idx_runtime_attempt_active_route",
     "idx_runtime_attempt_active_lease",
+    "idx_agent_runtime_attempts_run",
     "idx_task_agent_runs_active_input",
     "idx_agent_run_state_events_run",
     "idx_agent_effect_intents_run",
     "idx_agent_effect_intents_operation",
     "idx_sent_replies_external_action",
+    "idx_sent_replies_external_action_lookup",
+    "idx_external_action_results_business_object",
+    "idx_errors_reply_task_settlement",
     "idx_meeting_alignment_runs_active_job",
     "idx_weekly_okr_analysis_jobs_identity",
     "idx_wechat_memory_import_jobs_status",
@@ -5099,6 +5103,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "on sent_replies(external_action_key) "
                 "where external_action_key<>''"
             )
+            db.execute(
+                "create index if not exists "
+                "idx_sent_replies_external_action_lookup "
+                "on sent_replies(external_action_key)"
+            )
+            db.execute(
+                "create index if not exists "
+                "idx_external_action_results_business_object "
+                "on external_action_results(business_object_key, external_action_key)"
+            )
             feedback_event_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(feedback_events)").fetchall()
@@ -5495,6 +5509,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 create index if not exists idx_errors_unresolved
                     on errors(conversation_id, kind, message_id, id)
                     where coalesce(resolved_at, '')=''
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_errors_reply_task_settlement
+                    on errors(conversation_id, message_id, kind)
                 """
             )
             db.execute(
@@ -10163,6 +10183,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             where agent_run_id is null and status in ('starting', 'running')
             """
         )
+        db.execute(
+            """
+            create index if not exists idx_agent_runtime_attempts_run
+            on agent_runtime_attempts(agent_run_id, attempt_number)
+            where agent_run_id is not null
+            """
+        )
         db.execute("drop trigger if exists trg_runtime_attempt_generalized_lease_insert")
         db.execute("drop trigger if exists trg_runtime_attempt_generalized_lease_update")
         db.execute(
@@ -13592,6 +13619,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         parent_agent_run_id: int | None,
         operation_id: str,
         owner: str,
+        fresh_session: bool = False,
         lease_seconds: int = 1800,
         now: str | datetime | None = None,
     ) -> AgentRunClaim:
@@ -13679,9 +13707,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     )
             prior_session = db.execute(
                 """
-                select codex_session_id from agent_runs
+                select case
+                  when status='failed' and json_valid(structured_error_json)
+                  then case when json_type(structured_error_json, '$.session_continuable')='false'
+                    then '' else codex_session_id end
+                  else codex_session_id end as codex_session_id
+                from agent_runs
                 where reply_task_id=? and execution_generation=? and role=?
-                  and proposal_revision=? and codex_session_id<>''
+                  and proposal_revision=?
                 order by turn_attempt desc, id desc
                 limit 1
                 """,
@@ -13694,7 +13727,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchone()
             codex_session_id = (
                 str(prior_session["codex_session_id"])
-                if prior_session is not None
+                if prior_session is not None and not fresh_session
                 else ""
             )
             cursor = db.execute(

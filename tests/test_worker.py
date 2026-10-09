@@ -5895,13 +5895,20 @@ def test_consume_once_stops_retryable_orchestration_at_limit(
     assert worker.store.count_reply_tasks(status="pending") == 1
     pending = worker.store.list_reply_tasks(limit=1, statuses=["pending"])[0]
     generation = pending.execution_generation
+    prior_run = max(
+        worker.store.list_agent_runs_for_task_generation(pending.id, generation),
+        key=lambda run: run.id,
+    )
+    assert json.loads(prior_run.structured_error_json)["session_continuable"] is False
+    assert prior_run.codex_session_id == "retry-session"
     with worker.store._connect() as db:
         db.execute("update reply_tasks set available_at='' where id=?", (pending.id,))
     assert worker.consume_once(max_tasks=1) == 0
     retried = worker.store.list_reply_tasks(limit=1, statuses=["failed"])[0]
     assert retried.execution_generation == generation
     assert len(runner.calls) == 2
-    assert runner.calls[1][3] == "retry-session"
+    assert runner.calls[1][3] == ""
+    assert worker.store.get_agent_run(prior_run.id).codex_session_id == "retry-session"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == "failed"
@@ -6131,6 +6138,64 @@ def test_queued_task_fails_when_authorization_has_no_actionable_scopes(
     assert attempt is not None
     assert attempt.send_status == "failed"
     assert "authorization request has no actionable scopes" in attempt.send_error
+
+
+@pytest.mark.parametrize("authorization_required", [False, True])
+def test_terminal_pre_run_failure_preserves_cause_without_retry(
+    tmp_path: Path, monkeypatch, authorization_required: bool
+):
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [message("@Alex Chen(明哥) 请处理这个文档")]}),
+        FakeCodex([]),
+        monkeypatch,
+    )
+    worker.produce_once()
+    task = worker.store.claim_reply_tasks(limit=1)[0]
+    result = OrchestrationResult(
+        status="failed_terminal",
+        final_run_id=0,
+        final_role=AgentRole.CONSUMER,
+        summary="context provider rejected authentication before the Agent started",
+        error=AgentError(
+            code="agent_context_refresh_failed",
+            retryable=False,
+            authorization_required=authorization_required,
+        ),
+        feedback_cycles=0,
+    )
+
+    assert worker._apply_orchestration_result(task, result) is False
+    persisted = worker.store.get_reply_task(task.id)
+    assert persisted.status == "failed"
+    assert persisted.error == "agent_context_refresh_failed"
+    assert persisted.available_at == ""
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "agent_context_refresh_failed"
+    assert worker.store.get_agent_run(result.final_run_id) is None
+
+
+def test_missing_nonzero_final_run_remains_an_integrity_failure(tmp_path: Path, monkeypatch):
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [message("@Alex Chen(明哥) 请处理这个文档")]}),
+        FakeCodex([]),
+        monkeypatch,
+    )
+    worker.produce_once()
+    task = worker.store.claim_reply_tasks(limit=1)[0]
+    result = OrchestrationResult(
+        status="failed_terminal",
+        final_run_id=99999,
+        final_role=AgentRole.CONSUMER,
+        summary="missing persisted run",
+        error=AgentError(code="agent_context_refresh_failed", retryable=False),
+        feedback_cycles=0,
+    )
+    with pytest.raises(RuntimeError, match="orchestration final run was not persisted"):
+        worker._apply_orchestration_result(task, result)
+    assert worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1") is None
 
 
 def test_active_run_defer_cannot_overwrite_rotated_generation(

@@ -8,6 +8,7 @@ from uuid import UUID
 import pytest
 
 from app.email_store import (
+    EMAIL_SCHEMA_VERSION,
     EmailFolderBindingConflict,
     EmailPersistenceCorruption,
     EmailStore,
@@ -217,19 +218,7 @@ def test_v33_migration_backup_and_restart(tmp_path):
     with sqlite3.connect(path) as db:
         assert db.execute(
             "select version from email_schema_migrations order by version"
-        ).fetchall() == [
-            (33,),
-            (34,),
-            (35,),
-            (36,),
-            (37,),
-            (38,),
-            (39,),
-            (40,),
-            (41,),
-            (42,),
-            (43,),
-        ]
+        ).fetchall() == [(version,) for version in range(33, EMAIL_SCHEMA_VERSION + 1)]
         assert db.execute("pragma foreign_key_check").fetchall() == []
     with sqlite3.connect(tmp_path / "before.sqlite3") as db:
         assert db.execute("pragma integrity_check").fetchone()[0] == "ok"

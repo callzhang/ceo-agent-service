@@ -2395,9 +2395,9 @@ class DingTalkAutoReplyWorker:
             "codex_session_locked",
             "runtime_execution_failed",
         }
-        if result.status == "failed_retryable" and result.final_run_id == 0:
+        if result.status in {"failed_retryable", "failed_terminal"} and result.final_run_id == 0:
             error = error_code or "agent_orchestration_deferred"
-            if (
+            if result.status == "failed_retryable" and (
                 provider_recovery
                 or runtime_outage_wait
                 or dependency_read_wait

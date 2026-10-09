@@ -1,5 +1,54 @@
 # Current Runtime Mechanism
 
+An orchestration failure before the first Agent run has `final_run_id=0`.
+The Reply worker handles both retryable and terminal failures through its
+generation-checked no-run transition. Terminal failures retain their original
+error and summary in the failed Attempt without retrying or creating an Agent
+run. A missing nonzero final run ID remains an integrity error, not a pre-run
+failure.
+
+Retry session selection honors an explicit JSON boolean
+`session_continuable=false` on the latest failed run for the current generation,
+role and revision. A new run does not inherit that session, and Consumer/Audit
+start a fresh runtime rather than restoring it through conversation routing.
+Missing flags and string values are not treated as false. A later completed
+session covers an older failure. Existing candidate digest, revision, source,
+approval and external-receipt checks remain unchanged; fresh transport is not
+permission to replay an external action. Old run/session history is preserved.
+This decision uses the latest terminal run even when its legacy
+`codex_session_id` is empty: API/Claude sessions may exist only in route/runtime
+records. The runner computes fresh selection before claiming, and the same
+decision initializes the new run without an inherited session. This also keeps
+Audit's repeated-result fresh retry consistent with immutable run binding.
+Fresh selection remains effective across capacity retries and route changes.
+Within that run, a route may resume only a session actually observed in its
+current native events; before a new session event it stays fresh. Another
+explicit fresh decision invalidates that route's earlier in-run session.
+Normal continuation outside a fresh retry keeps its existing selection rules.
+
+`CEO_DATABASE_BACKUP_PAUSED=1` pauses automatic daily database backups before
+opening databases, creating directories, or pruning snapshots. Unset the flag
+to resume the existing daily workflow. Set it in the service process environment
+and use the formal restart/deployment path; it does not interrupt an in-flight
+copy. Explicit deployment backups remain governed by the deployment safety gate.
+Migration regression fixtures record their actual legacy schema version before
+reopening and assert the complete path to the current version. Quiet-deployment
+regressions distinguish a running meeting turn from an unclaimed historical
+processing row; neither a stale timestamp nor a status alone proves live work.
+
+The database-backup worker checks once per hour. It keeps one integrity-checked
+daily backup in `backups/`; after confirming that copy is complete, it prunes
+root-level `auto-reply.sqlite3.pre-*` recovery snapshots and their SQLite
+sidecars once they are older than 24 hours. A failed or interrupted daily copy
+does not authorize that cleanup.
+
+The repository updater does not write deployment progress to the shared
+SQLite database while waiting for the live service to become quiet. It records
+the next phase only after the service is quiet and stopped, using a narrow
+connection that does not initialize the application schema. That write
+acquires `BEGIN IMMEDIATE` and retries transient `SQLITE_BUSY`/`SQLITE_LOCKED`
+up to three times with the connection's existing 30-second busy timeout.
+
 Reply queue polling first reads the current channel's due pending tasks without
 acquiring a write transaction. An empty channel, future-only queue, or another
 channel's work returns immediately even while a different writer is active.
@@ -14,6 +63,18 @@ finish (commit or rollback), and connection close time. Body time can include
 waiting to acquire a transaction, so it is not automatically write-lock hold
 time. Logs keep call sites and elapsed durations, not SQL parameters or business
 payloads. Transaction behavior and existing error propagation are unchanged.
+
+Runtime-attempt detail reads filter by `agent_run_id` and order by
+`attempt_number`; the partial `idx_agent_runtime_attempts_run` index serves that
+lookup for run-bound attempts. This avoids scanning unrelated runtime attempts
+when History opens an attempt detail. Generalized attempts without an
+`agent_run_id` remain outside this index and keep their existing workload-key
+indexes.
+
+Audit web startup does not prewarm the History list or its 24-hour, 7-day and
+30-day charts. Those views scan large operation-history projections and run
+queries on demand when requested, so every service restart does not launch
+multi-minute reads against the same SQLite database used by workers.
 
 The required `idx_errors_unresolved` partial index contains only incidents whose
 `coalesce(resolved_at, '')` is empty. Attention retains the same recovery,
@@ -39,8 +100,11 @@ account and dependency selection for a read-only probe and the subsequent
 write transaction. A negative probe does not acquire the writer lock. A
 positive probe is not a reservation: BEGIN IMMEDIATE must recompute eligibility
 before the unchanged conditional update. New work arriving after a negative
-probe waits for the next poll; no queue result is cached. Regression tests hold
-a real competing writer and claim between the probe and transaction.
+probe waits for the next poll; no queue result is cached. Each pass starts from
+the indexed pending/failed statuses, then reads sibling actions through the
+`(classification_id, action_plan_id)` index; it does not scan every action while
+holding the SQLite writer lock. Candidate order and the existing action,
+dependency and retry rules are unchanged.
 
 Reply-task scheduled recovery uses the required partial expression index
 `idx_scheduled_task_runs_reply_execution`, keyed by the existing integer-cast
@@ -759,6 +823,11 @@ Email 的分类确认不是 Agent 运行，也不会创建通用 `reply_task`。
 永久删除、IMAP `EXPUNGE`
 和清空 Trash 不存在可调用路径。
 
+Provider observation scan 在一个 SQLite 写事务内发布消息状态、authoritative folder 缺失项对账和
+folder generation 时间。generation 按账号和文件夹单独记录，分类状态读取仍投影该文件夹最近一次
+扫描时间；消息内容未变时不更新消息行及其索引。扫描成员先放入连接级临时表，再按
+`(account_id, provider_folder_id)` 索引对账，避免大批动态 `NOT IN` 参数并缩短共享数据库写锁持有时间。
+
 IMAP 移动模式是账号级显式配置：默认 `imap_move_mode=move` 并要求服务端支持 `UID MOVE`；
 只有 provider 官方协议把 `UID COPY` 定义为移动时才配置 `copy_as_move`。运行时不按 hostname
 自动推断，不对普通 COPY 执行 `\\Deleted`/`EXPUNGE` 补偿；动作完成后统一用稳定 Message-ID
@@ -1007,6 +1076,10 @@ Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制�
 - 仍为常驻循环的只有 `meeting-delivery`：它只投递已审核通过的会议结论，10 秒一轮就是它的意义；
   以及备份、cron 调度/派发、探针等不产生业务判断的基础设施。
 
+Agent Cron Scheduler 在保存触发记录时遇到 SQLite `BUSY`/`LOCKED`，且存储层有限重试仍未取得写锁，
+会保留尚未保存的触发点，等待 1 秒后重试。该冲突不会生成失败运行记录或使 Service worker 退出；
+触发记录仍由原有原子校验与去重事务创建。
+
 任务卡死的回收由服务启动恢复、Consumer 的 stale-age 检查和 Dispatcher 的过期租约处理共同负责；
 不再依赖一个隐藏的业务级维护循环。`recover_stale_runtime_attempts`/`recover_expired_terminal_task_runtime_attempts`
 此前只在服务启动时跑一次：一个在进程运行期间才过期的租约（owner 进程已死、route 卡住）会
@@ -1017,6 +1090,19 @@ Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制�
 几个小时都在「service did not become idle」上空跑）。修复是把这两个恢复函数也挂到一个新的
 常驻组件 `runtime-attempt-reclaim` 上，每 5 分钟跑一次，和 `database-backup`、探针一样是
 命名、受心跳监控的基础设施循环，不是隐藏循环。
+
+部署静默检查对 `meeting_alignment_jobs.status='processing'` 和 `reply_tasks.status='processing'`
+核验 owner：会议任务须有有效的 meeting dispatcher 租约或 `meeting_alignment_runs` 的 `running`
+记录；回复任务须有有效的 reply dispatcher 租约或 `agent_runs` 的 `starting`/`running` 记录。
+失去 owner 证据的 processing 行由服务启动时既有恢复逻辑重新排队，不会无限卡住部署；
+`ready_to_send` 且仍锁定的会议投递仍计为在途工作。每次静默计数结束都会关闭只读 SQLite
+连接，避免长时间轮询累积文件描述符。
+
+启动恢复 `reconcile_done_reply_tasks_with_failed_current_run` 会校正当前执行代最新 run 为
+`failed`、但 task 投影误为 `done` 的回复任务，并保留成功外部动作和已收口错误的排除条件。
+它在事务内用 `external_action_results(business_object_key, external_action_key)`、
+`sent_replies(external_action_key)` 与 `errors(conversation_id, message_id, kind)` 索引做反查，
+避免逐条扫描回执和错误表延长写锁。
 
 ## 进程、租约和恢复
 
@@ -1505,6 +1591,11 @@ content. Correlate the caller with the operating system's WAL-lock owner and
 the affected run before changing transaction boundaries.
 Shared Store diagnostics retain up to eight caller frames so a context-manager
 wrapper cannot hide the business method that opened the connection.
+
+EmailStore startup still validates every durable email-message metadata field
+used for identity, provider locators, recipients, references, and attachment
+metadata. Its scan selects only those columns; it does not load cached message
+bodies or other unused columns into memory while performing the validation.
 
 The Console history-detail handler passes an EmailStore factory, not an already
 initialized EmailStore, to the Attempt DTO builder. Only an existing

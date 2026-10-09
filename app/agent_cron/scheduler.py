@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import logging
+import sqlite3
 from threading import Event, RLock
 from typing import Protocol
 
@@ -33,6 +34,15 @@ SCHEDULED_CAPABILITY_UNAVAILABLE_KINDS = frozenset(
 )
 
 logger = logging.getLogger(__name__)
+SQLITE_CONTENTION_RETRY_SECONDS = 1.0
+
+
+def _is_sqlite_contention(error: sqlite3.OperationalError) -> bool:
+    code = getattr(error, "sqlite_errorcode", None)
+    return isinstance(code, int) and (code & 0xFF) in {
+        sqlite3.SQLITE_BUSY,
+        sqlite3.SQLITE_LOCKED,
+    }
 
 
 class RuntimeRouteOption(Protocol):
@@ -245,7 +255,23 @@ class AgentCronScheduler:
         self.start(clock())
         while True:
             current = clock()
-            self.tick(current)
+            try:
+                self.tick(current)
+            except sqlite3.OperationalError as exc:
+                if not _is_sqlite_contention(exc):
+                    raise
+                logger.warning(
+                    "agent_cron_scheduler_database_contention",
+                    exc_info=True,
+                    extra={
+                        "scheduler_retry_after_seconds": (
+                            SQLITE_CONTENTION_RETRY_SECONDS
+                        )
+                    },
+                )
+                if wake_event.wait(SQLITE_CONTENTION_RETRY_SECONDS):
+                    wake_event.clear()
+                continue
             signaled = wake_event.wait(self.seconds_until_next(current))
             if signaled:
                 wake_event.clear()

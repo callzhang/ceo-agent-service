@@ -446,6 +446,10 @@ class ConsumerAgentRunner:
                 )
                 route_sessions.pop(route_name)
         conversation_session_id = next(iter(route_sessions.values()), None)
+        force_new_session = repeated_result_failure_requires_fresh_session(
+            self.store, task, role=AgentRole.CONSUMER,
+            proposal_revision=proposal_revision,
+        )
         claim = self.store.claim_agent_run(
             task.id,
             task.execution_generation,
@@ -460,11 +464,12 @@ class ConsumerAgentRunner:
             parent_agent_run_id=parent_agent_run_id,
             operation_id="",
             owner=self.owner,
+            fresh_session=force_new_session,
             lease_seconds=LEASE_SECONDS,
         )
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
-        session_id = (
+        session_id = None if force_new_session else (
             claim.run.codex_session_id if conversation_session_id is not None else None
         ) or conversation_session_id
         persist_conversation_session = not bool(route_sessions)
@@ -504,12 +509,6 @@ class ConsumerAgentRunner:
                 "不要重新开始一个新的业务判断。"
             )
         continuation_prompt += result_correction_prompt(
-            self.store,
-            task,
-            role=AgentRole.CONSUMER,
-            proposal_revision=proposal_revision,
-        )
-        force_new_session = repeated_result_failure_requires_fresh_session(
             self.store,
             task,
             role=AgentRole.CONSUMER,

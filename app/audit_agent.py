@@ -18,6 +18,7 @@ from app.agent_turn_runner import (
     AgentTurnProcess,
     AgentTurnRunResult,
     ProcessExecutor,
+    repeated_result_failure_requires_fresh_session,
     result_correction_prompt,
 )
 from app.agent_wire_contracts import parse_audit_agent_wire_result
@@ -106,6 +107,10 @@ class AuditAgentRunner:
             or json.loads(parent.final_result_json) != context.candidate.model_dump(mode="json")
         ):
             raise ValueError("Audit parent candidate mismatch")
+        force_new_session = repeated_result_failure_requires_fresh_session(
+            self.store, task, role=AgentRole.AUDIT,
+            proposal_revision=context.proposal_revision,
+        )
         claim = self.store.claim_agent_run(
             task.id,
             task.execution_generation,
@@ -115,6 +120,7 @@ class AuditAgentRunner:
             parent_agent_run_id=parent_agent_run_id,
             operation_id=context.operation_id,
             owner=self.owner,
+            fresh_session=force_new_session,
             lease_seconds=LEASE_SECONDS,
         )
         if not claim.claimed:
@@ -122,6 +128,7 @@ class AuditAgentRunner:
         return self._execute_claimed(
             task, context, run=claim.run,
             rendered_rules=render_audit_rules(AgentRole.AUDIT),
+            force_new_session=force_new_session,
         )
 
     def _execute_claimed(
@@ -131,6 +138,7 @@ class AuditAgentRunner:
         *,
         run: AgentRun,
         rendered_rules: str,
+        force_new_session: bool,
     ) -> AgentTurnRunResult[AuditAgentResult]:
         correction = result_correction_prompt(
             self.store,
@@ -300,6 +308,7 @@ class AuditAgentRunner:
             skill_names=context.task.skill_names,
             prompt=task_assembly.text,
             session_id=run.codex_session_id or None,
+            force_new_session=force_new_session,
             developer_instructions=render_prompt_sections(
                 developer_sections,
                 placement="developer",

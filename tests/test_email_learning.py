@@ -36,6 +36,58 @@ def test_runtime_observability_sink_failure_never_changes_classification_path():
     assert recorder.summary()["warm_success_cache"]["sample_count"] == 1
 
 
+def test_provider_scan_advances_folder_time_without_rewriting_message_rows(tmp_path):
+    store = EmailStore(tmp_path / "provider-observation-generation.sqlite3")
+    observations = tuple(
+        {
+            "account_id": "account-1",
+            "stable_message_identity": identity,
+            "provider_folder_id": "folder-inbox",
+            "provider_folder_name": "Inbox",
+            "folder_role": "inbox",
+            "bound_category_key": None,
+            "folder_binding_status": "unbound",
+            "important_signals": {
+                "provider_important": False,
+                "raw_signal_names": [],
+            },
+        }
+        for identity in ("message-one", "message-two")
+    )
+
+    store.record_current_provider_observations(
+        observations,
+        unavailable_folders=(),
+        active_account_ids=("account-1",),
+        observed_at="2026-10-08T10:00:00+00:00",
+    )
+    store.record_current_provider_observations(
+        observations,
+        unavailable_folders=(),
+        active_account_ids=("account-1",),
+        observed_at="2026-10-08T10:01:00+00:00",
+    )
+
+    with store._connect() as db:
+        message_times = tuple(
+            row["observed_at"]
+            for row in db.execute(
+                "select observed_at from email_provider_observations "
+                "order by stable_message_identity"
+            )
+        )
+        folder_time = db.execute(
+            "select observed_at from email_provider_folder_observation_generations "
+            "where account_id='account-1' and provider_folder_id='folder-inbox'"
+        ).fetchone()["observed_at"]
+
+    assert message_times == (
+        "2026-10-08T10:00:00+00:00",
+        "2026-10-08T10:00:00+00:00",
+    )
+    assert folder_time == "2026-10-08T10:01:00+00:00"
+
+
 def test_runtime_observability_persists_safe_bounded_samples_across_processes(
     tmp_path,
 ):

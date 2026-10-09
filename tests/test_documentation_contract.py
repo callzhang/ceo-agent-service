@@ -166,7 +166,7 @@ def test_current_docs_describe_upgrade_backup_and_mcp_boundary() -> None:
     inventory = _read("docs/dws-command-inventory.md")
 
     assert "MCP 配置不由该流程探测、禁用或覆盖" in architecture
-    assert "只保留一个最新快照" in architecture
+    assert "只保留一个最新的已验证日备份" in architecture
     assert "not a runtime command allowlist" in inventory
     assert "## CEO Service Command Reference" in inventory
     assert "Current practical allowlist" not in inventory
