@@ -489,7 +489,7 @@ def repeated_result_failure_requires_fresh_session(
     role: AgentRole,
     proposal_revision: int,
 ) -> bool:
-    """Break a session loop after it repeats the same unusable result twice."""
+    """Honor a noncontinuable result or break a repeated unusable-result loop."""
 
     failed_runs = sorted(
         (
@@ -500,15 +500,27 @@ def repeated_result_failure_requires_fresh_session(
             )
             if run.role is role
             and run.proposal_revision == proposal_revision
-            and run.status == "failed"
-            and run.codex_session_id
+            and run.status in {"failed", "completed"}
         ),
         key=lambda run: (run.turn_attempt, run.id),
     )
+    if not failed_runs:
+        return False
+    latest = failed_runs[-1]
+    if latest.status != "failed":
+        return False
+    try:
+        latest_error = json.loads(latest.structured_error_json or "{}")
+    except json.JSONDecodeError:
+        return False
+    if isinstance(latest_error, dict) and latest_error.get("session_continuable") is False:
+        return True
     if len(failed_runs) < 2:
         return False
     previous, latest = failed_runs[-2:]
-    if previous.codex_session_id != latest.codex_session_id:
+    if previous.status != "failed":
+        return False
+    if not previous.codex_session_id or previous.codex_session_id != latest.codex_session_id:
         return False
 
     fingerprints: list[tuple[str, str]] = []
@@ -712,6 +724,7 @@ class AgentTurnProcess(Generic[ResultT]):
         primary_turn_started = False
         primary_turn_closed = False
         observed_session_id = ""
+        fresh_route_sessions: dict[str, str | None] = {}
         active_attempt: AgentRuntimeAttempt | None = None
         active_route: RuntimeRoute | None = None
         session_transcript_end = 0
@@ -751,6 +764,10 @@ class AgentTurnProcess(Generic[ResultT]):
             new_session = trusted_claude_session_id or _session_id(payload)
             if new_session:
                 observed_session_id = new_session
+                if active_route is not None and (
+                    force_new_session or active_route.name in fresh_route_sessions
+                ):
+                    fresh_route_sessions[active_route.name] = new_session
                 is_claude = (
                     active_route is not None
                     and active_route.runtime_kind is RuntimeKind.CLAUDE_CLI
@@ -1330,10 +1347,13 @@ class AgentTurnProcess(Generic[ResultT]):
                         route=route,
                         failed_attempt=failed_attempt,
                     )
-                route_session_id = (
-                    None
-                    if decision.fresh_session
-                    else self._session_for_route(
+                if decision.fresh_session:
+                    fresh_route_sessions[route.name] = None
+                    route_session_id = None
+                elif force_new_session or route.name in fresh_route_sessions:
+                    route_session_id = fresh_route_sessions.get(route.name)
+                else:
+                    route_session_id = self._session_for_route(
                         route,
                         role=run.role,
                         requested_session_id=_fallback_requested_session_id(
@@ -1345,7 +1365,6 @@ class AgentTurnProcess(Generic[ResultT]):
                         ),
                         conversation_contract_hash=conversation_contract_hash,
                     )
-                )
                 successor = self._claim_and_start_attempt(
                     run,
                     route,

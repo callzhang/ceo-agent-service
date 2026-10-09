@@ -13611,6 +13611,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         parent_agent_run_id: int | None,
         operation_id: str,
         owner: str,
+        fresh_session: bool = False,
         lease_seconds: int = 1800,
         now: str | datetime | None = None,
     ) -> AgentRunClaim:
@@ -13698,9 +13699,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     )
             prior_session = db.execute(
                 """
-                select codex_session_id from agent_runs
+                select case
+                  when status='failed' and json_valid(structured_error_json)
+                  then case when json_type(structured_error_json, '$.session_continuable')='false'
+                    then '' else codex_session_id end
+                  else codex_session_id end as codex_session_id
+                from agent_runs
                 where reply_task_id=? and execution_generation=? and role=?
-                  and proposal_revision=? and codex_session_id<>''
+                  and proposal_revision=?
                 order by turn_attempt desc, id desc
                 limit 1
                 """,
@@ -13713,7 +13719,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchone()
             codex_session_id = (
                 str(prior_session["codex_session_id"])
-                if prior_session is not None
+                if prior_session is not None and not fresh_session
                 else ""
             )
             cursor = db.execute(

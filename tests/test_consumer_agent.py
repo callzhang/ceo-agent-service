@@ -226,6 +226,41 @@ class SequencedRuntimeExecutor(CapturingExecutor):
         return result
 
 
+@pytest.mark.parametrize("started_session", [None, "new-session-before-capacity"])
+def test_noncontinuable_api_session_is_not_restored_by_capacity_retry(store, task, context, started_session):
+    prior = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="prior-consumer",
+    ).run
+    store.fail_agent_run(prior.id, {
+        "code": "dependency_read_unavailable", "retryable": True,
+        "session_continuable": False,
+    }, owner="prior-consumer")
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "codex_api", "known-bad-api-session", "old-contract",
+    )
+    events = []
+    if started_session:
+        events.append(json.dumps({"type": "thread.started", "thread_id": started_session}))
+    events.append(json.dumps({"type": "error", "message": "Selected model is at capacity. Please try a different model."}))
+    recovered_session = started_session or "new-recovered-session"
+    executor = SequencedRuntimeExecutor(
+        ProcessRunResult(1, "\n".join(events), ""),
+        ProcessRunResult(0, _result_jsonl(session=recovered_session), ""),
+    )
+    config, router, adapter = _consumer_runtime_dependencies(store, routes="codex_api")
+    result = ConsumerAgentRunner(
+        store=store, workspace=Path("/workspace"), executor=executor,
+        runtime_config=config, runtime_router=router, codex_adapter=adapter,
+        codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    attempts = store.list_agent_runtime_attempts(result.run_id)
+    assert ["resume" in command for command in executor.commands] == [False, bool(started_session)]
+    assert all(attempt.source_session_id != "known-bad-api-session" for attempt in attempts)
+    assert attempts[-1].source_session_id == (started_session or "")
+
+
 @pytest.mark.parametrize(
     ("parent_mode", "ambient_mode"),
     (("1", "0"), ("0", "1")),

@@ -5891,13 +5891,20 @@ def test_consume_once_stops_retryable_orchestration_at_limit(
     assert worker.store.count_reply_tasks(status="pending") == 1
     pending = worker.store.list_reply_tasks(limit=1, statuses=["pending"])[0]
     generation = pending.execution_generation
+    prior_run = max(
+        worker.store.list_agent_runs_for_task_generation(pending.id, generation),
+        key=lambda run: run.id,
+    )
+    assert json.loads(prior_run.structured_error_json)["session_continuable"] is False
+    assert prior_run.codex_session_id == "retry-session"
     with worker.store._connect() as db:
         db.execute("update reply_tasks set available_at='' where id=?", (pending.id,))
     assert worker.consume_once(max_tasks=1) == 0
     retried = worker.store.list_reply_tasks(limit=1, statuses=["failed"])[0]
     assert retried.execution_generation == generation
     assert len(runner.calls) == 2
-    assert runner.calls[1][3] == "retry-session"
+    assert runner.calls[1][3] == ""
+    assert worker.store.get_agent_run(prior_run.id).codex_session_id == "retry-session"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == "failed"

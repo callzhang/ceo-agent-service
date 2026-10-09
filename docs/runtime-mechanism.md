@@ -1,5 +1,24 @@
 # Current Runtime Mechanism
 
+Retry session selection honors an explicit JSON boolean
+`session_continuable=false` on the latest failed run for the current generation,
+role and revision. A new run does not inherit that session, and Consumer/Audit
+start a fresh runtime rather than restoring it through conversation routing.
+Missing flags and string values are not treated as false. A later completed
+session covers an older failure. Existing candidate digest, revision, source,
+approval and external-receipt checks remain unchanged; fresh transport is not
+permission to replay an external action. Old run/session history is preserved.
+This decision uses the latest terminal run even when its legacy
+`codex_session_id` is empty: API/Claude sessions may exist only in route/runtime
+records. The runner computes fresh selection before claiming, and the same
+decision initializes the new run without an inherited session. This also keeps
+Audit's repeated-result fresh retry consistent with immutable run binding.
+Fresh selection remains effective across capacity retries and route changes.
+Within that run, a route may resume only a session actually observed in its
+current native events; before a new session event it stays fresh. Another
+explicit fresh decision invalidates that route's earlier in-run session.
+Normal continuation outside a fresh retry keeps its existing selection rules.
+
 `CEO_DATABASE_BACKUP_PAUSED=1` pauses automatic daily database backups before
 opening databases, creating directories, or pruning snapshots. Unset the flag
 to resume the existing daily workflow. Set it in the service process environment
