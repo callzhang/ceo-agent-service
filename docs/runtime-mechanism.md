@@ -6,11 +6,12 @@ root-level `auto-reply.sqlite3.pre-*` recovery snapshots and their SQLite
 sidecars once they are older than 24 hours. A failed or interrupted daily copy
 does not authorize that cleanup.
 
-The repository updater records progress in the existing `service_state` table
-before its quiet wait, using a narrow connection that does not initialize the
-application schema. That write acquires `BEGIN IMMEDIATE` and retries transient
-`SQLITE_BUSY`/`SQLITE_LOCKED` up to three times with the connection's existing
-30-second busy timeout; it does not make a long deploy-status transaction.
+The repository updater does not write deployment progress to the shared
+SQLite database while waiting for the live service to become quiet. It records
+the next phase only after the service is quiet and stopped, using a narrow
+connection that does not initialize the application schema. That write
+acquires `BEGIN IMMEDIATE` and retries transient `SQLITE_BUSY`/`SQLITE_LOCKED`
+up to three times with the connection's existing 30-second busy timeout.
 
 Reply queue polling first reads the current channel's due pending tasks without
 acquiring a write transaction. An empty channel, future-only queue, or another

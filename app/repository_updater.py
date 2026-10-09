@@ -380,10 +380,8 @@ class RepositoryUpdater:
 
     def execute(self, operation: UpgradeOperation) -> UpgradeResult:
         with self.repository.mutex():
-            self._persist(operation, "preparing")
             self.repository.fetch(self.remote)
             records = self._recheck(operation)
-            self._persist(operation, "waiting_for_idle")
             self.wait_for_quiet()
             self.stop()
             backup_path = self._backup(operation)
