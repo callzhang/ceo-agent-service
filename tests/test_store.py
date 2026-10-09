@@ -751,6 +751,39 @@ def test_runtime_attempt_claim_numbers_follow_terminal_attempts(tmp_path: Path):
     assert store.mark_agent_runtime_attempt_superseded(first.id).status == "superseded"
 
 
+def test_runtime_attempt_history_lookup_uses_run_index(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-attempt-history.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    first = store.claim_agent_runtime_attempt(
+        run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+    )
+    store.fail_agent_runtime_attempt(
+        first.id,
+        failure_class="authentication",
+        failure_code="codex_login_required",
+        failover_permitted=True,
+    )
+    second = store.claim_agent_runtime_attempt(
+        run.id, "codex_api", "codex_cli", "service_api", "gpt-5.5"
+    )
+
+    assert [attempt.id for attempt in store.list_agent_runtime_attempts(run.id)] == [
+        first.id,
+        second.id,
+    ]
+    with store._connect() as db:
+        plan = db.execute(
+            """
+            explain query plan
+            select * from agent_runtime_attempts
+            where agent_run_id=? order by attempt_number
+            """,
+            (run.id,),
+        ).fetchall()
+
+    assert any("idx_agent_runtime_attempts_run" in str(row[3]) for row in plan)
+
+
 def test_runtime_attempt_session_evidence_is_persisted_and_validated(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
     run = _claimed_runtime_agent_run(store)

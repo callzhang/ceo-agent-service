@@ -349,6 +349,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_oa_notification_events_claim",
     "idx_runtime_attempt_active_route",
     "idx_runtime_attempt_active_lease",
+    "idx_agent_runtime_attempts_run",
     "idx_task_agent_runs_active_input",
     "idx_agent_run_state_events_run",
     "idx_agent_effect_intents_run",
@@ -10180,6 +10181,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             create index if not exists idx_runtime_attempt_active_lease
             on agent_runtime_attempts(status, lease_expires_at)
             where agent_run_id is null and status in ('starting', 'running')
+            """
+        )
+        db.execute(
+            """
+            create index if not exists idx_agent_runtime_attempts_run
+            on agent_runtime_attempts(agent_run_id, attempt_number)
+            where agent_run_id is not null
             """
         )
         db.execute("drop trigger if exists trg_runtime_attempt_generalized_lease_insert")
