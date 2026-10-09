@@ -12101,7 +12101,32 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 """,
                 (reply_task_id, execution_generation),
             ).fetchall()
-            return [self._agent_run_from_row(row, db=db) for row in rows]
+            runs = [
+                self._agent_run_from_row(row, db=db, load_events=False)
+                for row in rows
+            ]
+            events_by_run: dict[int, list[dict[str, object]]] = {
+                run.id: [] for run in runs
+            }
+            run_ids = list(events_by_run)
+            # Stay below SQLite builds that cap bound variables at 999.
+            for start in range(0, len(run_ids), 800):
+                chunk = run_ids[start : start + 800]
+                placeholders = ", ".join("?" for _ in chunk)
+                event_rows = db.execute(
+                    "select agent_run_id, event_json from agent_run_events "
+                    f"where agent_run_id in ({placeholders}) "
+                    "order by agent_run_id, sequence",
+                    tuple(chunk),
+                ).fetchall()
+                for event in event_rows:
+                    events_by_run[int(event["agent_run_id"])].append(
+                        json.loads(event["event_json"])
+                    )
+            return [
+                run.model_copy(update={"tool_events": events_by_run[run.id]})
+                for run in runs
+            ]
 
     def list_agent_run_summaries_for_terminal_runs(
         self,
@@ -31164,6 +31189,29 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 self._history_page_cache_refreshing = False
         return result
 
+    def list_reply_attempt_operation_statuses(
+        self, attempt_ids: list[int]
+    ) -> dict[int, str]:
+        """Project History statuses only for the attempts requested by a chart."""
+        ids = list(dict.fromkeys(i for i in attempt_ids if type(i) is int and i > 0))
+        if not ids:
+            return {}
+        statuses: dict[int, str] = {}
+        with self._connect() as db:
+            for start in range(0, len(ids), 800):
+                chunk = ids[start : start + 800]
+                placeholders = ", ".join("?" for _ in chunk)
+                rows = db.execute(
+                    "select source_id, status from ("
+                    f"{self._operation_logs_base_query(('reply_attempts',), chunk)}"
+                    f") where source_id in ({placeholders})",
+                    tuple(chunk),
+                ).fetchall()
+                statuses.update(
+                    {int(row["source_id"]): str(row["status"]) for row in rows}
+                )
+        return statuses
+
     def warm_history_page_cache(
         self, *, source_tables: tuple[str, ...], limit: int = 20
     ) -> int:
@@ -31228,7 +31276,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         return False
 
     def _operation_logs_base_query(
-        self, source_tables: tuple[str, ...] | None = None
+        self,
+        source_tables: tuple[str, ...] | None = None,
+        reply_attempt_ids: list[int] | tuple[int, ...] | None = None,
     ) -> str:
         query = f"""
             select
@@ -31410,7 +31460,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     0 as todo_id,
                     0 as follow_up_id
                 from reply_attempts
-                where not exists (
+                where {(
+                    'id in (' + ', '.join(str(int(i)) for i in reply_attempt_ids) + ') and '
+                    if reply_attempt_ids is not None else ''
+                )}not exists (
                     select 1 from agent_runs as attempt_run
                     join reply_tasks as current_task
                       on current_task.id=attempt_run.reply_task_id

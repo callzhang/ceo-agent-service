@@ -7,7 +7,10 @@ repository updater the console's upgrade uses: wait until no work is in flight,
 back up the database, fast-forward to ``origin/main``, build the console,
 check the imports, restart and wait for health, rolling back on failure.
 
-Usage: ``python -m app.deploy`` from any checkout. Two sessions deploying at
+Usage: ``python -m app.deploy`` from any checkout. An explicitly requested
+``--skip-quiet-wait`` bypasses only the in-flight-work wait; the service is
+still stopped through the normal updater before backup or checkout changes.
+Two sessions deploying at
 once are serialized by the repository lock; the second finds the checkout
 already moved and stops.
 """
@@ -147,6 +150,7 @@ def deploy(
     root: Path, database_path: Path, *, publish_contracts: bool = False,
     publish_prompt_templates: bool = False,
     maintenance_tasks: tuple[int, ...] = (),
+    skip_quiet_wait: bool = False,
 ) -> str:
     if publish_contracts and publish_prompt_templates:
         raise SystemExit("Consumer/Audit contracts and prompt templates require separate deployments")
@@ -198,6 +202,8 @@ def deploy(
         stopped = False
 
     def quiet() -> None:
+        if skip_quiet_wait:
+            return
         if maintenance_tasks:
             processes = check_maintenance(database_path, maintenance_tasks)
             processes = stop_for_maintenance(processes, stop_once)
@@ -287,6 +293,11 @@ def main() -> int:
         help="restart on the current code (a setting changed), instead of deploying a commit",
     )
     parser.add_argument(
+        "--skip-quiet-wait",
+        action="store_true",
+        help="deploy immediately without waiting for active work to drain; the updater still stops the service before backup and checkout changes",
+    )
+    parser.add_argument(
         "--publish-consumer-system-contracts",
         action="store_true",
         help="publish the reviewed Consumer/Audit Skill and Audit-rule files in the quiet deploy window",
@@ -315,6 +326,7 @@ def main() -> int:
         publish_contracts=args.publish_consumer_system_contracts,
         publish_prompt_templates=args.publish_prompt_templates,
         maintenance_tasks=tuple(args.maintenance_task),
+        skip_quiet_wait=args.skip_quiet_wait,
     ), flush=True)
     return 0
 

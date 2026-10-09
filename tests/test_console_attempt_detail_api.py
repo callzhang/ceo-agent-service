@@ -656,52 +656,53 @@ def test_history_detail_does_not_initialize_unrelated_email_store(
         assert response.json()["item"]["email"] is None
 
 
-def test_email_history_detail_reads_fresh_context_on_each_request(
+def test_email_history_detail_reuses_initialized_store_and_reads_fresh_context(
     tmp_path: Path, monkeypatch
 ):
     from tests.test_console_web_api import _client
 
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = _seed_email_attempt(store, with_agent_runs=False)
+    initializations = []
     reads = []
 
     class FreshEmailStore(_FakeEmailStore):
         def get_classification(self, classification_id):
+            reads.append(classification_id)
             result = super().get_classification(classification_id)
             return {**result, "subject": f"Revision {len(reads)}"}
 
-    def email_store_factory(_path):
-        reads.append(_path)
+    def email_store_factory(path):
+        initializations.append(path)
         return FreshEmailStore()
 
+    monkeypatch.setattr("app.audit_web.EmailStore", email_store_factory)
     with _client(tmp_path) as client:
-        monkeypatch.setattr("app.audit_web.EmailStore", email_store_factory)
+        assert len(initializations) == 1
         first = client.get(f"/api/console/history/{attempt_id}")
         second = client.get(f"/api/console/history/{attempt_id}")
 
     assert first.status_code == second.status_code == 200
+    assert len(initializations) == 1
     assert len(reads) == 2
     assert first.json()["item"]["email"]["subject"] == "Revision 1"
     assert second.json()["item"]["email"]["subject"] == "Revision 2"
     assert second.json()["item"]["email"]["unsubscribe"]["evidence"] == "page-not-operable"
 
 
-def test_email_history_detail_preserves_store_validation_failure(
+def test_email_store_validation_failure_prevents_web_app_startup(
     tmp_path: Path, monkeypatch
 ):
     from app.email_store import EmailPersistenceCorruption
     from tests.test_console_web_api import _client
 
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    attempt_id = _seed_email_attempt(store, with_agent_runs=False)
-
     def invalid_email_store(_path):
         raise EmailPersistenceCorruption("test-invalid-email-state")
 
-    with _client(tmp_path) as client:
-        monkeypatch.setattr("app.audit_web.EmailStore", invalid_email_store)
-        with pytest.raises(EmailPersistenceCorruption, match="test-invalid-email-state"):
-            client.get(f"/api/console/history/{attempt_id}")
+    monkeypatch.setattr("app.audit_web.EmailStore", invalid_email_store)
+    with pytest.raises(EmailPersistenceCorruption, match="test-invalid-email-state"):
+        with _client(tmp_path):
+            pass
 
 
 def test_codex_session_roles_resolve_both_transcripts_of_one_attempt(tmp_path: Path):

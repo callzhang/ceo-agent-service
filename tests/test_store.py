@@ -6605,6 +6605,44 @@ def test_agent_run_concurrent_event_writers_do_not_drop_events(tmp_path: Path):
     assert {event["call_id"] for event in loaded.tool_events} == {"c1", "c2"}
 
 
+def test_list_agent_runs_for_generation_batches_events_and_preserves_order(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "agent-run-batch.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    first = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="consumer",
+    ).run
+    second = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=first.id,
+        operation_id="audit", owner="audit",
+    ).run
+    store.append_agent_run_event(first.id, {"call_id": "first-1"}, owner="consumer")
+    store.append_agent_run_event(first.id, {"call_id": "first-2"}, owner="consumer")
+    store.append_agent_run_event(second.id, {"call_id": "second-1"}, owner="audit")
+
+    runs = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
+
+    assert [run.id for run in runs] == [first.id, second.id]
+    assert [event["call_id"] for event in runs[0].tool_events] == ["first-1", "first-2"]
+    assert [event["call_id"] for event in runs[1].tool_events] == ["second-1"]
+
+
+def test_reply_attempt_status_projection_is_scoped_to_requested_ids(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "history-status-scope.sqlite3")
+    selected = _attempt(store, trigger="selected", status="failed")
+    unrelated = _attempt(store, trigger="unrelated", status="pending")
+
+    assert store.list_reply_attempt_operation_statuses([selected, selected, 0, -1]) == {
+        selected: "failed"
+    }
+    assert store.list_reply_attempt_operation_statuses([]) == {}
+    assert store.list_reply_attempt_operation_statuses([unrelated + 10_000]) == {}
+
+
 def test_append_rechecks_default_time_after_waiting_for_write_lock(
     tmp_path: Path,
     monkeypatch,

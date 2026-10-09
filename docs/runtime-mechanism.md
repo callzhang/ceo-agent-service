@@ -1439,6 +1439,13 @@ again with launchd `bootstrap` after verification, then performs the normal
 health and queue readback. This prevents the deployment process and worker
 process from writing the same SQLite database concurrently.
 
+An operator may explicitly run `python -m app.deploy --skip-quiet-wait` when
+immediate deployment is required. This bypasses only the in-flight-work wait;
+the repository lock, normal service stop before database backup and checkout
+changes, verification, restart, health check, and rollback behavior still
+apply. Work interrupted by that stop is handled by the existing startup
+recovery and claim logic.
+
 ### Public information and native reply recovery
 
 The fixed Consumer/Audit rules now distinguish established public disclosure
@@ -1516,10 +1523,12 @@ rewriting a completed reply task to pending. A successful receipt, missing
 receipt, or failed terminal parent does not authorize this runtime operation;
 the action plan and browser effect authorization remain unchanged.
 
-Audit History list and chart prewarming runs in a daemon background thread
-after lifecycle recovery starts. These read-only scans populate the existing
-caches but do not gate the HTTP listener or launchd startup health checks.
-Health readiness is not evidence that History prewarming or business actions
+Audit web startup does not scan and cache History lists or charts. History
+pages are computed when requested. Attempt detail loads all Agent runs for a
+task generation and their tool events in batched reads rather than one event
+query per run. The History chart projects lifecycle status only for reply
+attempts in the requested time window, avoiding a full-history status scan.
+Health readiness is not evidence that History requests or business actions
 have completed; their APIs and provider receipts must still be read back.
 
 DingTalk meeting group searches explicitly request 100 candidates per page,
@@ -1603,12 +1612,12 @@ used for identity, provider locators, recipients, references, and attachment
 metadata. Its scan selects only those columns; it does not load cached message
 bodies or other unused columns into memory while performing the validation.
 
-The Console history-detail handler passes an EmailStore factory, not an already
-initialized EmailStore, to the Attempt DTO builder. Only an existing
-email-channel Attempt opens that store for its classification and unsubscribe
-context. DingTalk, WeChat and missing Attempts do not scan email durable state.
-Each email detail request still initializes and validates the store and reads
-current receipts; initialization failures are not suppressed or cached.
+The Web process initializes and validates one EmailStore at startup, shared by
+Console detail routes and the email learning service. Initialization failures
+prevent startup. The Attempt DTO builder queries this initialized store only for
+an existing email-channel Attempt's classification and unsubscribe context.
+Every request reads current records through fresh database connections; detail
+results are not cached and requests do not repeat the full durable-state scan.
 
 Direct provider-action claims hold BEGIN IMMEDIATE only over classifications
 with pending or failed actions, rather than materializing every processed
