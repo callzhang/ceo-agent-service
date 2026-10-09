@@ -724,6 +724,7 @@ class AgentTurnProcess(Generic[ResultT]):
         primary_turn_started = False
         primary_turn_closed = False
         observed_session_id = ""
+        fresh_route_sessions: dict[str, str | None] = {}
         active_attempt: AgentRuntimeAttempt | None = None
         active_route: RuntimeRoute | None = None
         session_transcript_end = 0
@@ -763,6 +764,10 @@ class AgentTurnProcess(Generic[ResultT]):
             new_session = trusted_claude_session_id or _session_id(payload)
             if new_session:
                 observed_session_id = new_session
+                if active_route is not None and (
+                    force_new_session or active_route.name in fresh_route_sessions
+                ):
+                    fresh_route_sessions[active_route.name] = new_session
                 is_claude = (
                     active_route is not None
                     and active_route.runtime_kind is RuntimeKind.CLAUDE_CLI
@@ -1342,10 +1347,13 @@ class AgentTurnProcess(Generic[ResultT]):
                         route=route,
                         failed_attempt=failed_attempt,
                     )
-                route_session_id = (
-                    None
-                    if decision.fresh_session
-                    else self._session_for_route(
+                if decision.fresh_session:
+                    fresh_route_sessions[route.name] = None
+                    route_session_id = None
+                elif force_new_session or route.name in fresh_route_sessions:
+                    route_session_id = fresh_route_sessions.get(route.name)
+                else:
+                    route_session_id = self._session_for_route(
                         route,
                         role=run.role,
                         requested_session_id=_fallback_requested_session_id(
@@ -1357,7 +1365,6 @@ class AgentTurnProcess(Generic[ResultT]):
                         ),
                         conversation_contract_hash=conversation_contract_hash,
                     )
-                )
                 successor = self._claim_and_start_attempt(
                     run,
                     route,

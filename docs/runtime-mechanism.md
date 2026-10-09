@@ -13,6 +13,11 @@ This decision uses the latest terminal run even when its legacy
 records. The runner computes fresh selection before claiming, and the same
 decision initializes the new run without an inherited session. This also keeps
 Audit's repeated-result fresh retry consistent with immutable run binding.
+Fresh selection remains effective across capacity retries and route changes.
+Within that run, a route may resume only a session actually observed in its
+current native events; before a new session event it stays fresh. Another
+explicit fresh decision invalidates that route's earlier in-run session.
+Normal continuation outside a fresh retry keeps its existing selection rules.
 
 `CEO_DATABASE_BACKUP_PAUSED=1` pauses automatic daily database backups before
 opening databases, creating directories, or pruning snapshots. Unset the flag
