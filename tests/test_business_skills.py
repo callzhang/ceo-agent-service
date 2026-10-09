@@ -473,6 +473,29 @@ def test_runtime_scan_accepts_service_frontmatter_colons(tmp_path: Path):
     ]
 
 
+def test_runtime_scan_ignores_nested_product_metadata(tmp_path: Path):
+    root = tmp_path / "skills"
+    path = root / "dingtalk-calendar" / "SKILL.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "---\n"
+        "name: dingtalk-calendar\n"
+        "description: Calendar operations: reads and writes.\n"
+        "metadata:\n"
+        "  requires:\n"
+        "    bins:\n"
+        "      - dws\n"
+        "---\n\nBODY MUST NOT ENTER CATALOG\n",
+        encoding="utf-8",
+    )
+
+    [entry] = installed_runtime_skills(root)
+
+    assert entry.name == "dingtalk-calendar"
+    assert entry.description == "Calendar operations: reads and writes."
+    assert entry.skill_path == path.resolve()
+
+
 def test_codex_override_enables_the_allow_set_and_disables_everything_else(
     tmp_path: Path,
 ):

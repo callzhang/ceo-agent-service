@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import subprocess
 import threading
@@ -333,6 +334,92 @@ def test_read_skill_ignores_missing_configured_roots(
 
     assert result["path"] == str(skill_path.resolve())
     assert result["name"] == "business-review"
+
+
+def test_read_skill_tool_discovers_metadata_and_reads_exact_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    root = tmp_path / "skills"
+    skill_path = root / "business-review" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text(
+        "---\nname: business-review\n"
+        "description: Review business material: with evidence.\n"
+        "metadata:\n  requires:\n    bins:\n      - tool\n"
+        "---\n\nEXACT BODY\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (root,))
+    tool = agent_cli.build_role_server("audit")._tool_manager.get_tool("read_skill").fn
+    descriptor = next(
+        item
+        for item in asyncio.run(agent_cli.build_role_server("audit").list_tools())
+        if item.name == "read_skill"
+    )
+
+    discovered = tool()
+    assert discovered == {
+        "skills": [{
+            "name": "business-review",
+            "description": "Review business material: with evidence.",
+            "path": str(skill_path.resolve()),
+        }]
+    }
+    assert "EXACT BODY" not in json.dumps(discovered)
+    assert set(descriptor.inputSchema["properties"]) == {"path", "name"}
+    assert "required" not in descriptor.inputSchema
+    by_name = tool(name="business-review")
+    by_path = tool(path=str(skill_path))
+    assert by_name == by_path
+    assert tool(name="business-review", path=None) == by_name
+    assert tool(path=str(skill_path), name=None) == by_path
+    assert by_name["content"].endswith("EXACT BODY\n")
+    with pytest.raises(ValueError, match="only one"):
+        tool(path=str(skill_path), name="business-review")
+    with pytest.raises(ValueError, match="unknown"):
+        tool(name="missing")
+
+
+def test_read_skill_tool_rejects_ambiguous_installed_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    roots = (tmp_path / "one", tmp_path / "two")
+    for root in roots:
+        path = root / "same" / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            "---\nname: same\ndescription: Same.\n---\n\nBODY\n",
+            encoding="utf-8",
+        )
+    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", roots)
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("read_skill").fn
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        tool(name="same")
+
+
+def test_read_skill_discovery_excludes_skill_symlink_outside_authorized_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    root = tmp_path / "skills"
+    root.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text(
+        "---\nname: secret-skill\ndescription: SECRET SENTINEL\n---\n",
+        encoding="utf-8",
+    )
+    linked = root / "linked" / "SKILL.md"
+    linked.parent.mkdir()
+    linked.symlink_to(outside)
+    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (root,))
+    tool = agent_cli.build_role_server("audit")._tool_manager.get_tool("read_skill").fn
+
+    discovered = tool()
+
+    assert discovered == {"skills": []}
+    assert "SECRET SENTINEL" not in json.dumps(discovered)
+    with pytest.raises(ValueError, match="unknown"):
+        tool(name="secret-skill")
 
 
 @pytest.mark.parametrize("alias", ("tilde", "symlink"))

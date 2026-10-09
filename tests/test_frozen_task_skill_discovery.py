@@ -148,6 +148,23 @@ def test_read_task_skill_fails_for_missing_unknown_ambiguous_or_stale_material(
         read("ceo-calendar-invite")
 
 
+def test_read_task_skill_rejects_material_inside_invalid_service_wrapper(tmp_path):
+    invalid = _context(
+        ServiceCommandSkillMaterial(
+            name="ceo-calendar-invite", content="MUST NOT BE SERVED"
+        )
+    ).to_payload()
+    invalid["scheduled_task_id"] = "wrong-type"
+    db = tmp_path / "service.sqlite3"
+    _task_db(db, scheduled_consumer=invalid)
+    read = build_role_server(
+        "consumer", task_id=7, db_path=db, execution_generation="first"
+    )._tool_manager.get_tool("read_task_skill").fn
+
+    with pytest.raises(ValueError, match="scheduled consumer context is invalid"):
+        read("ceo-calendar-invite")
+
+
 @pytest.mark.parametrize("role", ["consumer", "audit"])
 def test_role_command_replaces_selected_native_skill_config_with_empty_selection(
     monkeypatch, role,

@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
+from app.agent_cli import build_role_server
 from app.agent_cron.commands import (
     SERVICE_COMMAND_EXECUTION_KIND,
     ServiceCommandRegistry,
@@ -241,8 +242,27 @@ def test_context_uses_exact_snapshot_and_rejects_unsupported_thinking(tmp_path):
     assert built.context.trigger_text == "Only snapshot"
     assert built.context.messages == built.context.materials == ()
     assert built.route.model == "saved" and built.reasoning_effort == "high"
-    assert "EXACT MANAGED BODY" in built.skill_protocol
-    assert options.operation.sha256 in built.skill_protocol
+    assert "EXACT MANAGED BODY" not in built.skill_protocol
+    assert options.operation.sha256 not in built.skill_protocol
+    assert "agent_cli.read_task_skill(name)" in built.skill_protocol
+    assert built.skill_names == ("managed-check", "operation-check")
+    assert [material.name for material in built.skill_materials] == [
+        "managed-check", "operation-check",
+    ]
+    assert "EXACT MANAGED BODY" in built.skill_materials[0].content
+    assert options.operation.sha256 in built.skill_materials[1].content
+    assert "EXACT MANAGED BODY" not in built.context.render()
+    serialized = built.to_execution_json()
+    assert "EXACT MANAGED BODY" in serialized
+    restored = type(built).from_execution_json(
+        serialized, reply_task_id=7,
+    )
+    assert restored.skill_names == built.skill_names
+    assert restored.skill_materials == built.skill_materials
+    assert restored.skill_protocol_source == "generated_discovery"
+    assert restored.context.skill_names == built.skill_names
+    assert restored.context.skill_protocol_source == "generated_discovery"
+    assert "EXACT MANAGED BODY" not in restored.context.render()
     for kind in (RuntimeKind.CLAUDE_CLI, RuntimeKind.FRIDAY_RUNTIME):
         _store, run, options = fixture(
             tmp_path / kind.value, kind=kind,
@@ -297,6 +317,30 @@ def test_scheduled_orchestrator_pins_parent_execution_mode_for_both_roles(
     }
     assert orchestrator.consumer.execution_environment == expected_environment
     assert orchestrator.audit.execution_environment == expected_environment
+    assert orchestrator.consumer.skill_protocol_source == "generated_discovery"
+    assert orchestrator.audit.skill_protocol_source == "generated_discovery"
+
+
+def test_legacy_scheduled_execution_protocol_remains_explicit_custom(tmp_path):
+    _store, run, options = fixture(tmp_path)
+    built = ScheduledAgentContextBuilder(options).build(run, reply_task_id=7)
+    payload = json.loads(built.to_execution_json())
+    payload["skill_protocol"] = "LEGACY EXPLICIT CUSTOM INSTRUCTIONS"
+    payload.pop("skill_names")
+    payload.pop("skill_materials")
+    payload.pop("skill_protocol_source")
+
+    restored = type(built).from_execution_json(
+        json.dumps(payload), reply_task_id=7,
+    )
+
+    assert restored.skill_names == ()
+    assert restored.skill_materials == ()
+    assert restored.skill_protocol_source == "explicit_custom"
+    assert restored.context.skill_protocol_override == (
+        "LEGACY EXPLICIT CUSTOM INSTRUCTIONS"
+    )
+    assert restored.context.skill_protocol_source == "explicit_custom"
 
 
 def test_scheduled_orchestrator_starts_on_the_saved_route_and_keeps_the_fallback(tmp_path):
@@ -658,6 +702,24 @@ def test_execution_uses_persisted_preflight_context_after_current_options_change
     store, run, options = fixture(tmp_path)
     persisted = dispatch(store, run, options)
     task_id = int(persisted.execution_id)
+    task = store.get_reply_task(task_id)
+    for role in ("consumer", "audit"):
+        read = build_role_server(
+            role,
+            task_id=task_id,
+            db_path=store.path,
+            execution_generation=task.execution_generation,
+        )._tool_manager.get_tool("read_task_skill").fn
+        managed = read("managed-check")
+        operation = read("operation-check")
+        assert "EXACT MANAGED BODY" in managed["content"]
+        assert managed["sha256"] == hashlib.sha256(
+            managed["content"].encode("utf-8")
+        ).hexdigest()
+        assert "EXACT OPERATION BODY" in operation["content"]
+        assert operation["sha256"] == hashlib.sha256(
+            operation["content"].encode("utf-8")
+        ).hexdigest()
     options.operation.path.write_text("CHANGED AFTER DISPATCH")
     observed = []
 
@@ -684,9 +746,37 @@ def test_execution_uses_persisted_preflight_context_after_current_options_change
         ), now=lambda: NOW,
     )
     consumer(envelope, guard)
-    assert "EXACT OPERATION BODY" in observed[0]
+    assert "EXACT OPERATION BODY" not in observed[0]
+    assert "agent_cli.read_task_skill(name)" in observed[0]
     assert "CHANGED AFTER DISPATCH" not in observed[0]
     assert observed[1] == ("Only snapshot", "Only snapshot")
+
+
+def test_damaged_duplicate_frozen_material_is_not_repaired_or_replaced(tmp_path):
+    store, run, options = fixture(tmp_path)
+    persisted = dispatch(store, run, options)
+    task_id = int(persisted.execution_id)
+    task = store.get_reply_task(task_id)
+    trigger = json.loads(task.trigger_message_json)
+    trigger["skill_materials"].append(
+        {"name": "managed-check", "content": ""}
+    )
+    with store._immediate_write_transaction() as db:
+        db.execute(
+            "update reply_tasks set trigger_message_json=? where id=?",
+            (json.dumps(trigger), task_id),
+        )
+    read = build_role_server(
+        "consumer",
+        task_id=task_id,
+        db_path=store.path,
+        execution_generation=task.execution_generation,
+    )._tool_manager.get_tool("read_task_skill").fn
+
+    with pytest.raises(
+        ValueError, match="scheduled execution Skill context is invalid"
+    ):
+        read("managed-check")
 
 
 def test_malformed_persisted_execution_context_is_audited_skip(tmp_path):

@@ -3,6 +3,12 @@ import { request } from "./console";
 export type PromptPreviewRole = "consumer" | "audit";
 export interface PromptPreviewRoute { name: string; runtime_kind: string; model: string; }
 export interface PromptPreviewAttempt { runtime_attempt_id: number; route_name: string; rendered_at: string; submission_state: "prepared" | "invoked"; }
+export interface PromptPreviewSection {
+  name: string;
+  source: string;
+  placement: "developer" | "task";
+  characters: number;
+}
 export interface PromptConfigurationFingerprints {
   developer_template?: string | null;
   developer_instructions?: string | null;
@@ -32,6 +38,7 @@ export interface PromptPreviewItem {
   reason: string;
   scope: string;
   routes: PromptPreviewRoute[];
+  sections?: PromptPreviewSection[] | null;
   configuration_fingerprints?: PromptConfigurationFingerprints | null;
   task_source_configuration_fingerprints?: PromptConfigurationFingerprints | null;
   task_source_run_id?: number | null;

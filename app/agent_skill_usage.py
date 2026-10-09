@@ -109,9 +109,36 @@ def normalized_read_skill_metadata(
     *,
     authorized_roots: tuple[Path, ...] | None = None,
 ) -> dict[str, str] | None:
-    if not isinstance(arguments, dict) or set(arguments) != {"path"}:
+    if not isinstance(arguments, dict) or not set(arguments) <= {"path", "name"}:
         return None
     requested = arguments.get("path")
+    requested_name = arguments.get("name")
+    if (requested is None) == (requested_name is None):
+        return None
+    receipt = _read_skill_result(result)
+    if receipt is None:
+        return None
+    content, digest, result_path, result_name = receipt
+    bound_name_path: str | None = None
+    if requested is None:
+        if not isinstance(requested_name, str) or not requested_name:
+            return None
+        requested = result_path
+        from app.business_skills import resolve_installed_skill_name
+
+        try:
+            bound_name_path = str(
+                resolve_installed_skill_name(
+                    requested_name,
+                    roots=(
+                        tuple(authorized_roots)
+                        if authorized_roots is not None
+                        else AGENT_SKILL_ROOTS
+                    ),
+                ).skill_path
+            )
+        except ValueError:
+            return None
     if not isinstance(requested, str) or not requested:
         return None
     try:
@@ -119,10 +146,6 @@ def normalized_read_skill_metadata(
             requested,
             authorized_roots=authorized_roots,
         )
-        receipt = _read_skill_result(result)
-        if receipt is None:
-            return None
-        content, digest, result_path, result_name = receipt
         encoded_content = content.encode("utf-8")
         content_digest = hashlib.sha256(encoded_content).hexdigest()
     except (
@@ -134,7 +157,11 @@ def normalized_read_skill_metadata(
         ValueError,
     ):
         return None
-    if result_path != str(skill.path) or result_name != skill.name:
+    if (
+        result_path != str(skill.path)
+        or result_name != skill.name
+        or (bound_name_path is not None and bound_name_path != result_path)
+    ):
         return None
     if content_digest != digest:
         return None

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from app.agent_context import AgentTaskContext
 from app.agent_cron.commands import (
@@ -82,6 +82,11 @@ class ScheduledAgentContext:
     workspace: Path
     reasoning_effort: str
     skill_protocol: str
+    skill_names: tuple[str, ...] = ()
+    skill_materials: tuple[ServiceCommandSkillMaterial, ...] = ()
+    skill_protocol_source: Literal["generated_discovery", "explicit_custom"] = (
+        "explicit_custom"
+    )
 
     def to_execution_json(self) -> str:
         payload = {
@@ -100,6 +105,12 @@ class ScheduledAgentContext:
             "workspace": str(self.workspace),
             "reasoning_effort": self.reasoning_effort,
             "skill_protocol": self.skill_protocol,
+            "skill_names": list(self.skill_names),
+            "skill_materials": [
+                {"name": material.name, "content": material.content}
+                for material in self.skill_materials
+            ],
+            "skill_protocol_source": self.skill_protocol_source,
         }
         return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -112,6 +123,52 @@ class ScheduledAgentContext:
             if payload.get("schema") != "scheduled_agent_execution.v1":
                 raise ValueError("scheduled execution context schema is invalid")
             saved = payload["context"]
+            has_structured_skill_state = any(
+                field in payload
+                for field in (
+                    "skill_names",
+                    "skill_materials",
+                    "skill_protocol_source",
+                )
+            )
+            skill_names = payload.get("skill_names", [])
+            skill_materials = payload.get("skill_materials", [])
+            skill_protocol_source = payload.get(
+                "skill_protocol_source", "explicit_custom"
+            )
+            if (
+                not isinstance(skill_names, list)
+                or any(
+                    not isinstance(name, str) or not name.strip()
+                    for name in skill_names
+                )
+                or not isinstance(skill_materials, list)
+                or any(
+                    not isinstance(material, dict)
+                    or set(material) != {"name", "content"}
+                    or not isinstance(material["name"], str)
+                    or not material["name"].strip()
+                    or not isinstance(material["content"], str)
+                    or not material["content"].strip()
+                    for material in skill_materials
+                )
+                or skill_protocol_source not in {
+                    "generated_discovery", "explicit_custom",
+                }
+            ):
+                raise ValueError("scheduled execution Skill context is invalid")
+            materials = tuple(
+                ServiceCommandSkillMaterial(
+                    name=material["name"], content=material["content"],
+                )
+                for material in skill_materials
+            )
+            names = tuple(skill_names)
+            if (
+                has_structured_skill_state
+                and tuple(material.name for material in materials) != names
+            ):
+                raise ValueError("scheduled execution Skill materials do not match")
             context = AgentTaskContext(
                 task_id=reply_task_id,
                 channel="scheduled",
@@ -124,6 +181,9 @@ class ScheduledAgentContext:
                 trigger_create_time=saved["trigger_create_time"],
                 messages=(), materials=(), prior_receipts=(),
                 trigger_raw_payload=saved["trigger_raw_payload"],
+                skill_protocol_override=payload["skill_protocol"],
+                skill_protocol_source=skill_protocol_source,
+                skill_names=names,
             )
             return cls(
                 context=context,
@@ -131,6 +191,9 @@ class ScheduledAgentContext:
                 workspace=Path(payload["workspace"]),
                 reasoning_effort=payload["reasoning_effort"],
                 skill_protocol=payload["skill_protocol"],
+                skill_names=names,
+                skill_materials=materials,
+                skill_protocol_source=skill_protocol_source,
             )
         except (KeyError, TypeError, json.JSONDecodeError) as exc:
             raise ValueError("scheduled execution context is invalid") from exc
@@ -163,6 +226,7 @@ class ScheduledAgentContextBuilder:
                 "content. You must read each applicable selected Skill before "
                 "deciding or reviewing the task."
             ),
+            skill_protocol_source="generated_discovery",
             skill_materials=tuple(
                 ServiceCommandSkillMaterial(name=name, content=content)
                 for name, content in zip(skill_names, protocols, strict=True)
@@ -250,6 +314,18 @@ class ScheduledAgentContextBuilder:
             raise ValueError("scheduled task working directory is unavailable")
 
         protocols, skill_facts = self._materialize_skills(snapshot.skill_refs)
+        skill_names = tuple(ref.skill_name for ref in snapshot.skill_refs)
+        skill_materials = tuple(
+            ServiceCommandSkillMaterial(name=name, content=content)
+            for name, content in zip(skill_names, protocols, strict=True)
+        )
+        from app.business_skills import render_task_skill_discovery
+
+        skill_protocol = render_task_skill_discovery(
+            skill_names,
+            catalog=(),
+            frozen_names=skill_names,
+        )
 
         context = AgentTaskContext(
             task_id=reply_task_id,
@@ -276,11 +352,17 @@ class ScheduledAgentContextBuilder:
                 ),
                 "skills": skill_facts,
             },
+            skill_protocol_override=skill_protocol,
+            skill_protocol_source="generated_discovery",
+            skill_names=skill_names,
         )
         return ScheduledAgentContext(
             context=context,
             route=route,
             workspace=workspace,
             reasoning_effort=effort.strip(),
-            skill_protocol="\n\n".join(protocols),
+            skill_protocol=skill_protocol,
+            skill_names=skill_names,
+            skill_materials=skill_materials,
+            skill_protocol_source="generated_discovery",
         )

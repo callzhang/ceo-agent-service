@@ -55,6 +55,7 @@ class AuditAgentRunner:
         forced_runtime_route=None,
         reasoning_effort: str = "",
         skill_protocol_override: str = "",
+        skill_protocol_source: str = "explicit_custom",
         execution_environment: Mapping[str, str] | None = None,
     ) -> None:
         self.store = store
@@ -71,6 +72,7 @@ class AuditAgentRunner:
         self.forced_runtime_route = forced_runtime_route
         self.reasoning_effort = reasoning_effort
         self.skill_protocol_override = skill_protocol_override
+        self.skill_protocol_source = skill_protocol_source
         self.execution_environment = dict(execution_environment or {})
 
     @staticmethod
@@ -138,19 +140,130 @@ class AuditAgentRunner:
         rendered_rules: str,
         force_new_session: bool,
     ) -> AgentTurnRunResult[AuditAgentResult]:
-        prompt = context.render() + result_correction_prompt(
+        correction = result_correction_prompt(
             self.store,
             task,
             role=AgentRole.AUDIT,
             proposal_revision=context.proposal_revision,
         )
-        from app.consumer_agent import audit_developer_instructions
-        from app.prompt_composition import load_prompt_configuration
+        from app.business_skills import (
+            frozen_task_skill_names,
+            render_task_skill_discovery,
+        )
+        from app.consumer_agent import audit_developer_sections, default_task_skill_catalog
+        from app.prompt_composition import (
+            PromptSection,
+            compose_plain_task_assembly,
+            load_prompt_configuration,
+            prompt_section_facts,
+            render_prompt_sections,
+        )
 
         configuration = load_prompt_configuration(role="audit")
-        developer_instructions = audit_developer_instructions(rendered_rules, runtime_context="", prompt_configuration=configuration)
-        if self.skill_protocol_override:
-            developer_instructions += "\n\n" + self.skill_protocol_override
+        developer_sections = audit_developer_sections(
+            rendered_rules,
+            runtime_context="",
+            prompt_configuration=configuration,
+        )
+        frozen_names = frozen_task_skill_names(
+            task.trigger_message_json, context.task.skill_names,
+        )
+        unfrozen_names = tuple(
+            name for name in context.task.skill_names if name not in frozen_names
+        )
+        task_skill_protocol = (
+            context.task.skill_protocol_override
+            if context.task.skill_protocol_override is not None
+            else self.skill_protocol_override
+        )
+        task_skill_protocol_source = (
+            context.task.skill_protocol_source
+            if context.task.skill_protocol_override is not None
+            else self.skill_protocol_source
+        )
+        task_skill_protocol_is_custom = (
+            task_skill_protocol_source == "explicit_custom"
+        )
+        if context.task.skill_names:
+            task_skill_text = render_task_skill_discovery(
+                context.task.skill_names,
+                catalog=default_task_skill_catalog(context.task.skill_names),
+                frozen_names=frozen_names,
+            )
+            if task_skill_protocol_is_custom and task_skill_protocol:
+                task_skill_text += (
+                    "\n\n## Saved Task Skill Instructions\n"
+                    + task_skill_protocol
+                )
+            if frozen_names and unfrozen_names:
+                task_skill_source = (
+                    "任务冻结与当前 Skill 选择 + 已保存任务约定"
+                    if task_skill_protocol_is_custom and task_skill_protocol
+                    else "任务冻结与当前 Skill 选择"
+                )
+            elif frozen_names:
+                task_skill_source = (
+                    "任务冻结 Skill 选择 + 已保存任务约定"
+                    if task_skill_protocol_is_custom and task_skill_protocol
+                    else "任务冻结 Skill 选择 + 当前 Skill 用途目录"
+                )
+            else:
+                task_skill_source = (
+                    "当前选中 Skill 用途目录 + 已保存任务约定"
+                    if task_skill_protocol_is_custom and task_skill_protocol
+                    else "当前选中 Skill 用途目录"
+                )
+        elif task_skill_protocol and task_skill_protocol_is_custom:
+            task_skill_text = task_skill_protocol
+            task_skill_source = "已保存自定义 Task Skill 约定"
+        else:
+            task_skill_text = render_task_skill_discovery(
+                (), catalog=default_task_skill_catalog()
+            )
+            task_skill_source = "当前 Skill 用途目录"
+        if context.task.skill_names:
+            skill_protocol_fact = (
+                task_skill_protocol or "" if task_skill_protocol_is_custom else ""
+            )
+            skill_protocol_source = (
+                "explicit_custom"
+                if task_skill_protocol_is_custom and task_skill_protocol
+                else "selected_installed_skills" if unfrozen_names
+                else "frozen_task_skills"
+            )
+        else:
+            skill_protocol_fact = (
+                task_skill_protocol or "" if task_skill_protocol_is_custom else ""
+            )
+            skill_protocol_source = (
+                "task_override"
+                if task_skill_protocol_is_custom and task_skill_protocol
+                else "runtime_catalog"
+            )
+        task_sections = [
+            PromptSection(
+                "任务 Skill 入口",
+                task_skill_source,
+                "task",
+                task_skill_text,
+            ),
+            PromptSection(
+                "当前审核任务",
+                "当前任务与候选",
+                "task",
+                context.render(),
+            ),
+        ]
+        if correction:
+            task_sections.append(
+                PromptSection(
+                    "本轮结果修正",
+                    "当前运行修正",
+                    "task",
+                    correction.strip("\n"),
+                )
+            )
+        task_assembly = compose_plain_task_assembly(*task_sections)
         process = AgentTurnProcess[AuditAgentResult](
             store=self.store,
             task=task,
@@ -179,15 +292,28 @@ class AuditAgentRunner:
 
         return process.execute(
             run=run,
-            invocation_facts={"stage_index": context.task.stage_index, "skill_protocol": self.skill_protocol_override or "",
-                              "skill_protocol_source": "task_override" if self.skill_protocol_override is not None else "runtime_catalog",
-                              "participant_timezones": explicit_participant_timezones(context.task.trigger_raw_payload),
-                              "prompt_configuration": configuration.fingerprints()},
+            invocation_facts={
+                "stage_index": context.task.stage_index,
+                "skill_names": list(context.task.skill_names),
+                "skill_protocol": skill_protocol_fact,
+                "skill_protocol_source": skill_protocol_source,
+                "participant_timezones": explicit_participant_timezones(
+                    context.task.trigger_raw_payload
+                ),
+                "prompt_configuration": configuration.fingerprints(),
+                "prompt_sections": prompt_section_facts(
+                    developer_sections, task_assembly.sections
+                ),
+            },
             skill_names=context.task.skill_names,
-            prompt=prompt,
+            prompt=task_assembly.text,
             session_id=run.codex_session_id or None,
             force_new_session=force_new_session,
-            developer_instructions=developer_instructions,
+            developer_instructions=render_prompt_sections(
+                developer_sections,
+                placement="developer",
+                omit_empty=False,
+            ),
             configure_command=lambda command: make_audit_agent_command(
                 command,
                 controlled_cli=ControlledCliConfig(

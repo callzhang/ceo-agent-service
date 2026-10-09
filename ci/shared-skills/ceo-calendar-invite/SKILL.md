@@ -1,6 +1,6 @@
 ---
 name: ceo-calendar-invite
-description: Use for incoming DingTalk calendar invitations, calendar cards, meeting invitations, attendance decisions, schedule conflicts, tentative, accept, or decline responses, and questions about why the principal should attend or what input is expected. Use ceo-meeting-work for meeting content after attendance is settled. Load dingtalk-calendar before issuing any DWS calendar command.
+description: Use for calendar scheduling, candidate windows, participant timezones, incoming DingTalk calendar invitations, calendar cards, meeting invitations, attendance decisions, schedule conflicts, tentative, accept, or decline responses, and questions about why the principal should attend or what input is expected. Use ceo-meeting-work for meeting content after attendance is settled. Load dingtalk-calendar before issuing any DWS calendar command.
 metadata:
   managed_by: ceo-agent-service
   version: 1
@@ -15,6 +15,16 @@ Decide from the live invitation, schedule context, attendance value, and request
 Load `dingtalk-calendar` before every calendar read or write. Load `dingtalk-chat` before a chat fallback. Load `dingtalk-doc` or `dingtalk-drive` before reading the corresponding linked material; follow those Skills instead of copying their command catalogs here.
 
 Use the supplied exact event command first. Read the title, time, organizer, attendees, description, comments, linked materials, the principal's current response state, and conflicting accepted events. Reuse confirmed facts from the trigger, conversation, and live results; do not ask for facts already present.
+
+Interpret event and participant times using source-supported timezones and the meeting date, including daylight saving; compare absolute instants. A timestamp offset does not establish a participant’s location.
+
+## Participant Timezones
+
+日历相关任务必须考虑本人、对方及必要协调者的时区。先从原请求、有效日程及实际可用来源核实，不用机器时区、公司所在地、姓名或消息时间戳代替对方时区。
+按每个候选的具体日期分别核实双方命名时区的 UTC 偏移，不能沿用今天的偏移或假定两地同日切换夏令时。使用本轮可用的时区计算能力或明确来源验算：本人当地时间 → UTC → 对方当地时间，并反向换算核对同一时刻；处理跨日与不存在/重复的当地时间。只有完成日期对应的偏移核实和换算才展示确定的双方当地日期与起止。无法核实换算时仍给本人侧已确认时区的候选，明确对方当地换算待核实，不凭记忆输出确定对方时间。
+考虑已知工作时段、占用与明确偏好，避免只因本人空闲推荐对方深夜；不编造固定办公时间。已知时区不证明对方空闲。
+对方时区仍未知时标明待确认，先给本人侧明确时区的暂定候选；只有确实阻断必要判断才问合适的请求方/协调者。不把暂定窗口称为双方均合适或已安排会议。
+读取范围内未见冲突不保证可出席；单纯时间流逝不证明原请求已取消、完成或过期。
 
 ## Decide
 
