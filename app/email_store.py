@@ -6981,7 +6981,14 @@ class EmailStore:
                 )
 
         messages: dict[str, sqlite3.Row] = {}
-        for row in db.execute("select * from email_messages"):
+        for row in db.execute(
+            """
+            select stable_message_identity, account_id, folder, uidvalidity, uid,
+                   rfc_message_id, thread_identity, recipients_json,
+                   references_json, in_reply_to, attachment_metadata_json
+            from email_messages
+            """
+        ):
             recipients = _json_load(
                 row["recipients_json"],
                 field="recipients_json",

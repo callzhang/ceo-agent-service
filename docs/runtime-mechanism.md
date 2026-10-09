@@ -1531,6 +1531,11 @@ the affected run before changing transaction boundaries.
 Shared Store diagnostics retain up to eight caller frames so a context-manager
 wrapper cannot hide the business method that opened the connection.
 
+EmailStore startup still validates every durable email-message metadata field
+used for identity, provider locators, recipients, references, and attachment
+metadata. Its scan selects only those columns; it does not load cached message
+bodies or other unused columns into memory while performing the validation.
+
 The Console history-detail handler passes an EmailStore factory, not an already
 initialized EmailStore, to the Attempt DTO builder. Only an existing
 email-channel Attempt opens that store for its classification and unsubscribe
