@@ -10008,9 +10008,10 @@ def create_audit_app(
     # The audit process is read-heavy. Reuse one initialized Store so requests do
     # not repeatedly contend with the worker for schema initialization writes.
     audit_store = _audit_store(db_path)
-    # EmailStore validates durable rows during initialization. Do this once at
-    # startup; its methods open fresh connections for each subsequent read.
-    audit_email_store = EmailStore(db_path)
+    # The worker owns full row-integrity validation. The web process verifies
+    # the schema but skips a second scan over every historical email row.
+    # Store methods open fresh connections for subsequent reads.
+    audit_email_store = EmailStore(db_path, validate_rows=False)
 
     from app.workbench.api import register_workbench_routes
     from app.workbench.executor import WorkbenchExecutor

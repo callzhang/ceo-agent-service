@@ -2865,10 +2865,10 @@ def _training_sample_digest(sample: Mapping[str, object]) -> str:
 class EmailStore:
     """Persist messages, classifier results, immutable plans, and direct actions."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, validate_rows: bool = True):
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
+        self._initialize(validate_rows=validate_rows)
 
     def _open_connection(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=30)
@@ -2996,13 +2996,16 @@ class EmailStore:
             status=str(row["status"]),
         )
 
-    def _initialize(self) -> None:
+    def _initialize(self, *, validate_rows: bool = True) -> None:
         with self._connect() as db:
             db.execute("begin")
             latest_version = self._read_schema_version(db)
             if latest_version == EMAIL_SCHEMA_VERSION:
                 self._ensure_provider_observation_signal_column(db)
-                self._validate_durable_state(db)
+                if validate_rows:
+                    self._validate_durable_state(db)
+                else:
+                    self._validate_schema_shape(db)
                 return
             if latest_version is not None and latest_version > EMAIL_SCHEMA_VERSION:
                 raise EmailPersistenceCorruption(
@@ -3027,7 +3030,10 @@ class EmailStore:
                 )
             if latest_version == EMAIL_SCHEMA_VERSION:
                 self._ensure_provider_observation_signal_column(db)
-                self._validate_durable_state(db)
+                if validate_rows:
+                    self._validate_durable_state(db)
+                else:
+                    self._validate_schema_shape(db)
                 return
             legacy_reply_claims = False
             if latest_version == 8:

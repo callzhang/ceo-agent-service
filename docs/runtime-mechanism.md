@@ -1445,6 +1445,12 @@ If fast-forward fails before a replacement revision is installed, the updater
 starts the original service again and checks its health. A settings-only
 restart also bootstraps the configured launchd job if it was already unloaded.
 
+The Email worker performs full durable-row validation during initialization.
+Audit web checks the current Email schema shape but skips repeating that
+multi-minute scan of historical email rows in its separate process; this keeps
+read APIs available while the worker remains the validation owner. Email
+detail reads still use fresh connections and do not cache record contents.
+
 ### Public information and native reply recovery
 
 The fixed Consumer/Audit rules now distinguish established public disclosure

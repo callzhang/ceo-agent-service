@@ -672,8 +672,8 @@ def test_email_history_detail_reuses_initialized_store_and_reads_fresh_context(
             result = super().get_classification(classification_id)
             return {**result, "subject": f"Revision {len(reads)}"}
 
-    def email_store_factory(path):
-        initializations.append(path)
+    def email_store_factory(path, **kwargs):
+        initializations.append((path, kwargs))
         return FreshEmailStore()
 
     monkeypatch.setattr("app.audit_web.EmailStore", email_store_factory)
@@ -684,6 +684,7 @@ def test_email_history_detail_reuses_initialized_store_and_reads_fresh_context(
 
     assert first.status_code == second.status_code == 200
     assert len(initializations) == 1
+    assert initializations[0][1]["validate_rows"] is False
     assert len(reads) == 2
     assert first.json()["item"]["email"]["subject"] == "Revision 1"
     assert second.json()["item"]["email"]["subject"] == "Revision 2"
@@ -696,7 +697,7 @@ def test_email_store_validation_failure_prevents_web_app_startup(
     from app.email_store import EmailPersistenceCorruption
     from tests.test_console_web_api import _client
 
-    def invalid_email_store(_path):
+    def invalid_email_store(_path, **_kwargs):
         raise EmailPersistenceCorruption("test-invalid-email-state")
 
     monkeypatch.setattr("app.audit_web.EmailStore", invalid_email_store)
