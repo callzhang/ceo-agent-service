@@ -115,19 +115,16 @@ function PromptOverview() {
     <div className="settings-table-wrap"><table className="settings-table">
       <thead><tr><th>提示词 / 内容</th><th>作用与使用位置</th></tr></thead>
       <tbody>
-        <tr><td>Developer Prompt</td><td>Consumer 与 Audit 共用的可配置工作原则，如证据、判断与沟通方式；与各角色的固定契约一起组成 Developer 指令。</td></tr>
-        <tr><td>User Prompt</td><td>Consumer 的完整任务模板；通过 <code>{"{{task_context}}"}</code> 填入当前任务、来源、材料、阶段、历史回执、审核反馈与续接内容。</td></tr>
-        <tr><td>Distilled work profile</td><td>工作人格与长期偏好；追加到后台 Consumer 与 Audit 的 Developer 指令中。</td></tr>
-        <tr><td>Audit Rules</td><td>Audit 的独立业务审核规则；在 Audit Rules 页面编辑，进入 Audit 的 Developer 指令。</td></tr>
-        <tr><td>服务角色与输出契约</td><td>各角色职责、输出 schema、能力边界与 System 动作契约由代码定义；在完整运行输入中只读查看。</td></tr>
-        <tr><td>运行输入 / Runtime Context</td><td>只读查看服务提交的 Developer 与 Task 输入。Runtime Context 说明本轮角色、模型、工具、时间及时区等运行事实，最后追加到后台 Developer 指令。</td></tr>
+        <tr><td>Developer Prompt（可配置）</td><td>Consumer 与 Audit 共用的工作原则，如证据、判断与沟通方式；它只是完整 Developer 输入中的一段。</td></tr>
+        <tr><td>完整 Developer 输入</td><td>服务按角色组装共同工作原则、角色指令、输出与动作契约、Work Profile 和 Runtime Context；Audit 还包含 Audit Rules。</td></tr>
+        <tr><td>User Prompt（可配置）</td><td>只用于组织 Consumer 的 Task 输入；通过 <code>{"{{task_context}}"}</code> 填入服务生成的完整任务上下文。</td></tr>
+        <tr><td>Task 输入</td><td>每轮提供任务专属指令、Skill 入口、事实或候选及反馈，已有 session 也会收到。Consumer 使用 User 模板；Audit 使用独立候选审核上下文，不使用 User 模板。</td></tr>
+        <tr><td>Work Profile</td><td>工作人格与长期偏好，作为独立分段进入 Consumer 与 Audit 的 Developer 输入。</td></tr>
+        <tr><td>角色指令与契约</td><td>角色职责、输出 schema、能力边界与 System 动作契约由代码定义，不能在 Developer Prompt 模板中配置。</td></tr>
+        <tr><td>Skill</td><td>任务选定 Skill 时，只在 Task 中列名称、用途和读取入口；未选定时提供极简业务发现目录，由 Agent 按需读取正文。</td></tr>
       </tbody>
     </table></div>
-    <p>Developer 与工作人格用于 Consumer/Audit；User 模板用于进入 AgentOrchestrator 的 Consumer 任务。Audit 的任务输入使用独立的候选审核上下文。</p>
-    <ol>
-      <li><strong>后台 Consumer：</strong>运行约定与 Skill 职责 → 共同 Developer 工作原则 → System 动作、输出、能力与角色契约 → 质量要求与 Consumer 任务契约 → 本轮 Skill 协议 → 工作人格 → Runtime Context；Task 由 User 模板承载完整任务上下文，包括定时任务专用要求、反馈与修正内容。</li>
-      <li><strong>后台 Audit：</strong>Audit Rules → 运行约定与 Skill 职责 → 同一份 Developer 工作原则 → System 动作、输出、能力与角色契约 → 质量要求与 Audit 任务契约 → 工作人格 → 本轮额外 Skill 协议（如有）→ Runtime Context；Task 包含任务证据、精确候选、版本、digest 及修正内容。</li>
-    </ol>
+    <p>共同内容与任务专属来源会分别标记。实际顺序以“运行输入”的分段回执为准；每行显示服务记录的来源、Developer/Task 提交位置和已清理文本字符数。</p>
     <p className="muted">这组配置不影响 Workbench、WeChat 独立流程、纯服务命令与 Email 退订。保存后由下一次角色调用读取；已保存历史输入保留原文，同一对话继续复用已有 session。</p>
     <p className="muted">上述顺序表示内容在各输入中的拼接位置；Developer 与 Task 分别提交给运行路线。CLI 自带的系统提示、工具定义和会话历史不包含在此预览中。Template 查看原文，Rendered preview 查看已保存模板的渲染结果；完整后台输入请打开“运行输入”。</p>
   </section>;

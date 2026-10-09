@@ -2832,6 +2832,10 @@ class DingTalkAutoReplyWorker:
             skill_protocol_override=(
                 scheduled_consumer.skill_protocol if scheduled_consumer else None
             ),
+            skill_protocol_source=(
+                scheduled_consumer.skill_protocol_source
+                if scheduled_consumer else "explicit_custom"
+            ),
             skill_names=(
                 tuple(scheduled_consumer.skill_names) if scheduled_consumer else ()
             ),

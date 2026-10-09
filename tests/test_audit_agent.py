@@ -11,6 +11,10 @@ from pathlib import Path
 import pytest
 
 from app.agent_context import AgentTaskContext, AuditTurnContext
+from app.agent_cron.commands import (
+    ServiceCommandConsumerContext,
+    ServiceCommandSkillMaterial,
+)
 from app.agent_contracts import AuditOutcome, ConsumerAgentResult
 from app.agent_result import ResultParseError
 from app.agent_runtime_config import load_runtime_config
@@ -253,6 +257,11 @@ def test_review_only_run_preserves_session_and_uses_bound_read_cli(setup):
     assert "send_approved_dingtalk_message" not in json.dumps(command)
     assert "unsubscribe_email" not in json.dumps(command)
     assert "Execute only the accepted candidate" not in executor.prompts[0]
+    assert "agent_cli.read_skill()" in executor.prompts[0]
+    snapshot = next(
+        event for event in saved.tool_events if event.get("type") == "runtime.prompt"
+    )
+    assert snapshot["invocation_facts"]["skill_names"] == []
 
 
 @pytest.mark.parametrize("outcome", ["return", "reject"])
@@ -341,3 +350,72 @@ def test_actual_audit_runner_uses_production_review_instructions(setup):
     assert task_rules == ""
     assert rendered_rules not in executor.prompts[0]
     assert "只读审核" in snapshot["runtime_context"]
+
+
+@pytest.mark.parametrize(
+    ("protocol_source", "protocol_present", "fact_source"),
+    (
+        ("generated_discovery", False, "frozen_task_skills"),
+        ("explicit_custom", True, "explicit_custom"),
+    ),
+)
+def test_audit_task_carries_selected_frozen_skill_discovery_on_every_turn(
+    setup, protocol_source, protocol_present, fact_source
+):
+    store, task, parent, context, _config, _router = setup
+    context = replace(
+        context,
+        task=replace(
+            context.task,
+            skill_names=("ceo-document-review",),
+            skill_protocol_override="OLD SELECTED PROTOCOL MUST NOT BE PRELOADED",
+            skill_protocol_source=protocol_source,
+        ),
+    )
+    executor = CapturingExecutor(_wire(context.candidate_digest))
+    runner = _runner(setup, executor)
+    runner.skill_protocol_override = "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED"
+    selected_task = task.model_copy(update={
+        "trigger_message_json": json.dumps({
+            "raw_payload": {
+                "scheduled_consumer": ServiceCommandConsumerContext(
+                    scheduled_task_id=11,
+                    scheduled_task_run_id=29,
+                    prompt="Review the selected document.",
+                    skill_names=("ceo-document-review",),
+                    skill_protocol="Read the selected frozen Skill.",
+                    skill_protocol_source=protocol_source,
+                    skill_materials=(ServiceCommandSkillMaterial(
+                        name="ceo-document-review", content="FROZEN BODY"
+                    ),),
+                ).to_payload()
+            }
+        })
+    })
+
+    runner.run(selected_task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    assert "ceo-document-review" in executor.prompts[0]
+    assert "agent_cli.read_task_skill(name)" in executor.prompts[0]
+    assert (
+        "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED" in executor.prompts[0]
+    ) is protocol_present
+    developer_setting = next(
+        value for value in executor.commands[0] if value.startswith("developer_instructions=")
+    )
+    assert "ceo-document-review" not in json.loads(developer_setting.split("=", 1)[1])
+    [snapshot] = [
+        event for event in store.list_agent_runs_for_task_generation(
+            task.id, task.execution_generation
+        )[-1].tool_events
+        if event.get("type") == "runtime.prompt"
+    ]
+    task_sections = [
+        section for section in snapshot["sections"] if section["placement"] == "task"
+    ]
+    assert any(section["name"] == "任务 Skill 入口" for section in task_sections)
+    assert snapshot["invocation_facts"]["skill_protocol_source"] == fact_source
+    assert snapshot["invocation_facts"]["skill_names"] == ["ceo-document-review"]
+    assert snapshot["invocation_facts"]["skill_protocol"] == (
+        "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED" if protocol_present else ""
+    )

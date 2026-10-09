@@ -163,6 +163,23 @@ class BusinessSkillCatalogEntry:
     description: str = ""
 
 
+@dataclass(frozen=True)
+class FrozenTaskSkillMaterial:
+    """One exact Skill body saved in a reply task's structured input."""
+
+    name: str
+    content: str
+
+
+@dataclass(frozen=True)
+class FrozenTaskSkillBinding:
+    """Structured frozen-Skill declaration and readable saved materials."""
+
+    declared: bool
+    declared_names: tuple[str, ...]
+    materials: tuple[FrozenTaskSkillMaterial, ...]
+
+
 @dataclass
 class _SwapState:
     staged_dir: Path
@@ -307,24 +324,49 @@ def installed_runtime_skill_paths(target_root: Path | None = None) -> tuple[Path
 
 
 def _describe_skill_file(path: Path) -> tuple[str, str] | None:
-    """Return (name, description) from the service-supported frontmatter, or None.
+    """Return top-level name/use metadata without validating unrelated fields.
 
-    Runtime managed Skills use the same compact frontmatter parser as the
-    installer and validator.  In particular, descriptions may contain a colon
-    without YAML quoting; using a stricter YAML loader here made an installed
-    Skill disappear from the catalog even though the service could load it.
+    The runtime tree contains user and product Skills whose metadata has nested
+    requirements.  Catalog discovery only needs the two top-level scalars, so
+    it must not apply the stricter managed-Skill installation schema to the
+    rest of the header.  The narrow reader also preserves plain descriptions
+    containing an unquoted colon.
     """
     try:
-        frontmatter = _parse_frontmatter(path.read_text(encoding="utf-8"), path)
-    except (OSError, UnicodeError, BusinessSkillValidationError):
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
         return None
-    if not isinstance(frontmatter, dict):
+    if not lines or lines[0] != "---":
         return None
-    name = frontmatter.get("name")
-    description = frontmatter.get("description")
-    if not isinstance(name, str) or not isinstance(description, str):
+    try:
+        end = lines.index("---", 1)
+    except ValueError:
         return None
-    name, description = name.strip(), description.strip()
+    values: dict[str, str] = {}
+    index = 1
+    while index < end:
+        line = lines[index]
+        index += 1
+        if not line or line[:1].isspace() or line.lstrip().startswith("#"):
+            continue
+        key, separator, raw_value = line.partition(":")
+        if not separator or key not in {"name", "description"}:
+            continue
+        raw_value = raw_value.strip()
+        if raw_value in {"|", "|-", ">", ">-"}:
+            block: list[str] = []
+            while index < end and (
+                not lines[index] or lines[index][:1].isspace()
+            ):
+                block.append(lines[index].strip())
+                index += 1
+            values[key] = (
+                "\n".join(block) if raw_value.startswith("|") else " ".join(block)
+            ).strip()
+        else:
+            values[key] = _frontmatter_scalar(raw_value).strip()
+    name = values.get("name", "")
+    description = values.get("description", "")
     return (name, description) if name and description else None
 
 
@@ -335,10 +377,10 @@ def installed_runtime_skills(
 
     Scanning beats a hardcoded list: a Skill added or removed on disk is
     reflected without a code change, and an entry can never point at a file that
-    is not there. Frontmatter is parsed as real YAML because Skills in the wild
-    use structures the bundled strict parser rejects. A file that will not parse
-    is skipped: a catalog entry without a description cannot help the Agent
-    choose, which is the only reason to list it.
+    is not there. Catalog extraction reads only top-level name and description,
+    so unrelated nested metadata cannot hide a usable entry. A file without
+    those two scalars is skipped: an entry without a description cannot help
+    the Agent choose, which is the only reason to list it.
     """
     wanted = None if names is None else {name for name in names if name}
     entries: list[BusinessSkillCatalogEntry] = []
@@ -355,6 +397,58 @@ def installed_runtime_skills(
             )
         )
     return tuple(entries)
+
+
+def resolve_installed_skill_name(
+    name: str, *, roots: Iterable[Path]
+) -> BusinessSkillCatalogEntry:
+    """Resolve one exact installed metadata name across authorized roots."""
+    if (
+        not isinstance(name, str)
+        or not name
+        or name != name.strip()
+        or Path(name).name != name
+        or name in {".", ".."}
+    ):
+        raise ValueError("Skill name is invalid")
+    matches = {
+        entry.skill_path: entry
+        for entry in installed_skill_catalog(roots=roots)
+        if entry.name == name
+    }
+    if not matches:
+        raise ValueError(f"unknown installed Skill: {name}")
+    if len(matches) != 1:
+        raise ValueError(f"ambiguous installed Skill: {name}")
+    return next(iter(matches.values()))
+
+
+def installed_skill_catalog(
+    *, roots: Iterable[Path]
+) -> tuple[BusinessSkillCatalogEntry, ...]:
+    """Return body-free metadata for every Skill under authorized roots."""
+    matches: dict[Path, BusinessSkillCatalogEntry] = {}
+    for root in roots:
+        try:
+            resolved_root = root.expanduser().resolve(strict=True)
+        except (OSError, RuntimeError, UnicodeError):
+            continue
+        for path in resolved_root.rglob("SKILL.md"):
+            try:
+                resolved = path.resolve(strict=True)
+            except (OSError, RuntimeError, UnicodeError):
+                continue
+            if not resolved.is_relative_to(resolved_root):
+                continue
+            described = _describe_skill_file(resolved)
+            if described is None:
+                continue
+            matches[resolved] = BusinessSkillCatalogEntry(
+                name=described[0],
+                skill_path=resolved,
+                description=described[1],
+            )
+    return tuple(matches[path] for path in sorted(matches))
 
 
 def _compact_skill_catalog(catalog: tuple[BusinessSkillCatalogEntry, ...]) -> str:
@@ -402,6 +496,182 @@ def render_business_skill_protocol(
         "the service does not route the domain. Read every additional business or "
         "operation Skill needed for the judgment. Do not return an outcome before "
         "completing this read."
+    )
+
+
+def render_task_skill_discovery(
+    selected_names: Iterable[str],
+    *,
+    catalog: tuple[BusinessSkillCatalogEntry, ...],
+    frozen_names: Iterable[str] = (),
+) -> str:
+    """Render name/use/read-only discovery without preloading Skill bodies."""
+    selected = tuple(dict.fromkeys(name for name in selected_names if name))
+    frozen = frozenset(name for name in frozen_names if name in selected)
+    by_name = {entry.name: entry for entry in catalog}
+    if selected:
+        missing_installed = tuple(
+            name for name in selected if name not in frozen and name not in by_name
+        )
+        if missing_installed:
+            raise ValueError(
+                "selected installed Skill metadata is unavailable: "
+                + ", ".join(missing_installed)
+            )
+        entries = tuple((name, by_name.get(name)) for name in selected)
+        heading = "## Selected Task Skills"
+        instructions: list[str] = []
+        if frozen:
+            names = ", ".join(f"`{name}`" for name in selected if name in frozen)
+            instructions.append(
+                f"For the task-frozen selection {names}, call "
+                "`agent_cli.read_task_skill(name)` before deciding or reviewing. "
+                "That lookup returns this task's exact frozen content; do not "
+                "substitute a similarly named installed Skill."
+            )
+        installed = tuple(name for name in selected if name not in frozen)
+        if installed:
+            instructions.append(
+                "For each installed selection, call its exact "
+                "`agent_cli.read_skill(path=...)` entry below before deciding "
+                "or reviewing."
+            )
+        instructions.append(
+            "When a selected Skill names another installed Skill, read that exact "
+            "dependency on demand with `agent_cli.read_skill(name=...)`."
+        )
+        read_instruction = " ".join(instructions)
+    else:
+        entries = tuple((entry.name, entry) for entry in dict.fromkeys(catalog))
+        heading = "## Skill Discovery"
+        read_instruction = (
+            "No task Skill was selected. When the task needs business or operation "
+            "guidance, call `agent_cli.read_skill()` to discover installed names, "
+            "uses, and authorized read paths, then read the applicable Skill by "
+            "exact name or path before applying it."
+        )
+    lines = [heading]
+    for name, entry in entries:
+        use = (
+            " ".join(entry.description.split())
+            if entry is not None
+            else "Selected for this task."
+        ) or "Selected for this task."
+        line = f"- `{name}`: {use}"
+        if name not in frozen:
+            assert entry is not None
+            path = json.dumps(str(entry.skill_path.resolve()), ensure_ascii=False)
+            line += f" Read with `agent_cli.read_skill(path={path})`."
+        lines.append(line)
+    lines.append(read_instruction)
+    return "\n".join(lines)
+
+
+def frozen_task_skill_names(
+    trigger_message_json: str,
+    selected_names: Iterable[str],
+) -> tuple[str, ...]:
+    """Return selected names declared as task-frozen in structured input."""
+    selected = tuple(dict.fromkeys(name for name in selected_names if name))
+    binding = frozen_task_skill_binding(trigger_message_json)
+    if not binding.declared:
+        return ()
+    declared = frozenset(binding.declared_names)
+    return tuple(name for name in selected if name in declared)
+
+
+def frozen_task_skill_binding(trigger_message_json: str) -> FrozenTaskSkillBinding:
+    """Read one task's structured frozen declaration without repairing it."""
+    empty = FrozenTaskSkillBinding(False, (), ())
+    try:
+        trigger = json.loads(trigger_message_json)
+    except (TypeError, json.JSONDecodeError):
+        return empty
+    if not isinstance(trigger, dict):
+        return empty
+    generic_scheduled = trigger.get("schema") == "scheduled_agent_execution.v1"
+    if generic_scheduled:
+        container = trigger
+    else:
+        raw_payload = trigger.get("raw_payload")
+        container = (
+            raw_payload.get("scheduled_consumer")
+            if isinstance(raw_payload, dict)
+            else None
+        )
+    if not isinstance(container, dict) or "skill_materials" not in container:
+        return empty
+    raw_names = container.get("skill_names")
+    declared_names = (
+        tuple(name for name in raw_names if isinstance(name, str) and name)
+        if isinstance(raw_names, list)
+        else ()
+    )
+    materials = container.get("skill_materials")
+    if not isinstance(materials, list):
+        return FrozenTaskSkillBinding(True, declared_names, ())
+    raw_material_names = tuple(
+        material.get("name")
+        for material in materials
+        if isinstance(material, dict)
+        and isinstance(material.get("name"), str)
+        and material["name"]
+    )
+    if not declared_names:
+        declared_names = tuple(dict.fromkeys(raw_material_names))
+    if generic_scheduled:
+        from app.agent_cron.context import ScheduledAgentContext
+
+        try:
+            parsed_materials = ScheduledAgentContext.from_execution_json(
+                trigger_message_json, reply_task_id=1
+            ).skill_materials
+        except ValueError:
+            parsed_materials = ()
+    else:
+        from app.agent_cron.commands import ServiceCommandConsumerContext
+
+        try:
+            parsed = ServiceCommandConsumerContext.from_payload(container)
+        except ValueError:
+            parsed = None
+        parsed_materials = parsed.skill_materials if parsed is not None else ()
+    readable = tuple(
+        FrozenTaskSkillMaterial(name=material.name, content=material.content)
+        for material in parsed_materials
+    )
+    return FrozenTaskSkillBinding(True, declared_names, readable)
+
+
+def frozen_task_skill_materials(
+    trigger_message_json: str,
+) -> tuple[FrozenTaskSkillMaterial, ...]:
+    """Strictly validate and read one owning scheduled wrapper's materials."""
+    trigger = json.loads(trigger_message_json)
+    if not isinstance(trigger, dict):
+        raise ValueError("task Skill material is unavailable")
+    if trigger.get("schema") == "scheduled_agent_execution.v1":
+        from app.agent_cron.context import ScheduledAgentContext
+
+        parsed_materials = ScheduledAgentContext.from_execution_json(
+            trigger_message_json, reply_task_id=1
+        ).skill_materials
+    else:
+        raw_payload = trigger.get("raw_payload")
+        scheduled = (
+            raw_payload.get("scheduled_consumer")
+            if isinstance(raw_payload, dict)
+            else None
+        )
+        from app.agent_cron.commands import ServiceCommandConsumerContext
+
+        parsed = ServiceCommandConsumerContext.from_payload(scheduled)
+        if parsed is None:
+            raise ValueError("task Skill material is unavailable")
+        parsed_materials = parsed.skill_materials
+    return tuple(
+        FrozenTaskSkillMaterial(name=material.name, content=material.content)
+        for material in parsed_materials
     )
 
 

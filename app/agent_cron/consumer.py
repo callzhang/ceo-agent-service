@@ -338,6 +338,7 @@ def build_scheduled_orchestrator(
         "runtime_config": scoped_config,
         "reasoning_effort": built.reasoning_effort,
         "skill_protocol_override": built.skill_protocol,
+        "skill_protocol_source": built.skill_protocol_source,
         "refresh_runtime_capabilities": refresh_runtime_capabilities,
         "execution_environment": execution_environment,
     }

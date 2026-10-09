@@ -97,7 +97,6 @@ def render_runtime_context(
         f"- 来源频道：{task.channel if task else '未绑定'}；阶段：{facts.get('stage_index', '未提供')}；proposal revision：{facts.get('proposal_revision', '未提供')}",
         f"- 原业务对象：{task.business_object_key if task else '未绑定'}；原触发：{task.trigger_message_id if task else '未绑定'}",
         f"- 后台来源绑定：{json.dumps(binding, ensure_ascii=False) if binding else '未提供'}",
-        "- 参与者时区：以原请求和已读取来源为准；本人、对方时区没有证据则待确认，按会议日期核对夏令时。源时间戳解释不证明参与者所在地。",
         "- 认证状态：本轮未验证；以下为本轮声明入口，不是读取结果或动作回执。",
     ]
     zones = facts.get("participant_timezones", [])
@@ -136,7 +135,23 @@ def runtime_prompt_snapshot(
     texts = {"developer_instructions": developer_instructions, "task_prompt": task_prompt,
              "submitted_input": submitted, "runtime_context": runtime_context}
     redacted = {key: redact_credentials(value) for key, value in texts.items()}
-    facts = invocation_facts or {}
+    facts = dict(invocation_facts or {})
+    section_texts = facts.pop("prompt_sections", [])
+    if not section_texts:
+        common = developer_instructions.removesuffix("\n\n" + runtime_context) if runtime_context else developer_instructions
+        section_texts = [{"name": "Developer 指令", "source": "服务角色装配", "placement": "developer", "text": common}]
+    section_texts = list(section_texts)
+    if runtime_context and developer_instructions.endswith(runtime_context):
+        section_texts.append({"name": "运行上下文", "source": "实际运行配置", "placement": "developer", "text": runtime_context})
+    if not any(section["placement"] == "task" for section in section_texts):
+        section_texts.append({"name": "任务输入", "source": "当前任务正文", "placement": "task", "text": task_prompt})
+    # The public receipt stores sources and lengths only. Full text is already
+    # captured above; internal assembly segments must not duplicate it in facts.
+    section_texts = sorted(section_texts, key=lambda section: section["placement"] == "task")
+    sections = [{key: section[key] for key in ("name", "source", "placement")} |
+                {"characters": len(redact_credentials(section["text"]))}
+                for section in section_texts if section["text"]]
+    section_redacted = any(redact_credentials(section["text"]) != section["text"] for section in section_texts)
     saved_facts = _redacted_facts(facts)
     return {
         "type": "runtime.prompt", "runtime_attempt_id": runtime_attempt_id,
@@ -145,5 +160,5 @@ def runtime_prompt_snapshot(
         "task_id": task.id if task else None,
         "execution_generation": task.execution_generation if task else None,
         "submission_state": "prepared", "invocation_facts": saved_facts,
-        "redacted": texts != redacted or facts != saved_facts, **redacted,
+        "redacted": texts != redacted or facts != saved_facts or section_redacted, "sections": sections, **redacted,
     }

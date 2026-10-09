@@ -89,7 +89,6 @@ from app.config import (
 )
 from app.quality_gate import scan_hourly_quality
 from app.embedding import EmbeddingClient
-from app import history_types
 from app.history import safe_observability_error
 from app.history_actions import (
     HistoryAttention,

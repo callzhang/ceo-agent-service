@@ -853,12 +853,44 @@ async def unsubscribe_email_tool(task_id: int) -> dict[str, object]:
         openWorldHint=False,
     ),
 )
-def read_skill_tool(path: str) -> dict[str, str]:
+def read_skill_tool(
+    path: str | None = None, name: str | None = None
+) -> dict[str, object]:
     """Read an installed Agent skill or its referenced Markdown safely.
 
-    Use this before following product-specific DWS procedures. The path must
-    identify a Markdown file inside an installed skill directory.
+    With no source, return body-free installed name/use/path metadata. Otherwise
+    pass exactly one source. `path` identifies a Markdown file inside an
+    installed Skill directory. `name` resolves one exact installed Skill's
+    metadata name and reads its SKILL.md through the same path authorization.
     """
+    if path is not None and name is not None:
+        raise ValueError("read_skill accepts only one of path or name")
+    from app import agent_skill_usage
+    from app.business_skills import (
+        installed_skill_catalog,
+        resolve_installed_skill_name,
+    )
+
+    if path is None and name is None:
+        return {
+            "skills": [
+                {
+                    "name": entry.name,
+                    "description": entry.description,
+                    "path": str(entry.skill_path),
+                }
+                for entry in installed_skill_catalog(
+                    roots=agent_skill_usage.AGENT_SKILL_ROOTS
+                )
+            ]
+        }
+    if name is not None:
+        path = str(
+            resolve_installed_skill_name(
+                name, roots=agent_skill_usage.AGENT_SKILL_ROOTS
+            ).skill_path
+        )
+    assert path is not None
     return read_skill(path)
 
 
@@ -947,22 +979,16 @@ def _read_bound_task_skill(
     if row[0] != expected_generation:
         raise ValueError("task Skill generation changed")
     try:
-        trigger = json.loads(row[1])
+        json.loads(row[1])
     except (TypeError, json.JSONDecodeError) as exc:
         raise ValueError("task Skill material is unavailable") from exc
-    raw_payload = trigger.get("raw_payload") if isinstance(trigger, dict) else None
-    scheduled = (
-        raw_payload.get("scheduled_consumer")
-        if isinstance(raw_payload, dict)
-        else None
-    )
-    from app.agent_cron.commands import ServiceCommandConsumerContext
+    from app.business_skills import frozen_task_skill_materials
 
-    context = ServiceCommandConsumerContext.from_payload(scheduled)
-    if context is None or not context.skill_materials:
+    materials = frozen_task_skill_materials(row[1])
+    if not materials:
         raise ValueError("task Skill material is unavailable")
     matches = [
-        material for material in context.skill_materials if material.name == name
+        material for material in materials if material.name == name
     ]
     if not matches:
         raise ValueError(f"unknown task Skill material: {name}")

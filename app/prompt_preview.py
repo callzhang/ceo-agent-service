@@ -8,8 +8,10 @@ from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import RuntimeKind
 from app.audit_rules import render_audit_rules
 from app.config import workspace_path
-from app.consumer_agent import consumer_developer_instructions, audit_developer_instructions, default_consumer_skill_protocol
-from app.prompt_composition import append_runtime_context, load_prompt_configuration
+from app.consumer_agent import consumer_developer_sections, audit_developer_sections, default_task_skill_catalog
+from app.business_skills import frozen_task_skill_names, render_task_skill_discovery
+from app.prompt_composition import (PromptSection, append_runtime_context, load_prompt_configuration,
+    prompt_section_facts, render_prompt_sections)
 from app.runtime_prompt_context import render_runtime_context, runtime_prompt_snapshot
 from app.store import AgentRole, AutoReplyStore
 
@@ -33,7 +35,7 @@ def _empty_item(*, mode: str, role: str) -> dict[str, object]:
             "runtime_context": "", "reason": "", "scope": PROMPT_SCOPE, "routes": [],
             "configuration_fingerprints": _saved_configuration_fingerprints(None),
             "task_source_configuration_fingerprints": _saved_configuration_fingerprints(None),
-            "task_source_run_id": None, "task_source_rendered_at": None}
+            "task_source_run_id": None, "task_source_rendered_at": None, "sections": []}
 
 
 def historical_prompt_preview(store: AutoReplyStore, *, run_id: int, runtime_attempt_id: int | None = None) -> dict[str, object]:
@@ -59,6 +61,7 @@ def historical_prompt_preview(store: AutoReplyStore, *, run_id: int, runtime_att
         result[key] = saved[key]
     for key in ("runtime_attempt_id", "execution_generation", "proposal_revision"):
         result[key] = saved.get(key)
+    result["sections"] = saved.get("sections", [])
     result["stage_index"] = saved.get("invocation_facts", {}).get("stage_index")
     result["configuration_fingerprints"] = _saved_configuration_fingerprints(saved)
     result["task_source_configuration_fingerprints"] = _saved_configuration_fingerprints(saved)
@@ -103,17 +106,30 @@ def current_prompt_preview(
     fingerprints = configuration.fingerprints()
     profile = configuration.work_profile
     if role == "consumer":
-        developer = consumer_developer_instructions(runtime_context="", work_profile=profile, prompt_configuration=configuration,
-            skill_protocol=facts.get("skill_protocol", "") if facts.get("skill_protocol_source") == "task_override" else default_consumer_skill_protocol())
+        developer_sections = consumer_developer_sections(runtime_context="", work_profile=profile, prompt_configuration=configuration)
     else:
         rules = render_audit_rules(AgentRole.AUDIT, create_missing=False)
-        developer = audit_developer_instructions(rules, runtime_context="", work_profile=profile, prompt_configuration=configuration)
-        if facts.get("skill_protocol_source") == "task_override" and facts.get("skill_protocol"):
-            developer += "\n\n" + facts["skill_protocol"]
+        developer_sections = audit_developer_sections(rules, runtime_context="", work_profile=profile, prompt_configuration=configuration)
+    developer = render_prompt_sections(developer_sections, placement="developer", omit_empty=role == "consumer")
     prompt = source_snapshot["task_prompt"] if source_snapshot else "未绑定任务和候选：仅预览当前角色公共指令与环境。"
     if task and source_snapshot is None:
         result.update(status="unavailable", reason="该任务未保存所选角色的完整上下文输入；不以省略材料、反馈或回执的原触发拼装结果冒充完整 prompt，也不重跑补齐。")
         prompt = ""
+    task_sections = ()
+    if source_snapshot and not source_snapshot.get("sections"):
+        # A saved legacy Task has no section receipts. Preserve its whole body;
+        # current task guidance is a separately identified prefix, not a rewrite
+        # or a reconstruction of what the historic Agent received.
+        selected_names = facts.get("skill_names", ())
+        frozen_names = frozen_task_skill_names(task.trigger_message_json, selected_names)
+        guidance = (facts.get("skill_protocol", "") if facts.get("skill_protocol_source") == "task_override"
+                    else render_task_skill_discovery(selected_names, catalog=default_task_skill_catalog(tuple(selected_names)), frozen_names=frozen_names))
+        guidance_source = ("已保存任务 Skill override" if facts.get("skill_protocol_source") == "task_override"
+                           else "任务冻结与当前 Skill 元数据" if frozen_names and set(frozen_names) != set(selected_names)
+                           else "任务冻结 Skill 元数据" if frozen_names else "当前 Skill 目录")
+        task_sections = (PromptSection("任务 Skill 入口", guidance_source, "task", guidance),
+                         PromptSection("已保存任务正文", "历史输入快照", "task", prompt))
+        prompt = render_prompt_sections(task_sections, placement="task")
     workspace = workspace_path()
     cwd = workspace / "consumer-artifacts" / str(task.id) / task.execution_generation if task and role == "consumer" else workspace
     if route.runtime_kind is RuntimeKind.CODEX_CLI:
@@ -132,8 +148,12 @@ def current_prompt_preview(
     developer = append_runtime_context(developer, runtime_context)
     result.update(runtime_prompt_snapshot(role=role, route=route, runtime_attempt_id=0, task=task,
         developer_instructions=developer, task_prompt=prompt, runtime_context=runtime_context, current_time=rendered_at,
-        invocation_facts={"prompt_configuration": fingerprints}))
+        invocation_facts={"prompt_configuration": fingerprints,
+                          "prompt_sections": prompt_section_facts(developer_sections, task_sections)}))
     result.pop("type")
+    if source_snapshot and source_snapshot.get("sections"):
+        result["sections"] = [section for section in result["sections"] if section["placement"] == "developer"] + [
+            section for section in source_snapshot["sections"] if section["placement"] == "task"]
     result["configuration_fingerprints"] = fingerprints
     result["task_source_configuration_fingerprints"] = _saved_configuration_fingerprints(source_snapshot)
     result["task_source_run_id"] = source_run.id if source_run else None

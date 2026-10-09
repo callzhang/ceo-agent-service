@@ -1,4 +1,10 @@
-from app.agent_skill_usage import LoadedSkillReceipt, loaded_skill_receipts
+import hashlib
+
+from app.agent_skill_usage import (
+    LoadedSkillReceipt,
+    loaded_skill_receipts,
+    normalized_read_skill_metadata,
+)
 
 
 SHA_A = "a" * 64
@@ -83,3 +89,59 @@ def test_loaded_skill_receipts_deduplicate_by_resolved_path_deterministically(
         LoadedSkillReceipt(name="first", path=str(first.resolve()), sha256=SHA_A),
         LoadedSkillReceipt(name="second", path=str(second.resolve()), sha256=SHA_B),
     )
+
+
+def test_named_read_skill_result_normalizes_to_the_resolved_path_receipt(tmp_path):
+    root = tmp_path / "skills"
+    path = root / "nested-folder" / "SKILL.md"
+    path.parent.mkdir(parents=True)
+    content = "EXACT BODY"
+    path.write_text(
+        "---\nname: business-review\ndescription: Review.\n---\n\n" + content,
+        encoding="utf-8",
+    )
+    content = path.read_text(encoding="utf-8")
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    metadata = normalized_read_skill_metadata(
+        {"name": "business-review", "path": None},
+        {
+            "structuredContent": {
+                "content": content,
+                "sha256": digest,
+                "path": str(path.resolve()),
+                "name": "nested-folder",
+            }
+        },
+        authorized_roots=(root,),
+    )
+
+    assert metadata == {
+        "skill_path": str(path.resolve()),
+        "skill_name": "nested-folder",
+        "skill_sha256": digest,
+    }
+    assert normalized_read_skill_metadata(
+        {}, {"skills": [{"name": "business-review"}]}, authorized_roots=(root,)
+    ) is None
+    assert normalized_read_skill_metadata(
+        {"name": None, "path": str(path)},
+        {
+            "structuredContent": {
+                "content": content,
+                "sha256": digest,
+                "path": str(path.resolve()),
+                "name": "nested-folder",
+            }
+        },
+        authorized_roots=(root,),
+    ) == {
+        "skill_path": str(path.resolve()),
+        "skill_name": "nested-folder",
+        "skill_sha256": digest,
+    }
+    assert normalized_read_skill_metadata(
+        {"name": "business-review", "path": str(path)},
+        {"structuredContent": {}},
+        authorized_roots=(root,),
+    ) is None

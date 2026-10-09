@@ -1781,6 +1781,9 @@ def test_worker_restores_finance_oa_scheduled_consumer_snapshot(
         ),
         skill_names=("dingtalk-oa-approval", "stardust-oa-finance-review"),
         skill_protocol="Read agent_cli.read_task_skill for selected Skills." if frozen else "# Stardust finance OA review",
+        skill_protocol_source=(
+            "generated_discovery" if frozen else "explicit_custom"
+        ),
         skill_materials=tuple(
             ServiceCommandSkillMaterial(name=name, content="FROZEN RULE BODY")
             for name in ("dingtalk-oa-approval", "stardust-oa-finance-review")
@@ -1813,6 +1816,7 @@ def test_worker_restores_finance_oa_scheduled_consumer_snapshot(
     if frozen:
         assert "agent_cli.read_task_skill" in context.consumer_prompt
     assert context.skill_protocol_override == scheduled_consumer.skill_protocol
+    assert context.skill_protocol_source == scheduled_consumer.skill_protocol_source
     assert context.skill_names == scheduled_consumer.skill_names
     assert "scheduled_consumer" not in context.trigger_raw_payload
 
