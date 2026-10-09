@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- 2026-10-09: Preserve terminal failures before an Agent run starts. The Reply
+  worker records the original failure without inventing a run or retrying a
+  non-retryable result; missing nonzero final run IDs remain integrity errors.
+
 - 2026-10-08: Probe direct Email action eligibility without a SQLite writer
   lock. Empty, settled, account-excluded and retry-blocked polls remain reads;
   actual claims recompute all plan and dependency checks under BEGIN IMMEDIATE.
