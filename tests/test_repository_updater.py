@@ -279,11 +279,30 @@ def test_quiet_counts_meeting_preparation_and_claimed_delivery(tmp_path, status,
     path = tmp_path / "meeting-quiet.sqlite3"
     AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        db.execute(
+        cursor = db.execute(
             "insert into meeting_alignment_jobs(meeting_id,status,locked_at) values (?,?,?)",
             ("meeting", status, locked_at),
         )
+        if status == "processing":
+            db.execute(
+                "insert into meeting_alignment_runs(job_id,status) values (?, 'running')",
+                (cursor.lastrowid,),
+            )
     assert in_flight_work(path) == expected
+
+
+def test_quiet_does_not_count_unclaimed_historical_meeting_processing(tmp_path):
+    from app.repository_updater import in_flight_work
+    from app.store import AutoReplyStore
+
+    path = tmp_path / "historical-meeting.sqlite3"
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "insert into meeting_alignment_jobs(meeting_id,status,locked_at) "
+            "values ('historical','processing','2026-01-01 00:00:00')"
+        )
+    assert in_flight_work(path) == 0
 
 
 @pytest.mark.parametrize("lease,terminal,expected", [

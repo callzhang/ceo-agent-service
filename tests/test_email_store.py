@@ -4248,16 +4248,11 @@ def test_durable_validation_boundary_normalizes_missing_row_field(
         store,
         _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
     )
-    gc.collect()
-    with sqlite3.connect(database) as db:
-        db.execute("drop trigger trg_email_reply_dispatch_blocks_thread_update")
-        db.execute("drop trigger trg_email_unsubscribe_blocks_message_update")
-        db.execute("alter table email_messages drop column thread_identity")
-    monkeypatch.setattr(
-        EmailStore,
-        "_validate_schema_shape",
-        staticmethod(lambda _db: None),
-    )
+    def read_missing_field(_self, db):
+        row = db.execute("select stable_message_identity from email_messages").fetchone()
+        row["thread_identity"]
+
+    monkeypatch.setattr(EmailStore, "_validate_durable_rows", read_missing_field)
 
     with pytest.raises(EmailPersistenceCorruption, match="missing a required field"):
         EmailStore(database)
@@ -10740,7 +10735,8 @@ def test_v42_and_v43_give_existing_mailboxes_default_dual_windows(tmp_path: Path
             alter table email_accounts drop column agent_lookback_days;
             alter table email_accounts drop column model_lookback_days;
             alter table email_accounts drop column scan_read_state;
-            update email_schema_migrations set version=41 where version=43;
+            delete from email_schema_migrations;
+            insert into email_schema_migrations values (41, 'legacy-fixture');
             """
         )
 
@@ -10755,7 +10751,7 @@ def test_v42_and_v43_give_existing_mailboxes_default_dual_windows(tmp_path: Path
     with sqlite3.connect(database) as db:
         assert db.execute(
             "select max(version) from email_schema_migrations"
-        ).fetchone() == (43,)
+        ).fetchone() == (email_store_module.EMAIL_SCHEMA_VERSION,)
 
 
 def test_v43_preserves_agent_window_and_adds_one_year_model_window(tmp_path: Path):
@@ -10777,9 +10773,8 @@ def test_v43_preserves_agent_window_and_adds_one_year_model_window(tmp_path: Pat
         if "model_lookback_days" in columns:
             db.execute("alter table email_accounts drop column model_lookback_days")
         db.execute("update email_accounts set scan_lookback_days=90")
-        db.execute(
-            "update email_schema_migrations set version=42 where version=43"
-        )
+        db.execute("delete from email_schema_migrations")
+        db.execute("insert into email_schema_migrations values (42, 'legacy-fixture')")
 
     reopened = EmailStore(database)
 
@@ -10790,7 +10785,7 @@ def test_v43_preserves_agent_window_and_adds_one_year_model_window(tmp_path: Pat
     with sqlite3.connect(database) as db:
         assert db.execute(
             "select max(version) from email_schema_migrations"
-        ).fetchone() == (43,)
+        ).fetchone() == (email_store_module.EMAIL_SCHEMA_VERSION,)
 
 
 def test_a_training_label_correction_never_moves_or_trashes_the_message(
