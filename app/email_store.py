@@ -70,7 +70,7 @@ from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 
 
-EMAIL_SCHEMA_VERSION = 44
+EMAIL_SCHEMA_VERSION = 45
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     {
         "email_model_promotion_configs",
@@ -933,6 +933,10 @@ _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
     "idx_email_actions_status": (
         "email_actions",
         ("status", "updated_at", "action_id"),
+    ),
+    "idx_email_actions_classification_plan": (
+        "email_actions",
+        ("classification_id", "action_plan_id"),
     ),
     "idx_email_reply_dispatch_claims_status": (
         "email_reply_dispatch_claims",
@@ -3166,6 +3170,9 @@ class EmailStore:
             if latest_version == 43:
                 self._migrate_v43_to_v44(db, replace_version=is_prototype)
                 latest_version = 44
+            if latest_version == 44:
+                self._migrate_v44_to_v45(db, replace_version=is_prototype)
+                latest_version = 45
             self._validate_durable_state(db)
 
     @classmethod
@@ -5257,6 +5264,28 @@ class EmailStore:
                 (version, self._now()),
             )
 
+    def _migrate_v44_to_v45(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Index direct-action siblings for bounded claim selection."""
+
+        db.execute(
+            "create index if not exists idx_email_actions_classification_plan "
+            "on email_actions(classification_id, action_plan_id)"
+        )
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=45, applied_at=? "
+                "where version=44",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) "
+                "values (45, ?)",
+                (self._now(),),
+            )
+
     def _migrate_v40_to_v41(
         self, db: sqlite3.Connection, *, replace_version: bool = False
     ) -> None:
@@ -6257,6 +6286,10 @@ class EmailStore:
             """
             create index if not exists idx_email_actions_status
             on email_actions(status, updated_at, action_id)
+            """,
+            """
+            create index if not exists idx_email_actions_classification_plan
+            on email_actions(classification_id, action_plan_id)
             """,
             """
             create index if not exists idx_email_reply_dispatch_claims_status
@@ -16135,30 +16168,31 @@ class EmailStore:
         claimed_at: str,
         account_ids: Sequence[str] | None,
     ) -> sqlite3.Row | None:
-        rows = db.execute(
+        eligible: list[sqlite3.Row] = []
+        candidate_classifications = db.execute(
             """
-            select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
-                   c.thread_id, c.stable_message_identity,
-                   c.current_action_plan_id, p.actions_json,
-                   p.action_plan_version
-            from email_actions as a
-            join email_classifications as c on c.id=a.classification_id
-            join email_action_plans as p on p.action_plan_id=a.action_plan_id
-            where c.status='processed'
-              and a.classification_id in (
-                  select classification_id from email_actions
-                  where status in ('pending', 'failed')
-              )
+            select distinct classification_id
+            from email_actions
+            where status in ('pending', 'failed')
             """
         ).fetchall()
-        rows_by_classification: dict[int, list[sqlite3.Row]] = {}
-        for candidate in rows:
-            rows_by_classification.setdefault(
-                int(candidate["classification_id"]),
-                [],
-            ).append(candidate)
-        eligible: list[sqlite3.Row] = []
-        for siblings in rows_by_classification.values():
+        for candidate_classification in candidate_classifications:
+            siblings = db.execute(
+                """
+                select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
+                       c.thread_id, c.stable_message_identity,
+                       c.current_action_plan_id, p.actions_json,
+                       p.action_plan_version
+                from email_actions as a
+                join email_classifications as c on c.id=a.classification_id
+                join email_action_plans as p on p.action_plan_id=a.action_plan_id
+                where a.classification_id=?
+                  and c.status='processed'
+                """,
+                (candidate_classification["classification_id"],),
+            ).fetchall()
+            if not siblings:
+                continue
             if any(sibling["status"] == "processing" for sibling in siblings):
                 continue
             if account_ids is not None and any(
@@ -16582,8 +16616,8 @@ class EmailStore:
             )
         siblings = db.execute(
             "select action_type, status, parameters_json from email_actions "
-            "where action_plan_id=?",
-            (row["action_plan_id"],),
+            "where classification_id=? and action_plan_id=?",
+            (row["classification_id"], row["action_plan_id"]),
         ).fetchall()
         status_by_type = {
             str(sibling["action_type"]): str(sibling["status"])

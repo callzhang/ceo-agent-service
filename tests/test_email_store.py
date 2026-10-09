@@ -3598,8 +3598,8 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_44() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 44
+def test_email_schema_version_is_45() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 45
 
 
 def _downgrade_task10_schema(database: Path, *, version: int) -> None:

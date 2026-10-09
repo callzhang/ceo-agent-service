@@ -39,8 +39,11 @@ account and dependency selection for a read-only probe and the subsequent
 write transaction. A negative probe does not acquire the writer lock. A
 positive probe is not a reservation: BEGIN IMMEDIATE must recompute eligibility
 before the unchanged conditional update. New work arriving after a negative
-probe waits for the next poll; no queue result is cached. Regression tests hold
-a real competing writer and claim between the probe and transaction.
+probe waits for the next poll; no queue result is cached. Each pass starts from
+the indexed pending/failed statuses, then reads sibling actions through the
+`(classification_id, action_plan_id)` index; it does not scan every action while
+holding the SQLite writer lock. Candidate order and the existing action,
+dependency and retry rules are unchanged.
 
 Reply-task scheduled recovery uses the required partial expression index
 `idx_scheduled_task_runs_reply_execution`, keyed by the existing integer-cast
