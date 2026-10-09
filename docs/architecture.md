@@ -514,6 +514,9 @@ launchd 后验证新 PID、HTTP 健康与 Store 可读性。
 复用上面的 updater，先等没有进行中的 Agent 回合和已领取的条目（30 分钟内不空闲就什么都不改），
 再备份数据库、fast-forward、控制台不是从检出当前的 `frontend/` 构建的时重建（比较构建戳 `app/static/workbench/.built-from` 与 `HEAD:frontend` 的树，而不是看本次部署的差异——中途停下的部署或别的会话插进来的部署会让下一次差异里没有前端改动，控制台就停在旧版本）、检查 import、重启，并轮询健康最多
 15 分钟（重启要重读数 GB 的数据库，负载高时曾用 8 分钟，只探一次会把正常升级误判回滚）。
+静默检查将会议任务处于 `processing` 视为在途工作，仅当它有有效的 meeting dispatcher 租约或
+对应的 `meeting_alignment_runs.status='running'` 运行记录时阻止部署；没有这两种 owner 证据的孤儿
+行不会无限阻塞部署，并由服务启动时现有的会议任务恢复逻辑重新排队。仍锁定的会议投递继续阻止部署。
 两个会话同时部署由仓库锁串行，后到的发现检出已前进就停止。只改了设置、没有提交要部署时（有些设置，比如邮箱账号，是 worker 启动时才读），用 `python -m app.deploy --restart`：同样先等没有进行中的工作，再经 launchd 重启并等健康，不手动 `launchctl kickstart`。生产检出里不能提交也不能跑测试（Derek 2026-09-25，此前有会话在那里跑测试并就地提交，检出与 main 分叉，之后所有部署都停下）：部署时装上 `pre-commit` / `pre-merge-commit` / `pre-rebase` 钩子，一律拒绝并提示去开发树改；`tests/conftest.py` 发现自己在生产检出里就退出。部署只做 fast-forward，不触发这些钩子。检出若已分叉，部署停下并列出只在生产里的提交，不会自动丢弃。`app/`、`frontend/src/`、`tests/` 在两次部署之间还是 chmod 只读（Derek 2026-09-28：上面三层防的是"改动悄悄上线"，这层防的是"改动被写下来"本身）；部署把这几棵源码树的解锁窗口精确框在 checkout+构建+校验期间，`finally` 里无论成功、回滚还是异常都重新上锁。`data/`、`.env` 和这三棵树以外的构建产物（`app/static/workbench`、`frontend/dist`、`frontend/node_modules`）保持可写——服务运行时和构建步骤本来就要写它们；`app/static/workbench` 虽然物理上在 `app/` 里，但只有构建步骤会碰它，而构建步骤总是在解锁窗口内跑。
 
 ### 会议投递目标

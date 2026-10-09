@@ -1027,6 +1027,11 @@ Agent Cron Scheduler 在保存触发记录时遇到 SQLite `BUSY`/`LOCKED`，且
 常驻组件 `runtime-attempt-reclaim` 上，每 5 分钟跑一次，和 `database-backup`、探针一样是
 命名、受心跳监控的基础设施循环，不是隐藏循环。
 
+部署静默检查对 `meeting_alignment_jobs.status='processing'` 也核验 owner：只有对应的
+meeting dispatcher 租约仍有效，或 `meeting_alignment_runs` 有 `running` 记录时才阻塞部署。
+失去两类 owner 证据的 processing 行是启动恢复可以重新排队的孤儿行，不会无限卡住部署；
+`ready_to_send` 且仍锁定的会议投递仍计为在途工作。
+
 ## 进程、租约和恢复
 
 - 生产入口是 launchd 管理的 `com.ceo-agent-service.main`，由 supervisor 管理 worker 和 audit-web。
