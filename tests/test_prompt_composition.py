@@ -316,7 +316,6 @@ def test_explicit_custom_protocol_is_preserved_with_fully_frozen_selection(
 
 def test_example_consumer_task_uses_runtime_assembler_and_validates_one_slot():
     from app.agent_context import AgentTaskContext
-    from app.consumer_agent import default_task_skill_catalog
     from app.developer_prompt import DeveloperPromptTemplateError
     from app.prompt_composition import (
         RawPromptConfiguration,
@@ -339,19 +338,16 @@ def test_example_consumer_task_uses_runtime_assembler_and_validates_one_slot():
         materials=(),
         prior_receipts=(),
     )
-    selected = ("ceo-document-review",)
     expected = compose_consumer_task_assembly(
         configuration,
         task_context=context.render(current_time="2026-01-01T12:00:00+00:00"),
-        skill_names=selected,
-        skill_catalog=default_task_skill_catalog(selected),
     ).text
 
     rendered = example_consumer_task(configuration)
     assert rendered == expected
-    assert "agent_cli.read_skill(path=" in rendered
-    assert "ceo-document-review" in rendered
-    assert "## Skill:" not in rendered
+    assert "No task Skill was selected" in rendered
+    assert "agent_cli.read_skill()" in rendered
+    assert "ceo-document-review" not in rendered
     with pytest.raises(DeveloperPromptTemplateError, match="exactly one"):
         compose_consumer_task_assembly(
             RawPromptConfiguration(

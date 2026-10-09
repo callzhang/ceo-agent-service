@@ -60,11 +60,9 @@ def test_runtime_context_injects_deployment_values_without_skill_literals(monkey
 SKILLS_ROOT = bundled_business_skills_root()
 
 
-def test_consumer_oa_work_uses_live_identity_and_autonomous_business_rules():
+def test_consumer_common_capabilities_leave_domain_workflows_to_skills():
     instructions = " ".join(AGENT_CAPABILITY_INSTRUCTIONS.split())
-    assert "Use originatorUserid/originatorOpenDingTalkId" in instructions
-    assert "A low-consequence operating choice is autonomous" in instructions
-    assert "A real provider read outage stays failed" in instructions
+    assert "originatorUserid/originatorOpenDingTalkId" not in instructions
     assert "Ordinary work does not require a controlled-action proposal" in instructions
     assert "Only the registered reviewed system actions" in instructions
     assert "after whole-candidate approval" in instructions
@@ -178,7 +176,9 @@ def test_default_developer_template_contains_shared_principles_without_role_sche
     assert template.startswith("## 原请求与取证\n")
     assert "原触发是权威请求" in template
     assert "普通文档、文件、研究、报告与计算工作" in template
-    assert "## 日历任务与参与者时区\n" in template
+    assert "## 日历任务与参与者时区\n" not in template
+    calendar_skill = SKILLS_ROOT / "ceo-calendar-invite" / "SKILL.md"
+    assert "日历相关任务必须考虑本人、对方及必要协调者的时区" in calendar_skill.read_text(encoding="utf-8")
     assert "不对外暴露凭据、私密日历正文或内部配置" in template
     assert "Consumer Agent A" not in template
     assert "Pydantic Wire/Result Contract" not in template

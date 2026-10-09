@@ -302,16 +302,11 @@ def compose_consumer_task(configuration: PromptConfiguration, *, task_context: s
 def example_consumer_task(configuration: PromptConfiguration | RawPromptConfiguration) -> str:
     """Render the saved User template using explicit synthetic complete facts."""
     from app.agent_context import AgentTaskContext
-    from app.consumer_agent import default_task_skill_catalog
-
     context = AgentTaskContext(task_id=0, channel="example", conversation_id="example-conversation",
         conversation_title="Synthetic example", single_chat=True, trigger_message_id="fixture-message",
         trigger_sender="Example sender", trigger_text="Review the supplied document.",
         trigger_create_time="2026-01-01T12:00:00+00:00", messages=(), materials=(), prior_receipts=())
-    selected = ("ceo-document-review",)
     return compose_consumer_task_assembly(
         configuration,
         task_context=context.render(current_time="2026-01-01T12:00:00+00:00"),
-        skill_names=selected,
-        skill_catalog=default_task_skill_catalog(selected),
     ).text
