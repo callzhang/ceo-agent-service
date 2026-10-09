@@ -70,7 +70,7 @@ from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 
 
-EMAIL_SCHEMA_VERSION = 43
+EMAIL_SCHEMA_VERSION = 44
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     {
         "email_model_promotion_configs",
@@ -486,6 +486,11 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "important_signals_json": ("text", False, None),
         "observed_at": ("text", True, None),
     },
+    "email_provider_folder_observation_generations": {
+        "account_id": ("text", True, None),
+        "provider_folder_id": ("text", True, None),
+        "observed_at": ("text", True, None),
+    },
     "email_training_snapshot_observations": {
         "snapshot_id": ("text", True, None),
         "account_id": ("text", True, None),
@@ -729,6 +734,11 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "important_signals_json is null or json_valid(important_signals_json)",
         "trim(observed_at) != ''",
     ),
+    "email_provider_folder_observation_generations": (
+        "trim(account_id) != ''",
+        "trim(provider_folder_id) != ''",
+        "trim(observed_at) != ''",
+    ),
     "email_training_snapshot_observations": (
         "trim(snapshot_id) != ''",
         "trim(account_id) != ''",
@@ -807,6 +817,10 @@ _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
     "email_unsubscribe_receipts": ("action_identity",),
     "email_training_snapshots": ("snapshot_id",),
     "email_provider_observations": ("account_id", "stable_message_identity"),
+    "email_provider_folder_observation_generations": (
+        "account_id",
+        "provider_folder_id",
+    ),
     "email_training_snapshot_observations": (
         "snapshot_id",
         "account_id",
@@ -943,6 +957,10 @@ _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
     "idx_email_provider_observations_lookup": (
         "email_provider_observations",
         ("account_id", "stable_message_identity", "observed_at"),
+    ),
+    "idx_email_provider_observations_folder": (
+        "email_provider_observations",
+        ("account_id", "provider_folder_id"),
     ),
     "idx_email_classifier_runtime_model_id": (
         "email_classifier_runtime_samples",
@@ -3145,6 +3163,9 @@ class EmailStore:
             if latest_version == 42:
                 self._migrate_v42_to_v43(db, replace_version=is_prototype)
                 latest_version = 43
+            if latest_version == 43:
+                self._migrate_v43_to_v44(db, replace_version=is_prototype)
+                latest_version = 44
             self._validate_durable_state(db)
 
     @classmethod
@@ -5204,6 +5225,38 @@ class EmailStore:
                 (self._now(),),
             )
 
+    def _migrate_v43_to_v44(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Track scan time per folder, separately from changed message rows."""
+
+        db.execute(
+            """
+            insert into email_provider_folder_observation_generations (
+                account_id, provider_folder_id, observed_at
+            )
+            select account_id, provider_folder_id, max(observed_at)
+            from email_provider_observations
+            where provider_folder_id is not null
+            group by account_id, provider_folder_id
+            on conflict(account_id, provider_folder_id) do update set
+                observed_at=excluded.observed_at
+            """
+        )
+        version = 44
+        previous_version = 43
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=?, applied_at=? "
+                "where version=?",
+                (version, self._now(), previous_version),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (?, ?)",
+                (version, self._now()),
+            )
+
     def _migrate_v40_to_v41(
         self, db: sqlite3.Connection, *, replace_version: bool = False
     ) -> None:
@@ -6082,6 +6135,15 @@ class EmailStore:
             )
             """,
             """
+            create table if not exists email_provider_folder_observation_generations (
+                account_id text not null check(trim(account_id) != ''),
+                provider_folder_id text not null
+                    check(trim(provider_folder_id) != ''),
+                observed_at text not null check(trim(observed_at) != ''),
+                primary key(account_id, provider_folder_id)
+            )
+            """,
+            """
             create table if not exists email_training_snapshot_observations (
                 snapshot_id text not null check(trim(snapshot_id) != ''),
                 account_id text not null check(trim(account_id) != ''),
@@ -6221,6 +6283,10 @@ class EmailStore:
             on email_provider_observations(
                 account_id, stable_message_identity, observed_at desc
             )
+            """,
+            """
+            create index if not exists idx_email_provider_observations_folder
+            on email_provider_observations(account_id, provider_folder_id)
             """,
             """
             create index if not exists idx_email_classifier_runtime_model_id
@@ -14833,10 +14899,18 @@ class EmailStore:
                 return {"state": "unavailable", "reason": "classification_missing"}
             row = db.execute(
                 """
-                select state, category_key, important, important_signals_json,
-                       provider_folder_id, provider_folder_name, observed_at
-                from email_provider_observations
-                where account_id=? and stable_message_identity=?
+                select observations.state, observations.category_key,
+                       observations.important, observations.important_signals_json,
+                       observations.provider_folder_id,
+                       observations.provider_folder_name,
+                       coalesce(generations.observed_at, observations.observed_at)
+                           as observed_at
+                from email_provider_observations as observations
+                left join email_provider_folder_observation_generations as generations
+                  on generations.account_id=observations.account_id
+                 and generations.provider_folder_id=observations.provider_folder_id
+                where observations.account_id=?
+                  and observations.stable_message_identity=?
                 """,
                 (
                     classification["account_id"],
@@ -14866,12 +14940,16 @@ class EmailStore:
                            observations.important_signals_json,
                            observations.provider_folder_id,
                            observations.provider_folder_name,
-                           observations.observed_at
+                           coalesce(generations.observed_at, observations.observed_at)
+                               as observed_at
                     from email_classifications as classifications
                     left join email_provider_observations as observations
                       on observations.account_id=classifications.account_id
                      and observations.stable_message_identity=
                          classifications.stable_message_identity
+                    left join email_provider_folder_observation_generations as generations
+                      on generations.account_id=observations.account_id
+                     and generations.provider_folder_id=observations.provider_folder_id
                     where classifications.id=?
                     """,
                     (classification_id,),
@@ -15019,7 +15097,47 @@ class EmailStore:
             if active_account_ids is None
             else tuple(str(value) for value in active_account_ids)
         )
+        parsed_authoritative: list[tuple[str, str]] = []
+        parsed_unavailable: list[tuple[str, str]] = []
+        for values, target, label in (
+            (authoritative, parsed_authoritative, "authoritative"),
+            (unavailable, parsed_unavailable, "unavailable"),
+        ):
+            for value in values:
+                account_id, separator, folder_id = value.partition(":")
+                if not separator or not account_id or not folder_id:
+                    raise ValueError(f"{label} folder identity is invalid")
+                target.append((account_id, folder_id))
+        current_membership = {
+            (str(row[0]), str(row[3]), str(row[1])) for row in rows
+        }
+        folder_generations = {
+            (str(row[0]), str(row[3])) for row in rows
+        } | set(parsed_authoritative) | set(parsed_unavailable)
         with self._connect() as db:
+            # Stage scan membership in SQLite's connection-local temp database
+            # before acquiring the shared database writer lock. This also keeps
+            # reconciliation independent of SQLite's host-parameter limit.
+            db.execute(
+                "create temp table current_provider_membership ("
+                "account_id text not null, provider_folder_id text not null, "
+                "stable_message_identity text not null, "
+                "primary key(account_id, provider_folder_id, stable_message_identity))"
+            )
+            db.executemany(
+                "insert or ignore into current_provider_membership values (?, ?, ?)",
+                current_membership,
+            )
+            if active_accounts is not None:
+                db.execute(
+                    "create temp table current_provider_accounts ("
+                    "account_id text primary key)"
+                )
+                db.executemany(
+                    "insert or ignore into current_provider_accounts values (?)",
+                    ((account_id,) for account_id in active_accounts),
+                )
+            db.commit()
             db.execute("begin immediate")
             db.executemany(
                 """
@@ -15036,61 +15154,51 @@ class EmailStore:
                     important=excluded.important,
                     important_signals_json=excluded.important_signals_json,
                     observed_at=excluded.observed_at
+                where email_provider_observations.state is not excluded.state
+                   or email_provider_observations.provider_folder_id
+                        is not excluded.provider_folder_id
+                   or email_provider_observations.provider_folder_name
+                        is not excluded.provider_folder_name
+                   or email_provider_observations.category_key is not excluded.category_key
+                   or email_provider_observations.important is not excluded.important
+                   or email_provider_observations.important_signals_json
+                        is not excluded.important_signals_json
                 """,
                 rows,
             )
-            current_membership: dict[tuple[str, str], set[str]] = {}
-            for row in rows:
-                current_membership.setdefault((str(row[0]), str(row[3])), set()).add(
-                    str(row[1])
+            for account_id, folder_id in parsed_authoritative:
+                db.execute(
+                    "update email_provider_observations "
+                    "set state='unavailable', provider_folder_id=null, "
+                    "provider_folder_name=null, category_key=null, important=null, "
+                    "important_signals_json=null, observed_at=? "
+                    "where account_id=? and provider_folder_id=? "
+                    "and not exists (select 1 from current_provider_membership as current "
+                    "where current.account_id=email_provider_observations.account_id "
+                    "and current.provider_folder_id=? "
+                    "and current.stable_message_identity="
+                    "email_provider_observations.stable_message_identity) "
+                    "and (state is not 'unavailable' or provider_folder_id is not null "
+                    "or provider_folder_name is not null or category_key is not null "
+                    "or important is not null or important_signals_json is not null "
+                    "or observed_at is not ?)",
+                    (observed_at, account_id, folder_id, folder_id, observed_at),
                 )
-            for value in authoritative:
-                account_id, separator, folder_id = value.partition(":")
-                if not separator or not account_id or not folder_id:
-                    raise ValueError("authoritative folder identity is invalid")
-                identities = current_membership.get((account_id, folder_id), set())
-                if identities:
-                    placeholders = ",".join("?" for _ in identities)
-                    db.execute(
-                        "update email_provider_observations set state='unavailable', "
-                        "provider_folder_id=null, provider_folder_name=null, "
-                        "category_key=null, important=null, important_signals_json=null, "
-                        "observed_at=? "
-                        "where account_id=? and provider_folder_id=? and "
-                        f"stable_message_identity not in ({placeholders})",
-                        (observed_at, account_id, folder_id, *sorted(identities)),
-                    )
-                else:
-                    db.execute(
-                        "update email_provider_observations set state='unavailable', "
-                        "provider_folder_id=null, provider_folder_name=null, "
-                        "category_key=null, important=null, important_signals_json=null, "
-                        "observed_at=? "
-                        "where account_id=? and provider_folder_id=?",
-                        (observed_at, account_id, folder_id),
-                    )
             if active_accounts is not None:
-                if active_accounts:
-                    placeholders = ",".join("?" for _ in active_accounts)
-                    db.execute(
-                        "update email_provider_observations set state='unavailable', "
-                        "provider_folder_id=null, provider_folder_name=null, "
-                        "category_key=null, important=null, "
-                        "important_signals_json=null, observed_at=? "
-                        f"where account_id not in ({placeholders})",
-                        (observed_at, *active_accounts),
-                    )
-                else:
-                    db.execute(
-                        "update email_provider_observations set state='unavailable', "
-                        "provider_folder_id=null, provider_folder_name=null, "
-                        "category_key=null, important=null, important_signals_json=null, observed_at=?",
-                        (observed_at,),
-                    )
-            for value in unavailable:
-                account_id, separator, folder_id = value.partition(":")
-                if not separator or not account_id or not folder_id:
-                    raise ValueError("unavailable folder identity is invalid")
+                db.execute(
+                    "update email_provider_observations "
+                    "set state='unavailable', provider_folder_id=null, "
+                    "provider_folder_name=null, category_key=null, important=null, "
+                    "important_signals_json=null, observed_at=? "
+                    "where not exists (select 1 from current_provider_accounts as active "
+                    "where active.account_id=email_provider_observations.account_id) "
+                    "and (state is not 'unavailable' or provider_folder_id is not null "
+                    "or provider_folder_name is not null or category_key is not null "
+                    "or important is not null or important_signals_json is not null "
+                    "or observed_at is not ?)",
+                    (observed_at, observed_at),
+                )
+            for account_id, folder_id in parsed_unavailable:
                 db.execute(
                     """
                     update email_provider_observations
@@ -15098,9 +15206,25 @@ class EmailStore:
                         important_signals_json=null,
                         observed_at=?
                     where account_id=? and provider_folder_id=?
+                      and (state is not 'unavailable' or category_key is not null
+                           or important is not null
+                           or important_signals_json is not null
+                           or observed_at is not ?)
                     """,
-                    (observed_at, account_id, folder_id),
+                    (observed_at, account_id, folder_id, observed_at),
                 )
+            db.executemany(
+                "insert into email_provider_folder_observation_generations "
+                "(account_id, provider_folder_id, observed_at) values (?, ?, ?) "
+                "on conflict(account_id, provider_folder_id) do update set "
+                "observed_at=excluded.observed_at "
+                "where email_provider_folder_observation_generations.observed_at "
+                "is not excluded.observed_at",
+                (
+                    (account_id, folder_id, observed_at)
+                    for account_id, folder_id in folder_generations
+                ),
+            )
 
     @staticmethod
     def _get_training_snapshot(
