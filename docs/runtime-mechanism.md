@@ -6,6 +6,13 @@ The eligibility read grants no ownership: expired-lease recovery and the full
 claim query still run under BEGIN IMMEDIATE, preserving generation and owner
 checks if another worker claims the candidate between the read and the lock.
 
+An orchestration failure before the first Agent run has `final_run_id=0`.
+The Reply worker handles both retryable and terminal failures through its
+generation-checked no-run transition. Terminal failures retain their original
+error and summary in the failed Attempt without retrying or creating an Agent
+run. A missing nonzero final run ID remains an integrity error, not a pre-run
+failure.
+
 Retry session selection honors an explicit JSON boolean
 `session_continuable=false` on the latest failed run for the current generation,
 role and revision. A new run does not inherit that session, and Consumer/Audit
