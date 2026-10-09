@@ -57,6 +57,13 @@ waiting to acquire a transaction, so it is not automatically write-lock hold
 time. Logs keep call sites and elapsed durations, not SQL parameters or business
 payloads. Transaction behavior and existing error propagation are unchanged.
 
+Runtime-attempt detail reads filter by `agent_run_id` and order by
+`attempt_number`; the partial `idx_agent_runtime_attempts_run` index serves that
+lookup for run-bound attempts. This avoids scanning unrelated runtime attempts
+when History opens an attempt detail. Generalized attempts without an
+`agent_run_id` remain outside this index and keep their existing workload-key
+indexes.
+
 The required `idx_errors_unresolved` partial index contains only incidents whose
 `coalesce(resolved_at, '')` is empty. Attention retains the same recovery,
 supersession, ordering and current-state predicates, but does not scan resolved
