@@ -501,7 +501,6 @@ def repeated_result_failure_requires_fresh_session(
             if run.role is role
             and run.proposal_revision == proposal_revision
             and run.status in {"failed", "completed"}
-            and run.codex_session_id
         ),
         key=lambda run: (run.turn_attempt, run.id),
     )
@@ -521,7 +520,7 @@ def repeated_result_failure_requires_fresh_session(
     previous, latest = failed_runs[-2:]
     if previous.status != "failed":
         return False
-    if previous.codex_session_id != latest.codex_session_id:
+    if not previous.codex_session_id or previous.codex_session_id != latest.codex_session_id:
         return False
 
     fingerprints: list[tuple[str, str]] = []

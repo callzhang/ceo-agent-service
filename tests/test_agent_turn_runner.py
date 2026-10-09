@@ -19,9 +19,10 @@ from app.store import AgentRole, AutoReplyStore, RuntimeRoutePausedError
 
 
 @pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
-def test_explicit_noncontinuable_failure_requires_fresh_session(role):
+@pytest.mark.parametrize("session_id", ["failed-session", ""])
+def test_explicit_noncontinuable_failure_requires_fresh_session(role, session_id):
     run = SimpleNamespace(
-        role=role, proposal_revision=2, status="failed", codex_session_id="failed-session",
+        role=role, proposal_revision=2, status="failed", codex_session_id=session_id,
         turn_attempt=1, id=17,
         structured_error_json=json.dumps({
             "code": "dependency_read_unavailable", "retryable": True,
@@ -49,7 +50,8 @@ def test_fresh_session_requires_explicit_false_not_missing_or_coerced_flag(conti
     )
 
 
-def test_later_completed_session_covers_older_noncontinuable_failure():
+@pytest.mark.parametrize("session_id", ["valid", ""])
+def test_later_completed_session_covers_older_noncontinuable_failure(session_id):
     earlier = SimpleNamespace(
         role=AgentRole.CONSUMER, proposal_revision=0, status="failed",
         codex_session_id="old", turn_attempt=1, id=1,
@@ -57,7 +59,7 @@ def test_later_completed_session_covers_older_noncontinuable_failure():
     )
     later = SimpleNamespace(
         role=AgentRole.CONSUMER, proposal_revision=0, status="completed",
-        codex_session_id="valid", turn_attempt=2, id=2, structured_error_json="",
+        codex_session_id=session_id, turn_attempt=2, id=2, structured_error_json="",
     )
     store = SimpleNamespace(list_agent_runs_for_task_generation=lambda *_: [earlier, later])
     task = SimpleNamespace(id=9, execution_generation="current")

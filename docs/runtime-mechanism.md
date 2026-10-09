@@ -8,6 +8,11 @@ Missing flags and string values are not treated as false. A later completed
 session covers an older failure. Existing candidate digest, revision, source,
 approval and external-receipt checks remain unchanged; fresh transport is not
 permission to replay an external action. Old run/session history is preserved.
+This decision uses the latest terminal run even when its legacy
+`codex_session_id` is empty: API/Claude sessions may exist only in route/runtime
+records. The runner computes fresh selection before claiming, and the same
+decision initializes the new run without an inherited session. This also keeps
+Audit's repeated-result fresh retry consistent with immutable run binding.
 
 `CEO_DATABASE_BACKUP_PAUSED=1` pauses automatic daily database backups before
 opening databases, creating directories, or pruning snapshots. Unset the flag
