@@ -5353,10 +5353,9 @@ def _history_chart_payload(
     # Keep terminal reply history consistent with the History list. Reply
     # attempts retain their raw execution outcome, while OperationLog projects
     # the current terminal result for that message and task.
-    projected_statuses = {
-        operation.source_id: operation.status
-        for operation in store.list_operation_logs(source_tables=("reply_attempts",))
-    }
+    projected_statuses = store.list_reply_attempt_operation_statuses(
+        [attempt.id for attempt in attempts]
+    )
     for attempt in attempts:
         created_at = _parse_utc_timestamp(attempt.created_at)
         if created_at is None:

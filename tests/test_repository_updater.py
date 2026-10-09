@@ -513,6 +513,40 @@ def test_deploy_locks_the_source_tree_after_a_successful_deploy(tmp_path: Path, 
         assert path.stat().st_mode & stat_module.S_IWUSR == 0
 
 
+def test_deploy_can_explicitly_skip_only_the_quiet_wait(tmp_path: Path, monkeypatch):
+    import app.deploy as deploy_module
+    from app.repository_updater import UpgradeResult
+
+    local, _files = fixture_repo_with_protected_source(tmp_path)
+    events: list[str] = []
+
+    class CapturingUpdater:
+        def __init__(self, *args, **kwargs):
+            self.wait_for_quiet = kwargs["wait_for_quiet"]
+            self.stop = kwargs["stop"]
+
+        def execute(self, operation):
+            self.wait_for_quiet()
+            self.stop()
+            events.append("service-stopped")
+            events.append("updater-continued")
+            return UpgradeResult(
+                operation_id=operation.operation_id,
+                status="succeeded",
+                installed_commit=git(local, "rev-parse", "origin/main"),
+            )
+
+    monkeypatch.setattr(deploy_module, "RepositoryUpdater", CapturingUpdater)
+    monkeypatch.setattr("app.store.AutoReplyStore", lambda _path: StateStore())
+    monkeypatch.setattr(deploy_module, "_default_stop", lambda: events.append("stop"))
+
+    deploy_module.deploy(
+        local, tmp_path / "db.sqlite3", skip_quiet_wait=True
+    )
+
+    assert events == ["stop", "service-stopped", "updater-continued"]
+
+
 def test_deploy_relocks_the_source_tree_even_when_the_race_is_lost(tmp_path: Path, monkeypatch):
     import stat as stat_module
 

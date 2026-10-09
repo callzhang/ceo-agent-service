@@ -1433,6 +1433,13 @@ again with launchd `bootstrap` after verification, then performs the normal
 health and queue readback. This prevents the deployment process and worker
 process from writing the same SQLite database concurrently.
 
+An operator may explicitly run `python -m app.deploy --skip-quiet-wait` when
+immediate deployment is required. This bypasses only the in-flight-work wait;
+the repository lock, normal service stop before database backup and checkout
+changes, verification, restart, health check, and rollback behavior still
+apply. Work interrupted by that stop is handled by the existing startup
+recovery and claim logic.
+
 ### Public information and native reply recovery
 
 The fixed Consumer/Audit rules now distinguish established public disclosure
@@ -1510,10 +1517,12 @@ rewriting a completed reply task to pending. A successful receipt, missing
 receipt, or failed terminal parent does not authorize this runtime operation;
 the action plan and browser effect authorization remain unchanged.
 
-Audit History list and chart prewarming runs in a daemon background thread
-after lifecycle recovery starts. These read-only scans populate the existing
-caches but do not gate the HTTP listener or launchd startup health checks.
-Health readiness is not evidence that History prewarming or business actions
+Audit web startup does not scan and cache History lists or charts. History
+pages are computed when requested. Attempt detail loads all Agent runs for a
+task generation and their tool events in batched reads rather than one event
+query per run. The History chart projects lifecycle status only for reply
+attempts in the requested time window, avoiding a full-history status scan.
+Health readiness is not evidence that History requests or business actions
 have completed; their APIs and provider receipts must still be read back.
 
 DingTalk meeting group searches explicitly request 100 candidates per page,
