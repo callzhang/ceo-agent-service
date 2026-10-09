@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+| codex-one-day-pre-snapshot-retention | app/database_backup.py; docs/architecture.md (SQLite backup retention); docs/runtime-mechanism.md (backup loop); docs/agent-claims.md | After a complete verified daily backup exists, prune root-level `auto-reply.sqlite3.pre-*` snapshots and sidecars older than 24 hours. Do not change email training snapshot retention until all historical model and evaluation references are understood. | 2026-10-09 |
+
 | codex-agent-cron-sqlite-busy-retry | app/agent_cron/scheduler.py; docs/architecture.md (Agent Cron retry behavior); docs/runtime-mechanism.md (scheduler lock recovery); docs/agent-claims.md | Keep an Agent Cron trigger due when a SQLite BUSY/LOCKED contention exhausts the store's bounded retries; wait briefly and retry the same persisted trigger instead of terminating the service worker. Do not turn database contention into a task outcome. |
 
 | codex-provider-observation-write-amplification | app/email_store.py (provider observation schema, migration, writes, and reads); docs/architecture.md and docs/runtime-mechanism.md (provider observation timestamp contract); docs/agent-claims.md | Keep provider observation generations atomic while persisting folder scan time once per folder and avoiding writes to unchanged observation rows; replace large dynamic membership lists with indexed temp-table reconciliation. Preserve the current state and observed-at API projection. |

@@ -1,5 +1,11 @@
 # Current Runtime Mechanism
 
+The database-backup worker checks once per hour. It keeps one integrity-checked
+daily backup in `backups/`; after confirming that copy is complete, it prunes
+root-level `auto-reply.sqlite3.pre-*` recovery snapshots and their SQLite
+sidecars once they are older than 24 hours. A failed or interrupted daily copy
+does not authorize that cleanup.
+
 Reply queue polling first reads the current channel's due pending tasks without
 acquiring a write transaction. An empty channel, future-only queue, or another
 channel's work returns immediately even while a different writer is active.

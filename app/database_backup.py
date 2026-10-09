@@ -8,6 +8,7 @@ from pathlib import Path
 
 BACKUP_DIRECTORY_NAME = "backups"
 BACKUP_CHECK_INTERVAL_SECONDS = 60 * 60
+PREDEPLOYMENT_SNAPSHOT_RETENTION_SECONDS = 24 * 60 * 60
 # Stamped into a backup only once it is complete and integrity-checked, so a
 # backup cut short by a restart is recognisable without a temporary file.
 BACKUP_COMPLETE_APPLICATION_ID = 0x43454F42  # "CEOB"
@@ -75,7 +76,8 @@ def backup_database_if_due(
     *,
     now: datetime | None = None,
 ) -> Path | None:
-    current_date = (now or datetime.now().astimezone()).date()
+    current = now or datetime.now().astimezone()
+    current_date = current.date()
     backup_dir = db_path.parent / BACKUP_DIRECTORY_NAME
     backup_dir.mkdir(parents=True, exist_ok=True)
     destination = backup_dir / f"{db_path.stem}-{current_date.isoformat()}.sqlite3"
@@ -85,10 +87,44 @@ def backup_database_if_due(
             today=current_date,
             keep_path=destination,
         )
+        prune_predeployment_snapshots(db_path, now=current)
         return None
 
     create_database_backup(db_path, destination)
+    # The daily copy is stamped complete only after integrity_check succeeds.
+    # Expire the separately named pre-deployment recovery copies only after
+    # that verified backup exists.
+    prune_predeployment_snapshots(db_path, now=current)
     return destination
+
+
+def prune_predeployment_snapshots(
+    db_path: Path,
+    *,
+    now: datetime | None = None,
+) -> list[Path]:
+    """Remove root-level pre-deployment database copies older than 24 hours.
+
+    These named recovery snapshots live beside the active database rather
+    than in ``backups/``. Their SQLite sidecars share the same prefix and are
+    subject to the same age limit.
+    """
+    cutoff = (
+        (now or datetime.now().astimezone()).timestamp()
+        - PREDEPLOYMENT_SNAPSHOT_RETENTION_SECONDS
+    )
+    deleted: list[Path] = []
+    for path in sorted(db_path.parent.glob(f"{db_path.name}.pre-*")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        if path.stat().st_mtime >= cutoff:
+            continue
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        deleted.append(path)
+    return deleted
 
 
 def _remove_older_backups(backup_dir: Path, *, keep: Path | None) -> list[Path]:
