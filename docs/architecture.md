@@ -482,6 +482,10 @@ important flag 在移动后的 locator 上执行。用户随后在邮箱中移�
 时间窗同时匹配时临时读取；普通 CAPTCHA 可在隔离 profile 中尝试，密码/MFA/CAPTCHA 无法完成时
 保存有界 continuation 并转人工接管，不持久化 OTP、cookie、完整 URL 或浏览器秘密。
 
+Web 进程在启动时初始化并校验一次 `EmailStore`，Console 详情接口和邮件学习服务复用该实例。
+初始化失败会阻止启动。邮件 Attempt 详情每次通过新的数据库连接读取当前分类和退订回执，
+不缓存详情，也不重复扫描整库持久化状态。
+
 Email Console 的 learning、model-version、folder-binding 和 classification-detail API 只投影版本、
 门槛、计数、时延、fallback、动作/readback 与 continuation 状态。它们不返回正文、附件字节、
 embedding、OTP、完整退订 URL 或私密浏览器数据。分类确认不会创建通用 CEO task；系统在任何阶段

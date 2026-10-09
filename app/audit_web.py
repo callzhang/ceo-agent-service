@@ -10010,6 +10010,9 @@ def create_audit_app(
     # The audit process is read-heavy. Reuse one initialized Store so requests do
     # not repeatedly contend with the worker for schema initialization writes.
     audit_store = _audit_store(db_path)
+    # EmailStore validates durable rows during initialization. Do this once at
+    # startup; its methods open fresh connections for each subsequent read.
+    audit_email_store = EmailStore(db_path)
 
     from app.workbench.api import register_workbench_routes
     from app.workbench.executor import WorkbenchExecutor
@@ -10266,7 +10269,7 @@ def create_audit_app(
             nonlocal email_learning_service
             if email_learning_service is None:
                 email_learning_service = EmailClassifierLearningService(
-                    EmailStore(db_path),
+                    audit_email_store,
                     registry=EmailModelRegistry(email_model_root),
                     retrain_state_path=email_model_root / "retrain-state.json",
                 )
@@ -10293,7 +10296,7 @@ def create_audit_app(
         ),
         task_row_builder=_task_row_payload,
         history_chart_factory=render_history_chart,
-        email_store_factory=lambda: EmailStore(db_path),
+        email_store_factory=lambda: audit_email_store,
         email_learning_factory=email_learning_factory,
         dws_factory=lambda: DwsClient(
             ding_robot_code=ding_robot_code,

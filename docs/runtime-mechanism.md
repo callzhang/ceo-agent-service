@@ -1597,12 +1597,12 @@ used for identity, provider locators, recipients, references, and attachment
 metadata. Its scan selects only those columns; it does not load cached message
 bodies or other unused columns into memory while performing the validation.
 
-The Console history-detail handler passes an EmailStore factory, not an already
-initialized EmailStore, to the Attempt DTO builder. Only an existing
-email-channel Attempt opens that store for its classification and unsubscribe
-context. DingTalk, WeChat and missing Attempts do not scan email durable state.
-Each email detail request still initializes and validates the store and reads
-current receipts; initialization failures are not suppressed or cached.
+The Web process initializes and validates one EmailStore at startup, shared by
+Console detail routes and the email learning service. Initialization failures
+prevent startup. The Attempt DTO builder queries this initialized store only for
+an existing email-channel Attempt's classification and unsubscribe context.
+Every request reads current records through fresh database connections; detail
+results are not cached and requests do not repeat the full durable-state scan.
 
 Direct provider-action claims hold BEGIN IMMEDIATE only over classifications
 with pending or failed actions, rather than materializing every processed

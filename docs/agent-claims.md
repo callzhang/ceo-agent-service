@@ -99,6 +99,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-attempt-detail-timeout | isolated /private/tmp/ceo-detail-timeout: app/audit_web.py (create_audit_app EmailStore lifetime only), tests/test_console_attempt_detail_api.py (store reuse/fresh reads regressions), docs/architecture.md and docs/runtime-mechanism.md (web store lifetime only) | Remove repeated full EmailStore initialization from email detail requests; retain initialization validation and fresh per-request reads. | completed 2026-10-09 |
+
 | codex-fix-attempt-15090 | app/feedback_spike.py (historical callback identity only), tests/test_consumer_agent.py (historical preview mismatch regressions), docs/runtime-mechanism.md, docs/architecture.md | Repair false rejection of valid historical callback pairs whose preview text differs; preserve authored outgoing validation and source checks. | done 2026-10-07 |
 
 
