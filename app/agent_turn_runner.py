@@ -489,7 +489,7 @@ def repeated_result_failure_requires_fresh_session(
     role: AgentRole,
     proposal_revision: int,
 ) -> bool:
-    """Break a session loop after it repeats the same unusable result twice."""
+    """Honor a noncontinuable result or break a repeated unusable-result loop."""
 
     failed_runs = sorted(
         (
@@ -500,14 +500,27 @@ def repeated_result_failure_requires_fresh_session(
             )
             if run.role is role
             and run.proposal_revision == proposal_revision
-            and run.status == "failed"
+            and run.status in {"failed", "completed"}
             and run.codex_session_id
         ),
         key=lambda run: (run.turn_attempt, run.id),
     )
+    if not failed_runs:
+        return False
+    latest = failed_runs[-1]
+    if latest.status != "failed":
+        return False
+    try:
+        latest_error = json.loads(latest.structured_error_json or "{}")
+    except json.JSONDecodeError:
+        return False
+    if isinstance(latest_error, dict) and latest_error.get("session_continuable") is False:
+        return True
     if len(failed_runs) < 2:
         return False
     previous, latest = failed_runs[-2:]
+    if previous.status != "failed":
+        return False
     if previous.codex_session_id != latest.codex_session_id:
         return False
 

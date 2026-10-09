@@ -134,6 +134,33 @@ def _runner(setup, executor):
     )
 
 
+@pytest.mark.parametrize("continuable", [False, True, None, "false"])
+def test_audit_retry_does_not_resume_explicit_noncontinuable_session(setup, monkeypatch, continuable):
+    from app.agent_turn_runner import AgentTurnProcess
+
+    store, task, parent, context, _config, _router = setup
+    prior = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=parent.id,
+        operation_id=context.operation_id, owner="prior-audit",
+    ).run
+    store.set_agent_run_session(prior.id, "unusable-session", owner="prior-audit")
+    store.fail_agent_run(prior.id, {
+        "code": "dependency_read_unavailable", "retryable": True,
+        "session_continuable": continuable,
+    }, owner="prior-audit")
+    captured = {}
+
+    def execute(_self, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(AgentTurnProcess, "execute", execute)
+    _runner(setup, None).run(task, context, turn_attempt=1, parent_agent_run_id=parent.id)
+    assert captured.get("force_new_session") is (continuable is False)
+    assert captured["run"].codex_session_id == ("" if continuable is False else "unusable-session")
+    assert store.get_agent_run(prior.id).codex_session_id == "unusable-session"
+
+
 def test_audit_context_contains_exact_candidate_and_all_review_checks(setup):
     _store, _task, _parent, context, _config, _router = setup
     from app.consumer_agent import audit_developer_instructions

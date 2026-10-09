@@ -18,6 +18,7 @@ from app.agent_turn_runner import (
     AgentTurnProcess,
     AgentTurnRunResult,
     ProcessExecutor,
+    repeated_result_failure_requires_fresh_session,
     result_correction_prompt,
 )
 from app.agent_wire_contracts import parse_audit_agent_wire_result
@@ -178,6 +179,10 @@ class AuditAgentRunner:
             skill_names=context.task.skill_names,
             prompt=prompt,
             session_id=run.codex_session_id or None,
+            force_new_session=repeated_result_failure_requires_fresh_session(
+                self.store, task, role=AgentRole.AUDIT,
+                proposal_revision=context.proposal_revision,
+            ),
             developer_instructions=developer_instructions,
             configure_command=lambda command: make_audit_agent_command(
                 command,
