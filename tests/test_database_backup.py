@@ -6,6 +6,25 @@ from app import cli
 from app.database_backup import prune_database_backups
 
 
+def test_paused_daily_backup_does_not_touch_storage(tmp_path, monkeypatch):
+    monkeypatch.setenv("CEO_DATABASE_BACKUP_PAUSED", "1")
+    db_path = tmp_path / "missing.sqlite3"
+    existing = set(tmp_path.iterdir())
+    assert cli.backup_database_if_due(db_path) is None
+    assert set(tmp_path.iterdir()) == existing
+
+
+def test_daily_backup_resumes_after_pause_is_removed(tmp_path, monkeypatch):
+    db_path = tmp_path / "auto-reply.sqlite3"
+    _create_database(db_path)
+    monkeypatch.setenv("CEO_DATABASE_BACKUP_PAUSED", "1")
+    assert cli.backup_database_if_due(db_path) is None
+    monkeypatch.delenv("CEO_DATABASE_BACKUP_PAUSED")
+    backup = cli.backup_database_if_due(db_path)
+    assert backup is not None
+    assert backup.exists()
+
+
 def _create_database(path: Path) -> None:
     with sqlite3.connect(path) as db:
         db.execute("pragma journal_mode = wal")

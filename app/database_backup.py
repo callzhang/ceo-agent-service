@@ -76,6 +76,8 @@ def backup_database_if_due(
     *,
     now: datetime | None = None,
 ) -> Path | None:
+    if os.environ.get("CEO_DATABASE_BACKUP_PAUSED", "0") == "1":
+        return None
     current = now or datetime.now().astimezone()
     current_date = current.date()
     backup_dir = db_path.parent / BACKUP_DIRECTORY_NAME

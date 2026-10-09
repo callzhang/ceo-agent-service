@@ -1,5 +1,11 @@
 # Current Runtime Mechanism
 
+`CEO_DATABASE_BACKUP_PAUSED=1` pauses automatic daily database backups before
+opening databases, creating directories, or pruning snapshots. Unset the flag
+to resume the existing daily workflow. Set it in the service process environment
+and use the formal restart/deployment path; it does not interrupt an in-flight
+copy. Explicit deployment backups remain governed by the deployment safety gate.
+
 The database-backup worker checks once per hour. It keeps one integrity-checked
 daily backup in `backups/`; after confirming that copy is complete, it prunes
 root-level `auto-reply.sqlite3.pre-*` recovery snapshots and their SQLite
