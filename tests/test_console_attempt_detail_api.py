@@ -690,19 +690,23 @@ def test_email_history_detail_reuses_initialized_store_and_reads_fresh_context(
     assert second.json()["item"]["email"]["unsubscribe"]["evidence"] == "page-not-operable"
 
 
-def test_email_store_validation_failure_prevents_web_app_startup(
+def test_email_store_validation_failure_does_not_block_unrelated_web_routes(
     tmp_path: Path, monkeypatch
 ):
     from app.email_store import EmailPersistenceCorruption
     from tests.test_console_web_api import _client
 
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = _seed_email_attempt(store, with_agent_runs=False)
+
     def invalid_email_store(_path):
         raise EmailPersistenceCorruption("test-invalid-email-state")
 
     monkeypatch.setattr("app.audit_web.EmailStore", invalid_email_store)
-    with pytest.raises(EmailPersistenceCorruption, match="test-invalid-email-state"):
-        with _client(tmp_path):
-            pass
+    with _client(tmp_path) as client:
+        assert client.get("/healthz").status_code == 200
+        with pytest.raises(EmailPersistenceCorruption, match="test-invalid-email-state"):
+            client.get(f"/api/console/history/{attempt_id}")
 
 
 def test_codex_session_roles_resolve_both_transcripts_of_one_attempt(tmp_path: Path):
