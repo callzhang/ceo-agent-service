@@ -1007,6 +1007,10 @@ Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制�
 - 仍为常驻循环的只有 `meeting-delivery`：它只投递已审核通过的会议结论，10 秒一轮就是它的意义；
   以及备份、cron 调度/派发、探针等不产生业务判断的基础设施。
 
+Agent Cron Scheduler 在保存触发记录时遇到 SQLite `BUSY`/`LOCKED`，且存储层有限重试仍未取得写锁，
+会保留尚未保存的触发点，等待 1 秒后重试。该冲突不会生成失败运行记录或使 Service worker 退出；
+触发记录仍由原有原子校验与去重事务创建。
+
 任务卡死的回收由服务启动恢复、Consumer 的 stale-age 检查和 Dispatcher 的过期租约处理共同负责；
 不再依赖一个隐藏的业务级维护循环。`recover_stale_runtime_attempts`/`recover_expired_terminal_task_runtime_attempts`
 此前只在服务启动时跑一次：一个在进程运行期间才过期的租约（owner 进程已死、route 卡住）会
