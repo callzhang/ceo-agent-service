@@ -1037,6 +1037,12 @@ Agent Cron Scheduler 在保存触发记录时遇到 SQLite `BUSY`/`LOCKED`，且
 `ready_to_send` 且仍锁定的会议投递仍计为在途工作。每次静默计数结束都会关闭只读 SQLite
 连接，避免长时间轮询累积文件描述符。
 
+启动恢复 `reconcile_done_reply_tasks_with_failed_current_run` 会校正当前执行代最新 run 为
+`failed`、但 task 投影误为 `done` 的回复任务，并保留成功外部动作和已收口错误的排除条件。
+它在事务内用 `external_action_results(business_object_key, external_action_key)`、
+`sent_replies(external_action_key)` 与 `errors(conversation_id, message_id, kind)` 索引做反查，
+避免逐条扫描回执和错误表延长写锁。
+
 ## 进程、租约和恢复
 
 - 生产入口是 launchd 管理的 `com.ceo-agent-service.main`，由 supervisor 管理 worker 和 audit-web。

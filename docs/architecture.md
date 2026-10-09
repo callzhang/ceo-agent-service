@@ -257,6 +257,12 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
 但不得删除旧输入、run、session、tool event、provider 结果或错误事件。当前投影修正不能被解释为
 “历史从未失败过”。
 
+服务启动时，`reconcile_done_reply_tasks_with_failed_current_run` 只把当前执行代的最新 run 确为
+`failed`、且没有成功外部动作或已收口错误的 `done` task 改回真实失败投影。此恢复按
+`external_action_results.business_object_key`、`sent_replies.external_action_key` 和
+`errors(conversation_id, message_id, kind)` 索引反查，不在写事务中为每条 task 扫描整张回执和
+错误表；原有状态条件及历史保留规则不变。
+
 旧版本曾在同一个 `reply_task` 的不同 generation 各写入一条 `reply_attempt` 投影。此类遗留行仍
 保留其 `agent_run` 作为执行事实，但 History（包括 Console API）只展示该 task 的最新 Attempt；它们
 不是多个独立业务事项，也不能重复计数或形成多张处理卡片。History 图表仍在每条原始 Attempt 的

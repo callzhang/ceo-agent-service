@@ -354,6 +354,9 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_agent_effect_intents_run",
     "idx_agent_effect_intents_operation",
     "idx_sent_replies_external_action",
+    "idx_sent_replies_external_action_lookup",
+    "idx_external_action_results_business_object",
+    "idx_errors_reply_task_settlement",
     "idx_meeting_alignment_runs_active_job",
     "idx_weekly_okr_analysis_jobs_identity",
     "idx_wechat_memory_import_jobs_status",
@@ -5099,6 +5102,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "on sent_replies(external_action_key) "
                 "where external_action_key<>''"
             )
+            db.execute(
+                "create index if not exists "
+                "idx_sent_replies_external_action_lookup "
+                "on sent_replies(external_action_key)"
+            )
+            db.execute(
+                "create index if not exists "
+                "idx_external_action_results_business_object "
+                "on external_action_results(business_object_key, external_action_key)"
+            )
             feedback_event_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(feedback_events)").fetchall()
@@ -5495,6 +5508,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 create index if not exists idx_errors_unresolved
                     on errors(conversation_id, kind, message_id, id)
                     where coalesce(resolved_at, '')=''
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_errors_reply_task_settlement
+                    on errors(conversation_id, message_id, kind)
                 """
             )
             db.execute(
