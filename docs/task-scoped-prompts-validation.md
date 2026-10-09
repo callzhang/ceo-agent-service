@@ -17,6 +17,7 @@ The existing read-only `agent_cli.read_skill` supports directory discovery with 
 Unknown tasks receive a 263-character discovery entry with zero catalog rows. Frozen calendar and document entries are 850 and 714 characters respectively. A rejected dependency-closure experiment produced 41 calendar entries and about 14.5k characters, so it is not used.
 
 Settings explains the purpose and order of Developer, User, Work Profile, role, Skill, and runtime content. Template previews render the corresponding saved template. The separate read-only runtime view displays public, task-bound, and historical sources explicitly. Section receipts contain name/source/placement and redacted character counts, without duplicating section text. Historical inputs and section receipts are read as saved; missing historical metadata is shown as unrecorded. CLI-internal system text, tool schemas, and session history are outside the service-input display.
+The public User-template sample uses synthetic facts with no presumed task Skill; it shows the generic discovery entry. A task-bound preview uses that task's selected or frozen Skills. This keeps the sample independent of whichever Skills happen to be installed on the Settings host.
 
 ## Local and independent verification
 
