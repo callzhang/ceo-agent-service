@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-09: Avoid SQLite writer admission for empty, settled, delayed and
+  live-leased Email classification polls. Due work and expired leases still
+  recover and claim exclusively under BEGIN IMMEDIATE; a concurrent claim is
+  rechecked rather than trusted from the preliminary read.
+
 - 2026-10-08: Probe direct Email action eligibility without a SQLite writer
   lock. Empty, settled, account-excluded and retry-blocked polls remain reads;
   actual claims recompute all plan and dependency checks under BEGIN IMMEDIATE.

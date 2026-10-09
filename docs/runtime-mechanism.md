@@ -1,5 +1,11 @@
 # Current Runtime Mechanism
 
+Email classification polling checks for due pending work or an expired running
+lease before acquiring the SQLite writer lock. Ineligible polls are read-only.
+The eligibility read grants no ownership: expired-lease recovery and the full
+claim query still run under BEGIN IMMEDIATE, preserving generation and owner
+checks if another worker claims the candidate between the read and the lock.
+
 Retry session selection honors an explicit JSON boolean
 `session_continuable=false` on the latest failed run for the current generation,
 role and revision. A new run does not inherit that session, and Consumer/Audit
