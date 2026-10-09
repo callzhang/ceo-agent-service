@@ -64,6 +64,11 @@ when History opens an attempt detail. Generalized attempts without an
 `agent_run_id` remain outside this index and keep their existing workload-key
 indexes.
 
+Audit web startup does not prewarm the History list or its 24-hour, 7-day and
+30-day charts. Those views scan large operation-history projections and run
+queries on demand when requested, so every service restart does not launch
+multi-minute reads against the same SQLite database used by workers.
+
 The required `idx_errors_unresolved` partial index contains only incidents whose
 `coalesce(resolved_at, '')` is empty. Attention retains the same recovery,
 supersession, ordering and current-state predicates, but does not scan resolved
