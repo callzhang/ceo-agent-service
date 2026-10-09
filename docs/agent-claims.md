@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+| codex-deploy-progress-lock-retry | app/repository_updater.py (ExistingSchemaUpgradeStateStore.set_service_state only); docs/architecture.md (Repository Upgrade progress state); docs/runtime-mechanism.md (deploy state lock retry); docs/agent-claims.md | Retry only transient SQLite BUSY/LOCKED errors for the upgrader's short progress write, without constructing AutoReplyStore or triggering schema migration before the quiet wait. | 2026-10-09 |
+
 | codex-one-day-pre-snapshot-retention | app/database_backup.py; docs/architecture.md (SQLite backup retention); docs/runtime-mechanism.md (backup loop); docs/agent-claims.md | After a complete verified daily backup exists, prune root-level `auto-reply.sqlite3.pre-*` snapshots and sidecars older than 24 hours. Do not change email training snapshot retention until all historical model and evaluation references are understood. | 2026-10-09 |
 
 | codex-agent-cron-sqlite-busy-retry | app/agent_cron/scheduler.py; docs/architecture.md (Agent Cron retry behavior); docs/runtime-mechanism.md (scheduler lock recovery); docs/agent-claims.md | Keep an Agent Cron trigger due when a SQLite BUSY/LOCKED contention exhausts the store's bounded retries; wait briefly and retry the same persisted trigger instead of terminating the service worker. Do not turn database contention into a task outcome. |

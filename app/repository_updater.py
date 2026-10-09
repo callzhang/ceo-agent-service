@@ -18,6 +18,8 @@ from app.repository_upgrade import GitRepository
 
 
 UPGRADE_OPERATION_STATE_KEY = "repository_upgrade_operation:v1"
+UPGRADE_STATE_WRITE_RETRY_ATTEMPTS = 3
+UPGRADE_STATE_WRITE_RETRY_DELAY_SECONDS = 0.25
 
 
 class UpgradePreconditionError(RuntimeError):
@@ -53,16 +55,29 @@ class ExistingSchemaUpgradeStateStore:
             return None if row is None else str(row[0])
 
     def set_service_state(self, key: str, value: str) -> None:
-        with sqlite3.connect(
-            f"file:{self.database_path}?mode=rw", uri=True, timeout=30
-        ) as db:
-            db.execute(
-                """insert into service_state (key, value, updated_at)
-                   values (?, ?, current_timestamp)
-                   on conflict(key) do update set
-                     value=excluded.value, updated_at=current_timestamp""",
-                (key, value),
-            )
+        for attempt in range(UPGRADE_STATE_WRITE_RETRY_ATTEMPTS):
+            try:
+                with sqlite3.connect(
+                    f"file:{self.database_path}?mode=rw", uri=True, timeout=30
+                ) as db:
+                    db.execute("begin immediate")
+                    db.execute(
+                        """insert into service_state (key, value, updated_at)
+                           values (?, ?, current_timestamp)
+                           on conflict(key) do update set
+                             value=excluded.value, updated_at=current_timestamp""",
+                        (key, value),
+                    )
+                return
+            except sqlite3.OperationalError as exc:
+                message = str(exc).casefold()
+                is_lock_error = "locked" in message or "busy" in message
+                if (
+                    not is_lock_error
+                    or attempt + 1 >= UPGRADE_STATE_WRITE_RETRY_ATTEMPTS
+                ):
+                    raise
+                time.sleep(UPGRADE_STATE_WRITE_RETRY_DELAY_SECONDS * (attempt + 1))
 
 
 class UpgradePublication(Protocol):
