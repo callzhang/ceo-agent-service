@@ -123,6 +123,34 @@ def test_upgrade_stops_service_after_quiet_before_backup_and_restart(tmp_path: P
     assert calls == ["quiet", "stop", "restart", "health"]
 
 
+def test_failed_fast_forward_restarts_original_service(tmp_path: Path):
+    local, _ = fixture_repo(tmp_path)
+    op = operation(local)
+    calls: list[str] = []
+    updater = RepositoryUpdater(
+        local,
+        StateStore(),
+        database_path=tmp_path / "missing.sqlite3",
+        wait_for_quiet=lambda: calls.append("quiet"),
+        stop=lambda: calls.append("stop"),
+        restart=lambda: calls.append("restart"),
+        health=lambda: calls.append("health") or True,
+    )
+    original_run = updater.repository._run
+
+    def fail_merge(args, *, category, **kwargs):
+        if category == "upgrade_merge":
+            raise RuntimeError("simulated fast-forward refusal")
+        return original_run(args, category=category, **kwargs)
+
+    updater.repository._run = fail_merge
+
+    with pytest.raises(UpgradeFailed):
+        updater.execute(op)
+
+    assert calls == ["quiet", "stop", "restart", "health"]
+
+
 def test_diverged_target_is_rejected_without_merge(tmp_path: Path):
     local, _ = fixture_repo(tmp_path)
     git(local, "config", "user.name", "Local")
@@ -613,6 +641,36 @@ def test_restart_only_waits_for_quiet_then_restarts_and_checks_health(tmp_path: 
     assert deploy_module.restart_only(tmp_path / "db", restart=lambda: events.append("restart")) == "restarted"
     assert events == ["quiet", "restart", "health"]
 
+    events.clear()
+    assert deploy_module.restart_only(
+        tmp_path / "db", restart=lambda: events.append("restart"),
+        skip_quiet_wait=True,
+    ) == "restarted"
+    assert events == ["restart", "health"]
+
     monkeypatch.setattr(deploy_module, "wait_for_health", lambda: False)
     with pytest.raises(SystemExit, match="did not become healthy"):
         deploy_module.restart_only(tmp_path / "db", restart=lambda: None)
+
+
+def test_default_restart_bootstraps_when_launchd_label_is_unloaded(monkeypatch):
+    from types import SimpleNamespace
+
+    import app.repository_updater as updater_module
+
+    calls: list[list[str]] = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        if args[1] == "kickstart":
+            return SimpleNamespace(returncode=113, stdout="", stderr="service not found")
+        if args[1] == "print":
+            return SimpleNamespace(
+                returncode=113, stdout="", stderr='Could not find service "x"'
+            )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(updater_module.subprocess, "run", run)
+    updater_module._default_restart()
+
+    assert [call[1] for call in calls] == ["kickstart", "print", "bootstrap"]

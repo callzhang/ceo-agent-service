@@ -1439,6 +1439,11 @@ the repository lock, normal service stop before database backup and checkout
 changes, verification, restart, health check, and rollback behavior still
 apply. Work interrupted by that stop is handled by the existing startup
 recovery and claim logic.
+The same flag on `python -m app.deploy --restart` skips only the quiet wait
+before a settings-only service restart.
+If fast-forward fails before a replacement revision is installed, the updater
+starts the original service again and checks its health. A settings-only
+restart also bootstraps the configured launchd job if it was already unloaded.
 
 ### Public information and native reply recovery
 

@@ -268,7 +268,12 @@ def deploy(
     return f"{message}; {result.error}" if result.error else message
 
 
-def restart_only(database_path: Path, *, restart=_default_restart) -> str:
+def restart_only(
+    database_path: Path,
+    *,
+    restart=_default_restart,
+    skip_quiet_wait: bool = False,
+) -> str:
     """Restart the service on its current code, when only its settings changed.
 
     Some settings (an email account's, for one) are read when a worker starts,
@@ -276,7 +281,8 @@ def restart_only(database_path: Path, *, restart=_default_restart) -> str:
     as a deploy: wait until no work is in flight, restart through launchd,
     wait for health.
     """
-    wait_until_quiet(database_path)
+    if not skip_quiet_wait:
+        wait_until_quiet(database_path)
     restart()
     if not wait_for_health():
         raise SystemExit("restarted, but the service did not become healthy")
@@ -319,7 +325,9 @@ def main() -> int:
     if args.publish_consumer_system_contracts and args.publish_prompt_templates:
         parser.error("Consumer/Audit contracts and prompt templates require separate deployments")
     if args.restart:
-        print(restart_only(args.db or worker_db_path()), flush=True)
+        print(restart_only(
+            args.db or worker_db_path(), skip_quiet_wait=args.skip_quiet_wait
+        ), flush=True)
         return 0
     print(deploy(
         args.root or service_root(), args.db or worker_db_path(),

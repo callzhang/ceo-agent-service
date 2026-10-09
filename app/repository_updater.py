@@ -155,14 +155,30 @@ def persist_operation(store: UpgradeStateStore, operation: UpgradeOperation) -> 
 
 
 def _default_restart() -> None:
+    target = f"gui/{_uid()}/com.ceo-agent-service.main"
     result = subprocess.run(
-        ["launchctl", "kickstart", "-k", f"gui/{_uid()}/com.ceo-agent-service.main"],
+        ["launchctl", "kickstart", "-k", target],
         check=False,
         capture_output=True,
         text=True,
         timeout=30,
     )
     if result.returncode != 0:
+        state = subprocess.run(
+            ["launchctl", "print", target],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if state.returncode != 0 and "could not find service" in (
+            state.stdout + state.stderr
+        ).lower():
+            # A failed deployment can leave the service booted out before a
+            # replacement was installed. In that case kickstart cannot find
+            # the label; bootstrap the existing production plist instead.
+            _default_start()
+            return
         raise UpgradeFailed("launchd restart failed")
 
 
@@ -433,6 +449,22 @@ class RepositoryUpdater:
                         rollback_status = "rolled_back"
                 except Exception:
                     rollback_status = "needs_manual"
+                if rollback_status == "failed":
+                    installed = self.repository.resolve_ref(self.target_ref)
+                    if (
+                        not replacement_started
+                        and installed == operation.original_commit
+                        and not self.repository.status_records()
+                    ):
+                        try:
+                            self.restart()
+                            if not self.health():
+                                raise UpgradeFailed(
+                                    "original service did not become healthy after deploy failure"
+                                )
+                            rollback_status = "rolled_back"
+                        except Exception:
+                            rollback_status = "needs_manual"
                 self._persist(
                     operation,
                     rollback_status,
