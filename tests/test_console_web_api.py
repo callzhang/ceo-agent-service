@@ -1037,7 +1037,18 @@ def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path
     assert meeting_item["title"] == "History meeting"
 
 
-def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path):
+def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path, monkeypatch):
+    def read_native_events(session_id, **_bounds):
+        assert session_id == "internal-session-must-not-leak"
+        return [
+            {"title": "读取会议记忆", "tool": "memory_recall", "call_id": "call-meeting-1",
+             "relevance": "确认历史判断", "path": "memory.md",
+             "args": {"query": "上线范围"}},
+            {"tool": "tool_output", "call_id": "call-meeting-1",
+             "output": '{"summary":"风险预算需要确认"}'},
+        ]
+
+    monkeypatch.setattr("app.audit_web.extract_codex_audit_events_from_session", read_native_events)
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     job_id = store.upsert_meeting_alignment_job(
         meeting_id="meeting-console-1",
