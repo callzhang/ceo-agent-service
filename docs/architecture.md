@@ -569,7 +569,7 @@ DWS 明确的保密群历史拒绝由适配器转换为候选级 `GroupHistoryRe
 正式分析恢复沿用 `rerun_meeting_alignment_jobs` 和原会议业务身份；事务内拒绝部分效果、
 已准备/已有回执的主消息或敏感消息、活跃 dispatcher/投递归属及仍活跃的 meeting/runtime run。
 旧运行保持历史，只在确认未发送且无活跃归属后清空原决策重做实际来源与受众核验。
-独立 Meeting Alignment planner/delivery 仍是独立路径；共享受众规则不代表迁入通用 Consumer/Audit 引擎。
+独立 Meeting Alignment planner/delivery 仍是独立路径；共享受众规则不代表迁入通用 Consumer/Audit 引擎。Meeting Alignment 没有任务内 Skill 读取能力，分析输入保留本轮定时任务提示及完整冻结 Skill 正文，保证自定义业务要求可见；无冻结材料的旧自定义 inline 约定继续保留。
 
 `audience_scope` 是当前 Meeting Alignment Agent 输出的必填字段。投递器读取早于该字段的
 持久化 `send` 决策时，只能从其已保存的 `target.kind` 规范化一次：`group` 对应 `business`，

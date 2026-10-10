@@ -1346,18 +1346,24 @@ def test_consumer_delivers_summary_when_there_is_no_disagreement(tmp_path):
     assert store.get_meeting_alignment_job(job_id).decision_json != "{}"
 
 
-def test_consumer_uses_frozen_scheduled_skill_instead_of_short_catalog(tmp_path):
+def test_tool_free_meeting_planner_preserves_all_frozen_skill_requirements(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
     context = ServiceCommandConsumerContext(
         scheduled_task_id=3,
         scheduled_task_run_id=5,
         prompt="使用 $ceo-meeting-work 处理真实会议。",
-        skill_names=("ceo-meeting-work",),
+        skill_names=("ceo-meeting-work", "dingtalk-minutes", "dingtalk-calendar"),
         skill_protocol="SHORT CATALOG MUST NOT SUBSTITUTE",
         skill_materials=(
             ServiceCommandSkillMaterial(
                 name="ceo-meeting-work", content="FROZEN MEETING SKILL BODY"
+            ),
+            ServiceCommandSkillMaterial(
+                name="dingtalk-minutes", content="FROZEN MINUTES SKILL BODY"
+            ),
+            ServiceCommandSkillMaterial(
+                name="dingtalk-calendar", content="FROZEN CALENDAR SKILL BODY"
             ),
         ),
     )
@@ -1376,6 +1382,8 @@ def test_consumer_uses_frozen_scheduled_skill_instead_of_short_catalog(tmp_path)
 
     [prompt] = runner.prompts
     assert "FROZEN MEETING SKILL BODY" in prompt
+    assert "FROZEN MINUTES SKILL BODY" in prompt
+    assert "FROZEN CALENDAR SKILL BODY" in prompt
     assert "SHORT CATALOG MUST NOT SUBSTITUTE" not in prompt
 
 
