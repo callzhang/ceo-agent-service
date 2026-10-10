@@ -1,6 +1,8 @@
 import json
 import sqlite3
 
+import pytest
+
 from app import native_trajectory
 from app.agent_envelope import AgentEnvelope
 from app.store import AutoReplyStore
@@ -259,6 +261,64 @@ def test_task_run_uses_latest_completed_exact_attempt_without_old_fallback(tmp_p
     missing = store.get_task_agent_run(run)
     assert missing["native_available"] is False
     assert missing["decision_json"] == "{}"
+
+
+def test_task_evaluation_reads_original_native_decision_without_sql_copy(tmp_path, monkeypatch):
+    from tests.test_task_project_centered_eval import _tool
+
+    store = AutoReplyStore(tmp_path / "evaluation.sqlite3")
+    tool = _tool()
+    input_id = store.enqueue_work_summary_input("reply_attempt", "native-evaluation", "{}")
+    decision = {
+        "project_decisions": [], "task_decisions": [],
+        "project_assessments": [], "update_summary": "Native evaluation decision",
+    }
+    native = tmp_path / "evaluation-native.jsonl"
+    native.write_text(_message(json.dumps(decision)) + "\n")
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *a, **k: native)
+    run = store.record_task_agent_run(summary_input_id=input_id, decision_json=json.dumps(decision))
+    with store._connect() as db:
+        _attempt(db, run, str(run), "native-evaluation", 0, 1, 1)
+        assert db.execute("select decision_json from task_agent_runs where id=?", (run,)).fetchone()[0] == "{}"
+    result = tool.readback(store, input_id=input_id, before=tool.read_domain(store))
+    assert result["project_decisions"] == []
+    assert result["project_assessments"] == []
+    decision.pop("project_assessments")
+    native.write_text(_message(json.dumps(decision)) + "\n")
+    missing_field = tool.readback(store, input_id=input_id, before=tool.read_domain(store))
+    assert missing_field["project_assessments"] is None
+    native.write_text("")
+    unavailable = tool.readback(store, input_id=input_id, before=tool.read_domain(store))
+    assert unavailable["passed"] is False
+    assert "task_agent_native_decision_unavailable" in unavailable["failures"]
+
+
+@pytest.mark.parametrize("invalid_field", [
+    {"task_decisions": "invalid"},
+    {"project_assessments": None},
+])
+def test_raw_task_decision_uses_runtime_valid_candidate_selection(monkeypatch, invalid_field):
+    from app import native_standalone
+
+    valid = {
+        "task_decisions": [], "project_decisions": [],
+        "project_assessments": [], "update_summary": "Accepted",
+    }
+    invalid = {**valid, **invalid_field}
+    stream = _message(json.dumps(valid)) + "\n" + _message(json.dumps(invalid))
+    monkeypatch.setattr(native_standalone, "_native_stream", lambda ref: stream)
+    ref = native_standalone.NativeStandaloneRef("codex_cli", "synthetic", 0, 2)
+    assert native_standalone.task_decision_value(ref) == valid
+    assert "todo_changes" not in native_standalone.task_decision_value(ref)
+
+
+def test_raw_task_decision_rejects_all_invalid_candidates(monkeypatch):
+    from app import native_standalone
+
+    stream = _message(json.dumps({"task_decisions": "invalid", "update_summary": "Invalid"}))
+    monkeypatch.setattr(native_standalone, "_native_stream", lambda ref: stream)
+    ref = native_standalone.NativeStandaloneRef("codex_cli", "synthetic", 0, 1)
+    assert native_standalone.task_decision_value(ref) is None
 
 
 def test_okr_run_keeps_business_items_and_reads_native_envelope(tmp_path, monkeypatch):

@@ -234,6 +234,20 @@ def task_decision(ref: NativeStandaloneRef | None) -> NativeStandaloneDecision:
     )
 
 
+def task_decision_value(ref: NativeStandaloneRef | None) -> dict | None:
+    """Read raw Task fields for evaluation without filling model defaults."""
+    from app.task_agent import select_task_decision_candidate
+
+    if ref is None:
+        return None
+    try:
+        raw = _native_stream(ref)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    _decision, original, _problems = select_task_decision_candidate(raw)
+    return original
+
+
 def task_project_value(ref: NativeStandaloneRef | None) -> dict | None:
     """Recover a legacy project decision for the offline repair planner."""
     from app.agent_result import agent_message_json_objects

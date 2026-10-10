@@ -895,15 +895,15 @@ def _task_decision_candidates(raw: str) -> list[object]:
     ]
 
 
-def _validate_task_decision_candidates(
+def select_task_decision_candidate(
     raw: str,
-) -> tuple[TaskAgentDecision | None, list[str]]:
-    """Return the last schema-valid candidate, else the field errors of the last one."""
+) -> tuple[TaskAgentDecision | None, dict[str, object] | None, list[str]]:
+    """Select once, retaining original fields alongside the validated model."""
     problems: list[str] = []
     # The last complete decision wins over an earlier draft.
     for candidate in reversed(_task_decision_candidates(raw)):
         try:
-            return TaskAgentDecision.model_validate(candidate), []
+            return TaskAgentDecision.model_validate(candidate), candidate, []
         except ValidationError as exc:
             if not problems:
                 # Field path and message only: error["input"] echoes the
@@ -913,7 +913,14 @@ def _validate_task_decision_candidates(
                     f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
                     for error in exc.errors()[:TASK_DECISION_PROBLEM_LIMIT]
                 ]
-    return None, problems
+    return None, None, problems
+
+
+def _validate_task_decision_candidates(
+    raw: str,
+) -> tuple[TaskAgentDecision | None, list[str]]:
+    decision, _original, problems = select_task_decision_candidate(raw)
+    return decision, problems
 
 
 def _parse_task_agent_decision(raw: str) -> TaskAgentDecision:

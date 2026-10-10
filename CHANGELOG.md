@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- 2026-10-10: Read Task evaluation decisions from exact native references rather
+  than removed SQL bodies. Share runtime candidate selection while retaining
+  original fields, and fail explicitly when no native decision is available.
+
 - 2026-10-10: Give deterministic calendar and Workbench end-to-end fixtures
   isolated native records and lifecycle references. Retain message, tool,
   streaming, stop and read-only historical-confirmation assertions.

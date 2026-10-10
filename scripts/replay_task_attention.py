@@ -420,6 +420,8 @@ def _assessment_evidence_matches(actual, *, required, alternatives):
 
 
 def readback(store, *, input_id, before, expected=None, project_before=None):
+    from app.native_standalone import latest_task_ref, task_decision_value
+
     capabilities = comparison_capabilities(store)
     after = read_domain(store)
     with store._connect() as db:
@@ -427,6 +429,7 @@ def readback(store, *, input_id, before, expected=None, project_before=None):
             "select * from task_agent_runs where summary_input_id=? order by id desc limit 1",
             (input_id,),
         ).fetchone()
+        native_ref = latest_task_ref(db, run["id"]) if run is not None else None
         attempts = [
             dict(row)
             for row in db.execute(
@@ -519,7 +522,8 @@ def readback(store, *, input_id, before, expected=None, project_before=None):
                 "evidence_valid": bool(valid),
             }
         )
-    decision = json.loads(run["decision_json"]) if run is not None else {}
+    native_decision = task_decision_value(native_ref)
+    decision = native_decision if native_decision is not None else {}
     proposal_count = sum(
         bool(row.get("attention_proposal"))
         for row in decision.get("project_assessments", [])
@@ -530,6 +534,8 @@ def readback(store, *, input_id, before, expected=None, project_before=None):
         else {}
     )
     failures = []
+    if run is not None and native_decision is None:
+        failures.append("task_agent_native_decision_unavailable")
     if capabilities["missing_tables"]:
         failures.append("project_centered_storage_missing")
     if proposal_count and not projection:
