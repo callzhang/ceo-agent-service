@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- 2026-10-10: Give deterministic calendar and Workbench end-to-end fixtures
+  isolated native records and lifecycle references. Retain message, tool,
+  streaming, stop and read-only historical-confirmation assertions.
+
 - 2026-10-10: Read runtime-worker business assertions from adopted candidates
   and reviews, and give the scripted protocol executor isolated native session
   records so terminal tool-evidence assertions exercise the native reader.

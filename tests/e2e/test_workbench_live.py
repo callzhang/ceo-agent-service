@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import queue
 import subprocess
 import threading
@@ -12,14 +13,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
 import app.agent_cli as agent_cli
 from app.agent_result import EffectKind
+from app.agent_runtime_contracts import CredentialMode
 from app.audit_web import create_audit_app
 from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.setup_wizard import SETUP_WIZARD_STEPS
+from app.store import AutoReplyStore
 from app.workbench.executor import WorkbenchExecutor
 from app.workbench.runtime import (
     RuntimeCapabilities,
@@ -36,6 +40,18 @@ from app.workbench.store import WorkbenchStore
 _SAFE_PROMPT = "Run the deterministic safe workflow"
 _STOP_PROMPT = "Run until I stop this turn"
 _CONFIRM_PROMPT = "Prepare the reviewed action"
+_TOOL_ARGUMENTS = {"path": "fixture.txt"}
+_NATIVE_TOOL = {
+    "type": "McpToolCall",
+    "id": "read-1",
+    "server": "fixture",
+    "tool": "fixture_reader",
+    "arguments": _TOOL_ARGUMENTS,
+}
+
+
+def _native_event(event_type: str, **payload: Any) -> dict[str, Any]:
+    return {"type": "event_msg", "payload": {"type": event_type, **payload}}
 
 
 @dataclass
@@ -43,13 +59,21 @@ class _Run:
     turn_id: str
     mode: str
     on_event: Callable[[RuntimeEvent], None]
+    attempt_id: int
+    session_id: str
+    native_path: Path
+    records: list[dict[str, Any]]
+    transcript_start: int
     release: threading.Event = field(default_factory=threading.Event)
 
 
 class FixtureRuntime:
     kind = "fixture"
 
-    def __init__(self) -> None:
+    def __init__(self, store: AutoReplyStore, codex_home: Path) -> None:
+        self.store = store
+        self.codex_home = codex_home
+        self.owner = "workbench-e2e-fixture"
         self.safe_wait_entered = threading.Event()
         self.stop_wait_entered = threading.Event()
         self.confirmation_wait_entered = threading.Event()
@@ -73,7 +97,70 @@ class FixtureRuntime:
     def start(self, request: RuntimeRequest, *, on_event) -> RuntimeHandle:
         self.requests.append(request)
         mode = self._mode(request.prompt)
-        run = _Run(turn_id=request.turn_id, mode=mode, on_event=on_event)
+        session_id = str(uuid4())
+        native_path = self.codex_home / "sessions" / f"rollout-{session_id}.jsonl"
+        native_path.parent.mkdir(parents=True, exist_ok=True)
+        # Adjacent turns make an incorrect whole-session read fail visibly.
+        records = [
+            {"type": "session_meta", "payload": {"id": session_id}},
+            _native_event("task_started"),
+            _native_event(
+                "item_completed",
+                item={
+                    "type": "AgentMessage",
+                    "text": "Previous turn, not this answer",
+                },
+            ),
+            _native_event("task_complete"),
+        ]
+        transcript_start = len(records)
+        records.append(_native_event("task_started"))
+        if mode == "safe":
+            records.extend(
+                [
+                    _native_event(
+                        "item_started", item={**_NATIVE_TOOL, "status": "running"}
+                    ),
+                    _native_event(
+                        "item_completed",
+                        item={
+                            **_NATIVE_TOOL,
+                            "status": "completed",
+                            "result": "Fixture read complete",
+                        },
+                    ),
+                ]
+            )
+        native_path.write_text(
+            "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+        )
+        attempt = self.store.claim_runtime_operation_attempt(
+            "workbench",
+            request.turn_id,
+            "fixture-native",
+            "codex_cli",
+            CredentialMode.LOCAL_OAUTH,
+            "fixture-model",
+            owner=self.owner,
+        )
+        self.store.mark_agent_runtime_attempt_running_once(attempt.id, owner=self.owner)
+        self.store.set_agent_runtime_attempt_session(
+            attempt.id,
+            session_id,
+            f"codex_session:{session_id}",
+            transcript_start=transcript_start,
+            owner=self.owner,
+        )
+        run = _Run(
+            turn_id=request.turn_id,
+            mode=mode,
+            on_event=on_event,
+            attempt_id=attempt.id,
+            session_id=session_id,
+            native_path=native_path,
+            records=records,
+            transcript_start=transcript_start,
+        )
         handle = RuntimeHandle.create(
             run_id=f"fixture-{request.turn_id}-{len(self.requests)}", owner=run
         )
@@ -88,6 +175,7 @@ class FixtureRuntime:
                         {
                             "tool": "fixture_reader",
                             "tool_call_id": "read-1",
+                            "arguments": _TOOL_ARGUMENTS,
                             "summary": "Read local fixture",
                         },
                     )
@@ -98,6 +186,7 @@ class FixtureRuntime:
                         {
                             "tool": "fixture_reader",
                             "tool_call_id": "read-1",
+                            "arguments": _TOOL_ARGUMENTS,
                             "summary": "Fixture read complete",
                         },
                     )
@@ -145,22 +234,73 @@ class FixtureRuntime:
                 self.safe_wait_entered.set()
                 assert run.release.wait(5), "safe runtime was not released"
                 run.on_event(RuntimeEvent("text_delta", {"text": "workbench"}))
-                return RuntimeResult(
-                    status="completed",
-                    final_text="Hello workbench",
-                    provider_session_ref="fixture-session",
-                )
-            if run.mode == "stop":
+                result = RuntimeResult(status="completed", final_text="Hello workbench")
+            elif run.mode == "stop":
                 self.stop_wait_entered.set()
                 assert run.release.wait(5), "stop signal was not delivered"
-                return RuntimeResult(status="stopped")
-            if run.mode == "confirmation":
+                result = RuntimeResult(status="stopped")
+            elif run.mode == "confirmation":
                 self.confirmation_wait_entered.set()
                 assert run.release.wait(5), "confirmation run did not quiesce"
-                return RuntimeResult(status="stopped")
-            return RuntimeResult(
-                status="completed", final_text="Reviewed action completed"
+                result = RuntimeResult(status="stopped")
+            else:
+                result = RuntimeResult(
+                    status="completed", final_text="Reviewed action completed"
+                )
+            if result.final_text:
+                run.records.append(
+                    _native_event(
+                        "item_completed",
+                        item={
+                            "type": "AgentMessage",
+                            "text": result.final_text,
+                        },
+                    )
+                )
+            run.records.append(_native_event("task_complete"))
+            transcript_end = len(run.records)
+            run.native_path.write_text(
+                "".join(
+                    json.dumps(record) + "\n"
+                    for record in run.records
+                    + [
+                        _native_event("task_started"),
+                        _native_event(
+                            "item_completed",
+                            item={
+                                "type": "AgentMessage",
+                                "text": "Next turn, not this answer",
+                            },
+                        ),
+                        _native_event("task_complete"),
+                    ]
+                ),
+                encoding="utf-8",
             )
+            if result.status == "completed":
+                self.store.complete_agent_runtime_attempt(
+                    run.attempt_id,
+                    run.session_id,
+                    f"codex_session:{run.session_id}",
+                    run.transcript_start,
+                    transcript_end,
+                    owner=self.owner,
+                )
+                result = RuntimeResult(
+                    status="completed",
+                    final_text=result.final_text,
+                    provider_session_ref=run.session_id,
+                )
+            else:
+                self.store.fail_agent_runtime_attempt(
+                    run.attempt_id,
+                    "process",
+                    "cancelled",
+                    False,
+                    transcript_end=transcript_end,
+                    owner=self.owner,
+                )
+            return result
         finally:
             with self._lock:
                 self._runs.pop(handle, None)
@@ -259,7 +399,9 @@ class _AsgiEventStream:
         finally:
             self._messages.put(None)
 
-    def read_event_ids(self, minimum: int, *, timeout: float = 2) -> tuple[str, list[int]]:
+    def read_event_ids(
+        self, minimum: int, *, timeout: float = 2
+    ) -> tuple[str, list[int]]:
         deadline = time.monotonic() + timeout
         status = 0
         body = bytearray()
@@ -330,9 +472,11 @@ def test_workbench_stream_stop_and_legacy_confirmation_read_only_are_end_to_end(
     tmp_path: Path, monkeypatch
 ) -> None:
     db_path = tmp_path / "workbench.sqlite3"
+    codex_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
     store = WorkbenchStore(db_path)
     _complete_setup(store)
-    runtime = FixtureRuntime()
+    runtime = FixtureRuntime(AutoReplyStore(db_path), codex_home)
     registry = RuntimeRegistry([runtime])
     writer_calls: list[list[str]] = []
     classifier = NativeCliMetadataClassifier(
@@ -394,11 +538,25 @@ def test_workbench_stream_stop_and_legacy_confirmation_read_only_are_end_to_end(
                 )
                 live_text, live_ids = live_stream.read_event_ids(4)
                 assert "event: turn_completed" not in live_text
+                live_tools = [
+                    json.loads(line.removeprefix("data: "))["payload"]
+                    for block in live_text.split("\n\n")
+                    if "event: tool_" in block
+                    for line in block.splitlines()
+                    if line.startswith("data: ")
+                ]
+                assert len(live_tools) == 2
+                assert {tool["tool_call_id"] for tool in live_tools} == {"read-1"}
+                assert [tool["arguments"] for tool in live_tools] == [
+                    _TOOL_ARGUMENTS,
+                    _TOOL_ARGUMENTS,
+                ]
                 assert len(live_ids) == len(set(live_ids))
                 cursor = live_ids[-1]
-                assert client.get(
-                    f"/api/workbench/turns/{safe_turn_id}"
-                ).json()["status"] == "running"
+                assert (
+                    client.get(f"/api/workbench/turns/{safe_turn_id}").json()["status"]
+                    == "running"
+                )
             finally:
                 live_stream.close()
             _wait_for(
@@ -413,6 +571,14 @@ def test_workbench_stream_stop_and_legacy_confirmation_read_only_are_end_to_end(
                 lambda payload: payload["status"] == "completed",
             )
             assert safe_terminal["final_text"] == "Hello workbench"
+            attempts = runtime.store.list_runtime_operation_attempts(
+                "workbench", safe_turn_id
+            )
+            assert len(attempts) == 1
+            assert attempts[0].status == "completed"
+            assert attempts[0].runtime_kind == "codex_cli"
+            assert attempts[0].transcript_start == 4
+            assert attempts[0].transcript_end == 9
 
             reconnected_stream = client.get(
                 f"/api/workbench/turns/{safe_turn_id}/events/stream",
@@ -425,7 +591,9 @@ def test_workbench_stream_stop_and_legacy_confirmation_read_only_are_end_to_end(
             reconnect_ids = _sse_ids(reconnected_stream.text)
             replay_ids = [event["id"] for event in replay.json()]
             assert reconnect_ids == replay_ids
-            assert reconnect_ids and all(event_id > cursor for event_id in reconnect_ids)
+            assert reconnect_ids and all(
+                event_id > cursor for event_id in reconnect_ids
+            )
             all_ids = live_ids + reconnect_ids
             assert len(all_ids) == len(set(all_ids))
             persisted = client.get(
@@ -443,8 +611,28 @@ def test_workbench_stream_stop_and_legacy_confirmation_read_only_are_end_to_end(
             ]
             tool_events = persisted[2:4]
             assert {event["payload"]["tool_call_id"] for event in tool_events} == {
+                "native-tool-1"
+            }
+            assert {event["payload"]["native_id"] for event in tool_events} == {
                 "read-1"
             }
+            assert [event["payload"]["arguments"] for event in tool_events] == [
+                _TOOL_ARGUMENTS,
+                _TOOL_ARGUMENTS,
+            ]
+            assert [event["payload"]["status"] for event in tool_events] == [
+                "running",
+                "completed",
+            ]
+            assert tool_events[1]["payload"]["result"] == "Fixture read complete"
+            assert (
+                "".join(
+                    event["payload"]["text"]
+                    for event in persisted
+                    if event["event_type"] == "text_delta"
+                )
+                == "Hello workbench"
+            )
 
             stop_turn = client.post(
                 f"/api/workbench/tasks/{task_id}/turns",
@@ -507,11 +695,11 @@ def test_workbench_stream_stop_and_legacy_confirmation_read_only_are_end_to_end(
             requested = client.post(confirm_path, json={})
             duplicate_before_quiescence = client.post(confirm_path, json={})
             assert (
-                requested.status_code
-                == duplicate_before_quiescence.status_code
-                == 410
+                requested.status_code == duplicate_before_quiescence.status_code == 410
             )
-            assert requested.json()["detail"] == "Historical confirmations are read-only"
+            assert (
+                requested.json()["detail"] == "Historical confirmations are read-only"
+            )
             assert writer_calls == []
 
             runtime.release(confirm_turn_id)
@@ -529,10 +717,9 @@ def test_workbench_stream_stop_and_legacy_confirmation_read_only_are_end_to_end(
             duplicate_after_execution = client.post(confirm_path, json={})
             assert duplicate_after_execution.status_code == 410
             assert writer_calls == []
-            assert (
-                [request.turn_id for request in runtime.requests].count(confirm_turn_id)
-                == 1
-            )
+            assert [request.turn_id for request in runtime.requests].count(
+                confirm_turn_id
+            ) == 1
             confirm_events = client.get(
                 f"/api/workbench/turns/{confirm_turn_id}/events", params={"after": 0}
             ).json()

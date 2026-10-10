@@ -24,10 +24,19 @@ from app.store import AgentRole, AutoReplyStore
 from app.system_executor import SystemExecutor
 from app.wechat.codex_safety import make_audit_agent_command
 from tests.support.audit_sink_mcp import AuditSink
+from tests.support.native_protocol import install_protocol_native_trajectories
 
 
 QUESTION = "What specific decision or input do you need from Derek in this meeting?"
 MESSAGE_TEXT = f"<@inviter-1> {QUESTION}"
+
+
+@pytest.fixture(autouse=True)
+def _deterministic_native_contract_environment(tmp_path, monkeypatch, request):
+    if request.node.get_closest_marker("live"):
+        return
+    monkeypatch.setenv("CEO_WORKSPACE", str(tmp_path / "workspace"))
+    install_protocol_native_trajectories(tmp_path, monkeypatch, CalendarRunnerContractExecutor)
 
 
 @pytest.fixture(autouse=True)
