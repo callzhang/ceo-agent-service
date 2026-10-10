@@ -1255,6 +1255,12 @@ Consumer 或 Audit，也不产生 reply task、agent run 或 reply_attempt。
 Reader 会把 WeChat 共享文章的标题、摘要和 URL 解码为文本，因此链接消息进入与普通文本相同的回复队列；图片目前只保留消息类型元数据，未提供媒体文件或视觉输入时不会被当作可读文本触发。
 通过 History 发起的 WeChat 手动 rerun 会在决策提示中明确标记为 Derek 的主动重跑；消息时效和后续上下文仍会提供给 Agent，但不能单独把该 rerun 强制收口为 `no_reply`。
 
+独立微信 Consumer 的 `CodexDecision` 不是统一 Audit 候选。完成时仅对持久任务
+通道为 `wechat`、包含有效 `action` 且不含 `outcome` 的旧契约免于候选采纳；
+代次、角色和运行终态仍需匹配。该路径不生成审核批准或 System 回执，原结果仍
+只存原生轨迹。新版 proposal 及其他通道
+继续执行完整候选校验，独立微信既有交付检查和外部动作拒绝不变。
+
 同一 Dispatcher 还通过独立 adapter 领取普通 reply、meeting、work summary、OKR review、
 DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。adapter 只读写各自既有事实来源，并统一 claim generation、lease、唤醒、
 公平性和容量；Consumer 保持领域边界。主动唤醒之外的有界等待只用于跨进程写入和异常恢复，不是

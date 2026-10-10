@@ -126,9 +126,19 @@ class ReviewedCandidateStoreMixin:
         body = _json(prepared_result)
         digest = hashlib.sha256(body.encode()).hexdigest()
         data = json.loads(body)
+        task_row = db.execute("select execution_generation, channel from reply_tasks where id=?", (run["reply_task_id"],)).fetchone()
+        if (task_row is not None and task_row["channel"] == "wechat"
+            and "action" in data and "outcome" not in data):
+            from app.dingtalk_models import CodexDecision
+
+            CodexDecision.model_validate(data)
+            if (task_row["execution_generation"] != run["execution_generation"]
+                or run["role"] != "consumer" or run["status"] != "completed"):
+                raise ValueError("completed WeChat decision mismatch")
+            # The independent WeChat delivery pipeline does not adopt Audit plans.
+            return
         if data.get("outcome") not in ("proposal", "needs_human", "no_action"):
             raise ValueError("result is not a reviewable candidate")
-        task_row = db.execute("select execution_generation from reply_tasks where id=?", (run["reply_task_id"],)).fetchone()
         if (task_row is None or run is None or task_row[0] != run["execution_generation"]
             or run["role"] != "consumer" or run["status"] != "completed"):
             raise ValueError("completed Consumer candidate mismatch")

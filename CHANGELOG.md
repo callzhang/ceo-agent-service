@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- 2026-10-10: Keep valid independent WeChat decisions out of reviewed-candidate
+  adoption. Preserve generation and role checks, reject malformed or mixed
+  contracts, and do not create an Audit approval or restore SQL result bodies.
+
 - 2026-10-10: Capture isolated native Task decisions in evaluation unit fixtures
   instead of restoring removed SQL bodies. Keep semantic rejection, rollback,
   projection and adoption assertions; synthetic records are not business eval

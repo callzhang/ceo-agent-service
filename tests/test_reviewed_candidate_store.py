@@ -8,6 +8,57 @@ from app.store import AgentRole, AutoReplyStore, STORE_SCHEMA_VERSION_KEY
 from app import store as store_module
 
 
+@pytest.mark.parametrize("channel", ["wechat", "dingtalk"])
+def test_legacy_wechat_decision_does_not_become_audited_candidate(tmp_path, channel):
+    from app.dingtalk_models import CodexAction, CodexDecision
+
+    store = AutoReplyStore(tmp_path / "channel-contract.sqlite3")
+    store.enqueue_reply_task(
+        channel=channel, conversation_id="contract", conversation_title="Test",
+        single_chat=True, trigger_message_id="m1", trigger_sender="Test",
+        trigger_create_time="2026-10-10T00:00:00Z", trigger_text="test",
+    )
+    task = store.claim_reply_tasks(1, channel=channel)[0]
+    run = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="contract",
+    ).run
+    decision = CodexDecision(action=CodexAction.NO_REPLY, audit_summary="not needed")
+    if channel == "dingtalk":
+        with pytest.raises(ValueError, match="not a reviewable candidate"):
+            store.complete_agent_run(run.id, decision.model_dump(mode="json"), owner="contract")
+        assert store.get_agent_run(run.id).status == "running"
+    else:
+        completed = store.complete_agent_run(run.id, decision.model_dump(mode="json"), owner="contract")
+        assert completed.status == "completed"
+        assert completed.final_result_json == ""
+    assert store.adopted_candidate_for_consumer_run(run.id) is None
+
+
+@pytest.mark.parametrize("body", [
+    {"action": "not_a_decision"},
+    {"action": "no_reply", "outcome": "executed"},
+])
+def test_wechat_completion_rejects_invalid_contract_without_adoption(tmp_path, body):
+    store = AutoReplyStore(tmp_path / "invalid-wechat.sqlite3")
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="contract", conversation_title="Test",
+        single_chat=True, trigger_message_id="m1", trigger_sender="Test",
+        trigger_create_time="2026-10-10T00:00:00Z", trigger_text="test",
+    )
+    task = store.claim_reply_tasks(1, channel="wechat")[0]
+    run = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="contract",
+    ).run
+    with pytest.raises(ValueError):
+        store.complete_agent_run(run.id, body, owner="contract")
+    assert store.get_agent_run(run.id).status == "running"
+    assert store.adopted_candidate_for_consumer_run(run.id) is None
+
+
 def _reviewed(store: AutoReplyStore, *, options=True):
     store.enqueue_reply_task(
         channel="dingtalk", conversation_id="candidate-test", conversation_title="Test",
