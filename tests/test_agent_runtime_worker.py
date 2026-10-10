@@ -730,6 +730,7 @@ class ScriptedTaskOrchestrator:
                 consumer_result=consumer_result,
             )
 
+        candidate = self.store.persist_review_candidate(task, consumer_run, consumer_result)
         operation_id = f"agent-task:{task.id}:{task.execution_generation}:proposal:0"
         audit_claim = self.store.claim_agent_run(
             task.id,
@@ -776,7 +777,7 @@ class ScriptedTaskOrchestrator:
                 "information_completeness": 1.0,
                 "summary": direct_result.summary,
                 "proposal_revision": 0,
-                "candidate_digest": "a" * 64,
+                "candidate_digest": candidate["candidate_digest"],
                 "feedback": None,
                 "error": {
                     "code": direct_result.error.code,

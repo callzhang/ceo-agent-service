@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- 2026-10-10: Bind scripted runtime-worker Audit fixtures to the adopted
+  candidate digest instead of a fabricated digest, retaining the production
+  candidate/review consistency check and the original execution assertions.
+
 - 2026-10-10: Attribute credential-bearing captured source rejection to service
   source validation, rather than provider execution failure. Keep the security
   rejection and source evidence; do not retry another provider for this failure.
