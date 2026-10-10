@@ -13863,7 +13863,9 @@ def test_okr_review_request_is_enqueued_after_agent_queue_action(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "agent_run"
     assert attempt.send_status == "completed"
-    assert json.loads(attempt.audit_tool_events_json)[-1]["result"]["success"] is True
+    run = worker.store.get_agent_run(attempt.agent_run_id)
+    assert run is not None
+    assert run.tool_events[-1]["result"]["success"] is True
 
 
 def test_okr_review_request_uses_explicit_quarter_from_trigger(
@@ -13904,7 +13906,9 @@ def test_okr_review_request_uses_explicit_quarter_from_trigger(
     assert runner.calls[0][2].trigger_text == "请帮我 review Q2 OKR"
     assert worker.store.claim_okr_review_requests(1) == []
     attempt = worker.store.get_reply_attempt(1)
-    events = json.loads(attempt.audit_tool_events_json)
+    run = worker.store.get_agent_run(attempt.agent_run_id)
+    assert run is not None
+    events = run.tool_events
     assert events[-1]["result"]["period_label"] == "2026 Q2"
 
 
