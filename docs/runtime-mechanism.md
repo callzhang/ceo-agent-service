@@ -1583,6 +1583,9 @@ Worker status reads its local SQLite queue, Email health and component facts
 on every request. These facts are not served from the last background payload:
 after a worker writes its state, the next status request must reflect it.
 External connector authentication probes retain their independent cache.
+The Email unsubscribe task view uses a partial `reply_tasks` index over only
+audited unsubscribe tasks, so repeated Worker status reads do not rescan each
+task's full trigger JSON to compute its counts and latest update.
 
 Typed result parsing preserves malformed or unclosed JSON as a result-stage
 invalid-result failure, including its syntax cause. It is not classified as a
