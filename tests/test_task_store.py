@@ -752,7 +752,7 @@ def test_list_follow_up_drafts_due_before_handles_iso_timezone(tmp_path: Path):
             "select memory_recall_used from task_agent_runs where id=?",
             (run_id,),
         ).fetchone()
-    assert row == (1,)
+    assert row == (0,)
 
 
 def test_create_follow_up_draft_dedupes_skipped_terminal_draft(tmp_path: Path):

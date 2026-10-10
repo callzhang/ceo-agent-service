@@ -295,15 +295,16 @@ def apply_manifest(
 def _latest_agent_values(
     db: sqlite3.Connection,
 ) -> dict[tuple[int, str], tuple[str, str, str, str]]:
+    from app.native_standalone import task_project_value
+
     values: dict[tuple[int, str], tuple[str, str, str, str]] = {}
     rows = db.execute(
-        "select id, decision_json, created_at from task_agent_runs "
+        "select id, created_at from task_agent_runs "
         "where status='completed' order by id desc"
     )
     for row in rows:
-        try:
-            decision = json.loads(row["decision_json"] or "{}")
-        except (TypeError, json.JSONDecodeError):
+        decision = task_project_value(db, int(row["id"]))
+        if decision is None:
             continue
         project = decision.get("project") if isinstance(decision, dict) else None
         if not isinstance(project, dict):

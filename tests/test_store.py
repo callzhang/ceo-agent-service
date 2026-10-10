@@ -3915,32 +3915,84 @@ def test_pre_run_failure_projection_is_reused_by_later_agent_run(
 
 
 def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ):
+    from app import native_trajectory
+    from app.meeting_alignment_models import MeetingSource
+    from tests.test_meeting_alignment import summary_decision
+
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    decisions = [
+        summary_decision().model_copy(update={"final_message": "先定义上线风险预算与故障面"}),
+        summary_decision().model_copy(update={"final_message": "客服解释口径"}),
+    ]
+    sources = [MeetingSource.model_validate({
+        "meeting_id": f"meeting-{index}", "title": title,
+        "status": "ended", "started_at": "2026-07-14T07:00:00+08:00",
+        "ended_at": "2026-07-14T08:00:00+08:00",
+        "participants": [{"name": "Derek", "user_id": "derek"}],
+        "attendee_evidence": "calendar", "attendee_roster_complete": True,
+        "current_user_id": "derek", "summary": "会议摘要", "transcript": [],
+    }) for index, title in enumerate(("上线评审", "客服话术"))]
 
-    store.upsert_codex_session_search_index(
-        session_id="session-risk-budget",
-        source_type="meeting_alignment",
-        source_id="10",
-        title="上线评审",
-        summary_text="话题：上线范围 风险预算。Derek 认为先定义可接受故障面。",
-        fts_text="上线 上线范围 风险 风险预算 故障 故障面",
-        embedding=[1.0, 0.0],
-    )
-    store.upsert_codex_session_search_index(
-        session_id="session-customer-script",
-        source_type="meeting_alignment",
-        source_id="11",
-        title="客服话术",
-        summary_text="话题：客服解释口径。",
-        fts_text="客服 话术 解释 口径",
-        embedding=[0.0, 1.0],
-    )
+    def native_lines():
+        lines = []
+        for source, decision in zip(sources, decisions):
+            lines.append(json.dumps({"type": "response_item", "payload": {
+                "type": "message", "role": "user", "content": [{
+                    "type": "input_text", "text": "完整会议来源 JSON：\n" + source.model_dump_json()
+                }]
+            }}, ensure_ascii=False))
+            lines.append(json.dumps({"type": "response_item", "payload": {
+                "type": "message", "role": "assistant", "content": [{
+                    "type": "output_text", "text": decision.model_dump_json()
+                }]
+            }}, ensure_ascii=False))
+        return "\n".join(lines) + "\n"
 
+    native = tmp_path / "meetings.jsonl"
+    native.write_text(native_lines())
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *args, **kwargs: native)
+    for index, (session_id, title) in enumerate((
+        ("session-risk-budget", "上线评审"),
+        ("session-customer-script", "客服话术"),
+    )):
+        job_id = store.upsert_meeting_alignment_job(
+            meeting_id=f"meeting-{index}", title=title,
+            source_json='{"minutes_info":{"summary":"数据库旧摘要"}}',
+            participants_json='[{"name":"Derek"}]',
+            ended_at="2026-07-14T08:00:00+08:00",
+            eligible_at="2026-07-14T08:10:00+08:00", status="no_action",
+        )
+        run_id = store.record_meeting_alignment_run(
+            job_id=job_id, codex_session_id=session_id,
+            decision_json=decisions[index].model_dump_json(),
+            audit_summary="private audit", status="ready_to_send", error="",
+            codex_transcript_start_line=index * 2,
+            codex_transcript_end_line=index * 2 + 2,
+        )
+        store.upsert_codex_session_search_index(
+            session_id=session_id, source_type="meeting_alignment",
+            source_id=str(run_id), title=title,
+            summary_text="private summary", fts_text="private token",
+            embedding=[1.0, 0.0],
+        )
+
+    calls = []
+
+    class Embed:
+        model = "test-model-1"
+        base_url = "test://embedding"
+
+        def __call__(self, texts):
+            calls.append(tuple(texts))
+            return [[1.0, 0.0] if "风险" in text else [0.0, 1.0] for text in texts]
+
+    embed = Embed()
     results = store.search_codex_sessions(
-        fts_query="上线 风险",
+        fts_query="上线 OR 风险",
         query_embedding=[1.0, 0.0],
+        embedding_client=embed,
         limit=2,
     )
 
@@ -3950,6 +4002,60 @@ def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
     ]
     assert results[0].embedding_score > results[1].embedding_score
     assert results[0].bm25_score is not None
+    assert "数据库旧摘要" not in results[0].summary_text
+    store.search_codex_sessions(
+        fts_query="上线 OR 风险", query_embedding=[1.0, 0.0],
+        embedding_client=embed, limit=2,
+    )
+    assert len(calls) == 1
+    decisions[0] = decisions[0].model_copy(
+        update={"final_message": "更新的上线风险预算与故障面"}
+    )
+    native.write_text(native_lines())
+    refreshed = store.search_codex_sessions(
+        fts_query="上线 OR 风险", query_embedding=[1.0, 0.0],
+        embedding_client=embed, limit=2,
+    )
+    assert "更新的上线风险预算" in refreshed[0].summary_text
+    assert len(calls) == 2
+    embed.model = "test-model-2"
+    store.search_codex_sessions(
+        fts_query="上线 OR 风险", query_embedding=[1.0, 0.0],
+        embedding_client=embed, limit=2,
+    )
+    assert len(calls) == 3
+    with store._connect() as db:
+        db.execute(
+            "update meeting_alignment_jobs set source_json=? where id=1",
+            ('{"minutes_info":{"summary":"业务补充摘要"}}',),
+        )
+    refreshed_source = store.search_codex_sessions(
+        fts_query="上线 OR 风险", query_embedding=[1.0, 0.0],
+        embedding_client=embed, limit=2,
+    )
+    assert "会议摘要" in refreshed_source[0].summary_text
+    assert "业务补充摘要" not in refreshed_source[0].summary_text
+    assert len(calls) == 4
+    lines = native_lines().splitlines()
+    lines[0] = json.dumps({"type": "event_msg", "payload": {"type": "task_started"}})
+    native.write_text("\n".join(lines) + "\n")
+    missing_source = store.search_codex_sessions(
+        fts_query="上线 OR 风险", query_embedding=[1.0, 0.0],
+        embedding_client=embed, limit=2,
+    )
+    by_session = {item.session_id: item for item in missing_source}
+    assert by_session["session-risk-budget"].summary_text == ""
+    assert by_session["session-risk-budget"].embedding_score == 0.0
+    with store._connect() as db:
+        rows = db.execute(
+            "select summary_text, fts_text, embedding_json, embedding_model "
+            "from codex_session_search_index"
+        ).fetchall()
+        assert all(tuple(row) == ("", "", "", "") for row in rows)
+        assert db.execute(
+            "select count(*) from codex_session_search_fts "
+            "where codex_session_search_fts match 'private'"
+        ).fetchone()[0] == 0
 
 
 def test_store_connections_enable_sqlite_concurrency_pragmas(tmp_path: Path):

@@ -763,6 +763,7 @@ def _search_similar_meeting_sessions(
     return store.search_codex_sessions(
         fts_query=_meeting_fts_query(query_text),
         query_embedding=query_embedding,
+        embedding_client=embedding_client,
         limit=3,
     )
 
@@ -1136,22 +1137,11 @@ def _index_meeting_codex_session(
     session_id = str(getattr(runner, "last_session_id", "") or "").strip()
     if not session_id:
         return
-    summary_text = _meeting_session_index_text(source, decision)
-    embedding = None
-    if embedding_client is not None:
-        try:
-            vectors = embedding_client([summary_text])
-            embedding = vectors[0] if vectors else None
-        except Exception:
-            embedding = None
     store.upsert_codex_session_search_index(
         session_id=session_id,
         source_type="meeting_alignment",
         source_id=str(source_id),
         title=source.title,
-        summary_text=summary_text,
-        fts_text=_meeting_fts_text(summary_text),
-        embedding=embedding,
     )
 
 

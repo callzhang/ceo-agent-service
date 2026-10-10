@@ -1335,7 +1335,15 @@ def test_consumer_delivers_summary_when_there_is_no_disagreement(tmp_path):
     assert run.codex_session_id == "meeting-session-1"
     assert run.codex_transcript_start_line == 4
     assert run.codex_transcript_end_line == 19
-    assert json.loads(run.audit_tool_events_json)[0]["tool"] == "dws"
+    assert run.audit_tool_events_json == "[]"
+    assert run.native_available is False
+    with store._connect() as db:
+        row = db.execute(
+            "select decision_json, audit_summary, audit_tool_events_json "
+            "from meeting_alignment_runs where id=?", (run.id,)
+        ).fetchone()
+    assert tuple(row) == ("{}", "", "[]")
+    assert store.get_meeting_alignment_job(job_id).decision_json != "{}"
 
 
 def test_consumer_uses_frozen_scheduled_skill_instead_of_short_catalog(tmp_path):
@@ -1398,7 +1406,7 @@ def test_consumer_injects_similar_codex_sessions_into_meeting_prompt(tmp_path):
     [prompt] = runner.prompts
     assert "相似历史 Codex sessions" in prompt
     assert "session-risk-budget" in prompt
-    assert "历史相似会议：上线范围和风险预算" in prompt
+    assert "历史相似会议：上线范围和风险预算" not in prompt
 
 
 def test_consumer_indexes_completed_meeting_codex_session(tmp_path):
@@ -1432,10 +1440,15 @@ def test_consumer_indexes_completed_meeting_codex_session(tmp_path):
         limit=1,
     )
     assert [result.session_id for result in results] == ["meeting-session-1"]
-    assert "上线范围" in results[0].summary_text
-    assert "最多接受多大故障面" in results[0].summary_text
+    assert results[0].summary_text == ""
     assert results[0].source_type == "meeting_alignment"
     assert results[0].source_id == "1"
+    with store._connect() as db:
+        row = db.execute(
+            "select summary_text, fts_text, embedding_json from codex_session_search_index "
+            "where session_id='meeting-session-1'"
+        ).fetchone()
+    assert tuple(row) == ("", "", "")
 
 
 def test_consumer_retries_invalid_model_decision(tmp_path):

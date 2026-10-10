@@ -1728,7 +1728,7 @@ def test_process_work_item_success_commits_task_and_terminal_run_and_input(
     assert run == ("completed", "")
 
 
-def test_process_work_item_persists_final_assessment_readback_without_rewriting_judgment(
+def test_process_work_item_persists_applied_assessment_without_raw_judgment_copy(
     tmp_path,
     monkeypatch,
 ):
@@ -1756,14 +1756,8 @@ def test_process_work_item_persists_final_assessment_readback_without_rewriting_
             "where summary_input_id=?",
             (input_id,),
         ).fetchone()
-    stored_decision = json.loads(run["decision_json"])
     stored_projection = json.loads(run["projection_json"])
-    assert stored_decision["project_assessments"][0]["outcome"] == "not_needed"
-    assert (
-        stored_decision["project_assessments"][0]["reason"]
-        == payload["project_assessments"][0]["reason"]
-    )
-    assert "assessment_results" not in stored_decision
+    assert run["decision_json"] == "{}"
     assert stored_projection["status"] == "no_proposal"
     assert stored_projection["project_assessments"][0]["status"] == "recorded"
     assert stored_projection["project_assessments"][0]["anchor_id"] == anchor_id

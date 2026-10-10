@@ -7,6 +7,7 @@ import sqlite3
 import sys
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from types import MappingProxyType
 from contextlib import contextmanager, suppress
@@ -1760,22 +1761,6 @@ class CodexSessionLock:
         return False
 
 
-def _embedding_from_json(text: str) -> list[float]:
-    if not text.strip():
-        return []
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(payload, list):
-        return []
-    values: list[float] = []
-    for item in payload:
-        if isinstance(item, (int, float)):
-            values.append(float(item))
-    return values
-
-
 def _embedding_score(
     query_embedding: list[float] | None,
     stored_embedding: list[float],
@@ -1791,6 +1776,28 @@ def _embedding_score(
     if not left_norm or not right_norm:
         return 0.0
     return dot / (left_norm * right_norm)
+
+
+_MEETING_SEARCH_CACHE_LOCK = threading.Lock()
+_MEETING_SEARCH_CORPUS_CACHE: OrderedDict[tuple, tuple[str, str]] = OrderedDict()
+_MEETING_SEARCH_VECTOR_CACHE: OrderedDict[tuple, list[float]] = OrderedDict()
+_MEETING_SEARCH_CACHE_LIMIT = 256
+
+
+def _meeting_search_cache_get(cache: OrderedDict, key: tuple):
+    with _MEETING_SEARCH_CACHE_LOCK:
+        value = cache.get(key)
+        if value is not None:
+            cache.move_to_end(key)
+        return value
+
+
+def _meeting_search_cache_put(cache: OrderedDict, key: tuple, value: object) -> None:
+    with _MEETING_SEARCH_CACHE_LOCK:
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > _MEETING_SEARCH_CACHE_LIMIT:
+            cache.popitem(last=False)
 
 
 def _utc_store_time(now: str | datetime | None = None) -> tuple[datetime, str]:
@@ -17634,7 +17641,22 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def _meeting_alignment_run_from_row(
         row: sqlite3.Row,
     ) -> MeetingAlignmentRun:
-        return MeetingAlignmentRun.model_validate(dict(row))
+        from app.native_standalone import meeting_decision
+
+        values = dict(row)
+        native = meeting_decision(
+            str(row["codex_session_id"]),
+            int(row["codex_transcript_start_line"]),
+            int(row["codex_transcript_end_line"]),
+        )
+        values.update(
+            decision_json=native.decision_json,
+            audit_summary=native.audit_summary,
+            audit_tool_events_json=native.audit_tool_events_json,
+            native_available=native.available,
+            native_reason=native.reason,
+        )
+        return MeetingAlignmentRun.model_validate(values)
 
     @staticmethod
     def _validate_meeting_alignment_status(status: object) -> str:
@@ -18981,9 +19003,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             codex_session_id,
             codex_transcript_start_line,
             codex_transcript_end_line,
-            decision_json,
-            _audit_event_metadata_json(audit_tool_events_json),
-            audit_summary,
+            "{}",
+            "[]",
+            "",
             error,
         )
         with self._agent_run_write_transaction(None) as (db, _):
@@ -19056,9 +19078,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     codex_session_id,
                     codex_transcript_start_line,
                     codex_transcript_end_line,
-                    decision_json,
-                    _audit_event_metadata_json(audit_tool_events_json),
-                    audit_summary,
+                    "{}",
+                    "[]",
+                    "",
                     status,
                     error,
                     status,
@@ -19389,12 +19411,44 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     codex_session_id,
                     codex_transcript_start_line,
                     codex_transcript_end_line,
-                    envelope_json,
-                    _audit_event_metadata_json(audit_tool_events_json),
-                    audit_summary,
+                    "{}",
+                    "[]",
+                    "",
                 ),
             )
             return int(cursor.lastrowid)
+
+    def get_okr_review_run(self, run_id: int) -> dict[str, object] | None:
+        from app.native_standalone import _codex_audit_events_json, okr_envelope
+
+        with self._connect() as db:
+            row = db.execute(
+                "select * from okr_review_runs where id=?", (run_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        envelope_json, reason = okr_envelope(
+            str(row["codex_session_id"]),
+            int(row["codex_transcript_start_line"]),
+            int(row["codex_transcript_end_line"]),
+        )
+        values = dict(row)
+        values.update(
+            envelope_json=envelope_json,
+            audit_tool_events_json=(
+                _codex_audit_events_json(
+                    str(row["codex_session_id"]),
+                    int(row["codex_transcript_start_line"]),
+                    int(row["codex_transcript_end_line"]),
+                ) if not reason else "[]"
+            ),
+            audit_summary=(
+                json.loads(envelope_json)["audit"]["summary"] if not reason else ""
+            ),
+            native_available=not reason,
+            native_reason=reason,
+        )
+        return values
 
     def record_okr_review_item(
         self,
@@ -27296,19 +27350,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         source_type: str,
         source_id: str,
         title: str,
-        summary_text: str,
-        fts_text: str,
+        summary_text: str = "",
+        fts_text: str = "",
         embedding: list[float] | None = None,
         embedding_model: str = "",
     ) -> None:
         if not session_id.strip():
             return
-        embedding_json = (
-            json.dumps(embedding, ensure_ascii=False) if embedding is not None else ""
-        )
-        embedding_updated_at_sql = (
-            "current_timestamp" if embedding is not None else "embedding_updated_at"
-        )
         with self._connect() as db:
             row = db.execute(
                 """
@@ -27319,7 +27367,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchone()
             if row is None:
                 cursor = db.execute(
-                    f"""
+                    """
                     insert into codex_session_search_index (
                         session_id,
                         source_type,
@@ -27331,91 +27379,44 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         embedding_model,
                         embedding_updated_at
                     )
-                    values (?, ?, ?, ?, ?, ?, ?, ?, {
-                        'current_timestamp' if embedding is not None else "''"
-                    })
+                    values (?, ?, ?, ?, '', '', '', '', '')
                     """,
-                    (
-                        session_id,
-                        source_type,
-                        source_id,
-                        title,
-                        summary_text,
-                        fts_text,
-                        embedding_json,
-                        embedding_model,
-                    ),
+                    (session_id, source_type, source_id, title),
                 )
                 row_id = int(cursor.lastrowid)
             else:
                 row_id = int(row["id"])
                 db.execute(
-                    f"""
+                    """
                     update codex_session_search_index
                     set source_type=?,
                         source_id=?,
                         title=?,
-                        summary_text=?,
-                        fts_text=?,
-                        embedding_json=case when ? != '' then ? else embedding_json end,
-                        embedding_model=case when ? != '' then ? else embedding_model end,
-                        embedding_updated_at={embedding_updated_at_sql},
+                        summary_text='',
+                        fts_text='',
+                        embedding_json='',
+                        embedding_model='',
+                        embedding_updated_at='',
                         updated_at=current_timestamp
                     where id=?
                     """,
-                    (
-                        source_type,
-                        source_id,
-                        title,
-                        summary_text,
-                        fts_text,
-                        embedding_json,
-                        embedding_json,
-                        embedding_model,
-                        embedding_model,
-                        row_id,
-                    ),
+                    (source_type, source_id, title, row_id),
                 )
                 db.execute(
                     "delete from codex_session_search_fts where rowid=?",
                     (row_id,),
                 )
-            db.execute(
-                """
-                insert into codex_session_search_fts (
-                    rowid, title, summary_text, fts_text
-                )
-                values (?, ?, ?, ?)
-                """,
-                (row_id, title, summary_text, fts_text),
-            )
+            # Native-derived corpus is assembled only for an in-memory search.
 
     def search_codex_sessions(
         self,
         *,
         fts_query: str,
         query_embedding: list[float] | None = None,
+        embedding_client: Callable[[list[str]], list[list[float]]] | None = None,
         limit: int = 3,
     ) -> list[CodexSessionSearchResult]:
-        fts_scores: dict[int, float] = {}
         with self._connect() as db:
-            if fts_query.strip():
-                try:
-                    rows = db.execute(
-                        """
-                        select rowid, bm25(codex_session_search_fts) as bm25_score
-                        from codex_session_search_fts
-                        where codex_session_search_fts match ?
-                        order by bm25_score
-                        limit ?
-                        """,
-                        (fts_query, max(limit * 5, 10)),
-                    ).fetchall()
-                    fts_scores = {
-                        int(row["rowid"]): float(row["bm25_score"]) for row in rows
-                    }
-                except sqlite3.OperationalError:
-                    fts_scores = {}
             rows = db.execute(
                 """
                 select *
@@ -27423,10 +27424,66 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 order by updated_at desc
                 """
             ).fetchall()
+            corpus = [self._native_meeting_search_corpus(db, row) for row in rows]
+        fts_scores: dict[int, float] = {}
+        with sqlite3.connect(":memory:") as search_db:
+            search_db.execute(
+                "create virtual table corpus using fts5(title, summary_text, fts_text)"
+            )
+            search_db.executemany(
+                "insert into corpus(rowid, title, summary_text, fts_text) "
+                "values (?, ?, ?, ?)",
+                (
+                    (int(row["id"]), row["title"], summary, fts)
+                    for row, summary, fts, _ in corpus
+                ),
+            )
+            if fts_query.strip():
+                try:
+                    matches = search_db.execute(
+                        "select rowid, bm25(corpus) from corpus where corpus match ? "
+                        "order by bm25(corpus) limit ?",
+                        (fts_query, max(limit * 5, 10)),
+                    ).fetchall()
+                    fts_scores = {int(row_id): float(score) for row_id, score in matches}
+                except sqlite3.OperationalError:
+                    pass
+        embeddings: dict[int, list[float]] = {}
+        if embedding_client is not None:
+            model = getattr(embedding_client, "model", None)
+            base_url = getattr(embedding_client, "base_url", None)
+            model_identity = (
+                (type(embedding_client), model, base_url)
+                if isinstance(model, str) and isinstance(base_url, str)
+                else (type(embedding_client), embedding_client)
+            )
+        else:
+            model_identity = ()
+        uncached: list[tuple[int, str, tuple]] = []
+        if query_embedding and embedding_client is not None:
+            for index, (_, summary, _, corpus_key) in enumerate(corpus):
+                if not summary:
+                    continue
+                vector_key = (corpus_key, model_identity)
+                cached = _meeting_search_cache_get(_MEETING_SEARCH_VECTOR_CACHE, vector_key)
+                if cached is None:
+                    uncached.append((index, summary, vector_key))
+                else:
+                    embeddings[index] = cached
+        if uncached and embedding_client is not None:
+            try:
+                vectors = embedding_client([summary for _, summary, _ in uncached])
+                for (index, _, vector_key), vector in zip(uncached, vectors):
+                    embeddings[index] = vector
+                    _meeting_search_cache_put(
+                        _MEETING_SEARCH_VECTOR_CACHE, vector_key, vector
+                    )
+            except Exception:
+                pass
         results = []
-        for row in rows:
+        for index, (row, summary_text, fts_text, _) in enumerate(corpus):
             row_id = int(row["id"])
-            stored_embedding = _embedding_from_json(row["embedding_json"])
+            stored_embedding = embeddings.get(index, [])
             embedding_score = _embedding_score(
                 query_embedding,
                 stored_embedding,
@@ -27447,8 +27504,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     source_type=row["source_type"],
                     source_id=row["source_id"],
                     title=row["title"],
-                    summary_text=row["summary_text"],
-                    fts_text=row["fts_text"],
+                    summary_text=summary_text,
+                    fts_text=fts_text,
                     embedding_score=embedding_score,
                     bm25_score=bm25_score,
                     score=score,
@@ -27457,6 +27514,70 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
         results.sort(key=lambda result: result.score, reverse=True)
         return results[:limit]
+
+    def _native_meeting_search_corpus(
+        self, db: sqlite3.Connection, row: sqlite3.Row
+    ) -> tuple[sqlite3.Row, str, str, tuple]:
+        from app.meeting_alignment import _meeting_fts_text, _meeting_session_index_text
+        from app.meeting_alignment_models import MeetingAlignmentDecision
+        from app.native_standalone import meeting_decision, meeting_source
+        from app.native_trajectory import find_codex_session_path
+
+        title_fts = _meeting_fts_text(str(row["title"]))
+        if row["source_type"] != "meeting_alignment":
+            return row, "", title_fts, ()
+        run = db.execute(
+            "select run.codex_session_id, run.codex_transcript_start_line, "
+            "run.codex_transcript_end_line, job.meeting_id, job.title, job.participants_json, "
+            "job.source_json from meeting_alignment_runs run "
+            "join meeting_alignment_jobs job on job.id=run.job_id "
+            "where run.id=? and run.codex_session_id=?",
+            (row["source_id"], row["session_id"]),
+        ).fetchone()
+        if run is None:
+            return row, "", title_fts, ()
+        path = find_codex_session_path(str(run["codex_session_id"]))
+        if path is not None and path.is_file():
+            stat = path.stat()
+            native_ref = (str(path), stat.st_mtime_ns, stat.st_size)
+        else:
+            native_ref = ("", 0, 0)
+        source_digest = hashlib.sha256(
+            json.dumps(
+                [row["title"], run["title"], run["source_json"],
+                 run["participants_json"]], ensure_ascii=False
+            ).encode("utf-8")
+        ).hexdigest()
+        cache_key = (
+            str(self.path), int(row["id"]), str(row["source_id"]),
+            str(run["codex_session_id"]),
+            int(run["codex_transcript_start_line"]),
+            int(run["codex_transcript_end_line"]),
+            native_ref, source_digest,
+        )
+        cached = _meeting_search_cache_get(_MEETING_SEARCH_CORPUS_CACHE, cache_key)
+        if cached is not None:
+            return row, *cached, cache_key
+        native = meeting_decision(
+            str(run["codex_session_id"]),
+            int(run["codex_transcript_start_line"]),
+            int(run["codex_transcript_end_line"]),
+        )
+        if not native.available:
+            return row, "", title_fts, cache_key
+        source = meeting_source(
+            str(run["codex_session_id"]),
+            int(run["codex_transcript_start_line"]),
+            int(run["codex_transcript_end_line"]),
+            meeting_id=str(run["meeting_id"]),
+        )
+        if source is None:
+            return row, "", title_fts, cache_key
+        decision = MeetingAlignmentDecision.model_validate_json(native.decision_json)
+        text = _meeting_session_index_text(source, decision)
+        fts = _meeting_fts_text(text)
+        _meeting_search_cache_put(_MEETING_SEARCH_CORPUS_CACHE, cache_key, (text, fts))
+        return row, text, fts, cache_key
 
     def list_reviewed_reply_attempts(
         self, limit: int | None = None
@@ -29415,9 +29536,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 (
                     summary_input_id,
                     codex_session_id,
-                    decision_json,
-                    audit_summary,
-                    int(memory_recall_used),
+                    "{}",
+                    "",
+                    0,
                 ),
             )
             return int(cursor.lastrowid)
@@ -29769,9 +29890,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         expected = (
             status,
             codex_session_id,
-            decision_json,
-            audit_summary,
-            int(memory_recall_used),
+            "{}",
+            "",
+            0,
             error,
         )
         if _db is not None:
@@ -29779,6 +29900,26 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return
         with self._agent_run_write_transaction(None) as (db, _):
             self._finish_task_agent_run_in_connection(db, run_id, expected)
+
+    def get_task_agent_run(self, run_id: int) -> dict[str, object] | None:
+        from app.native_standalone import task_decision
+
+        with self._connect() as db:
+            row = db.execute(
+                "select * from task_agent_runs where id=?", (run_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            native = task_decision(db, run_id)
+        values = dict(row)
+        values.update(
+            decision_json=native.decision_json,
+            audit_summary=native.audit_summary,
+            memory_recall_used=int(native.memory_recall_used),
+            native_available=native.available,
+            native_reason=native.reason,
+        )
+        return values
 
     def record_task_agent_projection(
         self, run_id: int, projection_json: str, *,
