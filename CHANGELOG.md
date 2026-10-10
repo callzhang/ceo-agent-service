@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-10: Bind routed-result recovery fixtures to exact isolated native
+  session ranges. Keep codec mismatch, UTF-8 size limits and effectful
+  no-replay assertions; oversized-result faults now target the native source
+  instead of the retired SQLite result envelope.
+
 - 2026-10-10: Update Project replay readback fixtures to isolated native Task
   records and schema-valid assessments with their actual source input. Preserve
   missing evidence, missing projection receipt and incomplete storage failures;
