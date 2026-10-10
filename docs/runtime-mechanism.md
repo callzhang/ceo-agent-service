@@ -70,6 +70,10 @@ waiting to acquire a transaction, so it is not automatically write-lock hold
 time. Logs keep call sites and elapsed durations, not SQL parameters or business
 payloads. Transaction behavior and existing error propagation are unchanged.
 
+Worker status summarizes the current `reply_attempts` projection using only
+identity, status, timestamp, and error columns. It does not load full attempt
+payloads such as captured inputs or reply bodies to calculate queue counts.
+
 Runtime-attempt detail reads filter by `agent_run_id` and order by
 `attempt_number`; the partial `idx_agent_runtime_attempts_run` index serves that
 lookup for run-bound attempts. Attempt details batch this indexed lookup across

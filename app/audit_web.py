@@ -2980,7 +2980,15 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
             from reply_attempts a
         ), current as (
             select
-                a.*,
+                a.id,
+                a.channel,
+                a.send_status,
+                a.resolved_at,
+                a.conversation_id,
+                a.trigger_message_id,
+                a.agent_run_id,
+                a.updated_at,
+                a.send_error,
                 case
                     when lower(a.send_status)='needs_human'
                      and trim(coalesce(a.resolved_at, ''))<>'' then 'skipped'
