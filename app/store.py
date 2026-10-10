@@ -1,5 +1,4 @@
 import errno
-import fcntl
 import hashlib
 import json
 import re
@@ -34,6 +33,7 @@ from app.reviewed_candidate_store import (
     REVIEWED_CANDIDATE_TABLES,
     ReviewedCandidateStoreMixin,
 )
+from app.sqlite_schema_lock import schema_initialize_lock
 from app.agent_cron.models import (
     ScheduledTask,
     ScheduledTaskRun,
@@ -2197,14 +2197,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
     @contextmanager
     def _schema_initialize_lock(self) -> Iterator[None]:
-        """Serialize schema work across the worker and audit-web processes."""
-        lock_path = self.path.with_name(f".{self.path.name}.initialize.lock")
-        with lock_path.open("a+", encoding="utf-8") as lock_file:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        """Serialize schema work across processes sharing this database."""
+        with schema_initialize_lock(self.path):
+            yield
 
     @contextmanager
     def managed_skill_baseline_initialization_lock(self) -> Iterator[None]:

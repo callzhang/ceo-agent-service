@@ -1526,12 +1526,14 @@ the ordinary fast-forward then installs the target. Staged edits, other paths,
 or any content mismatch remain a hard local-change refusal.
 
 The Email worker and Audit web lazily create one shared EmailStore and check
-schema shape during runtime initialization. They do not scan every historical
-email row while the service is starting or serving the first email-detail
-request; those scans took over two minutes on the production database. Explicit
-and offline EmailStore callers retain full durable-row validation by default.
-Email detail reads still use fresh connections and do not cache record
-contents.
+schema shape during runtime initialization. Every EmailStore schema
+initialization and the AutoReplyStore schema initializer acquire the same
+per-database cross-process file lock before inspecting or changing schema.
+They do not scan every historical email row while the service is starting or
+serving the first email-detail request; those scans took over two minutes on
+the production database. Explicit and offline EmailStore callers retain full
+durable-row validation by default, after releasing the schema lock. Email
+detail reads still use fresh connections and do not cache record contents.
 
 ### Public information and native reply recovery
 
@@ -2031,3 +2033,5 @@ Workbench 的实时文字和工具正文仅在运行时 RAM 中使用；SQLite �
 模型目录在无训练进程活动时清理，保留当前模型、上一个可运行版本和最新待评估候选；其他旧制品及遗留临时文件删除。业务状态、最终结果、执行回执与小型评估记录保留。数据库删除旧正文后需要执行存储维护并压缩页才能释放文件空间。
 
 描述优化提案保持产生它时的快照身份与引用证据不变。若提案尚未评估而源快照已被最新数据替代，提案一次性转为 `unavailable`，原因 `description_proposal_source_unavailable`；不反复启动失败的评估，也不把旧证据套到新数据上。下一次基于最新数据的训练可产生新的提案。
+
+Status API 的 SystemHealth 使用严格类型的 native_delivery_coverage（checked、unavailable）展示原生轨迹可用性；该字段仅实时计算，不写入质量快照，也不改变质量违规判断。
