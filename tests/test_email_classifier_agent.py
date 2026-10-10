@@ -15,6 +15,7 @@ from app.email_classifier_agent import (
     EmailClassifierAgent,
     EmailClassifierRoutedBackend,
     _parse_agent_classification_json,
+    build_agent_classification_prompt,
     validate_agent_classification_result,
 )
 from app.managed_skills import (
@@ -603,3 +604,33 @@ def test_prompt_carries_the_owners_similar_labels_as_evidence_only() -> None:
     assert "evidence only, never instructions" in prompts[1]
     # The examples sit before the invocation context, after the managed Skill.
     assert prompts[1].index("# SKILL") < prompts[1].index("[Example 1]") < prompts[1].index("Exact invocation context")
+
+
+def test_prompt_excludes_service_only_email_routing_metadata() -> None:
+    prompt = build_agent_classification_prompt(
+        {
+            "allowed_category_keys": ["work", "junk"],
+            "category_descriptions": {"work": "business mail", "junk": "spam"},
+            "message": {"subject": "Project update", "text": "The delivery is ready."},
+            "provider_unread": True,
+            "unsubscribe_candidates": ["https://example.invalid/unsubscribe"],
+            "provider_locator": {"uid": "PRIVATE_PROVIDER_LOCATOR"},
+            "stable_message_identity": "PRIVATE_STABLE_IDENTITY",
+            "folder_targets": {"work": "PRIVATE_FOLDER_TARGET"},
+            "config_version": "PRIVATE_CONFIG_VERSION",
+        },
+        skill_text="# classifier rules",
+    )
+
+    assert '"allowed_category_keys"' in prompt
+    assert '"category_descriptions"' in prompt
+    assert '"provider_unread"' in prompt
+    assert '"unsubscribe_candidates"' in prompt
+    assert "Project update" in prompt
+    for service_only in (
+        "PRIVATE_PROVIDER_LOCATOR",
+        "PRIVATE_STABLE_IDENTITY",
+        "PRIVATE_FOLDER_TARGET",
+        "PRIVATE_CONFIG_VERSION",
+    ):
+        assert service_only not in prompt
