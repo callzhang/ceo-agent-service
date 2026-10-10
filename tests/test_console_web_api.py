@@ -851,22 +851,19 @@ def test_console_failed_history_probe_skips_chart_by_default(tmp_path: Path):
 
 def test_console_history_chart_reuses_a_short_lived_snapshot(monkeypatch, tmp_path: Path):
     calls: list[int] = []
-    warmed = threading.Event()
 
     def fake_chart(_store, *, hours):
         if _store.path == tmp_path / "worker.sqlite3":
             calls.append(hours)
-            if hours == 24 * 30:
-                warmed.set()
         return {"labels": [], "series": [], "total": 0, "range": str(hours)}
 
     monkeypatch.setattr(audit_web_module, "_history_chart_payload", fake_chart)
 
     with _client(tmp_path) as client:
-        assert warmed.wait(timeout=5)
-        calls.clear()
+        assert calls == []
         first = client.get("/api/console/history/chart?range=1m")
         first_calls = list(calls)
+        assert first_calls == [24 * 30]
         fake_chart(AutoReplyStore(tmp_path / "other.sqlite3"), hours=24 * 30)
         second = client.get("/api/console/history/chart?range=1m")
 

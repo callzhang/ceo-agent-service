@@ -66,10 +66,10 @@ payloads. Transaction behavior and existing error propagation are unchanged.
 
 Runtime-attempt detail reads filter by `agent_run_id` and order by
 `attempt_number`; the partial `idx_agent_runtime_attempts_run` index serves that
-lookup for run-bound attempts. This avoids scanning unrelated runtime attempts
-when History opens an attempt detail. Generalized attempts without an
-`agent_run_id` remain outside this index and keep their existing workload-key
-indexes.
+lookup for run-bound attempts. Attempt details batch this indexed lookup across
+all runs on the page, avoiding one SQLite connection and query per run.
+Generalized attempts without an `agent_run_id` remain outside this index and
+keep their existing workload-key indexes.
 
 Audit web startup does not prewarm the History list or its 24-hour, 7-day and
 30-day charts. Those views scan large operation-history projections and run
@@ -1533,10 +1533,18 @@ rewriting a completed reply task to pending. A successful receipt, missing
 receipt, or failed terminal parent does not authorize this runtime operation;
 the action plan and browser effect authorization remain unchanged.
 
+Status queue statistics rank compact Attempt IDs by trigger before reading
+the current Attempt state and failure detail, keeping historical error bodies
+out of the latest-row window.
+
 Audit web startup does not scan and cache History lists or charts. History
-pages are computed when requested. Attempt detail loads all Agent runs for a
-task generation and their tool events in batched reads rather than one event
-query per run. The History chart projects lifecycle status only for reply
+pages are computed when requested. The list counts and sorts compact source
+keys, then hydrates only the requested page in the same read snapshot; it does
+not materialize every historical display body to compute the total. Attempt detail loads tool events in one
+batched read for the historical generation shown on the page. If the task has
+since moved to a newer execution generation, its runs are read without event
+payloads because only their status is needed for the current projection. The
+History chart projects lifecycle status only for reply
 attempts in the requested time window, avoiding a full-history status scan.
 Health readiness is not evidence that History requests or business actions
 have completed; their APIs and provider receipts must still be read back.

@@ -119,10 +119,17 @@ def _agent_sessions(attempt: Any, agent_runs: list[Any]) -> list[dict[str, Any]]
 def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
     from app.codex_history import find_codex_session_path
 
+    run_ids = [int(getattr(run, "id", 0) or 0) for run in agent_runs]
+    batch_reader = getattr(store, "list_agent_runtime_attempts_for_runs", None)
+    attempts_by_run = (
+        batch_reader(run_ids)
+        if callable(batch_reader)
+        else {run_id: store.list_agent_runtime_attempts(run_id) for run_id in run_ids}
+    )
     result = []
     for run in agent_runs:
         role = _run_role(run)
-        for item in store.list_agent_runtime_attempts(run.id):
+        for item in attempts_by_run.get(int(getattr(run, "id", 0) or 0), []):
             session_id = str(getattr(item, "session_id", "") or "").strip()
             result.append(
                 {
@@ -717,7 +724,9 @@ def build_attempt_detail(
         )
     ):
         current_agent_runs = store.list_agent_runs_for_task_generation(
-            reply_task.id, reply_task.execution_generation
+            reply_task.id,
+            reply_task.execution_generation,
+            load_events=False,
         )
         if not current_agent_runs:
             # A manual rerun may close without creating a run.  Keep the

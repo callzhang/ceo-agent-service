@@ -12071,6 +12071,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self,
         reply_task_id: int,
         execution_generation: str,
+        *,
+        load_events: bool = True,
     ) -> list[AgentRun]:
         with self._connect() as db:
             rows = db.execute(
@@ -12087,6 +12089,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 self._agent_run_from_row(row, db=db, load_events=False)
                 for row in rows
             ]
+            if not load_events:
+                return runs
             events_by_run: dict[int, list[dict[str, object]]] = {
                 run.id: [] for run in runs
             }
@@ -13486,6 +13490,39 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 (agent_run_id,),
             ).fetchall()
             return [self._agent_runtime_attempt_from_row(row) for row in rows]
+
+    def list_agent_runtime_attempts_for_runs(
+        self,
+        agent_run_ids: list[int],
+    ) -> dict[int, list[AgentRuntimeAttempt]]:
+        run_ids = list(
+            dict.fromkeys(
+                run_id
+                for run_id in agent_run_ids
+                if type(run_id) is int and run_id > 0
+            )
+        )
+        attempts_by_run: dict[int, list[AgentRuntimeAttempt]] = {
+            run_id: [] for run_id in run_ids
+        }
+        if not run_ids:
+            return attempts_by_run
+        with self._connect() as db:
+            for start in range(0, len(run_ids), 800):
+                chunk = run_ids[start : start + 800]
+                placeholders = ", ".join("?" for _ in chunk)
+                rows = db.execute(
+                    "select * from agent_runtime_attempts "
+                    f"where agent_run_id in ({placeholders}) "
+                    "order by agent_run_id, attempt_number",
+                    tuple(chunk),
+                ).fetchall()
+                for row in rows:
+                    run_id = int(row["agent_run_id"])
+                    attempts_by_run[run_id].append(
+                        self._agent_runtime_attempt_from_row(row)
+                    )
+        return attempts_by_run
 
     def list_runtime_operation_attempts(
         self,
@@ -31091,7 +31128,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         source_tables: tuple[str, ...] | None = None,
         _skip_history_cache: bool = False,
     ) -> tuple[int, list[OperationLog]]:
-        """Return one page and its exact count from a single materialized query."""
+        """Count compact keys, then hydrate only the page in one snapshot."""
         cacheable = (
             limit <= 100
             and offset == 0
@@ -31134,34 +31171,51 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             with operation_logs as (
                 {self._operation_logs_base_query(source_tables)}
             )
-            select operation_logs.*, count(*) over() as __total
+            select source_table, source_id, count(*) over() as __total
             from operation_logs
             {where_sql}
             order by occurred_at desc, source_table desc, source_id desc
             limit ? offset ?
         """
         args = [*where_args, max(0, limit), max(0, offset)]
-        with self._connect() as db:
-            rows = db.execute(sql, tuple(args)).fetchall()
-        if rows:
-            total = int(rows[0]["__total"] or 0)
-            items = []
-            for row in rows:
-                payload = dict(row)
-                payload.pop("__total", None)
-                items.append(OperationLog.model_validate(payload))
-            result = (total, items)
-        else:
-            result = (
-                self.count_operation_logs(
-                    query=query,
-                    log_type=log_type,
-                    statuses=statuses,
-                    history_types=history_types,
-                    source_tables=source_tables,
-                ),
-                [],
-            )
+        with self.read_snapshot(), self._connect() as db:
+            page_keys = db.execute(sql, tuple(args)).fetchall()
+            if page_keys:
+                total = int(page_keys[0]["__total"] or 0)
+                items_by_key = {}
+                for table in dict.fromkeys(row["source_table"] for row in page_keys):
+                    ids = [
+                        row["source_id"] for row in page_keys
+                        if row["source_table"] == table
+                    ]
+                    # Keep parameters below SQLite's limit for larger callers.
+                    for start in range(0, len(ids), 800):
+                        batch = ids[start:start + 800]
+                        placeholders = ",".join("?" for _ in batch)
+                        rows = db.execute(
+                            f"select * from ({self._operation_logs_base_query((table,))}) "
+                            f"where source_id in ({placeholders})",
+                            tuple(batch),
+                        ).fetchall()
+                        for row in rows:
+                            item = OperationLog.model_validate(dict(row))
+                            items_by_key[(item.source_table, item.source_id)] = item
+                result = (
+                    total,
+                    [items_by_key[(row["source_table"], row["source_id"])]
+                     for row in page_keys],
+                )
+            else:
+                result = (
+                    self.count_operation_logs(
+                        query=query,
+                        log_type=log_type,
+                        statuses=statuses,
+                        history_types=history_types,
+                        source_tables=source_tables,
+                    ),
+                    [],
+                )
         if cacheable:
             with self._history_page_cache_lock:
                 self._history_page_cache = (
