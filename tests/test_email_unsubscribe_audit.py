@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 import app.agent_cli as agent_cli
-from app.agent_contracts import AuditAgentResult, ConsumerAgentResult, ProposedAction
+from app.agent_contracts import ProposedAction
 from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
@@ -59,6 +59,7 @@ from app.email_unsubscribe_audit import (
 from app.email_unsubscribe_audit import _normalize_result, _rejection_detail
 from app.email_unsubscribe_audit import _store_arguments as audit_store_arguments
 from app.store import AgentRole, AutoReplyStore
+from tests.support.candidate_review import complete_synthetic_approval as _complete_synthetic_approval
 
 
 PRIVATE_URL = "https://news.example.com/unsubscribe?token=private-token"
@@ -345,45 +346,6 @@ def _error_code(result: dict[str, object]) -> str:
     error = result.get("error")
     assert isinstance(error, dict)
     return str(error.get("code"))
-
-
-def _complete_synthetic_approval(task_store, audit_run, *, owner):
-    """Adopt a unit-only review, not an external execution receipt."""
-    candidate = task_store.adopted_candidate_for_consumer_run(
-        audit_run.parent_agent_run_id
-    )
-    assert candidate is not None
-    assert candidate["task_id"] == audit_run.reply_task_id
-    assert candidate["execution_generation"] == audit_run.execution_generation
-    assert candidate["proposal_revision"] == audit_run.proposal_revision
-    ConsumerAgentResult.model_validate_json(candidate["candidate_json"])
-    assert sha256(candidate["candidate_json"].encode()).hexdigest() == candidate[
-        "candidate_digest"
-    ]
-    review = AuditAgentResult.model_validate(
-        {
-            "outcome": "approve",
-            "summary": "Synthetic unit review approves the bound candidate.",
-            "proposal_revision": audit_run.proposal_revision,
-            "candidate_digest": candidate["candidate_digest"],
-            "evidence_refs": [],
-            "feedback": None,
-            "error": {"code": "", "retryable": False, "authorization_required": False},
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-        }
-    )
-    completed = task_store.complete_agent_run(
-        audit_run.id, review.model_dump(mode="json"), owner=owner
-    )
-    adopted = task_store.reviewed_candidate_for_audit_run(completed.id)
-    assert adopted is not None
-    assert adopted["id"] == candidate["id"]
-    assert adopted["decision"] == "approve"
-    assert adopted["candidate_digest"] == candidate["candidate_digest"]
-    return completed
 
 
 class _TerminalBrowser:

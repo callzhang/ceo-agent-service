@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-10: Give audited email Web projection fixtures complete validated
+  proposals and candidate-bound approvals, sharing the existing synthetic
+  review helper without changing its checks. Retain privacy, entry-access,
+  receipt, search-count and multi-round lineage rejection assertions.
+
 - 2026-10-10: Give obsolete-rule retirement fixtures explicit isolated native
   sources, including the CLI child process. Preserve original native bytes and
   canonical receipt hashes, require preview to leave schema and data unchanged,
