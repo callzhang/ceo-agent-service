@@ -1529,9 +1529,11 @@ receipt, or failed terminal parent does not authorize this runtime operation;
 the action plan and browser effect authorization remain unchanged.
 
 Audit web startup does not scan and cache History lists or charts. History
-pages are computed when requested. Attempt detail loads all Agent runs for a
-task generation and their tool events in batched reads rather than one event
-query per run. The History chart projects lifecycle status only for reply
+pages are computed when requested. Attempt detail loads tool events in one
+batched read for the historical generation shown on the page. If the task has
+since moved to a newer execution generation, its runs are read without event
+payloads because only their status is needed for the current projection. The
+History chart projects lifecycle status only for reply
 attempts in the requested time window, avoiding a full-history status scan.
 Health readiness is not evidence that History requests or business actions
 have completed; their APIs and provider receipts must still be read back.

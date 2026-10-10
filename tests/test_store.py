@@ -6630,6 +6630,12 @@ def test_list_agent_runs_for_generation_batches_events_and_preserves_order(tmp_p
     assert [event["call_id"] for event in runs[0].tool_events] == ["first-1", "first-2"]
     assert [event["call_id"] for event in runs[1].tool_events] == ["second-1"]
 
+    status_runs = store.list_agent_runs_for_task_generation(
+        task.id, task.execution_generation, load_events=False
+    )
+    assert [run.id for run in status_runs] == [first.id, second.id]
+    assert [run.tool_events for run in status_runs] == [[], []]
+
 
 def test_reply_attempt_status_projection_is_scoped_to_requested_ids(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "history-status-scope.sqlite3")

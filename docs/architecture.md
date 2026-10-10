@@ -1356,6 +1356,9 @@ Codex 原生 session JSONL 是详细审计来源，保存每个 Agent turn 的�
 session 指针读取 JSONL，并只向普通用户展示业务结果；内部角色、规划标签和原始敏感工具
 输出保持折叠或脱敏。
 
+Attempt 详情只为页面展示的历史执行代批量读取 Agent 工具事件。若任务已有更新的执行代，
+当前状态投影只读取新执行代的运行状态，不再重复加载其工具事件。
+
 为避免一个详情页因同一 session 的 Consumer、重试和 runtime 记录而重复扫描全量本地
 索引，`session_path_index.jsonl` 的最新记录按文件的 mtime、大小和 inode 做进程内只读缓存。
 索引文件变更后下一次解析自动失效并重建该缓存；缓存只加速 session 路径发现，不改变

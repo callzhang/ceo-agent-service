@@ -717,7 +717,9 @@ def build_attempt_detail(
         )
     ):
         current_agent_runs = store.list_agent_runs_for_task_generation(
-            reply_task.id, reply_task.execution_generation
+            reply_task.id,
+            reply_task.execution_generation,
+            load_events=False,
         )
         if not current_agent_runs:
             # A manual rerun may close without creating a run.  Keep the

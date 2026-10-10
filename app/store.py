@@ -12089,6 +12089,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self,
         reply_task_id: int,
         execution_generation: str,
+        *,
+        load_events: bool = True,
     ) -> list[AgentRun]:
         with self._connect() as db:
             rows = db.execute(
@@ -12105,6 +12107,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 self._agent_run_from_row(row, db=db, load_events=False)
                 for row in rows
             ]
+            if not load_events:
+                return runs
             events_by_run: dict[int, list[dict[str, object]]] = {
                 run.id: [] for run in runs
             }
