@@ -962,8 +962,8 @@ def test_real_orchestrator_preserves_feedback_revision_chain(tmp_path):
         ("consumer", 0), ("audit", 0), ("consumer", 1), ("audit", 1)
     ]
     assert [r.parent_agent_run_id for r in runs] == [None, runs[0].id, runs[1].id, runs[2].id]
-    assert json.loads(runs[0].final_result_json)["proposal"]["actions"][0]["action_identity"] == "stable-action"
-    assert json.loads(runs[2].final_result_json)["outcome"] == "no_action"
+    assert json.loads(runs[0].adopted_result_json)["proposal"]["actions"][0]["action_identity"] == "stable-action"
+    assert json.loads(runs[2].adopted_result_json)["outcome"] == "no_action"
     assert task.status == "done"
     assert store.get_scheduled_task_run(run.id).dispatch_status == "dispatched"
 

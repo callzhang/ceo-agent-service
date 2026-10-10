@@ -1,5 +1,6 @@
 from app.store import AgentRole, AutoReplyStore
 from app.web_api.attempts import build_attempt_detail
+from tests.support.candidate_review import complete_synthetic_approval
 
 
 def test_audited_no_action_detail_preserves_skipped_without_rewriting_history(tmp_path):
@@ -18,16 +19,16 @@ def test_audited_no_action_detail_preserves_skipped_without_rewriting_history(tm
     ).run
     store.complete_agent_run(consumer.id, {
         'outcome': 'no_action', 'summary': 'The principal already followed up; no duplicate reply is needed.',
+        'proposal': None, 'decision_options': [],
+        'error': {'code': '', 'retryable': False, 'authorization_required': False},
+        'risk': 'low', 'confidence': 1.0, 'rule_coverage': 1.0, 'information_completeness': 1.0,
     }, owner='test-consumer')
     audit = store.claim_agent_run(
         task.id, task.execution_generation, role=AgentRole.AUDIT,
         proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id,
         operation_id='current-review', owner='test-audit',
     ).run
-    store.complete_agent_run(audit.id, {
-        'outcome': 'approve', 'summary': 'No duplicate action is appropriate.',
-        'proposal_revision': 0, 'candidate_digest': 'a' * 64,
-    }, owner='test-audit')
+    complete_synthetic_approval(store, audit, owner='test-audit')
     attempt_id = store.record_reply_attempt(
         conversation_id='current-group', conversation_title='Current discussion',
         trigger_message_id='trigger-1', trigger_sender='Reporter',

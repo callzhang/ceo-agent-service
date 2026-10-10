@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-10: Check adopted candidate/review data in orchestration, scheduled
+  and no-action fixtures without restoring raw SQL results. Technical Consumer
+  failures retain failed runs; unbound historical questions remain non-actionable
+  with no selection or execution records after reopening.
+
 - 2026-10-10: Align audit-page fixtures with candidate-bound approvals and
   native-only process visibility. Keep legacy-body non-exposure, unavailable
   result, malformed candidate, tool formatting and native range assertions.

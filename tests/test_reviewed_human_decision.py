@@ -177,7 +177,9 @@ def test_unbound_legacy_task_class_choices_survive_restart_without_becoming_exec
     assert reopened.get_reply_attempt(attempt_id).send_status == "needs_human"
     assert json.loads(reopened.get_reply_attempt(attempt_id).human_decision_options_json) == options
     assert reopened.get_reply_task(task.id).status == "needs_human"
-    assert json.loads(reopened.get_agent_run(run.id).final_result_json) == body
+    assert json.loads(reopened.get_agent_run(run.id).adopted_result_json) == body
+    with reopened._connect() as db:
+        assert db.execute("select final_result_json from agent_runs where id=?", (run.id,)).fetchone()[0] == ""
     with reopened._connect() as db:
         assert db.execute("select count(*) from candidate_selections").fetchone()[0] == 0
         assert db.execute("select count(*) from candidate_executions").fetchone()[0] == 0

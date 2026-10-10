@@ -143,9 +143,12 @@ class Consumer:
         result = self.results.popleft()
         if callable(result):
             result = result(context)
-        self.store.complete_agent_run(
-            run.id, result.model_dump(mode="json"), owner="consumer"
-        )
+        if result.outcome == "failed":
+            self.store.fail_agent_run(run.id, result.error.model_dump(mode="json"), owner="consumer")
+        else:
+            self.store.complete_agent_run(
+                run.id, result.model_dump(mode="json"), owner="consumer"
+            )
         self.calls.append((context, feedback))
         return AgentTurnRunResult(run.id, result, 0, 1)
 
@@ -406,7 +409,7 @@ def test_later_consumer_read_failure_reuses_completed_candidate_after_restart(tm
     original = store.list_agent_runs_for_task_generation(
         task.id, task.execution_generation,
     )[0]
-    original_json = original.final_result_json
+    original_json = original.adopted_result_json
 
     reopened = AutoReplyStore(store.path)
     fresh_consumer = Consumer(reopened)
@@ -428,8 +431,8 @@ def test_later_consumer_read_failure_reuses_completed_candidate_after_restart(tm
     )
     assert len(runs) == 3
     assert runs[0].id == original.id
-    assert runs[0].final_result_json == original_json
-    assert runs[1].status == "completed"  # The later failure stays in history.
+    assert runs[0].adopted_result_json == original_json
+    assert runs[1].status == "failed"  # The later technical failure stays in history.
     assert runs[2].parent_agent_run_id == original.id
 
 
