@@ -40,6 +40,50 @@ NOW = datetime(2026, 7, 29, 9, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture(autouse=True)
+def _protocol_native_trajectories(tmp_path, monkeypatch):
+    original = ProtocolCodexExecutor.__call__
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    def native_path(session_id, **_kwargs):
+        path = tmp_path / "native-protocol" / f"{session_id}.jsonl"
+        return path if path.is_file() else None
+
+    monkeypatch.setattr("app.codex_history.find_codex_session_path", native_path)
+    monkeypatch.setattr("app.native_trajectory.find_codex_session_path", native_path)
+
+    def execute(self, command, **kwargs):
+        result = original(self, command, **kwargs)
+        records = [json.loads(line) for line in result.stdout.splitlines()]
+        session_id = records[0]["thread_id"]
+        path = tmp_path / "native-protocol" / f"{session_id}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        native = [{"type": "event_msg", "payload": {"type": "task_started"}}]
+        for record in records[1:]:
+            if record.get("type") not in {"item.started", "item.completed"}:
+                continue
+            item = dict(record["item"])
+            native_type = {
+                "mcp_tool_call": "McpToolCall",
+                "command_execution": "CommandExecution",
+                "agent_message": "AgentMessage",
+            }.get(item["type"])
+            assert native_type is not None
+            item["type"] = native_type
+            native.append({"type": "event_msg", "payload": {
+                "type": record["type"].replace(".", "_"), "item": item,
+            }})
+        native.append({"type": "event_msg", "payload": {"type": "task_complete"}})
+        with path.open("a", encoding="utf-8") as stream:
+            for record in native:
+                stream.write(json.dumps(record) + "\n")
+        return result
+
+    monkeypatch.setattr(ProtocolCodexExecutor, "__call__", execute)
+
+
+@pytest.fixture(autouse=True)
 def _protocol_memory_transport(monkeypatch: pytest.MonkeyPatch):
     # Protocol turns advertise the configured memory read transport. The
     # production URL is intentionally absent from the test environment.
@@ -532,7 +576,7 @@ class ScriptedTaskOrchestrator:
             final_run = persisted[-1]
             if final_run.status == "completed" and final_run.role is AgentRole.AUDIT:
                 audit_result = AuditAgentResult.model_validate_json(
-                    final_run.final_result_json
+                    final_run.adopted_result_json
                 )
                 return OrchestrationResult(
                     status="executed",
@@ -545,7 +589,7 @@ class ScriptedTaskOrchestrator:
                 )
             if final_run.status == "completed" and final_run.role is AgentRole.CONSUMER:
                 consumer_result = ConsumerAgentResult.model_validate_json(
-                    final_run.final_result_json
+                    final_run.adopted_result_json
                 )
                 return OrchestrationResult(
                     status=(
@@ -3844,10 +3888,15 @@ def test_manual_rerun_carries_prior_audit_rejection_into_context(tmp_path: Path,
         worker.store,
         "list_agent_runs_for_task_generation",
         lambda task_id, generation: [SimpleNamespace(
+            id=41,
             role=AgentRole.AUDIT,
             status="completed",
-            final_result_json=rejected.model_dump_json(),
         )],
+    )
+    monkeypatch.setattr(
+        worker.store,
+        "get_candidate_review_for_audit_run",
+        lambda run_id: {"result_json": rejected.model_dump_json()} if run_id == 41 else None,
     )
 
     context = worker._build_agent_task_context(
@@ -4372,7 +4421,7 @@ def _assert_task4_receipts_and_consumer_read_only(
 
 def _task4_consumer_result(worker) -> dict[str, object]:
     consumer = _task4_agent_runs(worker)[0]
-    return json.loads(consumer.final_result_json)
+    return json.loads(consumer.adopted_result_json)
 
 
 def _task4_completed_operations(run) -> list[str]:
@@ -5462,7 +5511,7 @@ def test_mail_reply_proposal_is_rejected_without_a_typed_system_handler(
     assert worker.consume_once(max_tasks=1) == 0
 
     runs = _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
-    consumer_result = json.loads(runs[0].final_result_json)
+    consumer_result = json.loads(runs[0].adopted_result_json)
     action = consumer_result["proposal"]["actions"][0]
     assert action["operation"] == "mail message reply"
     assert action["payload"]["argv"] == DwsClient().build_mail_reply_command(
@@ -5484,7 +5533,7 @@ def test_mail_reply_proposal_is_rejected_without_a_typed_system_handler(
     assert executor.read_commands == [command for command, _output in executor.evidence] * 2
     assert executor.write_commands == []
     assert executor.verify_commands == []
-    audit_result = json.loads(runs[1].final_result_json)
+    audit_result = json.loads(runs[1].adopted_result_json)
     assert audit_result["outcome"] == "approve"
     assert "external_result" not in audit_result
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
@@ -5629,7 +5678,7 @@ def test_oa_runtime_agent_reads_live_tasks_and_reviews_selected_identity(
     assert attempt is not None
     assert attempt.send_status == attempt_status
     if approved_task_id is not None:
-        candidate = json.loads(_task4_agent_runs(worker)[0].final_result_json)
+        candidate = json.loads(_task4_agent_runs(worker)[0].adopted_result_json)
         assert candidate["proposal"]["actions"][0]["target"]["task_id"] == approved_task_id
 
 
