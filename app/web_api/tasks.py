@@ -1003,11 +1003,88 @@ def _confirmed_project_ids_by_task(store: Any) -> dict[int, set[int]]:
     return result
 
 
+def _project_summary_context_and_activity(
+    store: Any, projects: list[Any]
+) -> dict[int, tuple[ProjectContext | None, str | None, str | None, list[str]]]:
+    """Read the context and activity projection for a Project list in one DB connection."""
+    if not projects:
+        return {}
+    project_ids = [int(project.id) for project in projects]
+    anchor_ids = [int(project.canonical_anchor_id) for project in projects]
+    project_ids_json = json.dumps(project_ids)
+    anchor_ids_json = json.dumps(anchor_ids)
+    with store._connect() as db:
+        context_rows = db.execute(
+            """
+            with requested(project_id) as (
+                select cast(value as integer) from json_each(?)
+            ), latest as (
+                select revision.project_id, max(revision.id) as id
+                from business_project_context_revisions revision
+                join requested using (project_id)
+                group by revision.project_id
+            )
+            select revision.project_id, revision.context_json
+            from business_project_context_revisions revision
+            join latest using (project_id, id)
+            """,
+            (project_ids_json,),
+        ).fetchall()
+        revision_rows = db.execute(
+            """
+            select project_id, max(created_at) as created_at
+            from business_project_context_revisions
+            where project_id in (select cast(value as integer) from json_each(?))
+            group by project_id
+            """,
+            (project_ids_json,),
+        ).fetchall()
+        evidence_rows = db.execute(
+            """
+            select project_id, max(created_at) as created_at
+            from business_project_evidence
+            where project_id in (select cast(value as integer) from json_each(?))
+            group by project_id
+            """,
+            (project_ids_json,),
+        ).fetchall()
+        attention_rows = db.execute(
+            """
+            select anchor_id, why_attention
+            from business_attention_items
+            where status='active'
+              and anchor_id in (select cast(value as integer) from json_each(?))
+            order by id
+            """,
+            (anchor_ids_json,),
+        ).fetchall()
+
+    contexts = {
+        int(row["project_id"]): ProjectContext.model_validate_json(str(row["context_json"]))
+        for row in context_rows
+    }
+    revision_times = {int(row["project_id"]): row["created_at"] for row in revision_rows}
+    evidence_times = {int(row["project_id"]): row["created_at"] for row in evidence_rows}
+    reasons_by_anchor: dict[int, list[str]] = {}
+    for row in attention_rows:
+        reasons_by_anchor.setdefault(int(row["anchor_id"]), []).append(str(row["why_attention"]))
+    return {
+        int(project.id): (
+            contexts.get(int(project.id)),
+            revision_times.get(int(project.id)),
+            evidence_times.get(int(project.id)),
+            reasons_by_anchor.get(int(project.canonical_anchor_id), []),
+        )
+        for project in projects
+    }
+
+
 def _project_summary_payload(
     store: Any,
     project: Any,
     tasks: list[Any],
     project_ids_by_task: dict[int, set[int]] | None = None,
+    summary_context_and_activity: tuple[ProjectContext | None, str | None, str | None, list[str]] | None = None,
 ) -> dict[str, Any]:
     if project_ids_by_task is None:
         project_ids_by_task = _confirmed_project_ids_by_task(store)
@@ -1016,14 +1093,17 @@ def _project_summary_payload(
         if not (task.origin == "agent_suggestion" and task.stage.value == "candidate")
         and project.id in project_ids_by_task.get(task.id, set())
     ]
-    context = store.get_business_project_context(project.id)
+    if summary_context_and_activity is None:
+        context = store.get_business_project_context(project.id)
+        with store._connect() as db:
+            revision_time = db.execute("select max(created_at) from business_project_context_revisions where project_id=?", (project.id,)).fetchone()[0]
+            evidence_time = db.execute("select max(created_at) from business_project_evidence where project_id=?", (project.id,)).fetchone()[0]
+            attention_reasons = [row[0] for row in db.execute(
+                "select why_attention from business_attention_items where anchor_id=? and status='active' order by id", (project.canonical_anchor_id,)
+            )]
+    else:
+        context, revision_time, evidence_time, attention_reasons = summary_context_and_activity
     owner = context.overall_owner if context else None
-    with store._connect() as db:
-        revision_time = db.execute("select max(created_at) from business_project_context_revisions where project_id=?", (project.id,)).fetchone()[0]
-        evidence_time = db.execute("select max(created_at) from business_project_evidence where project_id=?", (project.id,)).fetchone()[0]
-        attention_reasons = [row[0] for row in db.execute(
-            "select why_attention from business_attention_items where anchor_id=? and status='active' order by id", (project.canonical_anchor_id,)
-        )]
     return {
         "id": project.id,
         "title": project.title,
@@ -1056,9 +1136,13 @@ def business_project_list_response(store: Any, *, page: int, page_size: int, que
                 if (not needle or needle in f"{row.title} {row.crm_customer_name}".casefold())]
     tasks = _all_business_tasks(store)
     project_ids_by_task = _confirmed_project_ids_by_task(store)
+    summary_context_and_activity = _project_summary_context_and_activity(store, projects)
     project_summaries = {
         project.id: ConsoleBusinessProjectSummary.model_validate(
-            _project_summary_payload(store, project, tasks, project_ids_by_task)
+            _project_summary_payload(
+                store, project, tasks, project_ids_by_task,
+                summary_context_and_activity[project.id],
+            )
         )
         for project in projects
     }

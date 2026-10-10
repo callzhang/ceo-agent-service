@@ -121,6 +121,36 @@ def test_project_summaries_batch_task_project_membership_queries(tmp_path, monke
     assert business_project_detail(store, first).summary.confirmed_task_count == 1
 
 
+def test_project_list_batches_context_and_activity_reads(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "batched-project-context.sqlite3")
+    project_ids = [_project(store, title=f"项目{number}")[0] for number in range(5)]
+    connection_count = 0
+    original_connect = store._connect
+    original_context_read = store.get_business_project_context
+
+    def count_connections(*args, **kwargs):
+        nonlocal connection_count
+        connection_count += 1
+        return original_connect(*args, **kwargs)
+
+    def unexpected_per_project_context_read(_project_id):
+        pytest.fail("Project list must batch context reads instead of reading each Project separately")
+
+    monkeypatch.setattr(store, "_connect", count_connections)
+    monkeypatch.setattr(store, "get_business_project_context", unexpected_per_project_context_read)
+    result = business_project_list_response(store, page=1, page_size=20)
+
+    assert {item.id for item in result.items} == set(project_ids)
+    assert all(item.goal == "完成交付并回款" for item in result.items)
+    assert connection_count <= 5
+
+    monkeypatch.setattr(store, "_connect", original_connect)
+    monkeypatch.setattr(store, "get_business_project_context", original_context_read)
+    listed = {item.id: item for item in result.items}
+    for project_id in project_ids:
+        assert listed[project_id] == business_project_detail(store, project_id).summary
+
+
 def test_human_promoted_suggestion_is_an_actual_task_without_losing_origin(tmp_path):
     store = AutoReplyStore(tmp_path / "promoted.sqlite3")
     project_id, anchor, citation, _ = _project(store)
