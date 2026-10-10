@@ -9481,7 +9481,13 @@ def test_fastapi_app_records_feedback_and_redirects(tmp_path: Path):
     assert attempt.corrected_reply_text == "先看材料"
 
 
-def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: Path):
+def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: Path, monkeypatch):
+    def read_native_events(session_id, **_bounds):
+        assert session_id == "session-1"
+        return [{"tool": "exec_command", "command": "rg 岗位",
+                 "input": json.dumps({"cmd": "rg 岗位"}, ensure_ascii=False, indent=2)}]
+
+    monkeypatch.setattr(audit_web_module, "extract_codex_audit_events_from_session", read_native_events)
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
     store.record_sent_reply(
