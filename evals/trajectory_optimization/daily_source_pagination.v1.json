@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "low",
+  "source_records": 100,
+  "mechanism": "Compare complete-window baseline against five-record native pages with hasMore/nextPageToken. Page tokens bind the same fixed group/time window; no keyword filtering, source truncation or changed Skill guidance.",
+  "criteria": "Both seeded interventions with unchanged IDs, business owners and numeric amounts; source_count 100; candidate must read all 20 source pages; no shell or business action. Inspect native model-facing outputs for truncation independently of final JSON.",
+  "cases": [
+    {"id":"group-window", "tool":"read_dingtalk_messages_in_window", "critical_indices":[42,99], "projects":["Delta","Vega"], "amounts":[32000,58000], "owners":["Avery","Alex"]}
+  ]
+}
