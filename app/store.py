@@ -11055,13 +11055,33 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "where reply_task_id=?",
                 (key, int(task["id"])),
             )
-        db.execute("delete from business_object_tasks")
+        desired_bindings: dict[str, int] = {}
         for task in reversed(tasks):
+            desired_bindings.setdefault(task_keys[int(task["id"])], int(task["id"]))
+        existing_bindings = {
+            str(row["business_object_key"]): int(row["reply_task_id"])
+            for row in db.execute(
+                "select business_object_key, reply_task_id from business_object_tasks"
+            ).fetchall()
+        }
+        for key in existing_bindings.keys() - desired_bindings.keys():
             db.execute(
-                "insert or ignore into business_object_tasks "
-                "(business_object_key, reply_task_id) values (?, ?)",
-                (task_keys[int(task["id"])], int(task["id"])),
+                "delete from business_object_tasks where business_object_key=?",
+                (key,),
             )
+        for key, task_id in desired_bindings.items():
+            if key not in existing_bindings:
+                db.execute(
+                    "insert into business_object_tasks "
+                    "(business_object_key, reply_task_id) values (?, ?)",
+                    (key, task_id),
+                )
+            elif existing_bindings[key] != task_id:
+                db.execute(
+                    "update business_object_tasks set reply_task_id=?, "
+                    "updated_at=current_timestamp where business_object_key=?",
+                    (task_id, key),
+                )
 
     @staticmethod
     def _migrate_oa_notification_events(db: sqlite3.Connection) -> None:
@@ -11216,6 +11236,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if isinstance(names, list) and all(isinstance(name, str) for name in names):
                 source["skill_names"] = names
             if payload.get("schema") == "email_agent_action.v1":
+                category = payload.get("category")
+                if isinstance(category, str) and category:
+                    source["category"] = category
+                parameters = payload.get("action_parameters")
+                if isinstance(parameters, dict):
+                    candidate_source = parameters.get("candidate_source")
+                    if isinstance(candidate_source, str) and candidate_source:
+                        source["action_parameters"] = {
+                            "candidate_source": candidate_source,
+                        }
                 entries = payload.get("unsubscribe_entries")
                 if isinstance(entries, list):
                     source["unsubscribe_entries"] = [
@@ -20671,23 +20701,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 """,
                 (channel, conversation_id, trigger_message_id),
             ).fetchone()
-            if (
-                row is None
-                or str(row["status"]) not in {"done", "failed"}
-                or (
-                    all(
-                        json.loads(str(row["input_provenance_json"]))[field]["sha256"]
-                        == hashlib.sha256(value.encode("utf-8")).hexdigest()
-                        for field, value in (
-                            ("trigger_text", trigger_text),
-                            ("trigger_message_json", trigger_message_json),
-                        )
-                    ) if row["input_compacted"] else (
-                        str(row["trigger_text"]) == trigger_text
-                        and str(row["trigger_message_json"]) == trigger_message_json
-                    )
-                )
-            ):
+            if row is None or str(row["status"]) not in {"done", "failed"}:
+                return False
+            same_rendered_text = (
+                json.loads(str(row["input_provenance_json"]))["trigger_text"]["sha256"]
+                == hashlib.sha256(trigger_text.encode("utf-8")).hexdigest()
+                if row["input_compacted"]
+                else str(row["trigger_text"]) == trigger_text
+            )
+            if same_rendered_text:
                 return False
             next_input_version = int(row["input_version"]) + 1
             revision_digest = hashlib.sha256(

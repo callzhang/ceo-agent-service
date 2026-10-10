@@ -7339,6 +7339,77 @@ def test_schema_upgrade_aliases_historical_oa_comment_to_the_known_node(
         assert db.execute("select count(*) from reply_tasks").fetchone()[0] == 2
 
 
+def test_schema_upgrade_preserves_unchanged_business_object_mapping_rows(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    for message_id in ("first", "second"):
+        store.ensure_reply_task(
+            channel="dingtalk", conversation_id="cid", conversation_title="Chat",
+            single_chat=False, trigger_message_id=message_id,
+            trigger_create_time="2026-10-10 00:00:00", trigger_sender="Sender",
+            trigger_text=f"Input {message_id}",
+        )
+    with store._connect() as db:
+        db.execute(
+            "update business_object_tasks set created_at=?, updated_at=?",
+            ("2020-01-02 03:04:05", "2021-02-03 04:05:06"),
+        )
+        before = [tuple(row) for row in db.execute(
+            "select business_object_key, reply_task_id, created_at, updated_at "
+            "from business_object_tasks order by business_object_key"
+        )]
+        db.execute(
+            "update service_state set value='2026-10-09.0' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    upgraded = AutoReplyStore(db_path)
+    with upgraded._connect() as db:
+        after = [tuple(row) for row in db.execute(
+            "select business_object_key, reply_task_id, created_at, updated_at "
+            "from business_object_tasks order by business_object_key"
+        )]
+    assert after == before
+
+
+def test_schema_upgrade_keeps_latest_business_object_remapping(tmp_path: Path) -> None:
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    first = store.ensure_reply_task(
+        channel="dingtalk", conversation_id="cid", conversation_title="Chat",
+        single_chat=False, trigger_message_id="first",
+        trigger_create_time="2026-10-10 00:00:00", trigger_sender="Sender",
+        trigger_text="First input",
+    )
+    second = store.ensure_reply_task(
+        channel="dingtalk", conversation_id="cid", conversation_title="Chat",
+        single_chat=False, trigger_message_id="second",
+        trigger_create_time="2026-10-10 00:01:00", trigger_sender="Sender",
+        trigger_text="Second input",
+    )
+    assert first.id < second.id
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set business_object_key=? where id=?",
+            (first.business_object_key, second.id),
+        )
+        db.execute(
+            "update service_state set value='2026-10-09.0' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    upgraded = AutoReplyStore(db_path)
+    with upgraded._connect() as db:
+        rows = [tuple(row) for row in db.execute(
+            "select business_object_key, reply_task_id from business_object_tasks"
+        )]
+    assert rows == [(first.business_object_key, second.id)]
+
+
 def test_different_oa_nodes_keep_separate_current_reply_tasks(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     first = store.ensure_reply_task(
@@ -8326,7 +8397,10 @@ def test_compacted_reply_input_revised_card_starts_new_exact_generation(tmp_path
         conversation_id="cid-card", conversation_title="Card", single_chat=False,
         trigger_message_id="msg-card", trigger_create_time="2026-10-10 10:00:00",
         trigger_sender="Sender", trigger_text="First card",
-        trigger_message_json='{"content":"First card"}',
+        trigger_message_json=(
+            '{"content":"First card","scheduled_consumer":'
+            '{"scheduled_task_run_id":1}}'
+        ),
     )
     claimed = store.claim_reply_task(task.id)
     assert claimed is not None
@@ -8336,8 +8410,13 @@ def test_compacted_reply_input_revised_card_starts_new_exact_generation(tmp_path
         conversation_id="cid-card", conversation_title="Card", single_chat=False,
         trigger_message_id="msg-card", trigger_create_time="2026-10-10 10:00:00",
         trigger_sender="Sender", trigger_text="First card",
-        trigger_message_json='{"content":"First card"}',
+        trigger_message_json=(
+            '{"content":"First card","scheduled_consumer":'
+            '{"scheduled_task_run_id":2}}'
+        ),
     )
+    assert store.get_reply_task(task.id).input_compacted
+    assert len(store.list_reply_task_inputs(task.id)) == 1
     assert store.requeue_terminal_reply_task_for_revised_trigger(
         conversation_id="cid-card", conversation_title="Card", single_chat=False,
         trigger_message_id="msg-card", trigger_create_time="2026-10-10 10:01:00",

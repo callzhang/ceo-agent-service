@@ -72,3 +72,15 @@ The isolated candidate compacts 9,080 work inputs, 7,216 settled reply tasks, 7,
 ## Done email classification input provenance (2026-10-10)
 
 Completion compacts only done `email_agent_classification_tasks.input_json` in the existing owner/generation transaction. The original SHA-256/bytes and immutable canonical digest (excluding scheduled_consumer exactly as before), stable identity, provider locator, configuration version, redacted unsubscribe candidates and scheduled configuration/Skill references remain. Equal rediscovery does not reinflate the body; changed immutable input still raises the existing conflict. Pending/running/failed remain exact. Classification results and model_text are untouched. Historical compaction is explicit and idempotent, never an initialization sweep. The full focused email task adapter and storage maintenance files passed 120 tests; copy/live acceptance follows separately.
+
+
+## Schema migration timestamp preservation (2026-10-10)
+
+Expanding copy verification to all 149 application tables found that the pre-existing business object mapping migration deleted/reinserted every mapping, resetting 7,058 unchanged rows' created/updated timestamps on this schema upgrade. It now reconciles the same latest-task binding while leaving unchanged rows intact. Forced-old-schema regressions for unchanged row/timestamps, latest task selection and OA aliasing passed (3 tests). Final copy/live acceptance verifies timestamps, rather than excluding them from comparison.
+
+
+## Final completed-input copy acceptance (2026-10-10)
+
+The final candidate is 409,423,872 bytes versus a fresh 603,500,544-byte live backup (32.2% smaller). It compacts 9,080 work inputs, 7,216 settled reply tasks / 7,300 input versions / 14,460 Attempt input texts, and 1,347 completed email classification inputs. Net removed logical input/provenance bytes: work 90,961,981, reply 76,063,554, email 9,921,097. Repeating all three maintenance functions changes zero rows. Final maintenance, repeat checks and VACUUM took 7.87 seconds (work 1.63, reply 1.50, email 0.44 and VACUUM 3.36 seconds); a preceding copy took 34.67 seconds, so this is not a guaranteed timing bound.
+
+All 149 application table counts and original preserved columns compare exactly, including business mapping timestamps, action receipts and required source records. Each removed original SHA-256/byte count verifies exactly; active input bodies stay exact. The schema-version stamp is the intended migration metadata change, and 11 old blank Attempt native-session references are verified backfills from their existing conversation references. All 1,066 unsubscribe terminal readbacks remain identical (486 available, 580 pre-existing validation failures); all 1,066 completed email Attempt display projections, including category and candidate source, also compare exactly with zero projection error. Revised-card regression confirms that a new scan run ID alone cannot reopen the completed task. quick_check is ok and foreign-key findings are unchanged. This remains copy validation before final release/live cleanup.
