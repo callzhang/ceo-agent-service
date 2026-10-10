@@ -7682,6 +7682,7 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
             futures.append(
                 self.executors["meeting"].submit(pending_started.set)
             )
+            captured["stop_requested_at"] = time.monotonic()
             raise StopDispatcher
 
     fake_runtime = SimpleNamespace(
@@ -7704,14 +7705,13 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
         lambda **_: object(),
     )
 
-    started_at = time.monotonic()
     with pytest.raises(StopDispatcher):
         cli.run_agent_cron_dispatcher_loop(
             WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False),
             object(),
             wake_event=threading.Event(),
         )
-    assert time.monotonic() - started_at < 2
+    assert time.monotonic() - captured["stop_requested_at"] < 2
 
     assert not futures[0].done()
     assert futures[1].cancelled()
