@@ -9556,7 +9556,23 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "Final reply (send-ready text)" not in html
 
 
-def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: Path):
+def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: Path, monkeypatch):
+    session_reads = []
+
+    def read_native_events(session_id, **bounds):
+        session_reads.append((session_id, bounds))
+        return [
+            {"tool": "exec_command", "call_id": "call-1",
+             "title": "Search role profile", "relevance": "确认岗位画像是否提到项目经理",
+             "input": '{"cmd":"rg -n 岗位 /Users/principal/Documents/memory/面试"}',
+             "command": "rg -n 岗位 /Users/principal/Documents/memory/面试"},
+            {"tool": "tool_output", "call_id": "call-1",
+             "output": json.dumps({"result": json.dumps(
+                 {"ok": "success", "matches": ["岗位画像.md:1:项目经理"]}, ensure_ascii=False
+             )}, ensure_ascii=False)},
+        ]
+
+    monkeypatch.setattr(audit_web_module, "extract_codex_audit_events_from_session", read_native_events)
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
@@ -9613,6 +9629,7 @@ def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: P
     )
 
     status, html = render_attempt_detail(store, attempt_id)
+    assert session_reads and all(session_id == "session-1" for session_id, _ in session_reads)
 
     assert status == 200
     assert "Tool uses" in html
