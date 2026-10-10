@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- 2026-10-10: Align audit-page fixtures with candidate-bound approvals and
+  native-only process visibility. Keep legacy-body non-exposure, unavailable
+  result, malformed candidate, tool formatting and native range assertions.
+
 - 2026-10-10: Give Task semantic-repair fixtures native records with exact
   original and correction ranges. Reopening reuses the matching result without
   another provider invocation; an invalid reference remains a failed readback.

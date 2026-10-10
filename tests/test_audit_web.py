@@ -63,6 +63,7 @@ from app.store import (
     AutoReplyStore,
 )
 from app.wechat.models import WechatMessage
+from tests.support.candidate_review import complete_synthetic_approval
 
 
 def test_attempt_detail_reply_text_falls_back_to_persisted_sent_reply():
@@ -212,18 +213,7 @@ def _complete_audit_run(
         operation_id=f"audit-consumer-result-{proposal_revision}",
         owner=owner,
     ).run
-    return store.complete_agent_run(
-        audit.id,
-        {
-            "outcome": "executed",
-            "summary": "The reviewed update was published.",
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-        },
-        owner=owner,
-    )
+    return complete_synthetic_approval(store, audit, owner=owner)
 
 
 def _finalize_consumer_result_attempt(
@@ -425,7 +415,7 @@ def test_attempt_detail_marks_malformed_consumer_result_unavailable(tmp_path: Pa
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
     with store._immediate_write_transaction() as db:
         db.execute(
-            "update agent_runs set final_result_json=? where id=?",
+            "update review_candidates set candidate_json=? where consumer_run_id=?",
             ('{"outcome":"proposal","raw_marker":"raw-malformed-marker"}', consumer.id),
         )
 
@@ -648,7 +638,7 @@ def test_orchestrated_attempt_detail_links_consumer_and_execution_sessions(
         )
         store.complete_agent_run(
             consumer.id,
-            {"outcome": "proposal", "summary": f"candidate {revision}"},
+            {**_consumer_result_payload(), "summary": f"candidate {revision}"},
             owner=f"consumer-{revision}",
         )
         audit = store.claim_agent_run(
@@ -666,18 +656,7 @@ def test_orchestrated_attempt_detail_links_consumer_and_execution_sessions(
             f"audit-session-{revision}",
             owner=f"audit-{revision}",
         )
-        terminal_run = store.complete_agent_run(
-            audit.id,
-            {
-                "outcome": "executed",
-                "summary": f"audit {revision}",
-                "risk": "low",
-                "confidence": 1.0,
-                "rule_coverage": 1.0,
-                "information_completeness": 1.0,
-            },
-            owner=f"audit-{revision}",
-        )
+        terminal_run = complete_synthetic_approval(store, audit, owner=f"audit-{revision}")
         parent_id = terminal_run.id
 
     assert terminal_run is not None
@@ -7748,16 +7727,9 @@ def test_rule_decision_attention_excludes_superseded_unreviewed_attempt(
         operation_id="audit-later-turn",
         owner="audit-later-turn",
     )
-    store.complete_agent_run(
+    store.fail_agent_run(
         later_audit_claim.run.id,
-        {
-            "outcome": "executed",
-            "summary": "Audit completed a later turn.",
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-        },
+        {"code": "audit_unavailable", "detail": "The question remains unreviewed."},
         owner="audit-later-turn",
     )
     attempt_id = store.finalize_orchestrated_reply_task(
@@ -9395,9 +9367,18 @@ def test_render_attempt_list_shows_missing_documents_info_icon_instead_of_warnin
     assert "data-tooltip=" in html
     assert "title=" not in html
     assert ".attempt-info::after" in html
+    assert audit_web_module.NO_AUDIT_CONTEXT_TOOLTIP in html
+    assert "rg 上下文" not in html
+    attempt = store.get_reply_attempt(1)
+    assert attempt is not None
+    info_html = audit_web_module._attempt_info_icon(
+        attempt.model_copy(
+            update={"audit_tool_events_json": '[{"tool":"exec_command","command":"rg 上下文"}]'}
+        )
+    )
     assert (
         "No audit documents were attached; this answer was generated without document evidence."
-        in html
+        in info_html
     )
 
 
@@ -9702,14 +9683,20 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "查看岗位画像后建议先按A方案走" in html
     assert "Tool uses" in html
     assert '<details class="card collapsible-card">' in html
-    assert html.index("Tool uses") < html.index("面试/岗位画像.md")
-    assert "面试/岗位画像.md" in html
+    assert "原生工具过程不可用" in html
+    assert "面试/岗位画像.md" not in html
+    assert "rg 岗位" not in html
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    tool_html = audit_web_module._audit_tool_uses_card(attempt)
+    assert tool_html.index("Tool uses") < tool_html.index("面试/岗位画像.md")
+    assert "面试/岗位画像.md" in tool_html
     assert "Audit documents" not in html
     assert "Audit tool events" not in html
-    assert html.index("Tool uses") < html.index("rg 岗位")
-    assert "rg 岗位" in html
-    assert "audit-tool-args" in html
-    assert "\n  " in html
+    assert tool_html.index("Tool uses") < tool_html.index("rg 岗位")
+    assert "rg 岗位" in tool_html
+    assert "audit-tool-args" in tool_html
+    assert "\n  " in tool_html
     assert "先按A方案走" in html
     assert "Draft reply (raw Codex reply)" in html
     assert "permission" in html
@@ -9795,8 +9782,17 @@ def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: P
         audit_summary="已查看工具输入输出。",
     )
 
-    status, html = render_attempt_detail(store, attempt_id)
-    assert session_reads and all(session_id == "session-1" for session_id, _ in session_reads)
+    status, page_html = render_attempt_detail(store, attempt_id)
+    assert status == 200
+    assert "原生工具过程不可用" in page_html
+    assert "Search role profile" not in page_html
+    assert "岗位画像.md:1:项目经理" not in page_html
+    assert "面试/岗位画像.md" not in page_html
+    assert session_reads == []
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    html = audit_web_module._audit_tool_uses_card(attempt)
+    assert session_reads == [("session-1", {"start_line": 0, "end_line": None})]
 
     assert status == 200
     assert "Tool uses" in html
@@ -9882,9 +9878,14 @@ def test_render_attempt_detail_unwraps_terminal_wrapped_mcp_json_output(tmp_path
         audit_summary="已写入 memory。",
     )
 
-    status, html = render_attempt_detail(store, attempt_id)
-
+    status, page_html = render_attempt_detail(store, attempt_id)
     assert status == 200
+    assert "原生工具过程不可用" in page_html
+    assert "processing_status" not in page_html
+    assert "稳定业务口径" not in page_html
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    html = audit_web_module._audit_tool_uses_card(attempt)
     assert "1 total · 1 calls · 0 documents" in html
     assert "mcp/json" in html
     assert '"result": "{' not in html
@@ -9918,9 +9919,14 @@ def test_render_attempt_detail_skips_empty_document_args(tmp_path: Path):
         audit_summary="已查看文档。",
     )
 
-    status, html = render_attempt_detail(store, attempt_id)
-
+    status, page_html = render_attempt_detail(store, attempt_id)
     assert status == 200
+    assert "原生工具过程不可用" in page_html
+    assert "03.3_StarBench产品说明" not in page_html
+    assert "https://alidocs.dingtalk.com/i/nodes/doc123" not in page_html
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    html = audit_web_module._audit_tool_uses_card(attempt)
     assert "1 total · 0 calls · 1 documents" in html
     assert "03.3_StarBench产品说明" in html
     assert "提供 StarBench 产品定位。" in html
@@ -9975,9 +9981,14 @@ def test_render_attempt_detail_renders_dws_material_tool_events(tmp_path: Path, 
         audit_summary="已读取 DWS 材料。",
     )
 
-    status, html = render_attempt_detail(store, attempt_id)
-
+    status, page_html = render_attempt_detail(store, attempt_id)
     assert status == 200
+    assert "原生工具过程不可用" in page_html
+    assert command not in page_html
+    assert "OpenAI 合作建议补充版" not in page_html
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    html = audit_web_module._audit_tool_uses_card(attempt)
     assert "Tool uses" in html
     assert "exec_command" in html
     assert "args" in html
@@ -10065,9 +10076,15 @@ def test_render_attempt_detail_renders_dws_material_events_from_codex_session(
         audit_summary="已读取 DWS 材料。",
     )
 
-    status, html = render_attempt_detail(store, attempt_id)
-
+    status, page_html = render_attempt_detail(store, attempt_id)
     assert status == 200
+    assert "原生工具过程不可用" in page_html
+    assert command not in page_html
+    assert "OpenAI 合作建议补充版" not in page_html
+    assert 'href="/codex/session-1"' in page_html
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    html = audit_web_module._audit_tool_uses_card(attempt)
     assert "Tool uses" in html
     assert "exec_command" in html
     assert "args" in html
@@ -10075,6 +10092,20 @@ def test_render_attempt_detail_renders_dws_material_events_from_codex_session(
     assert command in html
     assert "output" in html
     assert "OpenAI 合作建议补充版" in html
+
+    bounded_attempt = attempt.model_copy(
+        update={"codex_transcript_start_line": 1, "codex_transcript_end_line": 2}
+    )
+    bounded_html = audit_web_module._audit_tool_uses_card(bounded_attempt)
+    assert command in bounded_html
+    assert "OpenAI 合作建议补充版" not in bounded_html
+    status, native_html = render_codex_session_detail(
+        attempt.codex_session_id, codex_home=codex_home, store=store
+    )
+    assert status == 200
+    assert str(session_path) in native_html
+    assert command in native_html
+    assert "OpenAI 合作建议补充版" in native_html
 
 
 def test_render_attempt_detail_shows_counterparty_feedback(tmp_path: Path):
