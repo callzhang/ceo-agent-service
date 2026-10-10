@@ -344,7 +344,7 @@ def test_actual_audit_runner_uses_production_review_instructions(setup):
     _store, task, parent, _context, _config, _router = setup
     context = replace(_context, audit_rules="")
     executor = CapturingExecutor(_wire(context.candidate_digest))
-    result = _runner(setup, executor).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+    _runner(setup, executor).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
     command = executor.commands[0]
     setting = next(value for value in command if value.startswith("developer_instructions="))
     actual = json.loads(setting.split("=", 1)[1])
@@ -404,7 +404,7 @@ def test_audit_task_carries_selected_frozen_skill_discovery_on_every_turn(
         })
     })
 
-    result = runner.run(selected_task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+    runner.run(selected_task, context, turn_attempt=0, parent_agent_run_id=parent.id)
 
     assert "ceo-document-review" in executor.prompts[0]
     assert "agent_cli.read_task_skill(name)" in executor.prompts[0]

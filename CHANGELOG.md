@@ -9,6 +9,9 @@
 
 ## Unreleased
 
+- 2026-10-10: Remove unused Audit test result assignments that blocked lint
+  before the shared full suite; preserve runner calls and existing assertions.
+
 - 2026-10-10: Avoid hydrating historical email payloads in terminal unsubscribe
   probes; load full classifications only for missing-receipt terminal tasks and
   retain current-plan guards and failed-task exclusion.
