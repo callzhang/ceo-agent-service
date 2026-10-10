@@ -77,6 +77,10 @@ waiting to acquire a transaction, so it is not automatically write-lock hold
 time. Logs keep call sites and elapsed durations, not SQL parameters or business
 payloads. Transaction behavior and existing error propagation are unchanged.
 
+Worker status summarizes the current `reply_attempts` projection using only
+identity, status, timestamp, and error columns. It does not load full attempt
+payloads such as captured inputs or reply bodies to calculate queue counts.
+
 Runtime-attempt detail reads filter by `agent_run_id` and order by
 `attempt_number`; the partial `idx_agent_runtime_attempts_run` index serves that
 lookup for run-bound attempts. Attempt details batch this indexed lookup across
@@ -1474,15 +1478,13 @@ service and takes its backup before restoring those docs to the current HEAD;
 the ordinary fast-forward then installs the target. Staged edits, other paths,
 or any content mismatch remain a hard local-change refusal.
 
-The Email worker performs full durable-row validation during initialization.
-Audit web lazily creates one shared EmailStore on the first email-detail read
-and performs the same full validation once in that process. Validation selects
-only the fields needed to check durable invariants; it does not materialize
-`email_classifications.model_text` or complete classifier input JSON. This
-keeps the integrity checks while avoiding loading large message bodies into
-Python maps. A failed validation is scoped to that email request and does not
-prevent Audit web from starting. Email detail reads still use fresh
-connections and do not cache record contents.
+The Email worker and Audit web lazily create one shared EmailStore and check
+schema shape during runtime initialization. They do not scan every historical
+email row while the service is starting or serving the first email-detail
+request; those scans took over two minutes on the production database. Explicit
+and offline EmailStore callers retain full durable-row validation by default.
+Email detail reads still use fresh connections and do not cache record
+contents.
 
 ### Public information and native reply recovery
 
