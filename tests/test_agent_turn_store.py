@@ -353,10 +353,18 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
 
         def __call__(self, command, *, on_stdout_line, **kwargs):
             self.commands.append(command)
+            with native_path.open("a") as native:
+                for line in self.stream.splitlines():
+                    if json.loads(line).get("type") == "assistant":
+                        native.write(line + "\n")
             for line in self.stream.splitlines():
                 on_stdout_line(line)
             return ProcessRunResult(0, self.stream, "")
 
+    from app import native_trajectory
+    native_path = tmp_path / "claude-native.jsonl"
+    native_path.touch()
+    monkeypatch.setattr(native_trajectory, "claude_session_path", lambda *a, **k: native_path)
     executor = Executor(stream)
 
     def execute(
@@ -491,10 +499,10 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
         proposal_task.id, proposal_task.execution_generation
     )
     [proposal_attempt] = store.list_agent_runtime_attempts(proposal_run.id)
-    proposal_envelope = json.loads(proposal_attempt.result_envelope_json)
     assert proposal_run.status == "completed"
-    assert proposal_envelope["result_ref"]["agent_run_id"] == proposal_run.id
-    assert "result" not in proposal_envelope
+    assert proposal_attempt.result_envelope_json == ""
+    adopted = store.adopted_candidate_for_consumer_run(proposal_run.id)
+    assert body_marker in adopted["candidate_json"]
     assert body_marker not in proposal_attempt.result_envelope_json
     assert url_marker not in proposal_attempt.result_envelope_json
     assert body_marker in proposal_run.final_result_json
@@ -502,7 +510,7 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
 
     # Sensitive payload policy is covered by runtime contract tests; this case focuses on session ownership.
 
-def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path):
+def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     config = load_runtime_config(
@@ -579,12 +587,19 @@ def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path):
             ),
         )
     )
+    from app import native_trajectory
+    native_path = tmp_path / "claude-native.jsonl"
+    native_path.touch()
+    monkeypatch.setattr(native_trajectory, "claude_session_path", lambda *a, **k: native_path)
     commands: list[list[str]] = []
     submitted_prompts: list[str] = []
+    prompt_snapshots = []
 
     def executor(command, *, prompt, on_stdout_line, **kwargs):
         commands.append(command)
         submitted_prompts.append(prompt)
+        prompt_snapshots[:] = [event for event in native_trajectory.live_events(str(store.path.resolve()), claim.run.id)
+                               if event.get('type') == 'runtime.prompt']
         if command[0] != "claude-test":
             return ProcessRunResult(
                 1,
@@ -592,6 +607,10 @@ def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path):
                 "unexpected status 401 Unauthorized: missing bearer or basic "
                 "authentication /v1/responses",
             )
+        with native_path.open("a") as native:
+            for line in claude_stream.splitlines():
+                if json.loads(line).get("type") == "assistant":
+                    native.write(line + "\n")
         for line in claude_stream.splitlines():
             on_stdout_line(line)
         return ProcessRunResult(0, claude_stream, "")
@@ -642,7 +661,8 @@ def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path):
     ]
     assert submitted_prompts[:2] == ["Read-only decision", "Read-only decision"]
     saved_run = store.get_agent_run(claim.run.id)
-    prompt_snapshots = [event for event in saved_run.tool_events if event.get("type") == "runtime.prompt"]
+    assert native_trajectory.live_events(str(store.path.resolve()), claim.run.id) is None
+    assert not any(event.get("type") == "runtime.prompt" for event in saved_run.tool_events)
     assert [event["runtime_attempt_id"] for event in prompt_snapshots] == [attempt.id for attempt in attempts]
     assert [event["route_name"] for event in prompt_snapshots] == [attempt.route_name for attempt in attempts]
     claude_input = prompt_snapshots[2]
@@ -1021,7 +1041,9 @@ def test_system_message_receipt_preserves_readback_for_ledger_projection(tmp_pat
     assert receipt is not None
     assert json.loads(receipt["provider_result_json"])["readback"] == readback
     assert json.loads(sent.send_result_json)["readback"] == readback
-    assert json.loads(store.get_agent_run(run.id).final_result_json)["outcome"] == "approve"
+    # This fixture has no native transcript; the independent provider ledger
+    # still retains its verified message/readback, without fabricating raw output.
+    assert store.get_agent_run(run.id).final_result_json == ""
 
 
 def test_runtime_domain_result_codec_preserves_consumer_action_identity():
@@ -1204,7 +1226,8 @@ def test_runtime_attempt_completion_does_not_treat_provider_events_as_result_evi
     persisted_attempt = store.get_agent_runtime_attempt(attempt.id)
     assert persisted_attempt is not None
     assert persisted_attempt.status == "completed"
-    assert persisted_attempt.result_envelope_json == envelope
+    assert persisted_attempt.result_envelope_json == ""
+    assert persisted_attempt.result_schema_id == schema_id
 
 
 @pytest.mark.parametrize("outcome", ("no_action", "needs_human"))
@@ -1392,7 +1415,12 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
     assert completed_attempt is not None and completed_attempt.status == "completed"
     assert summary not in completed_attempt.result_envelope_json
     assert completed_run is not None and completed_run.status == "completed"
-    assert summary in completed_run.final_result_json
+    assert completed_run.final_result_json == ""
+    adopted = store.adopted_candidate_for_consumer_run(run.id)
+    assert json.loads(adopted["candidate_json"]) == result.model_dump(mode="json")
+    assert summary in adopted["candidate_json"]
+    with store._connect() as db:
+        assert db.execute("select final_result_json from agent_runs where id=?", (run.id,)).fetchone()[0] == ""
     assert store.get_conversation_runtime_session(
         task.conversation_id,
         "claude_api",
@@ -1846,14 +1874,15 @@ def test_provider_event_append_does_not_rescan_history(tmp_path):
     assert sum("from agent_run_events" in statement for statement in normalized) <= 4
 
 
-def test_failed_run_preserves_effect_event_fact(tmp_path):
+def test_failed_run_without_native_does_not_fabricate_effect_event_fact(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     run = _claim_audit(store, _task(store))
     store.append_agent_run_event(run.id, _effect_event(operation_digest="command-digest"), owner="audit")
     store.fail_agent_run(run.id, {"code": "crash_after_write", "retryable": True}, owner="audit")
     persisted = store.get_agent_run(run.id)
     assert persisted is not None and persisted.status == "failed"
-    assert len(persisted.tool_events) == 1
+    assert persisted.tool_events == []
+    assert json.loads(persisted.structured_error_json)["code"] == "crash_after_write"
 
 
 def _create_pre_role_database(path: Path) -> Path:
@@ -1970,7 +1999,7 @@ def _create_pre_role_database(path: Path) -> Path:
     return path
 
 
-def test_agent_run_migration_preserves_events_and_receipts(tmp_path):
+def test_agent_run_migration_preserves_receipts_without_exposing_legacy_events(tmp_path):
     db_path = _create_pre_role_database(tmp_path / "old.sqlite3")
 
     store = AutoReplyStore(db_path)
@@ -1982,7 +2011,7 @@ def test_agent_run_migration_preserves_events_and_receipts(tmp_path):
     assert run.turn_attempt == 0
     assert run.parent_agent_run_id is None
     assert run.operation_id == ""
-    assert run.tool_events == [{"type": "item.completed"}]
+    assert run.tool_events == []
     assert store.foreign_key_violations() == []
     with sqlite3.connect(db_path) as db:
         event = db.execute(

@@ -117,7 +117,11 @@ def _agent_sessions(attempt: Any, agent_runs: list[Any]) -> list[dict[str, Any]]
 
 
 def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
-    from app.codex_history import find_codex_session_path
+    from app.native_trajectory import (
+        _native_records,
+        claude_session_path,
+        find_codex_session_path,
+    )
 
     run_ids = [int(getattr(run, "id", 0) or 0) for run in agent_runs]
     batch_reader = getattr(store, "list_agent_runtime_attempts_for_runs", None)
@@ -131,6 +135,22 @@ def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
         role = _run_role(run)
         for item in attempts_by_run.get(int(getattr(run, "id", 0) or 0), []):
             session_id = str(getattr(item, "session_id", "") or "").strip()
+            runtime_kind = str(getattr(item, "runtime_kind", "") or "")
+            start = int(getattr(item, "transcript_start", 0) or 0)
+            end = int(getattr(item, "transcript_end", 0) or 0)
+            path = (
+                find_codex_session_path(session_id)
+                if runtime_kind == "codex_cli" and session_id else
+                claude_session_path(session_id)
+                if runtime_kind == "claude_cli" and session_id else None
+            )
+            native_available = bool(_native_records(path, start, end))
+            native_reason = (
+                "" if native_available else
+                "friday_artifact_remote" if runtime_kind == "friday_runtime" else
+                "native_session_unavailable" if session_id else
+                "native_session_not_started"
+            )
             result.append(
                 {
                     "role": normalize_display_value(role),
@@ -146,17 +166,17 @@ def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
                         getattr(item, "finished_at", "")
                     ),
                     "session_url": (
-                        f"/codex/{quote(session_id, safe='')}" if session_id else ""
+                        f"/codex/{quote(session_id, safe='')}"
+                        if runtime_kind == "codex_cli" and native_available else ""
                     ),
                     "proposal_revision": int(getattr(run, "proposal_revision", 0) or 0),
                     "turn_attempt": int(getattr(run, "turn_attempt", 0) or 0),
                     "route": normalize_display_value(getattr(item, "route_name", "")),
-                    "runtime": normalize_display_value(getattr(item, "runtime_kind", "")),
+                    "runtime": normalize_display_value(runtime_kind),
                     "credential_mode": normalize_display_value(getattr(item, "credential_mode", "")),
                     "model": normalize_display_value(getattr(item, "model", "")),
-                    "session_available": bool(
-                        session_id and find_codex_session_path(session_id) is not None
-                    ),
+                    "session_available": native_available,
+                    "native_reason": native_reason,
                     "status": normalize_display_value(getattr(item, "status", "")),
                     "run_status": normalize_display_value(run.status),
                     "failure_code": normalize_display_value(getattr(item, "failure_code", "")),
@@ -208,8 +228,8 @@ def _consumer_error_reason(consumer_run: Any | None) -> str:
 
                     return safe_observability_error(value, limit=180)
         return "Consumer 运行失败"
-    if not str(getattr(consumer_run, "final_result_json", "") or "").strip():
-        return "Consumer 未保存最终结果"
+    if not str(getattr(consumer_run, "adopted_result_json", "") or "").strip():
+        return "Consumer 已采用业务结果不可用"
     return "Consumer 结果不符合当前契约"
 
 
@@ -235,7 +255,7 @@ def _consumer_result_payload(
     result = None
     raw_result = ""
     if consumer_run is not None and str(getattr(consumer_run, "status", "") or "") != "failed":
-        raw_result = str(getattr(consumer_run, "final_result_json", "") or "")
+        raw_result = str(getattr(consumer_run, "adopted_result_json", "") or "")
         if raw_result.strip():
             from app.agent_contracts import ConsumerAgentResult
 
@@ -668,7 +688,6 @@ def build_attempt_detail(
         _attempt_action_label_text,
         _attempt_detail_reply_text,
         _attempt_info_tooltip,
-        _audit_tool_uses_for_attempt,
         _feedback_token_for_sent_reply,
         _attempt_reason_text,
         _needs_human_decision_options,
@@ -707,7 +726,15 @@ def build_attempt_detail(
     if reply_task is not None and not agent_runs and hasattr(store, "_connect"):
         with store._connect() as db:
             rows = db.execute(
-                "select * from agent_runs where reply_task_id=? order by id",
+                """select agent_runs.*,
+                          case agent_runs.role
+                            when 'consumer' then candidate.candidate_json
+                            when 'audit' then review.result_json
+                          end as adopted_result_json
+                   from agent_runs
+                   left join review_candidates candidate on candidate.consumer_run_id=agent_runs.id
+                   left join candidate_reviews review on review.audit_run_id=agent_runs.id
+                   where agent_runs.reply_task_id=? order by agent_runs.id""",
                 (reply_task.id,),
             ).fetchall()
             agent_runs = [
@@ -846,16 +873,8 @@ def build_attempt_detail(
         action_pills.append({"label": f"📆 {attempt.calendar_response_status.strip()}", "status": attempt.calendar_response_status})
     if _route_failure_recovery_state(attempt, reply_task):
         action_pills.append({"label": "↻ Recovery", "status": _route_failure_recovery_state(attempt, reply_task)})
-    # The calls a run made are the only readable account of what it did. They
-    # used to be dropped whenever agent runs existed, on the assumption that a
-    # per-role page showed them instead; no such page ever rendered them, so
-    # the process was missing from every agent Attempt. When the runs do have
-    # readable transcripts their calls are carried per role by agent_sessions,
-    # addressed by the run that made them; this field then holds nothing, and
-    # it stays the only source for an Attempt whose transcript is gone.
-    tool_uses = (
-        [] if agent_sessions else json_safe(_audit_tool_uses_for_attempt(attempt))
-    )
+    # Attempt rows are service state; native sessions own tool-call detail.
+    tool_uses: list[dict[str, Any]] = []
     metadata = [
         {"label": "trigger message id", "value": normalize_display_value(attempt.trigger_message_id)},
         {"label": "action", "value": normalize_display_value(attempt.action)},

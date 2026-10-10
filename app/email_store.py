@@ -5304,11 +5304,11 @@ class EmailStore:
     def _migrate_v45_to_v46(
         self, db: sqlite3.Connection, *, replace_version: bool = False
     ) -> None:
-        """Export the newest complete snapshot, then discard duplicate SQL payloads."""
+        """Export each type's newest complete snapshot, then discard SQL payloads."""
         from app.email_training_data import summarize, write_snapshot
 
         summaries: dict[str, str] = {}
-        exported = False
+        exported_versions: set[str] = set()
         for row in db.execute(
             "select snapshot_id from email_training_snapshots where frozen=1 "
             "order by observed_at desc, snapshot_id desc"
@@ -5324,9 +5324,9 @@ class EmailStore:
             summaries[snapshot_id] = json.dumps(
                 summarize(frozen), sort_keys=True, separators=(",", ":")
             )
-            if not exported:
+            if frozen.snapshot_version not in exported_versions:
                 write_snapshot(self.path, frozen)
-                exported = True
+                exported_versions.add(frozen.snapshot_version)
         for name in (
             "trg_email_training_snapshots_immutable_update",
             "trg_email_training_observations_immutable_update",

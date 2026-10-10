@@ -13,7 +13,18 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from app.store import SQLITE_BUSY_TIMEOUT_SECONDS, AutoReplyStore, _utc_store_time
-from app.workbench.native_events import hydrate_events, remember_live_payload, stored_payload
+from app.workbench.native_events import (
+    AGENT_EVENTS,
+    forget_live_turn,
+    friday_refs,
+    hydrate_events,
+    hydrate_friday_turns,
+    hydrate_turn,
+    remember_live_payload,
+    started_tool_event_id,
+    stored_payload,
+    terminal_cached_turn_ids,
+)
 from app.workbench.models import (
     ConfirmationStatus,
     TurnStatus,
@@ -155,6 +166,15 @@ class WorkbenchStore(AutoReplyStore):
     ):
         super().__init__(path, busy_timeout_seconds=busy_timeout_seconds)
         self._reconcile_attachments()
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        terminal_ids: list[str] = []
+        with super()._connect() as db:
+            yield db
+            terminal_ids = terminal_cached_turn_ids(db, self.path)
+        for turn_id in terminal_ids:
+            forget_live_turn(self.path, turn_id)
 
     def create_task(self, *, title: str, runtime_kind: str) -> WorkbenchTask:
         title = title.strip()
@@ -499,7 +519,11 @@ class WorkbenchStore(AutoReplyStore):
             row = db.execute(
                 "select * from workbench_turns where id=?", (turn_id,)
             ).fetchone()
-            return None if row is None else self._turn_from_row(row)
+            turn = None if row is None else hydrate_turn(db, self._turn_from_row(row))
+            refs = friday_refs(db, [turn]) if turn is not None else {}
+        if turn is not None:
+            hydrate_friday_turns([turn], refs)
+        return turn
 
     def list_turns(self, task_id: str) -> list[WorkbenchTurn]:
         with self._connect() as db:
@@ -511,7 +535,10 @@ class WorkbenchStore(AutoReplyStore):
                 """,
                 (task_id,),
             ).fetchall()
-            return [self._turn_from_row(row) for row in rows]
+            turns = [hydrate_turn(db, self._turn_from_row(row)) for row in rows]
+            refs = friday_refs(db, turns)
+        hydrate_friday_turns(turns, refs)
+        return turns
 
     def resume_context_for_executor(
         self,
@@ -721,13 +748,36 @@ class WorkbenchStore(AutoReplyStore):
             raise ValueError("invalid workbench event type")
         payload_json = _json_object_text(payload, field="payload")
         full_payload = json.loads(payload_json)
-        payload_json = _json_object_text(
-            stored_payload(event_type, full_payload), field="payload"
-        )
         _, now_text = _utc_store_time(now)
         with self._connect() as db:
             db.execute("begin immediate")
             self._require_executor_lease(db, turn_id, owner=owner, now_text=now_text)
+            ordinal = 0
+            if event_type == "tool_completed":
+                ordinal = db.execute(
+                    "select count(*)+1 from workbench_events "
+                    "where turn_id=? and event_type='tool_completed'", (turn_id,)
+                ).fetchone()[0]
+                call_id = full_payload.get("tool_call_id")
+                if isinstance(call_id, str):
+                    started_id = started_tool_event_id(self.path, turn_id, call_id)
+                    if started_id is not None:
+                        db.execute(
+                            "update workbench_events set payload_json=? "
+                            "where id=? and turn_id=? and event_type='tool_started'",
+                            (json.dumps({"native_ordinal": ordinal}), started_id, turn_id),
+                        )
+            elif event_type == "text_delta":
+                value = full_payload.get("native_ordinal")
+                ordinal = value if isinstance(value, int) and value > 0 else 1
+            elif event_type in {"thinking_summary", "file_changed"}:
+                ordinal = db.execute(
+                    "select count(*)+1 from workbench_events where turn_id=? and event_type=?",
+                    (turn_id, event_type),
+                ).fetchone()[0]
+            payload_json = _json_object_text(
+                stored_payload(event_type, full_payload, ordinal=ordinal), field="payload"
+            )
             expected_sequence = int(
                 db.execute(
                     """
@@ -755,9 +805,9 @@ class WorkbenchStore(AutoReplyStore):
             if event is None:
                 raise RuntimeError("event insert did not create a row")
             result = self._event_from_row(event)
-        if event_type in {"tool_started", "tool_completed"}:
-            remember_live_payload(self.path, result.id, full_payload)
-            result.payload = full_payload
+            if event_type in AGENT_EVENTS:
+                remember_live_payload(self.path, turn_id, result.id, event_type, full_payload)
+                result.payload = full_payload
         return result
 
     def events_after(
@@ -797,10 +847,15 @@ class WorkbenchStore(AutoReplyStore):
             turn_row = db.execute(
                 "select * from workbench_turns where id=?", (turn_id,)
             ).fetchone()
-            return (
+            turn = None if turn_row is None else hydrate_turn(db, self._turn_from_row(turn_row))
+            refs = friday_refs(db, [turn]) if turn is not None else {}
+            snapshot = (
                 hydrate_events(db, self.path, [self._event_from_row(row) for row in rows]),
-                None if turn_row is None else self._turn_from_row(turn_row),
+                turn,
             )
+        if turn is not None:
+            hydrate_friday_turns([turn], refs)
+        return snapshot
 
     def append_artifact_event(
         self,
@@ -1001,9 +1056,11 @@ class WorkbenchStore(AutoReplyStore):
                 if has_more and turn_rows
                 else None
             )
-            return (
+            turns = [hydrate_turn(db, self._turn_from_row(row)) for row in turn_rows]
+            refs = friday_refs(db, turns)
+            snapshot = (
                 self._task_from_row(task_row),
-                [self._turn_from_row(row) for row in turn_rows],
+                turns,
                 hydrate_events(db, self.path, [self._event_from_row(row) for row in reversed(event_rows)]),
                 [self._attachment_from_row(row) for row in attachment_rows],
                 [self._artifact_from_row(row) for row in artifact_rows],
@@ -1020,6 +1077,8 @@ class WorkbenchStore(AutoReplyStore):
                     "attachments_has_more": attachments_has_more,
                 },
             )
+        hydrate_friday_turns(turns, refs)
+        return snapshot
 
     def get_artifact(self, artifact_id: str) -> WorkbenchArtifact | None:
         with self._connect() as db:
@@ -2011,12 +2070,15 @@ class WorkbenchStore(AutoReplyStore):
                 current=current,
                 target=target_status,
                 now_text=now_text,
-                final_text=final_text,
+                final_text="",
                 error_code=error_code,
                 error_detail=error_detail,
                 clear_lease=True,
             )
-            return self._turn_from_row(self._require_turn(db, turn_id))
+            result = self._turn_from_row(self._require_turn(db, turn_id))
+            if target_status is TurnStatus.COMPLETED:
+                result.final_text = final_text
+        return result
 
     def _recover_expired_turns_in_transaction(
         self, db: sqlite3.Connection, *, now_text: str

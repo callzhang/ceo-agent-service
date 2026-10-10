@@ -42,6 +42,7 @@ from app.friday_runtime_adapter import (
     FridayRuntimeError,
 )
 from app.leak_check import contains_credential, contains_local_runtime_leak
+from app.native_trajectory import read_native_result_stream
 from app.runtime_fallback import plan_runtime_fallback
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.store import (
@@ -377,6 +378,32 @@ class RoutedResultCodec[ResultT]:
         valid = type(value) is int if self._kind == "integer" else type(value) is str
         if not valid:
             raise ValueError(f"result does not match {self._kind} codec")
+
+
+def recover_completed_routed_result(
+    attempt: AgentRuntimeAttempt,
+    parser: Callable[[str], ResultT],
+    codec: RoutedResultCodec[ResultT],
+    *,
+    friday_adapter: FridayRuntimeAdapter | None = None,
+) -> ResultT | None:
+    """Reparse a completed operation from its runtime-owned result."""
+    if attempt.result_schema_id != codec.schema_id:
+        raise ValueError("persisted result schema mismatch")
+    if attempt.runtime_kind == RuntimeKind.FRIDAY_RUNTIME.value:
+        if friday_adapter is None or not attempt.session_id:
+            return None
+        result_text = friday_adapter.read_final_artifact(attempt.session_id.removeprefix("friday_thread:"))
+        raw = _final_message_events(result_text) if result_text else ""
+    else:
+        raw = read_native_result_stream(
+            attempt.runtime_kind, attempt.session_id,
+            attempt.transcript_start, attempt.transcript_end,
+        )
+    if not raw:
+        return None
+    value = parser(raw)
+    return codec.decode(codec.encode(value))
 
 
 _EVIDENCE_SOURCE_REF_KEYS = frozenset({"source", "source_ref"})
@@ -1017,13 +1044,18 @@ class RoutedCodexExecution:
                 raise RoutedCodexExecutionError("runtime_attempt_active")
             if latest.status == "completed":
                 try:
-                    value = result_codec.decode(latest.result_envelope_json)
+                    value = recover_completed_routed_result(
+                        latest, parser, result_codec,
+                        friday_adapter=self._friday_adapter,
+                    )
                 except RoutedResultEnvelopeTooLarge as exc:
                     raise RoutedCodexExecutionError("runtime_result_invalid") from exc
                 except ValueError as exc:
                     raise RoutedCodexExecutionError(
                         "runtime_result_schema_mismatch"
                     ) from exc
+                if value is None:
+                    raise RoutedCodexExecutionError("runtime_result_unavailable")
                 return RoutedCodexExecutionResult(
                     value=value,
                     route_name=latest.route_name,

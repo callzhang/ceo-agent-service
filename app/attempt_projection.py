@@ -76,7 +76,7 @@ def project_attempt_status(
                 return "failed"
             if (
                 classify_stored_needs_human_projection(
-                    getattr(latest_run, "final_result_json", "")
+                    getattr(latest_run, "adopted_result_json", "")
                 )
                 is StoredNeedsHumanProjection.NEEDS_HUMAN
             ):

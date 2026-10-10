@@ -15,7 +15,6 @@ from threading import Barrier, Event, Thread
 import pytest
 
 import app.store as store_module
-from app.scheduled_config_storage import intern_scheduled_config
 from app.store import (
     REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
     AgentRole,
@@ -78,6 +77,52 @@ def _store_without_initialization(path: Path) -> AutoReplyStore:
         f"test_read_snapshot_{id(store)}", default=None
     )
     return store
+
+
+def _write_native_run_events(
+    store: AutoReplyStore,
+    run_id: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    paths: dict[str, Path],
+) -> None:
+    """Materialize a test runtime's observed stream before terminal eviction."""
+    from app import native_trajectory
+
+    events = native_trajectory.live_events(str(store.path.resolve()), run_id) or []
+    records = [{"type": "event_msg", "payload": {"type": "task_started"}}]
+    for index, event in enumerate(events):
+        item = event.get("item")
+        if not isinstance(item, dict):
+            continue
+        native_type = {
+            "command_execution": "CommandExecution",
+            "agent_message": "AgentMessage",
+        }.get(item.get("type"))
+        if native_type is None:
+            continue
+        records.append({
+            "type": "event_msg",
+            "payload": {"type": "item_completed", "item": {
+                **item, "id": item.get("id") or f"item-{index}", "type": native_type,
+            }},
+        })
+    records.append({"type": "event_msg", "payload": {"type": "task_complete"}})
+    session_id = f"test-run-{run_id}"
+    path = tmp_path / f"{session_id}.jsonl"
+    path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    paths[session_id] = path
+    monkeypatch.setattr(
+        native_trajectory,
+        "find_codex_session_path",
+        lambda session_id, **kwargs: paths.get(session_id),
+    )
+    with store._connect() as db:
+        db.execute(
+            "update agent_runs set codex_session_id=?, transcript_start_line=0, "
+            "transcript_end_line=? where id=?",
+            (session_id, len(records), run_id),
+        )
 
 
 def test_prepare_outbound_postfix_reuses_final_body_when_candidate_or_config_changes(
@@ -3138,7 +3183,11 @@ def test_reconcile_failed_audit_requires_verified_delivery_and_all_effects(
         operation_id="", owner="consumer",
     ).run
     action = {"action_identity": "send", "operation": "send", "target": {"user_id": "derek"}}
-    store.complete_agent_run(consumer.id, {"proposal": {"actions": [action]}}, owner="consumer")
+    store.complete_agent_run(
+        consumer.id,
+        {"outcome": "proposal", "proposal": {"actions": [action]}},
+        owner="consumer",
+    )
     audit = store.claim_agent_run(
         task.id, task.execution_generation, role=AgentRole.AUDIT,
         proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id,
@@ -3916,32 +3965,93 @@ def test_pre_run_failure_projection_is_reused_by_later_agent_run(
 
 
 def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ):
+    from app import native_trajectory
+    from app.meeting_alignment_models import MeetingSource
+    from tests.test_meeting_alignment import summary_decision
+
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    decisions = [
+        summary_decision().model_copy(update={"final_message": "先定义上线风险预算与故障面"}),
+        summary_decision().model_copy(update={"final_message": "客服解释口径"}),
+    ]
+    sources = [MeetingSource.model_validate({
+        "meeting_id": f"meeting-{index}", "title": title,
+        "status": "ended", "started_at": "2026-07-14T07:00:00+08:00",
+        "ended_at": "2026-07-14T08:00:00+08:00",
+        "participants": [{"name": "Derek", "user_id": "derek"}],
+        "attendee_evidence": "calendar", "attendee_roster_complete": True,
+        "current_user_id": "derek", "summary": "会议摘要", "transcript": [],
+    }) for index, title in enumerate(("上线评审", "客服话术"))]
 
-    store.upsert_codex_session_search_index(
-        session_id="session-risk-budget",
-        source_type="meeting_alignment",
-        source_id="10",
-        title="上线评审",
-        summary_text="话题：上线范围 风险预算。Derek 认为先定义可接受故障面。",
-        fts_text="上线 上线范围 风险 风险预算 故障 故障面",
-        embedding=[1.0, 0.0],
-    )
-    store.upsert_codex_session_search_index(
-        session_id="session-customer-script",
-        source_type="meeting_alignment",
-        source_id="11",
-        title="客服话术",
-        summary_text="话题：客服解释口径。",
-        fts_text="客服 话术 解释 口径",
-        embedding=[0.0, 1.0],
-    )
+    def native_lines():
+        lines = []
+        for source, decision in zip(sources, decisions):
+            lines.append(json.dumps({"type": "response_item", "payload": {
+                "type": "message", "role": "user", "content": [{
+                    "type": "input_text", "text": "完整会议来源 JSON：\n" + source.model_dump_json()
+                }]
+            }}, ensure_ascii=False))
+            lines.append(json.dumps({"type": "response_item", "payload": {
+                "type": "message", "role": "assistant", "content": [{
+                    "type": "output_text", "text": decision.model_dump_json()
+                }]
+            }}, ensure_ascii=False))
+        return "\n".join(lines) + "\n"
 
+    native = tmp_path / "meetings.jsonl"
+    native.write_text(native_lines())
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *args, **kwargs: native)
+    for index, (session_id, title) in enumerate((
+        ("session-risk-budget", "上线评审"),
+        ("session-customer-script", "客服话术"),
+    )):
+        job_id = store.upsert_meeting_alignment_job(
+            meeting_id=f"meeting-{index}", title=title,
+            source_json='{"minutes_info":{"summary":"数据库旧摘要"}}',
+            participants_json='[{"name":"Derek"}]',
+            ended_at="2026-07-14T08:00:00+08:00",
+            eligible_at="2026-07-14T08:10:00+08:00", status="no_action",
+        )
+        run_id = store.record_meeting_alignment_run(
+            job_id=job_id, codex_session_id=session_id,
+            decision_json=decisions[index].model_dump_json(),
+            audit_summary="private audit", status="ready_to_send", error="",
+            codex_transcript_start_line=index * 2,
+            codex_transcript_end_line=index * 2 + 2,
+        )
+        with store._connect() as db:
+            db.execute(
+                "insert into agent_runtime_attempts "
+                "(workload_kind, workload_key, attempt_number, route_name, runtime_kind, "
+                "credential_mode, model, session_id, status, transcript_start, transcript_end) "
+                "values ('meeting', ?, 1, 'test', 'codex_cli', 'local_oauth', 'test', ?, "
+                "'completed', ?, ?)",
+                (str(run_id), session_id, index * 2, index * 2 + 2),
+            )
+        store.upsert_codex_session_search_index(
+            session_id=session_id, source_type="meeting_alignment",
+            source_id=str(run_id), title=title,
+            summary_text="private summary", fts_text="private token",
+            embedding=[1.0, 0.0],
+        )
+
+    calls = []
+
+    class Embed:
+        model = "test-model-1"
+        base_url = "test://embedding"
+
+        def __call__(self, texts):
+            calls.append(tuple(texts))
+            return [[1.0, 0.0] if "风险" in text else [0.0, 1.0] for text in texts]
+
+    embed = Embed()
     results = store.search_codex_sessions(
-        fts_query="上线 风险",
+        fts_query="上线 OR 风险",
         query_embedding=[1.0, 0.0],
+        embedding_client=embed,
         limit=2,
     )
 
@@ -3951,6 +4061,62 @@ def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
     ]
     assert results[0].embedding_score > results[1].embedding_score
     assert results[0].bm25_score is not None
+    assert "数据库旧摘要" not in results[0].summary_text
+    store.search_codex_sessions(
+        fts_query="上线 OR 风险", query_embedding=[1.0, 0.0],
+        embedding_client=embed, limit=2,
+    )
+    assert len(calls) == 1
+    decisions[0] = decisions[0].model_copy(
+        update={"final_message": "更新的上线风险预算与故障面"}
+    )
+    native.write_text(native_lines())
+    refreshed = store.search_codex_sessions(
+        fts_query="上线 OR 风险", query_embedding=[1.0, 0.0],
+        embedding_client=embed, limit=2,
+    )
+    assert "更新的上线风险预算" in refreshed[0].summary_text
+    assert len(calls) == 2
+    embed.model = "test-model-2"
+    store.search_codex_sessions(
+        fts_query="上线 OR 风险", query_embedding=[1.0, 0.0],
+        embedding_client=embed, limit=2,
+    )
+    assert len(calls) == 3
+    with store._connect() as db:
+        db.execute(
+            "update meeting_alignment_jobs set source_json=? where id=1",
+            ('{"minutes_info":{"summary":"业务补充摘要"}}',),
+        )
+    refreshed_source = store.search_codex_sessions(
+        fts_query="上线 OR 风险", query_embedding=[1.0, 0.0],
+        embedding_client=embed, limit=2,
+    )
+    assert "会议摘要" in refreshed_source[0].summary_text
+    assert "业务补充摘要" not in refreshed_source[0].summary_text
+    assert len(calls) == 3
+    lines = native_lines().splitlines()
+    lines[0] = json.dumps({"type": "event_msg", "payload": {"type": "task_started"}})
+    native.write_text("\n".join(lines) + "\n")
+    missing_source = store.search_codex_sessions(
+        fts_query="上线 OR 风险", query_embedding=[1.0, 0.0],
+        embedding_client=embed, limit=2,
+    )
+    by_session = {item.session_id: item for item in missing_source}
+    assert by_session["session-risk-budget"].summary_text == ""
+    assert by_session["session-risk-budget"].native_available is False
+    assert by_session["session-risk-budget"].native_reason == "native_input_unavailable"
+    assert by_session["session-risk-budget"].embedding_score == 0.0
+    with store._connect() as db:
+        rows = db.execute(
+            "select summary_text, fts_text, embedding_json, embedding_model "
+            "from codex_session_search_index"
+        ).fetchall()
+        assert all(tuple(row) == ("", "", "", "") for row in rows)
+        assert db.execute(
+            "select count(*) from codex_session_search_fts "
+            "where codex_session_search_fts match 'private'"
+        ).fetchone()[0] == 0
 
 
 def test_store_connections_enable_sqlite_concurrency_pragmas(tmp_path: Path):
@@ -5380,7 +5546,7 @@ def test_reviewed_reply_rerun_allows_changed_feedback_to_rotate_generation(
     assert revised_task.execution_generation != first_task.execution_generation
 
 
-def test_reviewed_reply_rerun_preserves_prior_audit_events(tmp_path: Path) -> None:
+def test_reviewed_reply_rerun_keeps_review_metadata_without_process_events(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-history-preserve",
@@ -5411,7 +5577,6 @@ def test_reviewed_reply_rerun_preserves_prior_audit_events(tmp_path: Path) -> No
     attempt = store.get_reply_attempt(attempt_id)
     assert attempt is not None
     assert json.loads(attempt.audit_tool_events_json) == [
-        {"tool": "original_read"},
         {"tool": "audit_review", "result": "queued"},
     ]
 
@@ -5756,7 +5921,11 @@ def test_agent_run_lease_renewal_retries_transient_database_lock(
     assert renewed.lease_expires_at == "2026-07-29 00:25:00"
 
 
-def test_reclaimed_agent_run_rejects_every_stale_owner_mutation(tmp_path: Path):
+def test_reclaimed_agent_run_rejects_every_stale_owner_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    from app import native_trajectory
+
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     first = _claim_audit_run(store,
@@ -5829,27 +5998,52 @@ def test_reclaimed_agent_run_rejects_every_stale_owner_mutation(tmp_path: Path):
         owner="worker-b",
         now="2026-07-29 00:30:02",
     )
+    owned_event = {
+        "type": "item.completed",
+        "item": {
+            "type": "command_execution", "id": "owned", "command": "echo owned",
+            "exit_code": 0, "status": "completed", "aggregated_output": "owned",
+        },
+    }
     store.append_agent_run_event(
         first.run.id,
-        {"type": "item.completed", "call_id": "owned"},
+        owned_event,
         owner="worker-b",
         now="2026-07-29 00:30:02",
+    )
+    native_path = tmp_path / "session-1.jsonl"
+    native_path.write_text("\n".join(json.dumps(record) for record in (
+        {"type": "event_msg", "payload": {"type": "task_started"}},
+        {"type": "event_msg", "payload": {
+            "type": "item_completed",
+            "item": {**owned_event["item"], "type": "CommandExecution"},
+        }},
+        {"type": "event_msg", "payload": {"type": "task_complete"}},
+    )) + "\n")
+    monkeypatch.setattr(
+        native_trajectory, "find_codex_session_path",
+        lambda session_id, **kwargs: native_path if session_id == "session-1" else None,
     )
     renewed = store.renew_agent_run_lease(
         first.run.id,
         owner="worker-b",
         now="2026-07-29 00:31:00",
     )
+    assert store.get_agent_run(first.run.id).tool_events == [owned_event]
     completed = store.complete_agent_run(
         first.run.id,
         {"outcome": "completed", "summary": "owned"},
         owner="worker-b",
+        transcript_end_line=3,
         now="2026-07-29 00:31:01",
     )
 
     assert renewed.lease_owner == "worker-b"
     assert completed.status == "completed"
-    assert [event["call_id"] for event in completed.tool_events] == ["owned"]
+    assert completed.tool_events == [owned_event]
+    assert completed.codex_session_id == "session-1"
+    assert completed.transcript_start_line == 0
+    assert completed.transcript_end_line == 3
 
 
 def test_expired_lease_blocks_writes_until_session_recovery(tmp_path: Path):
@@ -5936,7 +6130,7 @@ def test_expired_lease_blocks_writes_until_session_recovery(tmp_path: Path):
 
 
 
-def test_running_agent_events_are_persisted_incrementally(tmp_path: Path):
+def test_running_agent_events_are_visible_incrementally(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
@@ -5964,7 +6158,7 @@ def test_running_agent_events_are_persisted_incrementally(tmp_path: Path):
 
 
 
-def test_agent_run_events_use_append_only_rows_in_sequence(tmp_path: Path):
+def test_agent_run_events_are_not_copied_to_sqlite(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
@@ -5985,10 +6179,7 @@ def test_agent_run_events_use_append_only_rows_in_sequence(tmp_path: Path):
             for row in db.execute("pragma table_info(agent_runs)")
             if row[1] == "tool_events_json"
         ]
-    assert [(row[0], json.loads(row[1])) for row in rows] == [
-        (1, first),
-        (2, second),
-    ]
+    assert rows == []
     assert second_copy == []
     assert store.get_agent_run(run.id).tool_events == [first, second]
 
@@ -6024,7 +6215,7 @@ def test_append_agent_events_does_not_reparse_prior_json(tmp_path: Path, monkeyp
     assert calls <= 300
 
 
-def test_agent_run_event_migration_backfills_legacy_json_once(tmp_path: Path):
+def test_agent_run_event_migration_discards_legacy_json_copies(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     task_id = _enqueue_universal_reply_task(store)
@@ -6050,15 +6241,14 @@ def test_agent_run_event_migration_backfills_legacy_json_once(tmp_path: Path):
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
     second_load = AutoReplyStore(db_path).get_agent_run(run.id)
 
-    assert first_load.tool_events == legacy_events
-    assert second_load.tool_events == legacy_events
+    assert first_load.tool_events == []
+    assert second_load.tool_events == []
     with sqlite3.connect(db_path) as db:
         assert db.execute(
             "select count(*) from agent_run_events where agent_run_id=?",
             (run.id,),
-        ).fetchone()[0] == 2
-        # The legacy column is drained and then removed, so agent_run_events is
-        # the only place the trajectory lives afterwards.
+        ).fetchone()[0] == 0
+        # Legacy copies are removed; native transcripts are the trajectory source.
         assert not any(
             row[1] == "tool_events_json"
             for row in db.execute("pragma table_info(agent_runs)")
@@ -6203,6 +6393,7 @@ def test_completed_message_delivery_persists_action_result_and_history_atomicall
 )
 def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     payload_field: str,
     reply_text: str,
     sent_text: str,
@@ -6210,6 +6401,7 @@ def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
     receipt_message_id: bool,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    native_paths: dict[str, Path] = {}
     task_id = _enqueue_universal_reply_task(store)
     task = store.get_reply_task(task_id)
     assert task is not None
@@ -6300,6 +6492,7 @@ def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
             },
             owner="audit",
         )
+    _write_native_run_events(store, send_run.id, tmp_path, monkeypatch, native_paths)
     store.fail_agent_run(send_run.id, {"code": "result_invalid"}, owner="audit")
     readback_run = store.claim_agent_run(
         task.id,
@@ -6360,6 +6553,7 @@ def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
         },
         owner="audit-readback",
     )
+    _write_native_run_events(store, readback_run.id, tmp_path, monkeypatch, native_paths)
     store.fail_agent_run(
         readback_run.id, {"code": "provider_receipt_missing"}, owner="audit-readback"
     )
@@ -6409,8 +6603,10 @@ def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
 
 def test_reconcile_failed_agent_message_accepts_send_and_readback_in_same_run(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    native_paths: dict[str, Path] = {}
     task_id = _enqueue_universal_reply_task(store)
     task = store.get_reply_task(task_id)
     assert task is not None
@@ -6493,6 +6689,7 @@ def test_reconcile_failed_agent_message_accepts_send_and_readback_in_same_run(
         },
         owner="audit",
     )
+    _write_native_run_events(store, audit.id, tmp_path, monkeypatch, native_paths)
     store.fail_agent_run(audit.id, {"code": "result_invalid"}, owner="audit")
     attempt_id = store.record_reply_attempt(
         conversation_id=task.conversation_id,
@@ -6779,23 +6976,36 @@ def test_agent_run_event_rejects_non_json_object_values(tmp_path: Path):
 
 def test_agent_run_terminal_transitions_are_strict_and_exactly_idempotent(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
+    from app import native_trajectory
+
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
     final_result = {"outcome": "completed", "summary": "sent"}
+    native_path = tmp_path / "terminal-session.jsonl"
+    native_path.write_text(json.dumps({
+        "type": "response_item",
+        "payload": {"type": "message", "role": "assistant", "content": [
+            {"type": "output_text", "text": json.dumps(final_result)}
+        ]},
+    }) + "\n")
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *a, **k: native_path)
+    with store._connect() as db:
+        db.execute("update agent_runs set codex_session_id='terminal-session' where id=?", (run.id,))
 
     completed = store.complete_agent_run(
         run.id,
         final_result,
         owner="worker-1",
-        transcript_end_line=12,
+        transcript_end_line=1,
     )
     repeated = store.complete_agent_run(
         run.id,
         final_result,
         owner="worker-1",
-        transcript_end_line=12,
+        transcript_end_line=1,
     )
 
     assert completed.status == "completed"
@@ -6807,7 +7017,7 @@ def test_agent_run_terminal_transitions_are_strict_and_exactly_idempotent(
             run.id,
             {"outcome": "completed", "summary": "different"},
             owner="worker-1",
-                transcript_end_line=12,
+            transcript_end_line=1,
         )
     with pytest.raises(ValueError, match="transition from completed"):
         store.fail_agent_run(
@@ -8776,13 +8986,7 @@ def test_reply_attempt_tracing_and_feedback_round_trip(tmp_path: Path):
     assert attempt.trigger_message_id == "msg-1"
     assert attempt.action == "send_reply"
     assert attempt.audit_documents_json == '[{"path":"面试/岗位画像.md"}]'
-    assert json.loads(attempt.audit_tool_events_json) == [{"tool": "exec_command"}]
-    with store._connect() as db:
-        persisted_events = db.execute(
-            "select audit_tool_events_json from reply_attempts where id=?",
-            (attempt_id,),
-        ).fetchone()[0]
-    assert "rg 岗位" not in persisted_events
+    assert attempt.audit_tool_events_json == '[]'
     assert attempt.audit_summary == "查看岗位画像后判断需要先收敛问题。"
     assert attempt.codex_session_id == "session-1"
     assert attempt.codex_transcript_start_line == 2
@@ -8905,7 +9109,7 @@ def test_record_reply_attempt_for_trigger_reuses_existing_attempt_id(
     assert attempt.draft_reply_text == "先按A方案走"
     assert attempt.codex_session_id == "session-1"
     assert attempt.audit_documents_json == '[{"title":"chat"}]'
-    assert attempt.audit_tool_events_json == '[{"tool":"dws"}]'
+    assert attempt.audit_tool_events_json == '[]'
     assert attempt.audit_summary == "已重新判断，需要回复。"
     assert attempt.final_reply_text == ""
     assert attempt.send_status == "pending"
@@ -9603,6 +9807,8 @@ def test_scheduled_service_incident_resolution_uses_task_history_index(tmp_path,
 
 
 def test_resolve_errors_recovered_by_scheduled_service_command(tmp_path: Path):
+    from app.scheduled_config_storage import intern_scheduled_config
+    from app.agent_cron.models import ScheduledTaskSnapshot
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = store.create_scheduled_task(
         name="Check DingTalk meetings",
@@ -9623,6 +9829,7 @@ def test_resolve_errors_recovered_by_scheduled_service_command(tmp_path: Path):
         "other task still failing",
     )
     with store._connect() as db:
+        snapshot_id = intern_scheduled_config(db, ScheduledTaskSnapshot.from_task(task).to_json())
         db.execute(
             """
             update errors
@@ -9643,7 +9850,7 @@ def test_resolve_errors_recovered_by_scheduled_service_command(tmp_path: Path):
                     '2026-09-10 12:01:00'
                 )
             """,
-            (task.id, intern_scheduled_config(db, "{}")),
+            (task.id, snapshot_id),
         )
 
     assert store.resolve_errors_recovered_by_scheduled_service_command() == 1
@@ -9659,6 +9866,8 @@ def test_resolve_errors_recovered_by_scheduled_service_command(tmp_path: Path):
 
 
 def test_resolve_errors_recovered_by_scheduled_reply_task(tmp_path: Path):
+    from app.scheduled_config_storage import intern_scheduled_config
+    from app.agent_cron.models import ScheduledTaskSnapshot
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = store.create_scheduled_task(
         name="Sync meeting notes",
@@ -9678,6 +9887,7 @@ def test_resolve_errors_recovered_by_scheduled_reply_task(tmp_path: Path):
         channel="scheduled",
     )
     with store._connect() as db:
+        snapshot_id = intern_scheduled_config(db, ScheduledTaskSnapshot.from_task(task).to_json())
         reply_task_id = db.execute(
             "select id from reply_tasks where trigger_message_id='event-success'"
         ).fetchone()[0]
@@ -9694,7 +9904,7 @@ def test_resolve_errors_recovered_by_scheduled_reply_task(tmp_path: Path):
                       '2026-09-18T12:00:00Z', 'dispatched', ?, 'reply_task', ?,
                       '2026-09-18 12:00:32')
             """,
-            (task.id, intern_scheduled_config(db, "{}"), str(reply_task_id)),
+            (task.id, snapshot_id, str(reply_task_id)),
         )
     store.record_error(
         f"scheduled-task:{task.id}",
@@ -11169,12 +11379,7 @@ def test_terminal_work_summary_input_resolves_its_own_error(tmp_path: Path):
 
 
 def test_reopening_drops_the_second_copy_of_a_run_trajectory(tmp_path: Path):
-    """agent_run_events is the only place a run's trajectory is kept.
-
-    The column held the same events as one JSON array. Two stores of one truth
-    is how they come to disagree, and nothing tells a reader which copy is
-    stale, so the column goes once its contents are in the table.
-    """
+    """Reopening removes retired SQLite payloads without reviving their contents."""
     db_path = tmp_path / "legacy-tool-events-column.sqlite3"
     store = AutoReplyStore(db_path)
     task_id = _enqueue_universal_reply_task(store)
@@ -11204,13 +11409,13 @@ def test_reopening_drops_the_second_copy_of_a_run_trajectory(tmp_path: Path):
     assert "tool_events_json" not in columns
     loaded = reopened.get_agent_run(run.id)
     assert loaded is not None
-    assert [event["call_id"] for event in loaded.tool_events] == ["legacy-1"]
+    assert loaded.tool_events == []
 
 
-def test_dropping_the_trajectory_column_refuses_to_discard_unmigrated_events(
+def test_dropping_the_trajectory_column_requires_clearing_retired_payloads(
     tmp_path: Path,
 ):
-    """Dropping unread trajectory would be data loss, not a migration."""
+    """The column cannot be dropped while it still contains retired payloads."""
     store = AutoReplyStore(tmp_path / "undrained-tool-events.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
@@ -11224,10 +11429,16 @@ def test_dropping_the_trajectory_column_refuses_to_discard_unmigrated_events(
             (json.dumps([{"type": "item.completed", "call_id": "kept"}]), run.id),
         )
 
-        with pytest.raises(ValueError, match="not migrated"):
+        with pytest.raises(ValueError, match="not cleared"):
             store._drop_agent_run_tool_events_column(db)
 
         assert any(
+            row["name"] == "tool_events_json"
+            for row in db.execute("pragma table_info(agent_runs)")
+        )
+        store._migrate_agent_run_events(db)
+        store._drop_agent_run_tool_events_column(db)
+        assert not any(
             row["name"] == "tool_events_json"
             for row in db.execute("pragma table_info(agent_runs)")
         )
@@ -12034,7 +12245,8 @@ def test_superseded_failed_weekly_okr_job_is_completed(tmp_path: Path, failure: 
 
 
 def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_path: Path):
-    """Migration currency checks stop at the first stale distinct config."""
+    """The check runs in every subprocess; it must not scan the whole table."""
+    from app.scheduled_config_storage import intern_scheduled_config
     store = AutoReplyStore(tmp_path / "snapshots.sqlite3")
     task = store.create_scheduled_task(
         name="消息检查",

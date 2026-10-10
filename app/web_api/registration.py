@@ -994,16 +994,9 @@ def register_console_routes(
             if conversation_id
             else ""
         )
-        try:
-            # Reuse the legacy trace normalizer so the React DTO preserves the
-            # readable title/metadata/args/output structure and call pairing.
-            from app.audit_web import _audit_event_uses_for_attempt
+        from app.audit_web import _audit_event_uses_for_attempt
 
-            tool_uses = _audit_event_uses_for_attempt(run)
-        except Exception:
-            # Old or partially persisted runs may not have a readable Codex
-            # transcript. Their stored event payload is still useful evidence.
-            tool_uses = stored_json(run.audit_tool_events_json, [])
+        tool_uses = _audit_event_uses_for_attempt(run)
         return item_envelope({
             "id": run.id,
             "title": job.title,
@@ -1038,6 +1031,10 @@ def register_console_routes(
             "generated_reply": {"title": "生成回复", "text": job.final_message or "No generated reply recorded."},
             "audit_summary": run.audit_summary,
             "tool_uses": tool_uses,
+            "native_available": run.native_available,
+            "native_reason": run.native_reason,
+            "tool_events_available": run.tool_events_available,
+            "tool_events_reason": run.tool_events_reason,
             "runtime": {
                 "run_status": run.status,
                 "job_status": job.status,

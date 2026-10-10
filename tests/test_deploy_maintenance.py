@@ -3,6 +3,39 @@ import pytest
 from app.deploy import deploy
 
 
+@pytest.mark.parametrize('missing', [False, True])
+def test_native_tool_or_missing_source_blocks_maintenance(tmp_path, monkeypatch, missing):
+    from app.deploy_maintenance import check_maintenance
+    from app.email_store import EmailStore
+    from app.repository_updater import UpgradePreconditionError
+    from tests.test_reply_task_deferral import native_events, ready
+    path, task_id, _ = ready(tmp_path)
+    EmailStore(path)
+    native_events(path, task_id, monkeypatch, {'type': 'UnknownTool'}, missing=missing)
+    with pytest.raises(UpgradePreconditionError, match='native event source unavailable' if missing else 'tool or unknown event'):
+        check_maintenance(path, (task_id,))
+
+
+def test_unknown_native_event_without_item_is_not_proven_empty(tmp_path, monkeypatch):
+    import json
+    from app.deploy_maintenance import check_maintenance
+    from app.email_store import EmailStore
+    from app.reply_task_deferral import preview_deferral
+    from app.repository_updater import UpgradePreconditionError
+    from tests.test_reply_task_deferral import NOW, native_events, ready
+
+    path, task_id, _ = ready(tmp_path)
+    EmailStore(path)
+    native_events(path, task_id, monkeypatch, {'type': 'AgentMessage'})
+    native = tmp_path / 'native.jsonl'
+    records = [json.loads(line) for line in native.read_text().splitlines()]
+    records[1] = {'type': 'event_msg', 'payload': {'type': 'unknown_provider_effect'}}
+    native.write_text('\n'.join(json.dumps(record) for record in records))
+    with pytest.raises(UpgradePreconditionError, match='tool or unknown event'):
+        check_maintenance(path, (task_id,))
+    assert 'native_event_source_unavailable' in preview_deferral(path, task_id, now=NOW)['blockers']
+
+
 def test_maintenance_deploy_stops_and_recovers_before_quiet(tmp_path, monkeypatch):
     from tests.test_repository_updater import fixture_repo, StateStore
     from app import deploy as module
@@ -41,20 +74,21 @@ def test_maintenance_precondition_failure_restarts_old_service(tmp_path, monkeyp
     assert calls == ['stop', 'start']
 
 
-def test_real_interrupted_recovery_preserves_identity_and_verified_backup(tmp_path):
+def test_real_interrupted_recovery_preserves_identity_and_verified_backup(tmp_path, monkeypatch):
     import json
     import sqlite3
     from app.deploy_maintenance import check_maintenance, prepare_maintenance
     from app.database_backup import backup_is_complete
-    from tests.test_reply_task_deferral import ready
+    from tests.test_reply_task_deferral import native_events, ready
     path, task_id, _ = ready(tmp_path)
     from app.email_store import EmailStore
     EmailStore(path)
+    native_end = native_events(path, task_id, monkeypatch, {'type': 'AgentMessage', 'text': 'preparing'})
     with sqlite3.connect(path) as db:
         db.execute("update reply_tasks set status='processing' where id=?", (task_id,))
         db.execute("update agent_runs set status='running',completed_at='' where reply_task_id=?", (task_id,))
         run_id = db.execute('select id from agent_runs where reply_task_id=?', (task_id,)).fetchone()[0]
-        db.execute("insert into agent_runtime_attempts(agent_run_id,workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status) values (?,'agent_run',?,1,'test','codex_cli','oauth','test','running')", (run_id,str(run_id)))
+        db.execute("insert into agent_runtime_attempts(agent_run_id,workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status,session_id,transcript_end) values (?,'agent_run',?,1,'test','codex_cli','oauth','test','running','native-test',?)", (run_id,str(run_id),native_end))
         before = db.execute('select execution_generation,input_version,business_object_key,attempts from reply_tasks where id=?', (task_id,)).fetchone()
     prepare_maintenance(path, (task_id,), 'test-maintenance', check_maintenance(path, (task_id,)))
     with sqlite3.connect(path) as db:
@@ -72,11 +106,11 @@ def test_real_interrupted_recovery_preserves_identity_and_verified_backup(tmp_pa
 
 
 @pytest.mark.parametrize('effect', ['receipt', 'unknown_tool', 'other_task'])
-def test_post_stop_race_rejected_before_recovery_or_backup(tmp_path, effect):
+def test_post_stop_race_rejected_before_recovery_or_backup(tmp_path, monkeypatch, effect):
     import sqlite3
     from app.deploy_maintenance import check_maintenance, prepare_maintenance
     from app.repository_updater import UpgradePreconditionError
-    from tests.test_reply_task_deferral import ready
+    from tests.test_reply_task_deferral import native_events, ready
     path, task_id, _ = ready(tmp_path)
     from app.email_store import EmailStore
     EmailStore(path)
@@ -85,8 +119,7 @@ def test_post_stop_race_rejected_before_recovery_or_backup(tmp_path, effect):
         if effect == 'receipt':
             db.execute("insert into sent_replies(conversation_id,trigger_message_id,reply_text) values ('cid-deferral','mid-deferral','sent')")
         elif effect == 'unknown_tool':
-            run = db.execute('select id from agent_runs where reply_task_id=?', (task_id,)).fetchone()[0]
-            db.execute("insert into agent_run_events(agent_run_id,sequence,event_json) values (?,999,?)", (run, '{"type":"item.completed","item":{"type":"command_execution"}}'))
+            native_events(path, task_id, monkeypatch, {'type': 'CommandExecution'})
         else:
             db.execute("update reply_tasks set status='processing' where id=?", (task_id,))
     allowed = () if effect == 'other_task' else (task_id,)

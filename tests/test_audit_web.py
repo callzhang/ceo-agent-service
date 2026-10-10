@@ -870,6 +870,8 @@ def _seed_confirmed_approval_attempt(
         },
         owner=f"approval-consumer-{suffix}",
     )
+    candidate = store.adopted_candidate_for_consumer_run(consumer.id)
+    assert candidate is not None
     audit = store.claim_agent_run(
         task.id,
         task.execution_generation,
@@ -880,9 +882,7 @@ def _seed_confirmed_approval_attempt(
         operation_id=operation_id,
         owner=f"approval-audit-{suffix}",
     ).run
-    audit = store.complete_agent_run(
-        audit.id,
-        {
+    historical_result = {
             "outcome": "executed",
             "risk": "low",
             "confidence": 1.0,
@@ -903,9 +903,19 @@ def _seed_confirmed_approval_attempt(
                 "retryable": False,
                 "authorization_required": False,
             },
-        },
+        }
+    audit = store.complete_agent_run(
+        audit.id,
+        {"outcome": "approve", "candidate_digest": candidate["candidate_digest"]},
         owner=f"approval-audit-{suffix}",
     )
+    # Simulate a grandfathered, service-adopted historical Audit review. Its
+    # completed native wire body is separate from the business review row.
+    with store._connect() as db:
+        db.execute(
+            "update candidate_reviews set result_json=? where audit_run_id=?",
+            (json.dumps(historical_result), audit.id),
+        )
     return store.finalize_orchestrated_reply_task(
         task_id=task.id,
         expected_execution_generation=task.execution_generation,
@@ -981,6 +991,50 @@ def seed_meeting_attempt(store: AutoReplyStore) -> int:
             ensure_ascii=False,
         ),
     )
+
+
+def _seed_native_meeting_search(
+    store: AutoReplyStore, run_id: int, tmp_path: Path, monkeypatch,
+) -> Path:
+    from app import native_trajectory
+    from app.meeting_alignment_models import MeetingSource
+    from tests.test_meeting_alignment import summary_decision
+
+    source = MeetingSource.model_validate({
+        "meeting_id": "minutes-history-1",
+        "title": "项目评审会",
+        "status": "ended",
+        "started_at": "2026-07-14T09:00:00+08:00",
+        "ended_at": "2026-07-14T09:50:00+08:00",
+        "participants": [],
+        "attendee_evidence": "calendar",
+        "attendee_roster_complete": True,
+        "current_user_id": "derek",
+        "summary": "历史相似会议：上线范围、风险预算、故障面。",
+        "transcript": [],
+    })
+    native = tmp_path / "meeting-search.jsonl"
+    native.write_text("\n".join((
+        json.dumps({"type": "event_msg", "payload": {
+            "type": "user_message", "message": source.model_dump_json(),
+        }}, ensure_ascii=False),
+        json.dumps({"type": "response_item", "payload": {
+            "type": "message", "role": "assistant", "content": [{
+                "type": "output_text", "text": summary_decision().model_dump_json(),
+            }],
+        }}, ensure_ascii=False),
+    )) + "\n")
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *args, **kwargs: native)
+    with store._connect() as db:
+        db.execute(
+            "insert into agent_runtime_attempts "
+            "(workload_kind, workload_key, attempt_number, route_name, runtime_kind, "
+            "credential_mode, model, session_id, status, transcript_start, transcript_end) "
+            "values ('meeting', ?, 1, 'test', 'codex_cli', 'local_oauth', 'test', "
+            "'meeting-session-history-1', 'completed', 0, 2)",
+            (str(run_id),),
+        )
+    return native
 
 
 def test_format_local_time_converts_utc_sqlite_timestamp():
@@ -2034,10 +2088,11 @@ def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path, mon
     assert "Decision summary" not in detail.text
     assert "Message and delivery" not in detail.text
     assert "Tool uses" in detail.text
-    assert "Read meeting memory" in detail.text
-    assert "确认会议相关历史判断" in detail.text
-    assert "rg 上线范围 /Users/principal/Documents/memory" in detail.text
-    assert "memory.md:1:上线范围需要先确认风险预算" in detail.text
+    # This fixture has an adopted delivery and only a copied legacy tool list.
+    # The business result remains visible; copied process events cannot be shown.
+    assert "会后对齐：@Avery 请确认风险预算。" in detail.text
+    assert "原生工具过程不可用" in detail.text
+    assert "Read meeting memory" not in detail.text
     assert "Mention resolution" in detail.text
     assert "/codex/meeting-session-history-1" in detail.text
 
@@ -2101,9 +2156,10 @@ def test_meeting_attempt_detail_keeps_ready_run_sent_after_later_run(tmp_path: P
     assert '<div class="attempt-detail-value">failed</div>' not in response.text
 
 
-def test_history_search_shows_similar_codex_sessions(tmp_path: Path):
+def test_history_search_shows_similar_codex_sessions(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     run_id = seed_meeting_attempt(store)
+    native = _seed_native_meeting_search(store, run_id, tmp_path, monkeypatch)
     store.upsert_codex_session_search_index(
         session_id="meeting-session-history-1",
         source_type="meeting_alignment",
@@ -2113,6 +2169,13 @@ def test_history_search_shows_similar_codex_sessions(tmp_path: Path):
         fts_text="历史 相似 会议 上线 范围 风险 预算 故障 面",
         embedding=[1.0, 0.0],
     )
+    native_search = store.search_codex_sessions
+
+    def search_without_snapshot(**kwargs):
+        assert store._read_snapshot_connection.get() is None
+        return native_search(**kwargs)
+
+    monkeypatch.setattr(store, "search_codex_sessions", search_without_snapshot)
 
     html = render_attempt_list(
         store,
@@ -2126,8 +2189,12 @@ def test_history_search_shows_similar_codex_sessions(tmp_path: Path):
     assert "/codex/meeting-session-history-1" in html
     assert f"/meeting-attempts/{run_id}" in html
 
+    native.unlink()
+    unavailable = render_attempt_list(store, query="历史上线范围对齐")
+    assert "仅标题可检索；原生过程不可用。" in unavailable
 
-def test_history_object_dropdown_controls_results(tmp_path: Path):
+
+def test_history_object_dropdown_controls_results(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_reply_attempt(
         conversation_id="cid-history",
@@ -2177,6 +2244,7 @@ def test_history_object_dropdown_controls_results(tmp_path: Path):
         available_at="2026-07-15 09:00:00",
     )
     run_id = seed_meeting_attempt(store)
+    _seed_native_meeting_search(store, run_id, tmp_path, monkeypatch)
     store.upsert_codex_session_search_index(
         session_id="meeting-session-history-1",
         source_type="meeting_alignment",
@@ -3954,6 +4022,32 @@ def test_worker_status_reads_component_changes_on_next_request(tmp_path):
         "agent-cron-scheduler", state="degraded", latest_error="after"
     )
     assert scheduler_error() == "after"
+
+
+def test_system_health_reports_native_delivery_coverage_without_changing_state(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    monkeypatch.setattr(
+        audit_web_module,
+        "scan_hourly_quality",
+        lambda _path: SimpleNamespace(
+            violations=(),
+            checked_at="2026-10-10T00:00:00+00:00",
+            native_delivery_coverage={"checked": 2, "unavailable": 3},
+        ),
+    )
+
+    health = audit_web_module._system_health_snapshot(
+        store,
+        {"ok": True},
+        meeting_memory_health={"delayed": 0, "ghost_runtime_attempts": 0},
+    )
+
+    assert health["state"] == "healthy"
+    assert health["violations"] == 0
+    assert health["native_delivery_coverage"] == {"checked": 2, "unavailable": 3}
+    assert "unavailable: 3" in health["detail"]
 
 
 def test_tutorial_check_route_records_real_step_status(tmp_path: Path):
@@ -7349,6 +7443,59 @@ def test_history_failed_item_shows_reason_effect_and_actions_inline(tmp_path: Pa
     assert "重试会沿用同一任务，不会创建新的业务事项" in html
     assert '<span class="attempt-label">答</span>' not in html
     assert '<span class="attempt-label">结果</span>' not in html
+
+
+def test_failed_history_cards_batch_status_without_reading_native_process(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from app import native_trajectory
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    run_ids = []
+    for index, status in enumerate(("failed", "needs_human"), start=1):
+        store.enqueue_reply_task(
+            conversation_id=f"history-status-{index}",
+            conversation_title=f"History status {index}", single_chat=False,
+            trigger_message_id=f"message-{index}",
+            trigger_create_time="2026-10-10 00:00:00",
+            trigger_sender="Applicant", trigger_text="Review this request",
+        )
+        task = store.claim_reply_tasks(1)[0]
+        run = store.claim_agent_run(
+            task.id, task.execution_generation, role=AgentRole.CONSUMER,
+            proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+            operation_id="", owner=f"consumer-{index}",
+        ).run
+        store.fail_agent_run(run.id, {"code": "source_unavailable"}, owner=f"consumer-{index}")
+        attempt_id = store.record_reply_attempt(
+            conversation_id=task.conversation_id,
+            conversation_title=task.conversation_title,
+            trigger_message_id=task.trigger_message_id,
+            trigger_sender=task.trigger_sender,
+            trigger_text=task.trigger_text, action="agent_run",
+            sensitivity_kind="general", send_status=status,
+        )
+        with store._connect() as db:
+            db.execute("update reply_attempts set agent_run_id=? where id=?", (run.id, attempt_id))
+        run_ids.append(run.id)
+
+    for reader in ("hydrate_run_events", "read_native_result_json", "_native_records"):
+        monkeypatch.setattr(native_trajectory, reader, lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("History status must not read a native trajectory")
+        ))
+    bulk_calls = []
+    original_bulk = store.list_agent_run_summaries_for_terminal_runs
+
+    def batch_summaries(ids):
+        bulk_calls.append(ids)
+        return original_bulk(ids)
+
+    monkeypatch.setattr(store, "list_agent_run_summaries_for_terminal_runs", batch_summaries)
+    html = render_attempt_list(store, include_chart=False)
+
+    assert "History status 1" in html and "History status 2" in html
+    assert len(bulk_calls) == 1
+    assert set(bulk_calls[0]) == set(run_ids)
 
 
 def test_history_failed_attempts_do_not_hide_each_other(tmp_path: Path):
@@ -11968,6 +12115,9 @@ def test_attention_keeps_old_scheduled_failure_in_history_after_later_success(
         channel="scheduled",
     )
     with store._connect() as db:
+        from app.scheduled_config_storage import intern_scheduled_config
+
+        snapshot_id = intern_scheduled_config(db, '{}')
         db.execute(
             "insert into scheduled_tasks (id, name, prompt, cron_expression, "
             "timezone, runtime_id, enabled) values "

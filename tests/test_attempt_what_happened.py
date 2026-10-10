@@ -15,6 +15,7 @@ class Run:
     completed_at: str = "2026-09-20 07:12:37"
     started_at: str = "2026-09-20 07:06:00"
     final_result_json: str = ""
+    adopted_result_json: str = ""
     structured_error_json: str = ""
     tool_events: list[Any] = field(default_factory=list)
     reply_task_id: int | None = None
@@ -63,7 +64,7 @@ def test_the_page_says_what_reached_the_outside_world() -> None:
     """Attempt 9698 read as "nothing happened" with the leave already approved."""
 
     runs = [
-        Run(20305, "consumer", "completed", final_result_json=_scores()),
+        Run(20305, "consumer", "completed", adopted_result_json=_scores()),
         Run(20309, "audit", "failed", tool_events=[_send()],
             structured_error_json=_refused("external_result: executed requires evidence")),
     ]
@@ -116,7 +117,7 @@ def test_verified_system_receipt_proves_external_action() -> None:
             return {"consumer_run_id": 1}
 
     answer = build_what_happened([
-        Run(1, "consumer", "completed", final_result_json=_scores(), reply_task_id=11),
+        Run(1, "consumer", "completed", adopted_result_json=_scores(), reply_task_id=11),
         Run(2, "audit", "completed", final_result_json='{"outcome":"approve"}', reply_task_id=11),
     ], store=Store())
     assert answer["reached_the_outside_world"] is True
@@ -167,11 +168,11 @@ def test_scores_come_from_the_turn_the_action_was_taken_on() -> None:
     material", which is false and worse than showing nothing.
     """
     runs = [
-        Run(20305, "consumer", "completed", final_result_json=_scores()),
+        Run(20305, "consumer", "completed", adopted_result_json=_scores()),
         Run(20309, "audit", "failed", tool_events=[_send()],
             structured_error_json=_refused("evidence required")),
         Run(20324, "consumer", "completed",
-            final_result_json=_scores(information_completeness=0.86, confidence=0.98)),
+            adopted_result_json=_scores(information_completeness=0.86, confidence=0.98)),
     ]
 
     scores = build_what_happened(runs)["deciding_scores"]
@@ -181,7 +182,7 @@ def test_scores_come_from_the_turn_the_action_was_taken_on() -> None:
 
 
 def test_a_generation_that_never_stopped_says_so() -> None:
-    answer = build_what_happened([Run(1, "audit", "completed", final_result_json=_scores())])
+    answer = build_what_happened([Run(1, "audit", "completed", adopted_result_json=_scores())])
 
     assert answer["stopped_because"]["kind"] == "none"
     assert answer["open_for_human"] is False
@@ -320,7 +321,7 @@ def test_the_page_can_show_what_the_turn_wrote() -> None:
         ensure_ascii=False,
     )
 
-    answer = build_what_happened([Run(1, "consumer", "completed", final_result_json=proposal)])
+    answer = build_what_happened([Run(1, "consumer", "completed", adopted_result_json=proposal)])
 
     assert answer["proposed_text"] == "你说的是哪次演示、哪个仓库？"
 

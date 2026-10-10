@@ -67,8 +67,8 @@ class FakeStore:
     def get_verified_action_source(self, action_key):
         return self.verified_source
 
-    def get_agent_run(self, run_id):
-        return type("Run", (), {"final_result_json": json.dumps(self.previous_candidate.model_dump(mode="json"))})()
+    def adopted_candidate_for_consumer_run(self, run_id):
+        return {"candidate_json": self.previous_candidate.model_dump_json()}
 
     def begin_candidate_action(self, execution_id, owner, index, action_key):
         self.events.append(f"begin:{index}")

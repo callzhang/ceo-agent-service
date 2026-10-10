@@ -170,6 +170,23 @@ describe("AttemptDetailPage", () => {
     expect(batches[2].open).toBe(true);
   });
 
+  it("describes a readable Claude range without offering a Codex link", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: {
+        ...detail,
+        runtime_attempts: [{
+          ...detail.runtime_attempts[0],
+          runtime: "claude_cli", session_available: true, session_url: "", native_reason: "",
+        }],
+      },
+      meta: { snapshot_at: "2026-10-10T00:00:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByText("原生过程记录可读；当前页面暂不支持打开此 Runtime 的过程。")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "查看这一步的 Agent 记录" })).not.toBeInTheDocument();
+  });
+
   it("explains that Consumer and Audit are the two steps of one processing batch", async () => {
     getAttemptDetail.mockResolvedValue({
       item: {
@@ -425,7 +442,7 @@ describe("AttemptDetailPage", () => {
 
     await screen.findByRole("heading", { name: "处理过程 · Consumer" });
     expect(screen.queryByRole("link", { name: "查看 Agent 记录" })).not.toBeInTheDocument();
-    expect(screen.getByText("本次执行的 Agent 记录已不在本机")).toBeInTheDocument();
+    expect(screen.getByText("本次执行的原生 Agent 过程不可用；详情请查看各运行步骤。")).toBeInTheDocument();
   });
 
   it("shows the email an email Attempt acted on and the receipt it earned", async () => {

@@ -2,6 +2,7 @@ import json
 import sqlite3
 from datetime import datetime, timedelta
 
+from app import native_trajectory
 from app.store import AutoReplyStore
 from app.task_project_repair import apply_manifest, build_repair_manifest
 
@@ -15,18 +16,30 @@ def _set_project_times(db_path, project_id, *, created_at):
 
 
 def _record_agent_value(db_path, project_id, *, title, created_at):
-    decision = {
-        "action": "update_project",
-        "project": {"id": project_id, "title": title},
-    }
     with sqlite3.connect(db_path) as db:
-        db.execute(
+        run_id = db.execute(
             "insert into task_agent_runs(summary_input_id, decision_json, status, created_at) values(?, ?, 'completed', ?)",
-            (project_id, json.dumps(decision, ensure_ascii=False), created_at),
+            (project_id, '{"project":{"id":999,"title":"stale database copy"}}', created_at),
+        ).lastrowid
+        db.execute(
+            "insert into agent_runtime_attempts "
+            "(workload_kind, workload_key, attempt_number, route_name, runtime_kind, "
+            "credential_mode, model, session_id, status, transcript_start, transcript_end) "
+            "values ('task', ?, 1, 'test', 'codex_cli', 'local_oauth', 'test', "
+            "'native-task', 'completed', 1, 2)",
+            (str(run_id),),
         )
 
 
-def test_manifest_restores_latest_traceable_value_then_is_idempotent(tmp_path):
+def test_manifest_restores_latest_traceable_value_then_is_idempotent(tmp_path, monkeypatch):
+    native = tmp_path / "native-task.jsonl"
+    native.write_text("\n".join(json.dumps({"type": "response_item", "payload": {
+        "type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]
+    }}, ensure_ascii=False) for text in (
+        '{"project":{"id":999,"title":"wrong turn"}}',
+        '{"project":{"id":1,"title":"最近 Agent 标题"}}',
+    )) + "\n")
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *args, **kwargs: native)
     current_path = tmp_path / "current.sqlite3"
     historical_path = tmp_path / "historical.sqlite3"
     current = AutoReplyStore(current_path)

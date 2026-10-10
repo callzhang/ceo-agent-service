@@ -279,7 +279,10 @@ class EmailUnsubscribeAuditOperation:
         try:
             parent = self.task_store.get_agent_run(audit_run.parent_agent_run_id)
             assert parent is not None
-            action = _bound_parent_consumer_action(parent, accepted_action)
+            adopted = self.task_store.adopted_candidate_for_consumer_run(parent.id)
+            if adopted is None:
+                raise ValueError("unsubscribe Consumer proposal is unavailable")
+            action = _bound_parent_consumer_action(adopted["candidate_json"], accepted_action)
             payload = _task_payload(task)
             identity = _validate_task_identity(task, payload)
             classification = self.email_store.get_classification(
@@ -633,7 +636,7 @@ def _rejection_detail(exc: Exception) -> str:
 
 
 def _bound_parent_consumer_action(
-    parent: AgentRun,
+    candidate_json: str,
     accepted_action: Mapping[str, object],
 ) -> ProposedAction:
     """Bind the Audit's acceptance to the Consumer's persisted proposal.
@@ -646,7 +649,7 @@ def _bound_parent_consumer_action(
     """
     try:
         parent_result = ConsumerAgentResult.model_validate_json(
-            parent.final_result_json
+            candidate_json
         )
     except (TypeError, ValueError) as exc:
         raise ValueError("unsubscribe Consumer proposal is invalid") from exc

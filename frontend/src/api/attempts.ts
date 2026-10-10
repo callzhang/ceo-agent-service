@@ -66,6 +66,7 @@ export interface AttemptRuntimeEntry {
   credential_mode: string;
   model: string;
   session_available: boolean;
+  native_reason: string;
   status: string;
   run_status: string;
   failure_code: string;

@@ -1188,6 +1188,8 @@ def test_quality_gate_writes_coverage_state(tmp_path):
     content = state_path.read_text(encoding="utf-8")
     assert '"mode": "fail_closed_queue_coverage"' in content
     assert '"reply_tasks"' in content
+    assert "native_delivery_coverage" not in content
+    assert report.to_dict()["native_delivery_coverage"] is not None
 
 
 def test_quality_check_command_writes_state_and_returns_nonzero_for_violation(tmp_path):
@@ -1289,7 +1291,7 @@ def test_quality_gate_does_not_flag_an_outbox_row_still_being_retried(tmp_path):
     )
 
 
-def test_an_executed_send_with_no_delivery_record_is_reported(tmp_path):
+def test_an_executed_send_with_no_delivery_record_is_reported(tmp_path, monkeypatch):
     """Nothing rebuilds a delivery any more, so a missing one must be visible.
 
     The sweep that used to fill these in wrote seven rows for sends that never
@@ -1317,23 +1319,52 @@ def test_an_executed_send_with_no_delivery_record_is_reported(tmp_path):
         proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id,
         operation_id="op-1", owner="audit",
     ).run
-    store.complete_agent_run(audit.id, {
+    native_result = {
         "outcome": "executed", "risk": "low", "confidence": 1.0,
         "rule_coverage": 1.0, "information_completeness": 1.0,
         "summary": "sent", "proposal_revision": 0, "feedback": None,
         "external_result": {"operation_id": "op-1",
             "live_result_reference": {"open_task_id": "openTask-1"}},
         "error": {"code": "", "retryable": False, "authorization_required": False},
-    }, owner="audit")
+    }
+    store.complete_agent_run(audit.id, native_result, owner="audit")
+    monkeypatch.setattr(
+        "app.native_trajectory.read_native_result_json",
+        lambda _db, _row: json.dumps(native_result),
+    )
 
     with sqlite3.connect(database) as db:
         db.row_factory = sqlite3.Row
         violations: list = []
-        _check_delivery_records(db, violations)
+        coverage = _check_delivery_records(db, violations)
 
     assert [item.code for item in violations] == ["executed_without_record"]
     assert violations[0].count == 1
     assert "do not backfill" in violations[0].detail
+    assert coverage == {"checked": 1, "unavailable": 0}
+
+
+def test_missing_native_delivery_evidence_is_reported_as_coverage_not_success(tmp_path):
+    from app.quality_gate import _check_delivery_records
+
+    store = AutoReplyStore(tmp_path / "delivery.sqlite3")
+    with store._connect() as db:
+        db.execute(
+            "insert into reply_tasks (channel, single_chat, conversation_id, conversation_title, "
+            "trigger_message_id, trigger_create_time, trigger_sender, trigger_text) "
+            "values ('dingtalk', 0, 'c', 'Group', 'm', '2026-10-10', 'Derek', 'reply')"
+        )
+        task_id = db.execute("select last_insert_rowid()").fetchone()[0]
+        db.execute(
+            "insert into agent_runs (reply_task_id, execution_generation, role, status, completed_at) "
+            "values (?, 'initial', 'audit', 'completed', datetime('now'))",
+            (task_id,),
+        )
+    with store._connect() as db:
+        issues: list = []
+        coverage = _check_delivery_records(db, issues)
+    assert coverage == {"checked": 0, "unavailable": 1}
+    assert issues == []
 
 
 def _runtime_sample(store, *, outcome, recorded_at, fallback_code=""):

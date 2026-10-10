@@ -406,7 +406,14 @@ function RuntimeEntry({ entry }: { entry: AttemptRuntimeEntry }) {
     runtime_unclassified: "运行环境没有返回可验证结果，系统进行了恢复或重试。",
   };
   const failureText = entry.failure_code ? (failureDescriptions[entry.failure_code] || entry.failure_code) : "";
-  return <article className="attempt-runtime-entry"><div className="attempt-runtime-heading"><div><strong>{phase} · 第 {entry.proposal_revision + 1} 轮{retry}</strong><p>{description}</p></div><span aria-label="业务运行状态">业务运行 <StatusBadge value={entry.run_status} /></span></div><dl className="attempt-runtime-grid"><div><dt>运行时调用</dt><dd aria-label="运行时调用状态"><StatusBadge value={entry.status} /></dd></div>{failureText && <div><dt>结果说明</dt><dd>{failureText}</dd></div>}{entry.effect_started_at && <div><dt>开始外部动作</dt><dd>{entry.effect_started_at}</dd></div>}</dl>{entry.session_url && <Link className="agent-log-button" to={entry.session_url}>查看这一步的 Agent 记录</Link>}</article>;
+  const unavailableText = entry.session_available && !entry.session_url
+    ? "原生过程记录可读；当前页面暂不支持打开此 Runtime 的过程。"
+    : entry.native_reason === "friday_artifact_remote"
+    ? "Friday 原生 Artifact 位于远端，当前页面无法读取过程。"
+    : entry.native_reason === "native_session_not_started"
+      ? "这一步未建立原生会话。"
+      : "原生过程记录不可用，无法确认这一步的工具调用。";
+  return <article className="attempt-runtime-entry"><div className="attempt-runtime-heading"><div><strong>{phase} · 第 {entry.proposal_revision + 1} 轮{retry}</strong><p>{description}</p></div><span aria-label="业务运行状态">业务运行 <StatusBadge value={entry.run_status} /></span></div><dl className="attempt-runtime-grid"><div><dt>运行时调用</dt><dd aria-label="运行时调用状态"><StatusBadge value={entry.status} /></dd></div>{failureText && <div><dt>结果说明</dt><dd>{failureText}</dd></div>}{entry.effect_started_at && <div><dt>开始外部动作</dt><dd>{entry.effect_started_at}</dd></div>}</dl>{entry.session_available && entry.session_url ? <Link className="agent-log-button" to={entry.session_url}>查看这一步的 Agent 记录</Link> : <p className="muted">{unavailableText}</p>}</article>;
 }
 
 function ExecutionDetail({ detail, role, snapshot }: { detail: AttemptDetail; role: "consumer" | "audit"; snapshot: string }) {
@@ -427,7 +434,7 @@ function ExecutionDetail({ detail, role, snapshot }: { detail: AttemptDetail; ro
     <section className="console-card execution-detail-context">
       <span>{detail.conversation.label}：<strong>{detail.conversation.title || "未记录"}</strong></span>
       <span>触发人：<strong>{detail.conversation.trigger_sender || "未提供"}</strong></span>
-      {!session && <span className="muted">本次执行的 Agent 记录已不在本机</span>}
+      {!session && <span className="muted">本次执行的原生 Agent 过程不可用；详情请查看各运行步骤。</span>}
     </section>
     <section className="console-card execution-detail-list" aria-label={`${roleLabel} 执行记录`}>
       <div className="execution-detail-list-header"><div><h2>执行步骤</h2><p>每一条代表一轮处理或一次重试；它们不会自动等同于重复发送。</p></div><span>{entries.length} 个步骤</span></div>

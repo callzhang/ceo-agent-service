@@ -951,7 +951,7 @@ def test_console_history_sends_a_running_scheduled_task_to_its_own_run_history(
     with store._connect() as db:
         from app.scheduled_config_storage import intern_scheduled_config
 
-        snapshot_id = intern_scheduled_config(db, "{}")
+        snapshot_id = intern_scheduled_config(db, '{}')
         db.execute(
             "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind, "
             "scheduled_for, first_scheduled_for, dispatch_status, snapshot_id, "
@@ -1037,18 +1037,57 @@ def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path
     assert meeting_item["title"] == "History meeting"
 
 
-def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path, monkeypatch):
-    def read_native_events(session_id, **_bounds):
-        assert session_id == "internal-session-must-not-leak"
-        return [
-            {"title": "读取会议记忆", "tool": "memory_recall", "call_id": "call-meeting-1",
-             "relevance": "确认历史判断", "path": "memory.md",
-             "args": {"query": "上线范围"}},
-            {"tool": "tool_output", "call_id": "call-meeting-1",
-             "output": '{"summary":"风险预算需要确认"}'},
-        ]
+def test_meeting_history_page_uses_adopted_message_without_reading_native_run(
+    tmp_path: Path, monkeypatch,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    run_ids = []
+    for index, final_message in enumerate(("", "已采用的会后对齐消息。"), start=1):
+        job_id = store.upsert_meeting_alignment_job(
+            meeting_id=f"meeting-history-{index}",
+            title=f"会议标题 {index}",
+            source_json="{}",
+            participants_json="[]",
+            ended_at="2026-08-29T10:00:00Z",
+            eligible_at="2026-08-29T10:05:00Z",
+            status="pending",
+        )
+        if final_message:
+            store.update_meeting_alignment_job(
+                job_id, status="sent", final_message=final_message,
+            )
+        run_ids.append(store.record_meeting_alignment_run(
+            job_id=job_id,
+            codex_session_id=f"meeting-history-session-{index}",
+            decision_json='{"action":"send"}',
+            audit_summary=f"原生审计摘要 {index}",
+            status="sent",
+            error="",
+        ))
 
-    monkeypatch.setattr("app.audit_web.extract_codex_audit_events_from_session", read_native_events)
+    def reject_native_run(*_args, **_kwargs):
+        raise AssertionError("History list must not hydrate a native meeting run")
+
+    monkeypatch.setattr(AutoReplyStore, "get_meeting_alignment_run", reject_native_run)
+    with _client(tmp_path) as client:
+        first = client.get("/api/console/history?object_type=meeting&page=1&page_size=1")
+        second = client.get("/api/console/history?object_type=meeting&page=2&page_size=1")
+
+    assert first.status_code == second.status_code == 200
+    first_body, second_body = first.json(), second.json()
+    assert first_body["meta"]["total"] == second_body["meta"]["total"] == 2
+    adopted, unavailable = first_body["items"][0], second_body["items"][0]
+    assert [adopted["id"], unavailable["id"]] == [str(run_ids[1]), str(run_ids[0])]
+    assert adopted["title"] == "会议标题 2"
+    assert adopted["input"] == "会议标题 2"
+    assert adopted["output"] == adopted["summary"] == "已采用的会后对齐消息。"
+    assert unavailable["title"] == "会议标题 1"
+    assert unavailable["input"] == "会议标题 1"
+    assert unavailable["output"] == unavailable["summary"] == "会议任务尚无已采用的最终消息。"
+    assert unavailable["detail_url"] == f"/meeting-attempts/{run_ids[0]}"
+
+
+def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     job_id = store.upsert_meeting_alignment_job(
         meeting_id="meeting-console-1",
@@ -1062,6 +1101,8 @@ def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path, monkeypatch)
     store.update_meeting_alignment_job(
         job_id,
         status="sent",
+        target_kind="group",
+        target_id="cid-meeting-console",
         final_message="会后对齐：请确认上线范围。",
     )
     run_id = store.record_meeting_alignment_run(
@@ -1095,18 +1136,11 @@ def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path, monkeypatch)
     item = response.json()["item"]
     assert item["id"] == run_id
     assert item["title"] == "项目评审会"
-    assert item["decision"]["action"] == "send"
+    assert item["decision"] == {}
+    assert item["native_available"] is False
+    assert item["tool_events_available"] is False
+    assert item["tool_uses"] == []
     assert item["actions"]["dingtalk_url"] == "/open-dingtalk-popup?conversation_id=cid-meeting-console"
-    assert item["tool_uses"] == [{
-        "title": "读取会议记忆",
-        "tool": "memory_recall",
-        "call_id": "call-meeting-1",
-        "relevance": "确认历史判断",
-        "source": "memory.md · memory_recall",
-        "format": "mcp/json",
-        "args": {"query": "上线范围"},
-        "output": '{"summary":"风险预算需要确认"}',
-    }]
     assert item["output"] == "会后对齐：请确认上线范围。"
     assert "codex_session_id" not in json.dumps(item)
 

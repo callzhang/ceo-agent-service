@@ -1,73 +1,107 @@
-"""Remove verified duplicate trajectories and reclaim SQLite pages."""
+"""Remove persisted trajectory copies and reclaim SQLite pages."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
-from app.agent_effect_guard import provider_receipts
-from app.codex_history import _file_session_id
-from app.codex_runner import _codex_home
-from app.native_trajectory import event_metadata, native_covers_event, native_run_available, payload_signature, read_run_events
-
-
-def completed_payloads(events: list[dict]) -> set[str]:
-    return {
-        payload_signature(event)
-        for event in events
-        if event.get("type") == "item.completed"
-        and isinstance(item := event.get("item"), dict)
-        and item.get("type") in {"command_execution", "mcp_tool_call"}
-    }
-
-
-def native_codex_sessions() -> set[str]:
-    root = _codex_home()
-    return {session_id for directory in (root / "sessions", root / "archived_sessions")
-            for path in directory.rglob("*.jsonl") if (session_id := _file_session_id(path))}
-
-
 def compact_native_duplicates(database: Path) -> dict[str, int]:
-    counts = {"runs_compacted": 0, "runs_retained": 0, "payload_bytes_removed": 0}
-    sessions = native_codex_sessions()
-    with sqlite3.connect(database, timeout=60) as db:
-        db.row_factory = sqlite3.Row
-        runs = db.execute("select * from agent_runs where status in ('completed','failed')").fetchall()
-        for run in runs:
-            attempts = db.execute("select runtime_kind,session_id from agent_runtime_attempts where agent_run_id=?", (run["id"],)).fetchall()
-            if (attempts and any(attempt["runtime_kind"] == "codex_cli" and attempt["session_id"] not in sessions for attempt in attempts)) or (not attempts and run["codex_session_id"] not in sessions):
-                counts["runs_retained"] += 1
-                continue
-            records = db.execute(
-                "select id,event_json from agent_run_events where agent_run_id=? order by sequence",
-                (run["id"],),
-            ).fetchall()
-            originals = [json.loads(record["event_json"]) for record in records]
-            native = read_run_events(db, run) if native_run_available(db, run) else []
-            if not native or provider_receipts(originals) != provider_receipts(native):
-                counts["runs_retained"] += 1
-                continue
-            replacements = [
-                json.dumps(event_metadata(event), ensure_ascii=False, separators=(",", ":"))
-                if completed_payloads([event]) and native_covers_event(event, native)
-                else record["event_json"]
-                for record, event in zip(records, originals)
-            ]
-            saving = sum(len(record["event_json"].encode()) - len(replacement.encode())
-                         for record, replacement in zip(records, replacements))
-            if saving <= 0:
-                continue
-            db.executemany("update agent_run_events set event_json=? where id=?",
-                           [(replacement, record["id"]) for record, replacement in zip(records, replacements)])
-            db.commit()
-            counts["runs_compacted"] += 1
-            counts["payload_bytes_removed"] += saving
+    """Remove all persisted trajectory copies, including missing-native history.
+
+    Task state and native references are retained. Missing original sessions are
+    explicitly unavailable; SQLite is no longer a second trajectory source.
+    """
+    counts = {"event_runs_cleared": 0, "payload_fields_cleared": 0, "payload_bytes_removed": 0}
+    columns = {
+        "agent_runs": {"final_result_json": ""},
+        "agent_runtime_attempts": {"result_envelope_json": ""},
+        "reply_attempts": {"audit_tool_events_json": "[]"},
+        "okr_review_runs": {"envelope_json": "{}", "audit_summary": "", "audit_tool_events_json": "[]"},
+        "meeting_alignment_runs": {"decision_json": "{}", "audit_summary": "", "audit_tool_events_json": "[]"},
+        "task_agent_runs": {"decision_json": "{}", "audit_summary": "", "memory_recall_used": 0},
+        "workbench_turns": {"final_text": "", "error_detail": ""},
+        "codex_session_search_index": {
+            "summary_text": "", "fts_text": "", "embedding_json": "",
+            "embedding_model": "", "embedding_updated_at": "",
+        },
+    }
+    with closing(sqlite3.connect(database, timeout=60)) as db:
+        db.execute("begin immediate")
+        counts["event_runs_cleared"] = db.execute(
+            "select count(distinct agent_run_id) from agent_run_events"
+        ).fetchone()[0]
+        counts["payload_bytes_removed"] = db.execute(
+            "select coalesce(sum(length(cast(event_json as blob))),0) from agent_run_events"
+        ).fetchone()[0]
+        db.execute("delete from agent_run_events")
+        _clear_workbench_event_bodies(db, counts)
+        db.execute("insert into codex_session_search_fts(codex_session_search_fts) values('delete-all')")
+        for table, fields in columns.items():
+            for column, empty in fields.items():
+                counts["payload_bytes_removed"] += db.execute(
+                    f"select coalesce(sum(max(length(cast({column} as blob))-length(cast(? as blob)),0)),0) "
+                    f"from {table} where {column}<>?", (empty, empty),
+                ).fetchone()[0]
+                counts["payload_fields_cleared"] += db.execute(
+                    f"update {table} set {column}=? where {column}<>?", (empty, empty)
+                ).rowcount
+        db.execute(
+            "insert into codex_session_search_fts(rowid,title,summary_text,fts_text) "
+            "select id,title,summary_text,fts_text from codex_session_search_index"
+        )
         if db.execute("pragma quick_check").fetchone()[0] != "ok":
             raise RuntimeError("database integrity check failed")
+        db.commit()
         db.execute("vacuum")
+        checkpoint = db.execute("pragma wal_checkpoint(truncate)").fetchone()
+        if checkpoint[0] != 0:
+            raise RuntimeError("database payloads cleared; WAL reclamation incomplete because another connection is busy")
     return counts
+
+
+def _clear_workbench_event_bodies(db: sqlite3.Connection, counts: dict[str, int]) -> None:
+    """Keep event identity/order and exact native ordinals; erase Agent content."""
+    from app.workbench.native_events import AGENT_EVENTS
+
+    rows = db.execute(
+        "select id,turn_id,event_type,payload_json from workbench_events "
+        "order by turn_id,sequence,id"
+    ).fetchall()
+    turn_id = None
+    completed = 0
+    pending: dict[str, int] = {}
+    replacements: dict[int, str] = {}
+    originals: dict[int, str] = {}
+    for event_id, current_turn, event_type, raw in rows:
+        if current_turn != turn_id:
+            turn_id, completed, pending = current_turn, 0, {}
+        if event_type not in AGENT_EVENTS:
+            continue
+        originals[event_id] = raw
+        payload = json.loads(raw)
+        ordinal = payload.get("native_ordinal")
+        reference = {"native_ordinal": ordinal} if type(ordinal) is int and ordinal > 0 else {}
+        replacements[event_id] = json.dumps(reference, separators=(",", ":"))
+        call_id = payload.get("tool_call_id")
+        if event_type == "tool_started" and isinstance(call_id, str) and call_id:
+            pending[call_id] = event_id
+        elif event_type == "tool_completed":
+            completed = max(completed + 1, ordinal if reference else 0)
+            reference = {"native_ordinal": ordinal if reference else completed}
+            encoded = json.dumps(reference, separators=(",", ":"))
+            replacements[event_id] = encoded
+            if isinstance(call_id, str) and call_id in pending:
+                replacements[pending.pop(call_id)] = encoded
+    for event_id, encoded in replacements.items():
+        raw = originals[event_id]
+        if raw == encoded:
+            continue
+        counts["payload_fields_cleared"] += 1
+        counts["payload_bytes_removed"] += max(0, len(raw.encode("utf-8")) - len(encoded.encode("utf-8")))
+        db.execute("update workbench_events set payload_json=? where id=?", (encoded, event_id))
 
 
 def main() -> None:

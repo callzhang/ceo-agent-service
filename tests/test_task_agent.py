@@ -1593,7 +1593,8 @@ def test_process_work_item_opens_and_completes_runtime_parent_before_decision(tm
         ).fetchall()
     assert len(runs) == 1
     assert runs[0]["status"] == "completed"
-    assert json.loads(runs[0]["decision_json"])["task_decisions"][0]["action"] == "skip"
+    assert runs[0]["decision_json"] == "{}"
+    assert store.get_task_agent_run(int(runs[0]["id"]))["native_available"] is False
     assert store.get_work_summary_input(input_id).status.value == "skipped"
     assert codex.calls[0]["session_scope_id"] == "task-agent:work-tracking:v1"
 
@@ -1728,7 +1729,7 @@ def test_process_work_item_success_commits_task_and_terminal_run_and_input(
     assert run == ("completed", "")
 
 
-def test_process_work_item_persists_final_assessment_readback_without_rewriting_judgment(
+def test_process_work_item_persists_applied_assessment_without_raw_judgment_copy(
     tmp_path,
     monkeypatch,
 ):
@@ -1756,14 +1757,8 @@ def test_process_work_item_persists_final_assessment_readback_without_rewriting_
             "where summary_input_id=?",
             (input_id,),
         ).fetchone()
-    stored_decision = json.loads(run["decision_json"])
     stored_projection = json.loads(run["projection_json"])
-    assert stored_decision["project_assessments"][0]["outcome"] == "not_needed"
-    assert (
-        stored_decision["project_assessments"][0]["reason"]
-        == payload["project_assessments"][0]["reason"]
-    )
-    assert "assessment_results" not in stored_decision
+    assert run["decision_json"] == "{}"
     assert stored_projection["status"] == "no_proposal"
     assert stored_projection["project_assessments"][0]["status"] == "recorded"
     assert stored_projection["project_assessments"][0]["anchor_id"] == anchor_id

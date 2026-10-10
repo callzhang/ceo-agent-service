@@ -180,19 +180,15 @@ def _snapshot(
         and trigger_message_id=? limit 1""",
         (task['conversation_id'], task['trigger_message_id'])).fetchone():
         blocked.append('sent_reply_projection')
-    if db.execute("""select 1 from agent_run_events event join agent_runs r on r.id=event.agent_run_id
-        join reply_tasks t on t.id=r.reply_task_id
-        where t.business_object_key=? and event.effect_kind in ('effectful','unreviewed') limit 1""",
-        (task['business_object_key'],)).fetchone():
-        blocked.append('tool_effect_or_unknown_effect')
-    else:
-        legacy_events = db.execute("""select event.event_json from agent_run_events event
-            join agent_runs r on r.id=event.agent_run_id
-            join reply_tasks t on t.id=r.reply_task_id
-            where t.business_object_key=? and event.effect_kind=''""",
-            (task['business_object_key'],)).fetchall()
-        if any(_legacy_event_may_have_effect(row['event_json']) for row in legacy_events):
+    from app.native_trajectory import read_run_event_evidence
+    for event_run in db.execute("""select r.* from agent_runs r
+        join reply_tasks t on t.id=r.reply_task_id where t.business_object_key=?""",
+        (task['business_object_key'],)).fetchall():
+        events, available = read_run_event_evidence(db, event_run)
+        if any(_legacy_event_may_have_effect(json.dumps(event)) for event in events):
             blocked.append('tool_effect_or_unknown_effect')
+        if not available:
+            blocked.append('native_event_source_unavailable')
     if db.execute("""select 1 from agent_effect_intents e join agent_runs r on r.id=e.agent_run_id
         join reply_tasks t on t.id=r.reply_task_id
         where t.business_object_key=? limit 1""",
