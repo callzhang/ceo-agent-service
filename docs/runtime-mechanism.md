@@ -1261,6 +1261,14 @@ Reader 会把 WeChat 共享文章的标题、摘要和 URL 解码为文本，因
 只存原生轨迹。新版 proposal 及其他通道
 继续执行完整候选校验，独立微信既有交付检查和外部动作拒绝不变。
 
+AgentRun 的终态重复完成先在写事务外读取准确原生引用。独立微信原生
+`AgentEnvelope` 按 Runner 同一解析及依赖失败规则转换为 `CodexDecision`，
+不能直接比较两个不同契约。`BEGIN IMMEDIATE` 内再次核对运行、任务代次、
+角色、状态、session、转写边界和被选中的 completed runtime attempt；引用变化
+或来源缺失不能被视为成功重放。候选及审核记录仍按既有事务校验。返回对象的
+原生轨迹加载发生在写事务释放后，不用 SQL 正文副本代替原生证据。这只是
+终态收尾路径的锁暴露修复，不代表全部生产延迟或 SQLite 竞争已经根治。
+
 同一 Dispatcher 还通过独立 adapter 领取普通 reply、meeting、work summary、OKR review、
 DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。adapter 只读写各自既有事实来源，并统一 claim generation、lease、唤醒、
 公平性和容量；Consumer 保持领域边界。主动唤醒之外的有界等待只用于跨进程写入和异常恢复，不是

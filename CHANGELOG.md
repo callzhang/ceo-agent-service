@@ -9,6 +9,13 @@
 
 ## Unreleased
 
+- 2026-10-10: Verify terminal AgentRun replay with native evidence outside the
+  SQLite writer transaction. Recheck run, task and exact runtime reference
+  before accepting replay, derive independent WeChat decisions using the
+  runner's envelope and dependency finalization, and hydrate returned runs
+  after releasing the writer lock. Missing or changed evidence cannot authorize
+  a conflicting terminal rewrite.
+
 - 2026-10-10: Keep valid independent WeChat decisions out of reviewed-candidate
   adoption. Preserve generation and role checks, reject malformed or mixed
   contracts, and do not create an Audit approval or restore SQL result bodies.

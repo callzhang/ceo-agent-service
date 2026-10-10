@@ -1617,6 +1617,10 @@ class AgentRunLeaseLostError(RuntimeError):
     pass
 
 
+class _AgentRunTerminalSnapshotRequired(RuntimeError):
+    pass
+
+
 def _persisted_agent_effect_state(events: list[dict[str, object]]) -> str:
     pending: dict[str, int] = {}
     event_closures: set[str] = set()
@@ -14087,6 +14091,99 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         return result
 
     def _transition_agent_run(
+        self, run_id: int, *, owner: str | None, target_status: str,
+        final_result_json: str, structured_error_json: str,
+        transcript_end_line: int | None, now: str | datetime | None,
+    ) -> AgentRun:
+        if owner is None or not owner.strip():
+            raise ValueError("owner must be non-empty")
+        if target_status not in {"completed", "failed"}:
+            raise ValueError("invalid terminal agent run status")
+        if transcript_end_line is not None and transcript_end_line < 0:
+            raise ValueError("transcript_end_line must not be negative")
+        snapshot = self._agent_run_terminal_native_snapshot(run_id) if target_status == "completed" else None
+        transition = {
+            "owner": owner, "target_status": target_status,
+            "final_result_json": final_result_json, "structured_error_json": structured_error_json,
+            "transcript_end_line": transcript_end_line, "now": now,
+        }
+        try:
+            metadata = self._transition_agent_run_locked(run_id, **transition, native_snapshot=snapshot)
+        except _AgentRunTerminalSnapshotRequired:
+            # Another writer completed after pre-read. The aborted transaction
+            # must release its lock before fetching the terminal native source.
+            snapshot = self._agent_run_terminal_native_snapshot(run_id)
+            metadata = self._transition_agent_run_locked(run_id, **transition, native_snapshot=snapshot)
+        loaded = self.get_agent_run(metadata.id)
+        if loaded is None:
+            raise ValueError("agent run does not exist")
+        return loaded
+
+    @staticmethod
+    def _agent_run_terminal_reference(db, row):
+        attempt = db.execute(
+            "select * from agent_runtime_attempts where agent_run_id=? and status='completed' order by id desc limit 1",
+            (row["id"],),
+        ).fetchone()
+        identity = tuple(row[key] for key in (
+            "id", "reply_task_id", "execution_generation", "task_execution_generation",
+            "task_channel", "role", "status", "codex_session_id",
+            "transcript_start_line", "transcript_end_line",
+        ))
+        reference = tuple(attempt[key] for key in (
+            "id", "runtime_kind", "session_id", "status", "transcript_start", "transcript_end",
+            "transcript_reference",
+        )) if attempt is not None else None
+        return (identity, reference), attempt
+
+    def _agent_run_terminal_native_snapshot(self, run_id):
+        from app.native_trajectory import read_native_result_json_from_attempt, read_native_result_stream
+
+        with self._connect() as db:
+            row = db.execute(
+                """select agent_runs.*, reply_tasks.channel as task_channel,
+                    reply_tasks.execution_generation as task_execution_generation
+                    from agent_runs join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
+                    where agent_runs.id=?""", (run_id,),
+            ).fetchone()
+            if row is None or row["status"] != "completed":
+                return None
+            if row["role"] == "consumer":
+                if row["task_channel"] != "wechat" or db.execute(
+                    "select 1 from review_candidates where consumer_run_id=?", (run_id,),
+                ).fetchone():
+                    return None
+            elif db.execute("select 1 from candidate_reviews where audit_run_id=?", (run_id,)).fetchone():
+                return None
+            fingerprint, attempt = self._agent_run_terminal_reference(db, row)
+        if row["role"] == "consumer":
+            from app.codex_decision import (
+                extract_codex_audit_events, finalize_codex_decision, parse_codex_json,
+            )
+            from app.codex_history import extract_codex_audit_events_from_session
+            from app.native_trajectory import read_run_events_from_attempts
+
+            events = []
+            kind = attempt["runtime_kind"] if attempt is not None else "codex_cli"
+            session = attempt["session_id"] if attempt is not None else row["codex_session_id"]
+            start = attempt["transcript_start"] if attempt is not None else row["transcript_start_line"]
+            end = attempt["transcript_end"] if attempt is not None else row["transcript_end_line"]
+            raw = read_native_result_stream(kind, session, start, end)
+            if not raw:
+                return fingerprint, ""
+            if kind == "codex_cli":
+                events = extract_codex_audit_events_from_session(
+                    session, start_line=start, end_line=end,
+                )
+            if not events:
+                native_events = read_run_events_from_attempts(row, [attempt] if attempt is not None else [])
+                events = extract_codex_audit_events("\n".join(json.dumps(event) for event in native_events))
+            result = finalize_codex_decision(parse_codex_json(raw), events).model_dump_json()
+        else:
+            result = read_native_result_json_from_attempt(row, attempt)
+        return fingerprint, result
+
+    def _transition_agent_run_locked(
         self,
         run_id: int,
         *,
@@ -14096,8 +14193,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         structured_error_json: str,
         transcript_end_line: int | None,
         now: str | datetime | None,
+        native_snapshot=None,
     ) -> AgentRun:
-        from app.native_trajectory import read_native_result_json
         if owner is None or not owner.strip():
             raise ValueError("owner must be non-empty")
         if target_status not in {"completed", "failed"}:
@@ -14108,7 +14205,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             row = db.execute(
                 """
                 select agent_runs.*,
-                       reply_tasks.execution_generation as task_execution_generation
+                       reply_tasks.execution_generation as task_execution_generation,
+                       reply_tasks.channel as task_channel
                 from agent_runs
                 join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
                 where agent_runs.id=?
@@ -14131,7 +14229,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     terminal_result = candidate[0] if candidate else ""
                 else:
                     review = db.execute("select result_json from candidate_reviews where audit_run_id=?", (run_id,)).fetchone()
-                    terminal_result = review[0] if review else read_native_result_json(db, row)
+                    terminal_result = review[0] if review else ""
+                if (not terminal_result and native_snapshot is None
+                    and (row["role"] == AgentRole.AUDIT.value or row["task_channel"] == "wechat")):
+                    raise _AgentRunTerminalSnapshotRequired()
+                if not terminal_result and native_snapshot is not None:
+                    fingerprint, _ = self._agent_run_terminal_reference(db, row)
+                    if fingerprint != native_snapshot[0]:
+                        raise ValueError("native terminal reference changed")
+                    terminal_result = native_snapshot[1]
             exact_terminal_write = (
                 row["status"] == target_status
                 and (target_status == "failed" or (
@@ -14141,7 +14247,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 and row["transcript_end_line"] == end_line
             )
             if exact_terminal_write:
-                return self._agent_run_from_row(row, db=db)
+                return self._agent_run_from_row(row, db=db, load_events=False)
             if row["status"] == target_status:
                 raise ValueError("conflicting terminal rewrite")
             if row["status"] == "completed":
@@ -14191,7 +14297,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     candidate = db.execute("select id from review_candidates where consumer_run_id=?", (row["parent_agent_run_id"],)).fetchone()
                     if candidate is not None:
                         self._adopt_candidate_review_in_connection(db, candidate["id"], run_id, json.loads(final_result_json))
-            return self._agent_run_from_row(updated, db=db)
+            return self._agent_run_from_row(updated, db=db, load_events=False)
 
     def complete_agent_run(
         self,

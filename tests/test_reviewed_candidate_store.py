@@ -59,6 +59,188 @@ def test_wechat_completion_rejects_invalid_contract_without_adoption(tmp_path, b
     assert store.adopted_candidate_for_consumer_run(run.id) is None
 
 
+def _native_wechat_run(tmp_path, monkeypatch, *, probe_writer=False, with_attempt=False, failed_read=False, with_draft=False):
+    from app import native_trajectory
+    from app.agent_envelope import AgentEnvelope
+    from app.codex_decision import CodexDecisionRunner, parse_codex_json
+    from app.codex_history import extract_codex_audit_events_from_session
+
+    store = AutoReplyStore(tmp_path / "native-wechat.sqlite3")
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="contract", conversation_title="Test",
+        single_chat=True, trigger_message_id="m1", trigger_sender="Test",
+        trigger_create_time="2026-10-10T00:00:00Z", trigger_text="test",
+    )
+    task = store.claim_reply_tasks(1, channel="wechat")[0]
+    run = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="contract",
+    ).run
+    envelope = AgentEnvelope.model_validate({
+        "kind": "no_action", "user_response": {
+            "mode": "no_reply", "text": "", "sensitivity_kind": "general",
+        }, "system_actions": [], "domain_payload": {},
+        "audit": {"summary": "not needed", "documents": [], "confidence": 1},
+    })
+    native = tmp_path / "wechat.jsonl"
+    records = []
+    if failed_read:
+        records.append({"type": "event_msg", "payload": {"type": "item_completed", "item": {
+            "type": "CommandExecution", "id": "failed-read", "command": "dws minutes list",
+            "aggregated_output": "Process exited with code 6\nrequest_failed",
+        }}})
+    native_text = envelope.model_dump_json()
+    if with_draft:
+        draft = envelope.model_copy(update={"audit": envelope.audit.model_copy(update={"summary": "changed"})})
+        native_text = draft.model_dump_json() + "\n" + native_text
+    records.append({"type": "response_item", "payload": {
+        "type": "message", "role": "assistant", "content": [
+            {"type": "output_text", "text": native_text},
+        ],
+    }})
+    native.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    writer_probes = []
+
+    def native_path(*args, **kwargs):
+        if probe_writer:
+            with sqlite3.connect(store.path, timeout=0) as writer:
+                writer.execute("BEGIN IMMEDIATE")
+                writer.rollback()
+            writer_probes.append(True)
+        return native
+
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", native_path)
+    monkeypatch.setattr("app.codex_history.find_codex_session_path", native_path)
+    store.set_agent_run_session(run.id, "fixture-wechat", owner="contract")
+    if with_attempt:
+        attempt = store.claim_agent_runtime_attempt(run.id, "fixture", "codex_cli", "local_oauth", "fixture")
+        store.mark_agent_runtime_attempt_running(attempt.id)
+        store.complete_agent_runtime_attempt(
+            attempt.id, "fixture-wechat", "codex_session:fixture-wechat", 0, len(records), owner="contract",
+        )
+    runner = CodexDecisionRunner.__new__(CodexDecisionRunner)
+    runner.last_audit_tool_events = extract_codex_audit_events_from_session(
+        "fixture-wechat", start_line=0, end_line=len(records),
+    )
+    decision = runner._finalize_decision(parse_codex_json(native_text), [], remember_events=False)
+    return store, run, decision, writer_probes
+
+
+@pytest.mark.parametrize("with_attempt", [False, True])
+@pytest.mark.parametrize("with_draft", [False, True])
+def test_wechat_native_envelope_completion_is_exactly_idempotent(tmp_path, monkeypatch, with_attempt, with_draft):
+    store, run, decision, _ = _native_wechat_run(tmp_path, monkeypatch, with_attempt=with_attempt, with_draft=with_draft)
+    for _ in range(2):
+        assert store.complete_agent_run(
+            run.id, decision.model_dump(mode="json"), owner="contract", transcript_end_line=1,
+        ).status == "completed"
+    assert store.adopted_candidate_for_consumer_run(run.id) is None
+    with pytest.raises(ValueError, match="conflicting terminal rewrite"):
+        store.complete_agent_run(
+            run.id, {**decision.model_dump(mode="json"), "audit_summary": "changed"},
+            owner="contract", transcript_end_line=1,
+        )
+
+
+def test_wechat_native_completion_does_not_hold_sqlite_writer_lock(tmp_path, monkeypatch):
+    store, run, decision, probes = _native_wechat_run(tmp_path, monkeypatch, probe_writer=True)
+    for _ in range(2):
+        store.complete_agent_run(run.id, decision.model_dump(mode="json"),
+                                 owner="contract", transcript_end_line=1)
+    assert probes
+
+
+def test_wechat_native_replay_preserves_runner_dependency_finalization(tmp_path, monkeypatch):
+    store, run, decision, _ = _native_wechat_run(tmp_path, monkeypatch, with_attempt=True, failed_read=True)
+    assert decision.action.value == "stop_with_error"
+    assert decision.external_dependency_failed
+    for _ in range(2):
+        store.complete_agent_run(run.id, decision.model_dump(mode="json"),
+                                 owner="contract", transcript_end_line=2)
+
+
+def test_wechat_native_replay_rejects_missing_source(tmp_path, monkeypatch):
+    store, run, decision, _ = _native_wechat_run(tmp_path, monkeypatch, with_attempt=True)
+    store.complete_agent_run(run.id, decision.model_dump(mode="json"), owner="contract", transcript_end_line=1)
+    monkeypatch.setattr("app.native_trajectory.find_codex_session_path", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.codex_history.find_codex_session_path", lambda *args, **kwargs: None)
+    with pytest.raises(ValueError, match="conflicting terminal rewrite"):
+        store.complete_agent_run(run.id, decision.model_dump(mode="json"), owner="contract", transcript_end_line=1)
+
+
+def test_wechat_native_replay_rechecks_exact_reference_after_io(tmp_path, monkeypatch):
+    from app import native_trajectory
+
+    store, run, decision, _ = _native_wechat_run(tmp_path, monkeypatch, with_attempt=True)
+    store.complete_agent_run(run.id, decision.model_dump(mode="json"), owner="contract", transcript_end_line=1)
+    original = native_trajectory.read_native_result_stream
+
+    def rotate_reference(*args):
+        result = original(*args)
+        with store._connect() as db:
+            db.execute("update agent_runtime_attempts set session_id='rotated' where agent_run_id=? and status='completed'", (run.id,))
+        return result
+
+    monkeypatch.setattr(native_trajectory, "read_native_result_stream", rotate_reference)
+    with pytest.raises(ValueError, match="native terminal reference changed"):
+        store.complete_agent_run(run.id, decision.model_dump(mode="json"), owner="contract", transcript_end_line=1)
+
+
+@pytest.mark.parametrize("same_result", [True, False])
+def test_native_audit_completion_race_rechecks_outside_writer(tmp_path, monkeypatch, same_result):
+    from app import native_trajectory
+
+    store = AutoReplyStore(tmp_path / "raced-audit.sqlite3")
+    other = AutoReplyStore(store.path)
+    store.enqueue_reply_task(
+        channel="dingtalk", conversation_id="contract", conversation_title="Test",
+        single_chat=True, trigger_message_id="m1", trigger_sender="Test",
+        trigger_create_time="2026-10-10T00:00:00Z", trigger_text="test",
+    )
+    task = store.claim_reply_tasks(1)[0]
+    run = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id=f"direct-agent:{task.id}:{task.execution_generation}", owner="contract",
+    ).run
+    body = {"outcome": "completed", "summary": "done"}
+    native = tmp_path / "audit.jsonl"
+    native.write_text(json.dumps({"type": "response_item", "payload": {
+        "type": "message", "role": "assistant", "content": [
+            {"type": "output_text", "text": json.dumps(body)},
+        ],
+    }}) + "\n")
+
+    def native_path(*args, **kwargs):
+        with sqlite3.connect(store.path, timeout=0) as writer:
+            writer.execute("BEGIN IMMEDIATE")
+            writer.rollback()
+        return native
+
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", native_path)
+    store.set_agent_run_session(run.id, "fixture-audit", owner="contract")
+    original_snapshot = store._agent_run_terminal_native_snapshot
+    completed_between_reads = False
+
+    def raced_snapshot(run_id):
+        nonlocal completed_between_reads
+        snapshot = original_snapshot(run_id)
+        if not completed_between_reads:
+            completed_between_reads = True
+            assert snapshot is None
+            other.complete_agent_run(run.id, body, owner="contract", transcript_end_line=1)
+        return snapshot
+
+    monkeypatch.setattr(store, "_agent_run_terminal_native_snapshot", raced_snapshot)
+    if same_result:
+        assert store.complete_agent_run(run.id, body, owner="contract", transcript_end_line=1).status == "completed"
+    else:
+        with pytest.raises(ValueError, match="conflicting terminal rewrite"):
+            store.complete_agent_run(run.id, {**body, "summary": "different"},
+                                     owner="contract", transcript_end_line=1)
+
+
 def _reviewed(store: AutoReplyStore, *, options=True):
     store.enqueue_reply_task(
         channel="dingtalk", conversation_id="candidate-test", conversation_title="Test",
