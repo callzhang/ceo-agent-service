@@ -12068,14 +12068,48 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 self._agent_run_from_row(row, db=db, load_events=False)
                 for row in rows
             ]
-            if not load_events:
-                return runs
-            from app.native_trajectory import hydrate_run_events, read_native_result_json
-            return [run.model_copy(update={
-                "tool_events": hydrate_run_events(db, row, str(self.path.resolve())),
-                "final_result_json": read_native_result_json(db, row)
-                if run.status == "completed" else "",
-            }) for run, row in zip(runs, rows)]
+            event_attempts_by_run = {}
+            result_attempt_by_run = {}
+            if load_events and rows:
+                run_ids = [int(row["id"]) for row in rows]
+                placeholders = ",".join("?" for _ in run_ids)
+                event_attempts = db.execute(
+                    "select agent_run_id, runtime_kind, session_id, transcript_reference, "
+                    "transcript_start, transcript_end, started_at, finished_at "
+                    "from agent_runtime_attempts where session_id<>'' "
+                    f"and agent_run_id in ({placeholders}) order by agent_run_id,id",
+                    run_ids,
+                ).fetchall()
+                for attempt in event_attempts:
+                    event_attempts_by_run.setdefault(int(attempt["agent_run_id"]), []).append(attempt)
+                result_attempts = db.execute(
+                    "select agent_run_id, runtime_kind, session_id, transcript_start, transcript_end "
+                    "from agent_runtime_attempts where status='completed' "
+                    f"and agent_run_id in ({placeholders}) order by agent_run_id,id desc",
+                    run_ids,
+                ).fetchall()
+                for attempt in result_attempts:
+                    result_attempt_by_run.setdefault(int(attempt["agent_run_id"]), attempt)
+
+        if not load_events or not rows:
+            return runs
+        from app.native_trajectory import (
+            hydrate_run_events_from_attempts,
+            read_native_result_json_from_attempt,
+        )
+        db_path = str(self.path.resolve())
+        hydrated = []
+        for run, row in zip(runs, rows):
+            run_id = int(row["id"])
+            hydrated.append(run.model_copy(update={
+                "tool_events": hydrate_run_events_from_attempts(
+                    row, event_attempts_by_run.get(run_id, []), db_path
+                ),
+                "final_result_json": read_native_result_json_from_attempt(
+                    row, result_attempt_by_run.get(run_id)
+                ) if run.status == "completed" else "",
+            }))
+        return hydrated
 
     def list_agent_run_summaries_for_terminal_runs(
         self,
