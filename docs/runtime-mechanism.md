@@ -10,6 +10,8 @@ changed resource bytes or message/resource facts invalidate the candidate.
 Only the native resource schema's URL, expiry and download instruction are
 transport capabilities, not candidate facts. Unknown resource fields and missing
 identity/verification fail explicitly. Original raw messages remain unchanged;
+provider-rendered or serialized text is not a native resource envelope and
+remains unchanged under the existing source security validation.
 signed URLs elsewhere, including authored results, retain the existing rejection.
 This changes source representation, not action permissions or historic replay.
 

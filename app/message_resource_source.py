@@ -32,7 +32,7 @@ class _NativeResource(BaseModel):
 def message_source_facts(context):
     raw = deepcopy(context.trigger_raw_payload)
     references = []
-    if getattr(context, "channel", "") != "dingtalk":
+    if getattr(context, "channel", "") != "dingtalk" or not isinstance(raw, dict):
         return raw, references
     messages = [raw]
     if isinstance(raw.get("quotedMessage"), dict):

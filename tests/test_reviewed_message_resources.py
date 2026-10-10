@@ -37,6 +37,27 @@ class Reader:
         return {**reference, "size_bytes": 8, "sha256": self.digest}
 
 
+@pytest.mark.parametrize("raw", ["Provider-rendered text", '{"notice":"Provider text"}'])
+def test_non_native_source_text_remains_unchanged_and_validated(tmp_path, raw):
+    _, _, context = setup(tmp_path)
+    context = replace(context, trigger_raw_payload=raw)
+    prepared = capture_candidate_sources(candidate(), context, Reader())
+    assert prepared.source_bindings[0].value["trigger_raw_payload"] == raw
+    assert len(prepared.source_bindings) == 1
+    _validate_runtime_reference_domain_result(prepared)
+
+
+def test_serialized_signed_resource_is_not_treated_as_verified_native_data(tmp_path):
+    import json
+
+    context = resource_context(tmp_path)
+    raw = json.dumps(context.trigger_raw_payload)
+    prepared = capture_candidate_sources(candidate(), replace(context, trigger_raw_payload=raw), Reader())
+    assert prepared.source_bindings[0].value["trigger_raw_payload"] == raw
+    with pytest.raises(ValueError):
+        _validate_runtime_reference_domain_result(prepared)
+
+
 def test_verified_resource_identity_and_content_replace_only_transport(tmp_path):
     context = resource_context(tmp_path)
     original = copy.deepcopy(context.trigger_raw_payload)
