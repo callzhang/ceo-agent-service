@@ -79,11 +79,14 @@ def test_attention_locates_scheduled_runs_without_scanning_unrelated_history(
         timezone_name="UTC",
     )
     with store._connect() as db:
+        from app.scheduled_config_storage import intern_scheduled_config
+
+        snapshot_id = intern_scheduled_config(db, "{}")
         db.executemany(
             "insert into scheduled_task_runs "
-            "(event_id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,dispatch_status,snapshot_json) "
-            "values (?,?,'manual','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z','failed','{}')",
-            [(f"unrelated-event-{i}", task.id) for i in range(5000)],
+            "(event_id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,dispatch_status,snapshot_id) "
+            "values (?,?,'manual','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z','failed',?)",
+            [(f"unrelated-event-{i}", task.id, snapshot_id) for i in range(5000)],
         )
     store.record_error(
         "scheduled-task-run:999999", "missing-event", "test", "not recovered"
@@ -140,18 +143,22 @@ def test_scheduled_error_locator_preserves_exact_identity_and_event_route(
         channel="scheduled",
     )
     with store._connect() as db:
+        from app.scheduled_config_storage import intern_scheduled_config
+
+        snapshot_id = intern_scheduled_config(db, "{}")
         db.execute("update reply_tasks set status='done' where id=?", (reply.id,))
         db.executemany(
             "insert into scheduled_task_runs "
-            "(id,event_id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,dispatch_status,snapshot_json,execution_kind,execution_id) "
-            "values (?,?,?,'manual','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z',?,'{}',?,?)",
+            "(id,event_id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,dispatch_status,snapshot_id,execution_kind,execution_id) "
+            "values (?,?,?,'manual','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z',?,?,?,?)",
             [
-                (10, "event-old", schedule.id, "failed", "", ""),
+                (10, "event-old", schedule.id, "failed", snapshot_id, "", ""),
                 (
                     11,
                     "event-new",
                     schedule.id,
                     "dispatched",
+                    snapshot_id,
                     "reply_task",
                     str(reply.id),
                 ),
