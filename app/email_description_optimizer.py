@@ -18,7 +18,7 @@ from app.email_classifier_contracts import validate_email_category_key
 from app.email_embedding_classifier import CategoryDescription
 
 
-ProposalStatus = Literal["proposed", "evaluated", "accepted", "rejected"]
+ProposalStatus = Literal["proposed", "evaluated", "accepted", "rejected", "unavailable"]
 MAX_AGENT_CONFLICT_GROUPS = 20
 MAX_REDACTED_EXAMPLE_CHARACTERS = 1_000
 OPTIMIZER_INVOCATION_LEASE_SECONDS = 300
@@ -285,7 +285,7 @@ class DescriptionProposal:
         if not isinstance(proposed, Mapping):
             raise ValueError("persisted description proposal is invalid")
         status = value.get("status")
-        if status not in {"proposed", "evaluated", "accepted", "rejected"}:
+        if status not in {"proposed", "evaluated", "accepted", "rejected", "unavailable"}:
             raise ValueError("persisted description proposal status is invalid")
         model_id = value.get("evaluated_model_id")
         if model_id is not None:
@@ -366,7 +366,7 @@ class DescriptionProposalRepository:
         return DescriptionProposal.from_mapping(value)
 
     def list_by_status(self, status: ProposalStatus) -> tuple[DescriptionProposal, ...]:
-        if status not in {"proposed", "evaluated", "accepted", "rejected"}:
+        if status not in {"proposed", "evaluated", "accepted", "rejected", "unavailable"}:
             raise ValueError("invalid description proposal status")
         return tuple(
             proposal
@@ -496,6 +496,19 @@ class DescriptionProposalRepository:
         )
         # One atomic replacement binds accepted status, description version,
         # and the passing candidate identifier together.
+        _write_json(
+            self._proposal_path(proposal_id), updated.to_dict(), immutable=False
+        )
+        return updated
+
+    def mark_source_unavailable(self, proposal_id: str) -> DescriptionProposal:
+        """Retire a proposal whose frozen source is no longer retained."""
+        current = self.get(proposal_id)
+        if current.status == "unavailable":
+            return current
+        if current.status != "proposed":
+            raise ValueError("only an unevaluated proposal can become unavailable")
+        updated = DescriptionProposal(**{**current.__dict__, "status": "unavailable"})
         _write_json(
             self._proposal_path(proposal_id), updated.to_dict(), immutable=False
         )

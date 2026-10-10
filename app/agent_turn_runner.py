@@ -775,7 +775,8 @@ class AgentTurnProcess(Generic[ResultT]):
                 )
                 if active_attempt is not None and not is_claude:
                     active_attempt = self.store.set_agent_runtime_attempt_session(
-                        active_attempt.id, new_session
+                        active_attempt.id, new_session, f"codex_session:{new_session}",
+                        transcript_start=attempt_transcript_start,
                     )
                 if active_route is not None and active_route.name == "codex_oauth":
                     self.store.set_agent_run_session(

@@ -736,6 +736,7 @@ class EmailClassifierLearningService:
             build_description_set_overlay,
         )
         from app.email_embedding_classifier import CategoryDescription
+        from app.email_training_data import TrainingSnapshotUnavailable
 
         recovered = self._recover_reserved_or_started_run(state, now=now)
         if recovered is not None:
@@ -754,17 +755,31 @@ class EmailClassifierLearningService:
             if row["enabled"]
         }
         overlay = build_description_set_overlay(proposal, active_descriptions)
-        snapshot = self.store.get_training_snapshot(proposal.source_snapshot_id)
-        if (
-            snapshot is None
-            or snapshot["snapshot_digest"] != proposal.source_snapshot_sha
-        ):
-            raise ValueError(
-                "proposal frozen source snapshot is unavailable or corrupt"
-            )
         latest = self.store.latest_training_snapshot_state()
-        if latest is None:
-            raise ValueError("training snapshot state is unavailable")
+        if (
+            latest is None
+            or latest["snapshot_id"] != proposal.source_snapshot_id
+            or latest["snapshot_sha"] != proposal.source_snapshot_sha
+        ):
+            repository.mark_source_unavailable(proposal_id)
+            return AutoRetrainResult(
+                RetrainDecision(False, "description_proposal_source_unavailable", 0),
+                state,
+                None,
+                None,
+            )
+        try:
+            snapshot = self.store.get_training_snapshot(proposal.source_snapshot_id)
+        except TrainingSnapshotUnavailable:
+            snapshot = None
+        if snapshot is None or snapshot["snapshot_digest"] != proposal.source_snapshot_sha:
+            repository.mark_source_unavailable(proposal_id)
+            return AutoRetrainResult(
+                RetrainDecision(False, "description_proposal_source_unavailable", 0),
+                state,
+                None,
+                None,
+            )
         repository.persist_overlay(overlay)
         signal = SnapshotTrainingSignal(
             snapshot_sha=proposal.source_snapshot_sha,

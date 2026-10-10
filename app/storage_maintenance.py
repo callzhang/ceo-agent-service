@@ -8,14 +8,14 @@ import sqlite3
 from pathlib import Path
 
 from app.agent_effect_guard import provider_receipts
-from app.native_trajectory import event_metadata, native_run_available, read_run_events
+from app.codex_history import _file_session_id
+from app.codex_runner import _codex_home
+from app.native_trajectory import event_metadata, native_covers_event, native_run_available, payload_signature, read_run_events
 
 
 def completed_payloads(events: list[dict]) -> set[str]:
     return {
-        json.dumps({key: item[key] for key in (
-            "type", "command", "arguments", "result", "aggregated_output", "exit_code"
-        ) if key in item}, ensure_ascii=False, sort_keys=True)
+        payload_signature(event)
         for event in events
         if event.get("type") == "item.completed"
         and isinstance(item := event.get("item"), dict)
@@ -23,12 +23,23 @@ def completed_payloads(events: list[dict]) -> set[str]:
     }
 
 
+def native_codex_sessions() -> set[str]:
+    root = _codex_home()
+    return {session_id for directory in (root / "sessions", root / "archived_sessions")
+            for path in directory.rglob("*.jsonl") if (session_id := _file_session_id(path))}
+
+
 def compact_native_duplicates(database: Path) -> dict[str, int]:
     counts = {"runs_compacted": 0, "runs_retained": 0, "payload_bytes_removed": 0}
+    sessions = native_codex_sessions()
     with sqlite3.connect(database, timeout=60) as db:
         db.row_factory = sqlite3.Row
         runs = db.execute("select * from agent_runs where status in ('completed','failed')").fetchall()
         for run in runs:
+            attempts = db.execute("select runtime_kind,session_id from agent_runtime_attempts where agent_run_id=?", (run["id"],)).fetchall()
+            if (attempts and any(attempt["runtime_kind"] == "codex_cli" and attempt["session_id"] not in sessions for attempt in attempts)) or (not attempts and run["codex_session_id"] not in sessions):
+                counts["runs_retained"] += 1
+                continue
             records = db.execute(
                 "select id,event_json from agent_run_events where agent_run_id=? order by sequence",
                 (run["id"],),
@@ -38,10 +49,9 @@ def compact_native_duplicates(database: Path) -> dict[str, int]:
             if not native or provider_receipts(originals) != provider_receipts(native):
                 counts["runs_retained"] += 1
                 continue
-            native_payloads = completed_payloads(native)
             replacements = [
                 json.dumps(event_metadata(event), ensure_ascii=False, separators=(",", ":"))
-                if completed_payloads([event]) and completed_payloads([event]).issubset(native_payloads)
+                if completed_payloads([event]) and native_covers_event(event, native)
                 else record["event_json"]
                 for record, event in zip(records, originals)
             ]

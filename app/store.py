@@ -1689,6 +1689,12 @@ def _persisted_agent_receipt_ids(value: object) -> set[str]:
     return receipt_ids
 
 
+def _audit_event_metadata_json(events_json: str) -> str:
+    from app.native_trajectory import event_metadata
+    return json.dumps([event_metadata(event) for event in json.loads(events_json or "[]")
+                       if isinstance(event, dict)], ensure_ascii=False, separators=(",", ":"))
+
+
 def _agent_event_columns(event: dict[str, object]) -> tuple[str, str, str, str]:
     event_type = str(event.get("type") or "")
     item = event.get("item")
@@ -11231,16 +11237,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "where agent_run_id=? order by sequence",
                 (row["id"],),
             ).fetchall()
-            from app.native_trajectory import live_events, native_run_available, read_run_events
+            from app.native_trajectory import hydrate_run_events
             db_path = str(db.execute("pragma database_list").fetchone()[2])
-            cached_events = live_events(db_path, int(row["id"]))
-            if cached_events is not None:
-                earlier_count = len(event_rows) - len(cached_events)
-                tool_events = [json.loads(event["event_json"]) for event in event_rows[:earlier_count]] + cached_events
-            else:
-                stored_events = [json.loads(event["event_json"]) for event in event_rows]
-                tool_events = (read_run_events(db, row)
-                               if native_run_available(db, row) else stored_events)
+            tool_events = hydrate_run_events(db, row, [json.loads(event["event_json"]) for event in event_rows], db_path)
         return AgentRun(
             id=row["id"],
             reply_task_id=row["reply_task_id"],
@@ -12106,10 +12105,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     events_by_run[int(event["agent_run_id"])].append(
                         json.loads(event["event_json"])
                     )
-            return [
-                run.model_copy(update={"tool_events": events_by_run[run.id]})
-                for run in runs
-            ]
+            from app.native_trajectory import hydrate_run_events
+            return [run.model_copy(update={"tool_events": hydrate_run_events(
+                db, row, events_by_run[run.id], str(self.path.resolve())
+            )}) for run, row in zip(runs, rows)]
 
     def list_agent_run_summaries_for_terminal_runs(
         self,
@@ -13296,6 +13295,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         session_id: str,
         transcript_reference: str | None = None,
         *,
+        transcript_start: int | None = None,
         owner: str = "legacy-runtime-owner",
         now: str | datetime | None = None,
     ) -> AgentRuntimeAttempt:
@@ -13324,13 +13324,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             db.execute(
                 """
                 update agent_runtime_attempts
-                set session_id=?, transcript_reference=?, updated_at=?
+                set session_id=?, transcript_reference=?, transcript_start=coalesce(?,transcript_start), updated_at=?
                 where id=? and status in ('starting', 'running')
                   and (agent_run_id is not null
                        or (lease_owner=? and lease_expires_at>?))
                 """,
                 (
-                    session_id, selected_reference, now_text, attempt_id,
+                    session_id, selected_reference, transcript_start, now_text, attempt_id,
                     owner, now_text,
                 ),
             )
@@ -18991,7 +18991,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             codex_transcript_start_line,
             codex_transcript_end_line,
             decision_json,
-            "[]",
+            _audit_event_metadata_json(audit_tool_events_json),
             audit_summary,
             error,
         )
@@ -19066,7 +19066,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     codex_transcript_start_line,
                     codex_transcript_end_line,
                     decision_json,
-                    "[]",
+                    _audit_event_metadata_json(audit_tool_events_json),
                     audit_summary,
                     status,
                     error,
@@ -19399,7 +19399,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     codex_transcript_start_line,
                     codex_transcript_end_line,
                     envelope_json,
-                    "[]",
+                    _audit_event_metadata_json(audit_tool_events_json),
                     audit_summary,
                 ),
             )
@@ -24403,7 +24403,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     codex_transcript_start_line,
                     codex_transcript_end_line,
                     audit_documents_json,
-                    "[]",
+                    _audit_event_metadata_json(audit_tool_events_json),
                     audit_summary,
                     human_decision_options_json,
                     oa_process_instance_id,
@@ -24572,7 +24572,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     codex_transcript_start_line,
                     codex_transcript_end_line,
                     audit_documents_json,
-                    "[]",
+                    _audit_event_metadata_json(audit_tool_events_json),
                     audit_summary,
                     human_decision_options_json,
                     oa_process_instance_id,
@@ -24826,7 +24826,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 codex_session_id,
                 codex_transcript_start_line,
                 codex_transcript_end_line,
-                "[]",
+                _audit_event_metadata_json(audit_tool_events_json),
                 audit_summary,
                 human_decision_options_json,
                 persisted_process_id,
@@ -25790,7 +25790,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "unknown reply_attempt update column: "
                 + ", ".join(sorted(unknown))
             )
-        return {column: ("[]" if column == "audit_tool_events_json" else value)
+        return {column: (_audit_event_metadata_json(str(value)) if column == "audit_tool_events_json" else value)
                 for column, value in updates.items() if value is not None}
 
     @staticmethod

@@ -1073,8 +1073,9 @@ class EmailModelRegistry:
         """Keep runnable manifests and one unevaluated candidate after training ends."""
         if training_active:
             return []
+        from app.email_training_observer import _state_lock
         removed: list[Path] = []
-        with self._locked():
+        with self._locked(), _state_lock(self.root / "provider-training-observations.json"):
             models = self.list_models()
             protected = {
                 manifest.model_id

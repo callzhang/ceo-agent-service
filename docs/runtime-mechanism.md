@@ -764,11 +764,10 @@ candidate_executions 保存租约，candidate_action_attempts 在 provider 调�
 历史 code 或 source_code 为 provider_risk_rejected 的同一业务对象不能通过换工具、渠道或执行代自动重放。保留拒绝来源和原始历史记录。native 引用回复仍使用原目标消息和准备正文的正向回读；空的有限消息列表不证明未发送。
 
 当前 Attempt 的结构化运行结果 `code` 或 `source_code` 为 `provider_risk_rejected` 时，历史“重新处理”入口不可用，直接提交该入口也返回冲突且不入队；API、React 和原生 HTML 优先展示该原因。确需新的候选或执行范围时，应通过明确的本次任务和完整候选提交处理，不能用旧入口重放历史候选。对于后端允许重新处理的其他失败，`rerun_label` / `rerun_confirmation` 仍由同一业务对象的结构化历史提供；跨执行代的历史拒绝可使措辞显示“重新评估候选”，普通技术失败保留“重新处理”。只认确切的顶层结构化错误，不匹配正文、嵌套文字或其他对象；System 的既有历史拒绝限制和原始记录继续保留。
-typed result 里的这些字段命名一次外发，但不构成它发生过的证据：它们由做出该声称的同一轮写出，
-其中 `delivery_key` 和 `external_action_key` 本就是服务在 prompt 里交给它的，回显不证明任何事。
-证据是 provider 接受副作用时返回的回执（`openTaskId` / `openMessageId`），它只会出现在运行时
-原生运行时的调用流里。服务从当前进程的调用事件或 Codex/Claude 原生 session 的精确行范围读取它；
-`agent_run_events` 只保存调用身份和状态，完整参数、命令和工具输出不再写入 SQLite。
+原生运行时的完整调用流保存在 Codex/Claude session 中。服务从当前进程的调用事件或原生 session
+的精确调用范围读取它；`agent_run_events` 保存调用身份、状态和已经提取的小型 provider 回执，
+完整参数、命令和工具输出不再写入 SQLite。中断运行按原生 `task_started` / `task_complete`
+边界恢复证据，既有投递核对和恢复契约保持不变。
 
 Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 consumer-artifacts 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
 
@@ -1928,3 +1927,5 @@ Consumer 捕获的历史消息以反馈 token 和 attempt ID 识别上下评分�
 定时配置正文存于 `scheduled_task_config_versions`，触发记录以 `snapshot_id` 引用不可变版本。数据库迁移保留运行 ID、状态和已排队输入。
 
 模型目录在无训练进程活动时清理，保留当前模型、上一个可运行版本和最新待评估候选；其他旧制品及遗留临时文件删除。业务状态、最终结果、执行回执与小型评估记录保留。数据库删除旧正文后需要执行存储维护并压缩页才能释放文件空间。
+
+描述优化提案保持产生它时的快照身份与引用证据不变。若提案尚未评估而源快照已被最新数据替代，提案一次性转为 `unavailable`，原因 `description_proposal_source_unavailable`；不反复启动失败的评估，也不把旧证据套到新数据上。下一次基于最新数据的训练可产生新的提案。

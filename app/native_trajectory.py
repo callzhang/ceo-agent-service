@@ -12,28 +12,41 @@ from app.codex_runner import _codex_home
 # The stream is needed while the invocation is running and its native file is
 # still being written. Retain a small number of recently completed runs for
 # callers consuming the result in this process, without another disk copy.
-_LIVE_EVENTS: OrderedDict[tuple[str, int], list[dict]] = OrderedDict()
+_LIVE_EVENTS: OrderedDict[tuple[str, int], tuple[int, list[dict]]] = OrderedDict()
 _LIVE_LOCK = threading.Lock()
+_LIVE_BYTES = 0
+_LIVE_LIMIT_BYTES = 64 * 1024 * 1024
 
 
 def remember_live_event(db_path: str, run_id: int, event: dict) -> None:
+    global _LIVE_BYTES
+    size = len(json.dumps(event, ensure_ascii=False).encode("utf-8"))
     with _LIVE_LOCK:
         key = (db_path, run_id)
-        _LIVE_EVENTS.setdefault(key, []).append(event)
+        if size > _LIVE_LIMIT_BYTES:
+            prior = _LIVE_EVENTS.pop(key, None)
+            if prior is not None:
+                _LIVE_BYTES -= prior[0]
+            return
+        prior_size, events = _LIVE_EVENTS.get(key, (0, []))
+        events.append(event)
+        _LIVE_EVENTS[key] = (prior_size + size, events)
+        _LIVE_BYTES += size
         _LIVE_EVENTS.move_to_end(key)
-        while len(_LIVE_EVENTS) > 32:
-            _LIVE_EVENTS.popitem(last=False)
+        while len(_LIVE_EVENTS) > 32 or _LIVE_BYTES > _LIVE_LIMIT_BYTES:
+            _, (removed_size, _) = _LIVE_EVENTS.popitem(last=False)
+            _LIVE_BYTES -= removed_size
 
 
 def live_events(db_path: str, run_id: int) -> list[dict] | None:
     with _LIVE_LOCK:
-        events = _LIVE_EVENTS.get((db_path, run_id))
-        return list(events) if events is not None else None
+        entry = _LIVE_EVENTS.get((db_path, run_id))
+        return list(entry[1]) if entry is not None else None
 
 
 def event_metadata(event: dict) -> dict:
     """Only call identity/status, never prompt, arguments or tool output."""
-    metadata = {"type": event.get("type", "")}
+    metadata = {key: event[key] for key in ("type", "tool", "title", "status", "id", "call_id") if key in event}
     item = event.get("item")
     if isinstance(item, dict):
         metadata["item"] = {
@@ -52,6 +65,7 @@ def read_codex_events(session_id: str, *, start_line: int = 0, end_line: int = 0
     if path is None:
         return []
     events: dict[str, dict] = {}
+    turn_started = False
     with path.open(encoding="utf-8") as stream:
         for line_number, line in enumerate(stream):
             if line_number < start_line:
@@ -66,6 +80,10 @@ def read_codex_events(session_id: str, *, start_line: int = 0, end_line: int = 0
                 continue
             event = _mcp_tool_result_from_event_msg(payload)
             body = payload.get("payload", {})
+            if payload.get("type") == "event_msg" and body.get("type") == "task_started":
+                if turn_started:
+                    break
+                turn_started = True
             if event is None and payload.get("type") == "event_msg" and body.get("type") == "item_completed":
                 item = body.get("item", {})
                 item_type = item.get("type")
@@ -76,6 +94,8 @@ def read_codex_events(session_id: str, *, start_line: int = 0, end_line: int = 0
             if event is not None:
                 item = event["item"]
                 events[str(item.get("id") or len(events))] = event
+            if payload.get("type") == "event_msg" and body.get("type") == "task_complete":
+                break
     return list(events.values())
 
 
@@ -134,6 +154,8 @@ def read_run_events(db, row) -> list[dict]:
     ).fetchall()
     for attempt in attempts:
         if attempt["transcript_end"] <= attempt["transcript_start"]:
+            if attempt["runtime_kind"] == "codex_cli" and attempt["transcript_reference"].startswith("codex_session:"):
+                events.extend(read_codex_events(attempt["session_id"], start_line=attempt["transcript_start"]))
             continue
         if attempt["runtime_kind"] == "codex_cli":
             events.extend(read_codex_events(attempt["session_id"], start_line=attempt["transcript_start"], end_line=attempt["transcript_end"]))
@@ -144,6 +166,53 @@ def read_run_events(db, row) -> list[dict]:
     if not attempts and row["codex_session_id"] and row["transcript_end_line"] > row["transcript_start_line"]:
         events.extend(read_codex_events(row["codex_session_id"], start_line=row["transcript_start_line"], end_line=row["transcript_end_line"]))
     return events
+
+
+def payload_signature(event: dict) -> str:
+    item = event.get("item")
+    if not isinstance(item, dict):
+        return json.dumps(event, ensure_ascii=False, sort_keys=True)
+    return json.dumps({key: value for key, value in item.items()
+                       if key not in {"id", "call_id", "status"}}, ensure_ascii=False, sort_keys=True)
+
+
+def native_covers_event(event: dict, native: list[dict]) -> bool:
+    item = event.get("item")
+    if not isinstance(item, dict) or event.get("type") != "item.completed":
+        return False
+    fields = {key: value for key, value in item.items() if key not in {"id", "call_id", "status"}}
+    return any(isinstance(candidate := record.get("item"), dict)
+               and all(key in candidate and candidate[key] == value for key, value in fields.items())
+               for record in native)
+
+
+def merge_native_events(native: list[dict], stored: list[dict]) -> list[dict]:
+    """Use native detail and keep historical rows with unmatched evidence."""
+    signatures = {payload_signature(event) for event in native}
+    native_ids = {event.get("item", {}).get("id") for event in native}
+    from app.agent_effect_guard import provider_receipts
+    native_receipts = set(provider_receipts(native))
+    retained = []
+    metadata_fields = {"type", "id", "call_id", "status", "exit_code", "server", "tool", "provider_receipt_ids"}
+    for event in stored:
+        item = event.get("item")
+        if payload_signature(event) in signatures:
+            continue
+        if isinstance(item, dict) and set(item).issubset(metadata_fields):
+            receipts = set(provider_receipts([event]))
+            if (receipts and receipts.issubset(native_receipts)) or (not receipts and item.get("id") in native_ids):
+                continue
+        elif native_covers_event(event, native):
+            continue
+        retained.append(event)
+    return native + retained
+
+
+def hydrate_run_events(db, row, stored: list[dict], db_path: str) -> list[dict]:
+    cached = live_events(db_path, int(row["id"]))
+    if cached is not None:
+        return stored[:len(stored) - len(cached)] + cached
+    return merge_native_events(read_run_events(db, row), stored)
 
 
 def native_run_available(db, row) -> bool:

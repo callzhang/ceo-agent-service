@@ -13,6 +13,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from app.store import SQLITE_BUSY_TIMEOUT_SECONDS, AutoReplyStore, _utc_store_time
+from app.workbench.native_events import hydrate_events, remember_live_payload, stored_payload
 from app.workbench.models import (
     ConfirmationStatus,
     TurnStatus,
@@ -719,6 +720,10 @@ class WorkbenchStore(AutoReplyStore):
         if event_type not in WorkbenchEvent.model_fields["event_type"].annotation.__args__:
             raise ValueError("invalid workbench event type")
         payload_json = _json_object_text(payload, field="payload")
+        full_payload = json.loads(payload_json)
+        payload_json = _json_object_text(
+            stored_payload(event_type, full_payload), field="payload"
+        )
         _, now_text = _utc_store_time(now)
         with self._connect() as db:
             db.execute("begin immediate")
@@ -749,7 +754,11 @@ class WorkbenchStore(AutoReplyStore):
             ).fetchone()
             if event is None:
                 raise RuntimeError("event insert did not create a row")
-            return self._event_from_row(event)
+            result = self._event_from_row(event)
+        if event_type in {"tool_started", "tool_completed"}:
+            remember_live_payload(self.path, result.id, full_payload)
+            result.payload = full_payload
+        return result
 
     def events_after(
         self, turn_id: str, after_id: int = 0, *, limit: int | None = None
@@ -769,7 +778,7 @@ class WorkbenchStore(AutoReplyStore):
                 query += " limit ?"
                 parameters += (limit,)
             rows = db.execute(query, parameters).fetchall()
-            return [self._event_from_row(row) for row in rows]
+            return hydrate_events(db, self.path, [self._event_from_row(row) for row in rows])
 
     def event_stream_snapshot(
         self, turn_id: str, after_id: int = 0, *, limit: int = 1000
@@ -789,7 +798,7 @@ class WorkbenchStore(AutoReplyStore):
                 "select * from workbench_turns where id=?", (turn_id,)
             ).fetchone()
             return (
-                [self._event_from_row(row) for row in rows],
+                hydrate_events(db, self.path, [self._event_from_row(row) for row in rows]),
                 None if turn_row is None else self._turn_from_row(turn_row),
             )
 
@@ -995,7 +1004,7 @@ class WorkbenchStore(AutoReplyStore):
             return (
                 self._task_from_row(task_row),
                 [self._turn_from_row(row) for row in turn_rows],
-                [self._event_from_row(row) for row in reversed(event_rows)],
+                hydrate_events(db, self.path, [self._event_from_row(row) for row in reversed(event_rows)]),
                 [self._attachment_from_row(row) for row in attachment_rows],
                 [self._artifact_from_row(row) for row in artifact_rows],
                 [self._confirmation_from_row(row) for row in confirmation_rows],
