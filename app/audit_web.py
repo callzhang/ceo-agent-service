@@ -10007,8 +10007,9 @@ def create_audit_app(
     # The audit process is read-heavy. Reuse one initialized Store so requests do
     # not repeatedly contend with the worker for schema initialization writes.
     audit_store = _audit_store(db_path)
-    # Share successful validation across email routes and detail reads. Route
-    # registration retains its existing email-only initialization error boundary.
+    # Share schema validation across email routes and detail reads. Durable-row
+    # validation belongs to explicit/offline EmailStore callers; doing that full
+    # historical scan in a request would block the first email read for minutes.
     audit_email_store = None
     audit_email_store_lock = threading.Lock()
 
@@ -10016,7 +10017,7 @@ def create_audit_app(
         nonlocal audit_email_store
         with audit_email_store_lock:
             if audit_email_store is None:
-                audit_email_store = EmailStore(db_path)
+                audit_email_store = EmailStore(db_path, validate_rows=False)
             return audit_email_store
 
     from app.workbench.api import register_workbench_routes

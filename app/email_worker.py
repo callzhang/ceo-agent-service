@@ -3313,7 +3313,7 @@ def build_email_worker_dependencies(
     if training_snapshot_job_factory is None:
         training_snapshot_job_factory = EmailTrainingSnapshotPublicationJob
 
-    email_store = EmailStore(Path(settings.db_path))
+    email_store = EmailStore(Path(settings.db_path), validate_rows=False)
     task_store = AutoReplyStore(Path(settings.db_path))
     from app.managed_skills import resolve_pending_runtime_skills
 
@@ -4292,7 +4292,7 @@ def _build_email_unsubscribe_context(settings: object) -> SimpleNamespace:
 
     from app.email_account_connector import ConnectorPriority
 
-    email_store = EmailStore(Path(settings.db_path))
+    email_store = EmailStore(Path(settings.db_path), validate_rows=False)
     task_store = AutoReplyStore(Path(settings.db_path))
     # This process runs one unsubscribe task at a time (see
     # app/email_account_connector.py), so this registry only ever needs to
