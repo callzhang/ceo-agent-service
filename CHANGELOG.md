@@ -21,6 +21,11 @@
   scheduler or dispatcher tick. Later incidents remain unresolved, and empty
   recovery checks do not acquire a SQLite writer transaction.
 
+- 2026-10-10: Initialize resumed runtime transcript ranges at their start
+  offset, so failure persistence retains the original runtime error rather
+  than raising a secondary invalid-range error. Completion range validation
+  remains unchanged.
+
 - 2026-10-09: Avoid SQLite writer admission for empty, settled, delayed and
   live-leased Email classification polls. Due work and expired leases still
   recover and claim exclusively under BEGIN IMMEDIATE; a concurrent claim is

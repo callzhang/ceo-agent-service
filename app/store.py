@@ -13328,13 +13328,17 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             db.execute(
                 """
                 update agent_runtime_attempts
-                set session_id=?, transcript_reference=?, transcript_start=coalesce(?,transcript_start), updated_at=?
+                set session_id=?, transcript_reference=?,
+                    transcript_start=coalesce(?,transcript_start),
+                    transcript_end=max(transcript_end,coalesce(?,transcript_start)),
+                    updated_at=?
                 where id=? and status in ('starting', 'running')
                   and (agent_run_id is not null
                        or (lease_owner=? and lease_expires_at>?))
                 """,
                 (
-                    session_id, selected_reference, transcript_start, now_text, attempt_id,
+                    session_id, selected_reference, transcript_start, transcript_start,
+                    now_text, attempt_id,
                     owner, now_text,
                 ),
             )

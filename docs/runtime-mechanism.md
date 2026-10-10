@@ -18,6 +18,13 @@ and incidents from other components. Startup health alone is
 not recovery evidence. With no eligible incident, resolution does not acquire
 the SQLite writer lock; the write transaction rechecks the same conditions.
 
+A resumed runtime attempt initializes an empty transcript range at its observed
+start offset. Setting the session advances an unset end to that offset without
+discarding any later captured end. Thus a result-validation failure can retain
+its original error before a transcript end is captured, instead of failing its
+own persistence with an invalid range. An empty range is not transcript content
+or execution evidence. Explicit invalid completion ranges are still rejected.
+
 Email classification polling checks for due pending work or an expired running
 lease before acquiring the SQLite writer lock. Ineligible polls are read-only.
 The eligibility read grants no ownership: expired-lease recovery and the full
