@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+| codex-runtime-source-depth-budget-20261010 | app/agent_turn_runner.py (`_validate_runtime_reference_domain_result` section-relative security checks only), tests/test_runtime_source_depth_budget.py, docs/runtime-mechanism.md, CHANGELOG.md | Do not charge candidate/list/binding wrappers twice against an already checked source's JSON-decoding budget. Preserve each source's credential, signed-URL, callback, depth and total codec limits, plus metadata and authored-field checks. | 2026-10-10 |
+
 | codex-email-runtime-startup-scan-cost | app/email_worker.py (runtime EmailStore constructors only), app/audit_web.py (lazy audit EmailStore factory only), docs/architecture.md and docs/runtime-mechanism.md (runtime email-store initialization contract), docs/agent-claims.md | Avoid synchronously parsing every historical email row during runtime startup or the first email-detail request; keep schema-shape checks on runtime paths and preserve full durable-row validation for explicit/default offline EmailStore callers. | 2026-10-09 |
 
 | codex-reply-status-payload-projection | app/audit_web.py (`_reply_attempt_queue_snapshot` current-row projection only), docs/runtime-mechanism.md (Worker status query projection), docs/agent-claims.md | Avoid reading large reply-attempt payload columns while building Worker status counts; retain all fields required for current-status and latest-error semantics. | 2026-10-09 |

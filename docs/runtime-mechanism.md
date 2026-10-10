@@ -1,5 +1,14 @@
 # Current Runtime Mechanism
 
+Runtime result security validation budgets authored fields, captured-source
+metadata and each captured-source value separately. Candidate/list/binding
+wrappers are not charged again against a source's JSON-decoding depth budget.
+Every field is still inspected by the same credential, signed-URL and local
+runtime predicates; each source retains its depth bound, callback validation
+and original contents. The total serialized result byte limit still applies
+to the complete envelope. This does not exempt business secrets or transport
+capabilities, change source identity/digest checks, or permit an external action.
+
 The Task Attention inspector reads decision fields only from the completed
 runtime attempt's exact native session and range. It closes the read-only
 SQLite connection after loading references, before reading transcript files,

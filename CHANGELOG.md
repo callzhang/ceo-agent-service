@@ -9,6 +9,12 @@
 
 ## Unreleased
 
+- 2026-10-10: Stop double-counting candidate packaging against a captured
+  source's JSON-decoding depth during sensitive/local-runtime validation.
+  Check authored data, source metadata and source values separately with the
+  existing predicates and limits; retain callback checks and full codec size
+  limits, without redacting or dropping source evidence.
+
 - 2026-10-10: Observe submitted runtime prompts through real append callbacks
   in test RAM, not terminal archives. Worker fixtures read exact synthetic
   native tool windows while persisted audit events remain empty. Quality
