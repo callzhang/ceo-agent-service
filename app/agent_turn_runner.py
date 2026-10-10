@@ -66,6 +66,7 @@ from app.codex_history import (
     extract_codex_assistant_messages_from_session,
 )
 from app.codex_runner import _codex_home
+from app.native_trajectory import count_claude_session_lines
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter, FridayRuntimeError
 from app.agent_runtime_router import _runtime_failure_from_friday_error
@@ -774,7 +775,8 @@ class AgentTurnProcess(Generic[ResultT]):
                 )
                 if active_attempt is not None and not is_claude:
                     active_attempt = self.store.set_agent_runtime_attempt_session(
-                        active_attempt.id, new_session
+                        active_attempt.id, new_session, f"codex_session:{new_session}",
+                        transcript_start=attempt_transcript_start,
                     )
                 if active_route is not None and active_route.name == "codex_oauth":
                     self.store.set_agent_run_session(
@@ -1074,6 +1076,8 @@ class AgentTurnProcess(Generic[ResultT]):
                         route_session_id, codex_home=_codex_home()
                     )
                     if route_session_id and route_uses_codex_history
+                    else count_claude_session_lines(route_session_id)
+                    if route_session_id and route.runtime_kind is RuntimeKind.CLAUDE_CLI
                     else 0
                 )
                 attempt_is_preclaimed = False
@@ -1275,6 +1279,9 @@ class AgentTurnProcess(Generic[ResultT]):
                     attempt_transcript_start + (line_count - attempt_line_start),
                     attempt_transcript_start,
                 )
+                if failed_session_id and route.runtime_kind is RuntimeKind.CLAUDE_CLI:
+                    attempt_transcript_reference = f"claude_session:{failed_session_id}"
+                    failed_transcript_end = count_claude_session_lines(failed_session_id)
                 if failed_session_id and route_uses_codex_history:
                     try:
                         failed_transcript_end = max(
@@ -1576,9 +1583,9 @@ class AgentTurnProcess(Generic[ResultT]):
             self.store.complete_agent_runtime_attempt(
                 persisted_attempt.id,
                 pending_claude_session_id,
-                "",
+                f"claude_session:{pending_claude_session_id}",
                 attempt_transcript_start,
-                attempt_transcript_start + (line_count - attempt_line_start),
+                count_claude_session_lines(pending_claude_session_id),
                 owner=self.owner,
                 result_schema_id=runtime_result_schema_id,
                 result_envelope_json=_encode_runtime_domain_result(

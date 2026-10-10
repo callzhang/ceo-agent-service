@@ -5410,7 +5410,7 @@ def test_reviewed_reply_rerun_preserves_prior_audit_events(tmp_path: Path) -> No
     attempt = store.get_reply_attempt(attempt_id)
     assert attempt is not None
     assert json.loads(attempt.audit_tool_events_json) == [
-        {"tool": "original_read", "result": "ok"},
+        {"tool": "original_read"},
         {"tool": "audit_review", "result": "queued"},
     ]
 
@@ -13389,17 +13389,19 @@ def test_scheduled_task_ids_for_reply_tasks_maps_only_reply_task_runs(tmp_path: 
     assert task is not None
     snapshot_json = ScheduledTaskSnapshot.from_task(task).to_json()
     with store._connect() as db:
+        from app.scheduled_config_storage import intern_scheduled_config
+        snapshot_id = intern_scheduled_config(db, snapshot_json)
         db.execute(
             "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind, "
             "scheduled_for, first_scheduled_for, dispatch_status, execution_kind, "
-            "execution_id, created_at, snapshot_json) values "
+            "execution_id, created_at, snapshot_id) values "
             "('e1', 13, 'scheduled', '2026-10-01T12:00:00+00:00', "
             "'2026-10-01T12:00:00+00:00', 'dispatched', 'reply_task', '9001', "
             "'2026-10-01T12:00:00+00:00', ?), "
             "('e2', 13, 'scheduled', '2026-10-01T13:00:00+00:00', "
             "'2026-10-01T13:00:00+00:00', 'dispatched', 'service_command', 'produce-once', "
             "'2026-10-01T13:00:00+00:00', ?)",
-            (snapshot_json, snapshot_json),
+            (snapshot_id, snapshot_id),
         )
 
     mapped = store.scheduled_task_ids_for_reply_tasks((9001, 9002))

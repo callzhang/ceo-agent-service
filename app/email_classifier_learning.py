@@ -497,6 +497,7 @@ class EmailClassifierLearningService:
 
         stored = self.store.persist_training_snapshot(snapshot)
         retrain = self.observe_snapshot_and_maybe_retrain(now=now)
+        self._cleanup_storage(training_active=retrain.state.active_run_id is not None)
         return SnapshotPublicationResult(
             snapshot=stored,
             retrain=retrain,
@@ -537,7 +538,14 @@ class EmailClassifierLearningService:
         current = now or datetime.now(timezone.utc)
         with retrain_state_reservation(self.retrain_state_path):
             state = load_retrain_state(self.retrain_state_path)
-            return self._poll_retrain(state, now=current)
+            result = self._poll_retrain(state, now=current)
+            self._cleanup_storage(training_active=result.state.active_run_id is not None)
+            return result
+
+    def _cleanup_storage(self, *, training_active: bool) -> None:
+        if isinstance(self.store, EmailStore):
+            self.store.prune_training_snapshot_data(training_active=training_active)
+        self.registry.prune_artifacts(training_active=training_active)
 
     def _poll_retrain(self, state: RetrainState, *, now: datetime) -> AutoRetrainResult:
         if state.active_run_id is None:
@@ -728,6 +736,7 @@ class EmailClassifierLearningService:
             build_description_set_overlay,
         )
         from app.email_embedding_classifier import CategoryDescription
+        from app.email_training_data import TrainingSnapshotUnavailable
 
         recovered = self._recover_reserved_or_started_run(state, now=now)
         if recovered is not None:
@@ -746,17 +755,31 @@ class EmailClassifierLearningService:
             if row["enabled"]
         }
         overlay = build_description_set_overlay(proposal, active_descriptions)
-        snapshot = self.store.get_training_snapshot(proposal.source_snapshot_id)
-        if (
-            snapshot is None
-            or snapshot["snapshot_digest"] != proposal.source_snapshot_sha
-        ):
-            raise ValueError(
-                "proposal frozen source snapshot is unavailable or corrupt"
-            )
         latest = self.store.latest_training_snapshot_state()
-        if latest is None:
-            raise ValueError("training snapshot state is unavailable")
+        if (
+            latest is None
+            or latest["snapshot_id"] != proposal.source_snapshot_id
+            or latest["snapshot_sha"] != proposal.source_snapshot_sha
+        ):
+            repository.mark_source_unavailable(proposal_id)
+            return AutoRetrainResult(
+                RetrainDecision(False, "description_proposal_source_unavailable", 0),
+                state,
+                None,
+                None,
+            )
+        try:
+            snapshot = self.store.get_training_snapshot(proposal.source_snapshot_id)
+        except TrainingSnapshotUnavailable:
+            snapshot = None
+        if snapshot is None or snapshot["snapshot_digest"] != proposal.source_snapshot_sha:
+            repository.mark_source_unavailable(proposal_id)
+            return AutoRetrainResult(
+                RetrainDecision(False, "description_proposal_source_unavailable", 0),
+                state,
+                None,
+                None,
+            )
         repository.persist_overlay(overlay)
         signal = SnapshotTrainingSignal(
             snapshot_sha=proposal.source_snapshot_sha,

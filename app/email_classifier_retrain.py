@@ -452,6 +452,7 @@ class TrainingSubprocessController:
                 snapshot_id=snapshot_id,
                 trained_at=_format_timestamp(now),
             )
+            EmailStore(self.store_path).pin_training_snapshot(run_id, snapshot_id)
         if not command or not all(isinstance(item, str) and item for item in command):
             raise ValueError("training command must contain non-empty strings")
         if signal is None:
@@ -926,7 +927,7 @@ def _run_training_job(
     try:
         if snapshot_id != started.snapshot_id:
             raise RuntimeError("training command snapshot does not match queued run")
-        store = EmailStore(db_path)
+        store = EmailStore(db_path, training_run_id=run_id)
         training_selection = started.training_selection
         selected_categories: tuple[str, ...] | None = None
         selected_message_identities: tuple[str, ...] | None = None

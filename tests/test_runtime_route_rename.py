@@ -45,7 +45,7 @@ def _run(store: AutoReplyStore, task_id: int, minutes: int, status: str):
 def _snapshot_runtime(store: AutoReplyStore, run_id: int) -> str:
     with store._connect() as db:
         row = db.execute(
-            "select snapshot_json from scheduled_task_runs where id=?", (run_id,)
+            "select snapshot_json from scheduled_task_config_versions where id=(select snapshot_id from scheduled_task_runs where id=?)", (run_id,)
         ).fetchone()
     return ScheduledTaskSnapshot.from_json(str(row["snapshot_json"])).runtime_id
 

@@ -244,7 +244,7 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                 now=now_text,
             )
             claimed = db.execute(
-                "select * from scheduled_task_runs where id=?", (candidate["id"],)
+                f"select {self.store._scheduled_task_run_columns()} from scheduled_task_runs where id=?", (candidate["id"],)
             ).fetchone()
             assert claimed is not None
             run = self.store._scheduled_task_run_from_row(claimed)

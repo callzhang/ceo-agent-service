@@ -45,8 +45,9 @@ def test_attention_recovery_does_not_search_unrelated_successes_first(
         db.execute(
             "insert into scheduled_tasks(id,name,prompt,cron_expression,timezone,runtime_id,enabled) values (1,'Report','p','0 * * * *','UTC','',1)"
         )
+        db.execute("insert or ignore into scheduled_task_config_versions(snapshot_json) values ('{}')")
         db.executemany(
-            "insert into scheduled_task_runs(event_id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,dispatch_status,snapshot_json,execution_kind,execution_id) values (?,1,'manual','2026-10-07T10:00:00Z','2026-10-07T10:00:00Z','dispatched','{}','reply_task',?)",
+            "insert into scheduled_task_runs(event_id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,dispatch_status,snapshot_id,execution_kind,execution_id) values (?,1,'manual','2026-10-07T10:00:00Z','2026-10-07T10:00:00Z','dispatched',(select id from scheduled_task_config_versions where snapshot_json='{}'),'reply_task',?)",
             [(f"event-{index}", str(completed.id)) for index in range(20000)],
         )
     steps = 0
@@ -114,8 +115,9 @@ def test_attention_recovery_keeps_same_schedule_terminal_evidence(
             "insert into scheduled_tasks(id,name,prompt,cron_expression,timezone,runtime_id,enabled) values (?,'Report','p','0 * * * *','UTC','',1)",
             [(1,), (2,)],
         )
+        db.execute("insert or ignore into scheduled_task_config_versions(snapshot_json) values ('{}')")
         db.executemany(
-            "insert into scheduled_task_runs(id,event_id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,dispatch_status,snapshot_json,execution_kind,execution_id) values (?, ?, ?, 'manual','2026-10-07T10:00:00Z','2026-10-07T10:00:00Z',?,'{}',?,?)",
+            "insert into scheduled_task_runs(id,event_id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,dispatch_status,snapshot_id,execution_kind,execution_id) values (?, ?, ?, 'manual','2026-10-07T10:00:00Z','2026-10-07T10:00:00Z',?,(select id from scheduled_task_config_versions where snapshot_json='{}'),?,?)",
             [
                 (10, "event-10", 1, "dispatched", "reply_task", str(tasks[0].id)),
                 (

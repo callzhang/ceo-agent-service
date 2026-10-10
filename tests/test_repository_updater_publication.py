@@ -177,8 +177,8 @@ def test_deploy_cli_passes_explicit_publication_only_when_requested(monkeypatch,
     calls = []
     monkeypatch.setattr(
         deploy_module, "deploy",
-        lambda root, db, *, publish_contracts=False, publish_prompt_templates=False, maintenance_tasks=(): calls.append(
-            (root, db, publish_contracts, publish_prompt_templates, maintenance_tasks)
+        lambda root, db, *, publish_contracts=False, publish_prompt_templates=False, maintenance_tasks=(), skip_quiet_wait=False: calls.append(
+            (root, db, publish_contracts, publish_prompt_templates, maintenance_tasks, skip_quiet_wait)
         ) or "offline",
     )
     root = tmp_path / "checkout"
@@ -189,7 +189,7 @@ def test_deploy_cli_passes_explicit_publication_only_when_requested(monkeypatch,
     )
 
     assert deploy_module.main() == 0
-    assert calls == [(root, db, True, False, ())]
+    assert calls == [(root, db, True, False, (), False)]
 
 
 def test_receipt_finalize_failure_keeps_truthful_healthy_upgrade_status(tmp_path: Path):

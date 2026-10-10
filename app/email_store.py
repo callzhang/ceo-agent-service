@@ -70,7 +70,7 @@ from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 
 
-EMAIL_SCHEMA_VERSION = 45
+EMAIL_SCHEMA_VERSION = 46
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     {
         "email_model_promotion_configs",
@@ -2865,8 +2865,12 @@ def _training_sample_digest(sample: Mapping[str, object]) -> str:
 class EmailStore:
     """Persist messages, classifier results, immutable plans, and direct actions."""
 
-    def __init__(self, path: Path, *, validate_rows: bool = True):
-        self.path = path
+    def __init__(
+        self, path: Path, *, validate_rows: bool = True,
+        training_run_id: str | None = None,
+    ):
+        self.path = Path(path)
+        self.training_run_id = training_run_id
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize(validate_rows=validate_rows)
 
@@ -3179,6 +3183,9 @@ class EmailStore:
             if latest_version == 44:
                 self._migrate_v44_to_v45(db, replace_version=is_prototype)
                 latest_version = 45
+            if latest_version == 45:
+                self._migrate_v45_to_v46(db, replace_version=is_prototype)
+                latest_version = 46
             self._validate_durable_state(db)
 
     @classmethod
@@ -5289,6 +5296,61 @@ class EmailStore:
             db.execute(
                 "insert into email_schema_migrations(version, applied_at) "
                 "values (45, ?)",
+                (self._now(),),
+            )
+
+    def _migrate_v45_to_v46(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Export the newest complete snapshot, then discard duplicate SQL payloads."""
+        from app.email_training_data import summarize, write_snapshot
+
+        summaries: dict[str, str] = {}
+        exported = False
+        for row in db.execute(
+            "select snapshot_id from email_training_snapshots where frozen=1 "
+            "order by observed_at desc, snapshot_id desc"
+        ):
+            snapshot_id = str(row["snapshot_id"])
+            try:
+                restored = self._get_legacy_training_snapshot(db, snapshot_id)
+            except EmailPersistenceCorruption:
+                summaries[snapshot_id] = "{}"
+                continue
+            assert restored is not None
+            frozen = self._training_snapshot_from_dict(restored)
+            summaries[snapshot_id] = json.dumps(
+                summarize(frozen), sort_keys=True, separators=(",", ":")
+            )
+            if not exported:
+                write_snapshot(self.path, frozen)
+                exported = True
+        for name in (
+            "trg_email_training_snapshots_immutable_update",
+            "trg_email_training_observations_immutable_update",
+            "trg_email_training_observations_immutable_delete",
+        ):
+            db.execute(f"drop trigger if exists {name}")
+        db.execute("delete from email_training_snapshot_observations")
+        for snapshot_id, summary in summaries.items():
+            db.execute(
+                "update email_training_snapshots set manifest_json=? where snapshot_id=?",
+                (summary, snapshot_id),
+            )
+        for name in (
+            "trg_email_training_snapshots_immutable_update",
+            "trg_email_training_observations_immutable_update",
+            "trg_email_training_observations_immutable_delete",
+        ):
+            db.execute(_REQUIRED_TRIGGER_SQL[name])
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=46, applied_at=? "
+                "where version=45", (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (46, ?)",
                 (self._now(),),
             )
 
@@ -14112,8 +14174,9 @@ class EmailStore:
         return result
 
     def persist_training_snapshot(self, snapshot: object) -> dict[str, object]:
-        """Atomically append one validated immutable training snapshot."""
+        """Append metadata after publishing one complete external training file."""
 
+        from app.email_training_data import summarize, write_snapshot
         from app.email_training_snapshot import (
             FolderTrainingSnapshot,
             validate_folder_training_snapshot,
@@ -14122,9 +14185,8 @@ class EmailStore:
         if type(snapshot) is not FolderTrainingSnapshot:
             raise TypeError("snapshot must be a FolderTrainingSnapshot")
         validate_folder_training_snapshot(snapshot)
-        manifest = snapshot.manifest
         manifest_json = json.dumps(
-            manifest,
+            summarize(snapshot),
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -14155,6 +14217,7 @@ class EmailStore:
                        important_label_watermark
                 from email_training_snapshots
                 where frozen=1 and snapshot_version=?
+                  and json_extract(manifest_json, '$.sample_count') is not null
                 order by observed_at desc, snapshot_id desc
                 limit 1
                 """,
@@ -14166,11 +14229,12 @@ class EmailStore:
                 from email_training_snapshots
                 where frozen=1
                   and snapshot_version='email-folder-training-snapshot-v1'
+                  and json_extract(manifest_json, '$.sample_count') is not null
                 order by observed_at desc, snapshot_id desc
                 limit 1
                 """
             ).fetchone()
-            previous_rows: dict[tuple[str, str], sqlite3.Row] = {}
+            previous_rows: dict[tuple[str, str], object] = {}
             folder_label_watermark = 0
             important_label_watermark = 0
             if previous_snapshot is not None:
@@ -14180,18 +14244,17 @@ class EmailStore:
                 important_label_watermark = int(
                     previous_snapshot["important_label_watermark"]
                 )
-                previous_rows = {
-                    (str(row["account_id"]), str(row["stable_message_identity"])): row
-                    for row in db.execute(
-                        """
-                        select account_id, stable_message_identity,
-                               category_key, important
-                        from email_training_snapshot_observations
-                        where snapshot_id=?
-                        """,
-                        (previous_snapshot["snapshot_id"],),
+                try:
+                    previous_data = self._get_training_snapshot(
+                        db, str(previous_snapshot["snapshot_id"])
                     )
-                }
+                except RuntimeError:
+                    previous_data = None
+                if previous_data is not None:
+                    previous_rows = {
+                        (str(row["account_id"]), str(row["stable_message_identity"])): row
+                        for row in previous_data["observations"]
+                    }
             for row in snapshot.observations:
                 previous = previous_rows.get(
                     (row.account_id, row.stable_message_identity)
@@ -14202,6 +14265,7 @@ class EmailStore:
                     folder_label_watermark += 1
                 if previous is None or bool(previous["important"]) != row.important:
                     important_label_watermark += 1
+            write_snapshot(self.path, snapshot)
             try:
                 db.execute(
                     """
@@ -14226,47 +14290,6 @@ class EmailStore:
                         important_label_watermark,
                     ),
                 )
-                db.executemany(
-                    """
-                    insert into email_training_snapshot_observations (
-                        snapshot_id, account_id, stable_message_identity,
-                        provider_folder_id, provider_folder_name, category_key,
-                        important, normalized_model_input,
-                        normalized_model_input_hash, input_schema_version,
-                        provider_thread_id, normalized_body_digest,
-                        sender_template_signature, explicit_matter_group,
-                        group_key, observed_at, source, split,
-                        selected_for_training, ordered_record_digest
-                    ) values (
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                    )
-                    """,
-                    [
-                        (
-                            row.snapshot_id,
-                            row.account_id,
-                            row.stable_message_identity,
-                            row.provider_folder_id,
-                            row.provider_folder_name,
-                            row.category_key,
-                            int(row.important),
-                            row.normalized_model_input,
-                            row.normalized_model_input_hash,
-                            row.input_schema_version,
-                            row.provider_thread_id,
-                            row.normalized_body_digest,
-                            row.sender_template_signature,
-                            row.explicit_matter_group,
-                            row.group_key,
-                            row.observed_at,
-                            row.source,
-                            row.split,
-                            int(row.selected_for_training),
-                            row.ordered_record_digest,
-                        )
-                        for row in snapshot.observations
-                    ],
-                )
                 frozen = db.execute(
                     "update email_training_snapshots set frozen=1 "
                     "where snapshot_id=? and frozen=0",
@@ -14290,6 +14313,37 @@ class EmailStore:
         with self._connect() as db:
             return self._get_training_snapshot(db, snapshot_id)
 
+    def pin_training_snapshot(self, run_id: str, snapshot_id: str) -> None:
+        """Bind the complete current payload before launching its training child."""
+        from app.email_training_data import write_pin
+
+        with self._connect() as db:
+            latest = db.execute(
+                "select snapshot_id, snapshot_digest from email_training_snapshots "
+                "where frozen=1 and json_extract(manifest_json, '$.sample_count') is not null "
+                "order by observed_at desc, snapshot_id desc limit 1"
+            ).fetchone()
+            if latest is None or latest["snapshot_id"] != snapshot_id:
+                raise EmailTrainingSnapshotConflict("training snapshot is unavailable to pin")
+            write_pin(self.path, run_id, snapshot_id, str(latest["snapshot_digest"]))
+
+    def prune_training_snapshot_data(self, *, training_active: bool) -> list[Path]:
+        """Keep only the latest complete payload after all training readers finish."""
+        from app.email_training_data import prune_snapshots
+
+        if training_active:
+            return []
+        with self._connect() as db:
+            latest = db.execute(
+                "select snapshot_digest from email_training_snapshots where frozen=1 "
+                "and json_extract(manifest_json, '$.sample_count') is not null "
+                "order by observed_at desc, snapshot_id desc limit 1"
+            ).fetchone()
+        return prune_snapshots(
+            self.path,
+            {str(latest["snapshot_digest"])} if latest is not None else set(),
+        )
+
     def list_provider_folder_correction_conflicts(
         self, snapshot_id: str
     ) -> list[dict[str, object]]:
@@ -14297,28 +14351,29 @@ class EmailStore:
 
         if not isinstance(snapshot_id, str) or not snapshot_id.strip():
             raise ValueError("snapshot_id must be non-empty text")
+        frozen = self.get_training_snapshot(snapshot_id)
+        if frozen is None:
+            return []
         with self._connect() as db:
-            rows = db.execute(
-                """
-                select observations.stable_message_identity as sample_id,
-                       observations.group_key,
-                       classifications.predicted_category,
-                       observations.category_key as confirmed_category,
-                       observations.normalized_model_input as redacted_text
-                from email_training_snapshot_observations as observations
-                join email_classifications as classifications
-                  on classifications.account_id=observations.account_id
-                 and classifications.stable_message_identity=
-                     observations.stable_message_identity
-                where observations.snapshot_id=?
-                  and observations.category_key is not null
-                  and classifications.predicted_category is not null
-                  and classifications.predicted_category != observations.category_key
-                order by observations.stable_message_identity
-                """,
-                (snapshot_id,),
-            ).fetchall()
-        return [dict(row) for row in rows]
+            predictions = {
+                (str(row["account_id"]), str(row["stable_message_identity"])): row["predicted_category"]
+                for row in db.execute(
+                    "select account_id, stable_message_identity, predicted_category "
+                    "from email_classifications where predicted_category is not null"
+                )
+            }
+        result = []
+        for row in frozen["observations"]:
+            predicted = predictions.get((row["account_id"], row["stable_message_identity"]))
+            if row["category_key"] is not None and predicted is not None and predicted != row["category_key"]:
+                result.append({
+                    "sample_id": row["stable_message_identity"],
+                    "group_key": row["group_key"],
+                    "predicted_category": predicted,
+                    "confirmed_category": row["category_key"],
+                    "redacted_text": row["normalized_model_input"],
+                })
+        return sorted(result, key=lambda row: row["sample_id"])
 
     def record_classifier_runtime_sample(
         self,
@@ -14586,52 +14641,19 @@ class EmailStore:
                 """
                 select snapshot_id, snapshot_version, snapshot_digest,
                        description_version, input_schema_version, observed_at,
-                       folder_label_watermark, important_label_watermark
+                       folder_label_watermark, important_label_watermark,
+                       manifest_json
                 from email_training_snapshots
                 where frozen=1
                   and snapshot_version='email-folder-training-snapshot-v1'
+                  and json_extract(manifest_json, '$.sample_count') is not null
                 order by observed_at desc, snapshot_id desc
                 limit 1
                 """
             ).fetchone()
             if latest is None:
                 return None
-            aggregate = db.execute(
-                """
-                select count(*) as sample_count,
-                       count(distinct group_key) as group_count
-                from email_training_snapshot_observations
-                where snapshot_id=?
-                """,
-                (latest["snapshot_id"],),
-            ).fetchone()
-            category_rows = db.execute(
-                """
-                select category_key, count(*) as sample_count,
-                       count(distinct group_key) as group_count
-                from email_training_snapshot_observations
-                where snapshot_id=? and category_key is not null
-                group by category_key
-                order by category_key
-                """,
-                (latest["snapshot_id"],),
-            ).fetchall()
-            split_rows = db.execute(
-                """
-                select split,
-                       count(*) as sample_count,
-                       min(important) as minimum_important,
-                       max(important) as maximum_important,
-                       group_concat(distinct case
-                           when split != 'train' or selected_for_training=1
-                           then category_key end
-                       ) as categories
-                from email_training_snapshot_observations
-                where snapshot_id=?
-                group by split
-                """,
-                (latest["snapshot_id"],),
-            ).fetchall()
+            summary = json.loads(str(latest["manifest_json"]))
             description_rows = db.execute(
                 """
                 select category_key, core_description, include_json, exclude_json,
@@ -14670,21 +14692,20 @@ class EmailStore:
                 if descriptions
                 else "description-set-unavailable"
             )
-            split_summary = {str(row["split"]): row for row in split_rows}
+            split_summary = summary.get("splits", {})
 
             def split_categories(name: str) -> set[str]:
                 row = split_summary.get(name)
-                if row is None or not row["categories"]:
+                if row is None:
                     return set()
-                return set(str(row["categories"]).split(","))
+                return set(row["categories"])
 
             def split_has_both_important(name: str) -> bool:
                 row = split_summary.get(name)
                 return bool(
                     row is not None
-                    and int(row["sample_count"]) > 0
-                    and row["minimum_important"] == 0
-                    and row["maximum_important"] == 1
+                    and int(row["count"]) > 0
+                    and row["important"] == [False, True]
                 )
 
             train_categories = split_categories("train")
@@ -14700,14 +14721,8 @@ class EmailStore:
                 and enabled_categories <= test_categories
                 and all(split_has_both_important(name) for name in ("train", "validation", "test"))
             )
-            latest_category_counts = {
-                str(row["category_key"]): int(row["sample_count"])
-                for row in category_rows
-            }
-            latest_category_group_counts = {
-                str(row["category_key"]): int(row["group_count"])
-                for row in category_rows
-            }
+            latest_category_counts = summary.get("category_sample_counts", {})
+            latest_category_group_counts = summary.get("category_group_counts", {})
             return {
                 "snapshot_id": latest["snapshot_id"],
                 "snapshot_version": latest["snapshot_version"],
@@ -14719,8 +14734,8 @@ class EmailStore:
                     latest["important_label_watermark"]
                 ),
                 "minimum_ready": minimum_ready,
-                "sample_count": int(aggregate["sample_count"]),
-                "group_count": int(aggregate["group_count"]),
+                "sample_count": int(summary.get("sample_count", 0)),
+                "group_count": int(summary.get("group_count", 0)),
                 "category_sample_counts": latest_category_counts,
                 "category_group_counts": latest_category_group_counts,
             }
@@ -15312,7 +15327,55 @@ class EmailStore:
             )
 
     @staticmethod
+    def _training_snapshot_from_dict(value: Mapping[str, object]):
+        from app.email_training_snapshot import FolderTrainingSnapshot, TrainingSnapshotObservation
+
+        return FolderTrainingSnapshot(
+            snapshot_id=value["snapshot_id"],
+            snapshot_version=value["snapshot_version"],
+            description_version=value["description_version"],
+            input_schema_version=value["input_schema_version"],
+            seed=value["seed"],
+            observed_at=value["observed_at"],
+            observations=tuple(
+                TrainingSnapshotObservation(**row) for row in value["observations"]
+            ),
+            snapshot_digest=value["snapshot_digest"],
+            _manifest_json=json.dumps(value["manifest"], ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        )
+
     def _get_training_snapshot(
+        self, db: sqlite3.Connection, snapshot_id: str
+    ) -> dict[str, object] | None:
+        from app.email_training_data import TrainingSnapshotUnavailable, pinned_digest, read_snapshot
+
+        snapshot = db.execute(
+            "select * from email_training_snapshots where snapshot_id=?", (snapshot_id,)
+        ).fetchone()
+        if snapshot is None:
+            return None
+        latest = db.execute(
+            "select snapshot_id from email_training_snapshots where frozen=1 "
+            "and json_extract(manifest_json, '$.sample_count') is not null "
+            "order by observed_at desc, snapshot_id desc limit 1"
+        ).fetchone()
+        if latest is None or latest["snapshot_id"] != snapshot_id:
+            pinned = (
+                pinned_digest(self.path, self.training_run_id, snapshot_id)
+                if self.training_run_id is not None else None
+            )
+            if pinned != snapshot["snapshot_digest"]:
+                raise TrainingSnapshotUnavailable("historical training snapshot data is unavailable")
+        restored = read_snapshot(self.path, str(snapshot["snapshot_digest"]))
+        if restored.snapshot_id != snapshot_id:
+            raise EmailPersistenceCorruption("external training snapshot identity mismatch")
+        result = restored.to_dict()
+        result["folder_label_watermark"] = int(snapshot["folder_label_watermark"])
+        result["important_label_watermark"] = int(snapshot["important_label_watermark"])
+        return result
+
+    @staticmethod
+    def _get_legacy_training_snapshot(
         db: sqlite3.Connection, snapshot_id: str
     ) -> dict[str, object] | None:
         snapshot = db.execute(

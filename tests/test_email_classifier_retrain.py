@@ -28,6 +28,7 @@ from app.email_model_registry import HistoricalSystematicErrorState
 from app.email_classifier_learning import EmailClassifierLearningService
 from app.email_model_registry import EmailModelRegistry
 from app.email_store import EmailStore
+from app.email_training_snapshot import build_selected_training_snapshot
 
 
 NOW = datetime(2026, 9, 7, 12, 0, tzinfo=timezone.utc)
@@ -44,6 +45,19 @@ def _signal(**overrides):
     }
     values.update(overrides)
     return SnapshotTrainingSignal(**values)
+
+
+def _persist_launch_snapshot(path, snapshot_id):
+    frozen = build_selected_training_snapshot(
+        [{"source": "agent_auto_label", "account_id": "account-a",
+          "stable_message_identity": f"account-a:{snapshot_id}",
+          "provider_thread_id": snapshot_id, "category_key": "work",
+          "normalized_model_input": json.dumps({"body": "launch fixture"})}],
+        snapshot_id=snapshot_id,
+        description_version="selected-training-input-v1",
+        observed_at=NOW, seed=17,
+    )
+    EmailStore(path).persist_training_snapshot(frozen)
 
 
 def test_snapshot_change_threshold_is_50_and_49_never_trains() -> None:
@@ -230,6 +244,7 @@ def test_reserved_launch_intent_replays_once_after_crash(tmp_path, path) -> None
 
     registry = EmailModelRegistry(tmp_path / "registry")
     store_path = tmp_path / "email.sqlite3"
+    _persist_launch_snapshot(store_path, f"snapshot-{path}")
     signal = _signal(
         snapshot_sha={"normal": "d", "pending": "e", "proposal": "f"}[path] * 64
     )
@@ -301,6 +316,7 @@ def test_spawned_launch_claim_is_not_spawned_again_after_parent_crash(
 
     registry = EmailModelRegistry(tmp_path / "registry")
     store_path = tmp_path / "email.sqlite3"
+    _persist_launch_snapshot(store_path, f"snapshot-{path}")
     launches = []
     signal = _signal(
         snapshot_sha={"normal": "1", "pending": "2", "proposal": "3"}[path] * 64
@@ -359,6 +375,7 @@ def test_expired_launch_claim_retries_same_typed_intent_once(tmp_path) -> None:
     from datetime import timedelta
 
     registry = EmailModelRegistry(tmp_path / "registry")
+    _persist_launch_snapshot(tmp_path / "email.sqlite3", "snapshot-expired")
     launches = []
     crashing = TrainingSubprocessController(
         registry,
@@ -798,7 +815,7 @@ def test_training_subprocess_reads_frozen_error_state_and_description_overlay(
     observed = {}
 
     class Store:
-        def __init__(self, _path):
+        def __init__(self, _path, **_kwargs):
             pass
 
         def current_model_promotion_config(self):
@@ -961,7 +978,7 @@ def test_selected_folder_categories_reach_the_staged_trainer(tmp_path, monkeypat
     observed = {}
 
     class Store:
-        def __init__(self, _path):
+        def __init__(self, _path, **_kwargs):
             pass
 
         def current_model_promotion_config(self):
@@ -1070,7 +1087,7 @@ def test_one_unstable_classic_family_does_not_discard_the_embedding_candidate(
     controller._save_run(queued)
 
     class Store:
-        def __init__(self, _path):
+        def __init__(self, _path, **_kwargs):
             pass
 
         def current_model_promotion_config(self):
@@ -1172,7 +1189,7 @@ def test_every_family_failing_still_fails_the_run(tmp_path, monkeypatch):
     controller._save_run(queued)
 
     class Store:
-        def __init__(self, _path):
+        def __init__(self, _path, **_kwargs):
             pass
 
         def current_model_promotion_config(self):
