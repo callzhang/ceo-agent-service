@@ -7866,12 +7866,14 @@ def test_reply_attempt_queue_snapshot_reads_latest_projection_once(tmp_path: Pat
     with store._connect() as db:
         db.set_trace_callback(queries.append)
         snapshot = _reply_attempt_queue_snapshot(db)
+        snapshot_queries = list(queries)
         expected_time = db.execute(
             "select max(updated_at) from reply_attempts"
         ).fetchone()[0]
     assert snapshot["counts"] == {"failed": 1}
     assert snapshot["latest_updated_at"] == expected_time
-    assert sum("row_number() over" in query.lower() for query in queries) == 1
+    assert len(snapshot_queries) == 1
+    assert "reply_attempts" in snapshot_queries[0].lower()
 
 
 def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(

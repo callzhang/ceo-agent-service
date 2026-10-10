@@ -9,6 +9,9 @@
 
 ## Unreleased
 
+- 2026-10-10: Verify worker attempt snapshots execute one projection query
+  without requiring the superseded window-ranking SQL implementation.
+
 - 2026-10-10: Narrow quality-gate Reply/OA window projections to required fields,
   avoiding repeated sorting of business payloads while retaining receipt,
   current-trigger and reviewed human-decision checks.
