@@ -253,12 +253,17 @@ def read_claude_events(session_id: str, *, start_line: int, end_line: int) -> li
 
 
 def read_run_events(db, row) -> list[dict]:
-    events = []
     attempts = db.execute(
         "select runtime_kind, session_id, transcript_reference, transcript_start, transcript_end, started_at, finished_at "
         "from agent_runtime_attempts where agent_run_id=? and session_id<>'' order by id",
         (row["id"],),
     ).fetchall()
+    return read_run_events_from_attempts(row, attempts)
+
+
+def read_run_events_from_attempts(row, attempts) -> list[dict]:
+    """Read transcript files from already-loaded runtime-attempt references."""
+    events = []
     for attempt in attempts:
         if attempt["transcript_end"] <= attempt["transcript_start"]:
             continue
@@ -347,10 +352,20 @@ def read_run_event_evidence(db, row) -> tuple[list[dict], bool]:
 
 
 def hydrate_run_events(db, row, db_path: str) -> list[dict]:
+    attempts = db.execute(
+        "select runtime_kind, session_id, transcript_reference, transcript_start, transcript_end, started_at, finished_at "
+        "from agent_runtime_attempts where agent_run_id=? and session_id<>'' order by id",
+        (row["id"],),
+    ).fetchall()
+    return hydrate_run_events_from_attempts(row, attempts, db_path)
+
+
+def hydrate_run_events_from_attempts(row, attempts, db_path: str) -> list[dict]:
+    """Hydrate native files after their SQLite references have been read."""
     if row["status"] == "running":
         cached = live_events(db_path, int(row["id"]))
         if cached is not None:
-            native = read_run_events(db, row)
+            native = read_run_events_from_attempts(row, attempts)
             if not native:
                 return cached
             seen = {
@@ -363,22 +378,27 @@ def hydrate_run_events(db, row, db_path: str) -> list[dict]:
                 if not isinstance(item := event.get("item"), dict)
                 or (event.get("type"), item.get("id") or item.get("call_id")) not in seen
             ]
-    return read_run_events(db, row)
+    return read_run_events_from_attempts(row, attempts)
 
 
 def read_native_result_json(db, row) -> str:
     """Project the original native JSON object without runtime validation."""
-    from pydantic import RootModel
-    from app.agent_result import ResultParseError, parse_typed_agent_result
-
     attempts = db.execute(
         "select runtime_kind, session_id, transcript_start, transcript_end "
         "from agent_runtime_attempts where agent_run_id=? and status='completed' "
         "order by id desc limit 1", (row["id"],),
     ).fetchone()
-    if attempts is not None:
-        kind, session_id = attempts["runtime_kind"], attempts["session_id"]
-        start, end = attempts["transcript_start"], attempts["transcript_end"]
+    return read_native_result_json_from_attempt(row, attempts)
+
+
+def read_native_result_json_from_attempt(row, attempt) -> str:
+    """Read the result transcript using a reference loaded before file I/O."""
+    from pydantic import RootModel
+    from app.agent_result import ResultParseError, parse_typed_agent_result
+
+    if attempt is not None:
+        kind, session_id = attempt["runtime_kind"], attempt["session_id"]
+        start, end = attempt["transcript_start"], attempt["transcript_end"]
     else:
         kind, session_id = "codex_cli", row["codex_session_id"]
         start, end = row["transcript_start_line"], row["transcript_end_line"]

@@ -6871,6 +6871,131 @@ def test_list_agent_runs_for_generation_batches_events_and_preserves_order(tmp_p
     assert [run.tool_events for run in status_runs] == [[], []]
 
 
+def test_list_agent_runs_reads_native_events_after_connection_closes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from app import native_trajectory
+
+    store = AutoReplyStore(tmp_path / "agent-run-hydration.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="consumer",
+    ).run
+    audit_run = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=run.id,
+        operation_id="audit", owner="audit",
+    ).run
+    result = {"outcome": "no_action", "summary": "native result"}
+    native_paths = {}
+    for session_id in ("native-session", "native-audit-session"):
+        native_path = tmp_path / f"{session_id}.jsonl"
+        native_path.write_text("\n".join((
+            json.dumps({
+                "type": "event_msg",
+                "payload": {"type": "item_completed", "item": {
+                    "type": "CommandExecution", "id": f"{session_id}-event",
+                    "command": "true", "aggregated_output": "",
+                }},
+            }),
+            json.dumps({
+                "type": "response_item",
+                "payload": {"type": "message", "role": "assistant", "content": [
+                    {"type": "output_text", "text": json.dumps(result)}
+                ]},
+            }),
+        )) + "\n")
+        native_paths[session_id] = native_path
+    monkeypatch.setattr(
+        native_trajectory,
+        "find_codex_session_path",
+        lambda session_id, **kwargs: native_paths.get(session_id),
+    )
+    for agent_run, session_id, owner in (
+        (run, "native-session", "consumer"),
+        (audit_run, "native-audit-session", "audit"),
+    ):
+        runtime = store.claim_agent_runtime_attempt(
+            agent_run.id, "codex_oauth", "codex_cli", "local_oauth", "test-model"
+        )
+        store.complete_agent_runtime_attempt(
+            runtime.id, session_id, f"codex_session:{session_id}", 0, 2
+        )
+        if agent_run.id == run.id:
+            store.complete_agent_run(
+                agent_run.id, result, owner=owner, transcript_end_line=2
+            )
+        else:
+            store.fail_agent_run(
+                agent_run.id, {"code": "test_failure"}, owner=owner,
+                transcript_end_line=2,
+            )
+
+    original_connect = store._connect
+    connection_state = {"open": False}
+
+    @contextmanager
+    def tracked_connect():
+        try:
+            with original_connect() as db:
+                db.set_trace_callback(trace_query)
+                connection_state["open"] = True
+                yield db
+        finally:
+            connection_state["open"] = False
+
+    original_hydrate = native_trajectory.hydrate_run_events_from_attempts
+    original_read_events = native_trajectory.read_codex_events
+    original_read_result = native_trajectory.read_native_result_stream
+    reference_query_count = {"value": 0}
+
+    def trace_query(statement):
+        if "from agent_runtime_attempts" in statement.casefold():
+            reference_query_count["value"] += 1
+
+    def assert_connection_closed(row, attempts, db_path):
+        assert connection_state["open"] is False
+        return original_hydrate(row, attempts, db_path)
+
+    def assert_read_events_connection_closed(*args, **kwargs):
+        assert connection_state["open"] is False
+        return original_read_events(*args, **kwargs)
+
+    def assert_read_result_connection_closed(*args, **kwargs):
+        assert connection_state["open"] is False
+        return original_read_result(*args, **kwargs)
+
+    monkeypatch.setattr(store, "_connect", tracked_connect)
+    monkeypatch.setattr(
+        native_trajectory,
+        "hydrate_run_events_from_attempts",
+        assert_connection_closed,
+    )
+    monkeypatch.setattr(
+        native_trajectory, "read_codex_events", assert_read_events_connection_closed
+    )
+    monkeypatch.setattr(
+        native_trajectory,
+        "read_native_result_stream",
+        assert_read_result_connection_closed,
+    )
+
+    runs = store.list_agent_runs_for_task_generation(
+        task.id, task.execution_generation
+    )
+
+    assert [agent_run.id for agent_run in runs] == [run.id, audit_run.id]
+    assert all(agent_run.tool_events for agent_run in runs)
+    assert json.loads(runs[0].final_result_json) == result
+    assert runs[1].final_result_json == ""
+    assert reference_query_count["value"] == 2
+
+
 def test_reply_attempt_status_projection_is_scoped_to_requested_ids(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "history-status-scope.sqlite3")
     selected = _attempt(store, trigger="selected", status="failed")

@@ -1616,6 +1616,8 @@ not materialize every historical display body to compute the total. Attempt deta
 batched read for the historical generation shown on the page. If the task has
 since moved to a newer execution generation, its runs are read without event
 payloads because only their status is needed for the current projection. The
+historical run rows and native transcript references are captured in SQLite
+first; native files are read and parsed only after that connection closes. The
 History chart projects lifecycle status only for reply
 attempts in the requested time window, avoiding a full-history status scan.
 Health readiness is not evidence that History requests or business actions
