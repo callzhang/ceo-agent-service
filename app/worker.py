@@ -520,10 +520,11 @@ def _accepted_consumer_result(
     consumer = store.get_agent_run(audit_run.parent_agent_run_id)
     if consumer is None or consumer.role is not AgentRole.CONSUMER:
         return None
-    if not consumer.final_result_json.strip():
+    adopted = store.adopted_candidate_for_consumer_run(consumer.id)
+    if adopted is None:
         return None
     try:
-        return ConsumerAgentResult.model_validate_json(consumer.final_result_json)
+        return ConsumerAgentResult.model_validate_json(adopted["candidate_json"])
     except ValidationError:
         return None
 
@@ -2163,7 +2164,6 @@ class DingTalkAutoReplyWorker:
             run.status,
             run.codex_session_id,
             run.transcript_end_line,
-            run.final_result_json,
             run.structured_error_json,
             run.completed_at,
             run.updated_at,
@@ -2768,12 +2768,12 @@ class DingTalkAutoReplyWorker:
                         if (
                             run.role is not AgentRole.AUDIT
                             or run.status != "completed"
-                            or not run.final_result_json
                         ):
                             continue
-                        audit_result = AuditAgentResult.model_validate_json(
-                            run.final_result_json
-                        )
+                        review = self.store.get_candidate_review_for_audit_run(run.id)
+                        if review is None:
+                            continue
+                        audit_result = AuditAgentResult.model_validate_json(review["result_json"])
                         if (
                             audit_result.outcome in (AuditOutcome.RETURN, AuditOutcome.REJECT)
                             and audit_result.feedback is not None

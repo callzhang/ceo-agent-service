@@ -207,13 +207,14 @@ class DingTalkSendEvidenceDriver:
         consumer = self.store.get_agent_run(run.parent_agent_run_id)
         if consumer is None or consumer.role is not AgentRole.CONSUMER:
             return None
-        if not consumer.final_result_json.strip():
+        adopted = self.store.adopted_candidate_for_consumer_run(consumer.id)
+        if adopted is None:
             return None
         # Read the fields this question needs rather than validating the whole
         # result: the scoring fields a Consumer result carries have changed
         # shape over time and have nothing to do with what the proposal does.
         try:
-            proposal = json.loads(consumer.final_result_json).get("proposal")
+            proposal = json.loads(adopted["candidate_json"]).get("proposal")
         except ValueError:
             return None
         if not isinstance(proposal, dict):

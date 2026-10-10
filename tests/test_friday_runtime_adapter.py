@@ -170,6 +170,18 @@ def _success(data):
     return {"result": "success", "code": 200, "message": None, "data": data}
 
 
+def test_read_final_artifact_recovers_existing_thread_without_new_turn(runtime_config):
+    transport = FakeTransport([_success({"items": [
+        {"thread_id": "thread-1", "final_message": "native final"}
+    ]})])
+    adapter = FridayRuntimeAdapter(runtime_config, transport=transport)
+
+    assert adapter.read_final_artifact("thread-1") == "native final"
+    assert [(call.method, call.path) for call in transport.calls] == [
+        ("GET", "/v1/artifacts?thread_id=thread-1")
+    ]
+
+
 def test_execute_creates_thread_sends_message_polls_and_returns_artifact(runtime_config):
     transport = FakeTransport(
         [

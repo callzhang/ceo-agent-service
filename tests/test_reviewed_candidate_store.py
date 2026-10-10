@@ -236,9 +236,10 @@ def test_later_stage_requires_verified_predecessor(tmp_path: Path):
         proposal_revision=1, turn_attempt=0, parent_agent_run_id=review["audit_run_id"],
         operation_id="", owner="later",
     ).run
-    store.complete_agent_run(later.id, next_body, owner="later")
     with pytest.raises(ValueError, match="predecessor mismatch"):
-        store.persist_review_candidate(task, later, next_body)
+        store.complete_agent_run(later.id, next_body, owner="later")
+    assert store.get_agent_run(later.id).status == "running"
+    assert store.adopted_candidate_for_consumer_run(later.id) is None
     first = store.claim_candidate_execution(candidate["id"], review["id"], "worker", 60)
     store.begin_candidate_action(first["id"], "worker", 0, "stage-action-key")
     store.record_candidate_external_action(
@@ -246,6 +247,7 @@ def test_later_stage_requires_verified_predecessor(tmp_path: Path):
         {"receipt": "verified"},
     )
     store.finish_candidate_execution(first["id"], "worker", "done", {})
+    store.complete_agent_run(later.id, next_body, owner="later")
     saved = store.persist_review_candidate(task, later, next_body)
     assert saved["predecessor_review_id"] == review["id"]
 

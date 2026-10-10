@@ -96,6 +96,7 @@ class AuditAgentRunner:
         if context.candidate_digest != exact_digest:
             raise ValueError("Audit candidate digest mismatch")
         parent = self.store.get_agent_run(parent_agent_run_id)
+        adopted = self.store.adopted_candidate_for_consumer_run(parent_agent_run_id)
         if (
             parent is None
             or parent.role is not AgentRole.CONSUMER
@@ -103,8 +104,8 @@ class AuditAgentRunner:
             or parent.reply_task_id != task.id
             or parent.execution_generation != task.execution_generation
             or parent.proposal_revision != context.proposal_revision
-            or not parent.final_result_json
-            or json.loads(parent.final_result_json) != context.candidate.model_dump(mode="json")
+            or adopted is None
+            or json.loads(adopted["candidate_json"]) != context.candidate.model_dump(mode="json")
         ):
             raise ValueError("Audit parent candidate mismatch")
         force_new_session = repeated_result_failure_requires_fresh_session(

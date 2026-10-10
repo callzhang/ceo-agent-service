@@ -1690,27 +1690,9 @@ def _persisted_agent_receipt_ids(value: object) -> set[str]:
 
 
 def _audit_event_metadata_json(events_json: str) -> str:
-    from app.native_trajectory import event_metadata
-    return json.dumps([event_metadata(event) for event in json.loads(events_json or "[]")
-                       if isinstance(event, dict)], ensure_ascii=False, separators=(",", ":"))
-
-
-def _agent_event_columns(event: dict[str, object]) -> tuple[str, str, str, str]:
-    event_type = str(event.get("type") or "")
-    item = event.get("item")
-    if not isinstance(item, dict):
-        return event_type, "", "", ""
-    call_id_value = item.get("call_id") or item.get("id")
-    call_id = call_id_value.strip() if isinstance(call_id_value, str) else ""
-    metadata = item.get("metadata")
-    effect_kind = ""
-    if isinstance(metadata, dict):
-        candidate = metadata.get("effect")
-        if candidate in {"read_only", "effectful", "unreviewed"}:
-            effect_kind = str(candidate)
-    receipt_ids = _persisted_agent_receipt_ids(event)
-    receipt_operation_id = next(iter(receipt_ids), "")
-    return event_type, call_id, effect_kind, receipt_operation_id
+    # Tool detail remains in the runtime-owned transcript. Callers still use
+    # their in-process event list for the current turn's checks.
+    return "[]"
 
 
 def _agent_effect_identity(event: dict[str, object]) -> dict[str, object] | None:
@@ -2589,11 +2571,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         body_finished_at = started_at
         try:
             try:
+                terminal_event_runs = []
                 with connection:
                     try:
                         yield connection
                     finally:
                         body_finished_at = time.monotonic()
+                    if connection.total_changes:
+                        from app.native_trajectory import terminal_cached_run_ids
+                        terminal_event_runs = terminal_cached_run_ids(connection, str(self.path.resolve()))
+                if terminal_event_runs:
+                    from app.native_trajectory import forget_live_events
+                    forget_live_events(str(self.path.resolve()), terminal_event_runs)
             finally:
                 close_started_at = time.monotonic()
                 connection.close()
@@ -3264,7 +3253,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     final_result_json text not null default '',
                     structured_error_json text not null default '',
                     -- Full trajectories stay in the runtime's native session.
-                    -- agent_run_events retains only call identity/status.
+                    -- Agent events live only in native transcripts; legacy rows are cleared by maintenance.
                     lease_owner text not null default '',
                     lease_expires_at text not null default '',
                     started_at text not null default '',
@@ -10811,65 +10800,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def _migrate_agent_run_events(db: sqlite3.Connection) -> None:
         if not AutoReplyStore._agent_runs_has_tool_events_column(db):
             return
-        rows = db.execute(
-            "select id, tool_events_json from agent_runs "
-            "where tool_events_json <> '[]'"
-        ).fetchall()
-        for row in rows:
-            try:
-                events = json.loads(row["tool_events_json"])
-            except json.JSONDecodeError as exc:
-                raise ValueError("agent run tool events are not valid JSON") from exc
-            if not isinstance(events, list) or any(
-                not isinstance(event, dict) for event in events
-            ):
-                raise ValueError("agent run tool events must be JSON objects")
-            for sequence, event in enumerate(events, start=1):
-                event_text = _json_object_text(event, field="event")
-                event_type, call_id, effect_kind, receipt_operation_id = (
-                    _agent_event_columns(event)
-                )
-                db.execute(
-                    """
-                    insert or ignore into agent_run_events (
-                        agent_run_id, sequence, event_json, event_type,
-                        call_id, effect_kind, receipt_operation_id
-                    ) values (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        row["id"],
-                        sequence,
-                        event_text,
-                        event_type,
-                        call_id,
-                        effect_kind,
-                        receipt_operation_id,
-                    ),
-                )
-                persisted = db.execute(
-                    "select event_json from agent_run_events "
-                    "where agent_run_id=? and sequence=?",
-                    (row["id"], sequence),
-                ).fetchone()
-                if persisted is None or json.loads(persisted["event_json"]) != event:
-                    raise ValueError("conflicting agent run event migration")
-            db.execute(
-                "update agent_runs set tool_events_json='[]' where id=?",
-                (row["id"],),
-            )
+        # Native transcripts are the sole trajectory source. Legacy payloads
+        # must never repopulate the retired event table when the DB is reopened.
+        db.execute("update agent_runs set tool_events_json='[]' where tool_events_json<>'[]'")
 
     @staticmethod
     def _drop_agent_run_tool_events_column(db: sqlite3.Connection) -> None:
-        """Remove the second copy of a run's trajectory.
-
-        agent_run_events holds one row per event and is what AgentRun.tool_events
-        is built from; the column was the older whole-array copy of the same
-        facts. Two stores of one truth is how they end up disagreeing, and a
-        reader has no way to tell which one is stale. _migrate_agent_run_events
-        has already moved every event into the table and blanked the column, so
-        this drops what is left. It refuses if anything is still there, because
-        dropping unread trajectory is not a migration, it is data loss.
-        """
+        """Remove the retired trajectory array after clearing its payload."""
         if not AutoReplyStore._agent_runs_has_tool_events_column(db):
             return
         undrained = db.execute(
@@ -10877,7 +10814,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         ).fetchone()
         if undrained is not None:
             raise ValueError(
-                "agent run tool events were not migrated into agent_run_events; "
+                "retired agent run tool events were not cleared; "
                 f"run {undrained['id']} still carries its own copy"
             )
         db.execute("alter table agent_runs drop column tool_events_json")
@@ -11230,16 +11167,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         db: sqlite3.Connection,
         load_events: bool = True,
     ) -> AgentRun:
+        from app.native_trajectory import hydrate_run_events, read_native_result_json
         tool_events: list[dict[str, object]] = []
         if load_events:
-            event_rows = db.execute(
-                "select event_json from agent_run_events "
-                "where agent_run_id=? order by sequence",
-                (row["id"],),
-            ).fetchall()
-            from app.native_trajectory import hydrate_run_events
             db_path = str(db.execute("pragma database_list").fetchone()[2])
-            tool_events = hydrate_run_events(db, row, [json.loads(event["event_json"]) for event in event_rows], db_path)
+            tool_events = hydrate_run_events(db, row, db_path)
         return AgentRun(
             id=row["id"],
             reply_task_id=row["reply_task_id"],
@@ -11253,7 +11185,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             codex_session_id=row["codex_session_id"],
             transcript_start_line=row["transcript_start_line"],
             transcript_end_line=row["transcript_end_line"],
-            final_result_json=row["final_result_json"],
+            final_result_json=(
+                read_native_result_json(db, row)
+                if row["status"] == "completed" else ""
+            ),
             structured_error_json=row["structured_error_json"],
             tool_events=tool_events,
             lease_owner=row["lease_owner"],
@@ -12091,27 +12026,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ]
             if not load_events:
                 return runs
-            events_by_run: dict[int, list[dict[str, object]]] = {
-                run.id: [] for run in runs
-            }
-            run_ids = list(events_by_run)
-            # Stay below SQLite builds that cap bound variables at 999.
-            for start in range(0, len(run_ids), 800):
-                chunk = run_ids[start : start + 800]
-                placeholders = ", ".join("?" for _ in chunk)
-                event_rows = db.execute(
-                    "select agent_run_id, event_json from agent_run_events "
-                    f"where agent_run_id in ({placeholders}) "
-                    "order by agent_run_id, sequence",
-                    tuple(chunk),
-                ).fetchall()
-                for event in event_rows:
-                    events_by_run[int(event["agent_run_id"])].append(
-                        json.loads(event["event_json"])
-                    )
             from app.native_trajectory import hydrate_run_events
             return [run.model_copy(update={"tool_events": hydrate_run_events(
-                db, row, events_by_run[run.id], str(self.path.resolve())
+                db, row, str(self.path.resolve())
             )}) for run, row in zip(runs, rows)]
 
     def list_agent_run_summaries_for_terminal_runs(
@@ -12921,7 +12838,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             row = self._runtime_attempt_for_transition(db, attempt_id)
             expected = (
                 session_id, transcript_reference, transcript_start, transcript_end,
-                result_schema_id, result_envelope_json,
+                result_schema_id,
             )
             actual = (
                 row["session_id"],
@@ -12929,9 +12846,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 row["transcript_start"],
                 row["transcript_end"],
                 row["result_schema_id"],
-                row["result_envelope_json"],
             )
             if row["status"] == "completed":
+                if agent_run_final_result is not None:
+                    candidate = db.execute("select candidate_json from review_candidates where consumer_run_id=?", (row["agent_run_id"],)).fetchone()
+                    if candidate is None or candidate[0] != agent_run_final_result_json:
+                        raise ValueError("conflicting terminal rewrite")
                 if actual == expected:
                     return self._agent_runtime_attempt_from_row(row)
                 raise ValueError("conflicting terminal rewrite")
@@ -12978,7 +12898,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     transcript_start,
                     transcript_end,
                     result_schema_id,
-                    result_envelope_json,
+                    "",
                     now_text,
                     now_text,
                     attempt_id,
@@ -13009,7 +12929,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       and lease_expires_at>?
                     """,
                     (
-                        agent_run_final_result_json,
+                        "",
                         agent_run_transcript_end,
                         now_text,
                         now_text,
@@ -13022,6 +12942,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     raise AgentRunLeaseLostError(
                         f"agent run lease lost: {row['agent_run_id']}"
                     )
+                completed_run = db.execute("select * from agent_runs where id=?", (row["agent_run_id"],)).fetchone()
+                self._adopt_review_candidate_in_connection(db, completed_run, agent_run_final_result)
             return self._agent_runtime_attempt_from_row(
                 self._runtime_attempt_for_transition(db, attempt_id)
             )
@@ -13354,6 +13276,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         transcript_start: int | None = None,
         transcript_end: int | None = None,
         owner: str = "legacy-runtime-owner",
+        agent_run_error: dict[str, object] | None = None,
+        agent_run_transcript_end: int | None = None,
         now: str | datetime | None = None,
     ) -> AgentRuntimeAttempt:
         failure_class, failure_code, failover_permitted = self._validate_runtime_failure(
@@ -13363,6 +13287,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise TypeError("runtime attempt session and transcript reference must be strings")
         if transcript_reference is not None and not isinstance(transcript_reference, str):
             raise TypeError("runtime attempt session and transcript reference must be strings")
+        error_json = ""
+        if agent_run_error is not None:
+            error_json = _json_object_text(agent_run_error, field="agent_run_error")
+            if agent_run_transcript_end is None or agent_run_transcript_end < 0:
+                raise ValueError("agent run transcript end is required")
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             row = self._runtime_attempt_for_transition(db, attempt_id)
             session_id = row["session_id"] if session_id is None else session_id
@@ -13400,6 +13329,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 row["transcript_end"],
             )
             if row["status"] == "failed":
+                if agent_run_error is not None:
+                    run = db.execute("select status,structured_error_json,transcript_end_line from agent_runs where id=?", (row["agent_run_id"],)).fetchone()
+                    if run is None or tuple(run) != ("failed", error_json, agent_run_transcript_end):
+                        raise ValueError("conflicting terminal rewrite")
                 if actual == expected:
                     return self._agent_runtime_attempt_from_row(row)
                 raise ValueError("conflicting terminal rewrite")
@@ -13408,6 +13341,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise ValueError("cannot transition from completed runtime attempt")
             if row["status"] == "superseded":
                 raise ValueError("cannot fail terminal runtime attempt")
+            if agent_run_error is not None:
+                if row["agent_run_id"] is None:
+                    raise ValueError("agent run error requires agent run")
+                self._require_current_agent_run_write_access(
+                    db, row["agent_run_id"], owner=owner, now_text=now_text,
+                    expected_status="running",
+                )
             cursor = db.execute(
                 """
                 update agent_runtime_attempts
@@ -13436,6 +13376,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             if cursor.rowcount != 1:
                 raise ValueError("runtime attempt transition conflict")
+            if agent_run_error is not None:
+                cursor = db.execute("""update agent_runs
+                    set status='failed',final_result_json='',structured_error_json=?,
+                        transcript_end_line=?,lease_owner='',lease_expires_at='',
+                        completed_at=?,updated_at=?
+                    where id=? and status='running' and lease_owner=? and lease_expires_at>?""",
+                    (error_json, agent_run_transcript_end, now_text, now_text,
+                     row["agent_run_id"], owner, now_text))
+                if cursor.rowcount != 1:
+                    raise AgentRunLeaseLostError(f"agent run lease lost: {row['agent_run_id']}")
             return self._agent_runtime_attempt_from_row(
                 self._runtime_attempt_for_transition(db, attempt_id)
             )
@@ -13996,10 +13946,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> AgentRun:
         if not owner.strip():
             raise ValueError("owner must be non-empty")
-        from app.native_trajectory import event_metadata, remember_live_event
+        from app.native_trajectory import remember_live_event
         event_text = _json_object_text(event, field="event")
         normalized_event = json.loads(event_text)
-        event_type, call_id, effect_kind, receipt_operation_id = _agent_event_columns(normalized_event)
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             status_row = db.execute(
                 "select agent_runs.status, agent_runs.execution_generation, "
@@ -14023,29 +13972,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 now_text=now_text,
                 status_error="cannot append event to terminal agent run",
             )
-            sequence = db.execute(
-                "select coalesce(max(sequence), 0) + 1 from agent_run_events "
-                "where agent_run_id=?",
-                (run_id,),
-            ).fetchone()[0]
-            db.execute(
-                """
-                insert into agent_run_events (
-                    agent_run_id, sequence, event_json, event_type,
-                    call_id, effect_kind, receipt_operation_id, event_scope, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, 'direct', ?)
-                """,
-                (
-                    run_id,
-                    sequence,
-                    json.dumps(event_metadata(normalized_event), ensure_ascii=False, separators=(",", ":")),
-                    event_type,
-                    call_id,
-                    effect_kind,
-                    receipt_operation_id,
-                    now_text,
-                ),
-            )
             cursor = db.execute(
                 """
                 update agent_runs
@@ -14063,7 +13989,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 (run_id,),
             ).fetchone()
             result = self._agent_run_from_row(updated, db=db, load_events=False)
-        remember_live_event(str(self.path.resolve()), run_id, normalized_event)
+            # Serialize publication with terminal writers using the existing
+            # SQLite write lock, so completion cannot evict before this append.
+            # This is the observed live stream: a later SQLite commit failure
+            # does not undo observing the event while the run is still active.
+            remember_live_event(str(self.path.resolve()), run_id, normalized_event)
         return result
 
     def _transition_agent_run(
@@ -14077,6 +14007,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         transcript_end_line: int | None,
         now: str | datetime | None,
     ) -> AgentRun:
+        from app.native_trajectory import read_native_result_json
         if owner is None or not owner.strip():
             raise ValueError("owner must be non-empty")
         if target_status not in {"completed", "failed"}:
@@ -14103,9 +14034,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 if transcript_end_line is None
                 else transcript_end_line
             )
+            terminal_result = ""
+            if row["status"] == target_status and target_status == "completed":
+                if row["role"] == AgentRole.CONSUMER.value:
+                    candidate = db.execute("select candidate_json from review_candidates where consumer_run_id=?", (run_id,)).fetchone()
+                    terminal_result = candidate[0] if candidate else ""
+                else:
+                    review = db.execute("select result_json from candidate_reviews where audit_run_id=?", (run_id,)).fetchone()
+                    terminal_result = review[0] if review else read_native_result_json(db, row)
             exact_terminal_write = (
                 row["status"] == target_status
-                and row["final_result_json"] == final_result_json
+                and (target_status == "failed" or (
+                    bool(terminal_result) and json.loads(terminal_result) == json.loads(final_result_json)
+                ))
                 and row["structured_error_json"] == structured_error_json
                 and row["transcript_end_line"] == end_line
             )
@@ -14129,7 +14070,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             completed_at = now_text
             values = (
                 target_status,
-                final_result_json,
+                "",
                 structured_error_json,
                 end_line,
                 completed_at,
@@ -14153,6 +14094,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "select * from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
+            if target_status == "completed":
+                if row["role"] == AgentRole.CONSUMER.value:
+                    self._adopt_review_candidate_in_connection(db, updated, json.loads(final_result_json))
+                else:
+                    candidate = db.execute("select id from review_candidates where consumer_run_id=?", (row["parent_agent_run_id"],)).fetchone()
+                    if candidate is not None:
+                        self._adopt_candidate_review_in_connection(db, candidate["id"], run_id, json.loads(final_result_json))
             return self._agent_run_from_row(updated, db=db)
 
     def complete_agent_run(
@@ -14216,14 +14164,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         owner = self._require_runtime_attempt_text(owner, field="owner")
         with self._agent_run_write_transaction(None) as (db, _clock):
             row = db.execute(
-                "select status, lease_owner from agent_runs where id=?",
+                "select status, lease_owner, transcript_start_line, transcript_end_line from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
             if row is None or row["status"] != "running" or row["lease_owner"] != owner:
                 return False
+            if row['transcript_end_line'] > row['transcript_start_line']:
+                return False
+            from app.native_trajectory import live_events
+            if live_events(str(self.path.resolve()), run_id):
+                return False
             for table in (
                 "agent_runtime_attempts",
-                "agent_run_events",
                 "agent_effect_intents",
                 "agent_execution_receipts",
             ):
@@ -17960,7 +17912,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         nothing reviews it. Every finished execution gets a row, including one
         with nothing to write, so "was this considered" always has an answer.
 
-        The memories are read from the stored result of the execution's last
+        The memories are read from the adopted candidate of the execution's last
         completed Consumer run, the revision the task finished on. The
         in-memory orchestration result is not used: most of its constructors
         leave ``consumer_result`` empty (OA task 384747 was queued as having no
@@ -17968,10 +17920,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """
         consumer_run = db.execute(
             """
-            select id, final_result_json from agent_runs
-            where reply_task_id=? and execution_generation=?
-              and role='consumer' and status='completed'
-            order by id desc limit 1
+            select r.id, c.candidate_json from agent_runs r
+            left join review_candidates c on c.consumer_run_id=r.id
+            where r.reply_task_id=? and r.execution_generation=?
+              and r.role='consumer' and r.status='completed'
+            order by r.id desc limit 1
             """,
             (task_id, execution_generation),
         ).fetchone()
@@ -17979,14 +17932,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if consumer_run is None:
             status, skip_reason = "skipped", "no_consumer_result"
         else:
+            adopted_result = consumer_run["candidate_json"]
             memories = list(
-                json.loads(consumer_run["final_result_json"] or "{}").get(
+                json.loads(adopted_result or "{}").get(
                     "durable_memories"
                 )
                 or []
             )
             status, skip_reason = (
-                ("pending", "") if memories else ("skipped", "no_durable_memories")
+                ("pending", "") if memories else ("skipped", "no_durable_memories" if adopted_result else "adopted_consumer_candidate_unavailable")
             )
         db.execute(
             """
@@ -20894,8 +20848,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         consumer = self.get_agent_run(send_run.parent_agent_run_id)
         if consumer is None or consumer.status != "completed":
             raise ValueError("accepted consumer proposal is unavailable")
+        adopted = self.adopted_candidate_for_consumer_run(consumer.id)
         try:
-            proposal = json.loads(consumer.final_result_json)["proposal"]
+            proposal = json.loads(adopted["candidate_json"] if adopted else "")["proposal"]
             actions = proposal["actions"]
         except (json.JSONDecodeError, KeyError, TypeError):
             raise ValueError("accepted consumer proposal is invalid") from None
@@ -21097,7 +21052,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         consumer = self.get_agent_run(run.parent_agent_run_id) if run.parent_agent_run_id else None
         if consumer is None or consumer.role is not AgentRole.CONSUMER or consumer.status != "completed":
             raise ValueError("accepted Consumer proposal is unavailable")
-        actions = json.loads(consumer.final_result_json)["proposal"]["actions"]
+        adopted = self.adopted_candidate_for_consumer_run(consumer.id)
+        if adopted is None:
+            raise ValueError("accepted Consumer proposal is unavailable")
+        actions = json.loads(adopted["candidate_json"])["proposal"]["actions"]
         expected = {
             external_action_key(
                 business_object_key=task.business_object_key,

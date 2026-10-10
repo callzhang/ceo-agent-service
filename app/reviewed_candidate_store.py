@@ -121,53 +121,74 @@ class ReviewedCandidateStoreMixin:
             if isinstance(error, dict) and (error.get("code") == "provider_risk_rejected" or error.get("source_code") == "provider_risk_rejected"):
                 raise ValueError("historical_runtime_risk_refusal")
 
-    def persist_review_candidate(self, task: Any, consumer_run: Any, prepared_result: Any) -> dict[str, Any]:
+    def _adopt_review_candidate_in_connection(self, db, run, prepared_result):
+        """Freeze the prepared plan in the same transaction as Consumer completion."""
         body = _json(prepared_result)
         digest = hashlib.sha256(body.encode()).hexdigest()
         data = json.loads(body)
         if data.get("outcome") not in ("proposal", "needs_human", "no_action"):
             raise ValueError("result is not a reviewable candidate")
-        with self._immediate_write_transaction() as db:
-            task_row = db.execute("select execution_generation from reply_tasks where id=?", (task.id,)).fetchone()
-            run = db.execute("select * from agent_runs where id=?", (consumer_run.id,)).fetchone()
-            if (task_row is None or run is None or task_row[0] != task.execution_generation
-                or run["reply_task_id"] != task.id or run["execution_generation"] != task.execution_generation
-                or run["role"] != "consumer" or run["status"] != "completed"
-                or run["final_result_json"] != body):
+        task_row = db.execute("select execution_generation from reply_tasks where id=?", (run["reply_task_id"],)).fetchone()
+        if (task_row is None or run is None or task_row[0] != run["execution_generation"]
+            or run["role"] != "consumer" or run["status"] != "completed"):
+            raise ValueError("completed Consumer candidate mismatch")
+        latest = db.execute("""select id from agent_runs where reply_task_id=?
+            and execution_generation=? and role='consumer' and status='completed'
+            and proposal_revision=(select max(current_run.proposal_revision) from agent_runs current_run
+                where current_run.reply_task_id=? and current_run.execution_generation=?
+                  and current_run.role='consumer')
+            order by proposal_revision desc, turn_attempt desc, id desc limit 1""",
+            (run["reply_task_id"], run["execution_generation"], run["reply_task_id"], run["execution_generation"])).fetchone()
+        if latest is None or latest["id"] != run["id"]:
+            raise ValueError("stale Consumer candidate")
+        stage = data.get("stage_index", 0)
+        predecessor = data.get("predecessor_review_id")
+        if not isinstance(stage, int) or stage < 0:
+            raise ValueError("invalid candidate stage")
+        if predecessor is not None:
+            prior = db.execute("""select c.task_id, c.execution_generation, c.stage_index,
+                r.decision, e.status as execution_status
+                from candidate_reviews r join review_candidates c on c.id=r.candidate_id
+                left join candidate_executions e on e.review_id=r.id
+                where r.id=?""", (predecessor,)).fetchone()
+            if (prior is None or prior["task_id"] != run["reply_task_id"]
+                or prior["execution_generation"] != run["execution_generation"]
+                or prior["stage_index"] != stage - 1 or prior["decision"] != "approve"
+                or prior["execution_status"] not in ("done", "skipped")):
+                raise ValueError("candidate predecessor mismatch")
+        db.execute("""insert or ignore into review_candidates
+            (task_id,execution_generation,consumer_run_id,stage_index,proposal_revision,predecessor_review_id,candidate_digest,candidate_json)
+            values (?,?,?,?,?,?,?,?)""", (run["reply_task_id"], run["execution_generation"], run["id"], stage, run["proposal_revision"], predecessor, digest, body))
+        saved = db.execute("select * from review_candidates where consumer_run_id=?", (run["id"],)).fetchone()
+        if saved["candidate_digest"] != digest or saved["candidate_json"] != body:
+            raise ValueError("candidate content conflict")
+        return dict(saved)
+
+    def persist_review_candidate(self, task: Any, consumer_run: Any, prepared_result: Any) -> dict[str, Any]:
+        """Validate the already adopted candidate; completed turns are immutable."""
+        body = _json(prepared_result)
+        with self._connect() as db:
+            saved = db.execute("""select c.*, r.status as run_status, t.execution_generation as current_generation
+                from review_candidates c join agent_runs r on r.id=c.consumer_run_id
+                join reply_tasks t on t.id=c.task_id where c.consumer_run_id=?""", (consumer_run.id,)).fetchone()
+            if (saved is None or saved["task_id"] != task.id
+                or saved["execution_generation"] != task.execution_generation
+                or saved["current_generation"] != task.execution_generation
+                or saved["run_status"] != "completed" or saved["candidate_json"] != body):
                 raise ValueError("completed Consumer candidate mismatch")
-            latest = db.execute("""select id from agent_runs where reply_task_id=?
-                and execution_generation=? and role='consumer' and status='completed'
-                and json_valid(final_result_json)
-                and json_extract(final_result_json, '$.outcome') in ('proposal', 'needs_human', 'no_action')
-                and proposal_revision=(select max(current_run.proposal_revision) from agent_runs current_run
-                    where current_run.reply_task_id=? and current_run.execution_generation=?
-                      and current_run.role='consumer')
-                order by proposal_revision desc, turn_attempt desc, id desc limit 1""",
+            latest = db.execute("""select r.id from agent_runs r join review_candidates c on c.consumer_run_id=r.id
+                where r.reply_task_id=? and r.execution_generation=? and r.status='completed'
+                  and r.proposal_revision=(select max(proposal_revision) from agent_runs
+                    where reply_task_id=? and execution_generation=? and role='consumer')
+                order by r.proposal_revision desc, r.turn_attempt desc, r.id desc limit 1""",
                 (task.id, task.execution_generation, task.id, task.execution_generation)).fetchone()
             if latest is None or latest["id"] != consumer_run.id:
                 raise ValueError("stale Consumer candidate")
-            stage = data.get("stage_index", 0)
-            predecessor = data.get("predecessor_review_id")
-            if not isinstance(stage, int) or stage < 0:
-                raise ValueError("invalid candidate stage")
-            if predecessor is not None:
-                prior = db.execute("""select c.task_id, c.execution_generation, c.stage_index,
-                    r.decision, e.status as execution_status
-                    from candidate_reviews r join review_candidates c on c.id=r.candidate_id
-                    left join candidate_executions e on e.review_id=r.id
-                    where r.id=?""", (predecessor,)).fetchone()
-                if (prior is None or prior["task_id"] != task.id
-                    or prior["execution_generation"] != task.execution_generation
-                    or prior["stage_index"] != stage - 1 or prior["decision"] != "approve"
-                    or prior["execution_status"] not in ("done", "skipped")):
-                    raise ValueError("candidate predecessor mismatch")
-            db.execute("""insert or ignore into review_candidates
-                (task_id,execution_generation,consumer_run_id,stage_index,proposal_revision,predecessor_review_id,candidate_digest,candidate_json)
-                values (?,?,?,?,?,?,?,?)""", (task.id, task.execution_generation, consumer_run.id, stage, run["proposal_revision"], predecessor, digest, body))
-            saved = db.execute("select * from review_candidates where consumer_run_id=?", (consumer_run.id,)).fetchone()
-            if saved["candidate_digest"] != digest or saved["candidate_json"] != body:
-                raise ValueError("candidate content conflict")
             return dict(saved)
+
+    def adopted_candidate_for_consumer_run(self, run_id: int) -> dict[str, Any] | None:
+        with self._connect() as db:
+            return _row(db.execute("select * from review_candidates where consumer_run_id=?", (run_id,)).fetchone())
 
     def get_review_candidate(self, candidate_id: int) -> dict[str, Any] | None:
         with self._connect() as db:
@@ -182,27 +203,38 @@ class ReviewedCandidateStoreMixin:
                 left join candidate_selections s on s.candidate_id=c.id
                 where r.audit_run_id=?""", (audit_run_id,)).fetchone())
 
-    def record_candidate_review(self, candidate_id: int, audit_run_id: int, result: Any) -> dict[str, Any]:
+    def _adopt_candidate_review_in_connection(self, db, candidate_id, audit_run_id, result):
         body = _json(result)
         data = json.loads(body)
         decision = data.get("outcome")
         if decision not in ("approve", "return", "reject"):
             raise ValueError("technical Audit failure is not a business review")
+        candidate = self._candidate_context(db, candidate_id)
+        if candidate["invalidated_at"]:
+            raise ValueError("candidate invalidated")
+        run = db.execute("select * from agent_runs where id=?", (audit_run_id,)).fetchone()
+        if (run is None or run["status"] != "completed" or run["role"] != "audit"
+            or run["reply_task_id"] != candidate["task_id"] or run["execution_generation"] != candidate["execution_generation"]
+            or run["proposal_revision"] != candidate["proposal_revision"] or run["parent_agent_run_id"] != candidate["consumer_run_id"]
+            or data.get("candidate_digest") != candidate["candidate_digest"]):
+            raise ValueError("completed Audit review mismatch")
+        db.execute("insert or ignore into candidate_reviews (candidate_id,audit_run_id,decision,candidate_digest,result_json) values (?,?,?,?,?)", (candidate_id, audit_run_id, decision, candidate["candidate_digest"], body))
+        saved = db.execute("select * from candidate_reviews where audit_run_id=?", (audit_run_id,)).fetchone()
+        if saved["candidate_id"] != candidate_id or saved["decision"] != decision or saved["result_json"] != body:
+            raise ValueError("review content conflict")
+        return dict(saved)
+
+    def record_candidate_review(self, candidate_id: int, audit_run_id: int, result: Any) -> dict[str, Any]:
+        """Validate the adopted review or import an exactly matching native result."""
+        body = _json(result)
         with self._immediate_write_transaction() as db:
-            candidate = self._candidate_context(db, candidate_id)
-            if candidate["invalidated_at"]:
-                raise ValueError("candidate invalidated")
-            run = db.execute("select * from agent_runs where id=?", (audit_run_id,)).fetchone()
-            if (run is None or run["status"] != "completed" or run["role"] != "audit"
-                or run["reply_task_id"] != candidate["task_id"] or run["execution_generation"] != candidate["execution_generation"]
-                or run["proposal_revision"] != candidate["proposal_revision"] or run["parent_agent_run_id"] != candidate["consumer_run_id"]
-                or run["final_result_json"] != body or data.get("candidate_digest") != candidate["candidate_digest"]):
-                raise ValueError("completed Audit review mismatch")
-            db.execute("insert or ignore into candidate_reviews (candidate_id,audit_run_id,decision,candidate_digest,result_json) values (?,?,?,?,?)", (candidate_id, audit_run_id, decision, candidate["candidate_digest"], body))
             saved = db.execute("select * from candidate_reviews where audit_run_id=?", (audit_run_id,)).fetchone()
-            if saved["candidate_id"] != candidate_id or saved["decision"] != decision or saved["result_json"] != body:
-                raise ValueError("review content conflict")
-            return dict(saved)
+            run = db.execute("select * from agent_runs where id=?", (audit_run_id,)).fetchone()
+            from app.native_trajectory import read_native_result_json
+            persisted_body = saved["result_json"] if saved else read_native_result_json(db, run) if run else ""
+            if not persisted_body or _json(json.loads(persisted_body)) != body:
+                raise ValueError("completed Audit review mismatch")
+            return self._adopt_candidate_review_in_connection(db, candidate_id, audit_run_id, result)
 
     def current_reviewed_candidate(self, task_id: int, generation: str) -> dict[str, Any] | None:
         with self._connect() as db:

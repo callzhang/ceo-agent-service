@@ -1,5 +1,6 @@
 """Isolated operator deferral of an existing reply task."""
 
+import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -32,6 +33,101 @@ def ready(tmp_path: Path):
     with sqlite3.connect(path) as source, sqlite3.connect(backup) as destination:
         source.backup(destination)
     return path, task.id, backup
+
+
+def native_events(path, task_id, monkeypatch, item, *, missing=False):
+    from app import native_trajectory
+    native = path.parent / 'native.jsonl'
+    records = [
+        {'type': 'event_msg', 'payload': {'type': 'task_started'}},
+        {'type': 'event_msg', 'payload': {'type': 'item_completed', 'item': item}},
+        {'type': 'event_msg', 'payload': {'type': 'task_complete'}},
+    ]
+    if not missing:
+        native.write_text('\n'.join(json.dumps(record) for record in records))
+    monkeypatch.setattr(native_trajectory, 'find_codex_session_path', lambda *a, **k: native)
+    with sqlite3.connect(path) as db:
+        db.execute("update agent_runs set codex_session_id='native-test',transcript_start_line=0,transcript_end_line=? where reply_task_id=?", (len(records), task_id))
+    return len(records)
+
+
+@pytest.mark.parametrize('effect', ['effectful', 'unreviewed'])
+def test_native_tool_effect_blocks_deferral_without_event_copy(tmp_path, monkeypatch, effect):
+    path, task_id, _ = ready(tmp_path)
+    native_events(path, task_id, monkeypatch, {'type': 'UnknownTool', 'metadata': {'effect': effect}})
+    assert 'tool_effect_or_unknown_effect' in preview_deferral(path, task_id, now=NOW)['blockers']
+    with sqlite3.connect(path) as db:
+        assert db.execute('select count(*) from agent_run_events').fetchone()[0] == 0
+
+
+def test_missing_native_events_cannot_prove_deferral_eligible(tmp_path, monkeypatch):
+    path, task_id, _ = ready(tmp_path)
+    native_events(path, task_id, monkeypatch, {'type': 'AgentMessage', 'text': 'message'}, missing=True)
+    assert 'native_event_source_unavailable' in preview_deferral(path, task_id, now=NOW)['blockers']
+
+
+def test_complete_native_messages_preserve_deferral_eligibility(tmp_path, monkeypatch):
+    path, task_id, _ = ready(tmp_path)
+    native_events(path, task_id, monkeypatch, {'type': 'AgentMessage', 'text': 'message'})
+    assert preview_deferral(path, task_id, now=NOW)['eligible'] is True
+
+
+def test_native_tool_without_effect_annotation_preserves_existing_deferral_predicate(tmp_path, monkeypatch):
+    path, task_id, _ = ready(tmp_path)
+    native_events(path, task_id, monkeypatch, {'type': 'McpToolCall', 'id': 'read', 'server': 'memory_connector', 'tool': 'memory_recall', 'arguments': {}})
+    assert preview_deferral(path, task_id, now=NOW)['eligible'] is True
+
+
+@pytest.mark.parametrize('status', ['failed', 'superseded'])
+def test_failed_attempt_before_native_session_remains_eligible(tmp_path, status):
+    path, task_id, _ = ready(tmp_path)
+    with sqlite3.connect(path) as db:
+        run_id = db.execute('select id from agent_runs where reply_task_id=?', (task_id,)).fetchone()[0]
+        db.execute("insert into agent_runtime_attempts(agent_run_id,workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status) values (?,'agent_run',?,1,'test','codex_cli','oauth','test',?)", (run_id, str(run_id), status))
+    assert preview_deferral(path, task_id, now=NOW)['eligible'] is True
+
+
+def test_observed_session_without_attempt_or_bounds_is_unavailable(tmp_path):
+    from app.deploy_maintenance import check_maintenance
+    from app.email_store import EmailStore
+    from app.repository_updater import UpgradePreconditionError
+    path, task_id, _ = ready(tmp_path)
+    EmailStore(path)
+    with sqlite3.connect(path) as db:
+        db.execute("update agent_runs set codex_session_id='observed-session' where reply_task_id=?", (task_id,))
+    assert 'native_event_source_unavailable' in preview_deferral(path, task_id, now=NOW)['blockers']
+    with pytest.raises(UpgradePreconditionError, match='native event source unavailable'):
+        check_maintenance(path, (task_id,))
+
+
+@pytest.mark.parametrize('kind', ['claude_cli', 'codex_cli'])
+def test_complete_native_metadata_preserves_operator_eligibility(tmp_path, monkeypatch, kind):
+    from app import native_trajectory
+    from app.deploy_maintenance import check_maintenance
+    from app.email_store import EmailStore
+    path, task_id, _ = ready(tmp_path)
+    EmailStore(path)
+    if kind == 'claude_cli':
+        records = [{'type': kind} for kind in ('ai-title', 'queue-operation', 'attachment', 'atis-latch', 'last-prompt', 'mode')]
+        records.extend([
+            {'type': 'user', 'message': {'content': 'Plain native user prompt'}},
+            {'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': 'No tool activity.'}]}},
+        ])
+    else:
+        records = [{'type': kind} for kind in ('world_state', 'inter_agent_communication_metadata', 'token_usage_record', 'compacted')]
+        records.extend([
+            {'type': 'event_msg', 'payload': {'type': 'thread_settings_applied'}},
+            {'type': 'response_item', 'payload': {'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'No tool activity.'}]}},
+        ])
+    native = tmp_path / 'native.jsonl'
+    native.write_text('\n'.join(json.dumps(record) for record in records))
+    monkeypatch.setattr(native_trajectory, 'claude_session_path', lambda *a, **k: native)
+    monkeypatch.setattr(native_trajectory, 'find_codex_session_path', lambda *a, **k: native)
+    with sqlite3.connect(path) as db:
+        run_id = db.execute('select id from agent_runs where reply_task_id=?', (task_id,)).fetchone()[0]
+        db.execute("insert into agent_runtime_attempts(agent_run_id,workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status,session_id,transcript_reference,transcript_end) values (?,'agent_run',?,1,'test',?,'oauth','test','failed','native-test','native-test',?)", (run_id, str(run_id), kind, len(records)))
+    assert preview_deferral(path, task_id, now=NOW)['eligible'] is True
+    assert check_maintenance(path, (task_id,)).task_bindings[0][0] == task_id
 
 
 def apply_ready(path, task_id, backup, **overrides):
@@ -161,8 +257,6 @@ def test_apply_refuses_changed_identity_or_live_work(tmp_path, mutation):
     ("insert into agent_runtime_attempts(agent_run_id,workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status,first_effect_started_at) values (?,'agent_run',?,1,'r','cli','native','m','failed','2026-10-05 11:00:00')", ('RUN', 'RUN_TEXT')),
     ("insert into agent_effect_intents(agent_run_id,authorization_id,action_index,receipt_operation_id,capability,operation,operation_digest,arguments_digest,target_identifiers_json,state) values (?,'auth',0,'op','c','o','d','a','{}','dispatched')", ('RUN',)),
     ("insert into agent_effect_intents(agent_run_id,authorization_id,action_index,receipt_operation_id,capability,operation,operation_digest,arguments_digest,target_identifiers_json,state) values (?,'auth',0,'op','c','o','d','a','{}','prepared')", ('RUN',)),
-    ("insert into agent_run_events(agent_run_id,sequence,event_json,effect_kind) values (?,1,'{}','unreviewed')", ('RUN',)),
-    ("insert into agent_run_events(agent_run_id,sequence,event_json,effect_kind) values (?,1,'{\"item\":{\"metadata\":{\"effect\":\"effectful\"}}}','')", ('RUN',)),
     ("insert into agent_execution_receipts(agent_run_id,receipt_id,operation_id,cli,command_path,command_digest,exit_code,completed,persisted,safe_to_confirm) values (?,'r','op','cli','cmd','d',1,0,0,0)", ('RUN',)),
     ("insert into sent_replies(conversation_id,trigger_message_id,reply_text) values ('cid-deferral','mid-deferral','sent')", ()),
     ("insert into external_action_results(external_action_key,business_object_key,action_identity,operation,target_identifiers_json,provider_result_json,result_digest,first_agent_run_id) values ('k',?,'a','o','{}','{}','d',?)", ('BUSINESS', 'RUN')),

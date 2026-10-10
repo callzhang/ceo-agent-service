@@ -72,7 +72,7 @@ def _driver(*, action=None, actions=None, tool_events: list, classifier=None, pa
         id=19556,
         role=AgentRole.CONSUMER,
         proposal_revision=0,
-        final_result_json=_proposal_with(actions if actions is not None else [action]),
+        final_result_json="",
     )
     audit_run = SimpleNamespace(
         id=19557, role=AgentRole.AUDIT, proposal_revision=0,
@@ -83,6 +83,9 @@ def _driver(*, action=None, actions=None, tool_events: list, classifier=None, pa
     runs = {19556: consumer_run, 19557: audit_run}
     store = SimpleNamespace(
         get_agent_run=lambda run_id: runs.get(run_id),
+        adopted_candidate_for_consumer_run=lambda run_id: {
+            "candidate_json": _proposal_with(actions if actions is not None else [action])
+        } if run_id == consumer_run.id else None,
         list_agent_runs_for_task_generation=lambda *_: [audit_run],
     )
     return DingTalkSendEvidenceDriver(store, classifier=classifier), task

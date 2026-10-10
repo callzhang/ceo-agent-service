@@ -84,11 +84,11 @@ class SystemExecutor:
                 include={"capability", "operation", "target", "payload", "effect"}, mode="json"
             ) == actual
         run_id = receipt.get("first_agent_run_id")
-        prior_run = self.store.get_agent_run(run_id) if run_id is not None else None
-        if prior_run is None:
+        adopted = self.store.adopted_candidate_for_consumer_run(run_id) if run_id is not None else None
+        if adopted is None:
             return False
         try:
-            prior = ConsumerAgentResult.model_validate_json(prior_run.final_result_json)
+            prior = ConsumerAgentResult.model_validate_json(adopted["candidate_json"])
         except ValueError:
             return False
         plans = ([prior.proposal] if prior.proposal is not None else []) + [

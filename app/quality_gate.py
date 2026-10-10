@@ -872,38 +872,31 @@ def _check_delivery_records(
     reported here and left missing -- filling it in is how a failure to send
     becomes a record of sending.
     """
-    _add(violations, source="sent_replies", code="executed_without_record", count=_count(
-        db,
-        """
-        select count(*) from agent_runs audit
+    from app.native_trajectory import read_native_result_json
+    rows = db.execute("""select audit.* from agent_runs audit
         join reply_tasks task on task.id=audit.reply_task_id
         where audit.role='audit' and audit.status='completed'
           and task.channel='dingtalk'
-          and json_valid(audit.final_result_json)
-          and json_extract(audit.final_result_json, '$.outcome')='executed'
-          and trim(coalesce(json_extract(
-                audit.final_result_json,
-                '$.external_result.live_result_reference.open_task_id'
-              ), coalesce(json_extract(
-                audit.final_result_json,
-                '$.external_result.live_result_reference.openTaskId'
-              ), coalesce(json_extract(
-                audit.final_result_json,
-                '$.external_result.live_result_reference.sent_message_id'
-              ), coalesce(json_extract(
-                audit.final_result_json,
-                '$.external_result.live_result_reference.openMessageId'
-              ), '')))))<>''
           and audit.completed_at >= datetime('now', '-7 days')
-          and not exists (
-            select 1 from sent_reply_observers observer
-            where observer.agent_run_id=audit.id
-          )
-        """,
-    ), severity="error", detail=(
-        "an Audit turn reported a send with a provider receipt and no delivery "
-        "record was written; investigate the live write path, do not backfill"
-    ))
+          and not exists(select 1 from sent_reply_observers observer where observer.agent_run_id=audit.id)
+        """).fetchall()
+    missing = 0
+    for row in rows:
+        payload = json.loads(read_native_result_json(db, row) or "{}")
+        external = payload.get("external_result")
+        reference = external.get("live_result_reference") if isinstance(external, dict) else None
+        if not isinstance(reference, dict):
+            continue
+        receipt = next((reference[key]
+            for key in ("open_task_id", "openTaskId", "sent_message_id", "openMessageId")
+            if reference.get(key) is not None), "")
+        if payload.get("outcome") == "executed" and str(receipt).strip():
+            missing += 1
+    _add(violations, source="sent_replies", code="executed_without_record", count=missing,
+         severity="error", detail=(
+             "an Audit turn reported a send with a provider receipt and no delivery "
+             "record was written; investigate the live write path, do not backfill"
+         ))
 
 
 def _check_feedback(

@@ -12,12 +12,10 @@ def test_live_events_keep_payload_in_memory_only(tmp_path):
     store.append_agent_run_event(run.id, event, owner="consumer")
     assert store.get_agent_run(run.id).tool_events == [event]
     with sqlite3.connect(store.path) as db:
-        stored = db.execute("select event_json from agent_run_events where agent_run_id=?", (run.id,)).fetchone()[0]
-        assert "large-private-output" not in stored
-        assert "echo private" not in stored
+        assert db.execute("select count(*) from agent_run_events where agent_run_id=?", (run.id,)).fetchone()[0] == 0
 
 
-def test_oversized_event_invalidates_partial_live_cache(tmp_path, monkeypatch):
+def test_oversized_event_uses_native_after_live_cache_limit(tmp_path, monkeypatch):
     from collections import OrderedDict
     from app import native_trajectory
     monkeypatch.setattr(native_trajectory, "_LIVE_EVENTS", OrderedDict())
@@ -27,6 +25,11 @@ def test_oversized_event_invalidates_partial_live_cache(tmp_path, monkeypatch):
     run = _claim_consumer(store, _task(store)).run
     for call_id, output in (("A", "small"), ("B", "large" * 200)):
         store.append_agent_run_event(run.id, {"type": "item.completed", "item": {"type": "command_execution", "id": call_id, "exit_code": 0, "aggregated_output": output}}, owner="consumer")
+    path = tmp_path / "session.jsonl"
+    path.write_text("\n".join(json.dumps({"type": "event_msg", "payload": {"type": "item_completed", "item": {"type": "CommandExecution", "id": call_id, "exit_code": 0, "aggregated_output": output}}}) for call_id, output in (("A", "small"), ("B", "large" * 200))) + "\n")
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *a, **k: path)
+    with store._connect() as db:
+        db.execute("update agent_runs set codex_session_id='native-session',transcript_end_line=2 where id=?", (run.id,))
     assert [event["item"]["id"] for event in store.get_agent_run(run.id).tool_events] == ["A", "B"]
 
 
@@ -38,24 +41,20 @@ def test_restart_preserves_receipts_before_attempt_finishes(tmp_path, monkeypatc
     run = _claim_consumer(store, _task(store)).run
     event = {"type": "item.completed", "item": {"type": "command_execution", "id": "call-1", "exit_code": 0, "aggregated_output": '{"result":{"openTaskId":"receipt-before-crash"},"private":"large-output"}'}}
     store.append_agent_run_event(run.id, event, owner="consumer")
+    path = tmp_path / "session.jsonl"
+    path.write_text(json.dumps({"type": "event_msg", "payload": {"type": "item_completed", "item": {**event["item"], "type": "CommandExecution"}}}) + "\n")
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *a, **k: path)
+    with store._connect() as db:
+        db.execute("update agent_runs set codex_session_id='native-session',transcript_end_line=1 where id=?", (run.id,))
     monkeypatch.setattr(native_trajectory, "_LIVE_EVENTS", OrderedDict())
     assert provider_receipts(store.get_agent_run(run.id).tool_events) == ("receipt-before-crash",)
     later = {"type": "item.completed", "item": {"type": "command_execution", "id": "call-2", "exit_code": 0, "aggregated_output": '{"result":{"openMessageId":"receipt-after-restart"}}'}}
     store.append_agent_run_event(run.id, later, owner="consumer")
+    with path.open("a") as stream:
+        stream.write(json.dumps({"type": "event_msg", "payload": {"type": "item_completed", "item": {**later["item"], "type": "CommandExecution"}}}) + "\n")
     assert provider_receipts(store.get_agent_run(run.id).tool_events) == ("receipt-before-crash", "receipt-after-restart")
     with sqlite3.connect(store.path) as db:
-        assert "large-output" not in db.execute("select event_json from agent_run_events order by id").fetchone()[0]
-
-
-def test_native_merge_preserves_unmatched_durable_receipt():
-    from app.native_trajectory import event_metadata, merge_native_events
-    from app.agent_effect_guard import provider_receipts
-    events = [{"type": "item.completed", "item": {"type": "command_execution", "id": name, "exit_code": 0,
-               "aggregated_output": json.dumps({"result": {"openMessageId": name}})}} for name in ("A", "B")]
-    merged = merge_native_events([events[0]], [event_metadata(event) for event in events])
-    assert provider_receipts(merged) == ("A", "B")
-    events[1]["item"]["id"] = events[0]["item"]["id"]
-    assert provider_receipts(merge_native_events([events[0]], [event_metadata(event) for event in events])) == ("A", "B")
+        assert db.execute("select count(*) from agent_run_events").fetchone()[0] == 0
 
 
 def test_generation_list_restores_prior_write_after_restart(tmp_path, monkeypatch):
@@ -94,27 +93,6 @@ def test_native_codex_reader_restores_completed_tool_and_exact_window(tmp_path, 
     assert provider_receipts(events) == ("receipt-1",)
 
 
-def test_compaction_preserves_only_copy_and_removes_verified_duplicate(tmp_path, monkeypatch):
-    from app import storage_maintenance
-    store = AutoReplyStore(tmp_path / "runs.sqlite3")
-    run = _claim_consumer(store, _task(store)).run
-    event = {"type": "item.completed", "item": {"type": "command_execution", "id": "call-1", "command": "private", "exit_code": 0, "aggregated_output": "private-output"}}
-    store.append_agent_run_event(run.id, event, owner="consumer")
-    with sqlite3.connect(store.path) as db:
-        db.execute("update agent_runs set status='completed',codex_session_id='test-session' where id=?", (run.id,))
-        db.execute("update agent_run_events set event_json=? where agent_run_id=?", (json.dumps(event), run.id))
-    monkeypatch.setattr(storage_maintenance, "native_run_available", lambda *args: False)
-    monkeypatch.setattr(storage_maintenance, "native_codex_sessions", lambda: {"test-session"})
-    assert storage_maintenance.compact_native_duplicates(store.path)["runs_retained"] == 1
-    with sqlite3.connect(store.path) as db:
-        assert "private-output" in db.execute("select event_json from agent_run_events").fetchone()[0]
-    monkeypatch.setattr(storage_maintenance, "native_run_available", lambda *args: True)
-    monkeypatch.setattr(storage_maintenance, "read_run_events", lambda *args: [event])
-    assert storage_maintenance.compact_native_duplicates(store.path)["runs_compacted"] == 1
-    with sqlite3.connect(store.path) as db:
-        assert "private-output" not in db.execute("select event_json from agent_run_events").fetchone()[0]
-
-
 def test_zero_native_range_does_not_read_reused_session(tmp_path, monkeypatch):
     from app import native_trajectory
     store = AutoReplyStore(tmp_path / "runs.sqlite3")
@@ -124,7 +102,6 @@ def test_zero_native_range_does_not_read_reused_session(tmp_path, monkeypatch):
         row = db.execute("select * from agent_runs where id=?", (run.id,)).fetchone()
         monkeypatch.setattr(native_trajectory, "read_codex_events", lambda *a, **k: (_ for _ in ()).throw(AssertionError("read unrelated later turn")))
         assert native_trajectory.read_run_events(db, row) == []
-        assert not native_trajectory.native_run_available(db, row)
 
 
 def test_claude_reader_uses_native_line_bounds_for_resumed_session(tmp_path, monkeypatch):
@@ -139,7 +116,7 @@ def test_claude_reader_uses_native_line_bounds_for_resumed_session(tmp_path, mon
     events = native_trajectory.read_claude_events("session", start_line=1, end_line=2)
     assert len(events) == 1
     assert events[0]["item"]["id"] == "selected"
-    assert "private" not in json.dumps(events)
+    assert events[0]["item"]["arguments"] == {"command": "private"}
 
 
 def test_delivery_reconciliation_after_restart_reads_interrupted_native_turn(tmp_path, monkeypatch):
@@ -147,11 +124,51 @@ def test_delivery_reconciliation_after_restart_reads_interrupted_native_turn(tmp
     from app import native_trajectory
     from tests.test_store import test_reconcile_failed_agent_message_requires_send_receipt_and_readback
     original = AutoReplyStore.reconcile_failed_agent_message_delivery
+    append_event = AutoReplyStore.append_agent_run_event
     paths = {}
+    captured_events = {}
+
+    def capture_event(store, run_id, event, **kwargs):
+        result = append_event(store, run_id, event, **kwargs)
+        captured_events.setdefault(run_id, []).append(event)
+        return result
+
+    monkeypatch.setattr(AutoReplyStore, 'append_agent_run_event', capture_event)
 
     def restart_then_reconcile(store, **arguments):
+        send = store.get_agent_run(arguments["send_run_id"])
+        consumer_id = send.parent_agent_run_id
+        task = store.get_reply_task(send.reply_task_id)
+        consumer_wire = {
+            "outcome": "proposal", "summary": "Send the reviewed text.",
+            "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "error_code": "", "error_retryable": False,
+            "error_authorization_required": False,
+            "durable_memories": [], "decision_options": [],
+            "proposal": {
+                "objective": "Deliver the message", "sourced_facts": [],
+                "authored_judgment": "Send the reviewed text.",
+                "actions": [{
+                    "description": "Send message", "action_identity": "reply",
+                    "capability": "dingtalk-chat", "operation": "send_group_message",
+                    "target": {"conversation_id": task.conversation_id},
+                    "payload": {"content": "Delivered text."}, "effect": "external",
+                }],
+            },
+        }
+        consumer_session = f"run-{consumer_id}"
+        consumer_path = tmp_path / f"{consumer_session}.jsonl"
+        consumer_path.write_text(json.dumps({"type": "response_item", "payload": {
+            "type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": json.dumps(consumer_wire)}
+            ],
+        }}) + "\n")
+        paths[consumer_session] = consumer_path
+        with store._connect() as db:
+            db.execute("update agent_runs set codex_session_id=?, transcript_end_line=1 where id=?", (consumer_session, consumer_id))
         for run_id in (arguments["send_run_id"], arguments["readback_run_id"]):
-            events = store.get_agent_run(run_id).tool_events
+            events = captured_events.get(run_id, [])
             session_id = f"run-{run_id}"
             path = tmp_path / f"{session_id}.jsonl"
             records = [{"type": "event_msg", "payload": {"type": "task_started"}}]
@@ -161,12 +178,13 @@ def test_delivery_reconciliation_after_restart_reads_interrupted_native_turn(tmp
                 if kind:
                     records.append({"type": "event_msg", "payload": {"type": "item_completed", "item": {**item, "type": kind}}})
             records.append({"type": "event_msg", "payload": {"type": "task_complete"}})
+            native_end = len(records)
             # A later turn in the same native session must remain outside the read.
             records.extend([{"type": "event_msg", "payload": {"type": "task_started"}}, {"type": "event_msg", "payload": {"type": "item_completed", "item": {"type": "CommandExecution", "command": "unrelated-later-turn", "exit_code": 0}}}])
             path.write_text("\n".join(json.dumps(record) for record in records))
             paths[session_id] = path
             with store._connect() as db:
-                db.execute("insert into agent_runtime_attempts(agent_run_id,workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status,session_id,transcript_reference) values (?,'agent_run',?,1,'codex_oauth','codex_cli','oauth','test','failed',?,?)", (run_id, str(run_id), session_id, f"codex_session:{session_id}"))
+                db.execute("insert into agent_runtime_attempts(agent_run_id,workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status,session_id,transcript_reference,transcript_end) values (?,'agent_run',?,1,'codex_oauth','codex_cli','oauth','test','failed',?,?,?)", (run_id, str(run_id), session_id, f"codex_session:{session_id}", native_end))
         monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda session_id, **kwargs: paths.get(session_id))
         monkeypatch.setattr(native_trajectory, "_LIVE_EVENTS", OrderedDict())
         for run_id in (arguments["send_run_id"], arguments["readback_run_id"]):

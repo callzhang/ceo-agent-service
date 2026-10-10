@@ -69,17 +69,20 @@ def check_maintenance(database_path: Path, task_ids: tuple[int, ...]) -> Mainten
             if db.execute('select 1 from agent_runtime_attempts a join agent_runs r on r.id=a.agent_run_id '
                           "where r.reply_task_id=? and a.first_effect_started_at<>'' limit 1", (task_id,)).fetchone():
                 raise UpgradePreconditionError('maintenance task has started effect')
-            events = db.execute('select e.effect_kind,e.event_json from agent_run_events e '
-                                'join agent_runs r on r.id=e.agent_run_id where r.reply_task_id=?', (task_id,))
-            for effect, raw in events:
-                event = json.loads(raw)
-                item = event.get('item', {})
-                # Native protocol and message events cannot execute provider tools.
-                if (effect in ('effectful', 'unreviewed') or _legacy_event_may_have_effect(raw)
-                    or item.get('type') not in (None, 'agent_message', 'reasoning', 'error')
-                    or event.get('type') not in ('thread.started', 'turn.started', 'turn.completed',
-                                                 'turn.failed', 'item.started', 'item.completed', 'error')):
-                    raise UpgradePreconditionError('maintenance task has tool or unknown event')
+            from app.native_trajectory import read_run_event_evidence
+            for run in db.execute('select * from agent_runs where reply_task_id=?', (task_id,)).fetchall():
+                events, available = read_run_event_evidence(db, run)
+                for event in events:
+                    item = event.get('item', {})
+                    # Keep the existing no-tool/no-unknown-event precondition.
+                    if (_legacy_event_may_have_effect(json.dumps(event))
+                        or not isinstance(item, dict)
+                        or item.get('type') not in (None, 'agent_message', 'reasoning', 'error')
+                        or event.get('type') not in ('thread.started', 'turn.started', 'turn.completed',
+                                                   'turn.failed', 'item.started', 'item.completed', 'error')):
+                        raise UpgradePreconditionError('maintenance task has tool or unknown event')
+                if not available:
+                    raise UpgradePreconditionError('maintenance native event source unavailable')
         owners = {row[0] for row in db.execute(
             "select distinct owner_pid from dispatcher_claim_leases where terminal_at='' and owner_pid>0 "
             "and julianday(lease_expires_at)>julianday('now')")}

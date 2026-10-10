@@ -321,6 +321,18 @@ class AgentOrchestrator:
         ):
             raise RuntimeError("audit_consumer_parent_invalid")
 
+    def _consumer_result(self, run: AgentRun) -> ConsumerAgentResult:
+        candidate = self.store.adopted_candidate_for_consumer_run(run.id)
+        if candidate is None:
+            raise ValueError("completed Consumer candidate unavailable")
+        return ConsumerAgentResult.model_validate_json(candidate["candidate_json"])
+
+    def _audit_result(self, run: AgentRun) -> AuditAgentResult:
+        review = self.store.get_candidate_review_for_audit_run(run.id)
+        return AuditAgentResult.model_validate_json(
+            review["result_json"] if review else run.final_result_json
+        )
+
     def _derive_state(self, task: ReplyTask):
         runs = self.store.list_agent_runs_for_task_generation(
             task.id, task.execution_generation
@@ -340,7 +352,7 @@ class AgentOrchestrator:
             ) or prior.status != "completed":
                 continue
             try:
-                completed = _consumer_result(prior)
+                completed = self._consumer_result(prior)
             except ValueError:
                 continue
             if completed.outcome is not ConsumerOutcome.FAILED:
@@ -359,7 +371,7 @@ class AgentOrchestrator:
                 else None
             )
             feedback = (
-                _audit_result(parent).feedback
+                self._audit_result(parent).feedback
                 if parent and parent.status == "completed"
                 else None
             )
@@ -373,10 +385,11 @@ class AgentOrchestrator:
                 **self._stage_for_parent(parent),
             )
         try:
-            result = _consumer_result(consumer)
+            result = self._consumer_result(consumer)
         except ValueError:
-            return _NextConsumer(
-                consumer.proposal_revision, consumer.parent_agent_run_id, None
+            return self._run_terminal(
+                consumer, "failed_terminal",
+                AgentError(code="completed_consumer_candidate_unavailable", retryable=False), cycles,
             )
         if result.outcome is ConsumerOutcome.FAILED:
             return self._run_terminal(
@@ -388,7 +401,7 @@ class AgentOrchestrator:
             else None
         )
         if parent:
-            previous = _audit_result(parent)
+            previous = self._audit_result(parent)
             expected_stage = self._stage_for_parent(parent)
             if (
                 result.stage_index != expected_stage["stage_index"]
@@ -403,7 +416,7 @@ class AgentOrchestrator:
                     result,
                 )
             if previous.outcome is AuditOutcome.REJECT:
-                original = _consumer_result(
+                original = self._consumer_result(
                     self.store.get_agent_run(parent.parent_agent_run_id)
                 )
                 if not rejected_content_changed(original, result):
@@ -460,15 +473,11 @@ class AgentOrchestrator:
                 technical.error.code if _is_waiting_failure(technical.error) else "",
             )
         try:
-            review_result = _audit_result(audit)
+            review_result = self._audit_result(audit)
         except ValueError:
-            return _NextAudit(
-                consumer.proposal_revision,
-                audit.turn_attempt + 1,
-                consumer.id,
-                result,
-                candidate["id"],
-                candidate["candidate_digest"],
+            return self._run_terminal(
+                audit, "failed_terminal",
+                AgentError(code="completed_audit_result_unavailable", retryable=False), cycles, result,
             )
         if review_result.outcome is AuditOutcome.FAILED:
             return self._run_terminal(
@@ -624,12 +633,12 @@ class AgentOrchestrator:
     def _stage_for_parent(self, parent: AgentRun | None) -> dict[str, object]:
         if parent is None:
             return {"stage_index": 0, "predecessor_review_id": None}
-        previous_candidate = _consumer_result(
+        previous_candidate = self._consumer_result(
             self.store.get_agent_run(parent.parent_agent_run_id)
         )
         review = self.store.get_candidate_review_for_audit_run(parent.id)
         execution = self.store.get_candidate_execution(review["candidate_id"]) if review else None
-        if (_audit_result(parent).outcome is AuditOutcome.APPROVE
+        if (self._audit_result(parent).outcome is AuditOutcome.APPROVE
             and previous_candidate.continue_after_execution
             and execution and execution["status"] == "done"):
             review_id = review["id"]
@@ -726,19 +735,18 @@ class AgentOrchestrator:
             )
         )
 
-    @staticmethod
-    def _feedback_cycles_by_runs(runs, stage_index=None):
+    def _feedback_cycles_by_runs(self, runs, stage_index=None):
         count = 0
         by_id = {r.id: r for r in runs}
         for run in runs:
             if run.role is not AgentRole.AUDIT or run.status != "completed":
                 continue
             try:
-                review = _audit_result(run)
+                review = self._audit_result(run)
                 parent = by_id.get(run.parent_agent_run_id)
                 if review.outcome in (AuditOutcome.RETURN, AuditOutcome.REJECT) and (
                     stage_index is None
-                    or (parent and _consumer_result(parent).stage_index == stage_index)
+                    or (parent and self._consumer_result(parent).stage_index == stage_index)
                 ):
                     count += 1
             except ValueError:
@@ -967,13 +975,3 @@ def _next_pass_delay_seconds(failed_turns: int) -> float:
 def _retryable_route_error_can_resume(task: ReplyTask, error: AgentError) -> bool:
     """A deferred error or an explicit safe recovery permits one fresh turn."""
     return task.error == error.code or bool(task.recovery_code)
-
-
-def _consumer_result(run: AgentRun) -> ConsumerAgentResult:
-    payload = json.loads(run.final_result_json)
-    return ConsumerAgentResult.model_validate(payload)
-
-
-def _audit_result(run: AgentRun) -> AuditAgentResult:
-    payload = json.loads(run.final_result_json)
-    return AuditAgentResult.model_validate(payload)

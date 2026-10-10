@@ -51,7 +51,7 @@ def retire_rule_question(
 def _retire_in_connection(db: sqlite3.Connection, attempt_id: int, *, authority: str, apply: bool) -> dict:
     row = db.execute("""
         select a.*, r.reply_task_id, r.execution_generation as run_generation,
-               r.role, r.status as run_status, r.final_result_json,
+               r.role, r.status as run_status,
                t.status as task_status, t.execution_generation as task_generation
         from reply_attempts a join agent_runs r on r.id=a.agent_run_id
         join reply_tasks t on t.id=r.reply_task_id
@@ -72,11 +72,16 @@ def _retire_in_connection(db: sqlite3.Connection, attempt_id: int, *, authority:
         and row["run_generation"] == row["task_generation"]
     ):
         raise ValueError("attempt is not an obsolete completed Consumer rule question")
-    result = json.loads(row["final_result_json"])
+    from app.native_trajectory import read_native_result_json
+    run = db.execute("select * from agent_runs where id=?", (row["agent_run_id"],)).fetchone()
+    native_result = read_native_result_json(db, run)
+    if not native_result:
+        raise ValueError("original native Consumer result is unavailable")
+    result = json.loads(native_result)
     question = _RuleQuestion.model_validate(result)
     if any(question.error.model_dump().values()):
         raise ValueError("technical failures cannot be retired as rule questions")
-    digest = hashlib.sha256(row["final_result_json"].encode()).hexdigest()
+    digest = hashlib.sha256(native_result.encode()).hexdigest()
     key = f"rule_question_retirement:{attempt_id}"
     saved = db.execute("select value from service_state where key=?", (key,)).fetchone()
     if row["resolved_at"]:

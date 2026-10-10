@@ -72,6 +72,8 @@ class CapturingExecutor:
         self.environments: list[dict[str, str]] = []
 
     def __call__(self, command, *, on_stdout_line, **kwargs):
+        if getattr(self, 'capture_active_events', None):
+            self.active_events = self.capture_active_events()
         self.commands.append(command)
         self.prompts.append(kwargs["prompt"])
         self.environments.append(dict(kwargs["env"]))
@@ -131,6 +133,13 @@ def setup(tmp_path: Path):
 
 def _runner(setup, executor):
     store, _task, _parent, _context, config, router = setup
+    if isinstance(executor, CapturingExecutor):
+        from app.native_trajectory import live_events
+        def capture_active_events():
+            with store._connect() as db:
+                run_id = db.execute("select id from agent_runs where status='running' order by id desc limit 1").fetchone()[0]
+            return live_events(str(store.path.resolve()), run_id) or []
+        executor.capture_active_events = capture_active_events
     return AuditAgentRunner(
         store=store, workspace=Path("/workspace"), executor=executor,
         runtime_config=config, runtime_router=router,
@@ -259,7 +268,8 @@ def test_review_only_run_preserves_session_and_uses_bound_read_cli(setup):
     assert "Execute only the accepted candidate" not in executor.prompts[0]
     assert "agent_cli.read_skill()" in executor.prompts[0]
     snapshot = next(
-        event for event in saved.tool_events if event.get("type") == "runtime.prompt"
+        event for event in executor.active_events
+        if event.get("type") == "runtime.prompt"
     )
     assert snapshot["invocation_facts"]["skill_names"] == []
 
@@ -334,11 +344,12 @@ def test_actual_audit_runner_uses_production_review_instructions(setup):
     _store, task, parent, _context, _config, _router = setup
     context = replace(_context, audit_rules="")
     executor = CapturingExecutor(_wire(context.candidate_digest))
-    _runner(setup, executor).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+    result = _runner(setup, executor).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
     command = executor.commands[0]
     setting = next(value for value in command if value.startswith("developer_instructions="))
     actual = json.loads(setting.split("=", 1)[1])
-    [snapshot] = [event for event in _store.list_agent_runs_for_task_generation(task.id, task.execution_generation)[-1].tool_events if event.get("type") == "runtime.prompt"]
+    [snapshot] = [event for event in executor.active_events
+                  if event.get("type") == "runtime.prompt"]
     rendered_rules = render_audit_rules(AgentRole.AUDIT)
     assert actual == audit_developer_instructions(rendered_rules, runtime_context="") + "\n\n" + snapshot["runtime_context"]
     assert actual == snapshot["developer_instructions"]
@@ -393,7 +404,7 @@ def test_audit_task_carries_selected_frozen_skill_discovery_on_every_turn(
         })
     })
 
-    runner.run(selected_task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+    result = runner.run(selected_task, context, turn_attempt=0, parent_agent_run_id=parent.id)
 
     assert "ceo-document-review" in executor.prompts[0]
     assert "agent_cli.read_task_skill(name)" in executor.prompts[0]
@@ -405,9 +416,7 @@ def test_audit_task_carries_selected_frozen_skill_discovery_on_every_turn(
     )
     assert "ceo-document-review" not in json.loads(developer_setting.split("=", 1)[1])
     [snapshot] = [
-        event for event in store.list_agent_runs_for_task_generation(
-            task.id, task.execution_generation
-        )[-1].tool_events
+        event for event in executor.active_events
         if event.get("type") == "runtime.prompt"
     ]
     task_sections = [
@@ -419,3 +428,26 @@ def test_audit_task_carries_selected_frozen_skill_discovery_on_every_turn(
     assert snapshot["invocation_facts"]["skill_protocol"] == (
         "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED" if protocol_present else ""
     )
+
+
+def test_audit_reads_frozen_prepared_parent_when_native_proposal_differs(setup, tmp_path, monkeypatch):
+    from app import native_trajectory
+    from app.agent_turn_runner import AgentTurnProcess
+
+    store, task, parent, context, _config, _router = setup
+    raw = context.candidate.model_copy(deep=True)
+    raw.proposal.actions[0].payload['content'] = 'Raw message before service preparation'
+    path = tmp_path / 'raw-consumer.jsonl'
+    path.write_text(json.dumps({'type': 'response_item', 'payload': {
+        'type': 'message', 'role': 'assistant', 'content': [
+            {'type': 'output_text', 'text': raw.model_dump_json()}
+        ]}}) + '\n')
+    monkeypatch.setattr(native_trajectory, 'find_codex_session_path', lambda *a, **k: path)
+    with store._connect() as db:
+        db.execute("update agent_runs set codex_session_id='native-consumer',transcript_end_line=1 where id=?", (parent.id,))
+    assert json.loads(store.get_agent_run(parent.id).final_result_json) != context.candidate.model_dump(mode='json')
+    captured = {}
+    monkeypatch.setattr(AgentTurnProcess, 'execute', lambda _self, **kwargs: captured.update(kwargs))
+    _runner(setup, None).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+    assert 'Exact prepared notice' in captured['prompt']
+    assert 'Raw message before service preparation' not in captured['prompt']
