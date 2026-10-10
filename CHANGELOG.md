@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-10: Reuse complete account scan-folder validation in lightweight
+  initialization and propagate previous snapshot corruption during publication.
+  Add invalid folder and publication rollback regressions; corrupted label
+  history cannot advance watermarks.
+
 - 2026-10-10: Validate Email account configuration on lightweight runtime
   initialization so corrupt account JSON cannot escape the email-unavailable
   boundary, without restoring full historical validation scans.
@@ -2338,10 +2343,3 @@
   self-delivery. Saved custom rules retain the fixed contract. Historical risk guards
   and System receipt/recovery semantics remain unchanged. Native audience evaluation
   is a separate release gate; this entry does not imply installation or delivery.
-# Email integrity review corrections
-
-- Reuse complete account scan-folder validation in lightweight initialization.
-- Propagate previous snapshot corruption during publication rather than treating
-  it as absent label history and advancing watermarks.
-- Add invalid folder and snapshot-publication rollback regressions.
-
