@@ -997,6 +997,8 @@ class RoutedCodexExecution:
         parser: Callable[[str], ResultT],
         result_codec: RoutedResultCodec[ResultT],
         conversation_id: str | None = None,
+        continuation_prompt: str | None = None,
+        continuation_session_id: str | None = None,
         required_capabilities: frozenset[str] = frozenset(),
         result_validation_retry: RoutedResultValidationRetry | None = None,
         on_stdout_line: Callable[[str], None] | None = None,
@@ -1022,6 +1024,13 @@ class RoutedCodexExecution:
         if not prompt:
             raise ValueError("prompt must be non-empty")
         original_prompt = prompt
+        if (continuation_prompt is None) != (continuation_session_id is None):
+            raise ValueError("continuation prompt and session must be paired")
+        if continuation_prompt is not None:
+            continuation_prompt = continuation_prompt.strip()
+            continuation_session_id = continuation_session_id.strip()
+            if not continuation_prompt or not continuation_session_id:
+                raise ValueError("continuation prompt and session must be non-empty")
         result_validation_retries_used = 0
         forced_retry_session_id: str | None = None
         terminal_failure: RuntimeFailure | None = None
@@ -1268,6 +1277,14 @@ class RoutedCodexExecution:
             )
 
         while True:
+            if result_validation_retries_used == 0:
+                prompt = (
+                    continuation_prompt
+                    if continuation_prompt is not None
+                    and route.runtime_kind in {RuntimeKind.CODEX_CLI, RuntimeKind.CLAUDE_CLI}
+                    and route_session_id == continuation_session_id
+                    else original_prompt
+                )
             transcript_start = 0
             transcript_end = 0
             line_count = 0

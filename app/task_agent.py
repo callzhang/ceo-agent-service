@@ -297,6 +297,8 @@ class TaskCodex(Protocol):
         prompt: str,
         workload_key: str,
         session_scope_id: str | None = None,
+        continuation_prompt: str | None = None,
+        continuation_session_id: str | None = None,
     ) -> TaskAgentDecision: ...
 
 
@@ -313,11 +315,19 @@ class TaskAgentRunner:
         run_id: int,
         session_scope_id: str,
         repair_round: int = 0,
+        repair_context: str | None = None,
     ) -> TaskAgentDecision:
+        continuation = {}
+        prior_session = getattr(self.codex, "last_session_id", None)
+        if repair_context and prior_session:
+            continuation = {
+                "continuation_prompt": build_task_agent_repair_prompt(repair_context),
+                "continuation_session_id": prior_session,
+            }
         return self.codex.decide(
             prompt=build_task_agent_prompt(
                 work_item,
-                candidate_prompt,
+                candidate_prompt + ("\n\n" + repair_context if repair_context else ""),
                 memory_issue=memory_issue,
             ),
             workload_key=(
@@ -325,6 +335,7 @@ class TaskAgentRunner:
                 else f"{run_id}:decision_repair.{repair_round}"
             ),
             session_scope_id=session_scope_id,
+            **continuation,
         )
 
 
@@ -355,6 +366,8 @@ class TaskAgentCodexRunner:
         prompt: str,
         workload_key: str,
         session_scope_id: str | None = None,
+        continuation_prompt: str | None = None,
+        continuation_session_id: str | None = None,
     ) -> TaskAgentDecision:
         self.last_session_id = None
         self.last_audit_tool_events = []
@@ -376,6 +389,8 @@ class TaskAgentCodexRunner:
                 parser=_encode_task_agent_result,
                 result_codec=TASK_RESULT_CODEC,
                 conversation_id=session_scope_id,
+                continuation_prompt=continuation_prompt,
+                continuation_session_id=continuation_session_id,
                 required_capabilities=TASK_RUNTIME_CAPABILITIES,
                 result_validation_retry=RoutedResultValidationRetry.same_session_exactly_once(
                     correction_prompt=_task_result_validation_repair_prompt
@@ -534,7 +549,7 @@ def build_task_agent_prompt(
         current_time.strip() or datetime.now(timezone.utc).isoformat()
     )
     decision_schema = json.dumps(
-        task_agent_output_schema(), ensure_ascii=False, indent=2
+        task_agent_output_schema(), ensure_ascii=False, separators=(",", ":")
     )
     return f"""You are the CEO Agent Task/Project reader. Do not reply to the source.
 Follow the current CEO Work Tracking Skill and return one TaskAgentDecision envelope:
@@ -815,6 +830,15 @@ TaskAgentDecision Pydantic JSON schema:
 {decision_schema}
 Return only the envelope after checking every item.
 """
+
+
+def build_task_agent_repair_prompt(repair_context: str) -> str:
+    return (
+        "Continue the immediately preceding Task Agent decision in this session. "
+        "Reuse its source, Work Item and semantic context. Return one complete "
+        "TaskAgentDecision JSON object correcting the following validation issues.\n\n"
+        + repair_context
+    )
 
 
 def _memory_connector_prompt_status(memory_issue: str) -> str:
@@ -3276,6 +3300,7 @@ def process_work_item(
         )
         active_run_id = store.begin_task_agent_run(work_input.id)
         memory_issue = memory_connector_config_issue()
+        repair_context = None
         for repair_round in range(TASK_DECISION_REPAIR_ROUNDS + 1):
             if session_lease is not None:
                 session_lease.assert_owned()
@@ -3286,6 +3311,7 @@ def process_work_item(
                 run_id=active_run_id,
                 session_scope_id=TASK_AGENT_SESSION_SCOPE_ID,
                 repair_round=repair_round,
+                repair_context=repair_context,
             )
             decision = _canonicalize_current_source_provenance(
                 decision, work_item=work_item
@@ -3302,9 +3328,8 @@ def process_work_item(
             except RepairableTaskDecisionValidationError as exc:
                 if repair_round == TASK_DECISION_REPAIR_ROUNDS:
                     raise TaskDecisionRepairExhausted(str(exc)) from exc
-                context_prompt = (
-                    render_task_semantic_context(semantic_context, work_item=work_item)
-                    + "\n\nDecision validation rejected the previous candidate before any "
+                repair_context = (
+                    "Decision validation rejected the previous candidate before any "
                     "domain writes. Correct this evidence error without inventing facts: "
                     + str(exc)
                     + "\nPrevious candidate:\n"

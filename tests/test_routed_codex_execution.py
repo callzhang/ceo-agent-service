@@ -792,6 +792,66 @@ def test_result_validation_retry_can_resume_same_persisted_session_once(store, c
     assert [attempt.source_session_id for attempt in attempts] == ["", "session-171"]
 
 
+@pytest.mark.parametrize("bound_session", [None, "previous-session", "other-session"])
+@pytest.mark.parametrize("fail_primary", [False, True])
+def test_compact_input_is_bound_to_actual_resumed_session(store, config, bound_session, fail_primary):
+    key = seed_structured_parent(store, 183)
+    if bound_session:
+        store.upsert_conversation_runtime_session("task-scope", "codex_oauth", bound_session)
+    prompts = []
+
+    def executor(command, **kwargs):
+        prompts.append(kwargs["prompt"])
+        if fail_primary and len(prompts) == 1:
+            return ProcessRunResult(1, "", "provider unavailable")
+        session = command[-1] if command[-1] != "fresh" else "new-session"
+        return ProcessRunResult(0, "\n".join([
+            json.dumps({"type": "thread.started", "thread_id": session}),
+            json.dumps({"type": "result", "value": 7}),
+        ]), "")
+
+    routed = RoutedCodexExecution(
+        store=store, config=config, router=make_router(store, config),
+        adapter=FakeAdapter(), executor=executor, session_line_counter=lambda _: 2,
+    )
+    routed.execute(
+        workload_kind="structured", workload_key=key, conversation_id="task-scope",
+        prompt="FULL SOURCE AND REPAIR", continuation_prompt="COMPACT REPAIR",
+        continuation_session_id="previous-session",
+        command_factory=CodexCommandFactory.standard(developer_instructions="test"),
+        parser=lambda raw: json.loads(raw.splitlines()[-1])["value"],
+        result_codec=INT_CODEC, required_capabilities=CAPABILITIES,
+    )
+    expected = "COMPACT REPAIR" if bound_session == "previous-session" else "FULL SOURCE AND REPAIR"
+    assert prompts == ([expected, "FULL SOURCE AND REPAIR"] if fail_primary else [expected])
+
+
+def test_friday_prior_thread_binding_never_selects_compact_input(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "friday-correction.sqlite3")
+    run_id = seed_agent_run_parent(store, task_id=992)
+    config = _friday_config(monkeypatch, "friday_runtime")
+    store.upsert_conversation_runtime_session("task-scope", "friday_runtime", "friday_thread:previous")
+    friday = FakeFridayAdapter(result=FridayExecutionResult(
+        text="7", thread_id="new-thread", turn_id="turn-1",
+        operation_id="operation-1", artifact={"final_message": "7"},
+    ))
+    routed = RoutedCodexExecution(
+        store=store, config=config,
+        router=AgentRuntimeRouter(routes=config.routes, store=store,
+                                  snapshots=_friday_snapshots(config), now=lambda: NOW),
+        adapter=FakeAdapter(), friday_adapter=friday, now=lambda: NOW,
+    )
+    routed.execute(
+        workload_kind="agent_run", workload_key=str(run_id), conversation_id="task-scope",
+        prompt="FULL SOURCE AND REPAIR", continuation_prompt="COMPACT REPAIR",
+        continuation_session_id="friday_thread:previous",
+        command_factory=CodexCommandFactory.standard(developer_instructions="test"),
+        parser=_friday_int, result_codec=INT_CODEC,
+    )
+    assert "FULL SOURCE AND REPAIR" in friday.calls[0][0]
+    assert "COMPACT REPAIR" not in friday.calls[0][0]
+
+
 def test_shared_task_agent_scope_resumes_across_workload_keys(store, config):
     first_key = seed_structured_parent(store, 181)
     second_key = seed_structured_parent(store, 182)

@@ -1248,13 +1248,16 @@ class FakeCodex:
         self.calls = []
 
     def decide(
-        self, *, prompt, session_id=None, workload_key=None, session_scope_id=None
+        self, *, prompt, session_id=None, workload_key=None, session_scope_id=None,
+        continuation_prompt=None, continuation_session_id=None,
     ):
         self.prompts.append(prompt)
         self.calls.append(
             {
                 "workload_key": workload_key,
                 "session_scope_id": session_scope_id,
+                "continuation_prompt": continuation_prompt,
+                "continuation_session_id": continuation_session_id,
             }
         )
         return TaskAgentDecision.model_validate(self.payload)
@@ -1922,7 +1925,11 @@ def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract(monkeyp
     )
     prompt = " ".join(build_task_agent_prompt(_work_item(), "无候选项目").split())
     assert "# CEO Work Tracking" in prompt
-    assert '"title": "TaskAgentDecision"' in prompt
+    schema_text = build_task_agent_prompt(_work_item(), "无候选项目").split(
+        "TaskAgentDecision Pydantic JSON schema:\n", 1
+    )[1]
+    schema, _ = json.JSONDecoder().raw_decode(schema_text)
+    assert schema == task_agent_output_schema()
     assert "Memory connector status:" in prompt
     assert "does not impose a general read-only mode" in prompt
     assert "using memory_connector.memory_write" in prompt
@@ -2822,6 +2829,11 @@ def test_process_work_item_repairs_owner_citation_before_atomic_apply(
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    repeated_context = "REPEATED-SEMANTIC-CONTEXT-" * 18_000
+    monkeypatch.setattr(
+        "app.task_agent.render_task_semantic_context",
+        lambda *_args, **_kwargs: repeated_context,
+    )
     store = AutoReplyStore(tmp_path / "owner-citation.sqlite3")
     item = _work_item(assignment_authorized=True).model_copy(
         update={
@@ -2871,6 +2883,13 @@ def test_process_work_item_repairs_owner_citation_before_atomic_apply(
     assert codex.calls[1]["workload_key"] == codex.calls[0]["workload_key"] + ":decision_repair.1"
     assert codex.calls[0]["session_scope_id"] == codex.calls[1]["session_scope_id"]
     assert "owner identity" in codex.prompts[1]
+    assert repeated_context in codex.prompts[1]
+    compact = codex.calls[1]["continuation_prompt"]
+    assert codex.calls[1]["continuation_session_id"] == "task-session-1"
+    assert "owner identity" in compact
+    assert "Previous candidate:" in compact
+    assert repeated_context not in compact
+    assert len(compact) < len(codex.prompts[1]) / 10
     assert len(store.list_business_tasks()) == 1
     assert store.get_work_summary_input(input_id).status.value == "done"
 

@@ -916,7 +916,7 @@ historical_comparison 同时用当前与历史原始证明；当前对旧报告�
 支持 Task 必须实际属于所评 Project，或本轮同一支持决定用真实证据确认；不能只因 ID 存在算成员。
 
 同一个既有 stored Project/assessment 只读校验器也在领域应用前、原有两轮 decision
-repair 中通过短连接执行；其 ValueError 携带原始错误和被拒决定反馈给同一 Task session。
+repair 中通过短连接执行；完整来源、原始错误和被拒决定始终作为修订的完整输入。只有实际运行线路续接刚生成候选的同一个 native session 时，才提交仅含错误与被拒决定的短输入；冷启动或续接其他 session 使用完整输入。Task prompt 中的完整 schema 使用紧凑 JSON 排版，不删除字段或断言。
 包括已有关注卡缺少其保存原证据的声明错误，不放宽原文、身份、成员标准。领域事务内
 仍再次执行未改动的同一校验器；SQLite 操作错误和原子应用阶段错误不进入模型纠正。
 没有新增校验政策、循环或纠正预算。

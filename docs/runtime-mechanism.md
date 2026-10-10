@@ -1815,8 +1815,14 @@ runs once per unresolved error while holding a SQLite writer transaction.
 
 Task Agent validates formal creation and candidate promotion owner citations
 before entering its atomic domain transaction. A repairable evidence error is
-returned to the same Task session and run with the rejected candidate and
-original context, for at most two correction rounds. No domain changes are
+returned with the rejected candidate and original context, for at most two
+correction rounds. Task also supplies a compact correction bound to the native
+session that produced the previous candidate. The runtime selects it only when
+the actual route resumes that exact session; cold starts and other sessions
+receive the complete source, semantic context and correction. Existing route
+selection and format-correction policies are unchanged. Friday creates a new
+thread on every invocation, so it always receives full repair context even when
+a prior thread reference is stored. No domain changes are
 committed before validation succeeds. Exhaustion retains a real failed run and
 uses the existing work-summary retry policy; it never guesses an owner or
 changes a technical failure into `needs_human`. Memory-backed ownership still
