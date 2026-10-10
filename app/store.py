@@ -13508,6 +13508,39 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchall()
             return [self._agent_runtime_attempt_from_row(row) for row in rows]
 
+    def list_agent_runtime_attempts_for_runs(
+        self,
+        agent_run_ids: list[int],
+    ) -> dict[int, list[AgentRuntimeAttempt]]:
+        run_ids = list(
+            dict.fromkeys(
+                run_id
+                for run_id in agent_run_ids
+                if type(run_id) is int and run_id > 0
+            )
+        )
+        attempts_by_run: dict[int, list[AgentRuntimeAttempt]] = {
+            run_id: [] for run_id in run_ids
+        }
+        if not run_ids:
+            return attempts_by_run
+        with self._connect() as db:
+            for start in range(0, len(run_ids), 800):
+                chunk = run_ids[start : start + 800]
+                placeholders = ", ".join("?" for _ in chunk)
+                rows = db.execute(
+                    "select * from agent_runtime_attempts "
+                    f"where agent_run_id in ({placeholders}) "
+                    "order by agent_run_id, attempt_number",
+                    tuple(chunk),
+                ).fetchall()
+                for row in rows:
+                    run_id = int(row["agent_run_id"])
+                    attempts_by_run[run_id].append(
+                        self._agent_runtime_attempt_from_row(row)
+                    )
+        return attempts_by_run
+
     def list_runtime_operation_attempts(
         self,
         workload_kind: str,

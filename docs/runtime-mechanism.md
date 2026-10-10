@@ -66,10 +66,10 @@ payloads. Transaction behavior and existing error propagation are unchanged.
 
 Runtime-attempt detail reads filter by `agent_run_id` and order by
 `attempt_number`; the partial `idx_agent_runtime_attempts_run` index serves that
-lookup for run-bound attempts. This avoids scanning unrelated runtime attempts
-when History opens an attempt detail. Generalized attempts without an
-`agent_run_id` remain outside this index and keep their existing workload-key
-indexes.
+lookup for run-bound attempts. Attempt details batch this indexed lookup across
+all runs on the page, avoiding one SQLite connection and query per run.
+Generalized attempts without an `agent_run_id` remain outside this index and
+keep their existing workload-key indexes.
 
 Audit web startup does not prewarm the History list or its 24-hour, 7-day and
 30-day charts. Those views scan large operation-history projections and run

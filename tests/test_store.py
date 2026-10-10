@@ -784,6 +784,42 @@ def test_runtime_attempt_history_lookup_uses_run_index(tmp_path: Path):
     assert any("idx_agent_runtime_attempts_run" in str(row[3]) for row in plan)
 
 
+def test_runtime_attempts_for_runs_batch_preserves_run_and_attempt_order(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-attempt-batch.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    first_run = _claim_audit_run(store, task.id, task.execution_generation,
+                                 owner="runtime-batch-audit").run
+    second_run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="runtime-batch-consumer",
+    ).run
+    first = store.claim_agent_runtime_attempt(
+        first_run.id, "codex_oauth", "codex_cli", "local_oauth", "first"
+    )
+    second = store.claim_agent_runtime_attempt(
+        first_run.id, "codex_api", "codex_cli", "service_api", "second"
+    )
+    other = store.claim_agent_runtime_attempt(
+        second_run.id, "codex_oauth", "codex_cli", "local_oauth", "other"
+    )
+
+    attempts = store.list_agent_runtime_attempts_for_runs(
+        [first_run.id, second_run.id, first_run.id, 0, -1]
+    )
+
+    assert [item.id for item in attempts[first_run.id]] == [first.id, second.id]
+    assert [item.id for item in attempts[second_run.id]] == [other.id]
+    assert store.list_agent_runtime_attempts_for_runs([]) == {}
+
+
 def test_runtime_attempt_session_evidence_is_persisted_and_validated(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
     run = _claimed_runtime_agent_run(store)
