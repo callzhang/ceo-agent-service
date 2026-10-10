@@ -2,7 +2,10 @@ import hashlib
 import json
 import sqlite3
 
-from app.storage_maintenance import compact_terminal_work_summary_inputs
+from app.storage_maintenance import (
+    compact_settled_reply_inputs,
+    compact_terminal_work_summary_inputs,
+)
 from app.store import AutoReplyStore
 
 
@@ -55,3 +58,33 @@ def test_historical_work_input_compaction_is_idempotent_and_preserves_adopted_ro
         assert db.execute("select title from work_projects where id=?", (project_id,)).fetchone()[0] == "Adopted project"
         assert db.execute("select summary from work_updates where id=?", (update_id,)).fetchone()[0] == "Adopted business result"
         assert db.execute("select codex_session_id from task_agent_runs where summary_input_id=?", (terminal_id,)).fetchone()[0] == "native-session"
+
+
+def test_historical_reply_input_compaction_preserves_unsettled_rows(tmp_path):
+    store = AutoReplyStore(tmp_path / "reply-maintenance.sqlite3")
+    ids = {}
+    for status in ("done", "skipped", "pending", "failed", "needs_human"):
+        task = store.ensure_reply_task(
+            conversation_id=f"cid-{status}", conversation_title="Source",
+            single_chat=True, trigger_message_id=f"msg-{status}",
+            trigger_create_time="2026-10-10 10:00:00", trigger_sender="Sender",
+            trigger_text=f"original {status} " + "body " * 300,
+            trigger_message_json=json.dumps({"content": f"original {status} " + "body " * 300}),
+        )
+        ids[status] = task.id
+        with store._connect() as db:
+            db.execute("update reply_tasks set status=? where id=?", (status, task.id))
+    first = compact_settled_reply_inputs(store.path)
+    second = compact_settled_reply_inputs(store.path)
+    assert first["tasks_compacted"] == 2
+    assert first["inputs_compacted"] == 2
+    assert first["logical_bytes_removed"] > 0
+    assert second == {"tasks_compacted": 0, "inputs_compacted": 0,
+                      "attempts_cleared": 0, "logical_bytes_removed": 0}
+    for status, task_id in ids.items():
+        task = store.get_reply_task(task_id)
+        assert task is not None and task.status == status
+        if status in {"done", "skipped"}:
+            assert task.input_compacted and task.trigger_text == ""
+        else:
+            assert not task.input_compacted and task.trigger_text == f"original {status} " + "body " * 300

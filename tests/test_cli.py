@@ -164,17 +164,16 @@ def enqueue_trigger_task(
         trigger_create_time="2026-05-28 18:00:00",
         trigger_sender=trigger_sender,
         trigger_text=trigger_text,
-        trigger_message_json=json.dumps(
-            {
-                "openConversationId": conversation_id,
-                "openMessageId": trigger_message_id,
-                "sender": trigger_sender,
-                "senderOpenDingTalkId": sender_open_dingtalk_id,
-                "createTime": "2026-05-28 18:00:00",
-                "content": trigger_text,
-            },
-            ensure_ascii=False,
-        ),
+        trigger_message_json=cli.DingTalkMessage(
+            open_conversation_id=conversation_id,
+            open_message_id=trigger_message_id,
+            conversation_title=conversation_title,
+            single_chat=single_chat,
+            sender_name=trigger_sender,
+            sender_open_dingtalk_id=sender_open_dingtalk_id,
+            create_time="2026-05-28 18:00:00",
+            content=trigger_text,
+        ).model_dump_json(),
     )
 
 
@@ -4720,6 +4719,105 @@ def test_send_attempt_command_dedupes_same_pending_rerun_without_direct_send(
     assert store.get_sent_reply("cid-1", "msg-1") is None
 
 
+@pytest.mark.parametrize("source", ["missing", "compacted", "invalid"])
+def test_send_attempt_command_refuses_unavailable_original_without_queue(
+    tmp_path, source,
+):
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Friday", False, None)
+    if source != "missing":
+        enqueue_trigger_task(store)
+        if source == "compacted":
+            with sqlite3.connect(settings.db_path) as db:
+                db.execute(
+                    "update reply_tasks set input_compacted=1, trigger_text='', "
+                    "trigger_message_json=? where conversation_id='cid-1'",
+                    (json.dumps({"input_compacted": True, "open_message_id": "msg-1"}),),
+                )
+        else:
+            with sqlite3.connect(settings.db_path) as db:
+                db.execute(
+                    "update reply_tasks set trigger_message_json='{}' "
+                    "where conversation_id='cid-1'"
+                )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1", conversation_title="Friday",
+        trigger_message_id="msg-1", trigger_sender="Phina",
+        trigger_text="@Alex Chen 看一下", action="send_reply",
+        sensitivity_kind="general", send_status="failed",
+    )
+    with pytest.raises(SystemExit, match="original trigger is unavailable"):
+        send_attempt_command(settings, attempt_id)
+    assert store.get_reply_attempt(attempt_id).send_status == "failed"
+    task = store.get_reply_task_for_message("cid-1", "msg-1")
+    assert (task is None) if source == "missing" else task.status == "pending"
+
+
+@pytest.mark.parametrize("compacted", [False, True])
+def test_send_attempt_email_requires_exact_uncompacted_action_payload(
+    tmp_path, compacted,
+):
+    from app.email_classifier_contracts import EmailAction
+    from app.email_store import email_action_identity
+    from app.email_task_adapter import email_conversation_id
+
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
+    store = cli.AutoReplyStore(settings.db_path)
+    account_id = "account-1"
+    stable_id = "message-1"
+    thread_id = "thread-1"
+    action_identity = email_action_identity(
+        account_id=account_id, stable_message_identity=stable_id,
+        action_type=EmailAction.AUTO_REPLY, action_plan_version=1,
+    )
+    conversation_id = email_conversation_id(account_id, thread_id)
+    payload = {
+        "schema": "email_agent_action.v1",
+        "lifecycle_version": "consumer_audit_v1",
+        "action_type": "auto_reply", "action_identity": action_identity,
+        "action_plan_id": "plan-1", "action_plan_version": 1,
+        "classification_id": 1, "account_id": account_id,
+        "stable_message_identity": stable_id, "thread_identity": thread_id,
+        "category": "work", "classification_source": "model",
+        "confidence": 0.99, "model_id": "model-1", "config_version": "v1",
+        "action_parameters": {},
+    }
+    task = store.enqueue_reply_task(
+        channel="email", conversation_id=conversation_id,
+        conversation_title="Email", single_chat=True,
+        trigger_message_id=action_identity,
+        trigger_create_time="2026-10-10 00:00:00", trigger_sender="sender@example.com",
+        trigger_text="Process this email action",
+        trigger_message_json=json.dumps(payload),
+    )
+    assert task
+    attempt_id = store.record_reply_attempt(
+        channel="email", conversation_id=conversation_id,
+        conversation_title="Email", trigger_message_id=action_identity,
+        trigger_sender="sender@example.com", trigger_text="Process this email action",
+        action="agent_run", sensitivity_kind="general", send_status="failed",
+    )
+    if compacted:
+        with sqlite3.connect(settings.db_path) as db:
+            db.execute(
+                "update reply_tasks set input_compacted=1, trigger_text='', "
+                "trigger_message_json=? where channel='email'",
+                (json.dumps({**payload, "input_compacted": True}),),
+            )
+        with pytest.raises(SystemExit, match="original trigger is unavailable"):
+            send_attempt_command(settings, attempt_id)
+        assert store.get_reply_task_for_message(
+            conversation_id, action_identity, channel="email"
+        ).manual_rerun_attempt_id == 0
+    else:
+        queued = send_attempt_command(settings, attempt_id)
+        assert queued["send_status"] == "queued"
+        assert queued["task_id"] == store.get_reply_task_for_message(
+            conversation_id, action_identity, channel="email"
+        ).id
+
+
 def test_send_attempt_command_persists_instruction_as_new_reviewed_attempt(
     monkeypatch, tmp_path
 ):
@@ -4826,6 +4924,15 @@ def test_send_attempt_oa_rerun_uses_current_business_object_task(tmp_path):
             trigger_create_time=f"{day} 00:00:00",
             trigger_sender="Derek OA",
             trigger_text=f"审批待办 {oa_url}",
+            trigger_message_json=cli.DingTalkMessage(
+                open_conversation_id=conversation_id,
+                open_message_id=f"oa-pending:process-1:{day}",
+                conversation_title="审批待办",
+                single_chat=True,
+                sender_name="Derek OA",
+                create_time=f"{day} 00:00:00",
+                content=f"审批待办 {oa_url}",
+            ).model_dump_json(),
             oa_url=oa_url,
             business_object_key=key,
         )
@@ -4918,6 +5025,10 @@ def test_send_attempt_command_queues_existing_calendar_attempt(
     )
     store = cli.AutoReplyStore(settings.db_path)
     store.upsert_conversation("cid-1", "Calendar", True, None)
+    enqueue_trigger_task(
+        store, conversation_title="Calendar", single_chat=True,
+        trigger_sender="Avery", trigger_text="[日程]",
+    )
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
         conversation_title="Calendar",

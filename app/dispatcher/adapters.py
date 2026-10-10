@@ -370,6 +370,15 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
         self.store = store
         self.owner_alive = owner_alive
 
+    def complete(
+        self, envelope: DispatchEnvelope, *, owner: str, now: datetime
+    ) -> None:
+        with self.store._immediate_write_transaction() as db:
+            _complete_ledger_in_db(
+                db, envelope=envelope, owner=owner, now=_sqlite_time(now),
+            )
+            self.store._compact_settled_reply_task_input(db, int(envelope.source_id))
+
     def _channel_clause(self, alias: str = "task") -> str:
         return f"{alias}.channel in ('dingtalk','wechat')"
 

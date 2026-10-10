@@ -11,6 +11,63 @@ from pathlib import Path
 from app.store import AutoReplyStore
 
 
+def compact_settled_reply_inputs(database: Path) -> dict[str, int]:
+    """Explicit, idempotent cleanup of historical settled reply input copies.
+
+    The caller owns backup, quiet-service coordination and page reclamation.
+    Store initialization never runs this historical batch.
+    """
+    counts = {"tasks_compacted": 0, "inputs_compacted": 0,
+              "attempts_cleared": 0, "logical_bytes_removed": 0}
+    with closing(sqlite3.connect(database, timeout=60)) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("begin immediate")
+        task_ids = [int(row["id"]) for row in db.execute(
+            "select id from reply_tasks where status in ('done','skipped') "
+            "and input_compacted=0 order by id"
+        ).fetchall()]
+        before = _reply_input_storage_counts(db)
+        for task_id in task_ids:
+            AutoReplyStore._compact_settled_reply_task_input(db, task_id)
+        after = _reply_input_storage_counts(db)
+        counts["tasks_compacted"] = before[0] - after[0]
+        counts["inputs_compacted"] = before[1] - after[1]
+        counts["attempts_cleared"] = before[2] - after[2]
+        counts["logical_bytes_removed"] = max(0, before[3] - after[3])
+        if db.execute("pragma quick_check").fetchone()[0] != "ok":
+            raise RuntimeError("database integrity check failed")
+        db.commit()
+    return counts
+
+
+def _reply_input_storage_counts(db: sqlite3.Connection) -> tuple[int, int, int, int]:
+    task = db.execute(
+        "select count(*)-coalesce(sum(input_compacted),0) as uncompact, "
+        "coalesce(sum(length(cast(trigger_text as blob)) + "
+        "length(cast(trigger_message_json as blob)) + "
+        "length(cast(input_provenance_json as blob))),0) as bytes "
+        "from reply_tasks where status in ('done','skipped')",
+    ).fetchone()
+    inputs = db.execute(
+        "select count(*)-coalesce(sum(input_compacted),0) as uncompact, "
+        "coalesce(sum(length(cast(trigger_text as blob)) + "
+        "length(cast(trigger_message_json as blob)) + "
+        "length(cast(input_provenance_json as blob))),0) as bytes "
+        "from reply_task_inputs",
+    ).fetchone()
+    attempts = db.execute(
+        """select coalesce(sum(case when trigger_text<>'' then 1 else 0 end),0) as uncleared,
+                  coalesce(sum(length(cast(trigger_text as blob)) +
+                               length(cast(trigger_text_provenance_json as blob))),0) as bytes
+           from reply_attempts""",
+    ).fetchone()
+    return (
+        int(task["uncompact"]), int(inputs["uncompact"]),
+        int(attempts["uncleared"] or 0),
+        int(task["bytes"]) + int(inputs["bytes"]) + int(attempts["bytes"]),
+    )
+
+
 def compact_terminal_work_summary_inputs(database: Path) -> dict[str, int]:
     """Explicit, idempotent migration of historical done/skipped input bodies.
 
@@ -143,9 +200,18 @@ def main() -> None:
     parser.add_argument("--db", type=Path, required=True)
     parser.add_argument("--work-summary-inputs", action="store_true",
                         help="compact historical done/skipped work inputs only")
+    parser.add_argument("--settled-reply-inputs", action="store_true",
+                        help="compact historical settled reply input copies only")
     arguments = parser.parse_args()
-    result = (compact_terminal_work_summary_inputs(arguments.db)
-              if arguments.work_summary_inputs else compact_native_duplicates(arguments.db))
+    if arguments.work_summary_inputs and arguments.settled_reply_inputs:
+        parser.error("select one historical compaction target")
+    result = (
+        compact_terminal_work_summary_inputs(arguments.db)
+        if arguments.work_summary_inputs else
+        compact_settled_reply_inputs(arguments.db)
+        if arguments.settled_reply_inputs else
+        compact_native_duplicates(arguments.db)
+    )
     print(json.dumps(result))
 
 

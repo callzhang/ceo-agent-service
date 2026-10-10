@@ -1,4 +1,5 @@
 import errno
+import hashlib
 import importlib.util
 import inspect
 import json
@@ -3247,6 +3248,50 @@ def test_complete_reply_task_never_hides_failed_current_run(tmp_path: Path) -> N
     assert updated is not None
     assert updated.status == "failed"
     assert updated.error == "runtime_result_validation_failed"
+
+
+def test_done_with_failed_latest_run_keeps_exact_input_until_settlement(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "failed-latest.sqlite3")
+    task = store.ensure_reply_task(
+        conversation_id="cid-failed-latest", conversation_title="Group",
+        single_chat=False, trigger_message_id="msg-failed-latest",
+        trigger_create_time="2026-10-10 10:00:00", trigger_sender="Sender",
+        trigger_text="Recoverable original", trigger_message_json='{"content":"Recoverable original"}',
+    )
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+    run = _claim_audit_run(store, task.id, claimed.execution_generation, owner="audit").run
+    store.fail_agent_run(run.id, {"code": "runtime_result_validation_failed"}, owner="audit")
+    store.complete_reply_task(task.id, expected_execution_generation=claimed.execution_generation)
+    assert store.get_reply_task(task.id).status == "failed"
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='done' where id=?", (task.id,))
+        assert not store._compact_settled_reply_task_input(db, task.id)
+    unchanged = store.get_reply_task(task.id)
+    assert unchanged is not None and unchanged.trigger_text == "Recoverable original"
+    assert not unchanged.input_compacted
+    assert store.reconcile_done_reply_tasks_with_failed_current_run() == 1
+    assert store.get_reply_task(task.id).status == "failed"
+
+
+def test_reply_input_compaction_rolls_back_with_terminal_transaction(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "rollback-input.sqlite3")
+    task = store.ensure_reply_task(
+        conversation_id="cid-rollback", conversation_title="Group", single_chat=False,
+        trigger_message_id="msg-rollback", trigger_create_time="2026-10-10 10:00:00",
+        trigger_sender="Sender", trigger_text="Original before rollback",
+        trigger_message_json='{"content":"Original before rollback"}',
+    )
+    with pytest.raises(RuntimeError, match="abort terminal write"):
+        with store._immediate_write_transaction() as db:
+            db.execute("update reply_tasks set status='done' where id=?", (task.id,))
+            assert store._compact_settled_reply_task_input(db, task.id)
+            raise RuntimeError("abort terminal write")
+    after = store.get_reply_task(task.id)
+    assert after is not None and after.status == "pending"
+    assert not after.input_compacted and after.trigger_text == "Original before rollback"
+    [input_row] = store.list_reply_task_inputs(task.id)
+    assert input_row["input_compacted"] == 0
 
 
 def test_skip_failed_reply_task_superseded_by_terminal_business_object(
@@ -8228,6 +8273,111 @@ def test_complete_reply_task_marks_generation_bound_task_done(tmp_path: Path):
     tasks = store.list_reply_tasks(limit=1)
     assert tasks[0].status == "done"
     assert tasks[0].error == ""
+
+
+def test_settled_reply_input_compacts_exact_copies_and_keeps_identity(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "reply-input.sqlite3")
+    original = json.dumps({"schema": "email_agent_action.v1",
+                           "lifecycle_version": "email_unsubscribe_audited_v2",
+                           "action_type": "unsubscribe", "action_identity": "action-1",
+                           "classification_id": 42, "body": "long copied input"})
+    spec = dict(channel="email", conversation_id="email:thread-1",
+                conversation_title="Mail", single_chat=True,
+                trigger_message_id="action-1", trigger_create_time="2026-10-10 10:00:00",
+                trigger_sender="Sender", trigger_text="long copied input",
+                trigger_message_json=original)
+    task = store.ensure_reply_task(**spec)
+    attempt_id = store.record_reply_attempt(
+        channel="email", conversation_id=spec["conversation_id"],
+        conversation_title="Mail", trigger_message_id="action-1",
+        trigger_sender="Sender", trigger_text="an earlier rendering",
+        action="agent_run", sensitivity_kind="normal", send_status="completed",
+    )
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+    store.complete_reply_task(task.id, expected_execution_generation=claimed.execution_generation)
+    settled = store.get_reply_task(task.id)
+    assert settled is not None and settled.status == "done"
+    assert settled.input_compacted and settled.trigger_text == ""
+    assert json.loads(settled.input_provenance_json)["trigger_message_json"] == {
+        "sha256": hashlib.sha256(original.encode()).hexdigest(),
+        "bytes": len(original.encode()),
+    }
+    marker = json.loads(settled.trigger_message_json)
+    assert marker["input_compacted"] is True
+    assert (marker["schema"], marker["lifecycle_version"], marker["action_type"],
+            marker["classification_id"]) == (
+                "email_agent_action.v1", "email_unsubscribe_audited_v2", "unsubscribe", 42)
+    [input_row] = store.list_reply_task_inputs(task.id)
+    assert input_row["input_compacted"] == 1 and input_row["trigger_text"] == ""
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None and attempt.trigger_text == ""
+    assert json.loads(attempt.trigger_text_provenance_json)["sha256"] == hashlib.sha256(
+        "an earlier rendering".encode()).hexdigest()
+    assert store.ensure_reply_tasks([spec])[0].id == task.id
+    with pytest.raises(store_module.ReplyTaskIdentityConflict):
+        store.ensure_reply_tasks([{**spec, "trigger_text": "changed original"}])
+    assert store.get_reply_task(task.id).input_compacted
+
+
+def test_compacted_reply_input_revised_card_starts_new_exact_generation(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "revised.sqlite3")
+    task = store.ensure_reply_task(
+        conversation_id="cid-card", conversation_title="Card", single_chat=False,
+        trigger_message_id="msg-card", trigger_create_time="2026-10-10 10:00:00",
+        trigger_sender="Sender", trigger_text="First card",
+        trigger_message_json='{"content":"First card"}',
+    )
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+    store.complete_reply_task(task.id, expected_execution_generation=claimed.execution_generation)
+    assert store.get_reply_task(task.id).input_compacted
+    assert not store.requeue_terminal_reply_task_for_revised_trigger(
+        conversation_id="cid-card", conversation_title="Card", single_chat=False,
+        trigger_message_id="msg-card", trigger_create_time="2026-10-10 10:00:00",
+        trigger_sender="Sender", trigger_text="First card",
+        trigger_message_json='{"content":"First card"}',
+    )
+    assert store.requeue_terminal_reply_task_for_revised_trigger(
+        conversation_id="cid-card", conversation_title="Card", single_chat=False,
+        trigger_message_id="msg-card", trigger_create_time="2026-10-10 10:01:00",
+        trigger_sender="Sender", trigger_text="Updated card",
+        trigger_message_json='{"content":"Updated card"}',
+    )
+    revised = store.get_reply_task(task.id)
+    assert revised is not None and revised.status == "pending"
+    assert not revised.input_compacted and revised.input_provenance_json == "{}"
+    assert revised.trigger_text == "Updated card"
+    assert revised.execution_generation != claimed.execution_generation
+    assert len(store.list_reply_task_inputs(task.id)) == 2
+
+
+def test_scheduled_reply_compaction_keeps_run_and_frozen_skill_identity():
+    payload = json.dumps({
+        "schema": "scheduled_agent_execution.v1",
+        "context": {"trigger_raw_payload": {
+            "scheduled_task_id": 5, "scheduled_task_version": 3,
+            "scheduled_task_run_id": 17,
+            "skills": [
+                {"source": "managed", "name": "daily", "skill_id": 8,
+                 "revision_id": 11, "sha256": "a" * 64},
+                {"source": "operation", "name": "ops", "path": "/skills/ops/SKILL.md",
+                 "sha256": "b" * 64},
+            ],
+        }},
+        "skill_names": ["daily", "ops"],
+        "skill_materials": [{"name": "daily", "content": "frozen body"}],
+    })
+    provenance = AutoReplyStore._reply_input_provenance("prompt", payload)
+    compact = json.loads(AutoReplyStore._compact_reply_input_json(provenance))
+    assert compact["input_compacted"] is True
+    assert compact["context"]["trigger_raw_payload"]["scheduled_task_run_id"] == 17
+    assert compact["skills"][0]["revision_id"] == 11
+    assert compact["skills"][1]["path"] == "/skills/ops/SKILL.md"
+    assert "frozen body" not in json.dumps(compact)
+    assert json.loads(provenance)["source"]["skill_materials"][0]["content"] == {
+        "sha256": hashlib.sha256(b"frozen body").hexdigest(), "bytes": 11,
+    }
 
 
 

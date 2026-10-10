@@ -650,6 +650,8 @@ def frozen_task_skill_materials(
     trigger = json.loads(trigger_message_json)
     if not isinstance(trigger, dict):
         raise ValueError("task Skill material is unavailable")
+    if trigger.get("input_compacted") is True:
+        raise ValueError("task Skill material is unavailable")
     if trigger.get("schema") == "scheduled_agent_execution.v1":
         from app.agent_cron.context import ScheduledAgentContext
 
