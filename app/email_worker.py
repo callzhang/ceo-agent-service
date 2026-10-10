@@ -2180,11 +2180,10 @@ def reconcile_missing_model_action_tasks(
                 repaired += 1
                 continue
             action_task_producer.produce(plan, message)
-            remaining = {
-                int(item["id"])
-                for item in email_store.list_missing_unsubscribe_action_tasks()
-            }
-            if int(classification["id"]) in remaining:
+            remaining = email_store.list_missing_unsubscribe_action_tasks(
+                classification_id=int(classification["id"])
+            )
+            if remaining:
                 raise RuntimeError("model action repair did not persist a task")
             repaired += 1
         except Exception:  # noqa: BLE001 - each durable conflict is isolated
@@ -3314,7 +3313,7 @@ def build_email_worker_dependencies(
     if training_snapshot_job_factory is None:
         training_snapshot_job_factory = EmailTrainingSnapshotPublicationJob
 
-    email_store = EmailStore(Path(settings.db_path))
+    email_store = EmailStore(Path(settings.db_path), validate_rows=False)
     task_store = AutoReplyStore(Path(settings.db_path))
     from app.managed_skills import resolve_pending_runtime_skills
 
@@ -4293,7 +4292,7 @@ def _build_email_unsubscribe_context(settings: object) -> SimpleNamespace:
 
     from app.email_account_connector import ConnectorPriority
 
-    email_store = EmailStore(Path(settings.db_path))
+    email_store = EmailStore(Path(settings.db_path), validate_rows=False)
     task_store = AutoReplyStore(Path(settings.db_path))
     # This process runs one unsubscribe task at a time (see
     # app/email_account_connector.py), so this registry only ever needs to

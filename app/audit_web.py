@@ -2972,15 +2972,21 @@ def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
 def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """Summarize the current state of each message trigger, not retry history."""
     current_attempts = """
-        with latest as (
-            select a.id, row_number() over (
-                partition by a.channel, a.conversation_id, a.trigger_message_id
-                order by a.updated_at desc, a.id desc
-            ) as ordinal
-            from reply_attempts a
+        with trigger_keys as (
+            select channel, conversation_id, trigger_message_id
+            from reply_attempts
+            group by channel, conversation_id, trigger_message_id
         ), current as (
             select
-                a.*,
+                a.id,
+                a.channel,
+                a.send_status,
+                a.resolved_at,
+                a.conversation_id,
+                a.trigger_message_id,
+                a.agent_run_id,
+                a.updated_at,
+                a.send_error,
                 case
                     when lower(a.send_status)='needs_human'
                      and trim(coalesce(a.resolved_at, ''))<>'' then 'skipped'
@@ -3046,10 +3052,17 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                     ) then 'recovered'
                     else lower(coalesce(a.send_status, ''))
                 end as live_status
-            from latest
-            join reply_attempts a on a.id=latest.id
-            where latest.ordinal=1
-              and not exists (
+            from trigger_keys
+            join reply_attempts a on a.id=(
+                select newest.id
+                from reply_attempts newest
+                where newest.channel=trigger_keys.channel
+                  and newest.conversation_id=trigger_keys.conversation_id
+                  and newest.trigger_message_id=trigger_keys.trigger_message_id
+                order by newest.updated_at desc, newest.id desc
+                limit 1
+            )
+            where not exists (
                   select 1
                   from agent_runs as source_run
                   join reply_tasks as source_task
@@ -10007,8 +10020,9 @@ def create_audit_app(
     # The audit process is read-heavy. Reuse one initialized Store so requests do
     # not repeatedly contend with the worker for schema initialization writes.
     audit_store = _audit_store(db_path)
-    # Share successful validation across email routes and detail reads. Route
-    # registration retains its existing email-only initialization error boundary.
+    # Share schema validation across email routes and detail reads. Durable-row
+    # validation belongs to explicit/offline EmailStore callers; doing that full
+    # historical scan in a request would block the first email read for minutes.
     audit_email_store = None
     audit_email_store_lock = threading.Lock()
 
@@ -10016,7 +10030,7 @@ def create_audit_app(
         nonlocal audit_email_store
         with audit_email_store_lock:
             if audit_email_store is None:
-                audit_email_store = EmailStore(db_path)
+                audit_email_store = EmailStore(db_path, validate_rows=False)
             return audit_email_store
 
     from app.workbench.api import register_workbench_routes

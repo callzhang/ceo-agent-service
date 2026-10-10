@@ -70,6 +70,13 @@ waiting to acquire a transaction, so it is not automatically write-lock hold
 time. Logs keep call sites and elapsed durations, not SQL parameters or business
 payloads. Transaction behavior and existing error propagation are unchanged.
 
+Worker status summarizes the current `reply_attempts` projection using only
+identity, status, timestamp, and error columns. It does not load full attempt
+payloads such as captured inputs or reply bodies to calculate queue counts.
+It groups trigger identities and seeks each trigger's latest attempt through
+`idx_reply_attempts_current_trigger`; it does not rank every retry row in a
+window function for each status request.
+
 Runtime-attempt detail reads filter by `agent_run_id` and order by
 `attempt_number`; the partial `idx_agent_runtime_attempts_run` index serves that
 lookup for run-bound attempts. Attempt details batch this indexed lookup across
@@ -891,6 +898,9 @@ image/content material，只包含文件名、MIME、字节大小、数量和 in
 或 image path。任何组件都不得下载、打开、OCR、解析、总结或推断附件正文。持久 trigger payload 不包含凭证、附件内容、本地路径、
 完整私密 URL 或 query token。
 
+模型 ActionPlan 的退订任务修复扫描只读取候选分类身份，确认缺任务后才加载完整分类行；
+每次修复后的复核按分类 ID 定点查询，避免每修复一个任务就再次扫描所有历史分类。
+
 退订不做结构化审核。Email worker 直接执行兼容调用语义 `unsubscribe_email(task_id)`：一次调用完成整件事——
 打开 ActionPlan 已授权的 entry，按页面当场呈现的控件操作，直到第一个终态页面，然后返回
 outcome 和脱敏后的页面原文。它只接受 task id 这一个调用方无法伪造的参数，其余全部从 durable 状态
@@ -1459,11 +1469,21 @@ If fast-forward fails before a replacement revision is installed, the updater
 starts the original service again and checks its health. A settings-only
 restart also bootstraps the configured launchd job if it was already unloaded.
 
-The Email worker performs full durable-row validation during initialization.
-Audit web checks the current Email schema shape but skips repeating that
-multi-minute scan of historical email rows in its separate process; this keeps
-read APIs available while the worker remains the validation owner. Email
-detail reads still use fresh connections and do not cache record contents.
+The repository mutex covers the protected-source unlock window as well as
+checkout, build, verification, restart and relock; settings-only restart uses
+the same mutex. If an interrupted fast-forward leaves only unstaged docs whose
+bytes exactly match the fetched target commit, formal deployment stops the
+service and takes its backup before restoring those docs to the current HEAD;
+the ordinary fast-forward then installs the target. Staged edits, other paths,
+or any content mismatch remain a hard local-change refusal.
+
+The Email worker and Audit web lazily create one shared EmailStore and check
+schema shape during runtime initialization. They do not scan every historical
+email row while the service is starting or serving the first email-detail
+request; those scans took over two minutes on the production database. Explicit
+and offline EmailStore callers retain full durable-row validation by default.
+Email detail reads still use fresh connections and do not cache record
+contents.
 
 ### Public information and native reply recovery
 
@@ -1569,6 +1589,9 @@ Worker status reads its local SQLite queue, Email health and component facts
 on every request. These facts are not served from the last background payload:
 after a worker writes its state, the next status request must reflect it.
 External connector authentication probes retain their independent cache.
+The Email unsubscribe task view uses a partial `reply_tasks` index over only
+audited unsubscribe tasks, so repeated Worker status reads do not rescan each
+task's full trigger JSON to compute its counts and latest update.
 
 Typed result parsing preserves malformed or unclosed JSON as a result-stage
 invalid-result failure, including its syntax cause. It is not classified as a
@@ -1634,10 +1657,11 @@ the affected run before changing transaction boundaries.
 Shared Store diagnostics retain up to eight caller frames so a context-manager
 wrapper cannot hide the business method that opened the connection.
 
-EmailStore startup still validates every durable email-message metadata field
-used for identity, provider locators, recipients, references, and attachment
-metadata. Its scan selects only those columns; it does not load cached message
-bodies or other unused columns into memory while performing the validation.
+EmailStore validates every durable email-message metadata field used for
+identity, provider locators, recipients, references, attachment metadata,
+classifier-task identity and redaction, classification lineage and ActionPlan
+snapshots. Its scans project only the fields required for those checks; they do
+not load full cached message bodies or classifier inputs into memory.
 
 The Web process shares one successfully initialized and validated EmailStore
 between registered email routes, Console detail routes and the email learning

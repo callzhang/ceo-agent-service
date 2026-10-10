@@ -425,6 +425,48 @@ After the second deploy, the same Project list endpoint returned all 28
 Projects in **0.191 seconds**, with 0 proposed Project candidates; Project list
 and detail summary semantics are covered by the new regression test.
 
+## 2026-10-10 Project-list context/activity batching
+
+Expected: a read-only Project list should return within normal console latency
+while preserving the same saved context, latest revision/evidence timestamps,
+active Attention reasons, Task counts, filters and customer grouping as detail
+reads. Actual before this change: on the deployed service `/healthz` returned
+200 in 0.802s and Project 37 detail returned 200 in 16.065s, but the same
+Project-list query produced no response bytes within 25s. This was observed
+latency, not a proven production exception. Source inspection found a second
+N+1 path after the Task→Project membership batching: each Project summary opened
+one connection for current context and another for revision, evidence and
+Attention metadata.
+
+The isolated worktree based on `origin/main` now batch-loads current Project
+contexts and activity projection through one SQLite connection and supplies
+those values to the existing summary DTO builder. The first regression failed
+before the implementation exactly at the per-Project `get_business_project_context`
+call. After the change, `tests/test_web_api_task_project_summary.py` reports
+**11 passed**; its regression checks bounded connections for five Projects and
+asserts the list summary equals each Project detail summary. Ruff and
+`git diff --check` pass. No Project, Task, Attention or CRM data was written.
+
+The fix was committed as `d839fb54` and pushed to `origin/main`. During deploy,
+the first deploy command was interrupted while waiting for health. A separate
+concurrent deploy from another worktree subsequently advanced production to
+`dfa7bbe6`, which contains `d839fb54` as an ancestor alongside other changes;
+that deployment is not attributed solely to this Project-list fix. Final
+readback observed launchd PID `71140`, `/healthz` HTTP 200 in 0.104s, and the
+production Project-list GET returned HTTP 200 in 1.597s (15,384 bytes): 20 of
+32 Projects on page 1 and 0 Project candidates. The same production Attention
+GET returned 7 items (4 decision, 3 watch). This is a successful production
+readback for the list and Attention endpoints, not a broad Tasks acceptance.
+
+The production status API returned after about 58s: 13 queues, 10 pending,
+2 processing, 12 failed, 1 retryable and 24 general Attention items. These are
+observed runtime states, not evidence that this change created or resolved any
+queue item. The History list did not return within 120s, and the failed-only
+History query did not return within 60s; neither is counted as a successful
+History readback. The overall post-deploy inspection therefore remains partial,
+and History latency is an outstanding service issue. No production Task,
+Project, Attention or CRM data was written by this change.
+
 Final runtime readback: the business Task Attention route has 0 active items;
 the general Attention page has 5. History reports 33,611 records. The runtime
 status endpoint returned in 4.977 seconds with 13 queues, 3 pending, 0
