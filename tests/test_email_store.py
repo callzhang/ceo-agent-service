@@ -576,20 +576,19 @@ def test_database_rejects_observation_append_after_snapshot_freeze(tmp_path: Pat
 def test_readback_rejects_persisted_observation_not_covered_by_manifest(
     tmp_path: Path,
 ):
+    from app.email_training_data import TrainingSnapshotUnavailable, data_path
+
     store = EmailStore(tmp_path / "training-snapshot-corrupt.sqlite3")
     snapshot = _frozen_training_snapshot()
     store.persist_training_snapshot(snapshot)
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            "drop trigger if exists "
-            "trg_email_training_observations_require_unfrozen_snapshot"
-        )
-    _append_copied_training_observation(
-        store.path,
-        stable_message_identity="account-a:message-id:<corrupt@example.test>",
-    )
+    path = data_path(store.path, snapshot.snapshot_digest)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    copied = dict(payload["observations"][0])
+    copied["stable_message_identity"] = "account-a:message-id:<corrupt@example.test>"
+    payload["observations"].append(copied)
+    path.write_text(json.dumps(payload), encoding="utf-8")
 
-    with pytest.raises(EmailPersistenceCorruption, match="training snapshot"):
+    with pytest.raises(TrainingSnapshotUnavailable, match="training snapshot.*corrupt"):
         store.get_training_snapshot(snapshot.snapshot_id)
 
 
