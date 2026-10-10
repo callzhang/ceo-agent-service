@@ -554,6 +554,28 @@ def effect_events(
     return started, {**started, "type": "item.completed", "result": result}
 
 
+def _native_script_events(tmp_path, monkeypatch, session_id, events):
+    from app import native_trajectory
+
+    path = tmp_path / "scripted-native.jsonl"
+    records = []
+    for event in events:
+        item = dict(event["item"])
+        if item["type"] == "mcp_tool_call":
+            item.update(type="McpToolCall", server="fixture", tool="scripted_effect", arguments={})
+        else:
+            assert item["type"] == "command_execution"
+            item["type"] = "CommandExecution"
+        if "result" in event:
+            item["result"] = event["result"]
+        records.append({"type": "event_msg", "payload": {
+            "type": event["type"].replace(".", "_"), "item": item,
+        }})
+    path.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path",
+                        lambda selected, **_kwargs: path if selected == session_id else None)
+
+
 def agent_runner(worker: DingTalkAutoReplyWorker) -> FakeAgentResultRunner:
     runner = worker._test_agent_runner
     assert isinstance(runner, FakeAgentResultRunner)
@@ -13514,15 +13536,16 @@ def test_reply_attempt_records_codex_audit_fields(tmp_path: Path, monkeypatch):
 
     worker.run_once()
 
+    _native_script_events(tmp_path, monkeypatch, "session-1", safe_events)
+
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.audit_documents_json == "[]"
-    events = json.loads(attempt.audit_tool_events_json)
-    assert [event["type"] for event in events] == [
-        "item.started",
-        "item.completed",
-    ]
-    assert events[-1]["item"]["id"] == "evidence-read"
+    assert attempt.audit_tool_events_json == "[]"
+    run = worker.store.get_agent_run(attempt.agent_run_id)
+    assert [event["type"] for event in run.tool_events] == ["item.completed"]
+    assert run.tool_events[0]["item"]["id"] == "evidence-read"
+    assert run.tool_events[0]["item"]["metadata"] == {"effect": "read_only"}
     assert attempt.audit_summary == "缺少简历内容，因此要求补齐材料后再判断。"
     assert attempt.codex_session_id == "session-1"
     assert attempt.codex_transcript_start_line == 0
@@ -13857,6 +13880,9 @@ def test_okr_review_request_is_enqueued_after_agent_queue_action(
 
     worker.run_once()
 
+    _native_script_events(tmp_path, monkeypatch, "okr-review-session",
+                          effect_events("okr-review", {"success": True}))
+
     assert codex.calls == []
     assert runner.calls[0][2].trigger_text == "帮我审核 OKR"
     assert worker.store.claim_okr_review_requests(1) == []
@@ -13865,7 +13891,7 @@ def test_okr_review_request_is_enqueued_after_agent_queue_action(
     assert attempt.send_status == "completed"
     run = worker.store.get_agent_run(attempt.agent_run_id)
     assert run is not None
-    assert run.tool_events[-1]["result"]["success"] is True
+    assert run.tool_events[-1]["item"]["result"]["success"] is True
 
 
 def test_okr_review_request_uses_explicit_quarter_from_trigger(
@@ -13902,6 +13928,9 @@ def test_okr_review_request_uses_explicit_quarter_from_trigger(
 
     worker.run_once()
 
+    _native_script_events(tmp_path, monkeypatch, "okr-q2-session",
+                          effect_events("okr-review-q2", {"success": True, "period_label": "2026 Q2"}))
+
     assert codex.calls == []
     assert runner.calls[0][2].trigger_text == "请帮我 review Q2 OKR"
     assert worker.store.claim_okr_review_requests(1) == []
@@ -13909,7 +13938,7 @@ def test_okr_review_request_uses_explicit_quarter_from_trigger(
     run = worker.store.get_agent_run(attempt.agent_run_id)
     assert run is not None
     events = run.tool_events
-    assert events[-1]["result"]["period_label"] == "2026 Q2"
+    assert events[-1]["item"]["result"]["period_label"] == "2026 Q2"
 
 
 def test_okr_mentions_without_agent_queue_action_do_not_fetch_okr_source(

@@ -9,6 +9,12 @@
 
 ## Unreleased
 
+- 2026-10-10: Observe submitted runtime prompts through real append callbacks
+  in test RAM, not terminal archives. Worker fixtures read exact synthetic
+  native tool windows while persisted audit events remain empty. Quality
+  fixtures explicitly distinguish unavailable native coverage from violations;
+  SQLite timing stubs retain the connection's write-count contract.
+
 - 2026-10-10: Check adopted candidate/review data in orchestration, scheduled
   and no-action fixtures without restoring raw SQL results. Technical Consumer
   failures retain failed runs; unbound historical questions remain non-actionable

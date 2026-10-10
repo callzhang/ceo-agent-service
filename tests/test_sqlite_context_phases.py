@@ -14,6 +14,8 @@ def test_slow_context_separates_body_transaction_finish_and_close(
     clock = [0.0]
 
     class Connection:
+        total_changes = 0
+
         def __enter__(self):
             return self
 

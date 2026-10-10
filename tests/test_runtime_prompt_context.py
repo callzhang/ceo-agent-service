@@ -110,11 +110,24 @@ def test_undeclared_codex_tools_are_not_described_as_available(role):
     assert "本轮未声明" in text
 
 
-def test_actual_consumer_submission_matches_persisted_prompt_snapshot(tmp_path, monkeypatch):
+def test_actual_consumer_submission_matches_submission_prompt_snapshot(tmp_path, monkeypatch):
     from app.agent_context import AgentTaskContext
     from app.consumer_agent import ConsumerAgentRunner
     from app.store import AutoReplyStore
     from tests.test_consumer_agent import CapturingExecutor, _result_jsonl
+    from tests.support.native_protocol import install_protocol_native_trajectories
+
+    install_protocol_native_trajectories(tmp_path, monkeypatch, CapturingExecutor)
+    observations = []
+    original_append = AutoReplyStore.append_agent_run_event
+
+    def observe_submission(store, run_id, event, **kwargs):
+        result = original_append(store, run_id, event, **kwargs)
+        if event.get("type") in {"runtime.prompt", "runtime.prompt.invoked"}:
+            observations.append(event)
+        return result
+
+    monkeypatch.setattr(AutoReplyStore, "append_agent_run_event", observe_submission)
 
     monkeypatch.setenv("CEO_WORKSPACE", str(tmp_path / "materials"))
     store = AutoReplyStore(tmp_path / "service.sqlite3")
@@ -130,13 +143,14 @@ def test_actual_consumer_submission_matches_persisted_prompt_snapshot(tmp_path, 
     ConsumerAgentRunner(store=store, workspace=tmp_path, executor=executor).run(
         task, context, proposal_revision=0, parent_agent_run_id=None)
     [run] = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
-    [snapshot] = [event for event in run.tool_events if event.get("type") == "runtime.prompt"]
+    [snapshot] = [event for event in observations if event.get("type") == "runtime.prompt"]
+    assert not any(event.get("type") == "runtime.prompt" for event in run.tool_events)
     assert snapshot["task_prompt"] == executor.prompts[0]
     configs = {value.partition("=")[0]: value.partition("=")[2] for value in executor.commands[0] if value.startswith("developer_instructions=")}
     assert json.loads(configs["developer_instructions"]) == snapshot["developer_instructions"]
     assert snapshot["runtime_context"] in snapshot["developer_instructions"]
     assert snapshot["invocation_facts"]["stage_index"] == 0
-    assert any(event.get("type") == "runtime.prompt.invoked" for event in run.tool_events)
+    assert any(event.get("type") == "runtime.prompt.invoked" for event in observations)
     assert "参与者时区：以原请求" not in snapshot["developer_instructions"]
     assert store.get_sent_reply(task.conversation_id, task.trigger_message_id) is None
 
