@@ -3618,6 +3618,26 @@ def test_prototype_migration_recognizes_quoted_mixed_case_existing_columns(
         assert columns.count(column) == 1
 
 
+def test_runtime_initialization_validates_accounts_without_historical_scan(tmp_path, monkeypatch):
+    path = tmp_path / "runtime-init.sqlite3"
+    EmailStore(path)
+
+    def unexpected_historical_scan(*_args):
+        raise AssertionError("runtime initialization scanned historical rows")
+
+    monkeypatch.setattr(EmailStore, "_validate_durable_state", unexpected_historical_scan)
+    calls = []
+    original = EmailStore._validate_account_configuration
+
+    def validate_accounts(self, db):
+        calls.append(self.path)
+        original(self, db)
+
+    monkeypatch.setattr(EmailStore, "_validate_account_configuration", validate_accounts)
+    EmailStore(path, validate_rows=False)
+    assert calls == [path]
+
+
 def test_email_store_migration_is_idempotent(tmp_path: Path):
     database = tmp_path / "idempotent.sqlite3"
     store = EmailStore(database)

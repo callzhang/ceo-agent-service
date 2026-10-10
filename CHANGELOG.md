@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- 2026-10-10: Validate Email account configuration on lightweight runtime
+  initialization so corrupt account JSON cannot escape the email-unavailable
+  boundary, without restoring full historical validation scans.
+
 - 2026-10-10: Verify external Email training payloads against frozen persisted
   snapshot metadata on readback, rejecting parent timestamp/version tampering
   while preserving per-snapshot reads and normal round trips.

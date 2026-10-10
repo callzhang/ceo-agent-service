@@ -1,5 +1,11 @@
 # Current Runtime Mechanism
 
+Runtime EmailStore initialization validates account configuration even when
+historical durable-row validation is disabled. Invalid account JSON makes email
+storage unavailable through the existing initialization boundary; unrelated
+audit routes remain available. This scans account configuration, not historical
+messages, actions or training observations.
+
 Email training snapshot reads validate the external payload against the frozen
 SQLite parent's identity, versions, seed, observation time and digest. A valid
 external file does not excuse a tampered parent record. These comparisons run

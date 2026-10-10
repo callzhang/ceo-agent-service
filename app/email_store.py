@@ -3010,6 +3010,7 @@ class EmailStore:
                     self._validate_durable_state(db)
                 else:
                     self._validate_schema_shape(db)
+                    self._validate_account_configuration(db)
                 return
             if latest_version is not None and latest_version > EMAIL_SCHEMA_VERSION:
                 raise EmailPersistenceCorruption(
@@ -3038,6 +3039,7 @@ class EmailStore:
                     self._validate_durable_state(db)
                 else:
                     self._validate_schema_shape(db)
+                    self._validate_account_configuration(db)
                 return
             legacy_reply_claims = False
             if latest_version == 8:
@@ -6961,6 +6963,10 @@ class EmailStore:
             raise EmailPersistenceCorruption(
                 "durable email row is missing a required field"
             ) from exc
+
+    def _validate_account_configuration(self, db: sqlite3.Connection) -> None:
+        for row in db.execute("select * from email_accounts"):
+            self._account_row(row)
 
     def _validate_durable_rows(self, db: sqlite3.Connection) -> None:
         configs = db.execute("select * from email_model_promotion_configs").fetchall()
