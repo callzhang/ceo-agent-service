@@ -3943,6 +3943,63 @@ def test_stale_processing_resumes_same_generation_and_session(tmp_path: Path):
     assert worker.store.get_reply_task(task_id).status == "done"
 
 
+@pytest.mark.parametrize("persisted_retryable,expected", [(False, "failed"), (True, "pending"), (None, "pending")])
+@pytest.mark.parametrize("clean_session", [False, True])
+@pytest.mark.parametrize("caller_retryable", [False, True])
+@pytest.mark.parametrize("at_limit", [False, True])
+def test_failure_recording_honors_persisted_nonretryable_run(tmp_path, persisted_retryable, expected, clean_session, caller_retryable, at_limit):
+    trigger = _message("read source")
+    worker, runner, _dws = _worker(tmp_path, [trigger], [], max_task_attempts=1 if at_limit else 3)
+    task_id = _enqueue(worker.store, trigger)
+    task = worker.store.claim_reply_task(task_id)
+    assert task is not None
+    before = worker._agent_run_snapshot(task)
+    claim = _claim_consumer_run(worker.store, task.id, task.execution_generation, owner="failure-test")
+    error = {"code": "runtime_result_source_invalid"}
+    if persisted_retryable is not None:
+        error["retryable"] = persisted_retryable
+    worker.store.fail_agent_run(claim.run.id, error, owner="failure-test")
+    if not caller_retryable or (at_limit and not clean_session):
+        expected = "failed"
+    status, attempt_id = worker._record_agent_runtime_failure_attempt(
+        task, "runtime_result_source_invalid", retryable=caller_retryable,
+        prior_run_snapshot=before, allow_clean_session_retry=clean_session,
+    )
+    assert status == expected
+    assert worker.store.get_reply_task(task.id).status == expected
+    attempt = worker.store.get_reply_attempt(attempt_id)
+    assert attempt.send_status == "failed"
+    assert attempt.agent_run_id == claim.run.id
+    assert worker.store.get_agent_run(claim.run.id).structured_error_json == json.dumps(error, ensure_ascii=False, separators=(",", ":"))
+    assert runner.calls == []
+
+
+def test_worker_exception_path_does_not_requeue_nonretryable_source_failure(tmp_path, monkeypatch):
+    trigger = _message("read source")
+    worker, runner, _dws = _worker(tmp_path, [trigger], [])
+    task_id = _enqueue(worker.store, trigger)
+    failed_ids = []
+
+    def fail_source(task, context, *, refresh_context):
+        claim = _claim_consumer_run(worker.store, task.id, task.execution_generation, owner="source-failure")
+        worker.store.fail_agent_run(
+            claim.run.id, {"code": "runtime_result_source_invalid", "retryable": False, "source": "service"},
+            owner="source-failure",
+        )
+        failed_ids.append(claim.run.id)
+        raise RuntimeError("runtime_result_source_invalid")
+
+    monkeypatch.setattr(runner, "process", fail_source)
+    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.store.get_reply_task(task_id).status == "failed"
+    attempts = worker.store.list_reply_attempts()
+    assert len(attempts) == 1
+    assert attempts[0].agent_run_id == failed_ids[0]
+    assert attempts[0].send_status == "failed"
+    assert worker.consume_once(max_tasks=1) == 0
+    assert len(failed_ids) == 1
+
+
 def test_stale_retryable_failed_run_resumes_same_generation_and_session(
     tmp_path: Path,
 ):

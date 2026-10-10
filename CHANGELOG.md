@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-10: Honor an explicit nonretryable error on the newly failed AgentRun
+  when the Reply worker records a runtime exception. Neither caller retry nor
+  clean-session retry can override that denial; keep existing retry limits,
+  wait policies, failure evidence and generation-checked finalization.
+
 - 2026-10-10: Verify terminal AgentRun replay with native evidence outside the
   SQLite writer transaction. Recheck run, task and exact runtime reference
   before accepting replay, derive independent WeChat decisions using the

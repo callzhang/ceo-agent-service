@@ -61,6 +61,16 @@ error and summary in the failed Attempt without retrying or creating an Agent
 run. A missing nonzero final run ID remains an integrity error, not a pre-run
 failure.
 
+When the Reply worker records an exception after a newly failed AgentRun,
+an explicit JSON boolean `retryable=false` in that run's error denies task
+requeue, including clean-session retry. Caller denial also remains binding.
+Only the current task/generation and a run changed since the pre-processing
+snapshot participate; historical unchanged failures cannot supply this flag.
+Missing flags retain the caller policy and existing attempt budget. The
+original failed run and failed Attempt remain evidence, not `needs_human` or
+a successful business result. Existing authorization/provider wait paths are
+unchanged.
+
 Retry session selection honors an explicit JSON boolean
 `session_continuable=false` on the latest failed run for the current generation,
 role and revision. A new run does not inherit that session, and Consumer/Audit

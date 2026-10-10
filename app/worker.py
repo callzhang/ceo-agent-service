@@ -2095,6 +2095,13 @@ class DingTalkAutoReplyWorker:
         allow_clean_session_retry: bool = False,
     ) -> tuple[str, int]:
         run = self._latest_failed_agent_run(task, prior_run_snapshot)
+        if run is not None:
+            try:
+                persisted_error = json.loads(run.structured_error_json)
+            except json.JSONDecodeError:
+                persisted_error = None
+            if isinstance(persisted_error, dict) and persisted_error.get("retryable") is False:
+                retryable = False
         task_status = (
             "pending"
             if retryable
