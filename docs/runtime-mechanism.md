@@ -1,5 +1,12 @@
 # Current Runtime Mechanism
 
+Terminal unsubscribe reconciliation probes classification identity and plan
+version before loading payloads. Only a missing receipt plus an existing
+done/skipped/needs_human task triggers full hydration; failed tasks stay excluded.
+Hydration rechecks the current plan version and processed status, so concurrent
+plan replacement cannot attach new payloads to the old action identity. This
+read-only optimization does not create or infer provider receipts.
+
 Reply quality checks rank attempts using only identity, ordering, status and
 review fields, not complete input or reply payloads. OA completion receipts and
 reviewed human-decision candidates are still checked through their original

@@ -2161,6 +2161,62 @@ def _replace_email_actions(
         )
 
 
+def test_terminal_unsubscribe_probe_does_not_hydrate_classification_payloads(tmp_path):
+    from contextlib import contextmanager
+
+    store = EmailStore(tmp_path / "unsubscribe-terminal-probe.sqlite3")
+    original_connect = store._connect
+
+    @contextmanager
+    def guarded_connect():
+        with original_connect() as db:
+            def authorize(action, table, column, database, source):
+                if action == sqlite3.SQLITE_READ and table == "email_classifications":
+                    if column in {"subject", "preview", "model_text", "agent_result_json"}:
+                        return sqlite3.SQLITE_DENY
+                return sqlite3.SQLITE_OK
+            db.set_authorizer(authorize)
+            yield db
+
+    store._connect = guarded_connect
+    assert store.list_terminal_unsubscribe_tasks_missing_receipts() == []
+
+
+@pytest.mark.parametrize("status", ["done", "skipped", "needs_human", "failed"])
+def test_terminal_unsubscribe_probe_hydrates_only_valid_terminal_tasks(tmp_path, status):
+    database = tmp_path / "unsubscribe-terminal-hydration.sqlite3"
+    store = EmailStore(database)
+    task_store = AutoReplyStore(database)
+    authorization = _unsubscribe_authorization(store)
+    from app.email_task_adapter import email_conversation_id
+
+    task = task_store.ensure_reply_task(
+        channel="email",
+        conversation_id=email_conversation_id(
+            authorization["account_id"], authorization["thread_identity"]
+        ),
+        conversation_title="Email unsubscribe",
+        single_chat=False,
+        trigger_message_id=authorization["action_identity"],
+        trigger_create_time="2026-09-26T21:57:14+00:00",
+        trigger_sender="sender@example.com",
+        trigger_text="Unsubscribe projection test",
+        execution_generation="test-generation",
+    )
+    with sqlite3.connect(database) as db:
+        db.execute("update reply_tasks set status=? where id=?", (status, task.id))
+    rows = store.list_terminal_unsubscribe_tasks_missing_receipts()
+    if status == "failed":
+        assert rows == []
+        return
+    assert len(rows) == 1
+    assert rows[0]["stable_message_identity"] == authorization["stable_message_identity"]
+    assert rows[0]["action_plan"]["classification_id"] == authorization["classification_id"]
+    assert rows[0]["unsubscribe_action_identity"] == authorization["action_identity"]
+    assert rows[0]["unsubscribe_task"]["id"] == task.id
+    assert rows[0]["unsubscribe_task"]["status"] == status
+
+
 def _insert_account_with_scan_folders_json(database: Path, value: object) -> None:
     with sqlite3.connect(database) as db:
         db.execute("pragma ignore_check_constraints = on")

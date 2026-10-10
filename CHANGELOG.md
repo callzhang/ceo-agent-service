@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- 2026-10-10: Avoid hydrating historical email payloads in terminal unsubscribe
+  probes; load full classifications only for missing-receipt terminal tasks and
+  retain current-plan guards and failed-task exclusion.
+
 - 2026-10-10: Verify worker attempt snapshots execute one projection query
   without requiring the superseded window-ranking SQL implementation.
 

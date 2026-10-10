@@ -16524,7 +16524,8 @@ class EmailStore:
         with self._connect() as db:
             rows = db.execute(
                 """
-                select c.*, p.action_plan_version, p.actions_json
+                select c.id, c.account_id, c.stable_message_identity,
+                       p.action_plan_version
                 from email_classifications as c
                 join email_action_plans as p
                   on p.action_plan_id=c.current_action_plan_id
@@ -16563,9 +16564,22 @@ class EmailStore:
                     "needs_human",
                 }:
                     continue
+                classification = db.execute(
+                    """
+                    select c.*, p.action_plan_version, p.actions_json
+                    from email_classifications as c
+                    join email_action_plans as p
+                      on p.action_plan_id=c.current_action_plan_id
+                    where c.id=? and c.status='processed'
+                      and p.action_plan_version=?
+                    """,
+                    (row["id"], row["action_plan_version"]),
+                ).fetchone()
+                if classification is None:
+                    continue
                 terminal.append(
                     {
-                        **self._classification_row(row),
+                        **self._classification_row(classification),
                         "unsubscribe_action_identity": action_identity,
                         "unsubscribe_task": dict(task),
                     }
