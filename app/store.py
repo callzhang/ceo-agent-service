@@ -30631,6 +30631,42 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             return cursor.rowcount
 
+    def resolve_errors_before_successful_component_tick(
+        self, component: str, *, tick_at: datetime
+    ) -> int:
+        if not component.strip():
+            raise ValueError("component must be non-empty")
+        instant = tick_at if tick_at.tzinfo else tick_at.replace(tzinfo=timezone.utc)
+        # SQLite incident timestamps have second precision; the tick's second
+        # cannot establish whether an incident preceded or followed its start.
+        cutoff = instant.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+        with self._connect() as db:
+            eligible = db.execute(
+                """
+                select 1 from errors
+                where kind=? and coalesce(resolved_at, '')=''
+                  and julianday(created_at) < julianday(?) limit 1
+                """,
+                (component, cutoff),
+            ).fetchone()
+        if eligible is None:
+            return 0
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update errors
+                set resolved_at=current_timestamp, resolution=?
+                where kind=? and coalesce(resolved_at, '')=''
+                  and julianday(created_at) < julianday(?)
+                """,
+                (
+                    f"recovered_by_successful_tick:{instant.isoformat()}",
+                    component,
+                    cutoff,
+                ),
+            )
+            return cursor.rowcount
+
     def resolve_unresolved_errors_by_kind(
         self,
         kind: str,

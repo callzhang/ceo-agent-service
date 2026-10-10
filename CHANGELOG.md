@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- 2026-10-10: Resolve earlier same-component Cron incidents after a successful
+  scheduler or dispatcher tick. Later incidents remain unresolved, and empty
+  recovery checks do not acquire a SQLite writer transaction.
+
 - 2026-10-09: Avoid SQLite writer admission for empty, settled, delayed and
   live-leased Email classification polls. Due work and expired leases still
   recover and claim exclusively under BEGIN IMMEDIATE; a concurrent claim is

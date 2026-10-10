@@ -372,13 +372,13 @@ class ConsumerDispatcher:
     def run(self, *, stop_event: Event, dispatch_limit: int = 100) -> None:
         while not stop_event.is_set():
             self.wake_event.clear()
+            tick_at = datetime.now(UTC)
+            submitted = self.dispatch_available(tick_at, limit=dispatch_limit)
             if self.tick_observer is not None:
-                tick_at = datetime.now(UTC)
                 try:
                     self.tick_observer(tick_at)
                 except Exception:  # noqa: BLE001 - health reporting must not stop dispatch
                     LOGGER.exception("dispatcher_tick_observer_failed")
-            submitted = self.dispatch_available(datetime.now(UTC), limit=dispatch_limit)
             if submitted:
                 continue
             if stop_event.is_set():

@@ -1,5 +1,12 @@
 # Current Runtime Mechanism
 
+Cron scheduler and dispatcher incidents close only after the same component
+completes a successful tick. Recovery retains incidents from the tick's entire
+start second or later, because stored incident timestamps have second precision,
+and incidents from other components. Startup health alone is
+not recovery evidence. With no eligible incident, resolution does not acquire
+the SQLite writer lock; the write transaction rechecks the same conditions.
+
 Email classification polling checks for due pending work or an expired running
 lease before acquiring the SQLite writer lock. Ineligible polls are read-only.
 The eligibility read grants no ownership: expired-lease recovery and the full
