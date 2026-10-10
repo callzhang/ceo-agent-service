@@ -435,6 +435,9 @@ metadata-only，没有 image/content material；只投影文件名、MIME、字�
 下载、打开、OCR、解析、总结或推断附件正文。不可变 ActionPlan 是唯一动作授权；Adapter
 只排队，不发送、不打开退订页面。
 
+Email worker 的退订任务修复先扫描分类 ID 和动作身份，只为确实缺少稳定任务的记录读取完整分类行；
+修复后按该分类 ID 定点复核，不重扫所有分类。
+
 退订是低风险的直接 Email worker 动作；退订不做结构化审核，也不做 Consumer 或 Audit turn。
 worker 以 task id 从
 durable 状态读取 ActionPlan 已授权的 entry，一次调用完成整件事——打开该 entry，按页面当场呈现的

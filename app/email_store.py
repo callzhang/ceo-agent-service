@@ -16416,21 +16416,30 @@ class EmailStore:
             ).fetchall()
         return tuple(dict(row) for row in rows)
 
-    def list_missing_unsubscribe_action_tasks(self) -> list[dict[str, Any]]:
+    def list_missing_unsubscribe_action_tasks(
+        self, *, classification_id: int | None = None
+    ) -> list[dict[str, Any]]:
         """Find current durable unsubscribe plans without their stable task."""
 
-        missing: list[dict[str, Any]] = []
+        missing_ids: list[int] = []
         with self._connect() as db:
-            rows = db.execute(
-                """
-                select c.*, p.action_plan_version, p.actions_json
+            identity_sql = """
+                select c.id, c.account_id, c.stable_message_identity,
+                       p.action_plan_version
                 from email_classifications as c
                 join email_action_plans as p
                   on p.action_plan_id=c.current_action_plan_id
                 where c.status='processed'
                   and instr(p.actions_json, '"unsubscribe"') > 0
-                order by c.id
-                """
+            """
+            params: tuple[Any, ...] = ()
+            if classification_id is not None:
+                identity_sql += " and c.id=?"
+                params = (classification_id,)
+            identity_sql += " order by c.id"
+            rows = db.execute(
+                identity_sql,
+                params,
             ).fetchall()
             for row in rows:
                 action_identity = email_action_identity(
@@ -16456,7 +16465,23 @@ class EmailStore:
                     (action_identity,),
                 ).fetchone()
                 if task is None:
-                    missing.append(self._classification_row(row))
+                    missing_ids.append(int(row["id"]))
+            missing: list[dict[str, Any]] = []
+            for offset in range(0, len(missing_ids), 500):
+                batch = missing_ids[offset : offset + 500]
+                placeholders = ",".join("?" for _ in batch)
+                hydrated = db.execute(
+                    f"""
+                    select c.*, p.action_plan_version, p.actions_json
+                    from email_classifications as c
+                    join email_action_plans as p
+                      on p.action_plan_id=c.current_action_plan_id
+                    where c.id in ({placeholders})
+                    order by c.id
+                    """,
+                    batch,
+                ).fetchall()
+                missing.extend(self._classification_row(row) for row in hydrated)
         return missing
 
     def list_terminal_unsubscribe_tasks_missing_receipts(self) -> list[dict[str, Any]]:

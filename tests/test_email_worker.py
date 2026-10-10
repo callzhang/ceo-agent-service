@@ -555,6 +555,18 @@ def test_worker_startup_repairs_missing_unsubscribe_task_and_repeated_tick_is_id
         unsubscribe_entries=entries,
     )
     health = []
+    missing_task_queries: list[int | None] = []
+    list_missing_unsubscribe_action_tasks = (
+        email_store.list_missing_unsubscribe_action_tasks
+    )
+
+    def track_missing_task_query(*, classification_id: int | None = None):
+        missing_task_queries.append(classification_id)
+        return list_missing_unsubscribe_action_tasks(
+            classification_id=classification_id
+        )
+
+    email_store.list_missing_unsubscribe_action_tasks = track_missing_task_query
 
     def reconcile():
         return module.reconcile_missing_model_action_tasks(
@@ -578,6 +590,9 @@ def test_worker_startup_repairs_missing_unsubscribe_task_and_repeated_tick_is_id
     )
     reconcile()
 
+    assert missing_task_queries[0] is None
+    assert isinstance(missing_task_queries[1], int)
+    assert missing_task_queries[2] is None
     assert len(task_store.list_reply_tasks(channel="email")) == 1
     assert email_store.claim_next_direct_action(
         claimed_at="2026-09-08T12:00:00+00:00",

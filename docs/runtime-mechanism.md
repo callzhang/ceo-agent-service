@@ -888,6 +888,9 @@ image/content material，只包含文件名、MIME、字节大小、数量和 in
 或 image path。任何组件都不得下载、打开、OCR、解析、总结或推断附件正文。持久 trigger payload 不包含凭证、附件内容、本地路径、
 完整私密 URL 或 query token。
 
+模型 ActionPlan 的退订任务修复扫描只读取候选分类身份，确认缺任务后才加载完整分类行；
+每次修复后的复核按分类 ID 定点查询，避免每修复一个任务就再次扫描所有历史分类。
+
 退订不做结构化审核。Email worker 直接执行兼容调用语义 `unsubscribe_email(task_id)`：一次调用完成整件事——
 打开 ActionPlan 已授权的 entry，按页面当场呈现的控件操作，直到第一个终态页面，然后返回
 outcome 和脱敏后的页面原文。它只接受 task id 这一个调用方无法伪造的参数，其余全部从 durable 状态

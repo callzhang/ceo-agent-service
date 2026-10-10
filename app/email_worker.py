@@ -2180,11 +2180,10 @@ def reconcile_missing_model_action_tasks(
                 repaired += 1
                 continue
             action_task_producer.produce(plan, message)
-            remaining = {
-                int(item["id"])
-                for item in email_store.list_missing_unsubscribe_action_tasks()
-            }
-            if int(classification["id"]) in remaining:
+            remaining = email_store.list_missing_unsubscribe_action_tasks(
+                classification_id=int(classification["id"])
+            )
+            if remaining:
                 raise RuntimeError("model action repair did not persist a task")
             repaired += 1
         except Exception:  # noqa: BLE001 - each durable conflict is isolated
