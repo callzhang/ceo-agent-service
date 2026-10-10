@@ -1,5 +1,10 @@
 # Current Runtime Mechanism
 
+Email training snapshot reads validate the external payload against the frozen
+SQLite parent's identity, versions, seed, observation time and digest. A valid
+external file does not excuse a tampered parent record. These comparisons run
+only for the requested snapshot and do not restore historical startup scans.
+
 Cron scheduler and dispatcher incidents close only after the same component
 completes a successful tick. Recovery retains incidents from the tick's entire
 start second or later, because stored incident timestamps have second precision,

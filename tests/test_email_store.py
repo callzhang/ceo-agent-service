@@ -593,6 +593,30 @@ def test_readback_rejects_persisted_observation_not_covered_by_manifest(
         store.get_training_snapshot(snapshot.snapshot_id)
 
 
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("snapshot_version", "tampered-version"),
+        ("description_version", "tampered-description"),
+        ("input_schema_version", "tampered-schema"),
+        ("seed", 99),
+        ("frozen", 0),
+    ],
+)
+def test_external_snapshot_readback_rejects_parent_identity_tampering(tmp_path, field, value):
+    store = EmailStore(tmp_path / "snapshot-identity.sqlite3")
+    snapshot = _frozen_training_snapshot()
+    store.persist_training_snapshot(snapshot)
+    with sqlite3.connect(store.path) as db:
+        db.execute("drop trigger trg_email_training_snapshots_immutable_update")
+        db.execute(
+            f"update email_training_snapshots set {field}=? where snapshot_id=?",
+            (value, snapshot.snapshot_id),
+        )
+    with pytest.raises(EmailPersistenceCorruption, match="training snapshot"):
+        store.get_training_snapshot(snapshot.snapshot_id)
+
+
 def test_readback_rejects_coordinated_parent_and_child_timestamp_tampering(
     tmp_path: Path,
 ):

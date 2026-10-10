@@ -15354,6 +15354,8 @@ class EmailStore:
         ).fetchone()
         if snapshot is None:
             return None
+        if snapshot["frozen"] != 1:
+            raise EmailPersistenceCorruption("training snapshot is not frozen")
         latest = db.execute(
             "select snapshot_id from email_training_snapshots where frozen=1 "
             "and json_extract(manifest_json, '$.sample_count') is not null "
@@ -15370,6 +15372,21 @@ class EmailStore:
         if restored.snapshot_id != snapshot_id:
             raise EmailPersistenceCorruption("external training snapshot identity mismatch")
         result = restored.to_dict()
+        persisted_identity = {
+            "snapshot_id": snapshot["snapshot_id"],
+            "snapshot_version": snapshot["snapshot_version"],
+            "description_version": snapshot["description_version"],
+            "input_schema_version": snapshot["input_schema_version"],
+            "seed": snapshot["seed"],
+            "observed_at": snapshot["observed_at"],
+            "snapshot_digest": snapshot["snapshot_digest"],
+        }
+        if any(
+            result[field] != value for field, value in persisted_identity.items()
+        ):
+            raise EmailPersistenceCorruption(
+                "external training snapshot does not match persisted identity"
+            )
         result["folder_label_watermark"] = int(snapshot["folder_label_watermark"])
         result["important_label_watermark"] = int(snapshot["important_label_watermark"])
         return result
