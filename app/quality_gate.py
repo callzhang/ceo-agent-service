@@ -345,7 +345,9 @@ def _check_reply_attempts(
     # old blocked/dry-run row from masking a later sent, skipped, or failed row.
     latest = """
         with latest as (
-            select *, row_number() over (
+            select id, channel, conversation_id, trigger_message_id,
+                   action, send_status, updated_at, reviewed_at, resolved_at,
+                   agent_run_id, row_number() over (
                 partition by channel, conversation_id, trigger_message_id
                 order by datetime(updated_at) desc, id desc
             ) as ordinal
@@ -380,7 +382,8 @@ def _check_reply_attempts(
         db,
         """
             with oa_latest as (
-                select a.*, row_number() over (
+                select a.id, a.channel, a.conversation_id, a.trigger_message_id,
+                       a.oa_process_instance_id, a.send_status, row_number() over (
                     partition by case
                         when trim(coalesce(a.oa_process_instance_id, '')) != ''
                             then a.oa_process_instance_id
@@ -473,9 +476,7 @@ def _check_structured_needs_human(
     rows = db.execute(
         latest
         + """
-            select a.send_status, a.reviewed_at, a.agent_run_id,
-                   a.send_error, a.human_decision_options_json,
-                   c.candidate_json as reviewed_candidate_json,
+            select c.candidate_json as reviewed_candidate_json,
                    choice.id as selection_id
             from latest a
             left join candidate_reviews review on review.audit_run_id=a.agent_run_id

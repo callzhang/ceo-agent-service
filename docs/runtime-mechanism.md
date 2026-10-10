@@ -1,5 +1,11 @@
 # Current Runtime Mechanism
 
+Reply quality checks rank attempts using only identity, ordering, status and
+review fields, not complete input or reply payloads. OA completion receipts and
+reviewed human-decision candidates are still checked through their original
+queries. Deduplication and recovery semantics are unchanged; narrower projection
+does not establish that all SQLite lock contention or endpoint latency is fixed.
+
 Runtime EmailStore initialization validates account configuration even when
 historical durable-row validation is disabled. Invalid account JSON makes email
 storage unavailable through the existing initialization boundary; unrelated
