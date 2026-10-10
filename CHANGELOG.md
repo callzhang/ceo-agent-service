@@ -9,6 +9,39 @@
 
 ## Unreleased
 
+- 2026-10-10: Verify worker attempt snapshots execute one projection query
+  without requiring the superseded window-ranking SQL implementation.
+
+- 2026-10-10: Narrow quality-gate Reply/OA window projections to required fields,
+  avoiding repeated sorting of business payloads while retaining receipt,
+  current-trigger and reviewed human-decision checks.
+
+- 2026-10-10: Align training payload reads, pins and idle cleanup with the
+  existing per-type label baseline. Alternating folder/selected publication
+  retains each latest baseline while removing superseded same-type data.
+
+- 2026-10-10: Reuse complete account scan-folder validation in lightweight
+  initialization and propagate previous snapshot corruption during publication.
+  Add invalid folder and publication rollback regressions; corrupted label
+  history cannot advance watermarks.
+
+- 2026-10-10: Validate Email account configuration on lightweight runtime
+  initialization so corrupt account JSON cannot escape the email-unavailable
+  boundary, without restoring full historical validation scans.
+
+- 2026-10-10: Verify external Email training payloads against frozen persisted
+  snapshot metadata on readback, rejecting parent timestamp/version tampering
+  while preserving per-snapshot reads and normal round trips.
+
+- 2026-10-10: Resolve earlier same-component Cron incidents after a successful
+  scheduler or dispatcher tick. Later incidents remain unresolved, and empty
+  recovery checks do not acquire a SQLite writer transaction.
+
+- 2026-10-10: Initialize resumed runtime transcript ranges at their start
+  offset, so failure persistence retains the original runtime error rather
+  than raising a secondary invalid-range error. Completion range validation
+  remains unchanged.
+
 - 2026-10-09: Avoid SQLite writer admission for empty, settled, delayed and
   live-leased Email classification polls. Due work and expired leases still
   recover and claim exclusively under BEGIN IMMEDIATE; a concurrent claim is

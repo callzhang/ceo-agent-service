@@ -1105,6 +1105,19 @@ def _resolve_service_runtime_skills(
     )
 
 
+def _record_successful_cron_tick(store, component: str, tick_at: datetime) -> None:
+    store.set_service_health_component(
+        component,
+        state="healthy",
+        status="running",
+        detail="",
+        latest_tick_at=tick_at.isoformat(),
+        latest_error="",
+        latest_error_at="",
+    )
+    store.resolve_errors_before_successful_component_tick(component, tick_at=tick_at)
+
+
 def run_agent_cron_scheduler_loop(
     settings: WorkerSettings,
     runtime_skill_snapshot,
@@ -1141,11 +1154,8 @@ def run_agent_cron_scheduler_loop(
             SERVICE_COMMAND_EXECUTION_KIND: lambda _execution_id: True,
         }),
         dispatcher_wake=(dispatcher_wake_event or wake_event).set,
-        tick_observer=lambda tick_at: store.set_service_health_component(
-            "agent-cron-scheduler",
-            state="healthy",
-            status="running",
-            latest_tick_at=tick_at.isoformat(),
+        tick_observer=lambda tick_at: _record_successful_cron_tick(
+            store, "agent-cron-scheduler", tick_at,
         ),
     )
     scheduler.run_forever(wake_event=wake_event)
@@ -1405,14 +1415,8 @@ def run_agent_cron_dispatcher_loop(
             shared_max_in_flight=agent_capacity,
             owner=f"scheduled-dispatcher:{os.getpid()}", lease=timedelta(minutes=5),
             wake_event=wake_event,
-            tick_observer=lambda tick_at: store.set_service_health_component(
-                "agent-cron-dispatcher",
-                state="healthy",
-                status="running",
-                detail="",
-                latest_tick_at=tick_at.isoformat(),
-                latest_error="",
-                latest_error_at="",
+            tick_observer=lambda tick_at: _record_successful_cron_tick(
+                store, "agent-cron-dispatcher", tick_at,
             ),
         )
         store.set_service_health_component(

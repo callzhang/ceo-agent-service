@@ -720,7 +720,7 @@ def test_email_history_detail_reuses_initialized_store_and_reads_fresh_context(
 
     assert first.status_code == second.status_code == 200
     assert len(initializations) == 1
-    assert initializations[0][1].get("validate_rows", True) is True
+    assert initializations[0][1]["validate_rows"] is False
     assert len(reads) == 2
     assert first.json()["item"]["email"]["subject"] == "Revision 1"
     assert second.json()["item"]["email"]["subject"] == "Revision 2"

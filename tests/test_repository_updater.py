@@ -634,6 +634,8 @@ def test_tests_refuse_to_run_in_the_production_checkout(tmp_path: Path, monkeypa
 def test_restart_only_waits_for_quiet_then_restarts_and_checks_health(tmp_path: Path, monkeypatch):
     import app.deploy as deploy_module
 
+    root, _remote = fixture_repo(tmp_path)
+    monkeypatch.setattr(deploy_module, "service_root", lambda: root)
     events: list[str] = []
     monkeypatch.setattr(deploy_module, "wait_until_quiet", lambda _db: events.append("quiet"))
     monkeypatch.setattr(deploy_module, "wait_for_health", lambda: events.append("health") or True)

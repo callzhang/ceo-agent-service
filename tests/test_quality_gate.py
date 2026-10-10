@@ -16,6 +16,24 @@ from app.store import AgentRole, AutoReplyStore
 NOW = datetime(2026, 8, 7, 1, 0, tzinfo=timezone.utc)
 
 
+def test_reply_quality_counts_do_not_read_business_payloads(tmp_path):
+    from app.quality_gate import _check_reply_attempts
+
+    store = AutoReplyStore(tmp_path / "quality-projection.sqlite3")
+    violations, attention = [], []
+    with store._connect() as db:
+        def authorize(action, table, column, database, source):
+            if action == sqlite3.SQLITE_READ and table == "reply_attempts":
+                if column in {"trigger_text", "final_reply_text", "context_json"}:
+                    return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        db.set_authorizer(authorize)
+        _check_reply_attempts(db, NOW, violations, attention)
+    assert violations == []
+    assert attention == []
+
+
 def _structured_needs_human_result(
     *, risk="high", confidence=0.2, rule_coverage=1.0,
     information_completeness=1.0, options=None,

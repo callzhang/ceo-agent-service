@@ -7682,6 +7682,7 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
             futures.append(
                 self.executors["meeting"].submit(pending_started.set)
             )
+            captured["stop_requested_at"] = time.monotonic()
             raise StopDispatcher
 
     fake_runtime = SimpleNamespace(
@@ -7704,14 +7705,13 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
         lambda **_: object(),
     )
 
-    started_at = time.monotonic()
     with pytest.raises(StopDispatcher):
         cli.run_agent_cron_dispatcher_loop(
             WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False),
             object(),
             wake_event=threading.Event(),
         )
-    assert time.monotonic() - started_at < 2
+    assert time.monotonic() - captured["stop_requested_at"] < 2
 
     assert not futures[0].done()
     assert futures[1].cancelled()
@@ -8792,6 +8792,62 @@ def test_agent_cron_treats_terminal_reply_task_status_as_finished(
 
     resolver = captured["terminal_resolver"]
     assert resolver.is_terminal("reply_task", "383933") is True
+
+
+def test_scheduler_success_closes_only_earlier_same_component_errors(monkeypatch, tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    captured = {}
+
+    class Scheduler:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def run_forever(self, **kwargs):
+            pass
+
+    monkeypatch.setattr(cli, "_scheduled_task_option_service", lambda *_: object())
+    monkeypatch.setattr("app.agent_cron.scheduler.AgentCronScheduler", Scheduler)
+    for kind, detail in (
+        ("agent-cron-scheduler", "earlier"),
+        ("agent-cron-scheduler", "later"),
+        ("agent-cron-dispatcher", "other"),
+    ):
+        store.record_error("", "", kind, detail)
+    with store._connect() as db:
+        db.execute("update errors set created_at='2026-10-10 10:00:00'")
+        db.execute("update errors set created_at='2026-10-10 12:00:00' where detail='later'")
+    cli.run_agent_cron_scheduler_loop(
+        SimpleNamespace(db_path=store.path), object(), wake_event=threading.Event()
+    )
+    captured["tick_observer"](datetime.fromisoformat("2026-10-10T11:00:00+00:00"))
+    errors = {error.detail: error for error in store.list_errors()}
+    assert errors["earlier"].resolved_at
+    assert not errors["later"].resolved_at
+    assert not errors["other"].resolved_at
+
+
+def test_successful_cron_tick_without_incident_does_not_acquire_writer(monkeypatch, tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    def unexpected_writer():
+        raise AssertionError("empty incident recovery must not acquire a writer")
+
+    monkeypatch.setattr(store, "_immediate_write_transaction", unexpected_writer)
+    assert store.resolve_errors_before_successful_component_tick(
+        "agent-cron-scheduler", tick_at=datetime.fromisoformat("2026-10-10T11:00:00+00:00")
+    ) == 0
+
+
+def test_cron_recovery_preserves_incident_from_tick_second(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error("", "", "agent-cron-scheduler", "during tick")
+    with store._connect() as db:
+        db.execute("update errors set created_at='2026-10-10 11:00:00'")
+    assert store.resolve_errors_before_successful_component_tick(
+        "agent-cron-scheduler",
+        tick_at=datetime.fromisoformat("2026-10-10T11:00:00.500000+00:00"),
+    ) == 0
+    assert not store.list_errors()[0].resolved_at
 
 
 def test_task_agent_queue_runs_one_turn_at_a_time():

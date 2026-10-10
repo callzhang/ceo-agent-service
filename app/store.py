@@ -13342,13 +13342,17 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             db.execute(
                 """
                 update agent_runtime_attempts
-                set session_id=?, transcript_reference=?, transcript_start=coalesce(?,transcript_start), updated_at=?
+                set session_id=?, transcript_reference=?,
+                    transcript_start=coalesce(?,transcript_start),
+                    transcript_end=max(transcript_end,coalesce(?,transcript_start)),
+                    updated_at=?
                 where id=? and status in ('starting', 'running')
                   and (agent_run_id is not null
                        or (lease_owner=? and lease_expires_at>?))
                 """,
                 (
-                    session_id, selected_reference, transcript_start, now_text, attempt_id,
+                    session_id, selected_reference, transcript_start, transcript_start,
+                    now_text, attempt_id,
                     owner, now_text,
                 ),
             )
@@ -30642,6 +30646,42 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and resolved_at=''
                 """,
                 (resolution.strip(), *unique_ids),
+            )
+            return cursor.rowcount
+
+    def resolve_errors_before_successful_component_tick(
+        self, component: str, *, tick_at: datetime
+    ) -> int:
+        if not component.strip():
+            raise ValueError("component must be non-empty")
+        instant = tick_at if tick_at.tzinfo else tick_at.replace(tzinfo=timezone.utc)
+        # SQLite incident timestamps have second precision; the tick's second
+        # cannot establish whether an incident preceded or followed its start.
+        cutoff = instant.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+        with self._connect() as db:
+            eligible = db.execute(
+                """
+                select 1 from errors
+                where kind=? and coalesce(resolved_at, '')=''
+                  and julianday(created_at) < julianday(?) limit 1
+                """,
+                (component, cutoff),
+            ).fetchone()
+        if eligible is None:
+            return 0
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update errors
+                set resolved_at=current_timestamp, resolution=?
+                where kind=? and coalesce(resolved_at, '')=''
+                  and julianday(created_at) < julianday(?)
+                """,
+                (
+                    f"recovered_by_successful_tick:{instant.isoformat()}",
+                    component,
+                    cutoff,
+                ),
             )
             return cursor.rowcount
 

@@ -3010,6 +3010,7 @@ class EmailStore:
                     self._validate_durable_state(db)
                 else:
                     self._validate_schema_shape(db)
+                    self._validate_account_configuration(db)
                 return
             if latest_version is not None and latest_version > EMAIL_SCHEMA_VERSION:
                 raise EmailPersistenceCorruption(
@@ -3038,6 +3039,7 @@ class EmailStore:
                     self._validate_durable_state(db)
                 else:
                     self._validate_schema_shape(db)
+                    self._validate_account_configuration(db)
                 return
             legacy_reply_claims = False
             if latest_version == 8:
@@ -6962,6 +6964,22 @@ class EmailStore:
                 "durable email row is missing a required field"
             ) from exc
 
+    def _validate_account_configuration(self, db: sqlite3.Connection) -> None:
+        for row in db.execute("select * from email_accounts"):
+            self._account_row(row)
+            folders = _json_load(
+                row["scan_folders_json"],
+                field="scan_folders_json",
+                expected_type=list,
+            )
+            if not folders or any(
+                not isinstance(folder, str) or not folder.strip() for folder in folders
+            ):
+                raise EmailPersistenceCorruption(
+                    f"scan_folders_json for account {row['account_id']} must contain "
+                    "one or more folder names"
+                )
+
     def _validate_durable_rows(self, db: sqlite3.Connection) -> None:
         configs = db.execute("select * from email_model_promotion_configs").fetchall()
         if not configs:
@@ -7059,21 +7077,7 @@ class EmailStore:
                 raise EmailPersistenceCorruption(
                     "non-running classifier task retains a lease"
                 )
-        for row in db.execute(
-            "select account_id, scan_folders_json from email_accounts"
-        ):
-            folders = _json_load(
-                row["scan_folders_json"],
-                field="scan_folders_json",
-                expected_type=list,
-            )
-            if not folders or any(
-                not isinstance(folder, str) or not folder.strip() for folder in folders
-            ):
-                raise EmailPersistenceCorruption(
-                    f"scan_folders_json for account {row['account_id']} must contain "
-                    "one or more folder names"
-                )
+        self._validate_account_configuration(db)
 
         messages: dict[str, sqlite3.Row] = {}
         for row in db.execute(
@@ -14244,12 +14248,9 @@ class EmailStore:
                 important_label_watermark = int(
                     previous_snapshot["important_label_watermark"]
                 )
-                try:
-                    previous_data = self._get_training_snapshot(
-                        db, str(previous_snapshot["snapshot_id"])
-                    )
-                except RuntimeError:
-                    previous_data = None
+                previous_data = self._get_training_snapshot(
+                    db, str(previous_snapshot["snapshot_id"])
+                )
                 if previous_data is not None:
                     previous_rows = {
                         (str(row["account_id"]), str(row["stable_message_identity"])): row
@@ -14321,27 +14322,33 @@ class EmailStore:
             latest = db.execute(
                 "select snapshot_id, snapshot_digest from email_training_snapshots "
                 "where frozen=1 and json_extract(manifest_json, '$.sample_count') is not null "
-                "order by observed_at desc, snapshot_id desc limit 1"
+                "and snapshot_version=(select snapshot_version from "
+                "email_training_snapshots where snapshot_id=?) "
+                "order by observed_at desc, snapshot_id desc limit 1",
+                (snapshot_id,),
             ).fetchone()
             if latest is None or latest["snapshot_id"] != snapshot_id:
                 raise EmailTrainingSnapshotConflict("training snapshot is unavailable to pin")
             write_pin(self.path, run_id, snapshot_id, str(latest["snapshot_digest"]))
 
     def prune_training_snapshot_data(self, *, training_active: bool) -> list[Path]:
-        """Keep only the latest complete payload after all training readers finish."""
+        """Keep each type's latest publication baseline after readers finish."""
         from app.email_training_data import prune_snapshots
 
         if training_active:
             return []
         with self._connect() as db:
             latest = db.execute(
-                "select snapshot_digest from email_training_snapshots where frozen=1 "
-                "and json_extract(manifest_json, '$.sample_count') is not null "
-                "order by observed_at desc, snapshot_id desc limit 1"
-            ).fetchone()
+                "select snapshot_digest from ("
+                "select snapshot_digest, row_number() over ("
+                "partition by snapshot_version order by observed_at desc, snapshot_id desc"
+                ") as ordinal from email_training_snapshots where frozen=1 "
+                "and json_extract(manifest_json, '$.sample_count') is not null"
+                ") where ordinal=1"
+            ).fetchall()
         return prune_snapshots(
             self.path,
-            {str(latest["snapshot_digest"])} if latest is not None else set(),
+            {str(row["snapshot_digest"]) for row in latest},
         )
 
     def list_provider_folder_correction_conflicts(
@@ -15354,10 +15361,14 @@ class EmailStore:
         ).fetchone()
         if snapshot is None:
             return None
+        if snapshot["frozen"] != 1:
+            raise EmailPersistenceCorruption("training snapshot is not frozen")
         latest = db.execute(
             "select snapshot_id from email_training_snapshots where frozen=1 "
+            "and snapshot_version=? "
             "and json_extract(manifest_json, '$.sample_count') is not null "
-            "order by observed_at desc, snapshot_id desc limit 1"
+            "order by observed_at desc, snapshot_id desc limit 1",
+            (snapshot["snapshot_version"],),
         ).fetchone()
         if latest is None or latest["snapshot_id"] != snapshot_id:
             pinned = (
@@ -15370,6 +15381,21 @@ class EmailStore:
         if restored.snapshot_id != snapshot_id:
             raise EmailPersistenceCorruption("external training snapshot identity mismatch")
         result = restored.to_dict()
+        persisted_identity = {
+            "snapshot_id": snapshot["snapshot_id"],
+            "snapshot_version": snapshot["snapshot_version"],
+            "description_version": snapshot["description_version"],
+            "input_schema_version": snapshot["input_schema_version"],
+            "seed": snapshot["seed"],
+            "observed_at": snapshot["observed_at"],
+            "snapshot_digest": snapshot["snapshot_digest"],
+        }
+        if any(
+            result[field] != value for field, value in persisted_identity.items()
+        ):
+            raise EmailPersistenceCorruption(
+                "external training snapshot does not match persisted identity"
+            )
         result["folder_label_watermark"] = int(snapshot["folder_label_watermark"])
         result["important_label_watermark"] = int(snapshot["important_label_watermark"])
         return result

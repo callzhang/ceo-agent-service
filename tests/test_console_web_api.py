@@ -949,13 +949,16 @@ def test_console_history_sends_a_running_scheduled_task_to_its_own_run_history(
     )
     assert task is not None
     with store._connect() as db:
+        from app.scheduled_config_storage import intern_scheduled_config
+
+        snapshot_id = intern_scheduled_config(db, "{}")
         db.execute(
             "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind, "
-            "scheduled_for, first_scheduled_for, dispatch_status, snapshot_json, "
+            "scheduled_for, first_scheduled_for, dispatch_status, snapshot_id, "
             "execution_kind, execution_id, created_at) values ('event-91606', 13, "
             "'scheduled', '2026-09-26T19:00:00Z', '2026-09-26T19:00:00Z', 'dispatched', "
-            "'{}', 'reply_task', ?, '2026-09-26T19:00:00Z')",
-            (str(task.id),),
+            "?, 'reply_task', ?, '2026-09-26T19:00:00Z')",
+            (snapshot_id, str(task.id)),
         )
 
     with _client(tmp_path) as client:
@@ -1034,7 +1037,18 @@ def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path
     assert meeting_item["title"] == "History meeting"
 
 
-def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path):
+def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path, monkeypatch):
+    def read_native_events(session_id, **_bounds):
+        assert session_id == "internal-session-must-not-leak"
+        return [
+            {"title": "读取会议记忆", "tool": "memory_recall", "call_id": "call-meeting-1",
+             "relevance": "确认历史判断", "path": "memory.md",
+             "args": {"query": "上线范围"}},
+            {"tool": "tool_output", "call_id": "call-meeting-1",
+             "output": '{"summary":"风险预算需要确认"}'},
+        ]
+
+    monkeypatch.setattr("app.audit_web.extract_codex_audit_events_from_session", read_native_events)
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     job_id = store.upsert_meeting_alignment_job(
         meeting_id="meeting-console-1",

@@ -15,6 +15,7 @@ from threading import Barrier, Event, Thread
 import pytest
 
 import app.store as store_module
+from app.scheduled_config_storage import intern_scheduled_config
 from app.store import (
     REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
     AgentRole,
@@ -8775,7 +8776,13 @@ def test_reply_attempt_tracing_and_feedback_round_trip(tmp_path: Path):
     assert attempt.trigger_message_id == "msg-1"
     assert attempt.action == "send_reply"
     assert attempt.audit_documents_json == '[{"path":"面试/岗位画像.md"}]'
-    assert attempt.audit_tool_events_json == '[{"tool":"exec_command","command":"rg 岗位"}]'
+    assert json.loads(attempt.audit_tool_events_json) == [{"tool": "exec_command"}]
+    with store._connect() as db:
+        persisted_events = db.execute(
+            "select audit_tool_events_json from reply_attempts where id=?",
+            (attempt_id,),
+        ).fetchone()[0]
+    assert "rg 岗位" not in persisted_events
     assert attempt.audit_summary == "查看岗位画像后判断需要先收敛问题。"
     assert attempt.codex_session_id == "session-1"
     assert attempt.codex_transcript_start_line == 2
@@ -9627,16 +9634,16 @@ def test_resolve_errors_recovered_by_scheduled_service_command(tmp_path: Path):
             """
                 insert into scheduled_task_runs (
                     event_id, scheduled_task_id, trigger_kind, scheduled_for, first_scheduled_for,
-                    dispatch_status, snapshot_json, execution_kind, execution_id,
+                    dispatch_status, snapshot_id, execution_kind, execution_id,
                     dispatched_at
                 ) values (
                         'event-success', ?, 'scheduled', '2026-09-10T12:01:00+00:00',
                         '2026-09-10T12:01:00+00:00',
-                        'dispatched', '{}', 'service_command', 'scan-meetings-once',
+                        'dispatched', ?, 'service_command', 'scan-meetings-once',
                     '2026-09-10 12:01:00'
                 )
             """,
-            (task.id,),
+            (task.id, intern_scheduled_config(db, "{}")),
         )
 
     assert store.resolve_errors_recovered_by_scheduled_service_command() == 1
@@ -9682,12 +9689,12 @@ def test_resolve_errors_recovered_by_scheduled_reply_task(tmp_path: Path):
             """
             insert into scheduled_task_runs (
                 event_id, scheduled_task_id, trigger_kind, scheduled_for, first_scheduled_for,
-                dispatch_status, snapshot_json, execution_kind, execution_id, dispatched_at
+                dispatch_status, snapshot_id, execution_kind, execution_id, dispatched_at
             ) values ('event-success', ?, 'scheduled', '2026-09-18T12:00:00Z',
-                      '2026-09-18T12:00:00Z', 'dispatched', '{}', 'reply_task', ?,
+                      '2026-09-18T12:00:00Z', 'dispatched', ?, 'reply_task', ?,
                       '2026-09-18 12:00:32')
             """,
-            (task.id, str(reply_task_id)),
+            (task.id, intern_scheduled_config(db, "{}"), str(reply_task_id)),
         )
     store.record_error(
         f"scheduled-task:{task.id}",
@@ -12027,7 +12034,7 @@ def test_superseded_failed_weekly_okr_job_is_completed(tmp_path: Path, failure: 
 
 
 def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_path: Path):
-    """The check runs in every subprocess; it must not scan the whole table."""
+    """Migration currency checks stop at the first stale distinct config."""
     store = AutoReplyStore(tmp_path / "snapshots.sqlite3")
     task = store.create_scheduled_task(
         name="消息检查",
@@ -12042,19 +12049,19 @@ def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_p
     with store._connect() as db:
         assert store._scheduled_task_run_snapshots_are_current(db) is True
         cols = {row["name"] for row in db.execute("pragma table_info(scheduled_task_runs)")}
-        assert "snapshot_json" in cols
+        assert "snapshot_id" in cols
         # A JSON null value for command is a present key, not an absent one.
         for index, payload in enumerate(
             (current, json.dumps({"command": None, "required_runtime_capabilities": None}))
         ):
             db.execute(
                 "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind,"
-                " scheduled_for, first_scheduled_for, dispatch_status, snapshot_json) "
+                " scheduled_for, first_scheduled_for, dispatch_status, snapshot_id) "
                 "values (?, ?, 'scheduled', ?, ?, 'pending', ?)",
                 (
                     f"evt-{index}", task.id,
                     f"2026-09-11T0{index}:00:00+00:00",
-                    f"2026-09-11T0{index}:00:00+00:00", payload,
+                    f"2026-09-11T0{index}:00:00+00:00", intern_scheduled_config(db, payload),
                 ),
             )
         assert store._scheduled_task_run_snapshots_are_current(db) is True
@@ -12062,13 +12069,13 @@ def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_p
         # Unparseable JSON is corrupt data, not a stale schema.
         db.execute(
             "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind,"
-            " scheduled_for, first_scheduled_for, dispatch_status, snapshot_json) "
+            " scheduled_for, first_scheduled_for, dispatch_status, snapshot_id) "
             "values ('evt-bad', ?, 'scheduled', ?, ?, 'pending', ?)",
             (
                 task.id,
                 "2026-09-11T05:00:00+00:00",
                 "2026-09-11T05:00:00+00:00",
-                "{not json",
+                intern_scheduled_config(db, "{not json"),
             ),
         )
         assert store._scheduled_task_run_snapshots_are_current(db) is True
@@ -12076,13 +12083,13 @@ def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_p
         # A snapshot missing the command keys is what the check must catch.
         db.execute(
             "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind,"
-            " scheduled_for, first_scheduled_for, dispatch_status, snapshot_json) "
+            " scheduled_for, first_scheduled_for, dispatch_status, snapshot_id) "
             "values ('evt-stale', ?, 'scheduled', ?, ?, 'pending', ?)",
             (
                 task.id,
                 "2026-09-11T06:00:00+00:00",
                 "2026-09-11T06:00:00+00:00",
-                stale,
+                intern_scheduled_config(db, stale),
             ),
         )
         assert store._scheduled_task_run_snapshots_are_current(db) is False
