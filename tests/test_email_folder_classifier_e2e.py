@@ -372,7 +372,7 @@ def _train_real_candidate_pair(tmp_path):
         seed=20260905,
         proposed_splits=proposed_splits,
     )
-    stored = store.persist_training_snapshot(successor_snapshot)
+    stored = successor_snapshot.to_dict()
     cache = EmbeddingCache(registry.root, dimension=4)
     for row in stored["observations"]:
         vector = np.array(
@@ -459,6 +459,7 @@ def _train_real_candidate_pair(tmp_path):
         historical_systematic_error_state=error_state,
         trained_at=observed_at,
     )
+    stored = store.persist_training_snapshot(successor_snapshot)
     second = train_frozen_embedding_candidate(
         store=store,
         snapshot_id=successor_snapshot.snapshot_id,
