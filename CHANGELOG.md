@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- 2026-10-10: Give Task semantic-repair fixtures native records with exact
+  original and correction ranges. Reopening reuses the matching result without
+  another provider invocation; an invalid reference remains a failed readback.
+
 - 2026-10-10: Repair the Task Attention inspector to read validated native
   decisions instead of retired SQLite result bodies. Explicitly close read-only
   query connections before native IO; unavailable evidence remains unavailable

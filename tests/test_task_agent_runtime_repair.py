@@ -1,11 +1,13 @@
 import json
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import pytest
 
+from app import native_trajectory
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
-from app.agent_runtime_router import RoutedCodexExecution
+from app.agent_runtime_router import RoutedCodexExecution, RoutedCodexExecutionError
 from app.process_runner import ProcessRunResult
 from app.store import AutoReplyStore
 from app.task_agent import (
@@ -18,8 +20,40 @@ from app.task_agent import (
     _validate_task_agent_decision,
     process_work_item,
 )
+from tests.support.native_protocol import install_protocol_native_trajectories
 from tests.test_routed_codex_execution import NOW, FakeAdapter, make_router
 from tests.test_task_agent import _candidate_decision, _work_item
+
+
+class ScriptedExecutor:
+    def __init__(self, store, payloads):
+        self.store = store
+        self.payloads = payloads
+        self.executions = 0
+        self.session_id = str(uuid4())
+
+    def __call__(self, command, **kwargs):
+        assert not self.store.list_business_tasks()
+        payload = self.payloads[min(self.executions, len(self.payloads) - 1)]
+        self.executions += 1
+        records = [
+            {"type": "thread.started", "thread_id": self.session_id},
+            {"type": "item.completed", "item": {
+                "type": "agent_message", "text": json.dumps(payload),
+            }},
+            {"type": "turn.completed"},
+        ]
+        return ProcessRunResult(0, "\n".join(map(json.dumps, records)), "")
+
+
+@pytest.fixture(autouse=True)
+def native_trajectories(tmp_path, monkeypatch):
+    install_protocol_native_trajectories(tmp_path, monkeypatch, ScriptedExecutor)
+
+
+def _native_line_count(session_id):
+    path = native_trajectory.find_codex_session_path(session_id)
+    return len(path.read_text().splitlines()) if path is not None else 0
 
 
 @pytest.fixture
@@ -29,24 +63,11 @@ def config():
 
 def _routed_runner(store, config, payloads):
     provider_calls = []
-    executions = 0
 
     class RecordingAdapter(FakeAdapter):
         def build_command(self, **kwargs):
             provider_calls.append(kwargs["prompt"])
             return super().build_command(**kwargs)
-
-    def executor(*args, **kwargs):
-        nonlocal executions
-        assert not store.list_business_tasks()
-        payload = payloads[min(executions, len(payloads) - 1)]
-        executions += 1
-        session_event = json.dumps(
-            {"type": "system", "session_id": "task-agent-session"}
-        )
-        return ProcessRunResult(
-            0, session_event + "\n" + json.dumps(payload), ""
-        )
 
     snapshots = {route.name: RuntimeCapabilitySnapshot(
         route_name=route.name, capabilities=TASK_RUNTIME_CAPABILITIES, healthy=True,
@@ -55,8 +76,8 @@ def _routed_runner(store, config, payloads):
     ) for route in config.routes}
     codex = TaskAgentCodexRunner(routed_execution=RoutedCodexExecution(
         store=store, config=config, router=make_router(store, config, snapshots=snapshots),
-        adapter=RecordingAdapter(), executor=executor,
-        session_line_counter=lambda _session: 0, now=lambda: NOW,
+        adapter=RecordingAdapter(), executor=ScriptedExecutor(store, payloads),
+        session_line_counter=_native_line_count, now=lambda: NOW,
     ))
     return TaskAgentRunner(codex), provider_calls
 
@@ -116,6 +137,28 @@ def test_semantic_repair_executes_new_round_and_replays_only_matching_receipt(
         session_scope_id="task-agent",
     )
     assert restored == replay
+    assert new_calls == []
+    with reopened._connect() as db:
+        attempts = db.execute(
+            "select id, session_id, transcript_reference, transcript_start, transcript_end "
+            "from agent_runtime_attempts order by id"
+        ).fetchall()
+        assert [(attempt["transcript_start"], attempt["transcript_end"])
+                for attempt in attempts] == [(0, 3), (3, 6)]
+        for attempt in attempts:
+            assert attempt["transcript_reference"] == f"codex_session:{attempt['session_id']}"
+            assert attempt["transcript_end"] - attempt["transcript_start"] == 3
+        latest = attempts[-1]
+        # A range beyond the recorded native turn must not replay or call the provider.
+        db.execute(
+            "update agent_runtime_attempts set transcript_end=? where id=?",
+            (latest["transcript_end"] + 1, latest["id"]),
+        )
+    with pytest.raises(RoutedCodexExecutionError, match="runtime_result_unavailable"):
+        new_runner.decide(
+            item, "Reject a mismatched native receipt", run_id=run_id,
+            repair_round=repair_round, session_scope_id="task-agent",
+        )
     assert new_calls == []
 
 
