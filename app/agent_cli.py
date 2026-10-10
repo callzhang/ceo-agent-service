@@ -1560,7 +1560,9 @@ def build_role_server(
         if kind != "daily":
             raise AgentReadOnlyViolationError("daily_report_task_required")
         return collect_daily_report_facts(
-            store, EmailStore(db_path), report_window_for_run(store, run.id)
+            store,
+            EmailStore(db_path, validate_rows=False),
+            report_window_for_run(store, run.id),
         )
 
     def weekly_report_materials() -> dict[str, object]:

@@ -2730,7 +2730,7 @@ def daily_report_facts_command(
     store = AutoReplyStore(settings.db_path)
     payload = collect_daily_report_facts(
         store,
-        EmailStore(settings.db_path),
+        EmailStore(settings.db_path, validate_rows=False),
         report_window_for_run(store, scheduled_run_id),
     )
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str), flush=True)
