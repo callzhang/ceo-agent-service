@@ -497,6 +497,7 @@ class EmailClassifierLearningService:
 
         stored = self.store.persist_training_snapshot(snapshot)
         retrain = self.observe_snapshot_and_maybe_retrain(now=now)
+        self._cleanup_storage(training_active=retrain.state.active_run_id is not None)
         return SnapshotPublicationResult(
             snapshot=stored,
             retrain=retrain,
@@ -537,7 +538,14 @@ class EmailClassifierLearningService:
         current = now or datetime.now(timezone.utc)
         with retrain_state_reservation(self.retrain_state_path):
             state = load_retrain_state(self.retrain_state_path)
-            return self._poll_retrain(state, now=current)
+            result = self._poll_retrain(state, now=current)
+            self._cleanup_storage(training_active=result.state.active_run_id is not None)
+            return result
+
+    def _cleanup_storage(self, *, training_active: bool) -> None:
+        if isinstance(self.store, EmailStore):
+            self.store.prune_training_snapshot_data(training_active=training_active)
+        self.registry.prune_artifacts(training_active=training_active)
 
     def _poll_retrain(self, state: RetrainState, *, now: datetime) -> AutoRetrainResult:
         if state.active_run_id is None:

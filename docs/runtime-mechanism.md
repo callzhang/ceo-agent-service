@@ -764,6 +764,11 @@ candidate_executions 保存租约，candidate_action_attempts 在 provider 调�
 历史 code 或 source_code 为 provider_risk_rejected 的同一业务对象不能通过换工具、渠道或执行代自动重放。保留拒绝来源和原始历史记录。native 引用回复仍使用原目标消息和准备正文的正向回读；空的有限消息列表不证明未发送。
 
 当前 Attempt 的结构化运行结果 `code` 或 `source_code` 为 `provider_risk_rejected` 时，历史“重新处理”入口不可用，直接提交该入口也返回冲突且不入队；API、React 和原生 HTML 优先展示该原因。确需新的候选或执行范围时，应通过明确的本次任务和完整候选提交处理，不能用旧入口重放历史候选。对于后端允许重新处理的其他失败，`rerun_label` / `rerun_confirmation` 仍由同一业务对象的结构化历史提供；跨执行代的历史拒绝可使措辞显示“重新评估候选”，普通技术失败保留“重新处理”。只认确切的顶层结构化错误，不匹配正文、嵌套文字或其他对象；System 的既有历史拒绝限制和原始记录继续保留。
+typed result 里的这些字段命名一次外发，但不构成它发生过的证据：它们由做出该声称的同一轮写出，
+其中 `delivery_key` 和 `external_action_key` 本就是服务在 prompt 里交给它的，回显不证明任何事。
+证据是 provider 接受副作用时返回的回执（`openTaskId` / `openMessageId`），它只会出现在运行时
+原生运行时的调用流里。服务从当前进程的调用事件或 Codex/Claude 原生 session 的精确行范围读取它；
+`agent_run_events` 只保存调用身份和状态，完整参数、命令和工具输出不再写入 SQLite。
 
 Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 consumer-artifacts 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
 
@@ -1144,7 +1149,8 @@ Agent Cron 保存任务定义及其结构化 Skill refs、首选 Runtime route/m
 手动运行只追加一次 manual trigger，不改变 `next_run_at`。若上一轮关联 execution 尚未终态，
 本轮以 `skipped` 和稳定原因结束，不等待后补。
 
-`scheduled_task_runs` 必须保存非空 `snapshot_json`；测试夹具也使用
+`scheduled_task_runs.snapshot_id` 必须引用 `scheduled_task_config_versions` 中的非空 `snapshot_json`。
+完全相同的冻结配置只存一份；修改任务会产生新的配置版本，已排队的运行仍引用原版本。测试夹具使用
 `ScheduledTaskSnapshot.from_task(task).to_json()` 生成冻结定义，不省略快照。
 同一任务的不同运行使用不同 `scheduled_for`，遵守任务 ID 与调度时间的唯一约束；
 验证 execution 映射时也不得通过放宽这些生产约束来构造夹具。
@@ -1912,3 +1918,13 @@ Provider 明确返回 `success=false` 的主消息或敏感消息记录真实失
 ### 历史反馈链接的来源读取（2026-10-07）
 
 Consumer 捕获的历史消息以反馈 token 和 attempt ID 识别上下评分链接是否属于同一对。旧链接中的触发/回复预览各自仍接受敏感值检查，但文字差异不使当前任务失败；Markdown 来源解析保留 URL 原文，以便只在结果检查副本中移除经过检查的链接。两个链接仍分别验证配置的 host/path、query 字段和评分。当前待发送正文保持完整 query 的严格配对，来源原文、候选 digest 和执行前来源比较不受影响。
+
+## Storage retention (2026-10-09)
+
+训练数据正文和观察明细放在数据库旁的 `*-training-data` 目录，SQLite 只保留快照摘要与训练/评估元数据。只保留最新完整快照；已启动训练的 run pin 暂时保留其选定数据，结束后清理。历史摘要不能恢复已经清理的数据，读取明确报告不可用。迁移先写出并校验最新完整快照，再移除旧正文表。
+
+完整 Agent trajectory 由 Codex/Claude 原生 session 或 Friday operation 保存。服务仅持久化原生引用、准确的调用范围、调用身份/状态、typed 最终结果和业务执行回执；当前进程需要的原始工具事件仅留在内存。Workbench 工具事件同样只保留身份/状态，不重复保存命令、参数或输出。旧记录只有在原生完整范围、工具内容和回执核对一致后才精简；原生文件已丢失的唯一历史副本保留。
+
+定时配置正文存于 `scheduled_task_config_versions`，触发记录以 `snapshot_id` 引用不可变版本。数据库迁移保留运行 ID、状态和已排队输入。
+
+模型目录在无训练进程活动时清理，保留当前模型、上一个可运行版本和最新待评估候选；其他旧制品及遗留临时文件删除。业务状态、最终结果、执行回执与小型评估记录保留。数据库删除旧正文后需要执行存储维护并压缩页才能释放文件空间。

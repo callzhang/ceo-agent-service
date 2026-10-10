@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import json
 import sqlite3
 
 from app.email_classifier_contracts import (
@@ -235,53 +236,16 @@ def test_latest_snapshot_projects_counts_and_provider_folder_truth(tmp_path):
                 20260905,
                 "2026-09-08T08:00:00+00:00",
                 "a" * 64,
-                "{}",
+                json.dumps({
+                    "sample_count": 3,
+                    "group_count": 3,
+                    "category_sample_counts": {"financing": 1, "legal": 2},
+                    "category_group_counts": {"financing": 1, "legal": 2},
+                    "splits": {"train": {"count": 3, "categories": ["financing", "legal"], "important": [False, True]}},
+                }),
                 "2026-09-08T08:00:00+00:00",
             ),
         )
-        rows = (
-            ("legal-1", "folder-legal", "Legal", "legal", "group-a"),
-            ("legal-2", "folder-legal", "Legal", "legal", "group-b"),
-            ("finance-1", "folder-financing", "Financing", "financing", "group-c"),
-        )
-        for identity, folder_id, folder_name, category, group in rows:
-            stable_identity = (
-                classification["stable_message_identity"]
-                if identity == "legal-1"
-                else f"account-1:message-id:<{identity}@example.com>"
-            )
-            db.execute(
-                """
-                insert into email_training_snapshot_observations (
-                    snapshot_id, account_id, stable_message_identity,
-                    provider_folder_id, provider_folder_name, category_key,
-                    important, normalized_model_input,
-                    normalized_model_input_hash, input_schema_version,
-                    provider_thread_id, normalized_body_digest,
-                    sender_template_signature, explicit_matter_group,
-                    group_key, observed_at, source, split,
-                    selected_for_training, ordered_record_digest
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null,
-                          ?, ?, 'natural', 'train', 1, ?)
-                """,
-                (
-                    "snapshot-observability",
-                    "account-1",
-                    stable_identity,
-                    folder_id,
-                    folder_name,
-                    category,
-                    1 if identity == "legal-1" else 0,
-                    identity,
-                    "b" * 64,
-                    "email-model-input.v3",
-                    group,
-                    "c" * 64,
-                    (group + "0" * 64)[:64],
-                    "2026-09-08T08:00:00+00:00",
-                    "d" * 64,
-                ),
-            )
         db.execute(
             "update email_training_snapshots set frozen=1 "
             "where snapshot_id='snapshot-observability'"

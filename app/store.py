@@ -230,7 +230,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-08.2"
+STORE_SCHEMA_VERSION = "2026-10-09.1"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -299,6 +299,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "scheduled_tasks",
     "scheduled_task_skill_refs",
     "scheduled_task_runs",
+    "scheduled_task_config_versions",
     "dispatcher_claim_leases",
     "runtime_skill_configs",
     "runtime_skill_bindings",
@@ -538,7 +539,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     ),
     "scheduled_task_runs": (
         "event_id",
-        "snapshot_json",
+        "snapshot_id",
         "execution_kind",
         "execution_id",
         "lease_owner",
@@ -2432,7 +2433,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         return (
             db.execute(
                 """
-                select 1 from scheduled_task_runs
+                select 1 from scheduled_task_config_versions
                 where json_valid(snapshot_json)
                   and json_type(snapshot_json) = 'object'
                   and (
@@ -3256,9 +3257,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     transcript_end_line integer not null default 0,
                     final_result_json text not null default '',
                     structured_error_json text not null default '',
-                    -- A run's trajectory lives in agent_run_events, one row per
-                    -- event, which is what AgentRun.tool_events is read from.
-                    -- There is deliberately no second copy of it here.
+                    -- Full trajectories stay in the runtime's native session.
+                    -- agent_run_events retains only call identity/status.
                     lease_owner text not null default '',
                     lease_expires_at text not null default '',
                     started_at text not null default '',
@@ -5842,41 +5842,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "update scheduled_tasks set description=coalesce(nullif(trim(prompt), ''), name) "
                 "where trim(description)=''"
             )
-            for snapshot_row in db.execute(
-                "select id, snapshot_json from scheduled_task_runs"
-            ).fetchall():
-                try:
-                    snapshot_payload = json.loads(str(snapshot_row["snapshot_json"]))
-                except (TypeError, json.JSONDecodeError):
-                    # Leave corrupt rows untouched: backfilling defaults into
-                    # unparseable data would invent a snapshot.  The currency
-                    # check skips them for the same reason, so startup neither
-                    # crashes here nor loops asking for this migration.
-                    continue
-                if not isinstance(snapshot_payload, dict):
-                    continue
-                missing_snapshot_fields = {
-                    "description": str(snapshot_payload.get("name") or ""),
-                    "required_runtime_capabilities": [],
-                    "command": "",
-                }
-                if any(
-                    field not in snapshot_payload for field in missing_snapshot_fields
-                ):
-                    for field, default in missing_snapshot_fields.items():
-                        snapshot_payload.setdefault(field, default)
-                    db.execute(
-                        "update scheduled_task_runs set snapshot_json=? where id=?",
-                        (
-                            json.dumps(
-                                snapshot_payload,
-                                ensure_ascii=False,
-                                sort_keys=True,
-                                separators=(",", ":"),
-                            ),
-                            int(snapshot_row["id"]),
-                        ),
-                    )
+            from app.scheduled_config_storage import migrate_scheduled_configs
+            migrate_scheduled_configs(db)
             error_columns = {
                 row["name"] for row in db.execute("pragma table_info(errors)").fetchall()
             }
@@ -8820,11 +8787,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return self._scheduled_task_from_row(db, row)
 
     @staticmethod
-    def _scheduled_task_run_columns() -> str:
+    def _scheduled_task_run_columns(alias: str = "scheduled_task_runs") -> str:
         return (
             "id, event_id, scheduled_task_id, trigger_kind, scheduled_for, "
             "first_scheduled_for, occurrence_count, "
-            "dispatch_status, skip_or_error_reason, snapshot_json, "
+            "dispatch_status, skip_or_error_reason, "
+            "(select snapshot_json from scheduled_task_config_versions "
+            f"where id={alias}.snapshot_id) as snapshot_json, "
             "execution_kind, execution_id, lease_owner, lease_expires_at, "
             "created_at, dispatched_at, result_summary"
         )
@@ -8967,6 +8936,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             task = self._scheduled_task_from_row(db, task_row)
             snapshot_json = ScheduledTaskSnapshot.from_task(task).to_json()
             ScheduledTaskSnapshot.from_json(snapshot_json)
+            from app.scheduled_config_storage import intern_scheduled_config
+            snapshot_id = intern_scheduled_config(db, snapshot_json)
             dispatch_status = "skipped" if reason else "pending"
             if reason == "scheduled_task_previous_execution_active":
                 duplicate = db.execute(
@@ -9019,7 +8990,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     insert into scheduled_task_runs (
                         event_id, scheduled_task_id, trigger_kind, scheduled_for,
                         first_scheduled_for, occurrence_count,
-                        dispatch_status, skip_or_error_reason, snapshot_json,
+                        dispatch_status, skip_or_error_reason, snapshot_id,
                         created_at, dispatched_at
                     ) values (?, ?, 'scheduled', ?, ?, 1, ?, ?, ?, ?, ?)
                     """,
@@ -9030,7 +9001,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         scheduled_for_text,
                         dispatch_status,
                         reason,
-                        snapshot_json,
+                        snapshot_id,
                         now_text,
                         now_text if reason else None,
                     ),
@@ -9105,13 +9076,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             snapshot_json = ScheduledTaskSnapshot.from_task(task).to_json()
             # Verify the exact bytes that will be persisted are readable.
             ScheduledTaskSnapshot.from_json(snapshot_json)
+            from app.scheduled_config_storage import intern_scheduled_config
+            snapshot_id = intern_scheduled_config(db, snapshot_json)
             try:
                 cursor = db.execute(
                     """
                     insert into scheduled_task_runs (
                         event_id, scheduled_task_id, trigger_kind, scheduled_for,
                         first_scheduled_for, occurrence_count,
-                        dispatch_status, skip_or_error_reason, snapshot_json,
+                        dispatch_status, skip_or_error_reason, snapshot_id,
                         created_at, dispatched_at
                     ) values (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
                     """,
@@ -9123,7 +9096,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         scheduled_for_text,
                         dispatch_status,
                         reason,
-                        snapshot_json,
+                        snapshot_id,
                         now_text,
                         now_text if dispatch_status == "skipped" else None,
                     ),
@@ -9448,7 +9421,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             rows = db.execute(
                 f"""
-                select {self._scheduled_task_run_columns()}
+                select {self._scheduled_task_run_columns("run")}
                   from scheduled_task_runs as run
                  where run.scheduled_task_id in ({placeholders})
                    and run.id = (
@@ -9542,12 +9515,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             row = db.execute(
                 f"""
-                select run.*
+                select run.*, config.snapshot_json
                   from reply_task_inputs as inputs
                   join scheduled_task_runs as run
                     on run.id=cast(
                         {_SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL} as integer
                     )
+                  join scheduled_task_config_versions as config on config.id=run.snapshot_id
                   join reply_attempts as attempts
                     on attempts.channel=inputs.channel
                    and attempts.conversation_id=inputs.conversation_id
@@ -11257,7 +11231,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "where agent_run_id=? order by sequence",
                 (row["id"],),
             ).fetchall()
-            tool_events = [json.loads(event["event_json"]) for event in event_rows]
+            from app.native_trajectory import live_events, native_run_available, read_run_events
+            db_path = str(db.execute("pragma database_list").fetchone()[2])
+            cached_events = live_events(db_path, int(row["id"]))
+            if cached_events is not None:
+                earlier_count = len(event_rows) - len(cached_events)
+                tool_events = [json.loads(event["event_json"]) for event in event_rows[:earlier_count]] + cached_events
+            else:
+                stored_events = [json.loads(event["event_json"]) for event in event_rows]
+                tool_events = (read_run_events(db, row)
+                               if native_run_available(db, row) else stored_events)
         return AgentRun(
             id=row["id"],
             reply_task_id=row["reply_task_id"],
@@ -13976,15 +13959,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> AgentRun:
         if not owner.strip():
             raise ValueError("owner must be non-empty")
+        from app.native_trajectory import event_metadata, remember_live_event
         event_text = _json_object_text(event, field="event")
         normalized_event = json.loads(event_text)
-        event_type = str(normalized_event.get("type") or "")
-        item = normalized_event.get("item")
-        call_id = (
-            str(item.get("id") or item.get("call_id") or "")
-            if isinstance(item, dict)
-            else ""
-        )
+        event_type, call_id, effect_kind, receipt_operation_id = _agent_event_columns(normalized_event)
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             status_row = db.execute(
                 "select agent_runs.status, agent_runs.execution_generation, "
@@ -14023,11 +14001,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 (
                     run_id,
                     sequence,
-                    event_text,
+                    json.dumps(event_metadata(normalized_event), ensure_ascii=False, separators=(",", ":")),
                     event_type,
                     call_id,
-                    "",
-                    "",
+                    effect_kind,
+                    receipt_operation_id,
                     now_text,
                 ),
             )
@@ -14047,7 +14025,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "select * from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
-            return self._agent_run_from_row(updated, db=db, load_events=False)
+            result = self._agent_run_from_row(updated, db=db, load_events=False)
+        remember_live_event(str(self.path.resolve()), run_id, normalized_event)
+        return result
 
     def _transition_agent_run(
         self,
@@ -19011,7 +18991,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             codex_transcript_start_line,
             codex_transcript_end_line,
             decision_json,
-            audit_tool_events_json,
+            "[]",
             audit_summary,
             error,
         )
@@ -19086,7 +19066,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     codex_transcript_start_line,
                     codex_transcript_end_line,
                     decision_json,
-                    audit_tool_events_json,
+                    "[]",
                     audit_summary,
                     status,
                     error,
@@ -19419,7 +19399,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     codex_transcript_start_line,
                     codex_transcript_end_line,
                     envelope_json,
-                    audit_tool_events_json,
+                    "[]",
                     audit_summary,
                 ),
             )
@@ -19738,6 +19718,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         caller may retry after a later step failed.
         """
 
+        from app.scheduled_config_storage import intern_scheduled_config
+
         old_name = self._require_runtime_attempt_text(old_name, field="route_name")
         new_name = self._require_runtime_attempt_text(new_name, field="route_name")
         if old_name == new_name:
@@ -19758,7 +19740,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             runs = 0
             for row in db.execute(
                 """
-                select id, snapshot_json from scheduled_task_runs
+                select runs.id, configs.snapshot_json from scheduled_task_runs as runs
+                 join scheduled_task_config_versions as configs on configs.id=runs.snapshot_id
                  where dispatch_status in ('pending', 'dispatched')
                    and json_valid(snapshot_json)
                    and json_extract(snapshot_json, '$.runtime_id')=?
@@ -19767,9 +19750,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchall():
                 snapshot = ScheduledTaskSnapshot.from_json(str(row["snapshot_json"]))
                 db.execute(
-                    "update scheduled_task_runs set snapshot_json=? where id=?",
+                    "update scheduled_task_runs set snapshot_id=? where id=?",
                     (
-                        dataclass_replace(snapshot, runtime_id=new_name).to_json(),
+                        intern_scheduled_config(db, dataclass_replace(snapshot, runtime_id=new_name).to_json()),
                         int(row["id"]),
                     ),
                 )
@@ -24420,7 +24403,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     codex_transcript_start_line,
                     codex_transcript_end_line,
                     audit_documents_json,
-                    audit_tool_events_json,
+                    "[]",
                     audit_summary,
                     human_decision_options_json,
                     oa_process_instance_id,
@@ -24589,7 +24572,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     codex_transcript_start_line,
                     codex_transcript_end_line,
                     audit_documents_json,
-                    audit_tool_events_json,
+                    "[]",
                     audit_summary,
                     human_decision_options_json,
                     oa_process_instance_id,
@@ -24843,7 +24826,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 codex_session_id,
                 codex_transcript_start_line,
                 codex_transcript_end_line,
-                audit_tool_events_json,
+                "[]",
                 audit_summary,
                 human_decision_options_json,
                 persisted_process_id,
@@ -25807,7 +25790,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "unknown reply_attempt update column: "
                 + ", ".join(sorted(unknown))
             )
-        return {column: value for column, value in updates.items() if value is not None}
+        return {column: ("[]" if column == "audit_tool_events_json" else value)
+                for column, value in updates.items() if value is not None}
 
     @staticmethod
     def _update_reply_attempt_in_connection(
@@ -31648,7 +31632,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         else 'failed'
                     end as status,
                     case
-                        when coalesce(json_extract(runs.snapshot_json, '$.command'), '')<>''
+                        when coalesce(json_extract(configs.snapshot_json, '$.command'), '')<>''
                             then '{history_types.SCHEDULED_COMMAND}'
                         else '{history_types.SCHEDULED_AGENT}'
                     end as history_type,
@@ -31657,7 +31641,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         else 'Scheduled task'
                     end as source_actor,
                     coalesce(
-                        nullif(json_extract(runs.snapshot_json, '$.name'), ''),
+                        nullif(json_extract(configs.snapshot_json, '$.name'), ''),
                         'Scheduled task ' || runs.scheduled_task_id
                     ) as context,
                     coalesce(
@@ -31672,6 +31656,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     0 as todo_id,
                     0 as follow_up_id
                 from scheduled_task_runs as runs
+                join scheduled_task_config_versions as configs on configs.id=runs.snapshot_id
                 where {history_types.scheduled_run_filter_sql("runs")}
         """
         if self._email_actions_history_available():

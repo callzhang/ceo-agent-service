@@ -51,6 +51,7 @@ def close_superseded_scheduled_reply_tasks(
              and run.execution_kind='reply_task'
              and run.execution_id=cast(task.id as text)
              and run.dispatch_status='dispatched'
+            join scheduled_task_config_versions as config on config.id=run.snapshot_id
             join scheduled_tasks as current_task
               on current_task.id=run.scheduled_task_id
             join reply_attempts as latest_attempt
@@ -69,10 +70,10 @@ def close_superseded_scheduled_reply_tasks(
               and task.error in ({placeholders})
               and current_task.deleted_at is null
               and trim(current_task.command)<>''
-              and json_valid(run.snapshot_json)
-              and json_type(run.snapshot_json)='object'
-              and trim(coalesce(json_extract(run.snapshot_json, '$.command'), ''))=''
-              and cast(json_extract(run.snapshot_json, '$.task_version') as integer)
+              and json_valid(config.snapshot_json)
+              and json_type(config.snapshot_json)='object'
+              and trim(coalesce(json_extract(config.snapshot_json, '$.command'), ''))=''
+              and cast(json_extract(config.snapshot_json, '$.task_version') as integer)
                   < current_task.version
               and latest_attempt.send_status='failed'
               and trim(coalesce(latest_attempt.resolved_at, ''))=''

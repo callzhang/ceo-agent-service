@@ -1171,7 +1171,7 @@ MODEL 缺省取 `CEO_CODEX_MODEL`）和 `CEO_RUNTIME_CLAUDE_API_*`（KIND=claude
 `{"new_name": ...}`；页面上改卡片名字即调用它）。新名字须合规、不能是三个内置名、不能与已配置的线路重名；
 内置线路不能改名。一次改名先在**一个数据库事务**里把按名字引用这条线路的地方全部改过去
 （`AutoReplyStore.rename_runtime_route`）：定时任务首选线路 `scheduled_tasks.runtime_id`（版本号 +1）、
-还可能被派发或重建的定时运行快照（`scheduled_task_runs` 中 `pending`/`dispatched` 的 `snapshot_json.runtime_id`；
+还可能被派发或重建的定时运行快照（`scheduled_task_runs` 中 `pending`/`dispatched` 通过 `snapshot_id` 引用的配置版本的 `snapshot_json.runtime_id`；
 `skipped`/`failed` 已是终态不改）、会话续接 `conversation_runtime_sessions`、线路暂停 `runtime_route_pauses`、
 能力快照 `service_state` 的 `agent-runtime-capability:<名字>`（连同快照里的 `route_name`）；新名字下已有的
 残留行属于一条已不存在的线路，被覆盖。历史 `agent_runtime_attempts.route_name` 不改，它记的是当时用的名字。
@@ -1593,3 +1593,12 @@ ProcessingReaction 在现有 service_state 保存文字表情模板与每条源�
 正常生产和消费 pass 根据现有 reply_tasks 与 sent_replies 清理已结束的源消息，
 重启后继续未确认的表情操作。只操作本功能记录的源消息与服务账号的「处理中」表情。
 该进度展示不改变 Consumer/Audit 生命周期、发送授权或现有业务效果检查。
+## Storage retention (2026-10-09)
+
+训练数据正文和观察明细放在数据库旁的 `*-training-data` 目录，SQLite 只保留快照摘要与训练/评估元数据。只保留最新完整快照；已启动训练的 run pin 暂时保留其选定数据，结束后清理。历史摘要不能恢复已经清理的数据，读取明确报告不可用。迁移先写出并校验最新完整快照，再移除旧正文表。
+
+完整 Agent trajectory 由 Codex/Claude 原生 session 或 Friday operation 保存。服务仅持久化原生引用、准确的调用范围、调用身份/状态、typed 最终结果和业务执行回执；当前进程需要的原始工具事件仅留在内存。Workbench 工具事件同样只保留身份/状态，不重复保存命令、参数或输出。旧记录只有在原生完整范围、工具内容和回执核对一致后才精简；原生文件已丢失的唯一历史副本保留。
+
+定时配置正文存于 `scheduled_task_config_versions`，触发记录以 `snapshot_id` 引用不可变版本。数据库迁移保留运行 ID、状态和已排队输入。
+
+模型目录在无训练进程活动时清理，保留当前模型、上一个可运行版本和最新待评估候选；其他旧制品及遗留临时文件删除。业务状态、最终结果、执行回执与小型评估记录保留。数据库删除旧正文后需要执行存储维护并压缩页才能释放文件空间。

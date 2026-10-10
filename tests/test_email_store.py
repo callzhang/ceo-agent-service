@@ -121,6 +121,21 @@ def _append_copied_training_observation(
         )
 
 
+def _insert_legacy_snapshot_observations(db, snapshot, record_digests):
+    for row, digest in zip(snapshot.observations, record_digests, strict=True):
+        values = row.to_dict()
+        values["important"] = int(values["important"])
+        values["selected_for_training"] = int(values["selected_for_training"])
+        values["ordered_record_digest"] = digest
+        columns = ", ".join(values)
+        placeholders = ", ".join("?" for _ in values)
+        db.execute(
+            f"insert into email_training_snapshot_observations ({columns}) "
+            f"values ({placeholders})",
+            tuple(values.values()),
+        )
+
+
 def _legacy_unsigned_record_digest(row) -> str:
     return deterministic_payload_digest(
         {
@@ -236,6 +251,13 @@ def test_v23_snapshot_migration_freezes_and_preserves_existing_observations(
             "trg_email_training_observations_require_unfrozen_snapshot",
         ):
             db.execute(f"drop trigger {trigger}")
+        _insert_legacy_snapshot_observations(
+            db, snapshot, snapshot.manifest["ordered_record_digests"]
+        )
+        db.execute(
+            "update email_training_snapshots set manifest_json=? where snapshot_id=?",
+            (json.dumps(snapshot.manifest), snapshot.snapshot_id),
+        )
         db.execute("alter table email_training_snapshots drop column frozen")
         _rewind_email_schema(db, version=23)
 
@@ -274,6 +296,7 @@ def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path)
             "trg_email_training_observations_require_unfrozen_snapshot",
         ):
             db.execute(f"drop trigger {trigger}")
+        _insert_legacy_snapshot_observations(db, snapshot, legacy_record_digests)
         db.execute(
             "update email_training_snapshots set manifest_json=?, snapshot_digest=?",
             (
@@ -315,7 +338,7 @@ def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path)
     ] == list(range(23, email_store_module.EMAIL_SCHEMA_VERSION + 1))
 
 
-def test_v24_snapshot_readback_preserves_unsigned_time_legacy_manifest(
+def test_snapshot_readback_requires_external_data_for_db_digest(
     tmp_path: Path,
 ):
     store = EmailStore(tmp_path / "training-snapshot-v24-legacy-manifest.sqlite3")
@@ -351,11 +374,8 @@ def test_v24_snapshot_readback_preserves_unsigned_time_legacy_manifest(
             ],
         )
 
-    restored = store.get_training_snapshot(snapshot.snapshot_id)
-
-    assert restored is not None
-    assert restored["snapshot_digest"] == legacy_digest
-    assert restored["manifest"] == legacy_manifest
+    with pytest.raises(RuntimeError, match="unavailable"):
+        store.get_training_snapshot(snapshot.snapshot_id)
 
 
 def test_store_round_trips_frozen_training_snapshot(tmp_path: Path):
@@ -413,7 +433,7 @@ def test_identical_training_snapshot_persistence_is_idempotent(tmp_path: Path):
             db.execute(
                 "select count(*) from email_training_snapshot_observations"
             ).fetchone()[0]
-            == 1
+            == 0
         )
 
 
@@ -506,12 +526,8 @@ def test_later_snapshot_does_not_mutate_earlier_observation(tmp_path: Path):
     store.persist_training_snapshot(first)
     store.persist_training_snapshot(moved)
 
-    assert (
-        store.get_training_snapshot("snapshot-before-move")["observations"][0][
-            "category_key"
-        ]
-        == "work"
-    )
+    with pytest.raises(RuntimeError, match="unavailable"):
+        store.get_training_snapshot("snapshot-before-move")
     assert (
         store.get_training_snapshot("snapshot-after-move")["observations"][0][
             "category_key"
@@ -532,8 +548,6 @@ def test_later_snapshot_does_not_mutate_earlier_observation(tmp_path: Path):
     "statement",
     (
         "update email_training_snapshots set seed=99",
-        "update email_training_snapshot_observations set source='targeted'",
-        "delete from email_training_snapshot_observations",
     ),
 )
 def test_database_rejects_frozen_snapshot_mutation(tmp_path: Path, statement: str):
@@ -549,13 +563,14 @@ def test_database_rejects_frozen_snapshot_mutation(tmp_path: Path, statement: st
 
 def test_database_rejects_observation_append_after_snapshot_freeze(tmp_path: Path):
     store = EmailStore(tmp_path / "training-snapshot-append.sqlite3")
-    store.persist_training_snapshot(_frozen_training_snapshot())
+    snapshot = _frozen_training_snapshot()
+    store.persist_training_snapshot(snapshot)
 
     with pytest.raises(sqlite3.IntegrityError, match="frozen"):
-        _append_copied_training_observation(
-            store.path,
-            stable_message_identity="account-a:message-id:<appended@example.test>",
-        )
+        with sqlite3.connect(store.path) as db:
+            _insert_legacy_snapshot_observations(
+                db, snapshot, [snapshot.observations[0].ordered_record_digest]
+            )
 
 
 def test_readback_rejects_persisted_observation_not_covered_by_manifest(

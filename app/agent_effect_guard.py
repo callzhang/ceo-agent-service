@@ -102,6 +102,10 @@ def provider_receipts(tool_events: Any) -> tuple[str, ...]:
         return ()
     found: list[str] = []
     for event in tool_events:
+        item = event.get("item") if isinstance(event, dict) else None
+        if isinstance(item, dict):
+            found.extend(receipt for receipt in item.get("provider_receipt_ids", [])
+                         if isinstance(receipt, str) and receipt.strip())
         for answer in _provider_answers(event):
             if isinstance(answer, str):
                 for response in _loads(answer):

@@ -1069,6 +1069,81 @@ class EmailModelRegistry:
             reverse=True,
         )
 
+    def prune_artifacts(self, *, training_active: bool) -> list[Path]:
+        """Keep runnable manifests and one unevaluated candidate after training ends."""
+        if training_active:
+            return []
+        removed: list[Path] = []
+        with self._locked():
+            models = self.list_models()
+            protected = {
+                manifest.model_id
+                for manifest in (
+                    self._read_manifest(self.root / "active.json", require_full_taxonomy=True),
+                    self._read_manifest(self.root / "previous.json"),
+                )
+                if manifest is not None
+            }
+            from app.email_classifier_runtime import _read_online_control
+
+            online = _read_online_control(self)
+            if online.get("model_id"):
+                protected.add(str(online["model_id"]))
+            for transition in reversed(online.get("mode_transitions", [])):
+                previous_id = transition.get("target_model_id")
+                if previous_id and previous_id != online.get("model_id"):
+                    protected.add(str(previous_id))
+                    break
+            candidates = [
+                record for record in models
+                if record.status == "candidate" and record.metadata.model_id not in protected
+            ]
+            staged = [
+                item for item in self.list_staged_evidence_inventory()
+                if item["integrity_status"] == "readable"
+                and item["evidence"].get("status") == "candidate"
+                and (self.embedding_artifacts / f"{item['model_id']}.artifact").is_file()
+            ]
+            staged.sort(
+                key=lambda item: (
+                    str(item["evidence"].get("trained_at", "")),
+                    str(item["model_id"]),
+                ), reverse=True,
+            )
+            candidate_options = [
+                (record.metadata.trained_at, record.metadata.model_id)
+                for record in candidates
+            ] + [
+                (str(item["evidence"].get("trained_at", "")), str(item["model_id"]))
+                for item in staged
+                if item["model_id"] not in protected
+            ]
+            if candidate_options:
+                protected.add(max(candidate_options)[1])
+            for record in models:
+                if record.metadata.model_id in protected:
+                    continue
+                for path in (
+                    record.artifact_path,
+                    record.metadata_path,
+                    *self.lifecycle.glob(f"{record.metadata.model_id}-*.json"),
+                ):
+                    path.unlink()
+                    removed.append(path)
+            for path in self.embedding_artifacts.glob("*.artifact"):
+                if path.stem not in protected:
+                    path.unlink()
+                    removed.append(path)
+            for directory in (
+                self.artifacts, self.embedding_artifacts, self.metadata,
+                self.staged_evidence, self.lifecycle, self.runtime_failures,
+                self.runs, self.root,
+            ):
+                for path in directory.glob(".*.tmp"):
+                    path.unlink()
+                    removed.append(path)
+        return removed
+
     def list_model_inventory(self) -> list[ModelInventoryEntry]:
         """Enumerate records without letting one damaged history item hide the rest."""
 
