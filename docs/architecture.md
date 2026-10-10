@@ -1358,6 +1358,7 @@ session 指针读取 JSONL，并只向普通用户展示业务结果；内部角
 
 Attempt 详情只为页面展示的历史执行代批量读取 Agent 工具事件。若任务已有更新的执行代，
 当前状态投影只读取新执行代的运行状态，不再重复加载其工具事件。
+详情页将这些运行的 runtime 尝试记录合并为一次按 run ID 查询，保持 run 内尝试顺序。
 
 为避免一个详情页因同一 session 的 Consumer、重试和 runtime 记录而重复扫描全量本地
 索引，`session_path_index.jsonl` 的最新记录按文件的 mtime、大小和 inode 做进程内只读缓存。
