@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-10: Update Project replay readback fixtures to isolated native Task
+  records and schema-valid assessments with their actual source input. Preserve
+  missing evidence, missing projection receipt and incomplete storage failures;
+  the legacy storage comparison remains read-only.
+
 - 2026-10-10: Give audited email Web projection fixtures complete validated
   proposals and candidate-bound approvals, sharing the existing synthetic
   review helper without changing its checks. Retain privacy, entry-access,

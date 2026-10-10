@@ -13,6 +13,32 @@ from app.store import AutoReplyStore
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
 from app.task_business_resolution import BusinessResolutionService
 from app.task_semantic_models import AttentionCategory
+from app.task_models import TaskAgentDecision
+from tests.support.task_native import task_native_records  # noqa: F401
+
+
+def _assessment(*, proposal=False, anchor_id=1, evidence=None):
+    evidence = evidence or [{"signal_id": None, "source_ref": "message:readback",
+                             "source_excerpt": "验收日期未确定，影响本期回款", "source_time": "", "source_link": ""}]
+    current = [{"signal_id": None, "source_ref": item["source_ref"],
+                "source_excerpt": item["source_excerpt"]} for item in evidence]
+    result = {
+        "project_title": "交付项目", "anchor_id": anchor_id,
+        "outcome": "needs_attention" if proposal else "not_needed",
+        "reason": "验收排期影响回款" if proposal else "已有人推进，当前不需关注",
+        "assessment_basis": "current_observation", "evidence": current,
+        "attention_proposal": None,
+    }
+    if proposal:
+        result["attention_proposal"] = {
+            "assessment_basis": "current_observation", "category": "watch",
+            "title": "交付项目", "why_attention": "本期回款有风险",
+            "current_state": "验收日期未确定", "ceo_action": "关注验收排期",
+            "material_trigger": "threatened_commitment", "evidence": current,
+        }
+    TaskAgentDecision.model_validate({"project_decisions": [], "task_decisions": [],
+                                     "project_assessments": [result]})
+    return result
 
 
 def _tool():
@@ -79,7 +105,7 @@ def test_readback_counts_project_owned_proposal_and_rejects_no_proposal_receipt(
     input_id = store.enqueue_work_summary_input("reply_attempt", "m:proposal", "{}")
     run_id = store.record_task_agent_run(input_id, decision_json=json.dumps({
         "project_decisions": [], "task_decisions": [],
-        "project_assessments": [{"attention_proposal": {"action": "upsert"}}],
+        "project_assessments": [_assessment(proposal=True)],
     }))
     if save_receipt:
         store.record_task_agent_projection(run_id, json.dumps({
@@ -97,12 +123,16 @@ def test_readback_counts_project_owned_proposal_and_rejects_no_proposal_receipt(
 def test_readback_not_needed_receipt_uses_project_proof_without_task_or_card(tmp_path, remove_project_proof):
     store = AutoReplyStore(tmp_path / "receipt.sqlite3")
     project_id, anchor_id, _, citation = _project(store)
-    input_id = store.enqueue_work_summary_input("reply_attempt", "m:receipt", "{}")
-    assessment = {
-        "project_title": "交付项目", "outcome": "not_needed",
-        "reason": "已有人推进，当前不需关注", "evidence": [citation],
-        "attention_proposal": None,
-    }
+    input_id = store.enqueue_work_summary_input("reply_attempt", "m:receipt", json.dumps({
+        "source": {"ref": citation["source_ref"]},
+        "summary": citation["source_excerpt"],
+    }))
+    assessment = _assessment(anchor_id=anchor_id, evidence=[citation])
+    assessment["assessment_basis"] = "historical_comparison"
+    assessment["evidence"].append({key: citation[key] for key in
+                                   ("signal_id", "source_ref", "source_excerpt")})
+    TaskAgentDecision.model_validate({"project_decisions": [], "task_decisions": [],
+                                     "project_assessments": [assessment]})
     run_id = store.record_task_agent_run(input_id, decision_json=json.dumps({
         "project_decisions": [], "task_decisions": [], "project_assessments": [assessment],
     }))
@@ -138,9 +168,7 @@ def test_completed_receipt_does_not_prove_a_missing_attention_result(tmp_path, o
     store = AutoReplyStore(tmp_path / "missing-card.sqlite3")
     input_id = store.enqueue_work_summary_input("reply_attempt", "m:missing-card", "{}")
     run_id = store.record_task_agent_run(input_id, decision_json=json.dumps({
-        "project_decisions": [], "task_decisions": [], "project_assessments": [{
-            "attention_proposal": {"action": "upsert"}, "outcome": "needs_attention",
-        }],
+        "project_decisions": [], "task_decisions": [], "project_assessments": [_assessment(proposal=True)],
     }))
     store.record_task_agent_projection(run_id, json.dumps({
         "status": "completed", "proposal_count": 1, "applied_count": len(outcomes),
@@ -156,9 +184,7 @@ def test_current_negative_assessment_requires_a_saved_receipt_without_oracle_lab
     store = AutoReplyStore(tmp_path / "missing-assessment.sqlite3")
     input_id = store.enqueue_work_summary_input("reply_attempt", "m:no-receipt", "{}")
     store.record_task_agent_run(input_id, decision_json=json.dumps({
-        "project_decisions": [], "task_decisions": [], "project_assessments": [{
-            "outcome": "not_needed", "attention_proposal": None,
-        }],
+        "project_decisions": [], "task_decisions": [], "project_assessments": [_assessment()],
     }))
     tool = _tool()
     result = tool.readback(store, input_id=input_id, before=tool.read_domain(store))
@@ -275,7 +301,7 @@ def test_baseline_missing_project_storage_is_an_explicit_comparison_failure(tmp_
         for name in ("business_projects", "business_tasks", "business_attention_items", "business_attention_events",
                      "business_task_events", "business_task_anchor_links", "business_anchors"):
             db.execute(f"create table {name} (id integer, canonical_anchor_id integer, active integer)")
-        db.execute("create table agent_runtime_attempts (id integer,route_name text,runtime_kind text,model text,status text,failure_code text,attempt_purpose text,workload_kind text,workload_key text)")
+        db.execute("create table agent_runtime_attempts (id integer,route_name text,runtime_kind text,model text,status text,failure_code text,attempt_purpose text,workload_kind text,workload_key text,session_id text,transcript_start integer,transcript_end integer)")
         db.execute("create table task_agent_runs (id integer,summary_input_id integer,status text,decision_json text,projection_json text,error text)")
         db.execute("insert into task_agent_runs values (1,1,'completed',?,?, '')", (
             json.dumps({"task_decisions": [], "project_assessments": []}),
