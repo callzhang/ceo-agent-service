@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-09: Avoid SQLite writer admission for empty, settled, delayed and
+  live-leased Email classification polls. Due work and expired leases still
+  recover and claim exclusively under BEGIN IMMEDIATE; a concurrent claim is
+  rechecked rather than trusted from the preliminary read.
+
 - 2026-10-09: Preserve terminal failures before an Agent run starts. The Reply
   worker records the original failure without inventing a run or retrying a
   non-retryable result; missing nonzero final run IDs remain integrity errors.

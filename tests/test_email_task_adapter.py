@@ -911,6 +911,68 @@ def test_v25_migration_structurally_redacts_unicode_url_and_token_everywhere(
     assert decoded_documents[2]["unsubscribe_candidate_source"] == "legacy"
 
 
+@pytest.mark.parametrize("state", ["empty", "done", "delayed", "live"])
+def test_ineligible_classification_poll_does_not_acquire_writer_lock(
+    tmp_path: Path, monkeypatch, state: str
+):
+    store = _email_store(tmp_path)
+    adapter = EmailClassificationTaskAdapter(store)
+    if state != "empty":
+        task = adapter.ensure_task(_classification_input(uid=142))
+        with store._connect() as db:
+            db.execute(
+                "update email_agent_classification_tasks set status=?, "
+                "available_at=?, lease_expires_at=? where task_id=?",
+                (
+                    "pending" if state == "delayed" else "running" if state == "live" else "done",
+                    "2099-01-01 00:00:00" if state == "delayed" else "",
+                    "2099-01-01 00:00:00" if state == "live" else "",
+                    task.task_id,
+                ),
+            )
+    original_open = store._open_connection
+
+    def short_wait_connection():
+        db = original_open()
+        db.execute("pragma busy_timeout=20")
+        return db
+
+    monkeypatch.setattr(store, "_open_connection", short_wait_connection)
+    with sqlite3.connect(store.path) as writer:
+        writer.execute("begin immediate")
+        try:
+            assert adapter.claim_next(owner="idle-poller") is None
+        finally:
+            writer.rollback()
+
+
+def test_classification_claim_rechecks_after_an_intervening_owner(tmp_path: Path, monkeypatch):
+    store = _email_store(tmp_path)
+    adapter = EmailClassificationTaskAdapter(store)
+    task = adapter.ensure_task(_classification_input(uid=142))
+    competitor = EmailClassificationTaskAdapter(EmailStore(store.path))
+    original_open = store._open_connection
+    claims = []
+
+    def competing_connection():
+        db = original_open()
+
+        def before_begin(statement):
+            if statement.lower() == "begin immediate":
+                db.set_trace_callback(None)
+                claims.append(competitor.claim_next(owner="other-worker"))
+
+        db.set_trace_callback(before_begin)
+        return db
+
+    monkeypatch.setattr(store, "_open_connection", competing_connection)
+    assert adapter.claim_next(owner="first-worker") is None
+    assert len(claims) == 1 and claims[0] is not None
+    persisted = adapter.get_task(task.task_id)
+    assert persisted.owner == "other-worker"
+    assert persisted.generation == 1
+
+
 def test_classification_task_claim_is_single_owner_and_recoverable(tmp_path: Path):
     adapter = EmailClassificationTaskAdapter(
         _email_store(tmp_path), retry_base_seconds=0

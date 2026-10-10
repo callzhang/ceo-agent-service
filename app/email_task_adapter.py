@@ -445,6 +445,19 @@ class EmailClassificationTaskAdapter:
             self._now() + timedelta(seconds=self.lease_seconds)
         )
         with self.email_store._connect() as db:
+            eligible = db.execute(
+                """
+                select 1 from email_agent_classification_tasks
+                where (status='pending' and (available_at='' or available_at <= ?))
+                   or (status='running' and lease_expires_at <= ?)
+                limit 1
+                """,
+                (now, now),
+            ).fetchone()
+            if eligible is None:
+                return None
+            # The read only avoids empty writes; recovery and claiming are
+            # recomputed under the writer lock, never from this snapshot.
             db.execute("begin immediate")
             self._expire_running_claims(db, now=now)
             row = db.execute(
