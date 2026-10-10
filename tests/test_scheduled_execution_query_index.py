@@ -2,6 +2,7 @@ import pytest
 
 from app.audit_web import _queue_attention_rows
 from app.store import AutoReplyStore
+from app.scheduled_config_storage import intern_scheduled_config
 
 
 def test_reply_recovery_does_not_scan_other_execution_links(tmp_path, monkeypatch):
@@ -31,6 +32,7 @@ def test_reply_recovery_does_not_scan_other_execution_links(tmp_path, monkeypatc
         timezone_name="UTC",
     )
     with store._connect() as db:
+        snapshot_id = intern_scheduled_config(db, "{}")
         db.execute(
             "update reply_tasks set status='failed',error='failed' where id=?",
             (failed.id,),
@@ -38,9 +40,9 @@ def test_reply_recovery_does_not_scan_other_execution_links(tmp_path, monkeypatc
         db.execute("update reply_tasks set status='done' where id=?", (other.id,))
         db.executemany(
             "insert into scheduled_task_runs "
-            "(event_id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,dispatch_status,snapshot_json,execution_kind,execution_id) "
-            "values (?,?,'manual','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z','dispatched','{}','reply_task',?)",
-            [(f"event-{i}", schedule.id, str(other.id)) for i in range(5000)],
+            "(event_id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,dispatch_status,snapshot_id,execution_kind,execution_id) "
+            "values (?,?,'manual','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z','dispatched',?,'reply_task',?)",
+            [(f"event-{i}", schedule.id, snapshot_id, str(other.id)) for i in range(5000)],
         )
     statements = []
     original_open = store._open_connection
@@ -86,11 +88,12 @@ def test_execution_expression_index_keeps_existing_integer_cast_semantics(
         timezone_name="UTC",
     )
     with store._connect() as db:
+        snapshot_id = intern_scheduled_config(db, "{}")
         db.execute(
             "insert into scheduled_task_runs "
-            "(event_id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,dispatch_status,snapshot_json,execution_kind,execution_id) "
-            "values ('event',?,'manual','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z','dispatched','{}','reply_task',?)",
-            (schedule.id, execution_id),
+            "(event_id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,dispatch_status,snapshot_id,execution_kind,execution_id) "
+            "values ('event',?,'manual','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z','dispatched',?,'reply_task',?)",
+            (schedule.id, snapshot_id, execution_id),
         )
         assert (
             db.execute(

@@ -1,5 +1,46 @@
 # Current Runtime Mechanism
 
+Reply quality checks rank attempts using only identity, ordering, status and
+review fields, not complete input or reply payloads. OA completion receipts and
+reviewed human-decision candidates are still checked through their original
+queries. Deduplication and recovery semantics are unchanged; narrower projection
+does not establish that all SQLite lock contention or endpoint latency is fixed.
+
+Runtime EmailStore initialization validates account configuration even when
+historical durable-row validation is disabled. Invalid account JSON makes email
+storage unavailable through the existing initialization boundary; unrelated
+audit routes remain available. This scans account configuration, not historical
+messages, actions or training observations.
+Both lightweight and full validation require at least one nonblank string scan
+folder per account, using the same account configuration check.
+
+Email training snapshot reads validate the external payload against the frozen
+SQLite parent's identity, versions, seed, observation time and digest. A valid
+external file does not excuse a tampered parent record. These comparisons run
+only for the requested snapshot and do not restore historical startup scans.
+Publishing a subsequent snapshot propagates failures while reading the previous
+snapshot; a corrupt parent cannot be treated as missing label history or advance
+watermarks. The failed publication leaves the previous snapshot unchanged.
+Folder and selected snapshots have separate cumulative label baselines. Reads,
+training pins and idle cleanup therefore use the latest complete snapshot of
+each type, not a single global latest file. Older snapshots of the same type
+remain unavailable unless pinned by an active training run. Already removed
+payloads are not reconstructed or silently treated as empty history.
+
+Cron scheduler and dispatcher incidents close only after the same component
+completes a successful tick. Recovery retains incidents from the tick's entire
+start second or later, because stored incident timestamps have second precision,
+and incidents from other components. Startup health alone is
+not recovery evidence. With no eligible incident, resolution does not acquire
+the SQLite writer lock; the write transaction rechecks the same conditions.
+
+A resumed runtime attempt initializes an empty transcript range at its observed
+start offset. Setting the session advances an unset end to that offset without
+discarding any later captured end. Thus a result-validation failure can retain
+its original error before a transcript end is captured, instead of failing its
+own persistence with an invalid range. An empty range is not transcript content
+or execution evidence. Explicit invalid completion ranges are still rejected.
+
 Email classification polling checks for due pending work or an expired running
 lease before acquiring the SQLite writer lock. Ineligible polls are read-only.
 The eligibility read grants no ownership: expired-lease recovery and the full
@@ -1964,7 +2005,7 @@ Consumer 捕获的历史消息以反馈 token 和 attempt ID 识别上下评分�
 
 ## Storage retention (2026-10-09)
 
-训练数据正文和观察明细放在数据库旁的 `*-training-data` 目录，SQLite 只保留快照摘要与训练/评估元数据。只保留最新完整快照；已启动训练的 run pin 暂时保留其选定数据，结束后清理。历史摘要不能恢复已经清理的数据，读取明确报告不可用。迁移先写出并校验最新完整快照，再移除旧正文表。
+训练数据正文和观察明细放在数据库旁的 `*-training-data` 目录，SQLite 只保留快照摘要与训练/评估元数据。运行时按快照类型保留最新完整基线，与各类型标签水位累计一致；已启动训练的 run pin 暂时保留其选定数据，结束后清理同类型旧快照。历史摘要不能恢复已经清理的数据，读取明确报告不可用。迁移先写出并校验最新完整快照，再移除旧正文表；运行时修复不重建迁移前已删除的基线。
 
 完整 Agent trajectory 的唯一数据源是 Codex/Claude 原生 session 或 Friday operation。服务仅持久化服务任务状态及定位原生运行所需的引用和准确范围；调用正文、精简事件、原始最终结果、runtime result envelope、审查调用正文及派生搜索正文不再保存第二份。当前调用流和解析结果仅在内存中使用，历史详情按需读取原生记录。迁移清除历史数据库副本，原生文件缺失的过程详情明确不可用，不回退到数据库副本。服务自己提交的业务状态、待执行输入和外部动作账本继续作为服务数据保存。
 

@@ -2046,7 +2046,19 @@ def test_render_attempt_list_shows_draft_follow_up_as_scheduled(tmp_path: Path):
     assert ">Processing</span>" not in html
 
 
-def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path):
+def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path, monkeypatch):
+    def read_native_events(session_id, **_bounds):
+        assert session_id == "meeting-session-history-1"
+        return [
+            {"tool": "exec_command", "call_id": "meeting-call-1",
+             "title": "Read meeting memory", "relevance": "确认会议相关历史判断",
+             "input": '{"cmd":"rg 上线范围 /Users/principal/Documents/memory"}',
+             "command": "rg 上线范围 /Users/principal/Documents/memory"},
+            {"tool": "tool_output", "call_id": "meeting-call-1",
+             "output": "memory.md:1:上线范围需要先确认风险预算"},
+        ]
+
+    monkeypatch.setattr(audit_web_module, "extract_codex_audit_events_from_session", read_native_events)
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     run_id = seed_meeting_attempt(store)
 
@@ -8001,12 +8013,14 @@ def test_reply_attempt_queue_snapshot_reads_latest_projection_once(tmp_path: Pat
     with store._connect() as db:
         db.set_trace_callback(queries.append)
         snapshot = _reply_attempt_queue_snapshot(db)
+        snapshot_queries = list(queries)
         expected_time = db.execute(
             "select max(updated_at) from reply_attempts"
         ).fetchone()[0]
     assert snapshot["counts"] == {"failed": 1}
     assert snapshot["latest_updated_at"] == expected_time
-    assert sum("row_number() over" in query.lower() for query in queries) == 1
+    assert len(snapshot_queries) == 1
+    assert "reply_attempts" in snapshot_queries[0].lower()
 
 
 def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(
@@ -9628,7 +9642,13 @@ def test_fastapi_app_records_feedback_and_redirects(tmp_path: Path):
     assert attempt.corrected_reply_text == "先看材料"
 
 
-def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: Path):
+def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: Path, monkeypatch):
+    def read_native_events(session_id, **_bounds):
+        assert session_id == "session-1"
+        return [{"tool": "exec_command", "command": "rg 岗位",
+                 "input": json.dumps({"cmd": "rg 岗位"}, ensure_ascii=False, indent=2)}]
+
+    monkeypatch.setattr(audit_web_module, "extract_codex_audit_events_from_session", read_native_events)
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
     store.record_sent_reply(
@@ -9703,7 +9723,23 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "Final reply (send-ready text)" not in html
 
 
-def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: Path):
+def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: Path, monkeypatch):
+    session_reads = []
+
+    def read_native_events(session_id, **bounds):
+        session_reads.append((session_id, bounds))
+        return [
+            {"tool": "exec_command", "call_id": "call-1",
+             "title": "Search role profile", "relevance": "确认岗位画像是否提到项目经理",
+             "input": '{"cmd":"rg -n 岗位 /Users/principal/Documents/memory/面试"}',
+             "command": "rg -n 岗位 /Users/principal/Documents/memory/面试"},
+            {"tool": "tool_output", "call_id": "call-1",
+             "output": json.dumps({"result": json.dumps(
+                 {"ok": "success", "matches": ["岗位画像.md:1:项目经理"]}, ensure_ascii=False
+             )}, ensure_ascii=False)},
+        ]
+
+    monkeypatch.setattr(audit_web_module, "extract_codex_audit_events_from_session", read_native_events)
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
@@ -9760,6 +9796,7 @@ def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: P
     )
 
     status, html = render_attempt_detail(store, attempt_id)
+    assert session_reads and all(session_id == "session-1" for session_id, _ in session_reads)
 
     assert status == 200
     assert "Tool uses" in html
@@ -9783,7 +9820,7 @@ def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: P
     assert "岗位画像.md:1:项目经理" in html
 
 
-def test_render_attempt_detail_unwraps_terminal_wrapped_mcp_json_output(tmp_path: Path):
+def test_render_attempt_detail_unwraps_terminal_wrapped_mcp_json_output(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     output = (
         "Wall time: 0.8105 seconds\n"
@@ -9803,6 +9840,15 @@ def test_render_attempt_detail_unwraps_terminal_wrapped_mcp_json_output(tmp_path
             ensure_ascii=False,
         )
     )
+    def read_native_events(session_id, **_bounds):
+        assert session_id == "memory-output-session"
+        return [
+            {"tool": "memory_write", "call_id": "call-memory",
+             "input": json.dumps({"data": "稳定业务口径", "type": "text"}, ensure_ascii=False)},
+            {"tool": "tool_output", "call_id": "call-memory", "output": output},
+        ]
+
+    monkeypatch.setattr(audit_web_module, "extract_codex_audit_events_from_session", read_native_events)
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
         conversation_title="MKT core",
@@ -9811,6 +9857,7 @@ def test_render_attempt_detail_unwraps_terminal_wrapped_mcp_json_output(tmp_path
         trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
+        codex_session_id="memory-output-session",
         audit_tool_events_json=json.dumps(
             [
                 {
@@ -9882,12 +9929,22 @@ def test_render_attempt_detail_skips_empty_document_args(tmp_path: Path):
     assert "audit-tool-args" not in tool_uses_html
 
 
-def test_render_attempt_detail_renders_dws_material_tool_events(tmp_path: Path):
+def test_render_attempt_detail_renders_dws_material_tool_events(tmp_path: Path, monkeypatch):
     command = (
         "dws doc read --node https://alidocs.dingtalk.com/i/nodes/doc123 "
         "--format json"
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    def read_native_events(session_id, **_bounds):
+        assert session_id == "dws-material-session"
+        return [
+            {"tool": "exec_command", "call_id": "call-dws-read",
+             "input": json.dumps({"cmd": command}, ensure_ascii=False), "command": command},
+            {"tool": "tool_output", "call_id": "call-dws-read",
+             "output": "OpenAI 合作建议补充版\n建议先补齐材料。"},
+        ]
+
+    monkeypatch.setattr(audit_web_module, "extract_codex_audit_events_from_session", read_native_events)
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
         conversation_title="技术部",
@@ -9896,6 +9953,7 @@ def test_render_attempt_detail_renders_dws_material_tool_events(tmp_path: Path):
         trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
+        codex_session_id="dws-material-session",
         audit_tool_events_json=json.dumps(
             [
                 {
@@ -12065,6 +12123,9 @@ def test_attention_keeps_old_scheduled_failure_in_history_after_later_success(
             "timezone, runtime_id, enabled) values "
             "(14, 'Daily report', 'p', '0 * * * *', 'UTC', '', 1)"
         )
+        from app.scheduled_config_storage import intern_scheduled_config
+
+        snapshot_id = intern_scheduled_config(db, "{}")
         for run_id, event_id, task_id in ((100, "event-old", old.id), (101, "event-new", new.id)):
             db.execute(
                 "insert into scheduled_task_runs "
