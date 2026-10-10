@@ -493,12 +493,11 @@ class WorkbenchExecutor:
                     self._stop_state_once(state)
                 result = runtime.wait(handle)
                 self._finish_runtime(state, result)
-            except Exception as exc:
+            except Exception:
                 self._stop_state_once(state)
                 self._fail_claimed(
                     turn.id,
                     "runtime_failure",
-                    detail=f"{type(exc).__name__}: {exc}",
                     state=state,
                 )
             finally:
@@ -738,8 +737,7 @@ class WorkbenchExecutor:
                 else ""
             ),
             error_detail=(
-                result.error_detail
-                or _public_runtime_failure_detail(result.error_code or "runtime_failure")
+                _public_runtime_failure_detail(result.error_code or "runtime_failure")
                 if target is TurnStatus.FAILED
                 else ""
             ),
@@ -752,7 +750,6 @@ class WorkbenchExecutor:
         turn_id: str,
         code: str,
         *,
-        detail: str = "",
         state: _RunState | None = None,
     ) -> None:
         if state is not None and state.lease_lost:
@@ -770,7 +767,7 @@ class WorkbenchExecutor:
                 error_detail=(
                     ""
                     if current.stop_requested
-                    else detail or _public_runtime_failure_detail(code)
+                    else _public_runtime_failure_detail(code)
                 ),
                 owner=self.owner,
             )

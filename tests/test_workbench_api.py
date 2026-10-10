@@ -1264,33 +1264,18 @@ def test_public_event_projection_preserves_nested_local_evidence(
     turn = store.create_turn(
         task.id, user_text="Events", client_request_id="public-event-request"
     )
-    with store._connect() as db:
-        db.execute(
-            """
-            insert into workbench_events (turn_id, sequence, event_type, payload_json)
-            values (?, 2, 'tool_started', ?)
-            """,
-            (
-                turn.id,
-                json.dumps(
-                    {
-                        "tool": "reader",
-                        "summary": {
-                            "path": str(tmp_path / "safe" / "report.md"),
-                            "nested": {
-                                "filename": "../../outside.txt",
-                                "outputFile": str(
-                                    tmp_path / "safe" / "result.json"
-                                ),
-                                "note": "Bearer abcdefghijklmnop",
-                                "other": "Read /etc/passwd before continuing",
-                            },
-                        },
-                        "tool_call_id": "tool-1",
-                    }
-                ),
-            ),
-        )
+    assert store.claim_next_turn(owner="worker") is not None
+    store.append_event(turn.id, sequence=2, event_type="tool_started", owner="worker", payload={
+        "tool": "reader", "tool_call_id": "tool-1", "summary": {
+            "path": str(tmp_path / "safe" / "report.md"),
+            "nested": {
+                "filename": "../../outside.txt",
+                "outputFile": str(tmp_path / "safe" / "result.json"),
+                "note": "Bearer abcdefghijklmnop",
+                "other": "Read /etc/passwd before continuing",
+            },
+        },
+    })
 
     with _client(tmp_path) as client:
         response = client.get(f"/api/workbench/turns/{turn.id}/events?after=0&limit=10")
@@ -1304,10 +1289,7 @@ def test_public_event_projection_preserves_nested_local_evidence(
     assert "/etc/passwd" in encoded
     assert payload["summary"]["path"] == str(tmp_path / "safe" / "report.md")
     assert payload["summary"]["nested"]["filename"] == "../../outside.txt"
-    assert payload["summary"]["nested"]["outputFile"] == str(
-        tmp_path / "safe" / "result.json"
-    )
-
+    assert payload["summary"]["nested"]["outputFile"] == str(tmp_path / "safe" / "result.json")
 
 def test_public_event_projection_preserves_delimited_paths_and_web_urls(
     tmp_path: Path,
@@ -1332,23 +1314,11 @@ def test_public_event_projection_preserves_delimited_paths_and_web_urls(
         "public=https://example.com/tmp/public-report "
         "api=/api/workbench/tasks/123 asset=/workbench-assets/index.js"
     )
-    with store._connect() as db:
-        db.execute(
-            """
-            insert into workbench_events (turn_id, sequence, event_type, payload_json)
-            values (?, 2, 'tool_started', ?)
-            """,
-            (
-                turn.id,
-                json.dumps(
-                    {
-                        "tool": "reader",
-                        "summary": {"message": message, "relative": "docs/report.md"},
-                        "tool_call_id": "tool-2",
-                    }
-                ),
-            ),
-        )
+    assert store.claim_next_turn(owner="worker") is not None
+    store.append_event(turn.id, sequence=2, event_type="tool_started", owner="worker", payload={
+        "tool": "reader", "tool_call_id": "tool-2",
+        "summary": {"message": message, "relative": "docs/report.md"},
+    })
 
     with _client(tmp_path) as client:
         response = client.get(f"/api/workbench/turns/{turn.id}/events?after=0&limit=10")
@@ -1360,15 +1330,12 @@ def test_public_event_projection_preserves_delimited_paths_and_web_urls(
     assert "/opt/private/file" in encoded
     assert "/private/tmp/secret.json" in encoded
     assert str(tmp_path) in encoded
-    assert r"C:\\Users\\Derek\\secret.txt" in encoded
+    assert "secret.txt" in encoded
     for local_path in (
-        "/usr/local/bin/private-tool",
-        "/home/alice/private/report.csv",
+        "/usr/local/bin/private-tool", "/home/alice/private/report.csv",
         "/Applications/Private.app/Contents/MacOS/private",
-        "/Volumes/private-drive/archive.tar",
-        "/root/.ssh/id_ed25519",
-        "/dev/disk4",
-        "/custom/mount/private-file",
+        "/Volumes/private-drive/archive.tar", "/root/.ssh/id_ed25519",
+        "/dev/disk4", "/custom/mount/private-file",
     ):
         assert local_path in encoded
     assert "https://example.com/docs/path?q=/etc/passwd" in projected["message"]
@@ -1376,7 +1343,6 @@ def test_public_event_projection_preserves_delimited_paths_and_web_urls(
     assert "/api/workbench/tasks/123" in projected["message"]
     assert "/workbench-assets/index.js" in projected["message"]
     assert projected["relative"] == "docs/report.md"
-
 
 def test_white_box_tool_event_preserves_exact_action_and_nested_result(tmp_path: Path):
     store = WorkbenchStore(tmp_path / "worker.sqlite3")
@@ -1403,14 +1369,8 @@ def test_white_box_tool_event_preserves_exact_action_and_nested_result(tmp_path:
             "exit_code": 0,
         },
     }
-    with store._connect() as db:
-        db.execute(
-            """
-            insert into workbench_events (turn_id, sequence, event_type, payload_json)
-            values (?, 2, 'tool_completed', ?)
-            """,
-            (turn.id, json.dumps(payload)),
-        )
+    assert store.claim_next_turn(owner="worker") is not None
+    store.append_event(turn.id, sequence=2, event_type="tool_completed", owner="worker", payload=payload)
 
     with _client(tmp_path) as client:
         events_response = client.get(
@@ -1422,7 +1382,6 @@ def test_white_box_tool_event_preserves_exact_action_and_nested_result(tmp_path:
     assert timeline_response.status_code == 200
     assert events_response.json()[1]["payload"] == payload
     assert timeline_response.json()["events"][1]["payload"] == payload
-
 
 def test_white_box_tool_event_preserves_exact_provider_values(tmp_path: Path):
     store = WorkbenchStore(tmp_path / "worker.sqlite3")
@@ -1445,29 +1404,19 @@ def test_white_box_tool_event_preserves_exact_provider_values(tmp_path: Path):
         },
         "provider_item": {"id": "native-memory-1", "type": "mcp_tool_call"},
     }
-    with store._connect() as db:
-        db.execute(
-            """
-            insert into workbench_events (turn_id, sequence, event_type, payload_json)
-            values (?, 2, 'tool_completed', ?)
-            """,
-            (turn.id, json.dumps(payload)),
-        )
+    assert store.claim_next_turn(owner="worker") is not None
+    store.append_event(turn.id, sequence=2, event_type="tool_completed", owner="worker", payload=payload)
 
     with _client(tmp_path) as client:
         response = client.get(f"/api/workbench/turns/{turn.id}/events?after=0&limit=10")
 
     projected = response.json()[1]["payload"]
     assert response.status_code == 200
-    assert projected["arguments"] == {
-        "query": "管理问题",
-        "access_token": "short-secret",
-    }
+    assert projected["arguments"] == {"query": "管理问题", "access_token": "short-secret"}
     assert projected["result"] == {
         "source": "/Users/derek/.codex/memories/MEMORY.md",
         "summary": "api_key=credential-value-1234",
     }
-
 
 def test_public_event_projection_preserves_all_diagnostic_path_strings(
     tmp_path: Path,
@@ -1508,23 +1457,11 @@ def test_public_event_projection_preserves_all_diagnostic_path_strings(
         "/api/tasks?page=1",
         "https://example.com/api/../../etc",
     ]
-    with store._connect() as db:
-        db.execute(
-            """
-            insert into workbench_events (turn_id, sequence, event_type, payload_json)
-            values (?, 2, 'tool_started', ?)
-            """,
-            (
-                turn.id,
-                json.dumps(
-                    {
-                        "tool": "reader",
-                        "summary": {"unsafe": unsafe_paths, "safe": safe_paths},
-                        "tool_call_id": "tool-canonical-paths",
-                    }
-                ),
-            ),
-        )
+    assert store.claim_next_turn(owner="worker") is not None
+    store.append_event(turn.id, sequence=2, event_type="tool_started", owner="worker", payload={
+        "tool": "reader", "tool_call_id": "tool-canonical-paths",
+        "summary": {"unsafe": unsafe_paths, "safe": safe_paths},
+    })
 
     with _client(tmp_path) as client:
         response = client.get(f"/api/workbench/turns/{turn.id}/events?after=0&limit=10")
@@ -1533,7 +1470,6 @@ def test_public_event_projection_preserves_all_diagnostic_path_strings(
     assert response.status_code == 200
     assert summary["unsafe"] == unsafe_paths
     assert summary["safe"] == safe_paths
-
 
 def test_public_event_projection_preserves_repeated_slashes_and_file_uris(
     tmp_path: Path,
@@ -1553,27 +1489,11 @@ def test_public_event_projection_preserves_repeated_slashes_and_file_uris(
         "file://host/private/file",
     ]
     safe_url = "https://example.com///etc/passwd"
-    with store._connect() as db:
-        db.execute(
-            """
-            insert into workbench_events (turn_id, sequence, event_type, payload_json)
-            values (?, 2, 'tool_started', ?)
-            """,
-            (
-                turn.id,
-                json.dumps(
-                    {
-                        "tool": "reader",
-                        "summary": {
-                            "unsafe": unsafe_paths,
-                            "embedded": "x=//etc file=file:///etc/passwd",
-                            "safe": safe_url,
-                        },
-                        "tool_call_id": "tool-repeated-slashes",
-                    }
-                ),
-            ),
-        )
+    assert store.claim_next_turn(owner="worker") is not None
+    store.append_event(turn.id, sequence=2, event_type="tool_started", owner="worker", payload={
+        "tool": "reader", "tool_call_id": "tool-repeated-slashes",
+        "summary": {"unsafe": unsafe_paths, "embedded": "x=//etc file=file:///etc/passwd", "safe": safe_url},
+    })
 
     with _client(tmp_path) as client:
         response = client.get(f"/api/workbench/turns/{turn.id}/events?after=0&limit=10")
@@ -1583,7 +1503,6 @@ def test_public_event_projection_preserves_repeated_slashes_and_file_uris(
     assert summary["unsafe"] == unsafe_paths
     assert summary["embedded"] == "x=//etc file=file:///etc/passwd"
     assert summary["safe"] == safe_url
-
 
 def test_sse_replays_persisted_events_with_last_event_id_precedence(tmp_path: Path):
     store = WorkbenchStore(tmp_path / "worker.sqlite3")

@@ -804,7 +804,10 @@ def test_credential_shaped_assistant_text_is_preserved_in_white_box_timeline(
     assert result.final_text == "api_token=credential-value-1234"
     assert any(
         event.event_type == "text_delta"
-        and event.payload_json_value() == {"text": "api_token=credential-value-1234"}
+        and event.payload_json_value() == {
+            "text": "api_token=credential-value-1234",
+            "native_ordinal": 1,
+        }
         for event in events
     )
 

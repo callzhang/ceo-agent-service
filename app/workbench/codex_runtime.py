@@ -108,6 +108,8 @@ class _CodexNormalizer:
         self._preamble_bytes = 0
         self._output_bytes = 0
         self._text_states: dict[str, str] = {}
+        self._text_ordinals: dict[str, int] = {}
+        self._message_sequence = 0
         self._idless_text_key = ""
         self._text_sequence = 0
         self._tool_calls: dict[str, tuple[str, dict[str, Any]]] = {}
@@ -213,31 +215,42 @@ class _CodexNormalizer:
         if not isinstance(value, str) or not value:
             return
         key = self._text_key(item, completing=False)
+        ordinal = self._message_ordinal(key)
         text = self._text_states.get(key, "") + value
         self._text_states[key] = text
         self.final_text = text
-        self._emit("text_delta", {"text": value})
+        self._emit("text_delta", {"text": value, "native_ordinal": ordinal})
 
     def _accept_completed_text(self, item: Mapping[str, Any]) -> None:
         value = item.get("text")
         if not isinstance(value, str) or not value:
             return
         key = self._text_key(item, completing=True)
+        ordinal = self._message_ordinal(key)
         streamed = self._text_states.pop(key, "")
         if value.startswith(streamed):
             suffix = value[len(streamed) :]
             if suffix:
-                self._emit("text_delta", {"text": suffix})
+                self._emit("text_delta", {"text": suffix, "native_ordinal": ordinal})
         elif value != streamed:
-            self._emit("text_delta", {"text": value})
+            self._emit("text_delta", {"text": value, "native_ordinal": ordinal})
         self.final_text = value
         if key == self._idless_text_key:
             self._idless_text_key = ""
 
     def _accept_terminal_text(self, value: str) -> None:
         if value != self.final_text:
-            self._emit("text_delta", {"text": value})
+            self._message_sequence += 1
+            self._emit("text_delta", {"text": value, "native_ordinal": self._message_sequence})
         self.final_text = value
+
+    def _message_ordinal(self, key: str) -> int:
+        ordinal = self._text_ordinals.get(key)
+        if ordinal is None:
+            self._message_sequence += 1
+            ordinal = self._message_sequence
+            self._text_ordinals[key] = ordinal
+        return ordinal
 
     def _text_key(self, item: Mapping[str, Any], *, completing: bool) -> str:
         native_id = item.get("id")
