@@ -555,10 +555,13 @@ def test_retirement_reads_original_native_question_without_database_body(tmp_pat
     from tests.test_rule_question_retirement import seed, AUTHORITY
 
     store = AutoReplyStore(tmp_path / 'runs.sqlite3')
-    attempt_id, task_id, run_id, payload = seed(store)
+    home = tmp_path / "retirement-native-home"
+    home.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    attempt_id, task_id, run_id, payload = seed(store, native_home=home)
     _native_final(tmp_path, monkeypatch, store, run_id, payload)
     with store._connect() as db:
-        db.execute("update agent_runs set final_result_json='' where id=?", (run_id,))
+        db.execute("update agent_runs set final_result_json='', transcript_start_line=0 where id=?", (run_id,))
     result = retire_rule_question(store, attempt_id, authority=AUTHORITY, apply=True)
     assert result['applied'] is True
     assert retire_rule_question(store, attempt_id, authority=AUTHORITY, apply=True) == result

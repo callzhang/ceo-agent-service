@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-10: Give obsolete-rule retirement fixtures explicit isolated native
+  sources, including the CLI child process. Preserve original native bytes and
+  canonical receipt hashes, require preview to leave schema and data unchanged,
+  and inject invalid-question faults into the actual native result.
+
 - 2026-10-10: Give Consumer executor fixtures isolated native records while
   preserving malformed stdout and missing-session failures. Check prompt
   assembly through actual submission callbacks, not an invented terminal
