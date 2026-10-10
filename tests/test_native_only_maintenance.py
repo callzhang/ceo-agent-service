@@ -78,3 +78,50 @@ def test_cleanup_reports_unreclaimed_wal_when_reader_holds_old_snapshot(tmp_path
     storage_maintenance.compact_native_duplicates(store.path)
     wal = store.path.with_name(store.path.name + '-wal')
     assert not wal.exists() or wal.stat().st_size == 0
+
+
+def test_cleanup_clears_standalone_bodies_and_workbench_keeps_only_source_references(tmp_path):
+    from app.workbench.store import WorkbenchStore
+
+    store = WorkbenchStore(tmp_path / 'service.sqlite3')
+    task = store.create_task(title='Service task', runtime_kind='codex')
+    turn = store.create_turn(task.id, user_text='Service input', client_request_id='cleanup')
+    from tests.test_reviewed_candidate_store import _reviewed
+    _, candidate, review, _ = _reviewed(store)
+    bodies = [
+        ('tool_started', {'tool_call_id': 'b', 'command': 'private b'}),
+        ('tool_started', {'tool_call_id': 'a', 'command': 'private a'}),
+        ('tool_completed', {'tool_call_id': 'a', 'output': 'private output a'}),
+        ('tool_completed', {'tool_call_id': 'b', 'output': 'private output b'}),
+        ('tool_started', {'tool_call_id': 'unfinished', 'arguments': 'private arguments'}),
+        ('text_delta', {'text': 'private text'}),
+        ('text_delta', {'native_ordinal': 2}),
+        ('thinking_summary', {'text': 'private reasoning'}),
+        ('file_changed', {'path': 'private path'}),
+        ('status_changed', {'status': 'completed'}),
+    ]
+    with sqlite3.connect(store.path) as db:
+        job = db.execute("insert into meeting_alignment_jobs(meeting_id,decision_json,final_message) values('cleanup','{\"adopted\":true}','Business message')").lastrowid
+        db.execute("insert into meeting_alignment_runs(job_id,status,decision_json,audit_summary,audit_tool_events_json) values(?,'sent', '{\"raw\":true}','private audit','[\"private tool\"]')", (job,))
+        db.execute("insert into task_agent_runs(summary_input_id,decision_json,audit_summary,memory_recall_used,projection_json) values(1,'{\"raw\":true}','private audit',1,'{\"applied\":true}')")
+        db.execute("insert into okr_review_runs(request_id,envelope_json,audit_summary) values(1,'{\"raw\":true}','private audit')")
+        db.execute("update workbench_turns set status='failed', final_text='private final', error_detail='private provider stderr', error_code='runtime_failed' where id=?", (turn.id,))
+        for sequence, (kind, payload) in enumerate(bodies, 100):
+            db.execute("insert into workbench_events(turn_id,sequence,event_type,payload_json) values(?,?,?,?)", (turn.id, sequence, kind, json.dumps(payload)))
+        before = db.execute('select id,turn_id,sequence,event_type,created_at from workbench_events').fetchall()
+        candidate_before = db.execute('select candidate_json,candidate_digest from review_candidates where id=?', (candidate['id'],)).fetchone()
+        review_before = db.execute('select result_json from candidate_reviews where id=?', (review['id'],)).fetchone()
+    storage_maintenance.compact_native_duplicates(store.path)
+    with sqlite3.connect(store.path) as db:
+        assert db.execute('select candidate_json,candidate_digest from review_candidates where id=?', (candidate['id'],)).fetchone() == candidate_before
+        assert db.execute('select result_json from candidate_reviews where id=?', (review['id'],)).fetchone() == review_before
+        assert db.execute('select decision_json,audit_summary,audit_tool_events_json from meeting_alignment_runs').fetchone() == ('{}','','[]')
+        assert db.execute('select decision_json,audit_summary,memory_recall_used,projection_json from task_agent_runs').fetchone() == ('{}','',0,'{"applied":true}')
+        assert db.execute('select envelope_json,audit_summary from okr_review_runs').fetchone() == ('{}','')
+        assert db.execute('select decision_json,final_message from meeting_alignment_jobs').fetchone() == ('{"adopted":true}','Business message')
+        assert db.execute('select status,final_text,error_detail,error_code,user_text from workbench_turns where id=?',(turn.id,)).fetchone() == ('failed','','','runtime_failed','Service input')
+        assert db.execute('select id,turn_id,sequence,event_type,created_at from workbench_events').fetchall() == before
+        payloads = [json.loads(row[0]) for row in db.execute('select payload_json from workbench_events where turn_id=? and sequence>=100 order by sequence',(turn.id,))]
+        assert payloads == [{'native_ordinal':2},{'native_ordinal':1},{'native_ordinal':1},{'native_ordinal':2},{},{},{'native_ordinal':2},{},{},{'status':'completed'}]
+        assert db.execute('pragma quick_check').fetchone()[0] == 'ok'
+    assert storage_maintenance.compact_native_duplicates(store.path)['payload_bytes_removed'] == 0

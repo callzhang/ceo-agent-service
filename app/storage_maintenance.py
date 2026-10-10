@@ -19,8 +19,10 @@ def compact_native_duplicates(database: Path) -> dict[str, int]:
         "agent_runs": {"final_result_json": ""},
         "agent_runtime_attempts": {"result_envelope_json": ""},
         "reply_attempts": {"audit_tool_events_json": "[]"},
-        "okr_review_runs": {"audit_tool_events_json": "[]"},
-        "meeting_alignment_runs": {"audit_tool_events_json": "[]"},
+        "okr_review_runs": {"envelope_json": "{}", "audit_summary": "", "audit_tool_events_json": "[]"},
+        "meeting_alignment_runs": {"decision_json": "{}", "audit_summary": "", "audit_tool_events_json": "[]"},
+        "task_agent_runs": {"decision_json": "{}", "audit_summary": "", "memory_recall_used": 0},
+        "workbench_turns": {"final_text": "", "error_detail": ""},
         "codex_session_search_index": {
             "summary_text": "", "fts_text": "", "embedding_json": "",
             "embedding_model": "", "embedding_updated_at": "",
@@ -35,11 +37,12 @@ def compact_native_duplicates(database: Path) -> dict[str, int]:
             "select coalesce(sum(length(cast(event_json as blob))),0) from agent_run_events"
         ).fetchone()[0]
         db.execute("delete from agent_run_events")
+        _clear_workbench_event_bodies(db, counts)
         db.execute("insert into codex_session_search_fts(codex_session_search_fts) values('delete-all')")
         for table, fields in columns.items():
             for column, empty in fields.items():
                 counts["payload_bytes_removed"] += db.execute(
-                    f"select coalesce(sum(length(cast({column} as blob))-length(cast(? as blob))),0) "
+                    f"select coalesce(sum(max(length(cast({column} as blob))-length(cast(? as blob)),0)),0) "
                     f"from {table} where {column}<>?", (empty, empty),
                 ).fetchone()[0]
                 counts["payload_fields_cleared"] += db.execute(
@@ -57,6 +60,48 @@ def compact_native_duplicates(database: Path) -> dict[str, int]:
         if checkpoint[0] != 0:
             raise RuntimeError("database payloads cleared; WAL reclamation incomplete because another connection is busy")
     return counts
+
+
+def _clear_workbench_event_bodies(db: sqlite3.Connection, counts: dict[str, int]) -> None:
+    """Keep event identity/order and exact native ordinals; erase Agent content."""
+    from app.workbench.native_events import AGENT_EVENTS
+
+    rows = db.execute(
+        "select id,turn_id,event_type,payload_json from workbench_events "
+        "order by turn_id,sequence,id"
+    ).fetchall()
+    turn_id = None
+    completed = 0
+    pending: dict[str, int] = {}
+    replacements: dict[int, str] = {}
+    originals: dict[int, str] = {}
+    for event_id, current_turn, event_type, raw in rows:
+        if current_turn != turn_id:
+            turn_id, completed, pending = current_turn, 0, {}
+        if event_type not in AGENT_EVENTS:
+            continue
+        originals[event_id] = raw
+        payload = json.loads(raw)
+        ordinal = payload.get("native_ordinal")
+        reference = {"native_ordinal": ordinal} if type(ordinal) is int and ordinal > 0 else {}
+        replacements[event_id] = json.dumps(reference, separators=(",", ":"))
+        call_id = payload.get("tool_call_id")
+        if event_type == "tool_started" and isinstance(call_id, str) and call_id:
+            pending[call_id] = event_id
+        elif event_type == "tool_completed":
+            completed = max(completed + 1, ordinal if reference else 0)
+            reference = {"native_ordinal": ordinal if reference else completed}
+            encoded = json.dumps(reference, separators=(",", ":"))
+            replacements[event_id] = encoded
+            if isinstance(call_id, str) and call_id in pending:
+                replacements[pending.pop(call_id)] = encoded
+    for event_id, encoded in replacements.items():
+        raw = originals[event_id]
+        if raw == encoded:
+            continue
+        counts["payload_fields_cleared"] += 1
+        counts["payload_bytes_removed"] += max(0, len(raw.encode("utf-8")) - len(encoded.encode("utf-8")))
+        db.execute("update workbench_events set payload_json=? where id=?", (encoded, event_id))
 
 
 def main() -> None:
