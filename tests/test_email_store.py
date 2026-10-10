@@ -616,6 +616,35 @@ def test_external_snapshot_readback_rejects_parent_identity_tampering(tmp_path, 
         store.get_training_snapshot(snapshot.snapshot_id)
 
 
+@pytest.mark.parametrize("folders", [[], [None], [" "], [7]])
+def test_lightweight_initialization_rejects_invalid_scan_folder_names(tmp_path, folders):
+    path = tmp_path / "invalid-account-folders.sqlite3"
+    EmailStore(path)
+    _insert_account_with_scan_folders_json(path, json.dumps(folders))
+    with pytest.raises(EmailPersistenceCorruption, match="scan_folders_json"):
+        EmailStore(path, validate_rows=False)
+
+
+def test_snapshot_publication_rejects_corrupt_previous_identity(tmp_path):
+    store = EmailStore(tmp_path / "snapshot-publication-identity.sqlite3")
+    first = _frozen_training_snapshot("first")
+    store.persist_training_snapshot(first)
+    with sqlite3.connect(store.path) as db:
+        db.execute("drop trigger trg_email_training_snapshots_immutable_update")
+        db.execute("update email_training_snapshots set seed=99 where snapshot_id=?", (first.snapshot_id,))
+    second = build_folder_training_snapshot(
+        [_frozen_training_observation(body="Changed body, unchanged labels")],
+        snapshot_id="second",
+        description_version="description-v3",
+        observed_at=datetime(2026, 9, 7, 19, 0, tzinfo=timezone.utc),
+        seed=17,
+    )
+    with pytest.raises(EmailPersistenceCorruption, match="training snapshot"):
+        store.persist_training_snapshot(second)
+    with sqlite3.connect(store.path) as db:
+        assert db.execute("select count(*) from email_training_snapshots").fetchone()[0] == 1
+
+
 def test_readback_rejects_coordinated_parent_and_child_timestamp_tampering(
     tmp_path: Path,
 ):

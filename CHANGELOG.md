@@ -2338,3 +2338,10 @@
   self-delivery. Saved custom rules retain the fixed contract. Historical risk guards
   and System receipt/recovery semantics remain unchanged. Native audience evaluation
   is a separate release gate; this entry does not imply installation or delivery.
+# Email integrity review corrections
+
+- Reuse complete account scan-folder validation in lightweight initialization.
+- Propagate previous snapshot corruption during publication rather than treating
+  it as absent label history and advancing watermarks.
+- Add invalid folder and snapshot-publication rollback regressions.
+

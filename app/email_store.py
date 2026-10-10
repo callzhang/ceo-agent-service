@@ -6967,6 +6967,18 @@ class EmailStore:
     def _validate_account_configuration(self, db: sqlite3.Connection) -> None:
         for row in db.execute("select * from email_accounts"):
             self._account_row(row)
+            folders = _json_load(
+                row["scan_folders_json"],
+                field="scan_folders_json",
+                expected_type=list,
+            )
+            if not folders or any(
+                not isinstance(folder, str) or not folder.strip() for folder in folders
+            ):
+                raise EmailPersistenceCorruption(
+                    f"scan_folders_json for account {row['account_id']} must contain "
+                    "one or more folder names"
+                )
 
     def _validate_durable_rows(self, db: sqlite3.Connection) -> None:
         configs = db.execute("select * from email_model_promotion_configs").fetchall()
@@ -7065,21 +7077,7 @@ class EmailStore:
                 raise EmailPersistenceCorruption(
                     "non-running classifier task retains a lease"
                 )
-        for row in db.execute(
-            "select account_id, scan_folders_json from email_accounts"
-        ):
-            folders = _json_load(
-                row["scan_folders_json"],
-                field="scan_folders_json",
-                expected_type=list,
-            )
-            if not folders or any(
-                not isinstance(folder, str) or not folder.strip() for folder in folders
-            ):
-                raise EmailPersistenceCorruption(
-                    f"scan_folders_json for account {row['account_id']} must contain "
-                    "one or more folder names"
-                )
+        self._validate_account_configuration(db)
 
         messages: dict[str, sqlite3.Row] = {}
         for row in db.execute(
@@ -14250,12 +14248,9 @@ class EmailStore:
                 important_label_watermark = int(
                     previous_snapshot["important_label_watermark"]
                 )
-                try:
-                    previous_data = self._get_training_snapshot(
-                        db, str(previous_snapshot["snapshot_id"])
-                    )
-                except RuntimeError:
-                    previous_data = None
+                previous_data = self._get_training_snapshot(
+                    db, str(previous_snapshot["snapshot_id"])
+                )
                 if previous_data is not None:
                     previous_rows = {
                         (str(row["account_id"]), str(row["stable_message_identity"])): row

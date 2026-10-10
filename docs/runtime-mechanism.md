@@ -5,11 +5,16 @@ historical durable-row validation is disabled. Invalid account JSON makes email
 storage unavailable through the existing initialization boundary; unrelated
 audit routes remain available. This scans account configuration, not historical
 messages, actions or training observations.
+Both lightweight and full validation require at least one nonblank string scan
+folder per account, using the same account configuration check.
 
 Email training snapshot reads validate the external payload against the frozen
 SQLite parent's identity, versions, seed, observation time and digest. A valid
 external file does not excuse a tampered parent record. These comparisons run
 only for the requested snapshot and do not restore historical startup scans.
+Publishing a subsequent snapshot propagates failures while reading the previous
+snapshot; a corrupt parent cannot be treated as missing label history or advance
+watermarks. The failed publication leaves the previous snapshot unchanged.
 
 Cron scheduler and dispatcher incidents close only after the same component
 completes a successful tick. Recovery retains incidents from the tick's entire
