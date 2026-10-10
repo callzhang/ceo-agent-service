@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- Bind native DingTalk attachments to verified stable message/resource identities
+  and content digests instead of persisting expiring download capabilities in
+  reviewed candidates. Preserve source-change, credential and action guards.
+
 - 2026-10-10: Stop double-counting candidate packaging against a captured
   source's JSON-decoding depth during sensitive/local-runtime validation.
   Check authored data, source metadata and source values separately with the

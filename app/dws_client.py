@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -2624,6 +2625,39 @@ class DwsClient:
             raise DwsError("invalid doc read response")
         return payload
 
+    def read_message_resource_digest(self, reference: dict[str, str]) -> dict[str, object]:
+        from app.message_resource_source import MessageResourceReference
+
+        ref = MessageResourceReference.model_validate(reference)
+        with tempfile.TemporaryDirectory(prefix="ceo-reviewed-resource-") as directory:
+            root = Path(directory).resolve()
+            payload = self.run_json([
+                self.dws_bin, "chat", "+messages-resource-download",
+                "--resource-id", ref.resource_id, "--type", ref.resource_id_type,
+                "--message-id", ref.message_id,
+                "--open-conversation-id", ref.conversation_id,
+                "--output", "resource", "--format", "json",
+            ], cwd=root)
+            if (not isinstance(payload, dict)
+                    or payload.get("messageVerified") is not True
+                    or payload.get("messageId") != ref.message_id
+                    or payload.get("resourceId") != ref.resource_id
+                    or not isinstance(payload.get("localPath"), str)):
+                raise ValueError("message resource download identity unverified")
+            path = Path(payload["localPath"])
+            path = path if path.is_absolute() else root / path
+            path.resolve().relative_to(root)
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("message resource download is not a regular file")
+            size = path.stat().st_size
+            if type(payload.get("sizeBytes")) is not int or payload["sizeBytes"] != size or size <= 0:
+                raise ValueError("message resource download size unverified")
+            digest = hashlib.sha256()
+            with path.open("rb") as source:
+                for chunk in iter(lambda: source.read(65536), b""):
+                    digest.update(chunk)
+            return {**ref.model_dump(), "size_bytes": size, "sha256": digest.hexdigest()}
+
     def read_sheet(self, node: str) -> dict[str, Any]:
         payload = self.run_json(self.build_read_sheet_command(node))
         if not isinstance(payload, dict):
@@ -3785,6 +3819,7 @@ class DwsClient:
         *,
         timeout_seconds: int | None = None,
         isolate_process_group: bool = False,
+        cwd: Path | None = None,
     ) -> Any:
         command_timeout_seconds = timeout_seconds or self.timeout_seconds
         remaining_retries = self.transient_retry_attempts
@@ -3793,11 +3828,13 @@ class DwsClient:
         while True:
             payload: Any | None = None
             try:
+                process_options = {"cwd": cwd} if cwd is not None else {}
                 result = self._run_cli_process(
                     command,
                     timeout=command_timeout_seconds,
                     env=self._cli_environment(),
                     isolate_process_group=isolate_process_group,
+                    **process_options,
                 )
             except subprocess.TimeoutExpired as exc:
                 if automatic_retry_allowed and remaining_retries > 0:
@@ -4009,8 +4046,10 @@ class DwsClient:
         timeout: int,
         env: dict[str, str],
         isolate_process_group: bool = False,
+        cwd: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         global _DWS_LAST_PROCESS_START_MONOTONIC
+        process_options = {"cwd": cwd} if cwd is not None else {}
         with _DWS_PROCESS_GATE:
             min_interval_seconds = _dws_process_min_interval_seconds()
             if min_interval_seconds > 0:
@@ -4032,6 +4071,7 @@ class DwsClient:
                     check=False,
                     timeout=timeout,
                     env=env,
+                    **process_options,
                 )
 
             # The headless OKR source can spawn Chrome.  Give this one local
@@ -4042,6 +4082,7 @@ class DwsClient:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=True,
+                **process_options,
                 env=env,
             )
             try:

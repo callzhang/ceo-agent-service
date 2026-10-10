@@ -1,5 +1,18 @@
 # Current Runtime Mechanism
 
+Native DingTalk message resources are reviewed as stable conversation/message/
+resource identities plus verified byte length and SHA-256. The provider reader
+downloads by those identities in a task-owned temporary directory, requires
+the native message-verification receipt and exact returned identities, and
+checks file containment and length before hashing. Downloads are removed when
+the read ends. Source capture and pre-execution reread use the same reader;
+changed resource bytes or message/resource facts invalidate the candidate.
+Only the native resource schema's URL, expiry and download instruction are
+transport capabilities, not candidate facts. Unknown resource fields and missing
+identity/verification fail explicitly. Original raw messages remain unchanged;
+signed URLs elsewhere, including authored results, retain the existing rejection.
+This changes source representation, not action permissions or historic replay.
+
 Runtime result security validation budgets authored fields, captured-source
 metadata and each captured-source value separately. Candidate/list/binding
 wrappers are not charged again against a source's JSON-decoding depth budget.
