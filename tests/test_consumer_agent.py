@@ -2561,13 +2561,30 @@ def test_participant_callback_format_cannot_bypass_source_security(
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
 
+def test_captured_source_credentials_are_service_validation_not_provider_failure(
+    store, task, context,
+):
+    context = replace(context, trigger_raw_payload={"access_token": "synthetic-secret"})
+    with pytest.raises(ValueError):
+        ConsumerAgentRunner(
+            store=store, workspace=Path("/workspace"),
+            executor=CapturingExecutor(_result_jsonl()),
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    [run] = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
+    error = json.loads(run.structured_error_json)
+    assert error["code"] == "runtime_result_source_invalid"
+    assert error["source"] == "service"
+    assert error["retryable"] is False
+    assert run.status == "failed"
+
+
 @pytest.mark.parametrize("failure", ["credential", "depth", "codec_size"])
 def test_captured_sources_keep_security_and_resource_bounds(
     store, task, context, failure,
 ):
     if failure == "credential":
         source = {"access_token": "secret-value"}
-        expected = "agent_result_contains_sensitive_value"
+        expected = "runtime_result_source_invalid"
     elif failure == "depth":
         source = {"leaf": "value"}
         for _ in range(13):
@@ -2584,6 +2601,8 @@ def test_captured_sources_keep_security_and_resource_bounds(
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
     if failure == "depth":
         assert str(raised.value.__cause__) == "runtime_result_reference_depth_invalid"
+    elif failure == "credential":
+        assert str(raised.value.__cause__) == "agent_result_contains_sensitive_value"
 
 
 def test_authored_reference_still_has_short_field_bound(store, task, context):

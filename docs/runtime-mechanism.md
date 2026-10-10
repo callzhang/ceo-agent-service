@@ -2035,3 +2035,9 @@ Workbench 的实时文字和工具正文仅在运行时 RAM 中使用；SQLite �
 描述优化提案保持产生它时的快照身份与引用证据不变。若提案尚未评估而源快照已被最新数据替代，提案一次性转为 `unavailable`，原因 `description_proposal_source_unavailable`；不反复启动失败的评估，也不把旧证据套到新数据上。下一次基于最新数据的训练可产生新的提案。
 
 Status API 的 SystemHealth 使用严格类型的 native_delivery_coverage（checked、unavailable）展示原生轨迹可用性；该字段仅实时计算，不写入质量快照，也不改变质量违规判断。
+
+服务捕获的 source_bindings 含凭据或未通过签名链接安全边界时，按
+`runtime_result_source_invalid` 记录为 service/result 的不可重试失败，
+不归为 Codex 执行失败，也不切换提供者来重复处理同一不安全来源。
+模型自行生成的敏感值仍由原有结果边界拒绝；不删除来源字段、放宽凭据
+检查或把该失败改成 needs_human。此分类修复不表示原业务已经恢复。

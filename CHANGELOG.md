@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- 2026-10-10: Attribute credential-bearing captured source rejection to service
+  source validation, rather than provider execution failure. Keep the security
+  rejection and source evidence; do not retry another provider for this failure.
+
 - 2026-10-10: Remove unused Audit test result assignments that blocked lint
   before the shared full suite; preserve runner calls and existing assertions.
 

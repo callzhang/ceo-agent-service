@@ -2057,6 +2057,10 @@ def _validate_runtime_reference_domain_result(
             {key: value for key, value in binding.items() if key != "value"}, depth=2,
         )
         _validate_runtime_reference_text_bounds(binding["value"], depth=3, authored=False)
+        if _contains_sensitive_value(binding["value"]):
+            raise RuntimeResultValidationError("runtime_result_source_invalid") from ValueError(
+                "agent_result_contains_sensitive_value"
+            )
     sensitive_projection = domain_result
     if _contains_sensitive_value(sensitive_projection):
         raise ValueError("agent_result_contains_sensitive_value")
