@@ -1,4 +1,4 @@
-"""One external complete email training snapshot; SQLite keeps only summaries."""
+"""External complete email training baselines; SQLite keeps only summaries."""
 
 from __future__ import annotations
 

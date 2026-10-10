@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- 2026-10-10: Align training payload reads, pins and idle cleanup with the
+  existing per-type label baseline. Alternating folder/selected publication
+  retains each latest baseline while removing superseded same-type data.
+
 - 2026-10-10: Reuse complete account scan-folder validation in lightweight
   initialization and propagate previous snapshot corruption during publication.
   Add invalid folder and publication rollback regressions; corrupted label

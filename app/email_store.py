@@ -14322,27 +14322,33 @@ class EmailStore:
             latest = db.execute(
                 "select snapshot_id, snapshot_digest from email_training_snapshots "
                 "where frozen=1 and json_extract(manifest_json, '$.sample_count') is not null "
-                "order by observed_at desc, snapshot_id desc limit 1"
+                "and snapshot_version=(select snapshot_version from "
+                "email_training_snapshots where snapshot_id=?) "
+                "order by observed_at desc, snapshot_id desc limit 1",
+                (snapshot_id,),
             ).fetchone()
             if latest is None or latest["snapshot_id"] != snapshot_id:
                 raise EmailTrainingSnapshotConflict("training snapshot is unavailable to pin")
             write_pin(self.path, run_id, snapshot_id, str(latest["snapshot_digest"]))
 
     def prune_training_snapshot_data(self, *, training_active: bool) -> list[Path]:
-        """Keep only the latest complete payload after all training readers finish."""
+        """Keep each type's latest publication baseline after readers finish."""
         from app.email_training_data import prune_snapshots
 
         if training_active:
             return []
         with self._connect() as db:
             latest = db.execute(
-                "select snapshot_digest from email_training_snapshots where frozen=1 "
-                "and json_extract(manifest_json, '$.sample_count') is not null "
-                "order by observed_at desc, snapshot_id desc limit 1"
-            ).fetchone()
+                "select snapshot_digest from ("
+                "select snapshot_digest, row_number() over ("
+                "partition by snapshot_version order by observed_at desc, snapshot_id desc"
+                ") as ordinal from email_training_snapshots where frozen=1 "
+                "and json_extract(manifest_json, '$.sample_count') is not null"
+                ") where ordinal=1"
+            ).fetchall()
         return prune_snapshots(
             self.path,
-            {str(latest["snapshot_digest"])} if latest is not None else set(),
+            {str(row["snapshot_digest"]) for row in latest},
         )
 
     def list_provider_folder_correction_conflicts(
@@ -15359,8 +15365,10 @@ class EmailStore:
             raise EmailPersistenceCorruption("training snapshot is not frozen")
         latest = db.execute(
             "select snapshot_id from email_training_snapshots where frozen=1 "
+            "and snapshot_version=? "
             "and json_extract(manifest_json, '$.sample_count') is not null "
-            "order by observed_at desc, snapshot_id desc limit 1"
+            "order by observed_at desc, snapshot_id desc limit 1",
+            (snapshot["snapshot_version"],),
         ).fetchone()
         if latest is None or latest["snapshot_id"] != snapshot_id:
             pinned = (

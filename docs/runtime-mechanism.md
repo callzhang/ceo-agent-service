@@ -15,6 +15,11 @@ only for the requested snapshot and do not restore historical startup scans.
 Publishing a subsequent snapshot propagates failures while reading the previous
 snapshot; a corrupt parent cannot be treated as missing label history or advance
 watermarks. The failed publication leaves the previous snapshot unchanged.
+Folder and selected snapshots have separate cumulative label baselines. Reads,
+training pins and idle cleanup therefore use the latest complete snapshot of
+each type, not a single global latest file. Older snapshots of the same type
+remain unavailable unless pinned by an active training run. Already removed
+payloads are not reconstructed or silently treated as empty history.
 
 Cron scheduler and dispatcher incidents close only after the same component
 completes a successful tick. Recovery retains incidents from the tick's entire
@@ -1991,7 +1996,7 @@ Consumer 捕获的历史消息以反馈 token 和 attempt ID 识别上下评分�
 
 ## Storage retention (2026-10-09)
 
-训练数据正文和观察明细放在数据库旁的 `*-training-data` 目录，SQLite 只保留快照摘要与训练/评估元数据。只保留最新完整快照；已启动训练的 run pin 暂时保留其选定数据，结束后清理。历史摘要不能恢复已经清理的数据，读取明确报告不可用。迁移先写出并校验最新完整快照，再移除旧正文表。
+训练数据正文和观察明细放在数据库旁的 `*-training-data` 目录，SQLite 只保留快照摘要与训练/评估元数据。运行时按快照类型保留最新完整基线，与各类型标签水位累计一致；已启动训练的 run pin 暂时保留其选定数据，结束后清理同类型旧快照。历史摘要不能恢复已经清理的数据，读取明确报告不可用。迁移先写出并校验最新完整快照，再移除旧正文表；运行时修复不重建迁移前已删除的基线。
 
 完整 Agent trajectory 由 Codex/Claude 原生 session 或 Friday operation 保存。服务仅持久化原生引用、准确的调用范围、调用身份/状态、typed 最终结果和业务执行回执；当前进程需要的原始工具事件仅留在内存。Workbench 工具事件同样只保留身份/状态，不重复保存命令、参数或输出。旧记录只有在原生完整范围、工具内容和回执核对一致后才精简；原生文件已丢失的唯一历史副本保留。
 

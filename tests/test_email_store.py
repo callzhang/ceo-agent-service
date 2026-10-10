@@ -416,6 +416,50 @@ def test_store_persists_agent_label_selected_training_snapshot(tmp_path: Path):
     assert stored["observations"][0]["source"] == "agent_auto_label"
 
 
+def test_alternating_snapshot_types_retain_each_publication_baseline(tmp_path):
+    from app.email_training_data import TrainingSnapshotUnavailable, data_path
+
+    store = EmailStore(tmp_path / "alternating-snapshots.sqlite3")
+    first = _frozen_training_snapshot("folder-first")
+    store.persist_training_snapshot(first)
+    selected = build_selected_training_snapshot(
+        [
+            {
+                "source": "agent_auto_label",
+                "account_id": "account-a",
+                "stable_message_identity": f"account-a:agent-label:{index}",
+                "provider_thread_id": f"thread-agent-{index}",
+                "category_key": "work",
+                "normalized_model_input": json.dumps({"body": f"Mail {index}"}),
+            }
+            for index in range(8)
+        ],
+        snapshot_id="selected",
+        description_version="selected-training-input-v1",
+        observed_at=datetime(2026, 9, 7, 19, tzinfo=timezone.utc),
+        seed=17,
+    )
+    store.persist_training_snapshot(selected)
+    store.pin_training_snapshot("folder-run", first.snapshot_id)
+    store.prune_training_snapshot_data(training_active=False)
+    assert data_path(store.path, first.snapshot_digest).is_file()
+    second = build_folder_training_snapshot(
+        [_frozen_training_observation(body="Changed body, unchanged labels")],
+        snapshot_id="folder-second",
+        description_version="description-v3",
+        observed_at=datetime(2026, 9, 7, 20, tzinfo=timezone.utc),
+        seed=17,
+    )
+    stored = store.persist_training_snapshot(second)
+    assert stored["folder_label_watermark"] == 1
+    assert stored["important_label_watermark"] == 1
+    store.prune_training_snapshot_data(training_active=False)
+    assert store.get_training_snapshot(selected.snapshot_id) is not None
+    assert not data_path(store.path, first.snapshot_digest).exists()
+    with pytest.raises(TrainingSnapshotUnavailable, match="historical"):
+        store.get_training_snapshot(first.snapshot_id)
+
+
 def test_identical_training_snapshot_persistence_is_idempotent(tmp_path: Path):
     store = EmailStore(tmp_path / "training-snapshot-idempotent.sqlite3")
     snapshot = _frozen_training_snapshot()
