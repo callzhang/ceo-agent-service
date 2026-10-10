@@ -1519,12 +1519,14 @@ the ordinary fast-forward then installs the target. Staged edits, other paths,
 or any content mismatch remain a hard local-change refusal.
 
 The Email worker and Audit web lazily create one shared EmailStore and check
-schema shape during runtime initialization. They do not scan every historical
-email row while the service is starting or serving the first email-detail
-request; those scans took over two minutes on the production database. Explicit
-and offline EmailStore callers retain full durable-row validation by default.
-Email detail reads still use fresh connections and do not cache record
-contents.
+schema shape during runtime initialization. Every EmailStore schema
+initialization and the AutoReplyStore schema initializer acquire the same
+per-database cross-process file lock before inspecting or changing schema.
+They do not scan every historical email row while the service is starting or
+serving the first email-detail request; those scans took over two minutes on
+the production database. Explicit and offline EmailStore callers retain full
+durable-row validation by default, after releasing the schema lock. Email
+detail reads still use fresh connections and do not cache record contents.
 
 ### Public information and native reply recovery
 

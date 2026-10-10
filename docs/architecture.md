@@ -704,11 +704,13 @@ Task Agent 的正常 liveness 由结构化 provider 事件驱动：每个有效 
 
 ### Schema 初始化竞争
 
-worker 与审计页面会各自打开 SQLite。它们先取得同一个初始化文件锁，再检查 schema 版本、必要表、
-必要列和定时任务运行快照字段（包括 `scheduled_tasks.command`、`command` 快照字段）。检查遇到短暂
+所有使用同一 SQLite 文件的 `AutoReplyStore` 和 `EmailStore` schema 初始化入口，都先取得按数据库路径共享的
+跨进程文件锁，再检查 schema 版本、必要表、必要列和定时任务运行快照字段（包括
+`scheduled_tasks.command`、`command` 快照字段）。检查遇到短暂
 `locked` 或 `busy` 时会在该锁内等待后复查；只有稳定确认 schema 过期、缺表、缺列或快照需要回填才
-执行迁移。这样高负载写入不会被误判为 schema 缺失，也不会让审计页面在请求期间执行 DDL；即使旧库
-的版本号已经提前写成当前版本，也会先完成定时任务 schema 的补齐再启动调度。
+执行迁移。这样多个启动进程不会并发执行不同 Store 的 schema 工作，也不会把高负载写入误判为 schema 缺失，或让审计页面在请求期间执行 DDL；即使旧库
+的版本号已经提前写成当前版本，也会先完成定时任务 schema 的补齐再启动调度。默认离线
+`EmailStore` 的完整持久行校验在释放 schema 锁后执行，不会占用初始化锁扫描历史邮件行。
 
 ### Workbench 启动恢复竞争
 

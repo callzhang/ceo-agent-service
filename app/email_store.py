@@ -68,6 +68,7 @@ from app.email_category_config import (
 from app.email_html_text import html_to_text, visible_email_text
 from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
+from app.sqlite_schema_lock import schema_initialize_lock
 
 
 EMAIL_SCHEMA_VERSION = 46
@@ -2872,7 +2873,11 @@ class EmailStore:
         self.path = Path(path)
         self.training_run_id = training_run_id
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize(validate_rows=validate_rows)
+        with schema_initialize_lock(self.path):
+            durable_rows_validated = self._initialize(validate_rows=False)
+        if validate_rows and not durable_rows_validated:
+            with self._connect() as db:
+                self._validate_durable_state(db)
 
     def _open_connection(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=30)
@@ -3000,7 +3005,7 @@ class EmailStore:
             status=str(row["status"]),
         )
 
-    def _initialize(self, *, validate_rows: bool = True) -> None:
+    def _initialize(self, *, validate_rows: bool = True) -> bool:
         with self._connect() as db:
             db.execute("begin")
             latest_version = self._read_schema_version(db)
@@ -3011,7 +3016,7 @@ class EmailStore:
                 else:
                     self._validate_schema_shape(db)
                     self._validate_account_configuration(db)
-                return
+                return validate_rows
             if latest_version is not None and latest_version > EMAIL_SCHEMA_VERSION:
                 raise EmailPersistenceCorruption(
                     f"database has newer schema version {latest_version}; "
@@ -3040,7 +3045,7 @@ class EmailStore:
                 else:
                     self._validate_schema_shape(db)
                     self._validate_account_configuration(db)
-                return
+                return validate_rows
             legacy_reply_claims = False
             if latest_version == 8:
                 legacy_reply_claims = self._prepare_v8_reply_claim_migration(db)
@@ -3189,6 +3194,7 @@ class EmailStore:
                 self._migrate_v45_to_v46(db, replace_version=is_prototype)
                 latest_version = 46
             self._validate_durable_state(db)
+            return True
 
     @classmethod
     def _prepare_v8_reply_claim_migration(cls, db: sqlite3.Connection) -> bool:
