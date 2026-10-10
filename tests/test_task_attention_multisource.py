@@ -13,6 +13,8 @@ from app.task_agent import apply_task_agent_decision
 from app.store import AutoReplyStore
 from app.task_agent import process_work_item
 from app.task_attention_projection import BusinessAttentionProjection
+from tests.support.task_native import task_native_records  # noqa: F401
+from tests.support.task_native import read_task_fixture_decision, rewrite_task_fixture_decision
 
 
 def evaluation_tool():
@@ -598,29 +600,24 @@ def recorded_two_project_assessment_case(store):
     return input_id, before, expected
 
 
+def read_latest_decision(store):
+    with store._connect() as db:
+        run_id = db.execute("select max(id) from task_agent_runs").fetchone()[0]
+    return read_task_fixture_decision(store, run_id)
+
+
 def rewrite_latest_run(store, *, decision=None, projection=None):
     with store._connect() as db:
         run = db.execute(
             "select * from task_agent_runs order by id desc limit 1"
         ).fetchone()
-        db.execute(
-            "update task_agent_runs set decision_json=?, projection_json=? where id=?",
-            (
-                json.dumps(
-                    decision
-                    if decision is not None
-                    else json.loads(run["decision_json"]),
-                    ensure_ascii=False,
-                ),
-                json.dumps(
-                    projection
-                    if projection is not None
-                    else json.loads(run["projection_json"]),
-                    ensure_ascii=False,
-                ),
-                run["id"],
-            ),
-        )
+        if projection is not None:
+            db.execute(
+                "update task_agent_runs set projection_json=? where id=?",
+                (json.dumps(projection, ensure_ascii=False), run["id"]),
+            )
+    if decision is not None:
+        rewrite_task_fixture_decision(store, run["id"], decision)
 
 
 def test_assessment_oracle_accepts_no_task_insufficient_receipt(tmp_path):
@@ -677,10 +674,7 @@ def test_assessment_oracle_observes_missing_raw_field_without_model_defaults(tmp
     tool = evaluation_tool()
     store = AutoReplyStore(tmp_path / "assessment-missing.sqlite3")
     _, input_id, before, _, expected = recorded_assessment_case(store)
-    with store._connect() as db:
-        raw = json.loads(
-            db.execute("select decision_json from task_agent_runs").fetchone()[0]
-        )
+    raw = read_latest_decision(store)
     raw.pop("project_assessments")
     rewrite_latest_run(store, decision=raw)
     result = tool.readback(store, input_id=input_id, before=before, expected=expected)
@@ -752,21 +746,18 @@ def test_assessment_oracle_matches_two_receipts_by_index_after_order_reversal(tm
     assert result["passed"], result["failures"]
 
 
-def test_assessment_oracle_rejects_null_reason_without_reparsing_model(tmp_path):
+def test_assessment_oracle_rejects_null_reason_in_native_source(tmp_path):
     tool = evaluation_tool()
     store = AutoReplyStore(tmp_path / "assessment-null-reason.sqlite3")
     _, input_id, before, _, expected = recorded_assessment_case(store)
-    with store._connect() as db:
-        decision = json.loads(
-            db.execute("select decision_json from task_agent_runs").fetchone()[0]
-        )
+    decision = read_latest_decision(store)
     decision["project_assessments"][0]["reason"] = None
     rewrite_latest_run(store, decision=decision)
 
     result = tool.readback(store, input_id=input_id, before=before, expected=expected)
 
     assert not result["passed"]
-    assert "project_assessment_reason_missing" in result["failures"]
+    assert "task_agent_native_decision_unavailable" in result["failures"]
 
 
 def test_assessment_oracle_rejects_blank_extra_current_citation(tmp_path):
@@ -775,8 +766,8 @@ def test_assessment_oracle_rejects_blank_extra_current_citation(tmp_path):
     item, input_id, before, _, expected = recorded_assessment_case(store)
     with store._connect() as db:
         run = db.execute("select * from task_agent_runs").fetchone()
-        decision = json.loads(run["decision_json"])
         projection = json.loads(run["projection_json"])
+    decision = read_latest_decision(store)
     decision["project_assessments"][0]["evidence"].append(
         {
             "signal_id": None,
@@ -798,7 +789,7 @@ def test_assessment_oracle_rejects_blank_extra_current_citation(tmp_path):
     result = tool.readback(store, input_id=input_id, before=before, expected=expected)
 
     assert not result["passed"]
-    assert "project_assessment_evidence_mismatch" in result["failures"]
+    assert "task_agent_native_decision_unavailable" in result["failures"]
 
 
 @pytest.mark.parametrize(
@@ -807,7 +798,7 @@ def test_assessment_oracle_rejects_blank_extra_current_citation(tmp_path):
         ("wrong_project_title", "project_assessment_coverage_mismatch"),
         ("wrong_judgment", "project_assessment_outcome_mismatch"),
         ("unsupported_citation", "project_assessment_evidence_mismatch"),
-        ("missing_negative_reason", "project_assessment_reason_missing"),
+        ("missing_negative_reason", "task_agent_native_decision_unavailable"),
     ],
 )
 def test_assessment_oracle_rejects_wrong_semantic_readback(
@@ -816,27 +807,24 @@ def test_assessment_oracle_rejects_wrong_semantic_readback(
     tool = evaluation_tool()
     store = AutoReplyStore(tmp_path / f"assessment-{fault}.sqlite3")
     _, input_id, before, _, expected = recorded_assessment_case(store)
-    with store._connect() as db:
-        decision = json.loads(
-            db.execute("select decision_json from task_agent_runs").fetchone()[0]
-        )
+    decision = read_latest_decision(store)
     assessment = decision["project_assessments"][0]
     if fault == "wrong_project_title":
         assessment["project_title"] = "另一个未期望 Project"
     elif fault == "wrong_judgment":
         assessment["outcome"] = "not_needed"
+        assessment["attention_proposal"] = None
     elif fault == "unsupported_citation":
         assessment["evidence"] = [
             {
                 "signal_id": None,
                 "source_ref": "report:unrelated",
                 "source_excerpt": "未出现在来源中的句子。",
-                "source_time": "",
-                "source_link": "",
             }
         ]
     else:
         assessment["outcome"] = "not_needed"
+        assessment["attention_proposal"] = None
         assessment["reason"] = "  "
         expected["project_assessments"][0]["outcome"] = "not_needed"
     rewrite_latest_run(store, decision=decision)
@@ -859,10 +847,7 @@ def test_assessment_oracle_rejects_unlinked_raw_positive_signal_absent_from_rece
         context_json="{}",
         dedupe_key="eval:unlinked-raw-positive",
     )
-    with store._connect() as db:
-        decision = json.loads(
-            db.execute("select decision_json from task_agent_runs").fetchone()[0]
-        )
+    decision = read_latest_decision(store)
     decision["project_assessments"][0]["evidence"].append(
         {
             "signal_id": unrelated_signal_id,
@@ -888,8 +873,8 @@ def test_assessment_oracle_accepts_linked_extra_positive_signal_in_raw_and_recei
     _, input_id, before, _, expected = recorded_assessment_case(store)
     with store._connect() as db:
         run = db.execute("select * from task_agent_runs").fetchone()
-        decision = json.loads(run["decision_json"])
         projection = json.loads(run["projection_json"])
+    decision = read_latest_decision(store)
     receipt = projection["project_assessments"][0]
     linked_signal_id = store.create_business_task_signal(
         source_type="project_weekly_report",
@@ -985,12 +970,7 @@ def test_assessment_oracle_requires_actual_application_receipt(tmp_path, fault):
         )
         projection["project_assessments"][0]["evidence"][0]["signal_id"] = unlinked
         if fault == "unlinked_raw_and_receipt":
-            with store._connect() as db:
-                decision = json.loads(
-                    db.execute("select decision_json from task_agent_runs").fetchone()[
-                        0
-                    ]
-                )
+            decision = read_latest_decision(store)
             decision["project_assessments"][0]["evidence"][0]["signal_id"] = unlinked
             rewrite_latest_run(store, decision=decision)
     elif fault == "wrong_source_time":
@@ -1023,8 +1003,8 @@ def test_assessment_oracle_requires_reviewed_proof_coverage_and_validates_extras
     item, input_id, before, _, expected = recorded_assessment_case(store)
     with store._connect() as db:
         run = db.execute("select * from task_agent_runs").fetchone()
-        decision = json.loads(run["decision_json"])
         projection = json.loads(run["projection_json"])
+    decision = read_latest_decision(store)
     if shape == "prefix_and_extra":
         evidence = [
             {

@@ -16,6 +16,7 @@ from app.task_semantic_models import AttentionCategory, ProjectContext, TaskSugg
 from app.task_semantic_service import RecordTaskSuggestion, SourceSignal, TaskSemanticService
 from app.task_models import TaskAgentDecision, WorkItem
 from app.task_agent import TaskAgentRunner
+from tests.support.task_native import task_native_records  # noqa: F401
 
 
 def _tool():
@@ -415,11 +416,17 @@ def test_readback_accepts_only_allowed_assessment_task_counts(seeded_domain):
     }
 
     def readback_for(task_ids):
+        native_citation = {
+            "signal_id": None,
+            "source_ref": current.source.ref,
+            "source_excerpt": "款项已到账",
+        }
         run_id = store.record_task_agent_run(input_id, decision_json=json.dumps({
             "project_decisions": [], "task_decisions": [],
             "project_assessments": [{
                 "project_title": "甲客户一期交付", "outcome": "not_needed",
-                "reason": "款项已到账", "evidence": [citation],
+                "reason": "款项已到账", "evidence": [native_citation],
+                "assessment_basis": "current_observation",
                 "anchor_id": anchor_id, "task_ids": task_ids,
                 "attention_proposal": None,
             }],

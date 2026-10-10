@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-10: Capture isolated native Task decisions in evaluation unit fixtures
+  instead of restoring removed SQL bodies. Keep semantic rejection, rollback,
+  projection and adoption assertions; synthetic records are not business eval
+  or external execution receipts.
+
 - 2026-10-10: Read Task evaluation decisions from exact native references rather
   than removed SQL bodies. Share runtime candidate selection while retaining
   original fields, and fail explicitly when no native decision is available.
