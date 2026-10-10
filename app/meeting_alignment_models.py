@@ -613,3 +613,5 @@ class MeetingAlignmentRun(StrictModel):
     updated_at: str = ""
     native_available: bool = False
     native_reason: str = "native_source_unavailable"
+    tool_events_available: bool = False
+    tool_events_reason: str = "native_source_unavailable"

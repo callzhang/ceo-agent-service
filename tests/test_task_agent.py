@@ -1593,7 +1593,8 @@ def test_process_work_item_opens_and_completes_runtime_parent_before_decision(tm
         ).fetchall()
     assert len(runs) == 1
     assert runs[0]["status"] == "completed"
-    assert json.loads(runs[0]["decision_json"])["task_decisions"][0]["action"] == "skip"
+    assert runs[0]["decision_json"] == "{}"
+    assert store.get_task_agent_run(int(runs[0]["id"]))["native_available"] is False
     assert store.get_work_summary_input(input_id).status.value == "skipped"
     assert codex.calls[0]["session_scope_id"] == "task-agent:work-tracking:v1"
 

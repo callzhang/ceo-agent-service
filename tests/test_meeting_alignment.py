@@ -2740,7 +2740,9 @@ def test_unavailable_planned_group_fails_without_organizer_fallback(
     assert json.loads(job.decision_json)["target"]["kind"] == "group"
     [run] = store.list_meeting_alignment_runs(job_id)
     assert run.status == "ready_to_send"
-    assert json.loads(run.decision_json)["action"] == "send"
+    assert run.decision_json == "{}"
+    assert run.native_available is False
+    assert run.native_reason == "native_source_unavailable"
     assert dws.send_calls == []
 
 

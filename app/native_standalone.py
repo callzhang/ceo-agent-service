@@ -18,6 +18,8 @@ class NativeStandaloneDecision:
     audit_summary: str = ""
     audit_tool_events_json: str = "[]"
     memory_recall_used: bool = False
+    tool_events_available: bool = False
+    tool_events_reason: str = "native_source_unavailable"
 
 
 @dataclass(frozen=True)
@@ -34,18 +36,9 @@ def _native_stream(ref: NativeStandaloneRef) -> str:
     if ref.kind == "friday_runtime":
         from app.agent_runtime_config import load_runtime_config
         from app.agent_runtime_router import _final_message_events
-        from app.friday_runtime_adapter import (
-            FridayRuntimeAdapter, UrllibFridayHttpTransport,
-            desktop_friday_endpoint,
-        )
+        from app.friday_runtime_adapter import FridayRuntimeAdapter
 
-        endpoint = desktop_friday_endpoint()
-        if not endpoint:
-            return ""
-        adapter = FridayRuntimeAdapter(
-            load_runtime_config(os.environ),
-            transport=UrllibFridayHttpTransport(endpoint),
-        )
+        adapter = FridayRuntimeAdapter(load_runtime_config(os.environ))
         text = adapter.read_final_artifact(
             ref.session_id.removeprefix("friday_thread:")
         )
@@ -58,12 +51,16 @@ def _native_stream(ref: NativeStandaloneRef) -> str:
 
 
 def meeting_decision(ref: NativeStandaloneRef) -> NativeStandaloneDecision:
-    raw = _native_stream(ref)
+    try:
+        raw = _native_stream(ref)
+    except (OSError, RuntimeError, ValueError):
+        return NativeStandaloneDecision(False, "native_source_unavailable")
     if not raw:
         return NativeStandaloneDecision(False, "native_source_unavailable")
     from app.agent_result import _agent_message_candidate
     from app.meeting_alignment_agent import parse_meeting_alignment_decision
 
+    tool_events_json, tool_events_available, tool_events_reason = _meeting_tool_events(ref)
     for line in reversed(raw.splitlines()):
         candidate = _agent_message_candidate(json.loads(line))
         if candidate is None:
@@ -77,12 +74,64 @@ def meeting_decision(ref: NativeStandaloneRef) -> NativeStandaloneDecision:
             "",
             decision_json=decision.model_dump_json(),
             audit_summary=decision.audit_summary,
-            audit_tool_events_json=(
-                _codex_audit_events_json(ref.session_id, ref.start, ref.end)
-                if ref.kind == "codex_cli" else "[]"
-            ),
+            audit_tool_events_json=tool_events_json,
+            tool_events_available=tool_events_available,
+            tool_events_reason=tool_events_reason,
         )
-    return NativeStandaloneDecision(False, "native_decision_invalid")
+    return NativeStandaloneDecision(
+        False, "native_decision_invalid",
+        audit_tool_events_json=tool_events_json,
+        tool_events_available=tool_events_available,
+        tool_events_reason=tool_events_reason,
+    )
+
+
+def _meeting_tool_events(ref: NativeStandaloneRef) -> tuple[str, bool, str]:
+    if ref.kind == "friday_runtime":
+        return "[]", False, "native_tool_stream_unavailable"
+    try:
+        if ref.kind == "codex_cli":
+            return _codex_audit_events_json(ref.session_id, ref.start, ref.end), True, ""
+        if ref.kind == "claude_cli":
+            return _claude_audit_events_json(ref.session_id, ref.start, ref.end), True, ""
+    except (OSError, RuntimeError, ValueError):
+        pass
+    return "[]", False, "native_tool_stream_unavailable"
+
+
+def _claude_audit_events_json(session_id: str, start: int, end: int) -> str:
+    from app.codex_decision import _audit_event_from_payload
+    from app.codex_history import _audit_event_from_jsonl
+    from app.native_trajectory import read_claude_events
+
+    audit_events = []
+    for native_event in read_claude_events(
+        session_id, start_line=start, end_line=end
+    ):
+        if native_event.get("type") not in {"item.completed", "item.failed"}:
+            continue
+        item = native_event.get("item")
+        if not isinstance(item, dict):
+            continue
+        native_type = item.get("type")
+        if native_type in {"mcp_tool_call", "command_execution"}:
+            codex_type = (
+                "McpToolCall" if native_type == "mcp_tool_call" else "CommandExecution"
+            )
+            event = _audit_event_from_jsonl({
+                "type": "event_msg",
+                "payload": {"type": "item_completed", "item": {**item, "type": codex_type}},
+            })
+        else:
+            event = _audit_event_from_payload({
+                **native_event,
+                "item": {**item, "call_id": item.get("id", "")},
+            })
+        if event is not None:
+            audit_events.append(event)
+        if len(audit_events) >= 200:
+            break
+    return json.dumps(audit_events, ensure_ascii=False)
 
 
 def _codex_audit_events_json(session_id: str, start: int, end: int) -> str:
@@ -159,7 +208,10 @@ def _native_user_texts(value):
 def task_decision(ref: NativeStandaloneRef | None) -> NativeStandaloneDecision:
     if ref is None:
         return NativeStandaloneDecision(False, "native_reference_unavailable")
-    raw = _native_stream(ref)
+    try:
+        raw = _native_stream(ref)
+    except (OSError, RuntimeError, ValueError):
+        return NativeStandaloneDecision(False, "native_source_unavailable")
     if not raw:
         return NativeStandaloneDecision(False, "native_source_unavailable")
     from app.task_agent import _parse_task_agent_decision
@@ -189,7 +241,10 @@ def task_project_value(ref: NativeStandaloneRef | None) -> dict | None:
 
     if ref is None:
         return None
-    raw = _native_stream(ref)
+    try:
+        raw = _native_stream(ref)
+    except (OSError, RuntimeError, ValueError):
+        return None
     for line in reversed(raw.splitlines()):
         try:
             record = json.loads(line)
@@ -213,6 +268,59 @@ def latest_task_ref(db: sqlite3.Connection, run_id: int) -> NativeStandaloneRef 
     return ref_from_attempt(attempt)
 
 
+def latest_standalone_ref(
+    db: sqlite3.Connection, *, workload_kind: str, workload_key: str,
+    legacy_row: sqlite3.Row | None = None,
+) -> NativeStandaloneRef | None:
+    attempt = db.execute(
+        "select status, runtime_kind, session_id, transcript_start, transcript_end "
+        "from agent_runtime_attempts where workload_kind=? and workload_key=? "
+        "order by (status='completed') desc, id desc limit 1",
+        (workload_kind, workload_key),
+    ).fetchone()
+    if attempt is None:
+        return legacy_codex_ref(legacy_row) if legacy_row is not None else None
+    if attempt["status"] != "completed":
+        return None
+    return ref_from_attempt(attempt)
+
+
+def exact_standalone_ref(
+    db: sqlite3.Connection, *, workload_kind: str, workload_key: str,
+    row: sqlite3.Row,
+) -> NativeStandaloneRef | None:
+    """Bind one stored run to its own completed native session and range."""
+    attempt = db.execute(
+        "select runtime_kind, session_id, transcript_start, transcript_end "
+        "from agent_runtime_attempts where workload_kind=? and workload_key=? "
+        "and status='completed' and session_id=? "
+        "and transcript_start=? and transcript_end=? "
+        "order by id desc limit 1",
+        (
+            workload_kind, workload_key, row["codex_session_id"],
+            row["codex_transcript_start_line"], row["codex_transcript_end_line"],
+        ),
+    ).fetchone()
+    if attempt is not None:
+        return ref_from_attempt(attempt)
+    exists = db.execute(
+        "select 1 from agent_runtime_attempts "
+        "where workload_kind=? and workload_key=? limit 1",
+        (workload_kind, workload_key),
+    ).fetchone()
+    return legacy_codex_ref(row) if exists is None else None
+
+
+def legacy_codex_ref(row: sqlite3.Row) -> NativeStandaloneRef | None:
+    """Use a complete historical Codex range only when no completed attempt exists."""
+    session_id = str(row["codex_session_id"] or "")
+    start = int(row["codex_transcript_start_line"] or 0)
+    end = int(row["codex_transcript_end_line"] or 0)
+    if not session_id or end <= start:
+        return None
+    return NativeStandaloneRef("codex_cli", session_id, start, end)
+
+
 def ref_from_attempt(attempt: sqlite3.Row | None) -> NativeStandaloneRef | None:
     if attempt is None:
         return None
@@ -224,8 +332,13 @@ def ref_from_attempt(attempt: sqlite3.Row | None) -> NativeStandaloneRef | None:
     )
 
 
-def okr_envelope(ref: NativeStandaloneRef) -> tuple[str, str]:
-    raw = _native_stream(ref)
+def okr_envelope(ref: NativeStandaloneRef | None) -> tuple[str, str]:
+    if ref is None:
+        return "{}", "native_reference_unavailable"
+    try:
+        raw = _native_stream(ref)
+    except (OSError, RuntimeError, ValueError):
+        return "{}", "native_source_unavailable"
     if not raw:
         return "{}", "native_source_unavailable"
     from app.agent_envelope import AgentEnvelope, AgentKind

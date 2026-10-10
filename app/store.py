@@ -1414,6 +1414,8 @@ class CodexSessionSearchResult(BaseModel):
     bm25_score: float | None = None
     score: float = 0.0
     updated_at: str = ""
+    native_available: bool = False
+    native_reason: str = "native_source_unavailable"
 
 
 class ReplyTask(BaseModel):
@@ -17640,21 +17642,24 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     @staticmethod
     def _meeting_alignment_run_from_row(
         row: sqlite3.Row,
+        ref: object,
     ) -> MeetingAlignmentRun:
-        from app.native_standalone import meeting_decision
+        from app.native_standalone import NativeStandaloneDecision, meeting_decision
 
         values = dict(row)
-        native = meeting_decision(
-            str(row["codex_session_id"]),
-            int(row["codex_transcript_start_line"]),
-            int(row["codex_transcript_end_line"]),
-        )
+        native = (meeting_decision(ref) if ref is not None else
+                  NativeStandaloneDecision(
+                      False, "native_reference_unavailable",
+                      tool_events_reason="native_reference_unavailable",
+                  ))
         values.update(
             decision_json=native.decision_json,
             audit_summary=native.audit_summary,
             audit_tool_events_json=native.audit_tool_events_json,
             native_available=native.available,
             native_reason=native.reason,
+            tool_events_available=native.tool_events_available,
+            tool_events_reason=native.tool_events_reason,
         )
         return MeetingAlignmentRun.model_validate(values)
 
@@ -19092,6 +19097,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self,
         job_id: int,
     ) -> list[MeetingAlignmentRun]:
+        from app.native_standalone import latest_standalone_ref
+
         with self._connect() as db:
             rows = db.execute(
                 """
@@ -19102,21 +19109,29 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 """,
                 (job_id,),
             ).fetchall()
-            return [
-                self._meeting_alignment_run_from_row(row)
+            runs = [
+                (row, latest_standalone_ref(
+                    db, workload_kind="meeting", workload_key=str(row["id"]), legacy_row=row,
+                ))
                 for row in rows
             ]
+        return [self._meeting_alignment_run_from_row(row, ref) for row, ref in runs]
 
     def get_meeting_alignment_run(
         self,
         run_id: int,
     ) -> MeetingAlignmentRun | None:
+        from app.native_standalone import latest_standalone_ref
+
         with self._connect() as db:
             row = db.execute(
                 "select * from meeting_alignment_runs where id=?",
                 (run_id,),
             ).fetchone()
-        return self._meeting_alignment_run_from_row(row) if row is not None else None
+            ref = (latest_standalone_ref(
+                db, workload_kind="meeting", workload_key=str(run_id), legacy_row=row,
+            ) if row is not None else None)
+        return self._meeting_alignment_run_from_row(row, ref) if row is not None else None
 
     def recovered_meeting_alignment_run_ids_since(
         self,
@@ -19160,6 +19175,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self,
         codex_session_id: str,
     ) -> list[MeetingAlignmentRun]:
+        from app.native_standalone import latest_standalone_ref
+
         with self._connect() as db:
             rows = db.execute(
                 """
@@ -19169,7 +19186,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 """,
                 (codex_session_id,),
             ).fetchall()
-        return [self._meeting_alignment_run_from_row(row) for row in rows]
+            runs = [
+                (row, latest_standalone_ref(
+                    db, workload_kind="meeting", workload_key=str(row["id"]), legacy_row=row,
+                ))
+                for row in rows
+            ]
+        return [self._meeting_alignment_run_from_row(row, ref) for row, ref in runs]
 
     def create_okr_review_request(
         self,
@@ -19419,28 +19442,29 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return int(cursor.lastrowid)
 
     def get_okr_review_run(self, run_id: int) -> dict[str, object] | None:
-        from app.native_standalone import _codex_audit_events_json, okr_envelope
+        from app.native_standalone import (
+            _codex_audit_events_json, exact_standalone_ref,
+            okr_envelope,
+        )
 
         with self._connect() as db:
             row = db.execute(
                 "select * from okr_review_runs where id=?", (run_id,)
             ).fetchone()
+            ref = (exact_standalone_ref(
+                db, workload_kind="structured", workload_key=str(row["request_id"]),
+                row=row,
+            ) if row is not None else None)
         if row is None:
             return None
-        envelope_json, reason = okr_envelope(
-            str(row["codex_session_id"]),
-            int(row["codex_transcript_start_line"]),
-            int(row["codex_transcript_end_line"]),
-        )
+        envelope_json, reason = okr_envelope(ref)
         values = dict(row)
         values.update(
             envelope_json=envelope_json,
             audit_tool_events_json=(
                 _codex_audit_events_json(
-                    str(row["codex_session_id"]),
-                    int(row["codex_transcript_start_line"]),
-                    int(row["codex_transcript_end_line"]),
-                ) if not reason else "[]"
+                    ref.session_id, ref.start, ref.end,
+                ) if not reason and ref is not None and ref.kind == "codex_cli" else "[]"
             ),
             audit_summary=(
                 json.loads(envelope_json)["audit"]["summary"] if not reason else ""
@@ -27416,6 +27440,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         embedding_client: Callable[[list[str]], list[list[float]]] | None = None,
         limit: int = 3,
     ) -> list[CodexSessionSearchResult]:
+        from app.native_standalone import latest_standalone_ref
+
         with self._connect() as db:
             rows = db.execute(
                 """
@@ -27424,7 +27450,28 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 order by updated_at desc
                 """
             ).fetchall()
-            corpus = [self._native_meeting_search_corpus(db, row) for row in rows]
+            source_ids = [str(row["source_id"]) for row in rows
+                          if row["source_type"] == "meeting_alignment"]
+            runs = {}
+            if source_ids:
+                placeholders = ",".join("?" for _ in source_ids)
+                runs = {str(run["id"]): run for run in db.execute(
+                    "select run.id, run.codex_session_id, run.codex_transcript_start_line, "
+                    "run.codex_transcript_end_line, job.meeting_id, job.title "
+                    "from meeting_alignment_runs run "
+                    "join meeting_alignment_jobs job on job.id=run.job_id "
+                    f"where run.id in ({placeholders})", source_ids,
+                ).fetchall()}
+            references = {
+                source_id: latest_standalone_ref(
+                    db, workload_kind="meeting", workload_key=source_id,
+                    legacy_row=runs.get(source_id),
+                )
+                for source_id in source_ids
+            }
+        corpus = [self._native_meeting_search_corpus(
+            row, runs.get(str(row["source_id"])), references.get(str(row["source_id"]))
+        ) for row in rows]
         fts_scores: dict[int, float] = {}
         with sqlite3.connect(":memory:") as search_db:
             search_db.execute(
@@ -27435,7 +27482,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "values (?, ?, ?, ?)",
                 (
                     (int(row["id"]), row["title"], summary, fts)
-                    for row, summary, fts, _ in corpus
+                    for row, summary, fts, _, _ in corpus
                 ),
             )
             if fts_query.strip():
@@ -27461,7 +27508,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             model_identity = ()
         uncached: list[tuple[int, str, tuple]] = []
         if query_embedding and embedding_client is not None:
-            for index, (_, summary, _, corpus_key) in enumerate(corpus):
+            for index, (_, summary, _, corpus_key, _) in enumerate(corpus):
                 if not summary:
                     continue
                 vector_key = (corpus_key, model_identity)
@@ -27481,7 +27528,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             except Exception:
                 pass
         results = []
-        for index, (row, summary_text, fts_text, _) in enumerate(corpus):
+        for index, (row, summary_text, fts_text, _, native_reason) in enumerate(corpus):
             row_id = int(row["id"])
             stored_embedding = embeddings.get(index, [])
             embedding_score = _embedding_score(
@@ -27510,74 +27557,53 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     bm25_score=bm25_score,
                     score=score,
                     updated_at=row["updated_at"],
+                    native_available=not native_reason,
+                    native_reason=native_reason,
                 )
             )
         results.sort(key=lambda result: result.score, reverse=True)
         return results[:limit]
 
     def _native_meeting_search_corpus(
-        self, db: sqlite3.Connection, row: sqlite3.Row
-    ) -> tuple[sqlite3.Row, str, str, tuple]:
+        self, row: sqlite3.Row, run: sqlite3.Row | None, ref: object
+    ) -> tuple[sqlite3.Row, str, str, tuple, str]:
         from app.meeting_alignment import _meeting_fts_text, _meeting_session_index_text
         from app.meeting_alignment_models import MeetingAlignmentDecision
         from app.native_standalone import meeting_decision, meeting_source
-        from app.native_trajectory import find_codex_session_path
+        from app.native_trajectory import claude_session_path, find_codex_session_path
 
         title_fts = _meeting_fts_text(str(row["title"]))
-        if row["source_type"] != "meeting_alignment":
-            return row, "", title_fts, ()
-        run = db.execute(
-            "select run.codex_session_id, run.codex_transcript_start_line, "
-            "run.codex_transcript_end_line, job.meeting_id, job.title, job.participants_json, "
-            "job.source_json from meeting_alignment_runs run "
-            "join meeting_alignment_jobs job on job.id=run.job_id "
-            "where run.id=? and run.codex_session_id=?",
-            (row["source_id"], row["session_id"]),
-        ).fetchone()
-        if run is None:
-            return row, "", title_fts, ()
-        path = find_codex_session_path(str(run["codex_session_id"]))
+        if row["source_type"] != "meeting_alignment" or run is None or ref is None:
+            return row, "", title_fts, (), "native_reference_unavailable"
+        if run["codex_session_id"] != row["session_id"]:
+            return row, "", title_fts, (), "native_reference_unavailable"
+        path = (find_codex_session_path(ref.session_id) if ref.kind == "codex_cli"
+                else claude_session_path(ref.session_id) if ref.kind == "claude_cli"
+                else None)
         if path is not None and path.is_file():
             stat = path.stat()
             native_ref = (str(path), stat.st_mtime_ns, stat.st_size)
         else:
             native_ref = ("", 0, 0)
-        source_digest = hashlib.sha256(
-            json.dumps(
-                [row["title"], run["title"], run["source_json"],
-                 run["participants_json"]], ensure_ascii=False
-            ).encode("utf-8")
-        ).hexdigest()
         cache_key = (
             str(self.path), int(row["id"]), str(row["source_id"]),
-            str(run["codex_session_id"]),
-            int(run["codex_transcript_start_line"]),
-            int(run["codex_transcript_end_line"]),
-            native_ref, source_digest,
+            ref.kind, ref.session_id, ref.start, ref.end,
+            native_ref, row["title"], run["title"], run["meeting_id"],
         )
         cached = _meeting_search_cache_get(_MEETING_SEARCH_CORPUS_CACHE, cache_key)
         if cached is not None:
-            return row, *cached, cache_key
-        native = meeting_decision(
-            str(run["codex_session_id"]),
-            int(run["codex_transcript_start_line"]),
-            int(run["codex_transcript_end_line"]),
-        )
+            return row, *cached, cache_key, ""
+        native = meeting_decision(ref)
         if not native.available:
-            return row, "", title_fts, cache_key
-        source = meeting_source(
-            str(run["codex_session_id"]),
-            int(run["codex_transcript_start_line"]),
-            int(run["codex_transcript_end_line"]),
-            meeting_id=str(run["meeting_id"]),
-        )
+            return row, "", title_fts, cache_key, native.reason
+        source = meeting_source(ref, meeting_id=str(run["meeting_id"]))
         if source is None:
-            return row, "", title_fts, cache_key
+            return row, "", title_fts, cache_key, "native_input_unavailable"
         decision = MeetingAlignmentDecision.model_validate_json(native.decision_json)
         text = _meeting_session_index_text(source, decision)
         fts = _meeting_fts_text(text)
         _meeting_search_cache_put(_MEETING_SEARCH_CORPUS_CACHE, cache_key, (text, fts))
-        return row, text, fts, cache_key
+        return row, text, fts, cache_key, ""
 
     def list_reviewed_reply_attempts(
         self, limit: int | None = None
@@ -29902,7 +29928,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             self._finish_task_agent_run_in_connection(db, run_id, expected)
 
     def get_task_agent_run(self, run_id: int) -> dict[str, object] | None:
-        from app.native_standalone import task_decision
+        from app.native_standalone import latest_task_ref, task_decision
 
         with self._connect() as db:
             row = db.execute(
@@ -29910,7 +29936,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchone()
             if row is None:
                 return None
-            native = task_decision(db, run_id)
+            ref = latest_task_ref(db, run_id)
+        native = task_decision(ref)
         values = dict(row)
         values.update(
             decision_json=native.decision_json,

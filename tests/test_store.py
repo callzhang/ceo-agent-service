@@ -3971,6 +3971,15 @@ def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
             codex_transcript_start_line=index * 2,
             codex_transcript_end_line=index * 2 + 2,
         )
+        with store._connect() as db:
+            db.execute(
+                "insert into agent_runtime_attempts "
+                "(workload_kind, workload_key, attempt_number, route_name, runtime_kind, "
+                "credential_mode, model, session_id, status, transcript_start, transcript_end) "
+                "values ('meeting', ?, 1, 'test', 'codex_cli', 'local_oauth', 'test', ?, "
+                "'completed', ?, ?)",
+                (str(run_id), session_id, index * 2, index * 2 + 2),
+            )
         store.upsert_codex_session_search_index(
             session_id=session_id, source_type="meeting_alignment",
             source_id=str(run_id), title=title,
@@ -4035,7 +4044,7 @@ def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
     )
     assert "会议摘要" in refreshed_source[0].summary_text
     assert "业务补充摘要" not in refreshed_source[0].summary_text
-    assert len(calls) == 4
+    assert len(calls) == 3
     lines = native_lines().splitlines()
     lines[0] = json.dumps({"type": "event_msg", "payload": {"type": "task_started"}})
     native.write_text("\n".join(lines) + "\n")
@@ -4045,6 +4054,8 @@ def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
     )
     by_session = {item.session_id: item for item in missing_source}
     assert by_session["session-risk-budget"].summary_text == ""
+    assert by_session["session-risk-budget"].native_available is False
+    assert by_session["session-risk-budget"].native_reason == "native_input_unavailable"
     assert by_session["session-risk-budget"].embedding_score == 0.0
     with store._connect() as db:
         rows = db.execute(
