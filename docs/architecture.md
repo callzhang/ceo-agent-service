@@ -1640,3 +1640,5 @@ Workbench 的实时文字和工具正文仅在运行时 RAM 中使用；SQLite �
 描述优化提案保持产生它时的快照身份与引用证据不变。若提案尚未评估而源快照已被最新数据替代，提案一次性转为 `unavailable`，原因 `description_proposal_source_unavailable`；不反复启动失败的评估，也不把旧证据套到新数据上。下一次基于最新数据的训练可产生新的提案。
 
 Status API 的 SystemHealth 使用严格类型的 native_delivery_coverage（checked、unavailable）展示原生轨迹可用性；该字段仅实时计算，不写入质量快照，也不改变质量违规判断。
+
+已完成的邮件分类任务不长期保存分类输入正文：`email_agent_classification_tasks.status=done` 在既有租约／代际校验的完成事务内，将 `input_json` 改为明确标记的来源记录，保留原始 JSON 摘要和字节数、去除 `scheduled_consumer` 后的不可变输入摘要、稳定邮件身份、provider locator、配置版本及脱敏退订候选引用。定时配置与 Skill 只保留运行／版本／摘要引用；模型输入、邮件正文和冻结 Skill 正文不再复制。重复发现以既有不可变输入语义核对摘要，不补回正文；内容变化仍按既有错误处理。pending／running／failed 保留完整输入以便恢复，分类结果、任务状态和执行回执保持原样。历史精简由显式维护命令执行，不在初始化时扫描。`email_classifications.model_text` 仍是训练／人工标注使用的准确特征文本，与邮件原文不同，本阶段保留。

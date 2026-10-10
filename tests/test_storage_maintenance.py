@@ -3,10 +3,13 @@ import json
 import sqlite3
 
 from app.storage_maintenance import (
+    compact_done_email_classification_inputs,
     compact_settled_reply_inputs,
     compact_terminal_work_summary_inputs,
 )
 from app.store import AutoReplyStore
+from app.email_store import EmailStore
+from app.email_task_adapter import EmailClassificationTaskAdapter, EmailClassificationTaskInput
 
 
 def test_historical_work_input_compaction_is_idempotent_and_preserves_adopted_rows(tmp_path):
@@ -88,3 +91,43 @@ def test_historical_reply_input_compaction_preserves_unsettled_rows(tmp_path):
             assert task.input_compacted and task.trigger_text == ""
         else:
             assert not task.input_compacted and task.trigger_text == f"original {status} " + "body " * 300
+
+
+def test_historical_done_email_classification_compaction_is_idempotent(tmp_path):
+    database = tmp_path / "email-legacy.sqlite3"
+    store = EmailStore(database)
+    adapter = EmailClassificationTaskAdapter(store)
+    tasks = {}
+    for uid, status in enumerate(("done", "pending", "running", "failed"), start=100):
+        task_input = EmailClassificationTaskInput.from_message(
+            {"accountId": "account-primary", "folder": "INBOX",
+             "uidValidity": 42, "uid": uid, "providerUnread": True,
+             "messageId": f"<mail-{uid}@example.com>",
+             "textBody": "original email body " * 500},
+            allowed_category_keys=("work",),
+            category_descriptions={"work": {"core": "Business."}},
+            folder_targets={"work": "Work"}, config_version="config-v1",
+            unsubscribe_candidates=(),
+        )
+        task = adapter.ensure_task(task_input)
+        tasks[status] = task
+        with store._connect() as db:
+            db.execute(
+                "update email_agent_classification_tasks set status=?, owner=?, "
+                "lease_expires_at=? where task_id=?",
+                (status, "worker" if status == "running" else "",
+                 "2099-01-01T00:00:00+00:00" if status == "running" else "",
+                 task.task_id),
+            )
+    first = compact_done_email_classification_inputs(database)
+    second = compact_done_email_classification_inputs(database)
+    assert first["tasks_compacted"] == 1
+    assert first["logical_bytes_removed"] > 0
+    assert second == {"tasks_compacted": 0, "logical_bytes_removed": 0}
+    assert json.loads(adapter.get_task(tasks["done"].task_id).input_json)["input_compacted"] is True
+    for status in ("pending", "running", "failed"):
+        assert adapter.get_task(tasks[status].task_id).input_json == tasks[status].input_json
+    assert adapter.stable_provider_uids(
+        account_id="account-primary", folder="INBOX", uidvalidity=42
+    ) == frozenset({100, 101, 102})
+    EmailStore(database)  # Full durable-row validation accepts historical compaction.

@@ -321,9 +321,13 @@ class EmailClassificationTaskAdapter:
                 candidate_payload = json.loads(input_json)
                 if not isinstance(existing_payload, dict):
                     raise ValueError("stable classification task input is invalid")
-                existing_payload.pop("scheduled_consumer", None)
-                candidate_payload.pop("scheduled_consumer", None)
-                if existing_payload != candidate_payload:
+                if existing_payload.get("input_compacted") is True:
+                    same_input = existing_payload.get("identity_sha256") == self._identity_sha256(candidate_payload)
+                else:
+                    existing_payload.pop("scheduled_consumer", None)
+                    candidate_payload.pop("scheduled_consumer", None)
+                    same_input = existing_payload == candidate_payload
+                if not same_input:
                     raise ValueError("stable classification task input changed")
         assert row is not None
         return self._row(row)
@@ -564,26 +568,93 @@ class EmailClassificationTaskAdapter:
             )
         )
         with self.email_store._connect() as db:
-            updated = db.execute(
-                """
-                update email_agent_classification_tasks
-                set status=?, result_json=?, error=?, owner='', lease_expires_at='',
-                    available_at=?, updated_at=?
-                where task_id=? and status='running' and owner=? and generation=?
-                """,
-                (
-                    status,
-                    result_json,
-                    error,
-                    available_at,
-                    self._timestamp(),
-                    task.task_id,
-                    task.owner,
-                    task.generation,
-                ),
-            ).rowcount
+            if status == "done":
+                db.execute("begin immediate")
+                row = db.execute(
+                    "select input_json from email_agent_classification_tasks "
+                    "where task_id=? and status='running' and owner=? and generation=?",
+                    (task.task_id, task.owner, task.generation),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("classification task lease changed")
+                compact = self.compact_done_input_json(row["input_json"])
+                updated = db.execute(
+                    """
+                    update email_agent_classification_tasks
+                    set status=?, result_json=?, error=?, owner='', lease_expires_at='',
+                        available_at=?, input_json=?, updated_at=?
+                    where task_id=? and status='running' and owner=? and generation=?
+                    """,
+                    (status, result_json, error, available_at, compact,
+                     self._timestamp(), task.task_id, task.owner, task.generation),
+                ).rowcount
+            else:
+                updated = db.execute(
+                    """
+                    update email_agent_classification_tasks
+                    set status=?, result_json=?, error=?, owner='', lease_expires_at='',
+                        available_at=?, updated_at=?
+                    where task_id=? and status='running' and owner=? and generation=?
+                    """,
+                    (status, result_json, error, available_at,
+                     self._timestamp(), task.task_id, task.owner, task.generation),
+                ).rowcount
             if updated != 1:
                 raise ValueError("classification task lease changed")
+
+    @staticmethod
+    def _identity_sha256(payload: Mapping[str, object]) -> str:
+        immutable = {key: value for key, value in payload.items()
+                     if key != "scheduled_consumer"}
+        canonical = json.dumps(immutable, ensure_ascii=False, sort_keys=True,
+                               separators=(",", ":"))
+        return sha256(canonical.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def compact_done_input_json(cls, input_json: str) -> str:
+        """Keep source identity and exact input checksums after a completed run."""
+        payload = json.loads(input_json)
+        if not isinstance(payload, dict):
+            raise ValueError("stable classification task input is invalid")
+        if payload.get("input_compacted") is True:
+            return input_json
+        scheduled = payload.get("scheduled_consumer")
+        scheduled_ref: dict[str, object] = {}
+        if isinstance(scheduled, dict):
+            scheduled_ref = {
+                key: scheduled[key] for key in (
+                    "schema", "scheduled_task_id", "scheduled_task_run_id",
+                    "skill_names", "skill_protocol_source",
+                ) if key in scheduled
+            }
+            for key in ("prompt", "skill_protocol"):
+                value = scheduled.get(key)
+                if isinstance(value, str):
+                    scheduled_ref[key + "_sha256"] = sha256(value.encode("utf-8")).hexdigest()
+            materials = scheduled.get("skill_materials")
+            if isinstance(materials, list):
+                material_refs = []
+                for material in materials:
+                    content = material["content"]
+                    material_refs.append({
+                        "name": material["name"],
+                        "content_sha256": sha256(content.encode("utf-8")).hexdigest(),
+                    })
+                scheduled_ref["skill_materials"] = material_refs
+        compact = {
+            "input_compacted": True,
+            "input_sha256": sha256(input_json.encode("utf-8")).hexdigest(),
+            "input_bytes": len(input_json.encode("utf-8")),
+            "identity_sha256": cls._identity_sha256(payload),
+            "stable_message_identity": payload["stable_message_identity"],
+            "provider_locator": payload["provider_locator"],
+            "config_version": payload["config_version"],
+            "unsubscribe_candidates": payload["unsubscribe_candidates"],
+        }
+        if scheduled_ref:
+            compact["scheduled_consumer_reference"] = scheduled_ref
+        return json.dumps(compact, ensure_ascii=False, sort_keys=True,
+                          separators=(",", ":"))
 
     def _timestamp(self, value: datetime | None = None) -> str:
         candidate = value or self._now()

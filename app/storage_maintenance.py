@@ -11,6 +11,42 @@ from pathlib import Path
 from app.store import AutoReplyStore
 
 
+def compact_done_email_classification_inputs(database: Path) -> dict[str, int]:
+    """Explicit, idempotent cleanup of historical completed classifier inputs.
+
+    Caller owns backup, quiet-service coordination and physical page reclamation.
+    Store initialization does not run this historical batch.
+    """
+    from app.email_task_adapter import EmailClassificationTaskAdapter
+
+    counts = {"tasks_compacted": 0, "logical_bytes_removed": 0}
+    with closing(sqlite3.connect(database, timeout=60)) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("begin immediate")
+        rows = db.execute(
+            "select task_id, input_json from email_agent_classification_tasks "
+            "where status='done' and json_extract(input_json, '$.input_compacted') is not 1 "
+            "order by task_id"
+        ).fetchall()
+        for row in rows:
+            compact = EmailClassificationTaskAdapter.compact_done_input_json(
+                row["input_json"]
+            )
+            updated = db.execute(
+                "update email_agent_classification_tasks set input_json=? "
+                "where task_id=? and status='done'",
+                (compact, row["task_id"]),
+            ).rowcount
+            counts["tasks_compacted"] += updated
+            counts["logical_bytes_removed"] += updated * max(
+                0, len(row["input_json"].encode("utf-8")) - len(compact.encode("utf-8"))
+            )
+        if db.execute("pragma quick_check").fetchone()[0] != "ok":
+            raise RuntimeError("database integrity check failed")
+        db.commit()
+    return counts
+
+
 def compact_settled_reply_inputs(database: Path) -> dict[str, int]:
     """Explicit, idempotent cleanup of historical settled reply input copies.
 
@@ -202,14 +238,19 @@ def main() -> None:
                         help="compact historical done/skipped work inputs only")
     parser.add_argument("--settled-reply-inputs", action="store_true",
                         help="compact historical settled reply input copies only")
+    parser.add_argument("--done-email-classification-inputs", action="store_true",
+                        help="compact historical done email classification inputs only")
     arguments = parser.parse_args()
-    if arguments.work_summary_inputs and arguments.settled_reply_inputs:
+    if sum((arguments.work_summary_inputs, arguments.settled_reply_inputs,
+            arguments.done_email_classification_inputs)) > 1:
         parser.error("select one historical compaction target")
     result = (
         compact_terminal_work_summary_inputs(arguments.db)
         if arguments.work_summary_inputs else
         compact_settled_reply_inputs(arguments.db)
         if arguments.settled_reply_inputs else
+        compact_done_email_classification_inputs(arguments.db)
+        if arguments.done_email_classification_inputs else
         compact_native_duplicates(arguments.db)
     )
     print(json.dumps(result))
