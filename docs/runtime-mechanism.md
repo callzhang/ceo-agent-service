@@ -73,6 +73,9 @@ payloads. Transaction behavior and existing error propagation are unchanged.
 Worker status summarizes the current `reply_attempts` projection using only
 identity, status, timestamp, and error columns. It does not load full attempt
 payloads such as captured inputs or reply bodies to calculate queue counts.
+It groups trigger identities and seeks each trigger's latest attempt through
+`idx_reply_attempts_current_trigger`; it does not rank every retry row in a
+window function for each status request.
 
 Runtime-attempt detail reads filter by `agent_run_id` and order by
 `attempt_number`; the partial `idx_agent_runtime_attempts_run` index serves that
