@@ -8776,7 +8776,13 @@ def test_reply_attempt_tracing_and_feedback_round_trip(tmp_path: Path):
     assert attempt.trigger_message_id == "msg-1"
     assert attempt.action == "send_reply"
     assert attempt.audit_documents_json == '[{"path":"面试/岗位画像.md"}]'
-    assert attempt.audit_tool_events_json == '[{"tool":"exec_command","command":"rg 岗位"}]'
+    assert json.loads(attempt.audit_tool_events_json) == [{"tool": "exec_command"}]
+    with store._connect() as db:
+        persisted_events = db.execute(
+            "select audit_tool_events_json from reply_attempts where id=?",
+            (attempt_id,),
+        ).fetchone()[0]
+    assert "rg 岗位" not in persisted_events
     assert attempt.audit_summary == "查看岗位画像后判断需要先收敛问题。"
     assert attempt.codex_session_id == "session-1"
     assert attempt.codex_transcript_start_line == 2
