@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-10: Give Consumer executor fixtures isolated native records while
+  preserving malformed stdout and missing-session failures. Check prompt
+  assembly through actual submission callbacks, not an invented terminal
+  archive, and bind revision fixtures to valid candidate-specific Audit returns.
+
 - 2026-10-10: Keep unmatched native Codex tool starts in chronological history
   as started attempts, without manufacturing completion or results. Preserve
   matched completion inputs, including legacy MCP end records.

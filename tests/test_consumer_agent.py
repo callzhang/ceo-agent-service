@@ -1,4 +1,5 @@
 import json
+import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from app.agent_cron.commands import (
     ServiceCommandConsumerContext,
     ServiceCommandSkillMaterial,
 )
-from app.agent_contracts import ConsumerAgentResult, ConsumerProposal
+from app.agent_contracts import AuditAgentResult, ConsumerAgentResult, ConsumerProposal
 from app.agent_result import ResultParseError
 from app.agent_wire_contracts import (
     ConsumerAgentWireResult,
@@ -42,6 +43,14 @@ from app.service_message_sender import ServiceMessageSender, agent_message_deliv
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
 from tests.runtime_route_env import claude_api_env, codex_api_env, set_env
+from tests.support.native_protocol import install_protocol_native_trajectories
+
+
+@pytest.fixture(autouse=True)
+def native_executor_records(tmp_path, monkeypatch):
+    install_protocol_native_trajectories(
+        tmp_path, monkeypatch, CapturingExecutor, allow_nonprotocol_output=True,
+    )
 
 
 def test_consumer_records_specific_missing_agent_cli_receipt(
@@ -209,7 +218,7 @@ def test_consumer_uses_scheduled_prompt_and_targeted_skill_protocol(
         task.id, task.execution_generation
     )
     snapshot = next(
-        event for event in saved.tool_events if event.get("type") == "runtime.prompt"
+        event for event in _prompt_observations(store, saved.id) if event.get("type") == "runtime.prompt"
     )
     assert snapshot["invocation_facts"]["skill_names"] == []
 
@@ -238,7 +247,7 @@ def test_consumer_without_selected_skill_uses_active_discovery(store, task, cont
         task.id, task.execution_generation
     )
     snapshot = next(
-        event for event in saved.tool_events if event.get("type") == "runtime.prompt"
+        event for event in _prompt_observations(store, saved.id) if event.get("type") == "runtime.prompt"
     )
     assert snapshot["invocation_facts"]["skill_names"] == []
 
@@ -304,7 +313,7 @@ def test_resumed_consumer_turn_uses_current_selected_frozen_skill_entry(
     ) is protocol_present
     saved = store.get_agent_run(result.run_id)
     snapshot = next(
-        event for event in saved.tool_events if event.get("type") == "runtime.prompt"
+        event for event in _prompt_observations(store, saved.id) if event.get("type") == "runtime.prompt"
     )
     assert snapshot["invocation_facts"]["skill_protocol"] == (
         "OLD SELECTED PROTOCOL MUST NOT BE PRELOADED" if protocol_present else ""
@@ -1136,8 +1145,44 @@ def _failed_reviewed_read_jsonl() -> str:
 
 
 @pytest.fixture
-def store(tmp_path):
-    return AutoReplyStore(tmp_path / "agent.sqlite3")
+def store(tmp_path, monkeypatch):
+    value = AutoReplyStore(tmp_path / "agent.sqlite3")
+    value.observed_prompt_events = {}
+    original = value.append_agent_run_event
+
+    def observe(run_id, event, **kwargs):
+        result = original(run_id, event, **kwargs)
+        if event.get("type") in {"runtime.prompt", "runtime.prompt.invoked"}:
+            value.observed_prompt_events.setdefault(run_id, []).append(json.loads(json.dumps(event)))
+        return result
+
+    monkeypatch.setattr(value, "append_agent_run_event", observe)
+    return value
+
+
+def _prompt_observations(store, run_id):
+    # Observe real submission callbacks; do not invent native prompt records.
+    saved = store.get_agent_run(run_id)
+    assert not any(event.get("type") == "runtime.prompt" for event in saved.tool_events)
+    return store.observed_prompt_events[run_id]
+
+
+def _return_fixture_candidate(store, audit, summary):
+    candidate = store.adopted_candidate_for_consumer_run(audit.parent_agent_run_id)
+    assert candidate["task_id"] == audit.reply_task_id
+    assert candidate["execution_generation"] == audit.execution_generation
+    assert candidate["proposal_revision"] == audit.proposal_revision
+    result = AuditAgentResult.model_validate({
+        "outcome": "return", "summary": summary, "proposal_revision": audit.proposal_revision,
+        "candidate_digest": candidate["candidate_digest"], "evidence_refs": [],
+        "feedback": {"rule": "Unit message revision", "observation": summary, "requested_revision": summary},
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0, "information_completeness": 1.0,
+    })
+    store.complete_agent_run(audit.id, result.model_dump(mode="json"), owner="audit-test")
+    adopted = store.reviewed_candidate_for_audit_run(audit.id)
+    assert adopted["id"] == candidate["id"]
+    assert adopted["decision"] == "return"
 
 
 @pytest.fixture
@@ -1542,11 +1587,10 @@ def test_consumer_read_events_can_fail_over_within_same_run(
         "session-api",
     ]
     assert attempts[0].transcript_start == 0
-    assert attempts[0].transcript_end == len(oauth_failure.splitlines())
+    from app.codex_history import count_codex_session_lines
+    assert attempts[0].transcript_end == count_codex_session_lines("session-a", codex_home=Path(os.environ["CODEX_HOME"]))
     assert attempts[1].transcript_start == 0
-    assert attempts[1].transcript_end == len(
-        _result_jsonl(session="session-api").splitlines()
-    )
+    assert attempts[1].transcript_end == count_codex_session_lines("session-api", codex_home=Path(os.environ["CODEX_HOME"]))
     assert store.active_runtime_route_pause(
         "codex_oauth", now="2026-08-20 00:00:00"
     ) == "codex_login_required"
@@ -1559,7 +1603,7 @@ def test_consumer_read_events_can_fail_over_within_same_run(
     persisted_run = store.get_agent_run(result.run_id)
     assert persisted_run is not None
     assert persisted_run.codex_session_id == "session-a"
-    snapshots = [event for event in persisted_run.tool_events if event.get("type") == "runtime.prompt"]
+    snapshots = [event for event in _prompt_observations(store, persisted_run.id) if event.get("type") == "runtime.prompt"]
     assert [event["runtime_attempt_id"] for event in snapshots] == [attempt.id for attempt in attempts]
     assert [event["route_name"] for event in snapshots] == ["codex_oauth", "codex_api"]
     for snapshot, command in zip(snapshots, executor.commands, strict=True):
@@ -2734,11 +2778,7 @@ def test_consumer_feedback_revision_prepares_its_corrected_dingtalk_body(
         operation_id="audit-revision-0",
         owner="audit-test",
     ).run
-    store.complete_agent_run(
-        audit.id,
-        {"outcome": "feedback_provided", "summary": "Correct the message."},
-        owner="audit-test",
-    )
+    _return_fixture_candidate(store, audit, "Correct the message.")
     revised = ConsumerAgentRunner(
         store=store,
         workspace=Path("/workspace"),
@@ -2797,11 +2837,7 @@ def test_consumer_feedback_revision_accepts_exact_service_feedback_links(
         operation_id="audit-preserved-feedback-links",
         owner="audit-test",
     ).run
-    store.complete_agent_run(
-        audit.id,
-        {"outcome": "feedback_provided", "summary": "Keep the reviewed body."},
-        owner="audit-test",
-    )
+    _return_fixture_candidate(store, audit, "Keep the reviewed body.")
 
     revised = ConsumerAgentRunner(
         store=store,
@@ -3757,7 +3793,7 @@ def test_saved_prompt_changes_update_input_and_hash_without_replacing_route_sess
     assert context.trigger_text in executor.prompts[0]
     assert store.get_conversation_runtime_session_contract_hash(task.conversation_id, 'codex_api') == after_hash
     saved = store.get_agent_run(result.run_id)
-    snapshot = next(event for event in saved.tool_events if event.get('type') == 'runtime.prompt')
+    snapshot = next(event for event in _prompt_observations(store, saved.id) if event.get('type') == 'runtime.prompt')
     assert snapshot['task_prompt'] == executor.prompts[0]
     from app.prompt_composition import load_prompt_configuration
     assert snapshot['invocation_facts']['prompt_configuration'] == load_prompt_configuration().fingerprints()
