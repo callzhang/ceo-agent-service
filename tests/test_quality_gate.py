@@ -24,7 +24,7 @@ def test_reply_quality_counts_do_not_read_business_payloads(tmp_path):
     with store._connect() as db:
         def authorize(action, table, column, database, source):
             if action == sqlite3.SQLITE_READ and table == "reply_attempts":
-                if column in {"trigger_text", "reply_text", "context_json"}:
+                if column in {"trigger_text", "final_reply_text", "context_json"}:
                     return sqlite3.SQLITE_DENY
             return sqlite3.SQLITE_OK
 
