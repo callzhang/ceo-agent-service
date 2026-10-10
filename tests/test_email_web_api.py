@@ -402,10 +402,10 @@ def test_email_routes_initialize_and_reuse_one_store(
     factory_calls = 0
     original_initialize = EmailStore._initialize
 
-    def counted_initialize(self: EmailStore) -> None:
+    def counted_initialize(self: EmailStore, *, validate_rows: bool = True) -> None:
         nonlocal initialize_calls
         initialize_calls += 1
-        original_initialize(self)
+        original_initialize(self, validate_rows=validate_rows)
 
     def factory() -> EmailStore:
         nonlocal factory_calls

@@ -1,5 +1,11 @@
 # Current Runtime Mechanism
 
+Email classification polling checks for due pending work or an expired running
+lease before acquiring the SQLite writer lock. Ineligible polls are read-only.
+The eligibility read grants no ownership: expired-lease recovery and the full
+claim query still run under BEGIN IMMEDIATE, preserving generation and owner
+checks if another worker claims the candidate between the read and the lock.
+
 An orchestration failure before the first Agent run has `final_run_id=0`.
 The Reply worker handles both retryable and terminal failures through its
 generation-checked no-run transition. Terminal failures retain their original
@@ -1630,9 +1636,12 @@ used for identity, provider locators, recipients, references, and attachment
 metadata. Its scan selects only those columns; it does not load cached message
 bodies or other unused columns into memory while performing the validation.
 
-The Web process initializes and validates one EmailStore at startup, shared by
-Console detail routes and the email learning service. Initialization failures
-prevent startup. The Attempt DTO builder queries this initialized store only for
+The Web process shares one successfully initialized and validated EmailStore
+between registered email routes, Console detail routes and the email learning
+service. Email route registration retains its existing initialization error
+boundary: invalid email persistence does not prevent unrelated Console routes
+from starting and is not treated as healthy email state. The Attempt DTO builder
+queries this initialized store only for
 an existing email-channel Attempt's classification and unsubscribe context.
 Every request reads current records through fresh database connections; detail
 results are not cached and requests do not repeat the full durable-state scan.
