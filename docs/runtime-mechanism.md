@@ -1529,7 +1529,9 @@ receipt, or failed terminal parent does not authorize this runtime operation;
 the action plan and browser effect authorization remain unchanged.
 
 Audit web startup does not scan and cache History lists or charts. History
-pages are computed when requested. Attempt detail loads tool events in one
+pages are computed when requested. The list counts and sorts compact source
+keys, then hydrates only the requested page in the same read snapshot; it does
+not materialize every historical display body to compute the total. Attempt detail loads tool events in one
 batched read for the historical generation shown on the page. If the task has
 since moved to a newer execution generation, its runs are read without event
 payloads because only their status is needed for the current projection. The
