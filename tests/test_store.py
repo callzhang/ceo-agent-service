@@ -79,6 +79,52 @@ def _store_without_initialization(path: Path) -> AutoReplyStore:
     return store
 
 
+def _write_native_run_events(
+    store: AutoReplyStore,
+    run_id: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    paths: dict[str, Path],
+) -> None:
+    """Materialize a test runtime's observed stream before terminal eviction."""
+    from app import native_trajectory
+
+    events = native_trajectory.live_events(str(store.path.resolve()), run_id) or []
+    records = [{"type": "event_msg", "payload": {"type": "task_started"}}]
+    for index, event in enumerate(events):
+        item = event.get("item")
+        if not isinstance(item, dict):
+            continue
+        native_type = {
+            "command_execution": "CommandExecution",
+            "agent_message": "AgentMessage",
+        }.get(item.get("type"))
+        if native_type is None:
+            continue
+        records.append({
+            "type": "event_msg",
+            "payload": {"type": "item_completed", "item": {
+                **item, "id": item.get("id") or f"item-{index}", "type": native_type,
+            }},
+        })
+    records.append({"type": "event_msg", "payload": {"type": "task_complete"}})
+    session_id = f"test-run-{run_id}"
+    path = tmp_path / f"{session_id}.jsonl"
+    path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    paths[session_id] = path
+    monkeypatch.setattr(
+        native_trajectory,
+        "find_codex_session_path",
+        lambda session_id, **kwargs: paths.get(session_id),
+    )
+    with store._connect() as db:
+        db.execute(
+            "update agent_runs set codex_session_id=?, transcript_start_line=0, "
+            "transcript_end_line=? where id=?",
+            (session_id, len(records), run_id),
+        )
+
+
 def test_prepare_outbound_postfix_reuses_final_body_when_candidate_or_config_changes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3137,7 +3183,11 @@ def test_reconcile_failed_audit_requires_verified_delivery_and_all_effects(
         operation_id="", owner="consumer",
     ).run
     action = {"action_identity": "send", "operation": "send", "target": {"user_id": "derek"}}
-    store.complete_agent_run(consumer.id, {"proposal": {"actions": [action]}}, owner="consumer")
+    store.complete_agent_run(
+        consumer.id,
+        {"outcome": "proposal", "proposal": {"actions": [action]}},
+        owner="consumer",
+    )
     audit = store.claim_agent_run(
         task.id, task.execution_generation, role=AgentRole.AUDIT,
         proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id,
@@ -5496,7 +5546,7 @@ def test_reviewed_reply_rerun_allows_changed_feedback_to_rotate_generation(
     assert revised_task.execution_generation != first_task.execution_generation
 
 
-def test_reviewed_reply_rerun_preserves_prior_audit_events(tmp_path: Path) -> None:
+def test_reviewed_reply_rerun_keeps_review_metadata_without_process_events(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-history-preserve",
@@ -5527,7 +5577,6 @@ def test_reviewed_reply_rerun_preserves_prior_audit_events(tmp_path: Path) -> No
     attempt = store.get_reply_attempt(attempt_id)
     assert attempt is not None
     assert json.loads(attempt.audit_tool_events_json) == [
-        {"tool": "original_read"},
         {"tool": "audit_review", "result": "queued"},
     ]
 
@@ -5872,7 +5921,11 @@ def test_agent_run_lease_renewal_retries_transient_database_lock(
     assert renewed.lease_expires_at == "2026-07-29 00:25:00"
 
 
-def test_reclaimed_agent_run_rejects_every_stale_owner_mutation(tmp_path: Path):
+def test_reclaimed_agent_run_rejects_every_stale_owner_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    from app import native_trajectory
+
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     first = _claim_audit_run(store,
@@ -5945,27 +5998,52 @@ def test_reclaimed_agent_run_rejects_every_stale_owner_mutation(tmp_path: Path):
         owner="worker-b",
         now="2026-07-29 00:30:02",
     )
+    owned_event = {
+        "type": "item.completed",
+        "item": {
+            "type": "command_execution", "id": "owned", "command": "echo owned",
+            "exit_code": 0, "status": "completed", "aggregated_output": "owned",
+        },
+    }
     store.append_agent_run_event(
         first.run.id,
-        {"type": "item.completed", "call_id": "owned"},
+        owned_event,
         owner="worker-b",
         now="2026-07-29 00:30:02",
+    )
+    native_path = tmp_path / "session-1.jsonl"
+    native_path.write_text("\n".join(json.dumps(record) for record in (
+        {"type": "event_msg", "payload": {"type": "task_started"}},
+        {"type": "event_msg", "payload": {
+            "type": "item_completed",
+            "item": {**owned_event["item"], "type": "CommandExecution"},
+        }},
+        {"type": "event_msg", "payload": {"type": "task_complete"}},
+    )) + "\n")
+    monkeypatch.setattr(
+        native_trajectory, "find_codex_session_path",
+        lambda session_id, **kwargs: native_path if session_id == "session-1" else None,
     )
     renewed = store.renew_agent_run_lease(
         first.run.id,
         owner="worker-b",
         now="2026-07-29 00:31:00",
     )
+    assert store.get_agent_run(first.run.id).tool_events == [owned_event]
     completed = store.complete_agent_run(
         first.run.id,
         {"outcome": "completed", "summary": "owned"},
         owner="worker-b",
+        transcript_end_line=3,
         now="2026-07-29 00:31:01",
     )
 
     assert renewed.lease_owner == "worker-b"
     assert completed.status == "completed"
-    assert [event["call_id"] for event in completed.tool_events] == ["owned"]
+    assert completed.tool_events == [owned_event]
+    assert completed.codex_session_id == "session-1"
+    assert completed.transcript_start_line == 0
+    assert completed.transcript_end_line == 3
 
 
 def test_expired_lease_blocks_writes_until_session_recovery(tmp_path: Path):
@@ -6052,7 +6130,7 @@ def test_expired_lease_blocks_writes_until_session_recovery(tmp_path: Path):
 
 
 
-def test_running_agent_events_are_persisted_incrementally(tmp_path: Path):
+def test_running_agent_events_are_visible_incrementally(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
@@ -6080,7 +6158,7 @@ def test_running_agent_events_are_persisted_incrementally(tmp_path: Path):
 
 
 
-def test_agent_run_events_use_append_only_rows_in_sequence(tmp_path: Path):
+def test_agent_run_events_are_not_copied_to_sqlite(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
@@ -6101,10 +6179,7 @@ def test_agent_run_events_use_append_only_rows_in_sequence(tmp_path: Path):
             for row in db.execute("pragma table_info(agent_runs)")
             if row[1] == "tool_events_json"
         ]
-    assert [(row[0], json.loads(row[1])) for row in rows] == [
-        (1, first),
-        (2, second),
-    ]
+    assert rows == []
     assert second_copy == []
     assert store.get_agent_run(run.id).tool_events == [first, second]
 
@@ -6140,7 +6215,7 @@ def test_append_agent_events_does_not_reparse_prior_json(tmp_path: Path, monkeyp
     assert calls <= 300
 
 
-def test_agent_run_event_migration_backfills_legacy_json_once(tmp_path: Path):
+def test_agent_run_event_migration_discards_legacy_json_copies(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     task_id = _enqueue_universal_reply_task(store)
@@ -6166,15 +6241,14 @@ def test_agent_run_event_migration_backfills_legacy_json_once(tmp_path: Path):
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
     second_load = AutoReplyStore(db_path).get_agent_run(run.id)
 
-    assert first_load.tool_events == legacy_events
-    assert second_load.tool_events == legacy_events
+    assert first_load.tool_events == []
+    assert second_load.tool_events == []
     with sqlite3.connect(db_path) as db:
         assert db.execute(
             "select count(*) from agent_run_events where agent_run_id=?",
             (run.id,),
-        ).fetchone()[0] == 2
-        # The legacy column is drained and then removed, so agent_run_events is
-        # the only place the trajectory lives afterwards.
+        ).fetchone()[0] == 0
+        # Legacy copies are removed; native transcripts are the trajectory source.
         assert not any(
             row[1] == "tool_events_json"
             for row in db.execute("pragma table_info(agent_runs)")
@@ -6319,6 +6393,7 @@ def test_completed_message_delivery_persists_action_result_and_history_atomicall
 )
 def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     payload_field: str,
     reply_text: str,
     sent_text: str,
@@ -6326,6 +6401,7 @@ def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
     receipt_message_id: bool,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    native_paths: dict[str, Path] = {}
     task_id = _enqueue_universal_reply_task(store)
     task = store.get_reply_task(task_id)
     assert task is not None
@@ -6416,6 +6492,7 @@ def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
             },
             owner="audit",
         )
+    _write_native_run_events(store, send_run.id, tmp_path, monkeypatch, native_paths)
     store.fail_agent_run(send_run.id, {"code": "result_invalid"}, owner="audit")
     readback_run = store.claim_agent_run(
         task.id,
@@ -6476,6 +6553,7 @@ def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
         },
         owner="audit-readback",
     )
+    _write_native_run_events(store, readback_run.id, tmp_path, monkeypatch, native_paths)
     store.fail_agent_run(
         readback_run.id, {"code": "provider_receipt_missing"}, owner="audit-readback"
     )
@@ -6525,8 +6603,10 @@ def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
 
 def test_reconcile_failed_agent_message_accepts_send_and_readback_in_same_run(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    native_paths: dict[str, Path] = {}
     task_id = _enqueue_universal_reply_task(store)
     task = store.get_reply_task(task_id)
     assert task is not None
@@ -6609,6 +6689,7 @@ def test_reconcile_failed_agent_message_accepts_send_and_readback_in_same_run(
         },
         owner="audit",
     )
+    _write_native_run_events(store, audit.id, tmp_path, monkeypatch, native_paths)
     store.fail_agent_run(audit.id, {"code": "result_invalid"}, owner="audit")
     attempt_id = store.record_reply_attempt(
         conversation_id=task.conversation_id,
@@ -6895,23 +6976,36 @@ def test_agent_run_event_rejects_non_json_object_values(tmp_path: Path):
 
 def test_agent_run_terminal_transitions_are_strict_and_exactly_idempotent(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
+    from app import native_trajectory
+
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
     final_result = {"outcome": "completed", "summary": "sent"}
+    native_path = tmp_path / "terminal-session.jsonl"
+    native_path.write_text(json.dumps({
+        "type": "response_item",
+        "payload": {"type": "message", "role": "assistant", "content": [
+            {"type": "output_text", "text": json.dumps(final_result)}
+        ]},
+    }) + "\n")
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *a, **k: native_path)
+    with store._connect() as db:
+        db.execute("update agent_runs set codex_session_id='terminal-session' where id=?", (run.id,))
 
     completed = store.complete_agent_run(
         run.id,
         final_result,
         owner="worker-1",
-        transcript_end_line=12,
+        transcript_end_line=1,
     )
     repeated = store.complete_agent_run(
         run.id,
         final_result,
         owner="worker-1",
-        transcript_end_line=12,
+        transcript_end_line=1,
     )
 
     assert completed.status == "completed"
@@ -6923,7 +7017,7 @@ def test_agent_run_terminal_transitions_are_strict_and_exactly_idempotent(
             run.id,
             {"outcome": "completed", "summary": "different"},
             owner="worker-1",
-                transcript_end_line=12,
+            transcript_end_line=1,
         )
     with pytest.raises(ValueError, match="transition from completed"):
         store.fail_agent_run(
@@ -8892,7 +8986,7 @@ def test_reply_attempt_tracing_and_feedback_round_trip(tmp_path: Path):
     assert attempt.trigger_message_id == "msg-1"
     assert attempt.action == "send_reply"
     assert attempt.audit_documents_json == '[{"path":"面试/岗位画像.md"}]'
-    assert attempt.audit_tool_events_json == '[{"tool":"exec_command","command":"rg 岗位"}]'
+    assert attempt.audit_tool_events_json == '[]'
     assert attempt.audit_summary == "查看岗位画像后判断需要先收敛问题。"
     assert attempt.codex_session_id == "session-1"
     assert attempt.codex_transcript_start_line == 2
@@ -9015,7 +9109,7 @@ def test_record_reply_attempt_for_trigger_reuses_existing_attempt_id(
     assert attempt.draft_reply_text == "先按A方案走"
     assert attempt.codex_session_id == "session-1"
     assert attempt.audit_documents_json == '[{"title":"chat"}]'
-    assert attempt.audit_tool_events_json == '[{"tool":"dws"}]'
+    assert attempt.audit_tool_events_json == '[]'
     assert attempt.audit_summary == "已重新判断，需要回复。"
     assert attempt.final_reply_text == ""
     assert attempt.send_status == "pending"
@@ -9713,6 +9807,8 @@ def test_scheduled_service_incident_resolution_uses_task_history_index(tmp_path,
 
 
 def test_resolve_errors_recovered_by_scheduled_service_command(tmp_path: Path):
+    from app.scheduled_config_storage import intern_scheduled_config
+    from app.agent_cron.models import ScheduledTaskSnapshot
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = store.create_scheduled_task(
         name="Check DingTalk meetings",
@@ -9733,6 +9829,7 @@ def test_resolve_errors_recovered_by_scheduled_service_command(tmp_path: Path):
         "other task still failing",
     )
     with store._connect() as db:
+        snapshot_id = intern_scheduled_config(db, ScheduledTaskSnapshot.from_task(task).to_json())
         db.execute(
             """
             update errors
@@ -9744,16 +9841,16 @@ def test_resolve_errors_recovered_by_scheduled_service_command(tmp_path: Path):
             """
                 insert into scheduled_task_runs (
                     event_id, scheduled_task_id, trigger_kind, scheduled_for, first_scheduled_for,
-                    dispatch_status, snapshot_json, execution_kind, execution_id,
+                    dispatch_status, snapshot_id, execution_kind, execution_id,
                     dispatched_at
                 ) values (
                         'event-success', ?, 'scheduled', '2026-09-10T12:01:00+00:00',
                         '2026-09-10T12:01:00+00:00',
-                        'dispatched', '{}', 'service_command', 'scan-meetings-once',
+                        'dispatched', ?, 'service_command', 'scan-meetings-once',
                     '2026-09-10 12:01:00'
                 )
             """,
-            (task.id,),
+            (task.id, snapshot_id),
         )
 
     assert store.resolve_errors_recovered_by_scheduled_service_command() == 1
@@ -9769,6 +9866,8 @@ def test_resolve_errors_recovered_by_scheduled_service_command(tmp_path: Path):
 
 
 def test_resolve_errors_recovered_by_scheduled_reply_task(tmp_path: Path):
+    from app.scheduled_config_storage import intern_scheduled_config
+    from app.agent_cron.models import ScheduledTaskSnapshot
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = store.create_scheduled_task(
         name="Sync meeting notes",
@@ -9788,6 +9887,7 @@ def test_resolve_errors_recovered_by_scheduled_reply_task(tmp_path: Path):
         channel="scheduled",
     )
     with store._connect() as db:
+        snapshot_id = intern_scheduled_config(db, ScheduledTaskSnapshot.from_task(task).to_json())
         reply_task_id = db.execute(
             "select id from reply_tasks where trigger_message_id='event-success'"
         ).fetchone()[0]
@@ -9799,12 +9899,12 @@ def test_resolve_errors_recovered_by_scheduled_reply_task(tmp_path: Path):
             """
             insert into scheduled_task_runs (
                 event_id, scheduled_task_id, trigger_kind, scheduled_for, first_scheduled_for,
-                dispatch_status, snapshot_json, execution_kind, execution_id, dispatched_at
+                dispatch_status, snapshot_id, execution_kind, execution_id, dispatched_at
             ) values ('event-success', ?, 'scheduled', '2026-09-18T12:00:00Z',
-                      '2026-09-18T12:00:00Z', 'dispatched', '{}', 'reply_task', ?,
+                      '2026-09-18T12:00:00Z', 'dispatched', ?, 'reply_task', ?,
                       '2026-09-18 12:00:32')
             """,
-            (task.id, str(reply_task_id)),
+            (task.id, snapshot_id, str(reply_task_id)),
         )
     store.record_error(
         f"scheduled-task:{task.id}",
@@ -11279,12 +11379,7 @@ def test_terminal_work_summary_input_resolves_its_own_error(tmp_path: Path):
 
 
 def test_reopening_drops_the_second_copy_of_a_run_trajectory(tmp_path: Path):
-    """agent_run_events is the only place a run's trajectory is kept.
-
-    The column held the same events as one JSON array. Two stores of one truth
-    is how they come to disagree, and nothing tells a reader which copy is
-    stale, so the column goes once its contents are in the table.
-    """
+    """Reopening removes retired SQLite payloads without reviving their contents."""
     db_path = tmp_path / "legacy-tool-events-column.sqlite3"
     store = AutoReplyStore(db_path)
     task_id = _enqueue_universal_reply_task(store)
@@ -11314,13 +11409,13 @@ def test_reopening_drops_the_second_copy_of_a_run_trajectory(tmp_path: Path):
     assert "tool_events_json" not in columns
     loaded = reopened.get_agent_run(run.id)
     assert loaded is not None
-    assert [event["call_id"] for event in loaded.tool_events] == ["legacy-1"]
+    assert loaded.tool_events == []
 
 
-def test_dropping_the_trajectory_column_refuses_to_discard_unmigrated_events(
+def test_dropping_the_trajectory_column_requires_clearing_retired_payloads(
     tmp_path: Path,
 ):
-    """Dropping unread trajectory would be data loss, not a migration."""
+    """The column cannot be dropped while it still contains retired payloads."""
     store = AutoReplyStore(tmp_path / "undrained-tool-events.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
@@ -11334,10 +11429,16 @@ def test_dropping_the_trajectory_column_refuses_to_discard_unmigrated_events(
             (json.dumps([{"type": "item.completed", "call_id": "kept"}]), run.id),
         )
 
-        with pytest.raises(ValueError, match="not migrated"):
+        with pytest.raises(ValueError, match="not cleared"):
             store._drop_agent_run_tool_events_column(db)
 
         assert any(
+            row["name"] == "tool_events_json"
+            for row in db.execute("pragma table_info(agent_runs)")
+        )
+        store._migrate_agent_run_events(db)
+        store._drop_agent_run_tool_events_column(db)
+        assert not any(
             row["name"] == "tool_events_json"
             for row in db.execute("pragma table_info(agent_runs)")
         )
@@ -12145,6 +12246,7 @@ def test_superseded_failed_weekly_okr_job_is_completed(tmp_path: Path, failure: 
 
 def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_path: Path):
     """The check runs in every subprocess; it must not scan the whole table."""
+    from app.scheduled_config_storage import intern_scheduled_config
     store = AutoReplyStore(tmp_path / "snapshots.sqlite3")
     task = store.create_scheduled_task(
         name="消息检查",
@@ -12159,19 +12261,19 @@ def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_p
     with store._connect() as db:
         assert store._scheduled_task_run_snapshots_are_current(db) is True
         cols = {row["name"] for row in db.execute("pragma table_info(scheduled_task_runs)")}
-        assert "snapshot_json" in cols
+        assert "snapshot_id" in cols
         # A JSON null value for command is a present key, not an absent one.
         for index, payload in enumerate(
             (current, json.dumps({"command": None, "required_runtime_capabilities": None}))
         ):
             db.execute(
                 "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind,"
-                " scheduled_for, first_scheduled_for, dispatch_status, snapshot_json) "
+                " scheduled_for, first_scheduled_for, dispatch_status, snapshot_id) "
                 "values (?, ?, 'scheduled', ?, ?, 'pending', ?)",
                 (
                     f"evt-{index}", task.id,
                     f"2026-09-11T0{index}:00:00+00:00",
-                    f"2026-09-11T0{index}:00:00+00:00", payload,
+                    f"2026-09-11T0{index}:00:00+00:00", intern_scheduled_config(db, payload),
                 ),
             )
         assert store._scheduled_task_run_snapshots_are_current(db) is True
@@ -12179,13 +12281,13 @@ def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_p
         # Unparseable JSON is corrupt data, not a stale schema.
         db.execute(
             "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind,"
-            " scheduled_for, first_scheduled_for, dispatch_status, snapshot_json) "
+            " scheduled_for, first_scheduled_for, dispatch_status, snapshot_id) "
             "values ('evt-bad', ?, 'scheduled', ?, ?, 'pending', ?)",
             (
                 task.id,
                 "2026-09-11T05:00:00+00:00",
                 "2026-09-11T05:00:00+00:00",
-                "{not json",
+                intern_scheduled_config(db, "{not json"),
             ),
         )
         assert store._scheduled_task_run_snapshots_are_current(db) is True
@@ -12193,13 +12295,13 @@ def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_p
         # A snapshot missing the command keys is what the check must catch.
         db.execute(
             "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind,"
-            " scheduled_for, first_scheduled_for, dispatch_status, snapshot_json) "
+            " scheduled_for, first_scheduled_for, dispatch_status, snapshot_id) "
             "values ('evt-stale', ?, 'scheduled', ?, ?, 'pending', ?)",
             (
                 task.id,
                 "2026-09-11T06:00:00+00:00",
                 "2026-09-11T06:00:00+00:00",
-                stale,
+                intern_scheduled_config(db, stale),
             ),
         )
         assert store._scheduled_task_run_snapshots_are_current(db) is False

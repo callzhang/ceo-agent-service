@@ -193,5 +193,5 @@ def test_delivery_reconciliation_after_restart_reads_interrupted_native_turn(tmp
 
     monkeypatch.setattr(AutoReplyStore, "reconcile_failed_agent_message_delivery", restart_then_reconcile)
     test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
-        tmp_path, "content", "Delivered text.", "Delivered text.", "Delivered text.", True,
+        tmp_path, monkeypatch, "content", "Delivered text.", "Delivered text.", "Delivered text.", True,
     )

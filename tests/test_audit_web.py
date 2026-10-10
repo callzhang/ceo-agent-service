@@ -12057,6 +12057,9 @@ def test_attention_keeps_old_scheduled_failure_in_history_after_later_success(
         channel="scheduled",
     )
     with store._connect() as db:
+        from app.scheduled_config_storage import intern_scheduled_config
+
+        snapshot_id = intern_scheduled_config(db, '{}')
         db.execute(
             "insert into scheduled_tasks (id, name, prompt, cron_expression, "
             "timezone, runtime_id, enabled) values "
@@ -12066,11 +12069,11 @@ def test_attention_keeps_old_scheduled_failure_in_history_after_later_success(
             db.execute(
                 "insert into scheduled_task_runs "
                 "(id, event_id, scheduled_task_id, trigger_kind, scheduled_for, "
-                "first_scheduled_for, dispatch_status, snapshot_json, "
+                "first_scheduled_for, dispatch_status, snapshot_id, "
                 "execution_kind, execution_id) "
-                "values (?, ?, 14, 'manual', ?, ?, 'dispatched', '{}', "
+                "values (?, ?, 14, 'manual', ?, ?, 'dispatched', ?, "
                 "'reply_task', ?)",
-                (run_id, event_id, f"2026-09-28T{run_id-87:02d}:00:00Z", f"2026-09-28T{run_id-87:02d}:00:00Z", str(task_id)),
+                (run_id, event_id, f"2026-09-28T{run_id-87:02d}:00:00Z", f"2026-09-28T{run_id-87:02d}:00:00Z", snapshot_id, str(task_id)),
             )
         db.execute("update reply_tasks set status='failed', error='codex_result_missing' where id=?", (old.id,))
         db.execute("update reply_tasks set status='done' where id=?", (new.id,))

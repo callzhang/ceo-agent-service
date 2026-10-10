@@ -84,10 +84,13 @@ def test_result_parse_failure_preserves_runtime_attempt_code():
 
     class Store:
         def get_agent_runtime_attempt(self, attempt_id):
-            return SimpleNamespace(id=attempt_id, status="running")
+            return SimpleNamespace(
+                id=attempt_id, status="running", session_id="",
+                transcript_start=0, transcript_end=0,
+            )
 
-        def fail_agent_runtime_attempt(self, *args):
-            calls.append(args)
+        def fail_agent_runtime_attempt(self, *args, **kwargs):
+            calls.append((args, kwargs))
 
     runner = object.__new__(AgentTurnProcess)
     runner.store = Store()
@@ -96,7 +99,8 @@ def test_result_parse_failure_preserves_runtime_attempt_code():
         ResultParseError("no valid typed result JSON found in Codex JSONL"),
     )
 
-    assert calls == [(17, "result", "codex_result_missing", False)]
+    assert calls == [((17, "result", "codex_result_missing", False),
+                      {"transcript_start": 0, "transcript_end": 0})]
 
 
 def test_routed_runtime_failure_preserves_router_failure_code():
@@ -106,10 +110,13 @@ def test_routed_runtime_failure_preserves_router_failure_code():
 
     class Store:
         def get_agent_runtime_attempt(self, attempt_id):
-            return SimpleNamespace(id=attempt_id, status="running")
+            return SimpleNamespace(
+                id=attempt_id, status="running", session_id="",
+                transcript_start=0, transcript_end=0,
+            )
 
-        def fail_agent_runtime_attempt(self, *args):
-            calls.append(args)
+        def fail_agent_runtime_attempt(self, *args, **kwargs):
+            calls.append((args, kwargs))
 
     runner = object.__new__(AgentTurnProcess)
     runner.store = Store()
@@ -122,7 +129,8 @@ def test_routed_runtime_failure_preserves_router_failure_code():
         ),
     )
 
-    assert calls == [(18, "process", "runtime_executor_failed", False)]
+    assert calls == [((18, "process", "runtime_executor_failed", False),
+                      {"transcript_start": 0, "transcript_end": 0})]
 
 
 def test_same_route_capacity_retry_resumes_observed_audit_session():
