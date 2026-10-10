@@ -1992,7 +1992,19 @@ def test_render_attempt_list_shows_draft_follow_up_as_scheduled(tmp_path: Path):
     assert ">Processing</span>" not in html
 
 
-def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path):
+def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path, monkeypatch):
+    def read_native_events(session_id, **_bounds):
+        assert session_id == "meeting-session-history-1"
+        return [
+            {"tool": "exec_command", "call_id": "meeting-call-1",
+             "title": "Read meeting memory", "relevance": "确认会议相关历史判断",
+             "input": '{"cmd":"rg 上线范围 /Users/principal/Documents/memory"}',
+             "command": "rg 上线范围 /Users/principal/Documents/memory"},
+            {"tool": "tool_output", "call_id": "meeting-call-1",
+             "output": "memory.md:1:上线范围需要先确认风险预算"},
+        ]
+
+    monkeypatch.setattr(audit_web_module, "extract_codex_audit_events_from_session", read_native_events)
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     run_id = seed_meeting_attempt(store)
 
