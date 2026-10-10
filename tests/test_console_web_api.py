@@ -949,13 +949,16 @@ def test_console_history_sends_a_running_scheduled_task_to_its_own_run_history(
     )
     assert task is not None
     with store._connect() as db:
+        from app.scheduled_config_storage import intern_scheduled_config
+
+        snapshot_id = intern_scheduled_config(db, "{}")
         db.execute(
             "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind, "
-            "scheduled_for, first_scheduled_for, dispatch_status, snapshot_json, "
+            "scheduled_for, first_scheduled_for, dispatch_status, snapshot_id, "
             "execution_kind, execution_id, created_at) values ('event-91606', 13, "
             "'scheduled', '2026-09-26T19:00:00Z', '2026-09-26T19:00:00Z', 'dispatched', "
-            "'{}', 'reply_task', ?, '2026-09-26T19:00:00Z')",
-            (str(task.id),),
+            "?, 'reply_task', ?, '2026-09-26T19:00:00Z')",
+            (snapshot_id, str(task.id)),
         )
 
     with _client(tmp_path) as client:
