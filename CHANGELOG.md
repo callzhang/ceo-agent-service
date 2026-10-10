@@ -9,6 +9,12 @@
 
 ## Unreleased
 
+- 2026-10-10: Bind audited email-unsubscribe fixtures to contract-valid reviews
+  of the actual adopted candidate. Keep technical browser failures as failed
+  runs, inject parent-result faults into authoritative candidate records, and
+  retain continuation, identity, recovery and receipt-rejection assertions.
+  Synthetic unit approvals are not external execution receipts.
+
 - 2026-10-10: Honor an explicit nonretryable error on the newly failed AgentRun
   when the Reply worker records a runtime exception. Neither caller retry nor
   clean-session retry can override that denial; keep existing retry limits,

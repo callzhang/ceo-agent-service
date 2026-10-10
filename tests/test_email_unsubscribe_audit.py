@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 import app.agent_cli as agent_cli
-from app.agent_contracts import ProposedAction
+from app.agent_contracts import AuditAgentResult, ConsumerAgentResult, ProposedAction
 from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
@@ -347,6 +347,45 @@ def _error_code(result: dict[str, object]) -> str:
     return str(error.get("code"))
 
 
+def _complete_synthetic_approval(task_store, audit_run, *, owner):
+    """Adopt a unit-only review, not an external execution receipt."""
+    candidate = task_store.adopted_candidate_for_consumer_run(
+        audit_run.parent_agent_run_id
+    )
+    assert candidate is not None
+    assert candidate["task_id"] == audit_run.reply_task_id
+    assert candidate["execution_generation"] == audit_run.execution_generation
+    assert candidate["proposal_revision"] == audit_run.proposal_revision
+    ConsumerAgentResult.model_validate_json(candidate["candidate_json"])
+    assert sha256(candidate["candidate_json"].encode()).hexdigest() == candidate[
+        "candidate_digest"
+    ]
+    review = AuditAgentResult.model_validate(
+        {
+            "outcome": "approve",
+            "summary": "Synthetic unit review approves the bound candidate.",
+            "proposal_revision": audit_run.proposal_revision,
+            "candidate_digest": candidate["candidate_digest"],
+            "evidence_refs": [],
+            "feedback": None,
+            "error": {"code": "", "retryable": False, "authorization_required": False},
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+        }
+    )
+    completed = task_store.complete_agent_run(
+        audit_run.id, review.model_dump(mode="json"), owner=owner
+    )
+    adopted = task_store.reviewed_candidate_for_audit_run(completed.id)
+    assert adopted is not None
+    assert adopted["id"] == candidate["id"]
+    assert adopted["decision"] == "approve"
+    assert adopted["candidate_digest"] == candidate["candidate_digest"]
+    return completed
+
+
 class _TerminalBrowser:
     def __init__(self, visible_text: str) -> None:
         self.visible_text = visible_text
@@ -481,9 +520,9 @@ def _start_second_audit_round(fixture: AuditFixture):
         accepted_action=_accepted_action(),
     )
     assert first["status"] == "awaiting_audit", first
-    first_audit = fixture.task_store.complete_agent_run(
-        fixture.audit_run.id,
-        {"outcome": "executed", "proposal_revision": 0},
+    first_audit = _complete_synthetic_approval(
+        fixture.task_store,
+        fixture.audit_run,
         owner="audit-owner",
     )
     second_consumer = fixture.task_store.claim_agent_run(
@@ -547,9 +586,9 @@ def _complete_two_step_terminal(fixture: AuditFixture):
         accepted_action=action,
     )
     assert second["status"] == "done", second
-    second_audit = fixture.task_store.complete_agent_run(
-        second_audit.id,
-        {"outcome": "executed", "proposal_revision": 1},
+    second_audit = _complete_synthetic_approval(
+        fixture.task_store,
+        second_audit,
         owner="audit-second-owner",
     )
     return action, first_audit, second_consumer, second_audit, second
@@ -720,6 +759,8 @@ def test_two_step_terminal_snapshot_rejects_earlier_effect_audit_tamper(
             trigger_text="other",
             execution_generation="other-generation",
         )
+        other = fixture.task_store.claim_reply_task(other.id)
+        assert other is not None
         other_consumer = fixture.task_store.claim_agent_run(
             other.id,
             other.execution_generation,
@@ -732,7 +773,12 @@ def test_two_step_terminal_snapshot_rejects_earlier_effect_audit_tamper(
         ).run
         other_consumer = fixture.task_store.complete_agent_run(
             other_consumer.id,
-            {"outcome": "proposal"},
+            {
+                **_consumer_proposal_result(),
+                "outcome": "no_action",
+                "summary": "The unrelated synthetic task requires no action.",
+                "proposal": None,
+            },
             owner="other-consumer-owner",
         )
         other_audit = fixture.task_store.claim_agent_run(
@@ -745,9 +791,9 @@ def test_two_step_terminal_snapshot_rejects_earlier_effect_audit_tamper(
             operation_id="other-audit-operation",
             owner="other-audit-owner",
         ).run
-        other_audit = fixture.task_store.complete_agent_run(
-            other_audit.id,
-            {"outcome": "executed"},
+        other_audit = _complete_synthetic_approval(
+            fixture.task_store,
+            other_audit,
             owner="other-audit-owner",
         )
         replacement_run_id = other_audit.id
@@ -1155,11 +1201,13 @@ def test_revised_initial_proposal_is_not_treated_as_a_later_browser_step(
     assert first_result["status"] == "failed"
     assert fixture.email_store.get_email_unsubscribe_claim(ACTION_IDENTITY) is None
     fixture.operation.execute_effect = terminal_callback
-    first_audit = fixture.task_store.complete_agent_run(
+    first_audit = fixture.task_store.fail_agent_run(
         fixture.audit_run.id,
-        {"outcome": "feedback_provided", "proposal_revision": 0},
+        first_result["error"],
         owner="audit-owner",
     )
+    assert first_audit.status == "failed"
+    assert fixture.task_store.reviewed_candidate_for_audit_run(first_audit.id) is None
     revised_consumer = fixture.task_store.claim_agent_run(
         fixture.task.id,
         fixture.task.execution_generation,
@@ -1469,13 +1517,13 @@ def test_audit_fails_closed_when_parent_consumer_has_no_unique_proposal_action(
 ) -> None:
     fixture = _make_fixture(tmp_path)
     if invalid_parent_result == "missing":
-        final_result_json = ""
+        candidate_json = ""
     elif invalid_parent_result == "malformed_json":
-        final_result_json = "{"
+        candidate_json = "{"
     elif invalid_parent_result == "non_object":
-        final_result_json = "[]"
+        candidate_json = "[]"
     elif invalid_parent_result == "non_proposal":
-        final_result_json = json.dumps(
+        candidate_json = json.dumps(
             {
                 **_consumer_proposal_result(_accepted_action()),
                 "outcome": "no_action",
@@ -1484,15 +1532,18 @@ def test_audit_fails_closed_when_parent_consumer_has_no_unique_proposal_action(
             sort_keys=True,
         )
     else:
-        final_result_json = json.dumps(
+        candidate_json = json.dumps(
             _consumer_proposal_result(_accepted_action(), _accepted_action()),
             sort_keys=True,
         )
     with sqlite3.connect(fixture.email_store.path) as db:
-        db.execute(
-            "update agent_runs set final_result_json=? where id=?",
-            (final_result_json, fixture.consumer_run.id),
+        # Deliberately corrupt the adopted business record, not the retired
+        # agent_runs body, which is never authoritative for execution.
+        changed = db.execute(
+            "update review_candidates set candidate_json=? where consumer_run_id=?",
+            (candidate_json, fixture.consumer_run.id),
         )
+        assert changed.rowcount == 1
 
     result = fixture.operation.execute(
         fixture.task.id,
