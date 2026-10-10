@@ -9653,7 +9653,7 @@ def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: P
     assert "岗位画像.md:1:项目经理" in html
 
 
-def test_render_attempt_detail_unwraps_terminal_wrapped_mcp_json_output(tmp_path: Path):
+def test_render_attempt_detail_unwraps_terminal_wrapped_mcp_json_output(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     output = (
         "Wall time: 0.8105 seconds\n"
@@ -9673,6 +9673,15 @@ def test_render_attempt_detail_unwraps_terminal_wrapped_mcp_json_output(tmp_path
             ensure_ascii=False,
         )
     )
+    def read_native_events(session_id, **_bounds):
+        assert session_id == "memory-output-session"
+        return [
+            {"tool": "memory_write", "call_id": "call-memory",
+             "input": json.dumps({"data": "稳定业务口径", "type": "text"}, ensure_ascii=False)},
+            {"tool": "tool_output", "call_id": "call-memory", "output": output},
+        ]
+
+    monkeypatch.setattr(audit_web_module, "extract_codex_audit_events_from_session", read_native_events)
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
         conversation_title="MKT core",
@@ -9681,6 +9690,7 @@ def test_render_attempt_detail_unwraps_terminal_wrapped_mcp_json_output(tmp_path
         trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
+        codex_session_id="memory-output-session",
         audit_tool_events_json=json.dumps(
             [
                 {
@@ -9752,12 +9762,22 @@ def test_render_attempt_detail_skips_empty_document_args(tmp_path: Path):
     assert "audit-tool-args" not in tool_uses_html
 
 
-def test_render_attempt_detail_renders_dws_material_tool_events(tmp_path: Path):
+def test_render_attempt_detail_renders_dws_material_tool_events(tmp_path: Path, monkeypatch):
     command = (
         "dws doc read --node https://alidocs.dingtalk.com/i/nodes/doc123 "
         "--format json"
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    def read_native_events(session_id, **_bounds):
+        assert session_id == "dws-material-session"
+        return [
+            {"tool": "exec_command", "call_id": "call-dws-read",
+             "input": json.dumps({"cmd": command}, ensure_ascii=False), "command": command},
+            {"tool": "tool_output", "call_id": "call-dws-read",
+             "output": "OpenAI 合作建议补充版\n建议先补齐材料。"},
+        ]
+
+    monkeypatch.setattr(audit_web_module, "extract_codex_audit_events_from_session", read_native_events)
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
         conversation_title="技术部",
@@ -9766,6 +9786,7 @@ def test_render_attempt_detail_renders_dws_material_tool_events(tmp_path: Path):
         trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
+        codex_session_id="dws-material-session",
         audit_tool_events_json=json.dumps(
             [
                 {
