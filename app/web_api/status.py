@@ -35,12 +35,18 @@ class PersistedComponentHealth(StrictStatusModel):
     updated_at: str
 
 
+class NativeDeliveryCoverage(StrictStatusModel):
+    checked: int
+    unavailable: int
+
+
 class SystemHealth(StrictStatusModel):
     state: str
     detail: str
     checked_at: str
     violations: int
     components: list[PersistedComponentHealth] = Field(default_factory=list)
+    native_delivery_coverage: NativeDeliveryCoverage | None = None
 
 
 class ComponentStatus(StrictStatusModel):

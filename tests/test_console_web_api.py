@@ -30,7 +30,7 @@ from app.setup_wizard_models import SetupWizardEvent
 from app.wechat.models import WechatReplyScope
 from tests.test_audit_web import seed_attempt
 from app.web_api.attention import group_attention_rows
-from app.web_api.status import ComponentStatus, DispatcherQueueStatus
+from app.web_api.status import ComponentStatus, DispatcherQueueStatus, SystemHealth
 from app.web_api.common import (
     ApiItemEnvelope,
     ApiMeta,
@@ -1224,6 +1224,51 @@ def test_console_status_route_registers_a_response_model(tmp_path: Path):
         )
 
     assert route.response_model is not None
+
+
+def test_console_status_accepts_live_native_delivery_coverage(
+    monkeypatch, tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    monkeypatch.setattr(
+        audit_web_module,
+        "scan_hourly_quality",
+        lambda _path: SimpleNamespace(
+            violations=(),
+            checked_at="2026-10-10T00:00:00+00:00",
+            native_delivery_coverage={"checked": 2, "unavailable": 3},
+        ),
+    )
+    monkeypatch.setattr(
+        audit_web_module, "_launchd_service_status", _running_launchd_service_status,
+    )
+    monkeypatch.setattr(audit_web_module, "_connector_status_snapshots", lambda: {})
+    monkeypatch.setattr(
+        audit_web_module, "_wechat_status_snapshot", lambda _store: _ready_wechat_status(),
+    )
+
+    health = audit_web_module._system_health_snapshot(
+        store,
+        {"ok": True},
+        meeting_memory_health={"delayed": 0, "ghost_runtime_attempts": 0},
+    )
+    assert SystemHealth.model_validate(health).native_delivery_coverage.model_dump() == {
+        "checked": 2, "unavailable": 3,
+    }
+
+    with _client(tmp_path, raise_server_exceptions=False) as client:
+        for _ in range(50):
+            response = client.get("/api/console/status")
+            if response.status_code != 200:
+                break
+            if response.json()["item"]["system_health"]["state"] == "healthy":
+                break
+            time.sleep(0.02)
+
+    assert response.status_code == 200
+    assert response.json()["item"]["system_health"]["native_delivery_coverage"] == {
+        "checked": 2, "unavailable": 3,
+    }
 
 
 @pytest.mark.parametrize("path", ("/api/console/status", "/api/workers/status"))
