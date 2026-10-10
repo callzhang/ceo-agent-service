@@ -166,6 +166,26 @@ def test_resumed_attempt_can_fail_before_transcript_end_is_recorded(tmp_path):
     assert failed.transcript_start == failed.transcript_end == 124
 
 
+def test_resumed_session_binding_preserves_captured_transcript_end(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_consumer(store, task).run
+    attempt = store.claim_agent_runtime_attempt(
+        run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.6-sol",
+        session_mode="resume", source_session_id="existing-session",
+    )
+    store.mark_agent_runtime_attempt_running_once(attempt.id)
+    with store._connect() as db:
+        db.execute("update agent_runtime_attempts set transcript_end=158 where id=?", (attempt.id,))
+    bound = store.set_agent_runtime_attempt_session(
+        attempt.id, "existing-session", "codex_session:existing-session", transcript_start=124,
+    )
+    assert bound.transcript_start == 124
+    assert bound.transcript_end == 158
+    failed = store.fail_agent_runtime_attempt(attempt.id, "result", "codex_result_invalid", False)
+    assert failed.transcript_end == 158
+
+
 def test_claude_incompatible_resume_clears_only_matching_route_slot(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
