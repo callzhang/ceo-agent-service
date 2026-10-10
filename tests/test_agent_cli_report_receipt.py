@@ -5,8 +5,81 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.agent_cli import _write_bound_report_document
+from app.agent_cli import _write_bound_report_document, build_role_server
 from app.weekly_report_materials import MANAGEMENT_WIKI_NAME
+
+
+def test_daily_report_facts_tool_uses_schema_only_email_validation(
+    tmp_path, monkeypatch
+):
+    import app.daily_report_facts as daily_report_facts
+    import app.email_store as email_store_module
+
+    validations = []
+    real_email_store = email_store_module.EmailStore
+
+    def track_email_store(path, **kwargs):
+        validations.append(kwargs.get("validate_rows", True))
+        return real_email_store(path, **kwargs)
+
+    monkeypatch.setattr(email_store_module, "EmailStore", track_email_store)
+    monkeypatch.setattr(
+        "app.agent_cli._bound_report",
+        lambda db_path, task_id: (object(), SimpleNamespace(id=42), "daily"),
+    )
+    monkeypatch.setattr(
+        daily_report_facts,
+        "report_window_for_run",
+        lambda store, run_id: object(),
+    )
+    monkeypatch.setattr(
+        daily_report_facts,
+        "collect_daily_report_facts",
+        lambda store, mail_store, window: {"validated": True},
+    )
+
+    tool = build_role_server(
+        "audit", db_path=tmp_path / "runtime-report.sqlite3"
+    )._tool_manager.get_tool("daily_report_facts").fn
+    result = tool()
+
+    assert result == {"validated": True}
+    assert validations == [False]
+
+
+def test_daily_report_facts_command_uses_schema_only_email_validation(
+    tmp_path, monkeypatch
+):
+    import app.cli as cli
+    import app.daily_report_facts as daily_report_facts
+    import app.email_store as email_store_module
+
+    validations = []
+    real_email_store = email_store_module.EmailStore
+
+    def track_email_store(path, **kwargs):
+        validations.append(kwargs.get("validate_rows", True))
+        return real_email_store(path, **kwargs)
+
+    monkeypatch.setattr(email_store_module, "EmailStore", track_email_store)
+    monkeypatch.setattr(
+        daily_report_facts,
+        "report_window_for_run",
+        lambda store, run_id: object(),
+    )
+    monkeypatch.setattr(
+        daily_report_facts,
+        "collect_daily_report_facts",
+        lambda store, mail_store, window: {"validated": True},
+    )
+
+    result = cli.daily_report_facts_command(
+        SimpleNamespace(db_path=tmp_path / "runtime-report-cli.sqlite3"),
+        scheduled_run_id=42,
+    )
+
+    assert result == {"validated": True}
+    assert validations == [False]
 
 
 @pytest.mark.parametrize("document_exists", [False, True])

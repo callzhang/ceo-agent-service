@@ -485,7 +485,7 @@ important flag 在移动后的 locator 上执行。用户随后在邮箱中移�
 时间窗同时匹配时临时读取；普通 CAPTCHA 可在隔离 profile 中尝试，密码/MFA/CAPTCHA 无法完成时
 保存有界 continuation 并转人工接管，不持久化 OTP、cookie、完整 URL 或浏览器秘密。
 
-邮件 Worker 与 Web 邮件路由在初始化时校验 `EmailStore` 的 schema 结构，不扫描全部历史持久行，
+邮件 Worker、Web 邮件路由、定时邮件发现和每日报告读取在初始化时校验 `EmailStore` 的 schema 结构，不扫描全部历史持久行，
 避免多 GB 邮件库让启动或首个详情请求长时间阻塞；显式/离线 `EmailStore` 调用默认仍校验完整持久行。
 初始化失败仍由既有邮件可用性边界隔离并如实报告，不阻止其他 Console 路由启动；显式/离线完整校验只读取
 用于持久状态核对的列，不把 `email_classifications.model_text` 正文或分类任务完整输入载入内存。邮件 Attempt 详情每次通过新的数据库连接

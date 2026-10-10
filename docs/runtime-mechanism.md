@@ -1518,15 +1518,17 @@ service and takes its backup before restoring those docs to the current HEAD;
 the ordinary fast-forward then installs the target. Staged edits, other paths,
 or any content mismatch remain a hard local-change refusal.
 
-The Email worker and Audit web lazily create one shared EmailStore and check
-schema shape during runtime initialization. Every EmailStore schema
+The Email worker, Audit web, scheduled Email discovery, and scheduled report
+readers lazily create one shared EmailStore and check schema shape during
+runtime initialization. Every EmailStore schema
 initialization and the AutoReplyStore schema initializer acquire the same
 per-database cross-process file lock before inspecting or changing schema.
 They do not scan every historical email row while the service is starting or
-serving the first email-detail request; those scans took over two minutes on
-the production database. Explicit and offline EmailStore callers retain full
-durable-row validation by default, after releasing the schema lock. Email
-detail reads still use fresh connections and do not cache record contents.
+serving scheduled Email and report work; production measurements showed those
+scans taking 11–21 seconds per construction. Explicit and offline EmailStore
+callers retain full durable-row validation by default, after releasing the
+schema lock. Email detail reads still use fresh connections and do not cache
+record contents.
 
 ### Public information and native reply recovery
 
@@ -1702,18 +1704,21 @@ the affected run before changing transaction boundaries.
 Shared Store diagnostics retain up to eight caller frames so a context-manager
 wrapper cannot hide the business method that opened the connection.
 
-EmailStore validates every durable email-message metadata field used for
-identity, provider locators, recipients, references, attachment metadata,
-classifier-task identity and redaction, classification lineage and ActionPlan
-snapshots. Its scans project only the fields required for those checks; they do
-not load full cached message bodies or classifier inputs into memory.
+Explicit and offline EmailStore callers perform full durable-row validation
+for email-message metadata, provider locators, recipients, references,
+attachment metadata, classifier-task identity and redaction, classification
+lineage and ActionPlan snapshots. The validator projects only the fields
+required for those checks; it does not load full cached message bodies or
+classifier inputs into memory. Runtime Email worker, Audit web, scheduled Email
+discovery and daily-report readers validate schema and account configuration
+without rescanning all durable rows.
 
-The Web process shares one successfully initialized and validated EmailStore
-between registered email routes, Console detail routes and the email learning
-service. Email route registration retains its existing initialization error
-boundary: invalid email persistence does not prevent unrelated Console routes
-from starting and is not treated as healthy email state. The Attempt DTO builder
-queries this initialized store only for
+The Web process shares one successfully schema-initialized EmailStore between
+registered email routes, Console detail routes and the email learning service.
+Email route registration retains its existing initialization error boundary:
+an invalid schema or account configuration does not prevent unrelated Console
+routes from starting and is not treated as healthy email state. The Attempt DTO
+builder queries this initialized store only for
 an existing email-channel Attempt's classification and unsubscribe context.
 Every request reads current records through fresh database connections; detail
 results are not cached and requests do not repeat the full durable-state scan.
