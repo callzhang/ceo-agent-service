@@ -1,17 +1,26 @@
 """Read one input's persisted Attention receipts without opening the service store."""
 
 import argparse
+from contextlib import closing
 import json
 import sqlite3
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-def inspect_run(db, run):
-    decision = json.loads(run["decision_json"])
+from app.native_standalone import latest_task_ref, task_decision_value
+
+
+def inspect_run(db, run, decision):
     projection = json.loads(run["projection_json"])
     inspected = {
         "run_id": run["id"], "run_status": run["status"], "projection": projection,
+        "native_available": decision is not None,
     }
+    if decision is None:
+        inspected["native_reason"] = "native_decision_unavailable"
+        return inspected
     if "project_assessments" in decision:
         inspected["project_assessments"] = decision["project_assessments"]
     if "project_decisions" in decision:
@@ -50,7 +59,7 @@ def main() -> int:
     parser.add_argument("--input-id", type=int, required=True)
     parser.add_argument("--replay-result", type=Path, help="Exact evaluation result artifact for delivered context metrics; no history reconstruction")
     args = parser.parse_args()
-    with sqlite3.connect(args.db.resolve().as_uri() + "?mode=ro", uri=True) as db:
+    with closing(sqlite3.connect(args.db.resolve().as_uri() + "?mode=ro", uri=True)) as db:
         db.row_factory = sqlite3.Row
         item = db.execute(
             "select id, source_type, status from work_summary_inputs where id=?",
@@ -60,11 +69,15 @@ def main() -> int:
             print(json.dumps({"error": "input_not_found", "input_id": args.input_id}))
             return 1
         runs = db.execute(
-            "select id, status, decision_json, projection_json "
+            "select id, status, projection_json "
             "from task_agent_runs where summary_input_id=? order by id",
             (args.input_id,),
         ).fetchall()
-        inspected_runs = [inspect_run(db, run) for run in runs]
+        refs = [latest_task_ref(db, run["id"]) for run in runs]
+    decisions = [task_decision_value(ref) for ref in refs]
+    with closing(sqlite3.connect(args.db.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+        db.row_factory = sqlite3.Row
+        inspected_runs = [inspect_run(db, run, decision) for run, decision in zip(runs, decisions)]
         if args.replay_result:
             artifact = json.loads(args.replay_result.read_text())
             deliveries = artifact["source_steps"] if "source_steps" in artifact else [artifact]

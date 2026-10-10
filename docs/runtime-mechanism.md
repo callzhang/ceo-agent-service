@@ -1,5 +1,14 @@
 # Current Runtime Mechanism
 
+The Task Attention inspector reads decision fields only from the completed
+runtime attempt's exact native session and range. It closes the read-only
+SQLite connection after loading references, before reading transcript files,
+then uses a separate read-only connection to select Project context from saved
+projection identities. Missing, invalid or out-of-range native decisions are
+reported as unavailable, not reconstructed from retired `decision_json` bodies
+or interpreted as a successful empty decision. Projection receipts remain
+visible independently; the inspector never initializes or migrates storage.
+
 Terminal unsubscribe reconciliation probes classification identity and plan
 version before loading payloads. Only a missing receipt plus an existing
 done/skipped/needs_human task triggers full hydration; failed tasks stay excluded.

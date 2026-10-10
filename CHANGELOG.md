@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-10: Repair the Task Attention inspector to read validated native
+  decisions instead of retired SQLite result bodies. Explicitly close read-only
+  query connections before native IO; unavailable evidence remains unavailable
+  while original projection receipts and Project context stay inspectable.
+
 - 2026-10-10: Bind routed-result recovery fixtures to exact isolated native
   session ranges. Keep codec mismatch, UTF-8 size limits and effectful
   no-replay assertions; oversized-result faults now target the native source
