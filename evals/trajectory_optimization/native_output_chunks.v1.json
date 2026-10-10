@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "low",
+  "records": 100,
+  "page_records": 5,
+  "mechanism": "One complete read-only MCP source retained in native store. Compare text(page) accumulation against notify(page) chunks. This is a capability probe with supplied execution code, not an autonomous daily-report eval or accepted Skill change.",
+  "criteria": "All 100 original records and exact text visible in model-facing CodeMode output; no truncation; exact unpredictable record-42 and record-99 markers returned; one backend call; no shell/file/business calls.",
+  "arms": ["text", "notify"]
+}

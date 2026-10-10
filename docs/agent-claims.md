@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+| codex-native-output-chunk-probe | Isolated trajectory-optimization worktree: evals/trajectory_optimization/native_output_chunks.v1.json, docs/trajectory-optimization-validation.md | Verify native notify/yield delivery using anonymous complete source records and actual model-facing outputs. Capability-only evidence; no business Skill, provider, runtime or audit changes. | 2026-10-10 |
+
 | codex-native-source-pagination-probe | Isolated trajectory-optimization worktree: evals/trajectory_optimization/daily_source_pagination.v1.json, docs/trajectory-optimization-validation.md | Read-only anonymous native comparison of full group-window result against existing DWS page-token semantics. Same source/model/Skill; no production API, prompt, audit or provider mutation. | 2026-10-10 |
 
 | codex-daily-source-retention-eval | Isolated trajectory-optimization worktree: evals/trajectory_optimization/daily_source_retention.v1.json, docs/trajectory-optimization-validation.md; candidate Skill material stays temporary until comparison passes | Compare complete source delivery and repeated reads with the same native model, anonymous large source and existing daily-report Skill versus native store/load guidance. Inspect model-facing CodeMode results and retain all failures. No provider actions, runtime cache layer, Audit policy or source truncation. | 2026-10-10 |

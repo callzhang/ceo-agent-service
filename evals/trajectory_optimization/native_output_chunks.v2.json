@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "low",
+  "records": 100,
+  "page_records": 5,
+  "fixture_correction": "Both arms set features.shell_tool=false. v1 showed intact notify output but both read canonical AGENTS via shell, violating its no-shell criterion. No source, chunking algorithm or business guidance change.",
+  "mechanism": "One complete anonymous read-only MCP source retained in native store. Compare text(page) accumulation against notify(page) chunks. Supplied execution code proves output capability only, not autonomous report quality.",
+  "criteria": "All 100 original records and exact text visible in model-facing CodeMode output; no truncation; exact unpredictable record-42 and record-99 markers; one backend read; zero executed shell/file/business calls.",
+  "arms": ["text", "notify"]
+}

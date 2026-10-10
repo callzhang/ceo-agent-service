@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "low",
+  "source_records": 100,
+  "source_reference": "Correct group fixture to real run 25643 DWS ledger shape: root messages and messageId/sender/text fields. Preserve the exact anonymous v1 message texts, order, IDs and decisions; remove invented triplicate raw_payload fields. Copy provider metadata structure with string identity values anonymized and window/count/coverage updated. Same fixture in both arms, unchanged 345-character candidate access guidance.",
+  "mechanism": "Native notify/store access; production-shape fidelity correction, no runtime or business Skill change.",
+  "post_run_review_notes": "source_sha256 below is the original nested source before ledger conversion; delivered_source_sha256 identifies both actual MCP fixtures. Timestamps wrap at index 60 despite asc metadata; optional non-text variants and multi-group coverage are absent. Preserve the bounded output/semantic result, but do not treat it as production-report acceptance.",
+  "criteria": "Both decision IDs/types, business owners and amounts; all 100 full original texts/IDs visible, no truncated page, no fixture-specific prefilter, no shell/file/business effects. Inspect model-input size and final result separately from stored output bytes.",
+  "cases": [
+    {"id":"group-window", "tool":"read_dingtalk_messages_in_window", "session":"01a127b7-6b4b-7a02-97ba-a8218b86da03", "source_sha256":"7f8d05bf83d48ab321e754a09a9612389d99d7037c50a12fe4e84a1d13030ea0", "delivered_source_sha256":"cd74f194cfdb459035baf93dc106d969e94e68cbfd44d3a9051907ff6f2fc4d5", "critical_indices":[42,99], "owners":["Avery","Alex"], "amounts":[32000,58000]}
+  ]
+}

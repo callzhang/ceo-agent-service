@@ -226,3 +226,145 @@ The confirmed defect is loss of model-visible source text at aggregate output,
 while native data retention and provider paging themselves work. A reliable
 fix must address that output delivery boundary; repeated prose refinements or
 fixture-specific filters are not accepted substitutes.
+
+### Native chunked output capability
+
+`native_output_chunks.v1.json`/`v2.json` test a supplied exact CodeMode program,
+not autonomous report behavior. One anonymous MCP read returns 100 records with
+complete long text and unpredictable per-record markers. Both programs retain
+the full source and iterate in five-record pages; the only output difference
+is `text(JSON.stringify(page))` versus `notify(JSON.stringify(page))`.
+Acceptance inspects actual custom-tool outputs, compares every complete record
+and text to the source, checks middle/last markers, and counts source/tool calls.
+
+v1 (`01a127c2-8be0-7421-add0-d94d471cf6a7` text,
+`01a127c2-8c2f-7d73-87d3-a0859c24652f` notify) established the output difference,
+but both additionally read canonical AGENTS through a read-only shell call.
+Thus v1 fails its no-shell criterion and is not silently relabeled a pass.
+
+v2 disables shell tools in both fixture arms, without changing the code or
+source construction. Both use configured service model `gpt-5.6-luna`/low,
+read-only sandbox, standard native home/authentication and one exact source read.
+
+| Arm | Native session | Model-visible output blocks | Truncated blocks | Exact complete records decoded from model-facing output | Markers | Shell calls |
+| --- | --- | --- | --- | --- | --- | --- |
+| text | `01a127c3-b1d2-78d0-882c-2f22d0036508` | 1 | 1 | 0 | fail | 0 |
+| notify | `01a127c3-b1cd-7842-be7b-b65a4a6cba48` | 21 | 0 | 100 | pass | 0 |
+
+Each v2 arm used one exec cell with the exact supplied code; neither invoked
+file/business tools. The text arm's zero decoded records does not mean zero
+visible text: its truncated aggregate fails complete page JSON decoding and
+loses the middle marker. The notify arm produced twenty individually complete
+five-record output blocks and a small count result. This confirms an available
+native mechanism at the previously failing output boundary. It introduces no
+service cache, native config policy or business rule. General autonomous use,
+other runtimes and production quality remain separate gates; the fixed daily
+comparison is defined in `daily_source_notifications.v1.json`.
+
+### Autonomous notification comparison and fixture-shape correction
+
+The unchanged v3 source/prompt plus 345 characters of native notify/store access
+guidance did not pass autonomous acceptance. Service baseline
+`01a127c5-2aa2-7843-b94a-21bf6b624941` read three times, had two truncated
+outputs, omitted 42 and added an unrequested result field. Candidate
+`01a127c5-2ac2-7d12-979a-c35f86540903` read once and returned both decisions,
+but printed the entire content as metadata (truncated) and recovered via a
+business keyword regex; it did not emit complete source pages. Both service
+results fail complete-source acceptance regardless of final semantic JSON.
+
+Group baseline `01a127c5-622b-77c1-8357-04fc1af94eb6` printed the entire MCP
+envelope, truncated, and omitted 42. Candidate
+`01a127c5-6f27-7c33-bf34-4288ca72fd9f` retained the full result and emitted four
+25-record notify blocks; its final result still omitted 42. The native JSONL
+stores all four blocks without a truncation warning, but the last model request
+contains 54,193 input tokens versus 19,720 before those outputs, much less than
+the full-source original-token measurements. This is evidence to investigate
+additional native model-input projection, not proof that every stored tool byte
+reached the model. All four runs disabled shell and had no business action.
+
+Further inspection of actual run 25643 revealed a fixture mismatch: the real
+`read_dingtalk_messages_in_window` returns the DWS ledger at the root, including
+`complete`, `hasMore`, `partial`, `truncated`, `queryRange`, `messages` and other
+provider metadata. Actual message fields are `conversationId`, `createTime`,
+`messageAiSendFlag`, `messageId`, `sender`, `senderId`, `text`. The earlier
+synthetic group fixture instead nests `data.messages` and triplicates text in
+`content`/`raw_payload.text`/`raw_payload.content`. That fixture remains a useful
+large-output stress case but is not production-shape fidelity or evidence for
+shipping a group-reader change. Actual service-facts keys match the synthetic
+Task body fields, with additional production metadata (`time_zone`, Task stage,
+commitment status and business relevance).
+
+Distinguish complete provider result, retained CodeMode value, persisted native
+tool-output bytes, actual model-input projection and final business judgment.
+Native notify is experimentally available; no autonomous Skill change has yet
+passed the complete-source and semantic gates together. Production-shaped
+fixtures must be checked before further business acceptance runs.
+
+### Bounded production-shaped ledger comparison and independent review
+
+`daily_source_notifications.v2.json` preserves the original 100 anonymous
+message IDs, timestamps, senders and complete texts, maps them to actual DWS
+`messageId`/`sender`/`text` fields and removes invented duplicate raw fields.
+The fixed original nested-source hash is `7f8d05bf...`; the delivered anonymous
+root-ledger hash is
+`cd74f194cfdb459035baf93dc106d969e94e68cbfd44d3a9051907ff6f2fc4d5` in both arms.
+The manifest's `source_sha256` is the pre-transform source hash; the second hash
+above identifies the actual fixture passed to the MCP tool. Both arms use the
+same corrected fixture. No production source projection was changed.
+
+- Baseline `01a127c9-80c2-74b3-a64a-de11075517ab`: one source read, truncated
+  transport-envelope output (68,626 original tokens), final only `msg:99`.
+- Candidate `01a127c9-80fe-7e31-a2b5-2271cd21646e`: one source read, complete
+  result retained, bounded metadata followed by four notify pages. Parsing the
+  saved outputs gives all 100 unique record objects exactly equal to the source,
+  including complete text. No warning or fixture/business-specific prefilter.
+  Final includes `msg:42`/Avery/32000 and `msg:99`/Alex/58000. Prompt length
+  5,683 -> 6,028; neither arm executes shell/file/business actions.
+
+An independent read-only auditor verified both full trajectories, source read
+counts, all 100 record equalities and final gold. It observed notify offsets
+arrive in order [25, 0, 50, 75], so source coverage must be checked by offset and
+identity rather than notification arrival order. This is a narrow source/output
+and two-decision fixture pass. Native JSONL contains persisted output bytes, not
+raw model requests; final input count 46,136 is not proof of complete effective
+model input. No generalized Skill change is accepted from that alone.
+
+The review identified remaining fixture limits: timestamps wrap at index 60
+while queryRange declares ascending order; optional real quotation/reaction/
+resource/forwarded fields are not covered; and one repetitive synthetic group
+does not reproduce real multi-group coverage. Those must be corrected/expanded
+before broader acceptance. Actual run 25643 has 68 complete group reads and
+681 messages, 190,121 text characters and 500,009 ledger JSON characters;
+median group size is 3, largest 96, longest message text 4,478 characters.
+These aggregate counts were read from native MCP results, with no business
+message contents copied to this report.
+
+Official [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)
+documents `features.code_mode.direct_only_tool_namespaces` and
+`features.code_mode.enabled`. This is a possible native way to expose paged
+reads directly without disabling the entire CodeMode host. It is not yet
+verified on the installed CLI/model, and no production setting is changed.
+The reference did not establish an exact notify/model-input truncation limit;
+that boundary remains unconfirmed and must not be inferred from saved JSONL.
+
+### Native direct-only namespace capability
+
+`native_direct_namespace.v1.json` tests a tiny anonymous marker read with the
+same configured model, prompt, MCP source, read-only sandbox and disabled shell
+in both arms. Candidate sets the documented native
+`features.code_mode={enabled=true,direct_only_tool_namespaces=["mcp__fixture"]}`
+while keeping the host enabled. No production config is changed.
+
+- Baseline `01a127ce-ade9-7dc0-afed-e6c686b8a7c2`: discovers metadata and invokes
+  `tools.mcp__fixture__read_source` through two `custom_tool_call exec` cells.
+- Candidate `01a127ce-b09c-7b22-89da-931abca08bbb`: directly issues native
+  `function_call read_source {}`; no exec aggregation. Both call the source once,
+  exit zero, and return the exact unpredictable marker.
+
+Thus installed CLI/model supports the documented direct-only transport. This
+corrects the earlier failed attempt to obtain direct tools by disabling the
+whole host. It proves transport capability for a single tiny read, not complete
+large-source delivery or suitability for all service tools. The next controlled
+test can use identical bounded source pages and unchanged business Skill with
+default versus direct-only transport; source order and metadata must be valid,
+all unique pages/records verified, and global role/tool-schema overhead measured.
