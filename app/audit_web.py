@@ -2972,12 +2972,10 @@ def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
 def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """Summarize the current state of each message trigger, not retry history."""
     current_attempts = """
-        with latest as (
-            select a.id, row_number() over (
-                partition by a.channel, a.conversation_id, a.trigger_message_id
-                order by a.updated_at desc, a.id desc
-            ) as ordinal
-            from reply_attempts a
+        with trigger_keys as (
+            select channel, conversation_id, trigger_message_id
+            from reply_attempts
+            group by channel, conversation_id, trigger_message_id
         ), current as (
             select
                 a.id,
@@ -3054,10 +3052,17 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                     ) then 'recovered'
                     else lower(coalesce(a.send_status, ''))
                 end as live_status
-            from latest
-            join reply_attempts a on a.id=latest.id
-            where latest.ordinal=1
-              and not exists (
+            from trigger_keys
+            join reply_attempts a on a.id=(
+                select newest.id
+                from reply_attempts newest
+                where newest.channel=trigger_keys.channel
+                  and newest.conversation_id=trigger_keys.conversation_id
+                  and newest.trigger_message_id=trigger_keys.trigger_message_id
+                order by newest.updated_at desc, newest.id desc
+                limit 1
+            )
+            where not exists (
                   select 1
                   from agent_runs as source_run
                   join reply_tasks as source_task

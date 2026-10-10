@@ -5081,6 +5081,20 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     on reply_tasks(channel, status, id)
                 """
             )
+            db.execute(
+                """
+                create index if not exists idx_reply_tasks_email_unsubscribe_status
+                    on reply_tasks(updated_at desc, id desc, status)
+                    where channel='email'
+                      and json_valid(trigger_message_json)
+                      and json_extract(trigger_message_json, '$.schema')=
+                          'email_agent_action.v1'
+                      and json_extract(trigger_message_json, '$.lifecycle_version')=
+                          'email_unsubscribe_audited_v2'
+                      and json_extract(trigger_message_json, '$.action_type')=
+                          'unsubscribe'
+                """
+            )
             sent_reply_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(sent_replies)").fetchall()

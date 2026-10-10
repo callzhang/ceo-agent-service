@@ -425,7 +425,7 @@ After the second deploy, the same Project list endpoint returned all 28
 Projects in **0.191 seconds**, with 0 proposed Project candidates; Project list
 and detail summary semantics are covered by the new regression test.
 
-## 2026-10-10 Project-list context/activity batching — local verification only
+## 2026-10-10 Project-list context/activity batching
 
 Expected: a read-only Project list should return within normal console latency
 while preserving the same saved context, latest revision/evidence timestamps,
@@ -445,10 +445,27 @@ before the implementation exactly at the per-Project `get_business_project_conte
 call. After the change, `tests/test_web_api_task_project_summary.py` reports
 **11 passed**; its regression checks bounded connections for five Projects and
 asserts the list summary equals each Project detail summary. Ruff and
-`git diff --check` pass. This verifies the local query path and DTO consistency;
-it does not prove production latency is repaired. This isolated change has not
-been committed, pushed, deployed, or read back from the live service. No
-Project, Task, Attention or CRM data was written.
+`git diff --check` pass. No Project, Task, Attention or CRM data was written.
+
+The fix was committed as `d839fb54` and pushed to `origin/main`. During deploy,
+the first deploy command was interrupted while waiting for health. A separate
+concurrent deploy from another worktree subsequently advanced production to
+`dfa7bbe6`, which contains `d839fb54` as an ancestor alongside other changes;
+that deployment is not attributed solely to this Project-list fix. Final
+readback observed launchd PID `71140`, `/healthz` HTTP 200 in 0.104s, and the
+production Project-list GET returned HTTP 200 in 1.597s (15,384 bytes): 20 of
+32 Projects on page 1 and 0 Project candidates. The same production Attention
+GET returned 7 items (4 decision, 3 watch). This is a successful production
+readback for the list and Attention endpoints, not a broad Tasks acceptance.
+
+The production status API returned after about 58s: 13 queues, 10 pending,
+2 processing, 12 failed, 1 retryable and 24 general Attention items. These are
+observed runtime states, not evidence that this change created or resolved any
+queue item. The History list did not return within 120s, and the failed-only
+History query did not return within 60s; neither is counted as a successful
+History readback. The overall post-deploy inspection therefore remains partial,
+and History latency is an outstanding service issue. No production Task,
+Project, Attention or CRM data was written by this change.
 
 Final runtime readback: the business Task Attention route has 0 active items;
 the general Attention page has 5. History reports 33,611 records. The runtime

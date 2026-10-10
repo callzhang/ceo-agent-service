@@ -98,6 +98,9 @@ payloads. Transaction behavior and existing error propagation are unchanged.
 Worker status summarizes the current `reply_attempts` projection using only
 identity, status, timestamp, and error columns. It does not load full attempt
 payloads such as captured inputs or reply bodies to calculate queue counts.
+It groups trigger identities and seeks each trigger's latest attempt through
+`idx_reply_attempts_current_trigger`; it does not rank every retry row in a
+window function for each status request.
 
 Runtime-attempt detail reads filter by `agent_run_id` and order by
 `attempt_number`; the partial `idx_agent_runtime_attempts_run` index serves that
@@ -1608,6 +1611,9 @@ Worker status reads its local SQLite queue, Email health and component facts
 on every request. These facts are not served from the last background payload:
 after a worker writes its state, the next status request must reflect it.
 External connector authentication probes retain their independent cache.
+The Email unsubscribe task view uses a partial `reply_tasks` index over only
+audited unsubscribe tasks, so repeated Worker status reads do not rescan each
+task's full trigger JSON to compute its counts and latest update.
 
 Typed result parsing preserves malformed or unclosed JSON as a result-stage
 invalid-result failure, including its syntax cause. It is not classified as a
