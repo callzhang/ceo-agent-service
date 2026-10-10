@@ -153,17 +153,23 @@ def read_codex_events(session_id: str, *, start_line: int = 0, end_line: int = 0
     path = find_codex_session_path(session_id, codex_home=_codex_home())
     events: dict[str, dict] = {}
     started: dict[str, dict] = {}
-    for payload in _codex_turn_records(path, start_line, end_line):
+    completed_ids: set[str] = set()
+    positions: dict[str, int] = {}
+    started_positions: dict[str, int] = {}
+    for position, payload in enumerate(_codex_turn_records(path, start_line, end_line)):
         body = payload.get("payload", {})
         if payload.get("type") == "event_msg" and isinstance(body, dict) and body.get("type") == "item_started":
             item = body.get("item")
             if isinstance(item, dict) and isinstance(item.get("id"), str):
                 started[item["id"]] = item
+                started_positions[item["id"]] = position
         event = None
         if payload.get("type") == "event_msg" and isinstance(body, dict) and body.get("type") == "item_completed":
             item = body.get("item", {})
             if not isinstance(item, dict):
                 continue
+            if isinstance(item.get("id"), str):
+                completed_ids.add(item["id"])
             prior = started.get(item.get("id"))
             if isinstance(prior, dict) and prior.get("type") == item.get("type"):
                 item = {**prior, **item}
@@ -185,8 +191,27 @@ def read_codex_events(session_id: str, *, start_line: int = 0, end_line: int = 0
             event = _mcp_tool_result_from_event_msg(payload)
         if event is not None:
             item = event["item"]
-            events[str(item.get("id") or len(events))] = event
-    return list(events.values())
+            if event.get("type") == "item.completed":
+                native_id = item.get("native_id") or item.get("id")
+                if isinstance(native_id, str):
+                    completed_ids.add(native_id)
+                prior = started.get(native_id) if isinstance(native_id, str) else None
+                if isinstance(prior, dict):
+                    for field in ("arguments", "input", "command"):
+                        if not item.get(field) and prior.get(field):
+                            item[field] = prior[field]
+            key = str(item.get("id") or len(events))
+            events[key] = event
+            positions[key] = position
+    for item_id, item in started.items():
+        if item_id in completed_ids:
+            continue
+        native_type = item.get("type")
+        protocol_type = {"McpToolCall": "mcp_tool_call", "CommandExecution": "command_execution"}.get(native_type) if isinstance(native_type, str) else None
+        if protocol_type is not None:
+            events[item_id] = {"type": "item.started", "item": {**item, "type": protocol_type}}
+            positions[item_id] = started_positions[item_id]
+    return [events[key] for key in sorted(events, key=positions.__getitem__)]
 
 
 def claude_session_path(session_id: str, *, refresh: bool = False) -> Path | None:

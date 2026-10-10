@@ -2067,6 +2067,12 @@ Workbench 的实时文字和工具正文仅在运行时 RAM 中使用；SQLite �
 
 Status API 的 SystemHealth 使用严格类型的 native_delivery_coverage（checked、unavailable）展示原生轨迹可用性；该字段仅实时计算，不写入质量快照，也不改变质量违规判断。
 
+Codex 原生工具只有开始、没有对应完成记录时，历史详情保留准确范围内的
+`item.started` 和实际输入，并按原生顺序展示；不生成结果、退出码或成功回执。
+匹配到完成记录时仍只采用对应完成投影，空参数不覆盖开始输入，旧 MCP end
+格式的完成结果也不会被开始投影覆盖。这是过程可见性，不证明外部动作发生，
+不改变运行终态、审批或重试资格。
+
 服务捕获的 source_bindings 含凭据或未通过签名链接安全边界时，按
 `runtime_result_source_invalid` 记录为 service/result 的不可重试失败，
 不归为 Codex 执行失败，也不切换提供者来重复处理同一不安全来源。

@@ -1,4 +1,5 @@
 import json
+import pytest
 import sqlite3
 
 from app import native_trajectory
@@ -111,6 +112,28 @@ def test_native_multiturn_range_is_unavailable_without_guessing_a_turn(tmp_path,
         assert 'later' in native_trajectory.read_native_result_stream('codex_cli', 'session', 4, 8)
 
 
+@pytest.mark.parametrize("native_type,protocol_type", [("CommandExecution", "command_execution"), ("McpToolCall", "mcp_tool_call")])
+def test_codex_native_unfinished_tool_preserves_started_state(tmp_path, monkeypatch, native_type, protocol_type):
+    path = tmp_path / "unfinished.jsonl"
+    start = {"type": "event_msg", "payload": {"type": "item_started", "item": {
+        "type": native_type, "id": "call-1", "command": "read fixture",
+        "server": "agent_cli", "tool": "read_file", "arguments": {"path": "fixture"},
+    }}}
+    final = {"type": "event_msg", "payload": {"type": "item_completed", "item": {
+        "type": "AgentMessage", "id": "answer", "text": "fixture final response",
+    }}}
+    path.write_text("\n".join(json.dumps(record) for record in (start, final)) + "\n")
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *a, **k: path)
+    events = native_trajectory.read_codex_events("session", start_line=0, end_line=2)
+    assert len(events) == 2
+    assert [event["type"] for event in events] == ["item.started", "item.completed"]
+    assert events[0]["type"] == "item.started"
+    assert events[0]["item"]["type"] == protocol_type
+    assert events[0]["item"]["arguments"] == {"path": "fixture"}
+    assert "result" not in events[0]["item"]
+    assert "exit_code" not in events[0]["item"]
+
+
 def test_codex_native_tool_completion_keeps_started_arguments(tmp_path, monkeypatch):
     path = tmp_path / "session.jsonl"
     path.write_text("\n".join(json.dumps(record) for record in (
@@ -129,6 +152,27 @@ def test_codex_native_tool_completion_keeps_started_arguments(tmp_path, monkeypa
     assert len(events) == 1
     assert events[0]["item"]["arguments"] == {"name": "plan"}
     assert events[0]["item"]["result"] == {"content": "read"}
+
+
+def test_codex_legacy_mcp_end_is_not_replaced_by_started_projection(tmp_path, monkeypatch):
+    path = tmp_path / "legacy-end.jsonl"
+    records = (
+        {"type": "event_msg", "payload": {"type": "item_started", "item": {
+            "type": "McpToolCall", "id": "call-1", "server": "agent_cli",
+            "tool": "read_file", "arguments": {"path": "fixture"},
+        }}},
+        {"type": "event_msg", "payload": {"type": "mcp_tool_call_end", "call_id": "call-1",
+            "invocation": {"server": "agent_cli", "tool": "read_file", "arguments": {}},
+            "result": {"Ok": {"content": "fixture result"}},
+        }},
+    )
+    path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *a, **k: path)
+    events = native_trajectory.read_codex_events("session", start_line=0, end_line=2)
+    assert len(events) == 1
+    assert events[0]["type"] == "item.completed"
+    assert events[0]["item"]["arguments"] == {"path": "fixture"}
+    assert events[0]["item"]["result"] == {"content": "fixture result"}
 
 
 def test_completed_runtime_result_recovers_typed_value_from_native(tmp_path, monkeypatch):

@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- 2026-10-10: Keep unmatched native Codex tool starts in chronological history
+  as started attempts, without manufacturing completion or results. Preserve
+  matched completion inputs, including legacy MCP end records.
+
 - 2026-10-10: Verify persisted Consumer source bindings against the adopted
   candidate while requiring the retired raw AgentRun SQL body to stay empty.
   Preserve exact historical feedback, complete calendar material and source
