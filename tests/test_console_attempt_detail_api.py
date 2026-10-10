@@ -75,6 +75,42 @@ def test_runtime_payload_preserves_business_status_separately(
     assert store.list_agent_runtime_attempts(run.id) == before
 
 
+def test_runtime_payload_uses_batch_runtime_attempt_lookup(tmp_path: Path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "runtime-payload-batch.sqlite3")
+    task = _consumer_result_task(store)
+    run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="runtime-batch",
+        owner="audit-runtime-batch",
+    ).run
+    runtime = store.claim_agent_runtime_attempt(
+        run.id, "codex_oauth", "codex_cli", "local_oauth", "test-model"
+    )
+    batch_calls = []
+    original_batch = store.list_agent_runtime_attempts_for_runs
+
+    def record_batch(run_ids):
+        batch_calls.append(run_ids)
+        return original_batch(run_ids)
+
+    monkeypatch.setattr(store, "list_agent_runtime_attempts_for_runs", record_batch)
+    monkeypatch.setattr(
+        store,
+        "list_agent_runtime_attempts",
+        lambda _run_id: pytest.fail("per-run runtime attempt query was used"),
+    )
+
+    payload = _runtime_payload([run], store)
+
+    assert [item["attempt_number"] for item in payload] == [runtime.attempt_number]
+    assert batch_calls == [[run.id]]
+
+
 def test_linked_consumer_run_falls_back_to_latest_consumer_sibling():
     audit = type("Run", (), {"id": 3, "role": "audit", "parent_agent_run_id": None})()
     old = type("Run", (), {"id": 1, "role": "consumer", "turn_attempt": 0, "proposal_revision": 0})()
@@ -672,8 +708,8 @@ def test_email_history_detail_reuses_initialized_store_and_reads_fresh_context(
             result = super().get_classification(classification_id)
             return {**result, "subject": f"Revision {len(reads)}"}
 
-    def email_store_factory(path):
-        initializations.append(path)
+    def email_store_factory(path, **kwargs):
+        initializations.append((path, kwargs))
         return FreshEmailStore()
 
     monkeypatch.setattr("app.audit_web.EmailStore", email_store_factory)
@@ -684,6 +720,7 @@ def test_email_history_detail_reuses_initialized_store_and_reads_fresh_context(
 
     assert first.status_code == second.status_code == 200
     assert len(initializations) == 1
+    assert initializations[0][1]["validate_rows"] is False
     assert len(reads) == 2
     assert first.json()["item"]["email"]["subject"] == "Revision 1"
     assert second.json()["item"]["email"]["subject"] == "Revision 2"
@@ -699,7 +736,7 @@ def test_email_store_validation_failure_does_not_block_unrelated_web_routes(
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = _seed_email_attempt(store, with_agent_runs=False)
 
-    def invalid_email_store(_path):
+    def invalid_email_store(_path, **_kwargs):
         raise EmailPersistenceCorruption("test-invalid-email-state")
 
     monkeypatch.setattr("app.audit_web.EmailStore", invalid_email_store)
