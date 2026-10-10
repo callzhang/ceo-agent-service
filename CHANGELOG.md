@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- 2026-10-10: Verify persisted Consumer source bindings against the adopted
+  candidate while requiring the retired raw AgentRun SQL body to stay empty.
+  Preserve exact historical feedback, complete calendar material and source
+  change/digest assertions; this does not establish native trace availability.
+
 - 2026-10-10: Bind audited email-unsubscribe fixtures to contract-valid reviews
   of the actual adopted candidate. Keep technical browser failures as failed
   runs, inject parent-result faults into authoritative candidate records, and

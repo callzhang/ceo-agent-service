@@ -2441,7 +2441,10 @@ def test_consumer_preserves_provider_rendered_historical_feedback_sources(
     [binding] = result.result.source_bindings
     assert binding.value["messages"][0]["text"] == source
     assert binding.value["trigger_raw_payload"] == context.trigger_raw_payload
-    assert json.loads(store.get_agent_run(result.run_id).final_result_json)["source_bindings"][0]["value"] == binding.value
+    saved = store.get_agent_run(result.run_id)
+    assert json.loads(saved.adopted_result_json)["source_bindings"][0]["value"] == binding.value
+    with store._connect() as db:
+        assert db.execute("select final_result_json from agent_runs where id=?", (result.run_id,)).fetchone()[0] == ""
 
 
 def test_consumer_preserves_full_calendar_material_source(store, task, context):
@@ -2456,8 +2459,10 @@ def test_consumer_preserves_full_calendar_material_source(store, task, context):
     assert result.result.outcome == "no_action"
     [binding] = result.result.source_bindings
     assert binding.value["materials"][0]["reference"] == reference
-    persisted = json.loads(store.get_agent_run(result.run_id).final_result_json)
+    persisted = json.loads(store.get_agent_run(result.run_id).adopted_result_json)
     assert persisted["source_bindings"][0]["value"] == binding.value
+    with store._connect() as db:
+        assert db.execute("select final_result_json from agent_runs where id=?", (result.run_id,)).fetchone()[0] == ""
     from app.reviewed_candidates import candidate_digest
     from app.reviewed_sources import capture_candidate_sources, changed_candidate_sources
 
