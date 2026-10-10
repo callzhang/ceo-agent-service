@@ -7,6 +7,12 @@
 
 Validation: test-first focused regressions, native readers and runtime receipt tests, real DB-copy migration and integrity/foreign-key checks, compare business object counts and pending references; deploy through app.deploy; verify PID, health, queues, Attention/History and disk sizes. No unrelated safety or audit policy changes.
 
+## Completed input provenance phase (approved 2026-10-10)
+
+Derek approved removing long-lived completed input bodies, retaining provenance and references to available originals, necessary task state, adopted business results and execution receipts. No time-based retention deadline is introduced. Pending, processing, failed and unresolved human-review inputs remain exact and resumable. Compacted bodies are explicitly unavailable when an exact original cannot be read; a result, summary or empty JSON object is never substituted as source evidence.
+
+Work-summary done/skipped transitions compact their input in the same business projection transaction. Source identity/time, original body SHA-256/byte count, explicit marker, attempts/errors/times and native run references survive. Duplicate terminal enqueue cannot restore copied bodies. Historical cleanup is explicit and idempotent; physical page reclamation and verified backup are separate deployment steps. This section describes implementation scope, not live acceptance; copy verification and live readback will be recorded after execution.
+
 ## Earlier conservative migration copy (superseded, 2026-10-09)
 
 A SQLite backup of production was migrated from email schema 45 to 46 and vacuumed. Size changed from 3,482,066,944 to 1,848,934,400 bytes (46.9% reclaimed). quick_check returned ok. Counts were unchanged: reply_tasks 7,175; reply_attempts 14,578; agent_runs 21,219; external_action_results 250; sent_replies 2,268; business_tasks 466; scheduled_task_runs 145,890; email_training_snapshots 122. Scheduled runs reference 66 immutable configurations with zero missing references. Latest external training data is 16,858,401 bytes.

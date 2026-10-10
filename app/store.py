@@ -231,7 +231,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-09.1"
+STORE_SCHEMA_VERSION = "2026-10-10.1"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -429,6 +429,10 @@ STORE_SCHEMA_REMOVED_COLUMNS = {
     "business_task_signals": ("evidence_text",),
 }
 STORE_SCHEMA_REQUIRED_COLUMNS = {
+    "work_summary_inputs": (
+        "id", "source_type", "source_ref", "payload_json", "source_created_at",
+        "body_sha256", "body_bytes", "body_compacted", "status",
+    ),
     "business_source_documents": ("id", "identity_key", "body", "created_at"),
     "meeting_alignment_delivery_claims": ("job_id", "claim_token"),
     "business_task_signals": (
@@ -4278,6 +4282,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     source_type text not null,
                     source_ref text not null,
                     payload_json text not null,
+                    source_created_at text not null default '',
+                    body_sha256 text not null default '',
+                    body_bytes integer not null default 0,
+                    body_compacted integer not null default 0,
                     status text not null default 'pending',
                     attempts integer not null default 0,
                     error text not null default '',
@@ -5351,6 +5359,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             }
             for column, definition in (
                 ("available_at", "text not null default ''"),
+                ("source_created_at", "text not null default ''"),
+                ("body_sha256", "text not null default ''"),
+                ("body_bytes", "integer not null default 0"),
+                ("body_compacted", "integer not null default 0"),
             ):
                 if column not in work_summary_input_columns:
                     db.execute(
@@ -27925,16 +27937,22 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         source_ref: str,
         payload_json: str,
     ) -> int:
+        source_created_at, body_sha256, body_bytes = self._work_summary_input_provenance(payload_json)
         with self._connect() as db:
             db.execute(
                 """
-                insert into work_summary_inputs (source_type, source_ref, payload_json)
-                values (?, ?, ?)
+                insert into work_summary_inputs
+                    (source_type, source_ref, payload_json, source_created_at, body_sha256, body_bytes)
+                values (?, ?, ?, ?, ?, ?)
                 on conflict(source_type, source_ref) do update set
                     payload_json=excluded.payload_json,
+                    source_created_at=excluded.source_created_at,
+                    body_sha256=excluded.body_sha256,
+                    body_bytes=excluded.body_bytes,
                     updated_at=current_timestamp
+                where work_summary_inputs.status not in ('processing', 'done', 'skipped')
                 """,
-                (source_type, source_ref, payload_json),
+                (source_type, source_ref, payload_json, source_created_at, body_sha256, body_bytes),
             )
             row = db.execute(
                 """
@@ -27944,6 +27962,37 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 (source_type, source_ref),
             ).fetchone()
             return int(row["id"])
+
+    @staticmethod
+    def _work_summary_input_provenance(payload_json: str) -> tuple[str, str, int]:
+        try:
+            decoded = json.loads(payload_json)
+        except json.JSONDecodeError:
+            decoded = {}
+        source = decoded.get("source", {}) if isinstance(decoded, dict) else {}
+        source_created_at = str(source.get("created_at") or "") if isinstance(source, dict) else ""
+        body = payload_json.encode("utf-8")
+        return source_created_at, hashlib.sha256(body).hexdigest(), len(body)
+
+    @classmethod
+    def _compact_work_summary_input(
+        cls, db: sqlite3.Connection, input_id: int, *, status: str, error: str
+    ) -> None:
+        row = db.execute(
+            "select payload_json from work_summary_inputs where id=? and status not in ('done', 'skipped')",
+            (input_id,),
+        ).fetchone()
+        if row is None:
+            return
+        source_created_at, body_sha256, body_bytes = cls._work_summary_input_provenance(row["payload_json"])
+        db.execute(
+            """update work_summary_inputs
+               set status=?, error=?, payload_json='{}',
+                   source_created_at=?, body_sha256=?, body_bytes=?, body_compacted=1,
+                   updated_at=current_timestamp
+               where id=? and status not in ('done', 'skipped')""",
+            (status, error, source_created_at, body_sha256, body_bytes, input_id),
+        )
 
     def claim_work_summary_inputs(
         self,
@@ -28127,14 +28176,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, input_id: int, *, _db: sqlite3.Connection | None = None
     ) -> None:
         with self._optional_connection(_db) as db:
-            db.execute(
-                """
-                update work_summary_inputs
-                set status='done', error='', updated_at=current_timestamp
-                where id=?
-                """,
-                (input_id,),
-            )
+            self._compact_work_summary_input(db, input_id, status="done", error="")
 
     def mark_work_summary_input_skipped(
         self,
@@ -28144,14 +28186,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         _db: sqlite3.Connection | None = None,
     ) -> None:
         with self._optional_connection(_db) as db:
-            db.execute(
-                """
-                update work_summary_inputs
-                set status='skipped', error=?, updated_at=current_timestamp
-                where id=?
-                """,
-                (reason, input_id),
-            )
+            self._compact_work_summary_input(db, input_id, status="skipped", error=reason)
 
     def mark_work_summary_input_failed(self, input_id: int, error: str) -> None:
         with self._connect() as db:
@@ -28159,7 +28194,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 """
                 update work_summary_inputs
                 set status='failed', error=?, updated_at=current_timestamp
-                where id=?
+                where id=? and status not in ('done', 'skipped')
+                  and body_compacted=0
                 """,
                 (error, input_id),
             )
@@ -28174,7 +28210,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     error=?,
                     available_at='',
                     updated_at=current_timestamp
-                where id=? and status='failed'
+                where id=? and status='failed' and body_compacted=0
                 """,
                 (reason.strip(), input_id),
             )
@@ -28184,24 +28220,26 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self, input_id: int, error: str, *, available_at: str
     ) -> None:
         with self._connect() as db:
-            db.execute(
+            cursor = db.execute(
                 """
                 update work_summary_inputs
                 set status='pending',
                     error=?,
                     available_at=?,
                     updated_at=current_timestamp
-                where id=?
+                where id=? and status not in ('done', 'skipped')
+                  and body_compacted=0
                 """,
                 (error, available_at, input_id),
             )
-            self._close_task_runs_leaving_processing(db, [input_id])
+            if cursor.rowcount:
+                self._close_task_runs_leaving_processing(db, [input_id])
 
     def defer_work_summary_input_for_capacity(
         self, input_id: int, error: str, *, available_at: str
     ) -> None:
         with self._connect() as db:
-            db.execute(
+            cursor = db.execute(
                 """
                 update work_summary_inputs
                 set status='pending',
@@ -28210,10 +28248,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     available_at=?,
                     updated_at=current_timestamp
                 where id=? and status in ('processing', 'failed')
+                  and body_compacted=0
                 """,
                 (error, available_at, input_id),
             )
-            self._close_task_runs_leaving_processing(db, [input_id])
+            if cursor.rowcount:
+                self._close_task_runs_leaving_processing(db, [input_id])
 
     def defer_meeting_alignment_job_for_capacity(
         self, job_id: int, *, available_at: str, error: str
@@ -31932,7 +31972,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     '{history_types.TASK}' as history_type,
                     'Task input' as source_actor,
                     source_type || ':' || source_ref as context,
-                    payload_json as summary,
+                    'Original input source: ' || source_type || ':' || source_ref ||
+                    case when body_sha256<>'' then '; SHA-256 ' || body_sha256 ||
+                        '; ' || body_bytes || ' bytes' else '' end as summary,
                     error as detail,
                     '' as conversation_id,
                     '' as message_id,

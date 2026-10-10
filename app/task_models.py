@@ -1208,6 +1208,10 @@ class WorkSummaryInput(BaseModel):
     source_type: WorkItemSourceType
     source_ref: str
     payload_json: str
+    source_created_at: str = ""
+    body_sha256: str = ""
+    body_bytes: int = 0
+    body_compacted: int = 0
     status: WorkSummaryStatus
     attempts: int = 0
     error: str = ""

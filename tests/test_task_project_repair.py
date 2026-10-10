@@ -125,3 +125,22 @@ def test_manifest_archives_only_old_local_file_only_project(tmp_path):
     assert result.archived_projects == 1
     assert store.get_work_project(eligible_id).status.value == "archived"
     assert store.get_work_project(excluded_id).status.value == "active"
+
+
+def test_repair_uses_source_created_at_after_input_compaction(tmp_path):
+    db_path = tmp_path / "repair.sqlite3"
+    store = AutoReplyStore(db_path)
+    project_id = store.create_work_project(title="历史材料项目")
+    _set_project_times(db_path, project_id, created_at="2026-03-01 09:00:00")
+    source_ref = "/tmp/historical.md#sha256=v1"
+    store.create_work_update(project_id=project_id, source_type="local_file",
+                             source_ref=source_ref, summary="历史材料")
+    input_id = store.enqueue_work_summary_input("local_file", source_ref, json.dumps({
+        "source": {"type": "local_file", "ref": source_ref,
+                   "created_at": "2026-01-01T09:00:00"},
+        "summary": "source body",
+    }))
+    store.mark_work_summary_input_done(input_id)
+    assert store.get_work_summary_input(input_id).payload_json == "{}"
+    manifest = build_repair_manifest(db_path)
+    assert [item.project_id for item in manifest.archives] == [project_id]

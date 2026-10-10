@@ -372,7 +372,7 @@ def _archive_candidates(
         all_historical = True
         for update in updates:
             input_row = db.execute(
-                "select payload_json from work_summary_inputs "
+                "select source_created_at, payload_json from work_summary_inputs "
                 "where source_type='local_file' and source_ref=? limit 1",
                 (update["source_ref"],),
             ).fetchone()
@@ -396,6 +396,9 @@ def _archive_candidates(
 def _source_created_at(row: sqlite3.Row | None) -> datetime | None:
     if row is None:
         return None
+    recorded = _parse_datetime(str(row["source_created_at"] or ""))
+    if recorded is not None:
+        return recorded
     try:
         payload = json.loads(row["payload_json"] or "{}")
         value = payload.get("source", {}).get("created_at", "")

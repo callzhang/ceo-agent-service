@@ -120,9 +120,13 @@ def _json_object(value: object) -> dict[str, object]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _input_body_unavailable(row: sqlite3.Row) -> bool:
+    return "body_compacted" in row.keys() and bool(row["body_compacted"])
+
+
 def _source_backed_task(
     todo: dict[str, object], updates: dict[int, dict[str, object]],
-    source_inputs: dict[tuple[str, str], tuple[dict[str, object], str]],
+    source_inputs: dict[tuple[str, str], tuple[dict[str, object] | None, str]],
 ) -> tuple[dict[str, object], tuple[str, ...]] | None:
     update = updates.get(int(todo["created_from_update_id"] or 0))
     if update is None or int(update["project_id"]) != int(todo["project_id"]):
@@ -141,6 +145,8 @@ def _source_backed_task(
     if source_record is None:
         return None
     source_input, input_digest = source_record
+    if source_input is None:
+        return None
     source = source_input.get("source")
     context = source_input.get("context")
     if not isinstance(source, dict) or not isinstance(context, dict):
@@ -221,10 +227,13 @@ def _plan_items(db: sqlite3.Connection) -> tuple[LegacyImportItem, ...]:
     by_update = {int(row["id"]): row for row in updates}
     source_inputs = {
         (str(row["source_type"]), str(row["source_ref"])): (
-            _json_object(row["payload_json"]), _digest(dict(row))
+            None if _input_body_unavailable(row)
+            else _json_object(row["payload_json"]),
+            _digest({"source_type": row["source_type"], "source_ref": row["source_ref"],
+                     "payload_json": row["payload_json"]})
         )
         for row in db.execute(
-            "select source_type, source_ref, payload_json from work_summary_inputs"
+            "select * from work_summary_inputs"
         )
     }
     todos_by_project: dict[int, list[int]] = {}
@@ -257,6 +266,11 @@ def _plan_items(db: sqlite3.Connection) -> tuple[LegacyImportItem, ...]:
         todo_id = int(todo["id"])
         formal = _source_backed_task(todo, by_update, source_inputs)
         task, refs = formal if formal else (None, (f"work_todos:{todo_id}",))
+        source_update = by_update.get(int(todo["created_from_update_id"] or 0))
+        source_record = source_inputs.get((
+            str(source_update["source_type"] or ""), str(source_update["source_ref"] or "")
+        )) if source_update is not None else None
+        source_unavailable = source_record is not None and source_record[0] is None
         items.append(LegacyImportItem(
             legacy_kind="work_todos", legacy_row_id=todo_id,
             legacy_project_id=int(todo["project_id"]), legacy_todo_ids=(todo_id,),
@@ -264,7 +278,8 @@ def _plan_items(db: sqlite3.Connection) -> tuple[LegacyImportItem, ...]:
             source_digest=_digest(todo), evidence_refs=refs,
             semantic_task=task, official_project_registry_key="",
             reason=("source-backed formal Task basis" if formal else
-                    "no confirmed formal Task; retain only in legacy history"),
+                    "source input unavailable after compaction" if source_unavailable
+                    else "no confirmed formal Task; retain only in legacy history"),
         ))
     for update in updates:
         update_id = int(update["id"])
@@ -405,16 +420,19 @@ def _check_supporting_source(
         "select * from work_updates where id=?", (details["source_update_id"],)
     ).fetchone()
     source_input = db.execute(
-        "select source_type, source_ref, payload_json from work_summary_inputs "
+        "select * from work_summary_inputs "
         "where source_type=? and source_ref=?",
         (details["source_type"], details["source_ref"]),
     ).fetchone()
+    if source_input is not None and _input_body_unavailable(source_input):
+        raise ValueError("task semantic import source input unavailable after compaction")
     if (
         update is None
         or source_input is None
         or int(update["project_id"]) != item.legacy_project_id
         or _digest(dict(update)) != details["source_update_digest"]
-        or _digest(dict(source_input)) != details["source_input_digest"]
+        or _digest({key: source_input[key] for key in ("source_type", "source_ref", "payload_json")})
+        != details["source_input_digest"]
     ):
         raise ValueError("task semantic import supporting source digest mismatch")
 

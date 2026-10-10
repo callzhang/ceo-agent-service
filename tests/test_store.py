@@ -11503,6 +11503,104 @@ def test_terminal_work_summary_input_resolves_its_own_error(tmp_path: Path):
     assert row["resolved_at"]
 
 
+def test_terminal_work_input_compacts_atomically_with_adopted_project(tmp_path: Path):
+    import hashlib
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    payload = json.dumps({"source": {"type": "local_file", "ref": "file#v1",
+                                     "created_at": "2026-01-01T09:00:00Z"},
+                          "summary": "private source body"})
+    input_id = store.enqueue_work_summary_input("local_file", "file#v1", payload)
+    [claimed] = store.claim_work_summary_inputs(1)
+    assert store.enqueue_work_summary_input(
+        "local_file", "file#v1", '{"summary":"later scan while processing"}'
+    ) == input_id
+    assert store.get_work_summary_input(input_id).payload_json == payload
+    with pytest.raises(RuntimeError, match="rollback"):
+        with store.task_agent_domain_apply_transaction() as db:
+            db.execute("insert into work_projects(title, goal) values('adopted', '')")
+            store.mark_work_summary_input_done(claimed.id, _db=db)
+            raise RuntimeError("rollback")
+    assert store.get_work_summary_input(input_id).payload_json == payload
+    with store._connect() as db:
+        assert db.execute("select count(*) from work_projects").fetchone()[0] == 0
+
+    with store.task_agent_domain_apply_transaction() as db:
+        db.execute("insert into work_projects(title, goal) values('adopted', '')")
+        store.mark_work_summary_input_done(claimed.id, _db=db)
+    done = store.get_work_summary_input(input_id)
+    assert done.status == "done"
+    assert done.payload_json == "{}"
+    assert done.source_created_at == "2026-01-01T09:00:00Z"
+    assert done.body_sha256 == hashlib.sha256(payload.encode()).hexdigest()
+    assert done.body_bytes == len(payload.encode())
+    with store._connect() as db:
+        assert db.execute("select count(*) from work_projects").fetchone()[0] == 1
+
+    duplicate = store.enqueue_work_summary_input("local_file", "file#v1", '{"summary":"later"}')
+    assert duplicate == input_id
+    assert store.get_work_summary_input(input_id) == done
+    log = next(log for log in store.list_operation_logs(source_tables=("work_summary_inputs",))
+               if log.source_id == input_id)
+    assert "private source body" not in log.summary
+    assert "file#v1" in log.summary
+    assert done.body_sha256 in log.summary
+
+
+def test_skipped_compacts_but_failed_and_requeued_keep_exact_input(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    payload = '{"source":{"type":"local_file","ref":"retry"},"summary":"exact"}'
+    failed_id = store.enqueue_work_summary_input("local_file", "retry", payload)
+    skipped_id = store.enqueue_work_summary_input("local_file", "skip", payload)
+    [failed, skipped] = store.claim_work_summary_inputs(2)
+    store.mark_work_summary_input_failed(failed.id, "invalid")
+    store.mark_work_summary_input_skipped(skipped.id, "irrelevant")
+    assert store.get_work_summary_input(failed_id).payload_json == payload
+    assert store.get_work_summary_input(skipped_id).payload_json == "{}"
+    assert store.requeue_failed_work_summary_input(failed_id, "reviewed")
+    assert store.get_work_summary_input(failed_id).payload_json == payload
+
+
+def test_work_input_provenance_schema_is_checked_on_store_reopen(tmp_path: Path):
+    path = tmp_path / "worker.sqlite3"
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        db.execute("alter table work_summary_inputs drop column body_compacted")
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    reopened = AutoReplyStore(path)
+    with reopened._connect() as db:
+        columns = {row["name"] for row in db.execute("pragma table_info(work_summary_inputs)")}
+    assert "body_compacted" in columns
+
+
+@pytest.mark.parametrize("terminal_status", ["done", "skipped"])
+def test_late_work_input_failure_or_retry_cannot_reopen_compacted_input(
+    tmp_path: Path, terminal_status: str
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    payload = '{"source":{"type":"local_file","ref":"file#v1"},"summary":"original"}'
+    input_id = store.enqueue_work_summary_input("local_file", "file#v1", payload)
+    [claimed] = store.claim_work_summary_inputs(1)
+    if terminal_status == "done":
+        store.mark_work_summary_input_done(claimed.id)
+    else:
+        store.mark_work_summary_input_skipped(claimed.id, "no actionable task")
+    terminal = store.get_work_summary_input(input_id)
+    assert terminal.payload_json == "{}"
+    assert terminal.body_compacted == 1
+
+    store.mark_work_summary_input_failed(input_id, "late failure")
+    store.schedule_work_summary_input_retry(
+        input_id, "late retry", available_at="2026-12-01 00:00:00"
+    )
+    store.defer_work_summary_input_for_capacity(
+        input_id, "late capacity", available_at="2026-12-01 00:00:00"
+    )
+    assert not store.requeue_failed_work_summary_input(input_id, "late manual requeue")
+    assert store.get_work_summary_input(input_id) == terminal
+    assert store.claim_work_summary_inputs(1) == []
+
+
 def test_reopening_drops_the_second_copy_of_a_run_trajectory(tmp_path: Path):
     """Reopening removes retired SQLite payloads without reviving their contents."""
     db_path = tmp_path / "legacy-tool-events-column.sqlite3"

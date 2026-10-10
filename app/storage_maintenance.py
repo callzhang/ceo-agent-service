@@ -8,6 +8,40 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
+from app.store import AutoReplyStore
+
+
+def compact_terminal_work_summary_inputs(database: Path) -> dict[str, int]:
+    """Explicit, idempotent migration of historical done/skipped input bodies.
+
+    This function does not run on store initialization or during deployment.
+    Caller owns backup, quiet-service coordination and physical page reclamation.
+    """
+    counts = {"rows_compacted": 0, "logical_bytes_removed": 0}
+    with closing(sqlite3.connect(database, timeout=60)) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("begin immediate")
+        rows = db.execute(
+            "select id, payload_json, source_created_at, body_sha256, body_bytes "
+            "from work_summary_inputs where status in ('done', 'skipped') "
+            "and body_compacted=0 order by id"
+        ).fetchall()
+        for row in rows:
+            payload = str(row["payload_json"])
+            source_created_at, digest, body_bytes = AutoReplyStore._work_summary_input_provenance(payload)
+            db.execute(
+                "update work_summary_inputs set payload_json='{}', source_created_at=?, "
+                "body_sha256=?, body_bytes=?, body_compacted=1 "
+                "where id=? and status in ('done', 'skipped') and body_compacted=0",
+                (source_created_at, digest, body_bytes, row["id"]),
+            )
+            counts["rows_compacted"] += 1
+            counts["logical_bytes_removed"] += max(0, body_bytes - 2)
+        if db.execute("pragma quick_check").fetchone()[0] != "ok":
+            raise RuntimeError("database integrity check failed")
+        db.commit()
+    return counts
+
 def compact_native_duplicates(database: Path) -> dict[str, int]:
     """Remove all persisted trajectory copies, including missing-native history.
 
@@ -107,8 +141,12 @@ def _clear_workbench_event_bodies(db: sqlite3.Connection, counts: dict[str, int]
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, required=True)
+    parser.add_argument("--work-summary-inputs", action="store_true",
+                        help="compact historical done/skipped work inputs only")
     arguments = parser.parse_args()
-    print(json.dumps(compact_native_duplicates(arguments.db)))
+    result = (compact_terminal_work_summary_inputs(arguments.db)
+              if arguments.work_summary_inputs else compact_native_duplicates(arguments.db))
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":
