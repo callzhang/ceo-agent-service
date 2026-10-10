@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import closing
+from contextlib import closing, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -372,6 +372,7 @@ class RepositoryUpdater:
         health: Callable[[], bool] = _default_health,
         wait_for_quiet: Callable[[], None] = lambda: None,
         publication: Callable[[], UpgradePublication] | None = None,
+        pre_checkout_cleanup: Callable[[], None] | None = None,
     ) -> None:
         self.repository = GitRepository(repository_root)
         self.store = store
@@ -385,6 +386,7 @@ class RepositoryUpdater:
         self.health = health
         self.wait_for_quiet = wait_for_quiet
         self.publication = publication
+        self.pre_checkout_cleanup = pre_checkout_cleanup
 
     @property
     def target_ref(self) -> str:
@@ -394,19 +396,25 @@ class RepositoryUpdater:
     def remote_ref(self) -> str:
         return f"refs/remotes/{self.remote}/{self.branch}"
 
-    def execute(self, operation: UpgradeOperation) -> UpgradeResult:
-        with self.repository.mutex():
+    def execute(
+        self, operation: UpgradeOperation, *, already_locked: bool = False
+    ) -> UpgradeResult:
+        lock = nullcontext() if already_locked else self.repository.mutex()
+        with lock:
             self.repository.fetch(self.remote)
             records = self._recheck(operation)
             self.wait_for_quiet()
             self.stop()
             backup_path = self._backup(operation)
-            if records:
-                self._preserve_local_changes(operation)
-            self._persist(operation, "updating", backup_path=backup_path)
             published: UpgradePublication | None = None
             replacement_started = False
             try:
+                self._persist(operation, "updating", backup_path=backup_path)
+                if self.pre_checkout_cleanup is not None:
+                    self.pre_checkout_cleanup()
+                    records = self.repository.status_records()
+                if records:
+                    self._preserve_local_changes(operation)
                 self.repository._run(
                     ["merge", "--ff-only", self.remote_ref],
                     category="upgrade_merge",
@@ -496,6 +504,10 @@ class RepositoryUpdater:
                 backup_path=str(backup_path) if backup_path else "",
                 error=finalize_error,
             )
+
+    def execute_locked(self, operation: UpgradeOperation) -> UpgradeResult:
+        """Execute while the caller holds this repository's deploy mutex."""
+        return self.execute(operation, already_locked=True)
 
     def _recheck(self, operation: UpgradeOperation) -> list[object]:
         current = self.repository.resolve_ref(self.target_ref)

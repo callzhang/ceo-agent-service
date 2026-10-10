@@ -6934,15 +6934,40 @@ class EmailStore:
                     raise ValueError("category description revision identity mismatch")
         except ValueError as exc:
             raise EmailPersistenceCorruption(str(exc)) from exc
-        for row in db.execute("select * from email_agent_classification_tasks"):
-            payload = _json_load(
-                row["input_json"], field="input_json", expected_type=dict
-            )
-            if payload.get("stable_message_identity") != row["stable_message_identity"]:
+        for row in db.execute(
+            """
+            select stable_message_identity, status, owner, lease_expires_at,
+                   json_type(input_json) as input_json_type,
+                   json_extract(input_json, '$.stable_message_identity')
+                       as input_stable_message_identity,
+                   json_type(input_json, '$.unsubscribe_candidates')
+                       as unsubscribe_candidates_type,
+                   json_extract(input_json, '$.unsubscribe_candidates')
+                       as unsubscribe_candidates_json,
+                   json_type(result_json) as result_json_type,
+                   json_type(result_json, '$.unsubscribe_url')
+                       as result_unsubscribe_url_type
+            from email_agent_classification_tasks
+            """
+        ):
+            if row["input_json_type"] != "object":
+                raise EmailPersistenceCorruption(
+                    "classifier task input is not a JSON object"
+                )
+            if (
+                row["input_stable_message_identity"]
+                != row["stable_message_identity"]
+            ):
                 raise EmailPersistenceCorruption(
                     "classifier task stable identity diverges from input"
                 )
-            candidates = payload.get("unsubscribe_candidates")
+            candidates_json = row["unsubscribe_candidates_json"]
+            candidates = (
+                json.loads(candidates_json)
+                if row["unsubscribe_candidates_type"] == "array"
+                and isinstance(candidates_json, str)
+                else None
+            )
             if not isinstance(candidates, list) or any(
                 not isinstance(candidate, dict)
                 or set(candidate) != {"index", "source", "digest", "reference"}
@@ -6955,8 +6980,10 @@ class EmailStore:
                 raise EmailPersistenceCorruption(
                     "classifier task unsubscribe candidates are not redacted"
                 )
-            result = json.loads(row["result_json"])
-            if isinstance(result, dict) and "unsubscribe_url" in result:
+            if (
+                row["result_json_type"] == "object"
+                and row["result_unsubscribe_url_type"] is not None
+            ):
                 raise EmailPersistenceCorruption(
                     "classifier task result contains private unsubscribe URL"
                 )
@@ -7054,7 +7081,19 @@ class EmailStore:
                 )
 
         classifications = {
-            row["id"]: row for row in db.execute("select * from email_classifications")
+            row["id"]: row
+            for row in db.execute(
+                """
+                select id, account_id, folder, uidvalidity, uid, rfc_message_id,
+                       thread_id, stable_message_identity, category,
+                       predicted_category, confirmed_category, confidence,
+                       probabilities_json, model_id, config_version, status,
+                       classification_source, agent_result_json,
+                       action_plan_json, current_action_plan_id,
+                       legacy_processed_without_plan
+                from email_classifications
+                """
+            )
         }
         classifications_by_identity: dict[str, list[sqlite3.Row]] = {}
         for row in classifications.values():

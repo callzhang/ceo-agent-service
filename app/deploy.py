@@ -146,6 +146,36 @@ def _production_prompt_template_paths(root: Path) -> tuple[Path, Path]:
     return paths[0], paths[1]
 
 
+def _target_matching_doc_changes(
+    repository: GitRepository, records, target: str
+) -> tuple[str, ...] | None:
+    """Recognize docs left at the exact target bytes by an interrupted checkout.
+
+    Only unstaged tracked docs can be recovered, and only when every working
+    file byte-for-byte matches the already-fetched target commit. The deploy
+    restores these files to HEAD after stopping the service; the normal
+    fast-forward then installs the target version.
+    """
+    if not records or any(record.code != " M" for record in records):
+        return None
+    paths = tuple(record.path for record in records)
+    for path in paths:
+        parts = Path(path).parts
+        if not parts or parts[0] != "docs" or ".." in parts:
+            return None
+        working_path = repository.root / path
+        try:
+            working = working_path.read_bytes()
+        except OSError:
+            return None
+        target_bytes = repository._run(
+            ["show", f"{target}:{path}"], category="deploy_target_doc_recovery"
+        ).stdout
+        if working != target_bytes:
+            return None
+    return paths
+
+
 def deploy(
     root: Path, database_path: Path, *, publish_contracts: bool = False,
     publish_prompt_templates: bool = False,
@@ -162,7 +192,8 @@ def deploy(
     if current == target and not publish_contracts and not publish_prompt_templates:
         return f"already current at {current[:8]}"
     records = repository.status_records()
-    if records:
+    target_doc_changes = _target_matching_doc_changes(repository, records, target)
+    if records and target_doc_changes is None:
         # Nobody edits the production checkout; a change there is the fault to
         # look at, not something to preserve and deploy over.
         raise SystemExit(f"{root} has local changes; nothing was deployed")
@@ -236,6 +267,13 @@ def deploy(
                 user_prompt_path=user_path,
             )
 
+    def restore_interrupted_target_docs() -> None:
+        if target_doc_changes:
+            repository._run(
+                ["restore", "--source", current, "--worktree", "--", *target_doc_changes],
+                category="deploy_target_doc_recovery",
+            )
+
     updater = RepositoryUpdater(
         root,
         ExistingSchemaUpgradeStateStore(database_path),
@@ -249,21 +287,29 @@ def deploy(
         verification=lambda: verify_imports(root),
         health=wait_for_health,
         publication=publication,
+        pre_checkout_cleanup=restore_interrupted_target_docs if target_doc_changes else None,
     )
     # Unlocked for exactly the checkout + build + verify window; the source
     # tree is locked again in `finally` whether this succeeds, rolls back, or
     # raises, so a deploy that dies mid-way never leaves it writable.
-    unlock_source_tree(root)
-    try:
-        result = updater.execute(operation)
-    except UpgradePreconditionError as exc:
-        moved = repository.resolve_ref(f"refs/heads/{BRANCH}")
-        if moved != current:
-            # Another session deployed while this one waited for the lock.
-            return f"another deploy got there first; production is at {moved[:8]}"
-        raise SystemExit(f"nothing was deployed: {exc}") from None
-    finally:
-        lock_source_tree(root)
+    with repository.mutex():
+        unlock_source_tree(root)
+        try:
+            try:
+                execute_locked = getattr(updater, "execute_locked", None)
+                result = (
+                    execute_locked(operation)
+                    if execute_locked is not None
+                    else updater.execute(operation)
+                )
+            except UpgradePreconditionError as exc:
+                moved = repository.resolve_ref(f"refs/heads/{BRANCH}")
+                if moved != current:
+                    # Another session deployed while this one waited for the lock.
+                    return f"another deploy got there first; production is at {moved[:8]}"
+                raise SystemExit(f"nothing was deployed: {exc}") from None
+        finally:
+            lock_source_tree(root)
     message = f"deployed {current[:8]} -> {result.installed_commit[:8]}"
     return f"{message}; {result.error}" if result.error else message
 
@@ -281,11 +327,12 @@ def restart_only(
     as a deploy: wait until no work is in flight, restart through launchd,
     wait for health.
     """
-    if not skip_quiet_wait:
-        wait_until_quiet(database_path)
-    restart()
-    if not wait_for_health():
-        raise SystemExit("restarted, but the service did not become healthy")
+    with GitRepository(service_root()).mutex():
+        if not skip_quiet_wait:
+            wait_until_quiet(database_path)
+        restart()
+        if not wait_for_health():
+            raise SystemExit("restarted, but the service did not become healthy")
     return "restarted"
 
 

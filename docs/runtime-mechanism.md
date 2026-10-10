@@ -1445,11 +1445,23 @@ If fast-forward fails before a replacement revision is installed, the updater
 starts the original service again and checks its health. A settings-only
 restart also bootstraps the configured launchd job if it was already unloaded.
 
+The repository mutex covers the protected-source unlock window as well as
+checkout, build, verification, restart and relock; settings-only restart uses
+the same mutex. If an interrupted fast-forward leaves only unstaged docs whose
+bytes exactly match the fetched target commit, formal deployment stops the
+service and takes its backup before restoring those docs to the current HEAD;
+the ordinary fast-forward then installs the target. Staged edits, other paths,
+or any content mismatch remain a hard local-change refusal.
+
 The Email worker performs full durable-row validation during initialization.
-Audit web checks the current Email schema shape but skips repeating that
-multi-minute scan of historical email rows in its separate process; this keeps
-read APIs available while the worker remains the validation owner. Email
-detail reads still use fresh connections and do not cache record contents.
+Audit web lazily creates one shared EmailStore on the first email-detail read
+and performs the same full validation once in that process. Validation selects
+only the fields needed to check durable invariants; it does not materialize
+`email_classifications.model_text` or complete classifier input JSON. This
+keeps the integrity checks while avoiding loading large message bodies into
+Python maps. A failed validation is scoped to that email request and does not
+prevent Audit web from starting. Email detail reads still use fresh
+connections and do not cache record contents.
 
 ### Public information and native reply recovery
 
@@ -1620,10 +1632,11 @@ the affected run before changing transaction boundaries.
 Shared Store diagnostics retain up to eight caller frames so a context-manager
 wrapper cannot hide the business method that opened the connection.
 
-EmailStore startup still validates every durable email-message metadata field
-used for identity, provider locators, recipients, references, and attachment
-metadata. Its scan selects only those columns; it does not load cached message
-bodies or other unused columns into memory while performing the validation.
+EmailStore validates every durable email-message metadata field used for
+identity, provider locators, recipients, references, attachment metadata,
+classifier-task identity and redaction, classification lineage and ActionPlan
+snapshots. Its scans project only the fields required for those checks; they do
+not load full cached message bodies or classifier inputs into memory.
 
 The Web process initializes and validates one EmailStore at startup, shared by
 Console detail routes and the email learning service. Initialization failures
