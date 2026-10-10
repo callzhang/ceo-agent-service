@@ -35,6 +35,13 @@ _STRUCTURED_COMMAND_RESULTS = {
     "oa approval reject": ApprovalHistoryResult.REJECTED,
     "oa approval revert-task": ApprovalHistoryResult.RETURNED,
 }
+_VERIFIED_ACTION_RESULTS = {
+    "approve": ApprovalHistoryResult.APPROVED,
+    "reject": ApprovalHistoryResult.REJECTED,
+    "revert_task": ApprovalHistoryResult.RETURNED,
+    "comment": ApprovalHistoryResult.COMMENTED_PENDING,
+}
+_VERIFIED_TASK_REQUIRED_ACTIONS = {"approve", "reject", "revert_task"}
 _TASK_REQUIRED_COMMANDS = {
     "oa approval approve",
     "oa approval reject",
@@ -60,6 +67,8 @@ _TERMINAL_BUSINESS_RESULTS = {
 def resolve_approval_history_result(
     attempt: ReplyAttempt,
     agent_runs: Sequence[AgentRun],
+    *,
+    verified_actions: Sequence[Mapping[str, object]] = (),
 ) -> ApprovalHistoryResult | None:
     """Resolve one approval attempt without interpreting any prose fields."""
 
@@ -76,6 +85,7 @@ def resolve_approval_history_result(
         consumer_runs=consumer_runs,
         consumer_results=consumer_results,
     )
+    confirmed_results.update(_verified_approval_results(attempt, verified_actions, agent_runs))
     if len(confirmed_results) == 1:
         return next(iter(confirmed_results))
     if len(confirmed_results) > 1:
@@ -90,7 +100,7 @@ def resolve_approval_history_result(
     if latest_consumer is not None:
         try:
             latest_result = ConsumerAgentResult.model_validate_json(
-                latest_consumer.final_result_json
+                latest_consumer.adopted_result_json
             )
         except (TypeError, ValueError, ValidationError, json.JSONDecodeError):
             return ApprovalHistoryResult.UNKNOWN
@@ -105,6 +115,8 @@ def resolve_approval_history_result(
 def resolve_approval_history_group_result(
     attempts: Sequence[ReplyAttempt],
     agent_runs_by_attempt: Mapping[int, Sequence[AgentRun]],
+    *,
+    verified_actions: Sequence[Mapping[str, object]] = (),
 ) -> ApprovalHistoryResult:
     """Resolve one process while keeping business evidence separate from workflow."""
 
@@ -120,13 +132,23 @@ def resolve_approval_history_group_result(
     latest_completed_consumer = _latest_completed_consumer(
         [run for run in latest_runs if run.role is AgentRole.CONSUMER]
     )
+    latest_consumer_invalid = False
     if latest_completed_consumer is not None:
         try:
             ConsumerAgentResult.model_validate_json(
-                latest_completed_consumer.final_result_json
+                latest_completed_consumer.adopted_result_json
             )
         except (TypeError, ValueError, ValidationError, json.JSONDecodeError):
-            return ApprovalHistoryResult.UNKNOWN
+            latest_consumer_invalid = True
+    if latest_consumer_invalid and not any(
+        _verified_approval_results(
+            attempt,
+            verified_actions,
+            agent_runs_by_attempt.get(attempt.id, ()),
+        )
+        for attempt in ordered
+    ):
+        return ApprovalHistoryResult.UNKNOWN
 
     latest_comment: ApprovalHistoryResult | None = None
     for attempt in ordered:
@@ -138,6 +160,7 @@ def resolve_approval_history_group_result(
             consumer_runs={run.id: run for run in consumers},
             consumer_results=_consumer_results(consumers),
         )
+        results.update(_verified_approval_results(attempt, verified_actions, runs))
         if len(results) > 1:
             return ApprovalHistoryResult.UNKNOWN
         if not results:
@@ -155,6 +178,7 @@ def resolve_approval_history_group_result(
         resolve_approval_history_result(
             newest,
             agent_runs_by_attempt.get(newest.id, ()),
+            verified_actions=verified_actions,
         )
         or ApprovalHistoryResult.UNKNOWN
     )
@@ -174,6 +198,45 @@ def _confirmed_business_results(
         consumer_results,
     )
     results.update(_direct_results(attempt))
+    return results
+
+
+def _verified_approval_results(
+    attempt: ReplyAttempt,
+    actions: Sequence[Mapping[str, object]],
+    agent_runs: Sequence[AgentRun],
+) -> set[ApprovalHistoryResult]:
+    """Project verified receipts linked to this attempt's task generation and OA process."""
+    results: set[ApprovalHistoryResult] = set()
+    process_id = attempt.oa_process_instance_id.strip()
+    run_generations = {
+        (run.reply_task_id, run.execution_generation) for run in agent_runs
+    }
+    if not process_id or not run_generations:
+        return results
+    for action in actions:
+        if (action.get("task_id"), action.get("execution_generation")) not in run_generations:
+            continue
+        operation = _normalize(str(action.get("operation") or ""))
+        outcome = _VERIFIED_ACTION_RESULTS.get(operation)
+        if outcome is None:
+            continue
+        try:
+            target = json.loads(str(action.get("target_identifiers_json") or "{}"))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(target, dict):
+            continue
+        target_process = str(target.get("process_instance_id") or "").strip()
+        if target_process != process_id:
+            continue
+        if operation in _VERIFIED_TASK_REQUIRED_ACTIONS:
+            task_id = str(target.get("task_id") or "").strip()
+            if not task_id or (attempt.oa_task_id.strip() and task_id != attempt.oa_task_id.strip()):
+                continue
+        if operation == "revert_task" and not str(target.get("target_activity_id") or "").strip():
+            continue
+        results.add(outcome)
     return results
 
 
@@ -203,7 +266,7 @@ def _consumer_results(
     results: dict[int, ConsumerAgentResult] = {}
     for run in consumers:
         try:
-            results[run.id] = ConsumerAgentResult.model_validate_json(run.final_result_json)
+            results[run.id] = ConsumerAgentResult.model_validate_json(run.adopted_result_json)
         except (TypeError, ValueError, ValidationError, json.JSONDecodeError):
             continue
     return results
@@ -220,7 +283,7 @@ def _confirmed_structured_results(
         if run.role is not AgentRole.AUDIT:
             continue
         try:
-            audit = _parse_persisted_audit_result(run.final_result_json)
+            audit = _parse_persisted_audit_result(run.adopted_result_json)
         except (TypeError, ValueError, ValidationError, json.JSONDecodeError):
             continue
         if (

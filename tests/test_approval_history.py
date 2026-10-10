@@ -17,7 +17,7 @@ from app.historical_agent_results import (
     HistoricalAuditExecutionResult,
     HistoricalAuditExternalResult,
 )
-from app.store import AgentRole, AgentRun, ReplyAttempt
+from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyAttempt
 
 
 def _attempt(**overrides: object) -> ReplyAttempt:
@@ -68,11 +68,152 @@ def _run(
         parent_agent_run_id=parent_agent_run_id,
         operation_id=operation_id or f"operation-{run_id}",
         status=status,
-        final_result_json=result if isinstance(result, str) else result.model_dump_json(),
+        adopted_result_json=result if isinstance(result, str) else result.model_dump_json(),
         side_effect_state=side_effect_state,
         created_at=f"2026-08-18T00:00:0{run_id}Z",
         updated_at=f"2026-08-18T00:00:0{run_id}Z",
     )
+
+
+def test_verified_service_action_survives_missing_native_audit_result():
+    attempt = _attempt(oa_process_instance_id="process", oa_task_id="task")
+    consumer = _run(1, AgentRole.CONSUMER, _consumer(None, outcome=ConsumerOutcome.NO_ACTION))
+    consumer = consumer.model_copy(update={"adopted_result_json": "", "final_result_json": '{"outcome":"proposal"}'})
+    verified = [{
+        "task_id": 1,
+        "execution_generation": "initial",
+        "operation": "approve",
+        "target_identifiers_json": '{"process_instance_id":"process","task_id":"task"}',
+    }]
+    assert resolve_approval_history_result(
+        attempt, [consumer], verified_actions=verified
+    ) is ApprovalHistoryResult.APPROVED
+    assert resolve_approval_history_result(
+        attempt, [consumer], verified_actions=[{
+            **verified[0],
+            "target_identifiers_json": '{"process_instance_id":"other","task_id":"task"}',
+        }]
+    ) is ApprovalHistoryResult.PROCESSING
+    for unrelated in (
+        {"task_id": 2},
+        {"execution_generation": "later-generation"},
+    ):
+        assert resolve_approval_history_result(
+            attempt, [consumer], verified_actions=[{**verified[0], **unrelated}]
+        ) is ApprovalHistoryResult.PROCESSING
+
+
+@pytest.mark.parametrize(
+    ("operation", "target", "expected"),
+    [
+        ("approve", {"process_instance_id": "process", "task_id": "task"}, ApprovalHistoryResult.APPROVED),
+        ("reject", {"process_instance_id": "process", "task_id": "task"}, ApprovalHistoryResult.REJECTED),
+        ("revert_task", {"process_instance_id": "process", "task_id": "task", "target_activity_id": "activity"}, ApprovalHistoryResult.RETURNED),
+        ("comment", {"process_instance_id": "process"}, ApprovalHistoryResult.COMMENTED_PENDING),
+    ],
+)
+def test_verified_typed_oa_receipt_projects_existing_history_result(
+    operation, target, expected,
+):
+    attempt = _attempt(oa_process_instance_id="process", oa_task_id="task")
+    consumer = _run(1, AgentRole.CONSUMER, _consumer(None, outcome=ConsumerOutcome.NO_ACTION))
+    receipt = {
+        "task_id": consumer.reply_task_id,
+        "execution_generation": consumer.execution_generation,
+        "operation": operation,
+        "target_identifiers_json": json.dumps(target),
+        "provider_result_json": '{"readback":"verified"}',
+    }
+    assert resolve_approval_history_result(
+        attempt, [consumer], verified_actions=[receipt]
+    ) is expected
+
+
+def test_approval_history_reads_actual_verified_system_execution_ledger(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "approval.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="approval", conversation_title="Approval", single_chat=False,
+        trigger_message_id="message", trigger_create_time="2026-10-10 00:00:00",
+        trigger_sender="Applicant", trigger_text="Review approval",
+    )
+    task = store.claim_reply_tasks(1)[0]
+    consumer = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="consumer",
+    ).run
+    target = {"process_instance_id": "process", "task_id": "task"}
+    store.complete_agent_run(consumer.id, {
+        "outcome": "proposal", "summary": "Approve request",
+        "proposal": {"actions": [{
+            "action_identity": "approve-request", "capability": "dingtalk-oa",
+            "operation": "approve", "target": target,
+        }]},
+    }, owner="consumer")
+    candidate = store.adopted_candidate_for_consumer_run(consumer.id)
+    assert candidate is not None
+    audit = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id,
+        operation_id="audit", owner="audit",
+    ).run
+    store.complete_agent_run(audit.id, {
+        "outcome": "approve", "candidate_digest": candidate["candidate_digest"],
+    }, owner="audit")
+    review = store.get_candidate_review_for_audit_run(audit.id)
+    assert review is not None
+    execution = store.claim_candidate_execution(candidate["id"], review["id"], "worker", 60)
+    assert execution is not None
+    store.begin_candidate_action(execution["id"], "worker", 0, "external-key")
+    store.record_candidate_external_action(
+        execution["id"], "worker", 0, "external-key", "approve", target,
+        {"readback": {"taskStatus": "COMPLETED", "taskResult": "AGREE"}},
+    )
+    [receipt] = store.list_verified_candidate_actions(task.id)
+    assert receipt["operation"] == "approve"
+    assert receipt["task_id"] == task.id
+    assert receipt["execution_generation"] == task.execution_generation
+    assert resolve_approval_history_result(
+        _attempt(oa_process_instance_id="process", oa_task_id="task"),
+        [store.get_agent_run(consumer.id), store.get_agent_run(audit.id)],
+        verified_actions=[receipt],
+    ) is ApprovalHistoryResult.APPROVED
+
+    # An older process row can lose its native transcript and have an
+    # unadopted newest Consumer turn. The verified provider action still owns
+    # the business result shown by the grouped History card.
+    from app.audit_web import render_attempt_list
+    history_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="oa_approval", sensitivity_kind="general",
+        oa_process_instance_id="process", oa_task_id="task", send_status="completed",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set agent_run_id=? where id=?",
+            (audit.id, history_id),
+        )
+    original_batch = store.list_agent_run_summaries_for_terminal_runs
+
+    def missing_adopted_newest_run(run_ids):
+        batches = original_batch(run_ids)
+        return {
+            key: [
+                run.model_copy(update={"adopted_result_json": ""})
+                if run.id == consumer.id else run
+                for run in runs
+            ]
+            for key, runs in batches.items()
+        }
+
+    monkeypatch.setattr(store, "list_agent_run_summaries_for_terminal_runs", missing_adopted_newest_run)
+    html = render_attempt_list(store, search_object_type="approval", include_chart=False)
+    assert "✓ 已同意" in html
+    assert "结果未知" not in html
 
 
 def _consumer(

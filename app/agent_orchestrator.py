@@ -302,7 +302,7 @@ class AgentOrchestrator:
                 # The runner persists its classified failure before raising; derive
                 # the next bounded technical attempt from that durable run.
                 if not self.store.list_agent_runs_for_task_generation(
-                    task.id, task.execution_generation
+                    task.id, task.execution_generation, load_events=False
                 ):
                     raise
         return self._deferred_result(
@@ -310,7 +310,7 @@ class AgentOrchestrator:
         )
 
     def _validate_audit_parent(self, task: ReplyTask, state: _NextAudit) -> None:
-        parent = self.store.get_agent_run(state.parent_run_id)
+        parent = self.store.get_agent_run(state.parent_run_id, load_events=False)
         if (
             parent is None
             or parent.reply_task_id != task.id
@@ -329,13 +329,13 @@ class AgentOrchestrator:
 
     def _audit_result(self, run: AgentRun) -> AuditAgentResult:
         review = self.store.get_candidate_review_for_audit_run(run.id)
-        return AuditAgentResult.model_validate_json(
-            review["result_json"] if review else run.final_result_json
-        )
+        if review is None:
+            raise ValueError("completed Audit review unavailable")
+        return AuditAgentResult.model_validate_json(review["result_json"])
 
     def _derive_state(self, task: ReplyTask):
         runs = self.store.list_agent_runs_for_task_generation(
-            task.id, task.execution_generation
+            task.id, task.execution_generation, load_events=False
         )
         consumers = sorted(
             (r for r in runs if r.role is AgentRole.CONSUMER),
@@ -366,7 +366,7 @@ class AgentOrchestrator:
             if technical.status != "failed_retryable":
                 return technical
             parent = (
-                self.store.get_agent_run(consumer.parent_agent_run_id)
+                self.store.get_agent_run(consumer.parent_agent_run_id, load_events=False)
                 if consumer.parent_agent_run_id
                 else None
             )
@@ -396,7 +396,7 @@ class AgentOrchestrator:
                 consumer, _failure_status(result.error), result.error, cycles, result
             )
         parent = (
-            self.store.get_agent_run(consumer.parent_agent_run_id)
+            self.store.get_agent_run(consumer.parent_agent_run_id, load_events=False)
             if consumer.parent_agent_run_id
             else None
         )
@@ -417,7 +417,7 @@ class AgentOrchestrator:
                 )
             if previous.outcome is AuditOutcome.REJECT:
                 original = self._consumer_result(
-                    self.store.get_agent_run(parent.parent_agent_run_id)
+                    self.store.get_agent_run(parent.parent_agent_run_id, load_events=False)
                 )
                 if not rejected_content_changed(original, result):
                     return self._run_terminal(
@@ -634,7 +634,7 @@ class AgentOrchestrator:
         if parent is None:
             return {"stage_index": 0, "predecessor_review_id": None}
         previous_candidate = self._consumer_result(
-            self.store.get_agent_run(parent.parent_agent_run_id)
+            self.store.get_agent_run(parent.parent_agent_run_id, load_events=False)
         )
         review = self.store.get_candidate_review_for_audit_run(parent.id)
         execution = self.store.get_candidate_execution(review["candidate_id"]) if review else None
@@ -662,7 +662,7 @@ class AgentOrchestrator:
                 {"code": f"{run.role.value}_lease_expired", "retryable": True},
                 expected_execution_generation=task.execution_generation,
             )
-            run = self.store.get_agent_run(run.id)
+            run = self.store.get_agent_run(run.id, load_events=False)
         error = _run_error(run)
         if error.code == "provider_risk_rejected" or error.source_code == "provider_risk_rejected":
             return self._run_terminal(run, "failed_terminal", error.model_copy(update={"retryable":False}), cycles)
@@ -677,7 +677,7 @@ class AgentOrchestrator:
                 )
             return self._run_terminal(run, "failed_retryable", error, cycles)
         if error.retryable and not error.authorization_required:
-            runs = self.store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
+            runs = self.store.list_agent_runs_for_task_generation(task.id, task.execution_generation, load_events=False)
             failed_turns = _consecutive_failed_turns([
                 prior for prior in runs
                 if prior.role is run.role and prior.proposal_revision == run.proposal_revision
@@ -731,7 +731,7 @@ class AgentOrchestrator:
     def _feedback_cycles(self, task):
         return self._feedback_cycles_by_runs(
             self.store.list_agent_runs_for_task_generation(
-                task.id, task.execution_generation
+                task.id, task.execution_generation, load_events=False
             )
         )
 
@@ -763,6 +763,7 @@ class AgentOrchestrator:
         runs = self.store.list_agent_runs_for_task_generation(
             task.id,
             task.execution_generation,
+            load_events=False,
         )
         latest = next(
             (

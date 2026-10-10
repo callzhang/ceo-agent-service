@@ -291,6 +291,7 @@ def test_okr_run_keeps_business_items_and_reads_native_envelope(tmp_path, monkey
         assert db.execute("select item_json from okr_review_items").fetchone()[0] == '{"adopted":"business"}'
     loaded = store.get_okr_review_run(run)
     assert loaded["native_available"] is True
+    assert loaded["tool_events_available"] is True
     assert json.loads(loaded["envelope_json"])["kind"] == "okr_review"
     assert loaded["audit_summary"] == "native audit"
     with store._connect() as db:
@@ -301,6 +302,7 @@ def test_okr_run_keeps_business_items_and_reads_native_envelope(tmp_path, monkey
     unavailable = store.get_okr_review_run(run)
     assert unavailable["native_available"] is False
     assert unavailable["native_reason"] == "native_reference_unavailable"
+    assert unavailable["tool_events_available"] is False
 
 
 def test_okr_runs_for_same_request_read_only_their_own_completed_attempt(tmp_path, monkeypatch):
@@ -384,3 +386,5 @@ def test_okr_run_uses_completed_friday_provider_reference(tmp_path, monkeypatch)
     assert loaded["native_available"] is True
     assert loaded["audit_summary"] == "Friday review"
     assert loaded["audit_tool_events_json"] == "[]"
+    assert loaded["tool_events_available"] is False
+    assert loaded["tool_events_reason"] == "native_tool_stream_unavailable"

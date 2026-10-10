@@ -513,7 +513,7 @@ class ReviewedCandidateStoreMixin:
     def list_verified_candidate_actions(self, task_id: int) -> list[dict[str, Any]]:
         """Return immutable receipts for the business object's verified stages."""
         with self._connect() as db:
-            rows = db.execute("""select a.*, c.stage_index, c.id as candidate_id,
+            rows = db.execute("""select a.*, c.task_id, c.stage_index, c.id as candidate_id,
                 c.execution_generation, r.operation, r.action_identity,
                 r.target_identifiers_json, r.provider_result_json
                 from candidate_action_attempts a

@@ -536,6 +536,7 @@ def repeated_result_failure_requires_fresh_session(
             for run in store.list_agent_runs_for_task_generation(
                 task.id,
                 task.execution_generation,
+                load_events=False,
             )
             if run.role is role
             and run.proposal_revision == proposal_revision
@@ -604,6 +605,7 @@ def result_correction_prompt(
         for run in store.list_agent_runs_for_task_generation(
             task.id,
             task.execution_generation,
+            load_events=False,
         )
         if run.role is role
         and run.proposal_revision == proposal_revision

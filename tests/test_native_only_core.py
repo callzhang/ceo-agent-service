@@ -111,6 +111,26 @@ def test_native_multiturn_range_is_unavailable_without_guessing_a_turn(tmp_path,
         assert 'later' in native_trajectory.read_native_result_stream('codex_cli', 'session', 4, 8)
 
 
+def test_codex_native_tool_completion_keeps_started_arguments(tmp_path, monkeypatch):
+    path = tmp_path / "session.jsonl"
+    path.write_text("\n".join(json.dumps(record) for record in (
+        {"type": "event_msg", "payload": {"type": "item_started", "item": {
+            "type": "McpToolCall", "id": "call-1", "server": "agent_cli",
+            "tool": "read_task_artifact", "arguments": {"name": "plan"},
+        }}},
+        {"type": "event_msg", "payload": {"type": "item_completed", "item": {
+            "type": "McpToolCall", "id": "call-1", "server": "agent_cli",
+            "tool": "read_task_artifact", "arguments": {},
+            "result": {"content": "read"},
+        }}},
+    )) + "\n")
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *a, **k: path)
+    events = native_trajectory.read_codex_events("session", start_line=0, end_line=2)
+    assert len(events) == 1
+    assert events[0]["item"]["arguments"] == {"name": "plan"}
+    assert events[0]["item"]["result"] == {"content": "read"}
+
+
 def test_completed_runtime_result_recovers_typed_value_from_native(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "runs.sqlite3")
     run = _claim_consumer(store, _task(store)).run
@@ -207,6 +227,26 @@ def test_consumer_completion_adopts_prepared_candidate_atomically(tmp_path, monk
     state = orchestrator._derive_state(task)
     assert state.candidate_id == candidate['id']
     assert state.candidate.proposal.actions[0].payload['text'] == prepared.proposal.actions[0].payload['text']
+
+
+def test_status_only_run_projections_use_adopted_plan_without_native_reads(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "runs.sqlite3")
+    task = _task(store)
+    run = _claim_consumer(store, task).run
+    plan = {"outcome": "no_action", "summary": "No reply needed."}
+    store.complete_agent_run(run.id, plan, owner="consumer")
+
+    def unexpected_native_read(*_args, **_kwargs):
+        raise AssertionError("status projection read native body")
+
+    monkeypatch.setattr(native_trajectory, "read_native_result_json", unexpected_native_read)
+    generation = store.list_agent_runs_for_task_generation(
+        task.id, task.execution_generation, load_events=False
+    )
+    terminal = store.list_agent_run_summaries_for_terminal_runs([run.id])[run.id]
+    for projected in (generation[0], terminal[0]):
+        assert projected.final_result_json == ""
+        assert json.loads(projected.adopted_result_json) == plan
 
 
 def test_consumer_candidate_insert_failure_rolls_back_completion(tmp_path):

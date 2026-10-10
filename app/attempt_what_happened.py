@@ -200,7 +200,7 @@ def deciding_scores(runs: Sequence[Any], *, acting_run_id: int | None = None) ->
             if getattr(run, "id", 0) and int(getattr(run, "id")) <= int(acting_run_id)
         ]
     for run in reversed(ordered):
-        result = _loads(getattr(run, "final_result_json", ""))
+        result = _loads(getattr(run, "adopted_result_json", ""))
         if not result or not any(field in result for field in _SCORE_FIELDS):
             continue
         scores = {field: result.get(field) for field in _SCORE_FIELDS}
@@ -260,7 +260,7 @@ def proposed_text(runs: Sequence[Any]) -> str:
     """
 
     for run in reversed(list(runs)):
-        result = _loads(getattr(run, "final_result_json", ""))
+        result = _loads(getattr(run, "adopted_result_json", ""))
         proposal = result.get("proposal")
         if not isinstance(proposal, dict):
             continue

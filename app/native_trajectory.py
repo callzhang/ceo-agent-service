@@ -152,21 +152,37 @@ def forget_live_events(db_path: str, run_ids: list[int]) -> None:
 def read_codex_events(session_id: str, *, start_line: int = 0, end_line: int = 0) -> list[dict]:
     path = find_codex_session_path(session_id, codex_home=_codex_home())
     events: dict[str, dict] = {}
+    started: dict[str, dict] = {}
     for payload in _codex_turn_records(path, start_line, end_line):
-        event = _mcp_tool_result_from_event_msg(payload)
         body = payload.get("payload", {})
-        if event is None and payload.get("type") == "event_msg" and isinstance(body, dict) and body.get("type") == "item_completed":
+        if payload.get("type") == "event_msg" and isinstance(body, dict) and body.get("type") == "item_started":
+            item = body.get("item")
+            if isinstance(item, dict) and isinstance(item.get("id"), str):
+                started[item["id"]] = item
+        event = None
+        if payload.get("type") == "event_msg" and isinstance(body, dict) and body.get("type") == "item_completed":
             item = body.get("item", {})
             if not isinstance(item, dict):
                 continue
+            prior = started.get(item.get("id"))
+            if isinstance(prior, dict) and prior.get("type") == item.get("type"):
+                item = {**prior, **item}
+                for key in ("arguments", "input", "command"):
+                    if not item.get(key) and prior.get(key):
+                        item[key] = prior[key]
+            event = _mcp_tool_result_from_event_msg({
+                "type": "event_msg", "payload": {"type": "item_completed", "item": item}
+            })
             item_type = item.get("type")
-            if item_type == "CommandExecution":
+            if event is None and item_type == "CommandExecution":
                 event = {"type": "item.completed", "item": {**item, "type": "command_execution"}}
-            elif item_type == "AgentMessage":
+            elif event is None and item_type == "AgentMessage":
                 event = {"type": "item.completed", "item": {
                     **item, "type": "agent_message",
                     "text": item.get("text") or _content_text(item.get("content")),
                 }}
+        else:
+            event = _mcp_tool_result_from_event_msg(payload)
         if event is not None:
             item = event["item"]
             events[str(item.get("id") or len(events))] = event

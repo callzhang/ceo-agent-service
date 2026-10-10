@@ -2309,18 +2309,26 @@ def _system_health_snapshot(
         for issue in report.violations
         if not (issue.source == "errors" and issue.code == "recent_error")
     ]
+    coverage = getattr(report, "native_delivery_coverage", None)
+    coverage_detail = (
+        f" Native delivery results readable: {coverage['checked']}; "
+        f"unavailable: {coverage['unavailable']}."
+        if coverage is not None else " Native delivery coverage unavailable."
+    )
     if other_violations:
         return {
             "state": "degraded",
-            "detail": other_violations[0].detail,
+            "detail": other_violations[0].detail + coverage_detail,
             "checked_at": report.checked_at,
             "violations": sum(issue.count for issue in other_violations),
+            "native_delivery_coverage": coverage,
         }
     return {
         "state": "healthy",
-        "detail": "No current quality-gate violations.",
+        "detail": "No current quality-gate violations." + coverage_detail,
         "checked_at": report.checked_at,
         "violations": 0,
+        "native_delivery_coverage": coverage,
     }
 
 
@@ -5905,16 +5913,22 @@ def _history_session_fts_query(text: str) -> str:
     return " OR ".join(terms)
 
 
-def _history_query_embedding(query: str) -> list[float] | None:
+def _history_embedding_client(query: str):
     if not query.strip() or not embedding_enabled():
         return None
+    return EmbeddingClient(
+        base_url=embedding_base_url(),
+        model=embedding_model(),
+        api_key=embedding_api_key(),
+        timeout_seconds=embedding_timeout_seconds(),
+    )
+
+
+def _history_query_embedding(query: str, client=None) -> list[float] | None:
+    if not query.strip() or client is None:
+        return None
     try:
-        vectors = EmbeddingClient(
-            base_url=embedding_base_url(),
-            model=embedding_model(),
-            api_key=embedding_api_key(),
-            timeout_seconds=embedding_timeout_seconds(),
-        )([query])
+        vectors = client([query])
     except Exception:
         return None
     return vectors[0] if vectors else None
@@ -5928,6 +5942,11 @@ def _history_session_search_html(results) -> str:
         source_link = _history_session_source_link(result)
         score = f"{result.score:.2f}" if result.score else ""
         score_html = f"<span class=\"pill\">score {escape(score)}</span>" if score else ""
+        summary_html = (
+            _attempt_text_line("摘要", result.summary_text, 320)
+            if result.native_available
+            else '<span class="muted">仅标题可检索；原生过程不可用。</span>'
+        )
         items.append(
             "<article class=\"attempt-item history-session-result\">"
             "<div class=\"attempt-head\">"
@@ -5942,7 +5961,7 @@ def _history_session_search_html(results) -> str:
             "</div>"
             "</div>"
             "<div class=\"attempt-lines\">"
-            f"{_attempt_text_line('摘要', result.summary_text, 320)}"
+            f"{summary_html}"
             "</div>"
             "</article>"
         )
@@ -6062,10 +6081,27 @@ def render_attempt_list(
     type_filter: str | Iterable[str] = (),
     query: str = "",
     query_embedding: list[float] | None = None,
+    embedding_client=None,
     search_object_type: str = "",
     include_chart: bool = True,
     include_feedback_count: bool = True,
 ) -> str:
+    session_results = None
+    if (
+        query.strip()
+        and page == 1
+        and "meeting" in _history_search_object_types(
+            _history_search_object_type(search_object_type)
+        )
+    ):
+        # Native session search can read local files or remote Friday artifacts.
+        # Do not keep a SQLite snapshot open across those reads.
+        session_results = store.search_codex_sessions(
+            fts_query=_history_session_fts_query(query.strip()),
+            query_embedding=query_embedding,
+            embedding_client=embedding_client,
+            limit=5,
+        )
     with store.read_snapshot():
         return _render_attempt_list(
             store,
@@ -6074,7 +6110,9 @@ def render_attempt_list(
             type_filter=type_filter,
             query=query,
             query_embedding=query_embedding,
+            embedding_client=embedding_client,
             search_object_type=search_object_type,
+            session_results=session_results,
             include_chart=include_chart,
             include_feedback_count=include_feedback_count,
         )
@@ -6087,7 +6125,9 @@ def _render_attempt_list(
     type_filter: str | Iterable[str] = (),
     query: str = "",
     query_embedding: list[float] | None = None,
+    embedding_client=None,
     search_object_type: str = "",
+    session_results=None,
     include_chart: bool = True,
     include_feedback_count: bool = True,
 ) -> str:
@@ -6155,12 +6195,7 @@ def _render_attempt_list(
     # native status visible and never promote them into Attention.
     items = [_reply_task_item(task) for task in queue_tasks]
     session_search_html = ""
-    if query and page == 1 and search_codex_sessions:
-        session_results = store.search_codex_sessions(
-            fts_query=_history_session_fts_query(query),
-            query_embedding=query_embedding,
-            limit=5,
-        )
+    if query and page == 1 and search_codex_sessions and session_results is not None:
         session_search_html = _history_session_search_html(session_results)
     history_items = (
         store.list_history_items(
@@ -6198,16 +6233,29 @@ def _render_attempt_list(
     approval_evidence_attempts.update(
         {attempt.id: attempt for attempt in approval_attempts}
     )
-    approval_agent_run_summaries = store.list_agent_run_summaries_for_terminal_runs(
+    history_agent_run_summaries = store.list_agent_run_summaries_for_terminal_runs(
         [
             attempt.agent_run_id
             for attempt in approval_evidence_attempts.values()
             if attempt.agent_run_id
+        ] + [
+            attempt.agent_run_id
+            for attempt in attempts
+            if attempt.agent_run_id
+            and attempt.send_status.strip().lower() in {"failed", "needs_human"}
         ]
     )
     approval_runs_by_attempt_id = {
-        attempt.id: approval_agent_run_summaries.get(attempt.agent_run_id, [])
+        attempt.id: history_agent_run_summaries.get(attempt.agent_run_id, [])
         for attempt in approval_evidence_attempts.values()
+    }
+    verified_approval_actions_by_task = {
+        task_id: store.list_verified_candidate_actions(task_id)
+        for task_id in {
+            run.reply_task_id
+            for runs in approval_runs_by_attempt_id.values()
+            for run in runs
+        }
     }
     wechat_ready_delivery_by_attempt = _wechat_ready_delivery_by_attempt(
         store, attempts
@@ -6218,7 +6266,6 @@ def _render_attempt_list(
         sent_replies_by_attempt.values(),
     )
     reply_task_cache: dict[tuple[str, str, str], ReplyTask | None] = {}
-    agent_runs_cache: dict[tuple[int, str], list[AgentRun]] = {}
     for history_item in history_items:
         if history_item.kind == "task":
             items.append(_task_history_card(history_item, store))
@@ -6266,6 +6313,12 @@ def _render_attempt_list(
             approval_result = resolve_approval_history_group_result(
                 group_attempts,
                 approval_runs_by_attempt_id,
+                verified_actions=[
+                    action
+                    for group_attempt in group_attempts
+                    for run in approval_runs_by_attempt_id.get(group_attempt.id, ())
+                    for action in verified_approval_actions_by_task.get(run.reply_task_id, ())
+                ],
             )
         attention = None
         terminal_run = None
@@ -6273,11 +6326,7 @@ def _render_attempt_list(
         if attention_status in {"failed", "needs_human"}:
             reply_task = _reply_task_for_attempt(store, attempt, reply_task_cache)
             if not approval_history:
-                agent_runs = _agent_runs_for_attempt(
-                    store,
-                    attempt,
-                    agent_runs_cache,
-                )
+                agent_runs = history_agent_run_summaries.get(attempt.agent_run_id, [])
             terminal_run = next(
                 (run for run in agent_runs if run.id == attempt.agent_run_id),
                 None,
@@ -6536,7 +6585,7 @@ def _wechat_send_actions(delivery_id: int | None) -> str:
 def _meeting_history_card(item, store: AutoReplyStore) -> str:
     status = item.status.strip().lower() or "processing"
     detail_url = f"/meeting-attempts/{item.source_id}"
-    run = store.get_meeting_alignment_run(item.source_id)
+    run = store.get_meeting_alignment_run_metadata(item.source_id)
     attention = None
     if run is not None:
         job = store.get_meeting_alignment_job(run.job_id)
@@ -8417,7 +8466,7 @@ def render_meeting_attempt_detail(
         side_html="",
         extra_cards=(
             f"{_text_card('Audit summary', run.audit_summary)}"
-            f"{_audit_tool_uses_card_for_uses(_audit_event_uses_for_attempt(run))}"
+            f"{_audit_tool_uses_card_for_uses(_audit_event_uses_for_attempt(run)) if run.tool_events_available else _collapsible_json_card('Tool uses', '原生工具过程不可用')}"
         ),
     )
     return 200, render_page(
@@ -10429,6 +10478,7 @@ def create_audit_app(
         if not request.query_params and not _tutorial_is_complete(audit_store):
             return RedirectResponse("/tutorial", status_code=303)
         query = str(request.query_params.get("q", ""))
+        embedding_client = _history_embedding_client(query)
 
         def render() -> str:
             return render_attempt_list(
@@ -10443,7 +10493,8 @@ def create_audit_app(
                 page=_positive_int_query(request, "page", default=1),
                 type_filter=request.query_params.getlist("type"),
                 query=query,
-                query_embedding=_history_query_embedding(query),
+                query_embedding=_history_query_embedding(query, embedding_client),
+                embedding_client=embedding_client,
                 search_object_type=str(request.query_params.get("object_type", "")),
                 include_chart=True,
                 include_feedback_count=False,
@@ -11192,8 +11243,8 @@ def _consumer_result_error(run: AgentRun | None) -> str:
                 if isinstance(value, str) and value.strip():
                     return safe_observability_error(value.strip(), limit=180)
         return "Consumer 运行失败"
-    if not run.final_result_json.strip():
-        return "Consumer 未保存最终结果"
+    if not run.adopted_result_json.strip():
+        return "Consumer 已采用业务结果不可用"
     return "Consumer 结果不符合当前契约"
 
 
@@ -11208,7 +11259,7 @@ def _consumer_result_fields(
     fields = [("Consumer 执行结果", f"run #{consumer.id}" if consumer else "—")]
     try:
         result = (
-            ConsumerAgentResult.model_validate_json(consumer.final_result_json)
+            ConsumerAgentResult.model_validate_json(consumer.adopted_result_json)
             if consumer is not None and consumer.status != "failed"
             else None
         )
@@ -11353,7 +11404,7 @@ def _attempt_detail_body(
             f"{_oa_metadata_card(attempt)}"
             f"{_calendar_metadata_card(attempt)}"
             f"{_text_card('Audit summary', attempt.audit_summary)}"
-            f"{'' if agent_runs else _audit_tool_uses_card(attempt)}"
+            f"{'' if agent_runs else _collapsible_json_card('Tool uses', '原生工具过程不可用')}"
             f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
             f"{_runtime_attempt_evidence_card(runtime_attempts or [])}"
         ),
@@ -12559,10 +12610,10 @@ def _consumer_proposal_display(
     agent_runs: list[AgentRun],
 ) -> tuple[str, tuple[str, ...]]:
     for run in reversed(agent_runs):
-        if run.role is not AgentRole.CONSUMER or not run.final_result_json.strip():
+        if run.role is not AgentRole.CONSUMER or not run.adopted_result_json.strip():
             continue
         try:
-            result = ConsumerAgentResult.model_validate_json(run.final_result_json)
+            result = ConsumerAgentResult.model_validate_json(run.adopted_result_json)
         except ValueError:
             continue
         if result.proposal is None:
@@ -13402,12 +13453,12 @@ def _agent_runs_for_attempt(
 ) -> list[AgentRun]:
     if not attempt.agent_run_id:
         return []
-    terminal_run = store.get_agent_run(attempt.agent_run_id)
+    terminal_run = store.get_agent_run(attempt.agent_run_id, load_events=False)
     if terminal_run is None:
         return []
     key = (terminal_run.reply_task_id, terminal_run.execution_generation)
     if key not in cache:
-        cache[key] = store.list_agent_runs_for_task_generation(*key)
+        cache[key] = store.list_agent_runs_for_task_generation(*key, load_events=False)
     return cache[key]
 def _history_approval_result_pill(result: ApprovalHistoryResult) -> str:
     label, state = {

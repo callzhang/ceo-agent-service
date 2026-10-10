@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import quote
 
 import pytest
@@ -75,6 +76,35 @@ def test_runtime_payload_preserves_business_status_separately(
     assert store.list_agent_runtime_attempts(run.id) == before
 
 
+def test_claude_native_range_is_readable_without_a_codex_viewer_link(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from app import native_trajectory
+
+    native = tmp_path / "claude.jsonl"
+    native.write_text('{"type":"assistant","message":{"content":[]}}\n')
+    monkeypatch.setattr(native_trajectory, "claude_session_path", lambda *_: native)
+    run = SimpleNamespace(
+        id=1, role=AgentRole.CONSUMER, execution_generation="initial",
+        proposal_revision=0, turn_attempt=0, status="completed",
+    )
+    attempt = SimpleNamespace(
+        runtime_kind="claude_cli", session_id="claude-session",
+        transcript_start=0, transcript_end=1, attempt_number=1,
+        route_name="claude", credential_mode="local_oauth", model="test",
+        status="completed", failure_code="", failover_permitted=False,
+        first_effect_started_at="", created_at="", finished_at="",
+    )
+    store = SimpleNamespace(
+        list_agent_runtime_attempts_for_runs=lambda _ids: {1: [attempt]}
+    )
+
+    [entry] = _runtime_payload([run], store)
+    assert entry["session_available"] is True
+    assert entry["session_url"] == ""
+    assert entry["native_reason"] == ""
+
+
 def test_runtime_payload_uses_batch_runtime_attempt_lookup(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "runtime-payload-batch.sqlite3")
     task = _consumer_result_task(store)
@@ -129,6 +159,7 @@ def test_consumer_result_prefers_current_generation_when_attempt_has_no_run_id()
             "turn_attempt": 4,
             "proposal_revision": 0,
             "final_result_json": "",
+                "adopted_result_json": "",
             "structured_error_json": '{"code":"service_restart_before_effect"}',
         },
     )()
@@ -144,7 +175,7 @@ def test_consumer_result_prefers_current_generation_when_attempt_has_no_run_id()
             "status": "completed",
             "turn_attempt": 0,
             "proposal_revision": 0,
-            "final_result_json": json.dumps(partial_result),
+                "adopted_result_json": json.dumps(partial_result),
             "structured_error_json": "",
         },
     )()
@@ -270,6 +301,8 @@ def _complete_consumer_run(
 
 
 def _complete_audit_run(store: AutoReplyStore, task, consumer, *, owner: str):
+    candidate = store.adopted_candidate_for_consumer_run(consumer.id)
+    assert candidate is not None
     run = store.claim_agent_run(
         task.id,
         task.execution_generation,
@@ -283,8 +316,12 @@ def _complete_audit_run(store: AutoReplyStore, task, consumer, *, owner: str):
     return store.complete_agent_run(
         run.id,
         {
-            "outcome": "executed",
+            "outcome": "approve",
             "summary": "The reviewed update was published.",
+            "proposal_revision": 0,
+            "candidate_digest": candidate["candidate_digest"],
+            "feedback": None,
+            "error": {"code": "", "retryable": False, "authorization_required": False},
             "risk": "low",
             "confidence": 1.0,
             "rule_coverage": 1.0,
@@ -597,7 +634,7 @@ def test_attempt_detail_reaches_every_role_transcript(
     assert item["tool_uses"] == []
 
 
-def test_recorded_calls_survive_an_attempt_whose_transcript_is_gone(
+def test_missing_transcript_does_not_resurrect_copied_attempt_calls(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -611,7 +648,7 @@ def test_recorded_calls_survive_an_attempt_whose_transcript_is_gone(
 
     assert item is not None
     assert item["agent_sessions"] == []
-    assert [use["tool"] for use in item["tool_uses"]] == ["unsubscribe_email"]
+    assert item["tool_uses"] == []
 
 
 def test_email_attempt_carries_its_message_and_unsubscribe_receipt(tmp_path: Path):
@@ -890,7 +927,7 @@ def test_attempt_detail_api_marks_unavailable_consumer_result_per_field(
         consumer = _complete_consumer_run(store, task, owner="malformed-api")
         with store._immediate_write_transaction() as db:
             db.execute(
-                "update agent_runs set final_result_json=? where id=?",
+                    "update review_candidates set candidate_json=? where consumer_run_id=?",
                 (json.dumps(stored_result), consumer.id),
             )
     else:
@@ -931,7 +968,7 @@ def test_attempt_detail_api_preserves_valid_metrics_from_partial_consumer_result
     partial.pop("rule_coverage")
     with store._immediate_write_transaction() as db:
         db.execute(
-            "update agent_runs set final_result_json=? where id=?",
+                "update review_candidates set candidate_json=? where consumer_run_id=?",
             (json.dumps(partial), consumer.id),
         )
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
@@ -958,7 +995,7 @@ def test_attempt_detail_api_marks_completed_consumer_without_result_unavailable(
     task = _consumer_result_task(store)
     consumer = _complete_consumer_run(store, task, owner="missing-result-api")
     with store._immediate_write_transaction() as db:
-        db.execute("update agent_runs set final_result_json='' where id=?", (consumer.id,))
+            db.execute("update review_candidates set candidate_json='' where consumer_run_id=?", (consumer.id,))
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
 
     _, item = build_attempt_detail(store, attempt_id)
@@ -969,7 +1006,7 @@ def test_attempt_detail_api_marks_completed_consumer_without_result_unavailable(
         "information_completeness": "—",
         "rule_coverage": "—",
         "risk": "—",
-        "error_reason": "Consumer 未保存最终结果",
+            "error_reason": "Consumer 已采用业务结果不可用",
         "current_run": None,
     }
 

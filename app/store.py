@@ -1527,6 +1527,7 @@ class AgentRun(BaseModel):
     transcript_start_line: int = 0
     transcript_end_line: int = 0
     final_result_json: str = ""
+    adopted_result_json: str = ""
     structured_error_json: str = ""
     tool_events: list[dict[str, object]] = Field(default_factory=list)
     lease_owner: str = ""
@@ -11210,7 +11211,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             transcript_end_line=row["transcript_end_line"],
             final_result_json=(
                 read_native_result_json(db, row)
-                if row["status"] == "completed" else ""
+                if load_events and row["status"] == "completed" else ""
+            ),
+            adopted_result_json=(
+                str(row["adopted_result_json"] or "")
+                if "adopted_result_json" in row.keys() else ""
             ),
             structured_error_json=row["structured_error_json"],
             tool_events=tool_events,
@@ -11958,13 +11963,21 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise RuntimeError("manual rerun reply task was not persisted")
         return cls._reply_task_from_row(row)
 
-    def get_agent_run(self, run_id: int) -> AgentRun | None:
+    def get_agent_run(self, run_id: int, *, load_events: bool = True) -> AgentRun | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from agent_runs where id=?",
+                """select agent_runs.*,
+                          case agent_runs.role
+                            when 'consumer' then candidate.candidate_json
+                            when 'audit' then review.result_json
+                          end as adopted_result_json
+                   from agent_runs
+                   left join review_candidates candidate on candidate.consumer_run_id=agent_runs.id
+                   left join candidate_reviews review on review.audit_run_id=agent_runs.id
+                   where agent_runs.id=?""",
                 (run_id,),
             ).fetchone()
-            return self._agent_run_from_row(row, db=db) if row is not None else None
+            return self._agent_run_from_row(row, db=db, load_events=load_events) if row is not None else None
 
     def get_agent_run_for_turn(
         self,
@@ -11979,10 +11992,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             row = db.execute(
                 """
-                select *
+                select agent_runs.*,
+                       case agent_runs.role
+                         when 'consumer' then candidate.candidate_json
+                         when 'audit' then review.result_json
+                       end as adopted_result_json
                 from agent_runs
-                where reply_task_id=? and execution_generation=? and role=?
-                  and proposal_revision=? and turn_attempt=?
+                left join review_candidates candidate on candidate.consumer_run_id=agent_runs.id
+                left join candidate_reviews review on review.audit_run_id=agent_runs.id
+                where agent_runs.reply_task_id=? and agent_runs.execution_generation=? and agent_runs.role=?
+                  and agent_runs.proposal_revision=? and agent_runs.turn_attempt=?
                 """,
                 (
                     reply_task_id,
@@ -12035,11 +12054,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             rows = db.execute(
                 """
-                select * from agent_runs
-                where reply_task_id=? and execution_generation=?
-                order by proposal_revision,
-                         case role when 'consumer' then 0 else 1 end,
-                         turn_attempt, id
+                select agent_runs.*,
+                       case agent_runs.role
+                         when 'consumer' then candidate.candidate_json
+                         when 'audit' then review.result_json
+                       end as adopted_result_json
+                from agent_runs
+                left join review_candidates candidate on candidate.consumer_run_id=agent_runs.id
+                left join candidate_reviews review on review.audit_run_id=agent_runs.id
+                where agent_runs.reply_task_id=? and agent_runs.execution_generation=?
+                order by agent_runs.proposal_revision,
+                         case agent_runs.role when 'consumer' then 0 else 1 end,
+                         agent_runs.turn_attempt, agent_runs.id
                 """,
                 (reply_task_id, execution_generation),
             ).fetchall()
@@ -12049,10 +12075,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ]
             if not load_events:
                 return runs
-            from app.native_trajectory import hydrate_run_events
-            return [run.model_copy(update={"tool_events": hydrate_run_events(
-                db, row, str(self.path.resolve())
-            )}) for run, row in zip(runs, rows)]
+            from app.native_trajectory import hydrate_run_events, read_native_result_json
+            return [run.model_copy(update={
+                "tool_events": hydrate_run_events(db, row, str(self.path.resolve())),
+                "final_result_json": read_native_result_json(db, row)
+                if run.status == "completed" else "",
+            }) for run, row in zip(runs, rows)]
 
     def list_agent_run_summaries_for_terminal_runs(
         self,
@@ -12074,11 +12102,17 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     from agent_runs
                     where id in ({placeholders})
                 )
-                select terminal_runs.terminal_id, agent_runs.*
+                select terminal_runs.terminal_id, agent_runs.*,
+                       case agent_runs.role
+                         when 'consumer' then candidate.candidate_json
+                         when 'audit' then review.result_json
+                       end as adopted_result_json
                 from terminal_runs
                 join agent_runs
                   on agent_runs.reply_task_id=terminal_runs.reply_task_id
                  and agent_runs.execution_generation=terminal_runs.execution_generation
+                left join review_candidates candidate on candidate.consumer_run_id=agent_runs.id
+                left join candidate_reviews review on review.audit_run_id=agent_runs.id
                 order by terminal_runs.terminal_id,
                          agent_runs.proposal_revision,
                          case agent_runs.role when 'consumer' then 0 else 1 end,
@@ -19147,6 +19181,21 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ) if row is not None else None)
         return self._meeting_alignment_run_from_row(row, ref) if row is not None else None
 
+    def get_meeting_alignment_run_metadata(
+        self,
+        run_id: int,
+    ) -> MeetingAlignmentRun | None:
+        """Read status and job linkage without opening a native trajectory."""
+        with self._connect() as db:
+            row = db.execute(
+                "select * from meeting_alignment_runs where id=?", (run_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        values = dict(row)
+        values.update(decision_json="{}", audit_summary="", audit_tool_events_json="[]")
+        return MeetingAlignmentRun.model_validate(values)
+
     def recovered_meeting_alignment_run_ids_since(
         self,
         created_since: str,
@@ -19457,7 +19506,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
     def get_okr_review_run(self, run_id: int) -> dict[str, object] | None:
         from app.native_standalone import (
-            _codex_audit_events_json, exact_standalone_ref,
+            _meeting_tool_events, exact_standalone_ref,
             okr_envelope,
         )
 
@@ -19472,19 +19521,22 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if row is None:
             return None
         envelope_json, reason = okr_envelope(ref)
+        tool_events_json, tool_events_available, tool_events_reason = (
+            _meeting_tool_events(ref)
+            if not reason and ref is not None
+            else ("[]", False, reason or "native_reference_unavailable")
+        )
         values = dict(row)
         values.update(
             envelope_json=envelope_json,
-            audit_tool_events_json=(
-                _codex_audit_events_json(
-                    ref.session_id, ref.start, ref.end,
-                ) if not reason and ref is not None and ref.kind == "codex_cli" else "[]"
-            ),
+            audit_tool_events_json=tool_events_json,
             audit_summary=(
                 json.loads(envelope_json)["audit"]["summary"] if not reason else ""
             ),
             native_available=not reason,
             native_reason=reason,
+            tool_events_available=tool_events_available,
+            tool_events_reason=tool_events_reason,
         )
         return values
 
@@ -26922,7 +26974,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         when jobs.final_message != '' and jobs.calendar_summary_status='failed'
                             then jobs.final_message || '\n\n日历备注：等待补写。'
                         when jobs.final_message != '' then jobs.final_message
-                        else runs.audit_summary
+                        else '会议任务尚无已采用的最终消息。'
                     end as output_text,
                     case
                         when jobs.status='no_action' then 'no_action'
@@ -31682,8 +31734,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     '{history_types.MEETING}' as history_type,
                     'Meeting Alignment Agent' as source_actor,
                     jobs.title as context,
-                    coalesce(nullif(jobs.final_message, ''), runs.audit_summary) as summary,
-                    runs.decision_json as detail,
+                    case when jobs.final_message<>'' then jobs.final_message
+                         else '会议任务尚无已采用的最终消息。' end as summary,
+                    case when jobs.final_message<>'' then jobs.final_message
+                         else '会议任务尚无已采用的最终消息。' end as detail,
                     '' as conversation_id,
                     '' as message_id,
                     0 as project_id,

@@ -83,6 +83,7 @@ class QualityGateReport:
     missing_sources: tuple[str, ...]
     violations: tuple[QualityIssue, ...]
     attention: tuple[QualityIssue, ...]
+    native_delivery_coverage: dict[str, int] | None = None
 
     @property
     def ok(self) -> bool:
@@ -97,6 +98,7 @@ class QualityGateReport:
             "missing_sources": list(self.missing_sources),
             "violations": [asdict(item) for item in self.violations],
             "attention": [asdict(item) for item in self.attention],
+            "native_delivery_coverage": self.native_delivery_coverage,
         }
 
 
@@ -167,7 +169,7 @@ def scan_hourly_quality(
         _check_meetings(db, checked_now, violations, attention)
         _check_okr_reviews(db, checked_now, violations, attention)
         _check_external_delivery_queues(db, checked_now, violations, attention)
-        _check_delivery_records(db, violations)
+        native_delivery_coverage = _check_delivery_records(db, violations)
         _check_feedback(db, violations)
         _check_scan_health(db, violations, attention)
         _check_scheduler_health(db, checked_now, violations)
@@ -180,6 +182,7 @@ def scan_hourly_quality(
         missing_sources=(),
         violations=tuple(violations),
         attention=tuple(attention),
+        native_delivery_coverage=native_delivery_coverage,
     )
 
 
@@ -235,8 +238,11 @@ def write_hourly_quality_state(report: QualityGateReport, state_path: Path | str
     path = Path(state_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
+    state = report.to_dict()
+    # Native-source coverage is a live observation, not hourly persisted state.
+    state.pop("native_delivery_coverage", None)
     temporary.write_text(
-        json.dumps(report.to_dict(), ensure_ascii=False, indent=2) + "\n",
+        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     temporary.replace(path)
@@ -862,7 +868,7 @@ def _check_external_delivery_queues(
 def _check_delivery_records(
     db: sqlite3.Connection,
     violations: list[QualityIssue],
-) -> None:
+) -> dict[str, int]:
     """Report an executed send the sender never recorded.
 
     A delivery row is written once, by the turn that performed the send, from
@@ -881,8 +887,13 @@ def _check_delivery_records(
           and not exists(select 1 from sent_reply_observers observer where observer.agent_run_id=audit.id)
         """).fetchall()
     missing = 0
+    unavailable = 0
     for row in rows:
-        payload = json.loads(read_native_result_json(db, row) or "{}")
+        native_result = read_native_result_json(db, row)
+        if not native_result:
+            unavailable += 1
+            continue
+        payload = json.loads(native_result)
         external = payload.get("external_result")
         reference = external.get("live_result_reference") if isinstance(external, dict) else None
         if not isinstance(reference, dict):
@@ -897,6 +908,7 @@ def _check_delivery_records(
              "an Audit turn reported a send with a provider receipt and no delivery "
              "record was written; investigate the live write path, do not backfill"
          ))
+    return {"checked": len(rows) - unavailable, "unavailable": unavailable}
 
 
 def _check_feedback(
