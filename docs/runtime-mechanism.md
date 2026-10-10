@@ -1528,6 +1528,10 @@ rewriting a completed reply task to pending. A successful receipt, missing
 receipt, or failed terminal parent does not authorize this runtime operation;
 the action plan and browser effect authorization remain unchanged.
 
+Status queue statistics rank compact Attempt IDs by trigger before reading
+the current Attempt state and failure detail, keeping historical error bodies
+out of the latest-row window.
+
 Audit web startup does not scan and cache History lists or charts. History
 pages are computed when requested. The list counts and sorts compact source
 keys, then hydrates only the requested page in the same read snapshot; it does

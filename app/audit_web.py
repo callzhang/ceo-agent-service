@@ -2973,9 +2973,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """Summarize the current state of each message trigger, not retry history."""
     current_attempts = """
         with latest as (
-            select a.id, a.agent_run_id, a.channel, a.conversation_id,
-                   a.trigger_message_id, a.send_status, a.resolved_at,
-                   a.updated_at, a.send_error, row_number() over (
+            select a.id, row_number() over (
                 partition by a.channel, a.conversation_id, a.trigger_message_id
                 order by a.updated_at desc, a.id desc
             ) as ordinal
@@ -3048,8 +3046,9 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                     ) then 'recovered'
                     else lower(coalesce(a.send_status, ''))
                 end as live_status
-            from latest a
-            where a.ordinal=1
+            from latest
+            join reply_attempts a on a.id=latest.id
+            where latest.ordinal=1
               and not exists (
                   select 1
                   from agent_runs as source_run
