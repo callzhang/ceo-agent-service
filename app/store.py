@@ -7196,6 +7196,17 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         ).fetchone()
         return self._business_task_signal_from_row(row) if row is not None else None
 
+    def get_business_task_signal_for_task_source_ref(
+        self, *, task_id: int, source_ref: str, source_type: str | None = None,
+    ) -> BusinessTaskSignal | None:
+        with self._connect() as db:
+            return self.get_business_task_signal_for_task_source_ref_in_transaction(
+                task_id=task_id,
+                source_ref=source_ref,
+                source_type=source_type,
+                _db=db,
+            )
+
     def create_business_task_date_evidence_in_transaction(
         self, *, task_id: int, source_signal_id: int,
         date_type: BusinessTaskDateType | str, value_at: str, raw_phrase: str,

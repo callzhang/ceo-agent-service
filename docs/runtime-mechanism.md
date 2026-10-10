@@ -676,6 +676,7 @@ confirmed link；新关联依据当前或历史实际原文证明，不按词面
 recompute，不把同项目但不支持该卡片的 Task 自动加入关注，也不重判风险。
 Task 关系用已有 related_task_id 和相对当前实际 Task 的 direction，应用后派生两端；
 相似交付只 proposed relation/cluster，不直接身份 merge，原始身份合并证明语义不变。
+跨版本报告事项只在被引用的 Task Signal 与持久 owner-evidence source_ref 均能定位到该 Task 已保存的完整版本化 DingTalk 报告正文、引用的所有文档节点相同、每个 SHA-256 均与其 `markdown` 正文相符，且相同负责人事项行在每份引用正文中恰好出现一次时才允许身份合并；owner-evidence 可以引用同一文档的较早版本，但必须有对应 Signal 和完整正文。JSON 包装的报告正文先解包 `markdown` 字段，不能在元数据或序列化转义文本中碰巧命中；缺版本/正文/唯一行/负责人证明或彼此冲突就拒绝。Project 关联和 Task 标题相似度不是身份依据。
 
 每个 assessment 针对一个实际 Project 或身份待明确的线索。one Project/精确标题 一轮一项；
 覆盖所有已输出项目决定、Task Project selector 及当前引用 Task 的 confirmed 正式项目。

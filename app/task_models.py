@@ -340,7 +340,15 @@ class TaskIdentityEvidence(StrictTaskModel):
         "same_external_task_id",
         "explicit_source_reference",
         "same_deliverable_owner_context_time",
-    ]
+        "same_source_item_same_owner",
+    ] = Field(
+        description=(
+            "For same_source_item_same_owner, versioned Task and owner-proof refs "
+            "must resolve to linked full DingTalk report bodies on one stable node. "
+            "The service verifies each SHA-256 against decoded markdown, requires "
+            "the cited action line once in every referenced body, and checks owners."
+        )
+    )
     source_signal_id: int = Field(strict=True, gt=0)
     target_signal_id: int = Field(strict=True, gt=0)
 
