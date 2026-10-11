@@ -103,4 +103,3 @@ def prepare_email_schema_release(root: Path, database_path: Path) -> EmailSchema
         if index is None:
             raise ValueError("Email schema 47 provider lookup index is missing")
         return EmailSchemaRelease(root, database_path, versions, index[0])
-
