@@ -4729,17 +4729,20 @@ def test_send_attempt_command_refuses_unavailable_original_without_queue(
     if source != "missing":
         enqueue_trigger_task(store)
         if source == "compacted":
+            original = store.get_reply_task_for_message("cid-1", "msg-1")
+            provenance = store._reply_input_provenance(original.trigger_text, original.trigger_message_json)
             with sqlite3.connect(settings.db_path) as db:
                 db.execute(
-                    "update reply_tasks set input_compacted=1, trigger_text='', "
-                    "trigger_message_json=? where conversation_id='cid-1'",
-                    (json.dumps({"input_compacted": True, "open_message_id": "msg-1"}),),
+                    "update reply_task_inputs set input_compacted=1, trigger_text='', "
+                    "trigger_message_json='', input_provenance_json=? where id in "
+                    "(select current_input_id from reply_tasks where conversation_id='cid-1')",
+                    (provenance,),
                 )
         else:
             with sqlite3.connect(settings.db_path) as db:
                 db.execute(
-                    "update reply_tasks set trigger_message_json='{}' "
-                    "where conversation_id='cid-1'"
+                    "update reply_task_inputs set trigger_message_json='{}' "
+                    "where id in (select current_input_id from reply_tasks where conversation_id='cid-1')"
                 )
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1", conversation_title="Friday",
@@ -4799,11 +4802,14 @@ def test_send_attempt_email_requires_exact_uncompacted_action_payload(
         action="agent_run", sensitivity_kind="general", send_status="failed",
     )
     if compacted:
+        original = store.get_reply_task_for_message(conversation_id, action_identity, channel="email")
+        provenance = store._reply_input_provenance(original.trigger_text, original.trigger_message_json)
         with sqlite3.connect(settings.db_path) as db:
             db.execute(
-                "update reply_tasks set input_compacted=1, trigger_text='', "
-                "trigger_message_json=? where channel='email'",
-                (json.dumps({**payload, "input_compacted": True}),),
+                "update reply_task_inputs set input_compacted=1, trigger_text='', "
+                "trigger_message_json='', input_provenance_json=? where id in "
+                "(select current_input_id from reply_tasks where channel='email')",
+                (provenance,),
             )
         with pytest.raises(SystemExit, match="original trigger is unavailable"):
             send_attempt_command(settings, attempt_id)
