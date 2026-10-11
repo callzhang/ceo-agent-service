@@ -470,7 +470,9 @@ pending.
   a skipped summary without touching the Reader. Pause the `检查微信消息` task on
   the Agent Cron page to stop the 15-second trigger itself.
 - Purge the decrypted mirror (`CEO_WECHAT_MIRROR_DIR`, default
-  `~/.cache/wx_read/plain`) and the passphrase file to remove all plaintext.
+  `~/wx_plain`, also used by the local WeChat DB toolkit) and the passphrase
+  file to remove all plaintext. The Reader keeps the directory at mode 700 and
+  decrypted databases at mode 600; source mtime changes refresh the shared copy.
 - The real `/Applications/WeChat.app` is never modified by this channel.
 
 ## Known residual risks / TODO
