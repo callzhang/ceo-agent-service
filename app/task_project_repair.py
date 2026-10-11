@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.work_summary_payload import decode_work_summary_payload
+
 
 RESTORABLE_FIELDS = (
     "title",
@@ -400,7 +402,7 @@ def _source_created_at(row: sqlite3.Row | None) -> datetime | None:
     if recorded is not None:
         return recorded
     try:
-        payload = json.loads(row["payload_json"] or "{}")
+        payload = json.loads(decode_work_summary_payload(row["payload_json"] or "{}"))
         value = payload.get("source", {}).get("created_at", "")
     except (AttributeError, TypeError, json.JSONDecodeError):
         return None

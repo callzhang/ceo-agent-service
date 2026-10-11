@@ -15,6 +15,7 @@ from app.task_semantic_models import (
     SourceCitation,
     TaskSuggestion,
 )
+from app.work_summary_payload import decode_work_summary_payload
 
 
 def _null_means_omitted(field: FieldInfo) -> bool:
@@ -1226,6 +1227,11 @@ class WorkSummaryInput(BaseModel):
     available_at: str = ""
     created_at: str
     updated_at: str
+
+    @field_validator("payload_json", mode="before")
+    @classmethod
+    def _decode_stored_payload(cls, value: str | bytes) -> str:
+        return decode_work_summary_payload(value)
 
 
 class TaskAttentionProjectionOutcome(BaseModel):

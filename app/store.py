@@ -157,6 +157,10 @@ from app.task_semantic_models import (
     FormalTaskBasis,
     ProjectContext,
 )
+from app.work_summary_payload import (
+    decode_work_summary_payload,
+    encode_work_summary_payload,
+)
 from app.task_source_documents import source_document_key, source_is_observed
 from app.wechat.models import WechatReplyScope
 
@@ -28414,7 +28418,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     updated_at=current_timestamp
                 where work_summary_inputs.status not in ('processing', 'done', 'skipped')
                 """,
-                (source_type, source_ref, payload_json, source_created_at, body_sha256, body_bytes),
+                (
+                    source_type,
+                    source_ref,
+                    encode_work_summary_payload(payload_json),
+                    source_created_at,
+                    body_sha256,
+                    body_bytes,
+                ),
             )
             row = db.execute(
                 """
@@ -28426,14 +28437,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return int(row["id"])
 
     @staticmethod
-    def _work_summary_input_provenance(payload_json: str) -> tuple[str, str, int]:
+    def _work_summary_input_provenance(payload_json: str | bytes) -> tuple[str, str, int]:
+        payload_text = decode_work_summary_payload(payload_json)
         try:
-            decoded = json.loads(payload_json)
+            decoded = json.loads(payload_text)
         except json.JSONDecodeError:
             decoded = {}
         source = decoded.get("source", {}) if isinstance(decoded, dict) else {}
         source_created_at = str(source.get("created_at") or "") if isinstance(source, dict) else ""
-        body = payload_json.encode("utf-8")
+        body = payload_text.encode("utf-8")
         return source_created_at, hashlib.sha256(body).hexdigest(), len(body)
 
     @classmethod
