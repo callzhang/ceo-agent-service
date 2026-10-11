@@ -15,6 +15,58 @@ def test_live_events_keep_payload_in_memory_only(tmp_path):
         assert db.execute("select count(*) from agent_run_events where agent_run_id=?", (run.id,)).fetchone()[0] == 0
 
 
+def test_get_agent_run_reads_native_events_and_result_after_sqlite_closes(
+    tmp_path, monkeypatch
+):
+    from contextlib import contextmanager
+
+    from app import native_trajectory
+
+    store = AutoReplyStore(tmp_path / "runs.sqlite3")
+    run = _claim_consumer(store, _task(store)).run
+    with store._connect() as db:
+        db.execute(
+            "update agent_runs set status='completed', codex_session_id=?, "
+            "transcript_start_line=0, transcript_end_line=1 where id=?",
+            ("native-session", run.id),
+        )
+
+    original_connect = store._connect
+    connection_open = False
+
+    @contextmanager
+    def tracked_connect():
+        nonlocal connection_open
+        try:
+            with original_connect() as db:
+                connection_open = True
+                yield db
+        finally:
+            connection_open = False
+
+    def read_events(row, attempts, db_path):
+        assert connection_open is False
+        return [{"type": "native-event"}]
+
+    def read_result(row, attempt):
+        assert connection_open is False
+        return '{"result":"native-result"}'
+
+    monkeypatch.setattr(store, "_connect", tracked_connect)
+    monkeypatch.setattr(
+        native_trajectory, "hydrate_run_events_from_attempts", read_events
+    )
+    monkeypatch.setattr(
+        native_trajectory, "read_native_result_json_from_attempt", read_result
+    )
+
+    loaded = store.get_agent_run(run.id)
+
+    assert loaded is not None
+    assert loaded.tool_events == [{"type": "native-event"}]
+    assert loaded.final_result_json == '{"result":"native-result"}'
+
+
 def test_oversized_event_uses_native_after_live_cache_limit(tmp_path, monkeypatch):
     from collections import OrderedDict
     from app import native_trajectory

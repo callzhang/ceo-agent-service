@@ -12,6 +12,7 @@ from app.codex_history import (
     render_local_codex_session,
     refresh_codex_session_path_index,
 )
+from app.native_trajectory import find_codex_session_path as find_native_trajectory_session_path
 
 
 def write_session(codex_home: Path, session_id: str) -> Path:
@@ -248,6 +249,63 @@ def test_find_codex_session_path_reuses_index_until_the_index_changes(
     )
     assert find_codex_session_path(session_id, codex_home=tmp_path) == session_path
     assert reads == 3
+
+
+def test_stale_session_index_checks_archived_counterpart_without_tree_scan(
+    tmp_path: Path, monkeypatch
+):
+    session_id = "archived-index-session"
+    session_path = write_session(tmp_path, session_id)
+    archived_path = tmp_path / "archived_sessions" / session_path.name
+    archived_path.parent.mkdir(parents=True)
+    session_path.rename(archived_path)
+    index_path = tmp_path / "session_path_index.jsonl"
+    index_path.write_text(
+        json.dumps(
+            {
+                "session_id": session_id,
+                "path": str(session_path.relative_to(tmp_path)),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fail_on_tree_scan(_path, _pattern):
+        raise AssertionError("known session IDs must not trigger a recursive scan")
+
+    monkeypatch.setattr(Path, "rglob", fail_on_tree_scan)
+
+    assert find_codex_session_path(session_id, codex_home=tmp_path) == archived_path
+    assert (
+        find_native_trajectory_session_path(session_id, codex_home=tmp_path)
+        == archived_path
+    )
+
+
+def test_missing_indexed_session_skips_recursive_tree_scan(tmp_path: Path, monkeypatch):
+    session_id = "removed-index-session"
+    session_path = write_session(tmp_path, session_id)
+    index_path = tmp_path / "session_path_index.jsonl"
+    index_path.write_text(
+        json.dumps(
+            {
+                "session_id": session_id,
+                "path": str(session_path.relative_to(tmp_path)),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    session_path.unlink()
+
+    def fail_on_tree_scan(_path, _pattern):
+        raise AssertionError("known missing session IDs must not trigger a tree scan")
+
+    monkeypatch.setattr(Path, "rglob", fail_on_tree_scan)
+
+    assert find_codex_session_path(session_id, codex_home=tmp_path) is None
+    assert find_native_trajectory_session_path(session_id, codex_home=tmp_path) is None
 
 
 def test_render_local_codex_session_renders_reasoning_summary_and_skips_system_events(tmp_path: Path):

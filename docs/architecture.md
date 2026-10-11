@@ -1393,11 +1393,17 @@ session 指针读取 JSONL，并只向普通用户展示业务结果；内部角
 Attempt 详情只为页面展示的历史执行代批量读取 Agent 工具事件。若任务已有更新的执行代，
 当前状态投影只读取新执行代的运行状态，不再重复加载其工具事件。
 详情页将这些运行的 runtime 尝试记录合并为一次按 run ID 查询，保持 run 内尝试顺序。
+Attempt 详情先在 SQLite 中读取所选 run 的原生轨迹引用并关闭连接，再读取和解析 transcript
+文件；本地轨迹较大或读取较慢时，不会占用 SQLite 连接。
 
 为避免一个详情页因同一 session 的 Consumer、重试和 runtime 记录而重复扫描全量本地
 索引，`session_path_index.jsonl` 的最新记录按文件的 mtime、大小和 inode 做进程内只读缓存。
 索引文件变更后下一次解析自动失效并重建该缓存；缓存只加速 session 路径发现，不改变
 SQLite 投影、JSONL 原文或审计证据。
+
+若索引记录仍在、其原路径已清理，路径解析会直接检查 Codex 平铺的 `archived_sessions/`
+对应文件名；若也不存在，就按 transcript unavailable 返回，不再递归枚举全部历史会话目录。
+因此清理掉的旧 transcript 不会拖慢 Attempt 详情，也不会改变 SQLite 中的业务结果与审计记录。
 
 详情页判断既有外部动作时只重放已持久化的工具事件和 provider 回执；它不得为了渲染
 History 再启动原生 CLI 去发现命令元数据。运行时发现失败属于执行事实，不能成为一次

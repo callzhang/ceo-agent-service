@@ -55,8 +55,8 @@ def find_codex_session_path(session_id: str, *, codex_home: Path | None = None) 
         return None
     root = codex_home or _codex_home()
     indexed = _indexed_session(session_id, root)
-    if indexed is not None and indexed.path.is_file():
-        return indexed.path
+    if indexed is not None:
+        return indexed.path if indexed.path.is_file() else None
     path = _native_path_inventory("codex_cli", root).get(session_id)
     return path if path is not None and path.is_file() else None
 
