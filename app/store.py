@@ -19651,6 +19651,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> list[MeetingAlignmentJob]:
         if limit <= 0:
             return []
+        # An idle poll needs no writer lock. This read is not a reservation;
+        # the transactional claim below rechecks the same eligibility.
+        with self._connect() as db:
+            candidate = db.execute(
+                """select 1 from meeting_alignment_jobs
+                   where status='ready_to_send' and locked_at is null
+                     and (available_at='' or datetime(available_at)<=datetime(?))
+                   limit 1""",
+                (now,),
+            ).fetchone()
+            if candidate is None:
+                return []
         with self._immediate_write_transaction() as db:
             rows = db.execute(
                 """

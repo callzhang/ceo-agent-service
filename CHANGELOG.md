@@ -9,6 +9,12 @@
 
 ## Unreleased
 
+- Avoid SQLite writer-lock waits during idle meeting delivery batch polls.
+  Probe the existing ready/unlocked/due predicate read-only, retaining the
+  original transactional recheck and claim-token mutation. Cover empty,
+  settled, future and already-claimed queues under an unrelated live writer,
+  plus a competing claimant between the probe and transaction.
+
 - Align real Chrome unsubscribe fixtures with current contracts: keep private
   entry URLs only in the permitted receipt field, validate redacted persisted
   records, bind incremental proposals to action identity, and distinguish

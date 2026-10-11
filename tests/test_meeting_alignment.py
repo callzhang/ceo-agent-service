@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 
 from types import SimpleNamespace
@@ -403,6 +404,76 @@ def test_delivery_claim_insert_failure_rolls_back_job_lock(tmp_path, entry):
     assert [store.get_meeting_alignment_job(job_id).locked_at for job_id in ids] == [None, None]
     with sqlite3.connect(store.path) as db:
         assert db.execute("select count(*) from meeting_alignment_delivery_claims").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("queue", ["empty", "settled", "future", "locked"])
+def test_idle_meeting_delivery_poll_does_not_wait_for_writer(tmp_path, monkeypatch, queue):
+    import app.store as store_module
+
+    store = AutoReplyStore(tmp_path / "idle-meeting.sqlite3")
+    if queue != "empty":
+        job_id = store.upsert_meeting_alignment_job(
+            meeting_id="idle-meeting", title="Meeting", source_json="{}",
+            participants_json="[]", ended_at=NOW.isoformat(),
+            eligible_at=NOW.isoformat(),
+            status="sent" if queue == "settled" else "ready_to_send",
+        )
+        if queue == "future":
+            store.update_meeting_alignment_job(
+                job_id, available_at=(NOW + timedelta(hours=1)).isoformat(),
+            )
+        elif queue == "locked":
+            store.update_meeting_alignment_job(job_id, locked_at=NOW.isoformat())
+    original_connect = store._connect
+
+    @contextmanager
+    def no_wait_connection():
+        with original_connect() as database:
+            database.execute("pragma busy_timeout=0")
+            yield database
+
+    monkeypatch.setattr(store, "_connect", no_wait_connection)
+    monkeypatch.setattr(store_module, "STORE_WRITE_LOCK_RETRY_ATTEMPTS", 1)
+    writer = sqlite3.connect(store.path, timeout=0)
+    try:
+        writer.execute("begin immediate")
+        assert store.claim_ready_to_send_meeting_alignment_jobs(
+            limit=2, now=NOW.isoformat(),
+        ) == []
+    finally:
+        writer.rollback()
+        writer.close()
+
+
+def test_meeting_delivery_probe_cannot_overwrite_competing_claim(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "competing-meeting.sqlite3")
+    other = AutoReplyStore(store.path)
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="competing-meeting", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="ready_to_send",
+    )
+    transaction = store._immediate_write_transaction
+    competing_claims = []
+
+    @contextmanager
+    def claim_before_transaction():
+        competing_claims.append(other.claim_ready_to_send_meeting_alignment_job(
+            job_id, now=NOW.isoformat(),
+        ))
+        with transaction() as database:
+            yield database
+
+    monkeypatch.setattr(store, "_immediate_write_transaction", claim_before_transaction)
+    assert store.claim_ready_to_send_meeting_alignment_jobs(limit=2, now=NOW.isoformat()) == []
+    assert len(competing_claims) == 1
+    assert competing_claims[0] is not None
+    with sqlite3.connect(store.path) as database:
+        token = database.execute(
+            "select claim_token from meeting_alignment_delivery_claims where job_id=?",
+            (job_id,),
+        ).fetchone()[0]
+    assert token == competing_claims[0].delivery_claim_token
 
 
 def test_delivery_claim_delete_failure_rolls_back_release(tmp_path):
@@ -2429,7 +2500,7 @@ def test_calendar_summary_non_organizer_permission_marks_sent_without_retry(tmp_
     assert len(dws.send_calls) == 1
     receipt = json.loads(job.calendar_summary_result_json)
     assert receipt["reason"] == "current account is not the calendar organizer"
-    assert store.claim_ready_to_send_meeting_alignment_jobs(limit=1, now=NOW) == []
+    assert store.claim_ready_to_send_meeting_alignment_jobs(limit=1, now=NOW.isoformat()) == []
 
 
 def test_calendar_summary_does_not_update_description_for_other_organizer(tmp_path):
