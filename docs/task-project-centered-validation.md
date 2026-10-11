@@ -1,5 +1,19 @@
 # Project-centered work validation
 
+## Finalization integration on refreshed main: 2026-10-10
+
+The release candidate includes the versioned same-report-item identity slice and
+the dependent-risk suggestion guidance. It was integrated onto origin/main
+`36e42c17`, preserving main's session-bound repair continuation. It excludes
+the optional two-stage evaluator and the general capability-probe configuration
+changes, which remain saved in development commit `13d24e94`.
+
+Focused verification on this integrated candidate:
+`pytest -q tests/test_task_report_item_identity.py tests/test_task_agent.py tests/test_work_tracking_skill.py tests/test_task_agent_runtime_repair.py tests/test_task_models.py tests/test_task_semantic_rules.py`
+completed **414 passed** in 13.97 seconds. Ruff passed for the changed Task
+Python modules and tests; `git diff --check` passed. These checks do not execute
+a native model, merge production duplicates, or demonstrate deployment.
+
 ## 最新生产读回与重复 Task 证据：2026-10-10 01:56 PDT（只读）
 
 已从当前生产 checkout 只读确认版本 `6b01a3c7`，`/healthz` 返回 ok。同一时间窗口的
