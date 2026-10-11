@@ -1666,3 +1666,21 @@ Status API 的 SystemHealth 使用严格类型的 native_delivery_coverage（che
 存储 schema 升级迁移业务对象映射时，只插入新键、删除已不存在的键或更新变化的任务绑定；绑定未变的 `business_object_tasks` 原行及创建／更新时间保持不变，最新任务与 OA 别名选择规则不变。
 
 精简后的邮件来源记录同时保留业务分类 `category` 和候选来源 `action_parameters.candidate_source`，确保已完成 Attempt 详情的业务显示不变；其他参数正文不复制。日历卡片修订仍只比较呈现正文（精简后使用原文摘要），定时扫描运行 ID 的变化不会重新打开已完成任务。
+
+## Email provider identity lookup storage
+
+Email provider 当前库存以 `(account_id, stable_message_identity)` 主键定位，
+按账户/文件夹使用独立 `idx_email_provider_observations_folder` 索引。
+Email schema 48 移除覆盖同一身份键的 `observed_at` lookup 索引，
+provider 状态、分类、刷新和外部动作语义不变。主键和文件夹索引仍保留。
+
+## Reversible Email schema release
+
+正式 deploy 在 quiet/停止服务及一致备份之后，先捕获 Email schema 的回退
+元信息，再在停止窗口执行数据库迁移，随后校验 imports、启动及 health。
+本次只支持经过验证的 47→48 provider 索引逆迁：恢复原索引 SQL，移除
+新增的版本 48 行；不覆盖数据库文件或业务记录。启动失败或 health/加载
+验证失败时，先停止可能已启动的 replacement、回退可选发布资产与 schema，
+再恢复旧代码并启动。schema 逆迁失败时保持 replacement 停止并记录
+needs_manual，不将旧代码启动在不兼容数据库上。其他 schema 变化需要
+各自验证的逆迁，不能自动套用本次索引回退。

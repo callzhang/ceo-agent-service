@@ -1,0 +1,1750 @@
+{
+  "source_commit": "3249d40e74039c0b031ef10724fc7b7b354b0636",
+  "caller_worktree": "/Users/derek/.codex/worktrees/database-redesign-plan/ceo-agent-service",
+  "source_schema": 47,
+  "target_schema": 48,
+  "tables_verified": 149,
+  "only_upgrade_data_change": [
+    "email_schema_migrations"
+  ],
+  "provider_rows": 72004,
+  "removed_index_bytes": 11579392,
+  "copy_logical_bytes_before": 414822400,
+  "copy_bytes_after_vacuum": 399876096,
+  "inverse_transaction_and_new_receipt_preserved": true,
+  "preexisting_fk_violations_unchanged": 1,
+  "actual_old_runtime_reopen": {
+    "old_runtime_schema": 47,
+    "reopened": true
+  },
+  "original_metadata": {
+    "version": 47,
+    "quick": "ok",
+    "fk_violations": 1,
+    "fk_fingerprint": "321d6189f4c88381e003a5fd89922fe852a31b60fa6d1711dee8dcabe77c2116",
+    "point_plan": [
+      "SEARCH email_provider_observations USING INDEX sqlite_autoindex_email_provider_observations_1 (account_id=? AND stable_message_identity=?)"
+    ],
+    "folder_plan": [
+      "SEARCH email_provider_observations USING INDEX idx_email_provider_observations_folder (account_id=? AND provider_folder_id=?)"
+    ]
+  },
+  "upgraded_metadata": {
+    "version": 48,
+    "quick": "ok",
+    "fk_violations": 1,
+    "fk_fingerprint": "321d6189f4c88381e003a5fd89922fe852a31b60fa6d1711dee8dcabe77c2116",
+    "point_plan": [
+      "SEARCH email_provider_observations USING INDEX sqlite_autoindex_email_provider_observations_1 (account_id=? AND stable_message_identity=?)"
+    ],
+    "folder_plan": [
+      "SEARCH email_provider_observations USING INDEX idx_email_provider_observations_folder (account_id=? AND provider_folder_id=?)"
+    ]
+  },
+  "inverse_metadata": {
+    "version": 47,
+    "quick": "ok",
+    "fk_violations": 1,
+    "fk_fingerprint": "321d6189f4c88381e003a5fd89922fe852a31b60fa6d1711dee8dcabe77c2116",
+    "point_plan": [
+      "SEARCH email_provider_observations USING INDEX sqlite_autoindex_email_provider_observations_1 (account_id=? AND stable_message_identity=?)"
+    ],
+    "folder_plan": [
+      "SEARCH email_provider_observations USING INDEX idx_email_provider_observations_folder (account_id=? AND provider_folder_id=?)"
+    ]
+  },
+  "integrity_check": "ok",
+  "fingerprints_before": {
+    "agent_effect_intents": {
+      "rows": 214,
+      "sha256": "2a043b66ff80a618b0e9bea32869bcf9502b35e029c70c47f51d5cf2629ab8c0"
+    },
+    "agent_execution_receipts": {
+      "rows": 115,
+      "sha256": "e5e9cb9098e98f68f6a1ada5770c986c519764a73ad87cab57d69f6b16f16071"
+    },
+    "agent_run_events": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "agent_run_state_events": {
+      "rows": 1151,
+      "sha256": "029658469e2c78ff049664314a7e929816f0a8c9492ff962ce0ec9fe24cc0144"
+    },
+    "agent_runs": {
+      "rows": 21595,
+      "sha256": "3dd8d1b9979451acf173595498659fd9e1fb46083478441834b307406a8e709f"
+    },
+    "agent_runtime_attempts": {
+      "rows": 22707,
+      "sha256": "aedfa0cb21ba7c728100dc0f74c897b10361492df4da25047ac29c31c7587ae3"
+    },
+    "business_anchors": {
+      "rows": 50,
+      "sha256": "5eaac639cc9a174def20c4fb3f94cd8927147f1a1fb813eb2d34f0889fdfa7a1"
+    },
+    "business_attention_events": {
+      "rows": 9,
+      "sha256": "f6c43ebac3b3055fe597503b91c8b01f82064d26c9447e35dc1f24db839a86f0"
+    },
+    "business_attention_items": {
+      "rows": 7,
+      "sha256": "d6e3fa731d8938b832fe6276f1c5e8ee7eba8443bcfcc7fb2a1866c61dd686b0"
+    },
+    "business_attention_proposal_tasks": {
+      "rows": 2,
+      "sha256": "447d4620d29c7bf14fb42eba4f56aad45640ef4c51c9b170eba4842f3dfc1708"
+    },
+    "business_attention_tasks": {
+      "rows": 2,
+      "sha256": "447d4620d29c7bf14fb42eba4f56aad45640ef4c51c9b170eba4842f3dfc1708"
+    },
+    "business_legacy_links": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_object_tasks": {
+      "rows": 7066,
+      "sha256": "78ce2634bb20189f427d0fc9e0980d3c8269ad434bcf7b01b0cfe0aea974caff"
+    },
+    "business_project_candidates": {
+      "rows": 10,
+      "sha256": "5c6cabf171266937728c84e19f69010265c126301f166de4e2ccb3d5c2c6f9a7"
+    },
+    "business_project_context_revisions": {
+      "rows": 5,
+      "sha256": "24ffc3d8087d1e26df000e2e492d78d24e25fc7869187a97b0c423e92b4a3950"
+    },
+    "business_project_evidence": {
+      "rows": 22,
+      "sha256": "723c70244c246f30026ae19425c80a4d245630066bf9b04725983934e231790c"
+    },
+    "business_projects": {
+      "rows": 32,
+      "sha256": "1449e2c416a388cd87fcb8ad4c8c5b292f4aa0d2e93d96866c6359f594e1f354"
+    },
+    "business_source_documents": {
+      "rows": 161,
+      "sha256": "a830f26d8642043ca46ee5340b1b8839f1e18ccb5ad4f93e4c41b240941ba4ce"
+    },
+    "business_task_anchor_links": {
+      "rows": 71,
+      "sha256": "cd098fa07770f52325560b67df9ed37110ac2e7a4c765403eebcae9e7b1b613b"
+    },
+    "business_task_date_evidence": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_dingtalk_links": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_events": {
+      "rows": 785,
+      "sha256": "60362fa45a46bc0ae3235124724cf48c6d873b881968a93de1fcde72b6b07733"
+    },
+    "business_task_evidence": {
+      "rows": 788,
+      "sha256": "b702d3d64390a17c6fcf1b7b270edc7e4472f5012e4b9376a6542e31790e7e93"
+    },
+    "business_task_follow_up_send_attempts": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_follow_ups": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_relations": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_signals": {
+      "rows": 733,
+      "sha256": "c629d3080fd8422b6ad4fa42a66b64b2f07b0e0901e2308ae9d215d8dc06be09"
+    },
+    "business_task_todo_sync_outbox": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_tasks": {
+      "rows": 510,
+      "sha256": "34b757ee5604841a679f665c857b32b75d096543705bc7424b0933eb753e2638"
+    },
+    "business_work_cluster_tasks": {
+      "rows": 16,
+      "sha256": "de4990640671d5e149e1157ece3a454583cfc945db157cc3da27b7b4ec2bf9e6"
+    },
+    "business_work_clusters": {
+      "rows": 16,
+      "sha256": "b3d00590d722553f5347e5d1394502472a1679e962006319f90173cff570aeb3"
+    },
+    "candidate_action_attempts": {
+      "rows": 76,
+      "sha256": "a104f55090cae35c4e186aa5f540873a7d3d8223bdd7533d01bf719fb1ec08b0"
+    },
+    "candidate_executions": {
+      "rows": 75,
+      "sha256": "f3e9a8c35d14f19c815c33a5961271422cd3d396fb76e249d62879a332c91377"
+    },
+    "candidate_reviews": {
+      "rows": 292,
+      "sha256": "f6698a26b29309fb6ec7098202203027aa5b10ce30abbe8d6d81cff0ec73e751"
+    },
+    "candidate_selections": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "candidate_supplements": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "channel_login_reservations": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "codex_session_locks": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "codex_session_search_fts": {
+      "rows": 662,
+      "sha256": "d3cbd272e17532bcfec8543902e181bf27822bd513c82109fbd28f2601746cb5"
+    },
+    "codex_session_search_fts_config": {
+      "rows": 1,
+      "sha256": "3cffaf3719ec9fa128d45d7b940210ce29d8fb017cfd43ba5df8c0eb3648ace1"
+    },
+    "codex_session_search_fts_data": {
+      "rows": 6,
+      "sha256": "602c33a3652d22626ecc56956688413caf7a3678851e6bb1813b627fb3d36b72"
+    },
+    "codex_session_search_fts_docsize": {
+      "rows": 654,
+      "sha256": "d899029b51959c25cb6d16d23fdaa561deea871f719ea0ba149e560d2aa27415"
+    },
+    "codex_session_search_fts_idx": {
+      "rows": 4,
+      "sha256": "d38d8e7949ab851240ddb0467e75dda398fa8bbcc23164fb4baf6c39de166a85"
+    },
+    "codex_session_search_index": {
+      "rows": 662,
+      "sha256": "55c856b5a57a285eb31099ae80dd04fed1396f47ef5e334768dad3375623b3fd"
+    },
+    "conversation_runtime_sessions": {
+      "rows": 5287,
+      "sha256": "5aa02c73b1786dfec15401c76d3a2941f50164c1ff79276ab8121c6eca884d44"
+    },
+    "conversations": {
+      "rows": 499,
+      "sha256": "5f0e075abecb968b2b3564dd0a3aed454aaa227ab0ff1c7c8bcd1a2ac822ec9a"
+    },
+    "corpus_sources": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "daily_scan_state": {
+      "rows": 9,
+      "sha256": "d9c8d6139cdc357f6711fff75e160ca2348cd494dd765cbbe9cd76989c82b014"
+    },
+    "dispatcher_claim_leases": {
+      "rows": 10053,
+      "sha256": "3ce32c19ee557dc7a8347548517344ec0c484f7a6da787e8bd19bd52f89b4a89"
+    },
+    "email_accounts": {
+      "rows": 2,
+      "sha256": "b2cb500a4c0eb75557a0951d4d6d8e729d0b8f6eddc55a2cbcedfc27a03a60c6"
+    },
+    "email_action_attempts": {
+      "rows": 11845,
+      "sha256": "056fd6bb2f13976c847bbe4ff096ce0319b7300779eae6809ea2e792f7048f82"
+    },
+    "email_action_plans": {
+      "rows": 9514,
+      "sha256": "3b53a1977b7dea8efa300647f26015f80783270f9f5327c120a9f193d95a0d7b"
+    },
+    "email_actions": {
+      "rows": 9879,
+      "sha256": "4e75a8cf18b1453539d56c091d872390c9dae27424407e27cf70d546f42c04a6"
+    },
+    "email_agent_classification_tasks": {
+      "rows": 1348,
+      "sha256": "40404e84f86a3030146bb5029c78a3fe68ffc6c43dd62581e65c749bc179051c"
+    },
+    "email_category_configs": {
+      "rows": 11,
+      "sha256": "da436b94f7d270274e30f430201cef6e2dbe5f726330f9ccc1fbb79a870d1c79"
+    },
+    "email_category_description_revisions": {
+      "rows": 24,
+      "sha256": "db49b48f49dfddb3c681f310bcc23c02a1fdd4bdbb241bd19c309ff437974f75"
+    },
+    "email_category_folder_bindings": {
+      "rows": 22,
+      "sha256": "6cad5a155df450faa6d9291726245d8117453ed61918637d60014c154a32d59d"
+    },
+    "email_classifications": {
+      "rows": 8480,
+      "sha256": "e8a8716e711e196e6971b47c9c2deae49773b0b432ff22efa4f8bd6d138c80e9"
+    },
+    "email_classifier_runtime_samples": {
+      "rows": 2048,
+      "sha256": "ecd66af0e7ed2905d7ae45db1e6b1d02923c107a43017b6818bd94358ddd0bc1"
+    },
+    "email_feedback_requests": {
+      "rows": 1413,
+      "sha256": "5a55ddc254bc61163aa8d36f8f682b4ce1df498951c301ac6f300dd0d976b083"
+    },
+    "email_historical_candidates": {
+      "rows": 924,
+      "sha256": "de80e4b5ec480aeaffbb1166af6e90821caa5fe431cd76ac87317fbdf63f721e"
+    },
+    "email_historical_classification_history": {
+      "rows": 183,
+      "sha256": "6e379c9ede797e41eb51e86747c75998ea1c57f4764d2cff4230dc17f119e132"
+    },
+    "email_historical_operations": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_historical_traversals": {
+      "rows": 2,
+      "sha256": "2e89fa6508be81aa09a3c541480d9414645da14b9b64cd1158d88c8c6bf3966d"
+    },
+    "email_messages": {
+      "rows": 8480,
+      "sha256": "05664ef6358e7ae5e08b09164429aae068939c816100434be718e2549b4dbcdb"
+    },
+    "email_model_mode_transitions": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_model_promotion_configs": {
+      "rows": 4,
+      "sha256": "7cefff74e9335c49aaa4c731454860e7d992e1e383ff01b46153afed6c513c45"
+    },
+    "email_provider_folder_observation_generations": {
+      "rows": 55,
+      "sha256": "38e738b75df24a22481c5fa6146a37013683b87cc09f32df2f46d6c43aa4226a"
+    },
+    "email_provider_observations": {
+      "rows": 72004,
+      "sha256": "1d22504509f7024eec1652a21731d08ffb1f4d6310d4d83493fd68a0b2ac9dc9"
+    },
+    "email_reply_dispatch_claims": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_reply_receipts": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_scan_cursors": {
+      "rows": 2,
+      "sha256": "2d9ccabbbdb88eecf5ac1b4b999d9f55157c944ae47e0cfa2f9a68afed2b05ae"
+    },
+    "email_schema_migrations": {
+      "rows": 34,
+      "sha256": "0f39642e7693abc90491ce1dc7f74e2c9ec2592793633396a00781cbdea98b8e"
+    },
+    "email_training_snapshot_observations": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_training_snapshots": {
+      "rows": 122,
+      "sha256": "bb7a8b99993412cf1f4086cb452e04d942f60d4d3369692f8f54ab9e168a4671"
+    },
+    "email_unsubscribe_claims": {
+      "rows": 1066,
+      "sha256": "6f8f798f44132999698cb9076bd8d61639e56428ecff4536ec1e9eaf51a319b4"
+    },
+    "email_unsubscribe_continuations": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_unsubscribe_effects": {
+      "rows": 1153,
+      "sha256": "7e6666897453a00c8a3eb36ddc11e96660916ae594e8dcea9e0e8ef88753faf5"
+    },
+    "email_unsubscribe_receipts": {
+      "rows": 1066,
+      "sha256": "f932a1d5529ac1f90da17bcc55d6ee92edef80355ae5e447ae5d0fa32165c947"
+    },
+    "email_unsubscribe_steps": {
+      "rows": 812,
+      "sha256": "4438e0f51434ed629de4ac23938b0209705987aa13eb15c7f695c519688cf69d"
+    },
+    "errors": {
+      "rows": 15203,
+      "sha256": "fc83a77f0f182f8863d04d8d389030f42e5ba68a27d4fb8c764f2c93da25a67f"
+    },
+    "external_action_results": {
+      "rows": 281,
+      "sha256": "fc84439e57c4630cb2e93ab7a712cd9e1b05c95b391f585e9c9952db1d89fd92"
+    },
+    "feedback_events": {
+      "rows": 48,
+      "sha256": "45ae3506e5ff707baca11b24d169d8b2e0fd302ec94428654c54bdbf84f435f5"
+    },
+    "feedback_iteration_decision_items": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "feedback_iteration_decisions": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "feedback_processing_batches": {
+      "rows": 3,
+      "sha256": "1792130351c8c5fd97a4457d29aa1334a365202dbc40c00b1dedec76721b5ffb"
+    },
+    "feedback_processing_items": {
+      "rows": 48,
+      "sha256": "d10fd5dbbb7a17267651374f57737f4475468ecb35a44193c5b979ece00051f6"
+    },
+    "feedback_processing_rounds": {
+      "rows": 3,
+      "sha256": "75d36b2f845cbc36666b576c1af41e62001f3c66b2f1a5cf8a40bb97a872e8a8"
+    },
+    "feedback_processing_transitions": {
+      "rows": 5,
+      "sha256": "55560c0ed318346bd643526feecf1cad61d8b5833773665253474062f70eeaf8"
+    },
+    "follow_up_drafts": {
+      "rows": 2477,
+      "sha256": "0439dcdf5ea53bcc4e851edbfbd305171112571be48131d1df1a9a11b14e3ae0"
+    },
+    "follow_up_send_attempts": {
+      "rows": 65,
+      "sha256": "3b3db607d16defa926fc028815ae8d738822e0d4bd58058f21c84c10d6d7c875"
+    },
+    "managed_skill_export_receipts": {
+      "rows": 1920,
+      "sha256": "d751a5e8c6053263d44f9e22bc5ea0d3b40fa6918c993b0c0608aa80d677444d"
+    },
+    "managed_skill_revisions": {
+      "rows": 145,
+      "sha256": "2cdb8b51f833c591c450b4a41013f2e540ea2c1ff988ba95f5a7c0e9561419ed"
+    },
+    "managed_skills": {
+      "rows": 21,
+      "sha256": "1e604b0f1d965b629c94becbb9baed3e124f2acafffd1f1082f003f1dbba633c"
+    },
+    "meeting_alignment_delivery_claims": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "meeting_alignment_jobs": {
+      "rows": 679,
+      "sha256": "879d49d94aa2d23a024daf5b244708466754bad4c1ed0f563578e5e70760d0e9"
+    },
+    "meeting_alignment_runs": {
+      "rows": 2526,
+      "sha256": "1db8751631592cba20cdc1bdf42bd5373197d3de54a702fcf13b8dee77ab662e"
+    },
+    "meeting_memory_write_events": {
+      "rows": 536,
+      "sha256": "37a25acb6b17146b048535398013db3d6a8b1537565915a0e17fe94a202bd4ef"
+    },
+    "memory_write_events": {
+      "rows": 476,
+      "sha256": "fab4b87164833e2e52790b6a0f29050a7b3c20c775ed53783200187358c3580d"
+    },
+    "native_reply_dispatches": {
+      "rows": 46,
+      "sha256": "4d693c1ede6b07ad85e31bd398db97a0f4c73afd880508d92810518f760bdbe3"
+    },
+    "oa_notification_events": {
+      "rows": 11,
+      "sha256": "9951eaef4ded25975746e0e54352939a7883c4fced7edb53075556b35125327a"
+    },
+    "okr_review_items": {
+      "rows": 413,
+      "sha256": "2dfb7a80eb09d376a528d82398b8833b56e460325192cd3d86a29d23c2f2f4af"
+    },
+    "okr_review_requests": {
+      "rows": 20,
+      "sha256": "8790e0c2121e4347a0136e64f936b5b26b0ec7c208fc146d41767227d3ebe354"
+    },
+    "okr_review_runs": {
+      "rows": 22,
+      "sha256": "47c44a30f80657f765361c9fb64c9c11fcf17d479bb745438f03de8c588e578b"
+    },
+    "org_cache_metadata": {
+      "rows": 2,
+      "sha256": "a343db2a47b014cfd685f97f50aedd82e46465e2b1e7fe3d60e89da8ecbefb92"
+    },
+    "org_user_profiles": {
+      "rows": 74,
+      "sha256": "f14311159f5104d5648a4952099f91f66d1c15d615c39ff67ab0b9fee1105f7c"
+    },
+    "outbound_postfix_receipts": {
+      "rows": 543,
+      "sha256": "d5536eb2e87eef9f388d2bf982cc1011ed19a43ee970d0e7451a72b1ac2ba3a7"
+    },
+    "outbound_postfixes": {
+      "rows": 953,
+      "sha256": "1bede70ea52ed81e49514569b6f4da401e9c50baf0339f65a74b38c4b44240bb"
+    },
+    "reply_attempts": {
+      "rows": 14666,
+      "sha256": "2ebde2c7ec6141c7ecd2cc02df6ea3ccc1e17ef8c8fd8059cebde535b3fde3ae"
+    },
+    "reply_task_inputs": {
+      "rows": 7351,
+      "sha256": "987bcf387663698b264eb9cd58134ee9bb0e4995322afa1638370cc1e4b0334f"
+    },
+    "reply_tasks": {
+      "rows": 7252,
+      "sha256": "6123900cea33faad33f3063a44be81f8f597679f73cda4de6828aacddca06980"
+    },
+    "review_candidates": {
+      "rows": 299,
+      "sha256": "b5dcfcb91072c2f32da8bc9f119cd0ba19abbc65542fc2a49a6fdcfbb071dad9"
+    },
+    "runtime_feedback_iteration_capabilities": {
+      "rows": 18,
+      "sha256": "6a61e87fb03465c7e4f127b61e2ded88af35385a3ef3e234b2e96f9aa369edc9"
+    },
+    "runtime_route_pauses": {
+      "rows": 2,
+      "sha256": "06ac9a22a716aad8e6f8240ba58c94e465c924ff31a9d3b212c87417dfde971f"
+    },
+    "runtime_skill_bindings": {
+      "rows": 227,
+      "sha256": "36f215e33e3c8642803af5fcfa6a80157b85dcce3fcac4fd538ed1a8af2b27a8"
+    },
+    "runtime_skill_configs": {
+      "rows": 18,
+      "sha256": "bd012e977e715493a50f1b6abdee56182e0c056c5ae583a51108bb29dd3767f8"
+    },
+    "runtime_skill_load_receipts": {
+      "rows": 3880,
+      "sha256": "ddff4c5b24e832376409bfd3efd65f04f575bb8a6659c2c7f0197f57562b694f"
+    },
+    "scheduled_task_config_versions": {
+      "rows": 67,
+      "sha256": "8826eb66f94c84d4a9d0e8f1a33d67ab47e32718a8229c38e2b61ed9c71d4dc2"
+    },
+    "scheduled_task_runs": {
+      "rows": 151056,
+      "sha256": "dac3bbf1a186c7a002ce8f1a7911d1720596fd3880a695ecc68eb7f35e2ed3c6"
+    },
+    "scheduled_task_skill_refs": {
+      "rows": 34,
+      "sha256": "13375d71093eef4f2df01e0f576aeb4965a016124e77ee17a41b39ae87f5ad94"
+    },
+    "scheduled_tasks": {
+      "rows": 15,
+      "sha256": "93712e4b2cb0c98fbe5ee4ad79dbdbb21d63a492a1487f15d61898214b4c4a5b"
+    },
+    "seen_messages": {
+      "rows": 7034,
+      "sha256": "c0becc9a0f501c55a8c8ff569137e3b32217ba48fd8d53a537cba8bc6e2a4d4d"
+    },
+    "sent_replies": {
+      "rows": 2291,
+      "sha256": "95acf66c8069251c52a100ceea3bbb74c535395d167100499ebc4555738720aa"
+    },
+    "sent_reply_observers": {
+      "rows": 270,
+      "sha256": "423270320e0b235c2c4fc9988f4c8ed915cb3ccca8f4702e67f0c0cfe7022aee"
+    },
+    "service_bugfix_candidates": {
+      "rows": 3,
+      "sha256": "9751d7b1a9d890d1ae02127c85d883c9a500c6857ce7af4b4f718445f827326e"
+    },
+    "service_state": {
+      "rows": 215,
+      "sha256": "dbfbba6694eacbb12d6a06996a740667e2d37d50f4ab4db8df433d4ededa8f11"
+    },
+    "setup_wizard_events": {
+      "rows": 22,
+      "sha256": "4a64febebf1f11faf9f6f3ef317f431e648e64a74ae9221e698ca89161add324"
+    },
+    "setup_wizard_steps": {
+      "rows": 12,
+      "sha256": "d109d324ef41acd39f9c97d2f41f1d6b05efc35f25f296f88b4ffa994474d76f"
+    },
+    "task_agent_runs": {
+      "rows": 10714,
+      "sha256": "25414d75d63d9aca3509d2333e72ec67e62d0f0d9bdde57240acbc7069e11fdb"
+    },
+    "task_memory_write_events": {
+      "rows": 329,
+      "sha256": "5bee1287fc6e0a7ccf8d658f2d161801fdff862c6a7e81c97d3377b29506855d"
+    },
+    "task_todo_sync_outbox": {
+      "rows": 242,
+      "sha256": "d400a547ece042f82d146ff4211d2d08074851ba4018e422082f33e008124117"
+    },
+    "todo_evidence_candidates": {
+      "rows": 3,
+      "sha256": "1b8d6bd42374b10325cdb2e10176d3c6aff0a7bfc9590e8bbb39ed80c1d14635"
+    },
+    "wechat_deliveries": {
+      "rows": 130,
+      "sha256": "0f8495c88003fec2d05a0f4e5d1d90f022f6e13dd48c9947e94dc782fa13fad3"
+    },
+    "wechat_memory_candidates": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "wechat_memory_import_jobs": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "wechat_read_state": {
+      "rows": 1,
+      "sha256": "730579c22618870c1eb4b74021ba158e653fdecda610377c10d5cdbe5bd116bb"
+    },
+    "wechat_reply_scopes": {
+      "rows": 4,
+      "sha256": "4d4bb7c8eae2ee26db415e2eee056ad85e0e8dafbefccc9dbf7627b70f543f86"
+    },
+    "weekly_okr_analysis_jobs": {
+      "rows": 169,
+      "sha256": "89dc49bd492caf4a5ee57bb0e14e295b23f8c73b2a98c663396676645505b693"
+    },
+    "work_projects": {
+      "rows": 975,
+      "sha256": "abad7ce7504452c61d26b7bbb8ec3dd8348a974284f74a16082ddd4035d60b87"
+    },
+    "work_summary_inputs": {
+      "rows": 9080,
+      "sha256": "03692e3650d4d9de9a9413006568f1b33a4a2ef5e5b2b9f6f2e84ad4e39c6073"
+    },
+    "work_todo_dingtalk_links": {
+      "rows": 875,
+      "sha256": "9186787cbb8ae47198f1df92144403253228487b8626d1e11b20927ff08712d4"
+    },
+    "work_todos": {
+      "rows": 3327,
+      "sha256": "0ce024c17d38d6a1d9ac57a36ca1d487e75a52e90e39f53f7399bdde38751d49"
+    },
+    "work_updates": {
+      "rows": 5468,
+      "sha256": "8f33b65657bd2f4f8e224e70736a9c66e355d19983873a371da067ec80667b14"
+    },
+    "workbench_artifacts": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "workbench_attachments": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "workbench_confirmations": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "workbench_events": {
+      "rows": 810,
+      "sha256": "3fd22e56dd1e68dc372dc621e7d29fb27527bfaf9f91772fb366b4fc9e5ae3f8"
+    },
+    "workbench_tasks": {
+      "rows": 20,
+      "sha256": "076a2b0c49ccb74faa7f166d02f94d28e5101a97c5db6e5b6e9cc33a914d4338"
+    },
+    "workbench_turns": {
+      "rows": 37,
+      "sha256": "d30bab3bd3b92e02cad0349534b8d93270cad7ae498085ffd82018ba07a8e1b4"
+    },
+    "sqlite_sequence": {
+      "rows": [
+        [
+          "agent_effect_intents",
+          560
+        ],
+        [
+          "agent_execution_receipts",
+          115
+        ],
+        [
+          "agent_run_events",
+          152696
+        ],
+        [
+          "agent_run_state_events",
+          1151
+        ],
+        [
+          "agent_runs",
+          25732
+        ],
+        [
+          "agent_runtime_attempts",
+          22707
+        ],
+        [
+          "business_anchors",
+          50
+        ],
+        [
+          "business_attention_events",
+          9
+        ],
+        [
+          "business_attention_items",
+          7
+        ],
+        [
+          "business_project_candidates",
+          10
+        ],
+        [
+          "business_project_context_revisions",
+          5
+        ],
+        [
+          "business_projects",
+          50
+        ],
+        [
+          "business_source_documents",
+          161
+        ],
+        [
+          "business_task_anchor_links",
+          87
+        ],
+        [
+          "business_task_events",
+          785
+        ],
+        [
+          "business_task_signals",
+          733
+        ],
+        [
+          "business_tasks",
+          510
+        ],
+        [
+          "business_work_clusters",
+          16
+        ],
+        [
+          "codex_session_search_index",
+          662
+        ],
+        [
+          "email_action_attempts",
+          12045
+        ],
+        [
+          "email_classifier_runtime_samples",
+          5180
+        ],
+        [
+          "email_messages",
+          8484
+        ],
+        [
+          "email_unsubscribe_steps",
+          812
+        ],
+        [
+          "errors",
+          15246
+        ],
+        [
+          "feedback_processing_rounds",
+          3
+        ],
+        [
+          "feedback_processing_transitions",
+          5
+        ],
+        [
+          "follow_up_drafts",
+          2477
+        ],
+        [
+          "follow_up_send_attempts",
+          65
+        ],
+        [
+          "managed_skill_export_receipts",
+          1920
+        ],
+        [
+          "managed_skill_revisions",
+          145
+        ],
+        [
+          "managed_skills",
+          21
+        ],
+        [
+          "meeting_alignment_jobs",
+          7929
+        ],
+        [
+          "meeting_alignment_runs",
+          2526
+        ],
+        [
+          "meeting_memory_write_events",
+          295502
+        ],
+        [
+          "memory_write_events",
+          1426
+        ],
+        [
+          "oa_notification_events",
+          11
+        ],
+        [
+          "okr_review_items",
+          413
+        ],
+        [
+          "okr_review_requests",
+          24
+        ],
+        [
+          "okr_review_runs",
+          22
+        ],
+        [
+          "reply_attempts",
+          15254
+        ],
+        [
+          "reply_task_inputs",
+          251576
+        ],
+        [
+          "reply_tasks",
+          386353
+        ],
+        [
+          "runtime_skill_configs",
+          18
+        ],
+        [
+          "runtime_skill_load_receipts",
+          3880
+        ],
+        [
+          "scheduled_task_runs",
+          151059
+        ],
+        [
+          "scheduled_tasks",
+          15
+        ],
+        [
+          "sent_replies",
+          2308
+        ],
+        [
+          "service_bugfix_candidates",
+          3
+        ],
+        [
+          "setup_wizard_events",
+          22
+        ],
+        [
+          "task_agent_runs",
+          10714
+        ],
+        [
+          "task_memory_write_events",
+          329
+        ],
+        [
+          "task_todo_sync_outbox",
+          242
+        ],
+        [
+          "todo_evidence_candidates",
+          3
+        ],
+        [
+          "wechat_deliveries",
+          134
+        ],
+        [
+          "weekly_okr_analysis_jobs",
+          718
+        ],
+        [
+          "work_projects",
+          975
+        ],
+        [
+          "work_summary_inputs",
+          27515
+        ],
+        [
+          "work_todo_dingtalk_links",
+          875
+        ],
+        [
+          "work_todos",
+          3327
+        ],
+        [
+          "work_updates",
+          5468
+        ],
+        [
+          "workbench_events",
+          810
+        ]
+      ]
+    }
+  },
+  "fingerprints_upgraded": {
+    "agent_effect_intents": {
+      "rows": 214,
+      "sha256": "2a043b66ff80a618b0e9bea32869bcf9502b35e029c70c47f51d5cf2629ab8c0"
+    },
+    "agent_execution_receipts": {
+      "rows": 115,
+      "sha256": "e5e9cb9098e98f68f6a1ada5770c986c519764a73ad87cab57d69f6b16f16071"
+    },
+    "agent_run_events": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "agent_run_state_events": {
+      "rows": 1151,
+      "sha256": "029658469e2c78ff049664314a7e929816f0a8c9492ff962ce0ec9fe24cc0144"
+    },
+    "agent_runs": {
+      "rows": 21595,
+      "sha256": "3dd8d1b9979451acf173595498659fd9e1fb46083478441834b307406a8e709f"
+    },
+    "agent_runtime_attempts": {
+      "rows": 22707,
+      "sha256": "aedfa0cb21ba7c728100dc0f74c897b10361492df4da25047ac29c31c7587ae3"
+    },
+    "business_anchors": {
+      "rows": 50,
+      "sha256": "5eaac639cc9a174def20c4fb3f94cd8927147f1a1fb813eb2d34f0889fdfa7a1"
+    },
+    "business_attention_events": {
+      "rows": 9,
+      "sha256": "f6c43ebac3b3055fe597503b91c8b01f82064d26c9447e35dc1f24db839a86f0"
+    },
+    "business_attention_items": {
+      "rows": 7,
+      "sha256": "d6e3fa731d8938b832fe6276f1c5e8ee7eba8443bcfcc7fb2a1866c61dd686b0"
+    },
+    "business_attention_proposal_tasks": {
+      "rows": 2,
+      "sha256": "447d4620d29c7bf14fb42eba4f56aad45640ef4c51c9b170eba4842f3dfc1708"
+    },
+    "business_attention_tasks": {
+      "rows": 2,
+      "sha256": "447d4620d29c7bf14fb42eba4f56aad45640ef4c51c9b170eba4842f3dfc1708"
+    },
+    "business_legacy_links": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_object_tasks": {
+      "rows": 7066,
+      "sha256": "78ce2634bb20189f427d0fc9e0980d3c8269ad434bcf7b01b0cfe0aea974caff"
+    },
+    "business_project_candidates": {
+      "rows": 10,
+      "sha256": "5c6cabf171266937728c84e19f69010265c126301f166de4e2ccb3d5c2c6f9a7"
+    },
+    "business_project_context_revisions": {
+      "rows": 5,
+      "sha256": "24ffc3d8087d1e26df000e2e492d78d24e25fc7869187a97b0c423e92b4a3950"
+    },
+    "business_project_evidence": {
+      "rows": 22,
+      "sha256": "723c70244c246f30026ae19425c80a4d245630066bf9b04725983934e231790c"
+    },
+    "business_projects": {
+      "rows": 32,
+      "sha256": "1449e2c416a388cd87fcb8ad4c8c5b292f4aa0d2e93d96866c6359f594e1f354"
+    },
+    "business_source_documents": {
+      "rows": 161,
+      "sha256": "a830f26d8642043ca46ee5340b1b8839f1e18ccb5ad4f93e4c41b240941ba4ce"
+    },
+    "business_task_anchor_links": {
+      "rows": 71,
+      "sha256": "cd098fa07770f52325560b67df9ed37110ac2e7a4c765403eebcae9e7b1b613b"
+    },
+    "business_task_date_evidence": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_dingtalk_links": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_events": {
+      "rows": 785,
+      "sha256": "60362fa45a46bc0ae3235124724cf48c6d873b881968a93de1fcde72b6b07733"
+    },
+    "business_task_evidence": {
+      "rows": 788,
+      "sha256": "b702d3d64390a17c6fcf1b7b270edc7e4472f5012e4b9376a6542e31790e7e93"
+    },
+    "business_task_follow_up_send_attempts": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_follow_ups": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_relations": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_signals": {
+      "rows": 733,
+      "sha256": "c629d3080fd8422b6ad4fa42a66b64b2f07b0e0901e2308ae9d215d8dc06be09"
+    },
+    "business_task_todo_sync_outbox": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_tasks": {
+      "rows": 510,
+      "sha256": "34b757ee5604841a679f665c857b32b75d096543705bc7424b0933eb753e2638"
+    },
+    "business_work_cluster_tasks": {
+      "rows": 16,
+      "sha256": "de4990640671d5e149e1157ece3a454583cfc945db157cc3da27b7b4ec2bf9e6"
+    },
+    "business_work_clusters": {
+      "rows": 16,
+      "sha256": "b3d00590d722553f5347e5d1394502472a1679e962006319f90173cff570aeb3"
+    },
+    "candidate_action_attempts": {
+      "rows": 76,
+      "sha256": "a104f55090cae35c4e186aa5f540873a7d3d8223bdd7533d01bf719fb1ec08b0"
+    },
+    "candidate_executions": {
+      "rows": 75,
+      "sha256": "f3e9a8c35d14f19c815c33a5961271422cd3d396fb76e249d62879a332c91377"
+    },
+    "candidate_reviews": {
+      "rows": 292,
+      "sha256": "f6698a26b29309fb6ec7098202203027aa5b10ce30abbe8d6d81cff0ec73e751"
+    },
+    "candidate_selections": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "candidate_supplements": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "channel_login_reservations": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "codex_session_locks": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "codex_session_search_fts": {
+      "rows": 662,
+      "sha256": "d3cbd272e17532bcfec8543902e181bf27822bd513c82109fbd28f2601746cb5"
+    },
+    "codex_session_search_fts_config": {
+      "rows": 1,
+      "sha256": "3cffaf3719ec9fa128d45d7b940210ce29d8fb017cfd43ba5df8c0eb3648ace1"
+    },
+    "codex_session_search_fts_data": {
+      "rows": 6,
+      "sha256": "602c33a3652d22626ecc56956688413caf7a3678851e6bb1813b627fb3d36b72"
+    },
+    "codex_session_search_fts_docsize": {
+      "rows": 654,
+      "sha256": "d899029b51959c25cb6d16d23fdaa561deea871f719ea0ba149e560d2aa27415"
+    },
+    "codex_session_search_fts_idx": {
+      "rows": 4,
+      "sha256": "d38d8e7949ab851240ddb0467e75dda398fa8bbcc23164fb4baf6c39de166a85"
+    },
+    "codex_session_search_index": {
+      "rows": 662,
+      "sha256": "55c856b5a57a285eb31099ae80dd04fed1396f47ef5e334768dad3375623b3fd"
+    },
+    "conversation_runtime_sessions": {
+      "rows": 5287,
+      "sha256": "5aa02c73b1786dfec15401c76d3a2941f50164c1ff79276ab8121c6eca884d44"
+    },
+    "conversations": {
+      "rows": 499,
+      "sha256": "5f0e075abecb968b2b3564dd0a3aed454aaa227ab0ff1c7c8bcd1a2ac822ec9a"
+    },
+    "corpus_sources": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "daily_scan_state": {
+      "rows": 9,
+      "sha256": "d9c8d6139cdc357f6711fff75e160ca2348cd494dd765cbbe9cd76989c82b014"
+    },
+    "dispatcher_claim_leases": {
+      "rows": 10053,
+      "sha256": "3ce32c19ee557dc7a8347548517344ec0c484f7a6da787e8bd19bd52f89b4a89"
+    },
+    "email_accounts": {
+      "rows": 2,
+      "sha256": "b2cb500a4c0eb75557a0951d4d6d8e729d0b8f6eddc55a2cbcedfc27a03a60c6"
+    },
+    "email_action_attempts": {
+      "rows": 11845,
+      "sha256": "056fd6bb2f13976c847bbe4ff096ce0319b7300779eae6809ea2e792f7048f82"
+    },
+    "email_action_plans": {
+      "rows": 9514,
+      "sha256": "3b53a1977b7dea8efa300647f26015f80783270f9f5327c120a9f193d95a0d7b"
+    },
+    "email_actions": {
+      "rows": 9879,
+      "sha256": "4e75a8cf18b1453539d56c091d872390c9dae27424407e27cf70d546f42c04a6"
+    },
+    "email_agent_classification_tasks": {
+      "rows": 1348,
+      "sha256": "40404e84f86a3030146bb5029c78a3fe68ffc6c43dd62581e65c749bc179051c"
+    },
+    "email_category_configs": {
+      "rows": 11,
+      "sha256": "da436b94f7d270274e30f430201cef6e2dbe5f726330f9ccc1fbb79a870d1c79"
+    },
+    "email_category_description_revisions": {
+      "rows": 24,
+      "sha256": "db49b48f49dfddb3c681f310bcc23c02a1fdd4bdbb241bd19c309ff437974f75"
+    },
+    "email_category_folder_bindings": {
+      "rows": 22,
+      "sha256": "6cad5a155df450faa6d9291726245d8117453ed61918637d60014c154a32d59d"
+    },
+    "email_classifications": {
+      "rows": 8480,
+      "sha256": "e8a8716e711e196e6971b47c9c2deae49773b0b432ff22efa4f8bd6d138c80e9"
+    },
+    "email_classifier_runtime_samples": {
+      "rows": 2048,
+      "sha256": "ecd66af0e7ed2905d7ae45db1e6b1d02923c107a43017b6818bd94358ddd0bc1"
+    },
+    "email_feedback_requests": {
+      "rows": 1413,
+      "sha256": "5a55ddc254bc61163aa8d36f8f682b4ce1df498951c301ac6f300dd0d976b083"
+    },
+    "email_historical_candidates": {
+      "rows": 924,
+      "sha256": "de80e4b5ec480aeaffbb1166af6e90821caa5fe431cd76ac87317fbdf63f721e"
+    },
+    "email_historical_classification_history": {
+      "rows": 183,
+      "sha256": "6e379c9ede797e41eb51e86747c75998ea1c57f4764d2cff4230dc17f119e132"
+    },
+    "email_historical_operations": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_historical_traversals": {
+      "rows": 2,
+      "sha256": "2e89fa6508be81aa09a3c541480d9414645da14b9b64cd1158d88c8c6bf3966d"
+    },
+    "email_messages": {
+      "rows": 8480,
+      "sha256": "05664ef6358e7ae5e08b09164429aae068939c816100434be718e2549b4dbcdb"
+    },
+    "email_model_mode_transitions": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_model_promotion_configs": {
+      "rows": 4,
+      "sha256": "7cefff74e9335c49aaa4c731454860e7d992e1e383ff01b46153afed6c513c45"
+    },
+    "email_provider_folder_observation_generations": {
+      "rows": 55,
+      "sha256": "38e738b75df24a22481c5fa6146a37013683b87cc09f32df2f46d6c43aa4226a"
+    },
+    "email_provider_observations": {
+      "rows": 72004,
+      "sha256": "1d22504509f7024eec1652a21731d08ffb1f4d6310d4d83493fd68a0b2ac9dc9"
+    },
+    "email_reply_dispatch_claims": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_reply_receipts": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_scan_cursors": {
+      "rows": 2,
+      "sha256": "2d9ccabbbdb88eecf5ac1b4b999d9f55157c944ae47e0cfa2f9a68afed2b05ae"
+    },
+    "email_schema_migrations": {
+      "rows": 35,
+      "sha256": "b6128b2733b17ab30fb1cdc1a09c703c2ad258bb4c766155a143787e634b3c98"
+    },
+    "email_training_snapshot_observations": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_training_snapshots": {
+      "rows": 122,
+      "sha256": "bb7a8b99993412cf1f4086cb452e04d942f60d4d3369692f8f54ab9e168a4671"
+    },
+    "email_unsubscribe_claims": {
+      "rows": 1066,
+      "sha256": "6f8f798f44132999698cb9076bd8d61639e56428ecff4536ec1e9eaf51a319b4"
+    },
+    "email_unsubscribe_continuations": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_unsubscribe_effects": {
+      "rows": 1153,
+      "sha256": "7e6666897453a00c8a3eb36ddc11e96660916ae594e8dcea9e0e8ef88753faf5"
+    },
+    "email_unsubscribe_receipts": {
+      "rows": 1066,
+      "sha256": "f932a1d5529ac1f90da17bcc55d6ee92edef80355ae5e447ae5d0fa32165c947"
+    },
+    "email_unsubscribe_steps": {
+      "rows": 812,
+      "sha256": "4438e0f51434ed629de4ac23938b0209705987aa13eb15c7f695c519688cf69d"
+    },
+    "errors": {
+      "rows": 15203,
+      "sha256": "fc83a77f0f182f8863d04d8d389030f42e5ba68a27d4fb8c764f2c93da25a67f"
+    },
+    "external_action_results": {
+      "rows": 281,
+      "sha256": "fc84439e57c4630cb2e93ab7a712cd9e1b05c95b391f585e9c9952db1d89fd92"
+    },
+    "feedback_events": {
+      "rows": 48,
+      "sha256": "45ae3506e5ff707baca11b24d169d8b2e0fd302ec94428654c54bdbf84f435f5"
+    },
+    "feedback_iteration_decision_items": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "feedback_iteration_decisions": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "feedback_processing_batches": {
+      "rows": 3,
+      "sha256": "1792130351c8c5fd97a4457d29aa1334a365202dbc40c00b1dedec76721b5ffb"
+    },
+    "feedback_processing_items": {
+      "rows": 48,
+      "sha256": "d10fd5dbbb7a17267651374f57737f4475468ecb35a44193c5b979ece00051f6"
+    },
+    "feedback_processing_rounds": {
+      "rows": 3,
+      "sha256": "75d36b2f845cbc36666b576c1af41e62001f3c66b2f1a5cf8a40bb97a872e8a8"
+    },
+    "feedback_processing_transitions": {
+      "rows": 5,
+      "sha256": "55560c0ed318346bd643526feecf1cad61d8b5833773665253474062f70eeaf8"
+    },
+    "follow_up_drafts": {
+      "rows": 2477,
+      "sha256": "0439dcdf5ea53bcc4e851edbfbd305171112571be48131d1df1a9a11b14e3ae0"
+    },
+    "follow_up_send_attempts": {
+      "rows": 65,
+      "sha256": "3b3db607d16defa926fc028815ae8d738822e0d4bd58058f21c84c10d6d7c875"
+    },
+    "managed_skill_export_receipts": {
+      "rows": 1920,
+      "sha256": "d751a5e8c6053263d44f9e22bc5ea0d3b40fa6918c993b0c0608aa80d677444d"
+    },
+    "managed_skill_revisions": {
+      "rows": 145,
+      "sha256": "2cdb8b51f833c591c450b4a41013f2e540ea2c1ff988ba95f5a7c0e9561419ed"
+    },
+    "managed_skills": {
+      "rows": 21,
+      "sha256": "1e604b0f1d965b629c94becbb9baed3e124f2acafffd1f1082f003f1dbba633c"
+    },
+    "meeting_alignment_delivery_claims": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "meeting_alignment_jobs": {
+      "rows": 679,
+      "sha256": "879d49d94aa2d23a024daf5b244708466754bad4c1ed0f563578e5e70760d0e9"
+    },
+    "meeting_alignment_runs": {
+      "rows": 2526,
+      "sha256": "1db8751631592cba20cdc1bdf42bd5373197d3de54a702fcf13b8dee77ab662e"
+    },
+    "meeting_memory_write_events": {
+      "rows": 536,
+      "sha256": "37a25acb6b17146b048535398013db3d6a8b1537565915a0e17fe94a202bd4ef"
+    },
+    "memory_write_events": {
+      "rows": 476,
+      "sha256": "fab4b87164833e2e52790b6a0f29050a7b3c20c775ed53783200187358c3580d"
+    },
+    "native_reply_dispatches": {
+      "rows": 46,
+      "sha256": "4d693c1ede6b07ad85e31bd398db97a0f4c73afd880508d92810518f760bdbe3"
+    },
+    "oa_notification_events": {
+      "rows": 11,
+      "sha256": "9951eaef4ded25975746e0e54352939a7883c4fced7edb53075556b35125327a"
+    },
+    "okr_review_items": {
+      "rows": 413,
+      "sha256": "2dfb7a80eb09d376a528d82398b8833b56e460325192cd3d86a29d23c2f2f4af"
+    },
+    "okr_review_requests": {
+      "rows": 20,
+      "sha256": "8790e0c2121e4347a0136e64f936b5b26b0ec7c208fc146d41767227d3ebe354"
+    },
+    "okr_review_runs": {
+      "rows": 22,
+      "sha256": "47c44a30f80657f765361c9fb64c9c11fcf17d479bb745438f03de8c588e578b"
+    },
+    "org_cache_metadata": {
+      "rows": 2,
+      "sha256": "a343db2a47b014cfd685f97f50aedd82e46465e2b1e7fe3d60e89da8ecbefb92"
+    },
+    "org_user_profiles": {
+      "rows": 74,
+      "sha256": "f14311159f5104d5648a4952099f91f66d1c15d615c39ff67ab0b9fee1105f7c"
+    },
+    "outbound_postfix_receipts": {
+      "rows": 543,
+      "sha256": "d5536eb2e87eef9f388d2bf982cc1011ed19a43ee970d0e7451a72b1ac2ba3a7"
+    },
+    "outbound_postfixes": {
+      "rows": 953,
+      "sha256": "1bede70ea52ed81e49514569b6f4da401e9c50baf0339f65a74b38c4b44240bb"
+    },
+    "reply_attempts": {
+      "rows": 14666,
+      "sha256": "2ebde2c7ec6141c7ecd2cc02df6ea3ccc1e17ef8c8fd8059cebde535b3fde3ae"
+    },
+    "reply_task_inputs": {
+      "rows": 7351,
+      "sha256": "987bcf387663698b264eb9cd58134ee9bb0e4995322afa1638370cc1e4b0334f"
+    },
+    "reply_tasks": {
+      "rows": 7252,
+      "sha256": "6123900cea33faad33f3063a44be81f8f597679f73cda4de6828aacddca06980"
+    },
+    "review_candidates": {
+      "rows": 299,
+      "sha256": "b5dcfcb91072c2f32da8bc9f119cd0ba19abbc65542fc2a49a6fdcfbb071dad9"
+    },
+    "runtime_feedback_iteration_capabilities": {
+      "rows": 18,
+      "sha256": "6a61e87fb03465c7e4f127b61e2ded88af35385a3ef3e234b2e96f9aa369edc9"
+    },
+    "runtime_route_pauses": {
+      "rows": 2,
+      "sha256": "06ac9a22a716aad8e6f8240ba58c94e465c924ff31a9d3b212c87417dfde971f"
+    },
+    "runtime_skill_bindings": {
+      "rows": 227,
+      "sha256": "36f215e33e3c8642803af5fcfa6a80157b85dcce3fcac4fd538ed1a8af2b27a8"
+    },
+    "runtime_skill_configs": {
+      "rows": 18,
+      "sha256": "bd012e977e715493a50f1b6abdee56182e0c056c5ae583a51108bb29dd3767f8"
+    },
+    "runtime_skill_load_receipts": {
+      "rows": 3880,
+      "sha256": "ddff4c5b24e832376409bfd3efd65f04f575bb8a6659c2c7f0197f57562b694f"
+    },
+    "scheduled_task_config_versions": {
+      "rows": 67,
+      "sha256": "8826eb66f94c84d4a9d0e8f1a33d67ab47e32718a8229c38e2b61ed9c71d4dc2"
+    },
+    "scheduled_task_runs": {
+      "rows": 151056,
+      "sha256": "dac3bbf1a186c7a002ce8f1a7911d1720596fd3880a695ecc68eb7f35e2ed3c6"
+    },
+    "scheduled_task_skill_refs": {
+      "rows": 34,
+      "sha256": "13375d71093eef4f2df01e0f576aeb4965a016124e77ee17a41b39ae87f5ad94"
+    },
+    "scheduled_tasks": {
+      "rows": 15,
+      "sha256": "93712e4b2cb0c98fbe5ee4ad79dbdbb21d63a492a1487f15d61898214b4c4a5b"
+    },
+    "seen_messages": {
+      "rows": 7034,
+      "sha256": "c0becc9a0f501c55a8c8ff569137e3b32217ba48fd8d53a537cba8bc6e2a4d4d"
+    },
+    "sent_replies": {
+      "rows": 2291,
+      "sha256": "95acf66c8069251c52a100ceea3bbb74c535395d167100499ebc4555738720aa"
+    },
+    "sent_reply_observers": {
+      "rows": 270,
+      "sha256": "423270320e0b235c2c4fc9988f4c8ed915cb3ccca8f4702e67f0c0cfe7022aee"
+    },
+    "service_bugfix_candidates": {
+      "rows": 3,
+      "sha256": "9751d7b1a9d890d1ae02127c85d883c9a500c6857ce7af4b4f718445f827326e"
+    },
+    "service_state": {
+      "rows": 215,
+      "sha256": "dbfbba6694eacbb12d6a06996a740667e2d37d50f4ab4db8df433d4ededa8f11"
+    },
+    "setup_wizard_events": {
+      "rows": 22,
+      "sha256": "4a64febebf1f11faf9f6f3ef317f431e648e64a74ae9221e698ca89161add324"
+    },
+    "setup_wizard_steps": {
+      "rows": 12,
+      "sha256": "d109d324ef41acd39f9c97d2f41f1d6b05efc35f25f296f88b4ffa994474d76f"
+    },
+    "task_agent_runs": {
+      "rows": 10714,
+      "sha256": "25414d75d63d9aca3509d2333e72ec67e62d0f0d9bdde57240acbc7069e11fdb"
+    },
+    "task_memory_write_events": {
+      "rows": 329,
+      "sha256": "5bee1287fc6e0a7ccf8d658f2d161801fdff862c6a7e81c97d3377b29506855d"
+    },
+    "task_todo_sync_outbox": {
+      "rows": 242,
+      "sha256": "d400a547ece042f82d146ff4211d2d08074851ba4018e422082f33e008124117"
+    },
+    "todo_evidence_candidates": {
+      "rows": 3,
+      "sha256": "1b8d6bd42374b10325cdb2e10176d3c6aff0a7bfc9590e8bbb39ed80c1d14635"
+    },
+    "wechat_deliveries": {
+      "rows": 130,
+      "sha256": "0f8495c88003fec2d05a0f4e5d1d90f022f6e13dd48c9947e94dc782fa13fad3"
+    },
+    "wechat_memory_candidates": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "wechat_memory_import_jobs": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "wechat_read_state": {
+      "rows": 1,
+      "sha256": "730579c22618870c1eb4b74021ba158e653fdecda610377c10d5cdbe5bd116bb"
+    },
+    "wechat_reply_scopes": {
+      "rows": 4,
+      "sha256": "4d4bb7c8eae2ee26db415e2eee056ad85e0e8dafbefccc9dbf7627b70f543f86"
+    },
+    "weekly_okr_analysis_jobs": {
+      "rows": 169,
+      "sha256": "89dc49bd492caf4a5ee57bb0e14e295b23f8c73b2a98c663396676645505b693"
+    },
+    "work_projects": {
+      "rows": 975,
+      "sha256": "abad7ce7504452c61d26b7bbb8ec3dd8348a974284f74a16082ddd4035d60b87"
+    },
+    "work_summary_inputs": {
+      "rows": 9080,
+      "sha256": "03692e3650d4d9de9a9413006568f1b33a4a2ef5e5b2b9f6f2e84ad4e39c6073"
+    },
+    "work_todo_dingtalk_links": {
+      "rows": 875,
+      "sha256": "9186787cbb8ae47198f1df92144403253228487b8626d1e11b20927ff08712d4"
+    },
+    "work_todos": {
+      "rows": 3327,
+      "sha256": "0ce024c17d38d6a1d9ac57a36ca1d487e75a52e90e39f53f7399bdde38751d49"
+    },
+    "work_updates": {
+      "rows": 5468,
+      "sha256": "8f33b65657bd2f4f8e224e70736a9c66e355d19983873a371da067ec80667b14"
+    },
+    "workbench_artifacts": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "workbench_attachments": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "workbench_confirmations": {
+      "rows": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "workbench_events": {
+      "rows": 810,
+      "sha256": "3fd22e56dd1e68dc372dc621e7d29fb27527bfaf9f91772fb366b4fc9e5ae3f8"
+    },
+    "workbench_tasks": {
+      "rows": 20,
+      "sha256": "076a2b0c49ccb74faa7f166d02f94d28e5101a97c5db6e5b6e9cc33a914d4338"
+    },
+    "workbench_turns": {
+      "rows": 37,
+      "sha256": "d30bab3bd3b92e02cad0349534b8d93270cad7ae498085ffd82018ba07a8e1b4"
+    },
+    "sqlite_sequence": {
+      "rows": [
+        [
+          "agent_effect_intents",
+          560
+        ],
+        [
+          "agent_execution_receipts",
+          115
+        ],
+        [
+          "agent_run_events",
+          152696
+        ],
+        [
+          "agent_run_state_events",
+          1151
+        ],
+        [
+          "agent_runs",
+          25732
+        ],
+        [
+          "agent_runtime_attempts",
+          22707
+        ],
+        [
+          "business_anchors",
+          50
+        ],
+        [
+          "business_attention_events",
+          9
+        ],
+        [
+          "business_attention_items",
+          7
+        ],
+        [
+          "business_project_candidates",
+          10
+        ],
+        [
+          "business_project_context_revisions",
+          5
+        ],
+        [
+          "business_projects",
+          50
+        ],
+        [
+          "business_source_documents",
+          161
+        ],
+        [
+          "business_task_anchor_links",
+          87
+        ],
+        [
+          "business_task_events",
+          785
+        ],
+        [
+          "business_task_signals",
+          733
+        ],
+        [
+          "business_tasks",
+          510
+        ],
+        [
+          "business_work_clusters",
+          16
+        ],
+        [
+          "codex_session_search_index",
+          662
+        ],
+        [
+          "email_action_attempts",
+          12045
+        ],
+        [
+          "email_classifier_runtime_samples",
+          5180
+        ],
+        [
+          "email_messages",
+          8484
+        ],
+        [
+          "email_unsubscribe_steps",
+          812
+        ],
+        [
+          "errors",
+          15246
+        ],
+        [
+          "feedback_processing_rounds",
+          3
+        ],
+        [
+          "feedback_processing_transitions",
+          5
+        ],
+        [
+          "follow_up_drafts",
+          2477
+        ],
+        [
+          "follow_up_send_attempts",
+          65
+        ],
+        [
+          "managed_skill_export_receipts",
+          1920
+        ],
+        [
+          "managed_skill_revisions",
+          145
+        ],
+        [
+          "managed_skills",
+          21
+        ],
+        [
+          "meeting_alignment_jobs",
+          7929
+        ],
+        [
+          "meeting_alignment_runs",
+          2526
+        ],
+        [
+          "meeting_memory_write_events",
+          295502
+        ],
+        [
+          "memory_write_events",
+          1426
+        ],
+        [
+          "oa_notification_events",
+          11
+        ],
+        [
+          "okr_review_items",
+          413
+        ],
+        [
+          "okr_review_requests",
+          24
+        ],
+        [
+          "okr_review_runs",
+          22
+        ],
+        [
+          "reply_attempts",
+          15254
+        ],
+        [
+          "reply_task_inputs",
+          251576
+        ],
+        [
+          "reply_tasks",
+          386353
+        ],
+        [
+          "runtime_skill_configs",
+          18
+        ],
+        [
+          "runtime_skill_load_receipts",
+          3880
+        ],
+        [
+          "scheduled_task_runs",
+          151059
+        ],
+        [
+          "scheduled_tasks",
+          15
+        ],
+        [
+          "sent_replies",
+          2308
+        ],
+        [
+          "service_bugfix_candidates",
+          3
+        ],
+        [
+          "setup_wizard_events",
+          22
+        ],
+        [
+          "task_agent_runs",
+          10714
+        ],
+        [
+          "task_memory_write_events",
+          329
+        ],
+        [
+          "task_todo_sync_outbox",
+          242
+        ],
+        [
+          "todo_evidence_candidates",
+          3
+        ],
+        [
+          "wechat_deliveries",
+          134
+        ],
+        [
+          "weekly_okr_analysis_jobs",
+          718
+        ],
+        [
+          "work_projects",
+          975
+        ],
+        [
+          "work_summary_inputs",
+          27515
+        ],
+        [
+          "work_todo_dingtalk_links",
+          875
+        ],
+        [
+          "work_todos",
+          3327
+        ],
+        [
+          "work_updates",
+          5468
+        ],
+        [
+          "workbench_events",
+          810
+        ]
+      ]
+    }
+  },
+  "elapsed_seconds": 22.09
+}

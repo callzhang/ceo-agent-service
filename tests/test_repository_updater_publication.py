@@ -124,7 +124,7 @@ def test_health_failure_stops_replacement_and_restores_publication_before_old_st
     assert (local / "version").read_text() == "old\n"
 
 
-def test_failed_bootstrap_restores_publication_without_stopping_absent_replacement(
+def test_failed_bootstrap_requests_stop_before_restoring_publication(
     tmp_path: Path,
 ):
     local, operation = _repo(tmp_path)
@@ -147,7 +147,7 @@ def test_failed_bootstrap_restores_publication_without_stopping_absent_replaceme
         updater.execute(operation)
 
     assert events == [
-        "stop", "publish", "start", "rollback_publication", "start", "health",
+        "stop", "publish", "start", "stop", "rollback_publication", "start", "health",
     ]
     assert (local / "version").read_text() == "old\n"
 

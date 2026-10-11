@@ -71,7 +71,7 @@ from app.leak_check import assert_no_credentials, is_sensitive_url_component_nam
 from app.sqlite_schema_lock import schema_initialize_lock
 
 
-EMAIL_SCHEMA_VERSION = 47
+EMAIL_SCHEMA_VERSION = 48
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     {
         "email_model_promotion_configs",
@@ -962,10 +962,6 @@ _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
     "idx_email_training_observations_provider_truth": (
         "email_training_snapshot_observations",
         ("account_id", "stable_message_identity", "observed_at", "snapshot_id"),
-    ),
-    "idx_email_provider_observations_lookup": (
-        "email_provider_observations",
-        ("account_id", "stable_message_identity", "observed_at"),
     ),
     "idx_email_provider_observations_folder": (
         "email_provider_observations",
@@ -3206,6 +3202,9 @@ class EmailStore:
             if latest_version == 46:
                 self._migrate_v46_to_v47(db, replace_version=is_prototype)
                 latest_version = 47
+            if latest_version == 47:
+                self._migrate_v47_to_v48(db, replace_version=is_prototype)
+                latest_version = 48
             self._validate_durable_state(db)
             return True
 
@@ -5390,6 +5389,22 @@ class EmailStore:
                 (self._now(),),
             )
 
+    def _migrate_v47_to_v48(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Use the existing provider primary key for identity lookups."""
+        db.execute("drop index if exists idx_email_provider_observations_lookup")
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=48, applied_at=? "
+                "where version=47", (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (48, ?)",
+                (self._now(),),
+            )
+
     def _migrate_v40_to_v41(
         self, db: sqlite3.Connection, *, replace_version: bool = False
     ) -> None:
@@ -6419,12 +6434,6 @@ class EmailStore:
             create index if not exists idx_email_training_observations_provider_truth
             on email_training_snapshot_observations(
                 account_id, stable_message_identity, observed_at desc, snapshot_id desc
-            )
-            """,
-            """
-            create index if not exists idx_email_provider_observations_lookup
-            on email_provider_observations(
-                account_id, stable_message_identity, observed_at desc
             )
             """,
             """
