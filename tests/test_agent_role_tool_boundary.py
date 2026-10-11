@@ -281,3 +281,22 @@ def test_consumer_resume_uses_global_cwd_and_keeps_session_prompt_positions(tmp_
     assert command[:5] == ["codex", "--cd", str(tmp_path), "exec", "resume"]
     assert command[-2:] == ["session-id", "-"]
     assert "--cd" not in command[5:]
+
+
+@pytest.mark.parametrize("role", ["consumer", "audit"])
+@pytest.mark.parametrize("resume", [False, True])
+def test_codex_role_preserves_long_frozen_task_skill_output(tmp_path, monkeypatch, role, resume):
+    from app.wechat.codex_safety import make_role_agent_command
+
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    (home / "config.toml").write_text("")
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    command = ["codex", "exec", *(["resume", "session-id"] if resume else []), "--json", "-"]
+    make_role_agent_command(command, role=role,
+                            task_workspace=str(tmp_path) if role == "consumer" else None)
+
+    assert command.count("mcp_servers.agent_cli.tools.read_task_skill.output_token_limit=30000") == 1
+    assert not any(value.startswith("tool_output_token_limit=") for value in command)
+    assert command[-1] == "-"
+    assert ("resume" in command) is resume

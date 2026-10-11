@@ -254,6 +254,9 @@ def make_role_agent_command(
         ),
         "-c",
         'mcp_servers.agent_cli.default_tools_approval_mode="approve"',
+        # Preserve long immutable Skill bodies in native model-visible history.
+        "-c",
+        "mcp_servers.agent_cli.tools.read_task_skill.output_token_limit=30000",
         "-c",
         'approval_policy="never"',
     ]
