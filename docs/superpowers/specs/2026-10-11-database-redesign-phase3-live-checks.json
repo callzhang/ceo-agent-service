@@ -1,0 +1,109 @@
+{
+  "store_version": "2026-10-11.1",
+  "email_version": 49,
+  "reply_tasks": 7261,
+  "reply_inputs": 7788,
+  "invalid_current_refs": 0,
+  "invalid_claimed_refs": 0,
+  "retired_copied_json_rows": 0,
+  "new_failures": {
+    "reply_tasks": [],
+    "work_summary_inputs": [],
+    "agent_runs": [],
+    "meeting_alignment_jobs": [],
+    "task_agent_runs": []
+  },
+  "queues": {
+    "reply_tasks": {
+      "done": 7138,
+      "failed": 3,
+      "needs_human": 3,
+      "skipped": 117
+    },
+    "work_summary_inputs": {
+      "done": 4678,
+      "skipped": 4402
+    },
+    "agent_runs": {
+      "completed": 6613,
+      "failed": 15002
+    },
+    "meeting_alignment_jobs": {
+      "no_action": 85,
+      "sent": 537,
+      "skipped": 59
+    },
+    "task_agent_runs": {
+      "completed": 8890,
+      "failed": 1824
+    }
+  },
+  "fk": [
+    [
+      "meeting_alignment_runs",
+      2298,
+      "meeting_alignment_jobs",
+      0
+    ]
+  ],
+  "quick_check": "ok",
+  "file_bytes": 414822400,
+  "wal_bytes": 35782232,
+  "page_size": 4096,
+  "page_count": 101275,
+  "freelist_count": 4587,
+  "production_commit": "984168d616764b576a243cfaae158b4c231b4b0f",
+  "api": [
+    {
+      "endpoint": "/healthz",
+      "http_status": 200,
+      "items": 0,
+      "health": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    {
+      "endpoint": "/api/console/status",
+      "http_status": 200,
+      "items": 0,
+      "health": null
+    },
+    {
+      "endpoint": "/api/console/attention",
+      "http_status": 200,
+      "items": 0,
+      "health": null
+    },
+    {
+      "endpoint": "/api/console/history",
+      "http_status": 200,
+      "items": 20,
+      "health": null
+    }
+  ],
+  "pid": 28507,
+  "backup": {
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-11.sqlite3",
+    "files": 1,
+    "complete_stamp": true,
+    "quick_check": "ok",
+    "store_version": "2026-10-10.2",
+    "email_version": 49,
+    "reply_tasks": 7261,
+    "bytes": 414822400
+  },
+  "business_and_receipt_tables": {
+    "baseline_equal": {
+      "external_action_results": 281,
+      "agent_execution_receipts": 115,
+      "review_candidates": 308,
+      "candidate_reviews": 301,
+      "candidate_action_attempts": 76,
+      "sent_replies": 2291,
+      "reply_attempts": 14676,
+      "work_summary_inputs": 9080
+    }
+  },
+  "production_vacuum": false
+}

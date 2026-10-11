@@ -16,6 +16,7 @@ from threading import Barrier, Event, Thread
 import pytest
 
 import app.store as store_module
+from tests.reply_schema_fixtures import restore_legacy_reply_parent
 from app.store import (
     REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
     AgentRole,
@@ -643,14 +644,13 @@ def _seed_runtime_operation_parent(
             action_identity, _, _ = workload_key.removeprefix(
                 "email-unsubscribe-page:"
             ).rpartition(":")
-            db.execute(
-                "insert into reply_tasks (channel, conversation_id, "
-                "conversation_title, single_chat, trigger_message_id, "
-                "trigger_create_time, trigger_sender, trigger_text, "
-                "trigger_message_json, status) values ('email', 'email-thread:1', "
-                "'Email unsubscribe', 0, ?, '', '', '', '{}', 'processing')",
-                (action_identity,),
-            )
+            task, _ = store._ensure_business_reply_task(db, store_module.ReplyTaskSpec(
+                channel="email", conversation_id="email-thread:1",
+                conversation_title="Email unsubscribe", single_chat=False,
+                trigger_message_id=action_identity, trigger_create_time="",
+                trigger_sender="", trigger_text="", trigger_message_json="{}",
+            ))
+            db.execute("update reply_tasks set status='processing', claimed_input_id=current_input_id where id=?", (task.id,))
         elif workload_kind == "email_description_optimization":
             snapshot_id, _, _ = workload_key.removeprefix(
                 "description-optimization:"
@@ -4308,13 +4308,17 @@ def test_slow_sqlite_context_names_caller_without_local_values(tmp_path: Path, m
     assert private_value not in output
 
 
-def test_slow_transaction_names_business_caller_through_wrapper(tmp_path: Path, monkeypatch, capsys):
+def test_slow_transaction_names_business_caller_through_wrapper(tmp_path: Path, capsys):
+    import time
+
     store = AutoReplyStore(tmp_path / "wrapped-context.sqlite3")
-    ticks = iter((0.0, 3.0, 4.0, 5.0))
-    monkeypatch.setattr(store_module.time, "monotonic", lambda: next(ticks))
     with store._immediate_write_transaction() as db:
         db.execute("select 1").fetchone()
-    assert "test_slow_transaction_names_business_caller_through_wrapper" in capsys.readouterr().err
+        time.sleep(1.01)
+    output = capsys.readouterr().err
+    assert "lock_wait_seconds=0.000" in output
+    assert "hold_seconds=1." in output
+    assert "test_slow_transaction_names_business_caller_through_wrapper" in output
 
 
 def test_sqlite_error_diagnostic_names_caller_without_local_values(tmp_path: Path, capsys):
@@ -4932,13 +4936,15 @@ def test_retry_failed_effect_free_email_unsubscribe_tasks_requeues_only_safe_row
             """
         )
         db.execute(
-            "update reply_tasks set status='failed', error=?, trigger_message_json=? where trigger_message_id=?",
+            "update reply_tasks set status='failed', error=? where trigger_message_id=?",
             (
                 "email_unsubscribe_browser_failed: category=operation_failed",
-                json.dumps(payload),
                 action_identity,
             ),
         )
+
+    with store._connect() as db:
+        db.execute("update reply_task_inputs set trigger_message_json=? where trigger_message_id=?", (json.dumps(payload), action_identity))
 
     assert store.retry_failed_effect_free_email_unsubscribe_tasks() == [1]
     task = store.list_reply_tasks(limit=1)[0]
@@ -5077,10 +5083,15 @@ def test_store_channel_identity_migration_preserves_active_execution_generation(
             """
         )
 
+    with pytest.raises(RuntimeError, match="quiet"):
+        AutoReplyStore(db_path)
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("select status,execution_generation from reply_tasks where id=1").fetchone() == ("processing", "gen-active")
+        db.execute("update reply_tasks set status='pending' where id=1")
     store = AutoReplyStore(db_path)
     migrated = store.get_reply_task(1)
     assert migrated is not None
-    assert migrated.status == "processing"
+    assert migrated.status == "pending"
     assert migrated.execution_generation == "gen-active"
 
     AutoReplyStore(db_path)
@@ -7309,6 +7320,7 @@ def test_schema_upgrade_aliases_historical_oa_comment_to_the_known_node(
         oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
     )
     assert old_comment.id != current.id
+    restore_legacy_reply_parent(store)
     with store._connect() as db:
         db.execute(
             "update service_state set value='2026-09-07.2' where key=?",
@@ -7391,6 +7403,7 @@ def test_schema_upgrade_keeps_latest_business_object_remapping(tmp_path: Path) -
         trigger_text="Second input",
     )
     assert first.id < second.id
+    restore_legacy_reply_parent(store)
     with store._connect() as db:
         db.execute(
             "update reply_tasks set business_object_key=? where id=?",
@@ -11215,6 +11228,7 @@ def test_removed_runtime_migrates_every_action_status_with_terminal_semantics(
         "stop_with_error": "failed",
     }
     expected: dict[str, str] = {}
+    restore_legacy_reply_parent(store)
     with store._connect() as db:
         db.executescript(
             """

@@ -668,7 +668,7 @@ def main() -> int:
     parser.add_argument("--db", required=True)
     args = parser.parse_args()
 
-    from app.email_schema_release import prepare_email_schema_release
+    from app.store_schema_release import prepare_database_schema_release
 
     store = ExistingSchemaUpgradeStateStore(Path(args.db))
     operation = load_persisted_operation(store, args.operation_id)
@@ -690,7 +690,7 @@ def main() -> int:
         wait_for_quiet=lambda: wait_until_quiet(Path(args.db)),
         stop=_default_stop,
         restart=_default_start,
-        database_publication=lambda: prepare_email_schema_release(repository_root, Path(args.db)),
+        database_publication=lambda: prepare_database_schema_release(repository_root, Path(args.db)),
         dependency_sync=lambda: build_frontend(repository_root, changed_paths()),
         verification=lambda: verify_imports(repository_root),
         health=lambda: wait_for_health(),

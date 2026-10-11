@@ -24,9 +24,11 @@ def _task_db(path, *, scheduled_consumer: dict[str, object], generation="first")
         db.execute(
             "create table reply_tasks ("
             "id integer primary key, execution_generation text not null, "
-            "trigger_message_json text not null)"
+            "claimed_input_id integer references reply_task_inputs(id))"
         )
-        db.execute("insert into reply_tasks values (7, ?, ?)", (generation, trigger))
+        db.execute("create table reply_task_inputs (id integer primary key, reply_task_id integer not null, trigger_message_json text not null)")
+        db.execute("insert into reply_task_inputs values (13, 7, ?)", (trigger,))
+        db.execute("insert into reply_tasks values (7, ?, 13)", (generation,))
 
 
 def _context(*materials: ServiceCommandSkillMaterial) -> ServiceCommandConsumerContext:
@@ -134,7 +136,7 @@ def test_read_task_skill_fails_for_missing_unknown_ambiguous_or_stale_material(
     with sqlite3.connect(db) as connection:
         empty = _context().to_payload()
         connection.execute(
-            "update reply_tasks set trigger_message_json=? where id=7",
+            "update reply_task_inputs set trigger_message_json=? where reply_task_id=7",
             (json.dumps({"raw_payload": {"scheduled_consumer": empty}}),),
         )
     with pytest.raises(ValueError, match="unavailable"):

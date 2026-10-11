@@ -171,11 +171,34 @@ def seed_agent_run_parent(store: AutoReplyStore, task_id: int = 901) -> int:
             insert into reply_tasks (
                 id, conversation_id, conversation_title, single_chat,
                 trigger_message_id, trigger_create_time, trigger_sender,
-                trigger_text, execution_generation, status
+                execution_generation, input_version, claimed_input_version, status
             ) values (?, ?, 'WeChat', 1, ?, '2026-08-20 10:00:00',
-                      'sender', 'hello', ?, 'processing')
+                      'sender', ?, 1, 1, 'processing')
             """,
             (task_id, f"wechat-{task_id}", f"message-{task_id}", generation),
+        )
+        provenance = store._reply_input_provenance("hello", "{}")
+        cursor = db.execute(
+            """
+            insert into reply_task_inputs (
+                reply_task_id, channel, conversation_id, conversation_title,
+                single_chat, trigger_message_id, trigger_create_time,
+                trigger_sender, trigger_text, trigger_message_json, oa_url,
+                business_object_key, input_revision_key,
+                input_provenance_json, input_compacted
+            )
+            select id, channel, conversation_id, conversation_title,
+                   single_chat, trigger_message_id, trigger_create_time,
+                   trigger_sender, 'hello', '{}', oa_url,
+                   business_object_key, ?, ?, 0
+            from reply_tasks where id=?
+            """,
+            (f"fixture-{task_id}", provenance, task_id),
+        )
+        input_id = int(cursor.lastrowid)
+        db.execute(
+            "update reply_tasks set current_input_id=?, claimed_input_id=? where id=?",
+            (input_id, input_id, task_id),
         )
     claim = store.claim_agent_run(
         task_id,

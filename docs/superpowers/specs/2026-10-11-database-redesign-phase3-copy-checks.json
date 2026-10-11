@@ -1,0 +1,89 @@
+{
+  "source_commit": "b998f225571637f6ec31795a5399e9758b6ff5b0",
+  "original_store_version": "2026-10-10.2",
+  "original_email_version": 49,
+  "forward": {
+    "tables": 150,
+    "unchanged_tables": 146,
+    "changed_tables": [
+      "reply_task_inputs",
+      "reply_tasks",
+      "service_state",
+      "sqlite_sequence"
+    ],
+    "task_api_equal": 7261,
+    "original_inputs_equal": 7366,
+    "new_exact_canonical_inputs": 422,
+    "fk": "baseline-equal",
+    "quick_check": "ok"
+  },
+  "inverse": {
+    "unchanged_tables": 147,
+    "changed_format_tables": [
+      "reply_task_inputs",
+      "reply_tasks",
+      "service_state"
+    ],
+    "all_task_API_equal": 7265,
+    "all_sequence_values_exact": true,
+    "old_source": "b998f225",
+    "receipt_and_business_result": "exact",
+    "compressed_wsi": "byte-exact",
+    "actual_current_and_claimed_distinct": true
+  },
+  "logical_space": {
+    "original_task_payload_provenance_bytes": 6922755,
+    "original_input_payload_provenance_bytes": 7068808,
+    "canonical_input_payload_provenance_bytes_including_422_preserved_snapshots": 4861995,
+    "logical_bytes_removed": 9129568,
+    "canonical_input_rows_for_original_tasks": 7788
+  },
+  "copy_only_vacuum": {
+    "before_copy_vacuum": {
+      "file_bytes": 414822400,
+      "page_size": 4096,
+      "page_count": 101275,
+      "freelist_count": 4608
+    },
+    "after_copy_vacuum": {
+      "file_bytes": 376016896,
+      "page_count": 91801,
+      "freelist_count": 0
+    },
+    "current_input_text_json_provenance_bytes": [
+      17153,
+      722487,
+      4124278
+    ],
+    "copy_only": true
+  },
+  "providers_called": 0,
+  "actual_old_runtime_recovery_and_frozen_skill": "passed",
+  "re_forward_and_repeat_startup": "passed",
+  "codec_reader": {
+    "compressed_failed_input_attention": "decoded accurately",
+    "source_body_hash_and_status": "unchanged",
+    "read_only_projection": true,
+    "providers_called": 0
+  },
+  "codec_recovery": {
+    "synthetic_copy_only": true,
+    "attention_read_unchanged": true,
+    "states": [
+      "failed",
+      "pending",
+      "processing",
+      "pending",
+      "processing"
+    ],
+    "body_sha256_unchanged": true,
+    "body_bytes": 17116,
+    "stored_bytes": 439,
+    "stored_body_unchanged": true,
+    "input_compacted": 0,
+    "decoded_exact": true,
+    "agent_runs": 0,
+    "external_action_results": 0,
+    "quick_check": "ok"
+  }
+}

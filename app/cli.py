@@ -1227,7 +1227,12 @@ def run_agent_cron_dispatcher_loop(
 
     def consume_reply(envelope, guard) -> None:
         nonlocal wechat_consumer
-        task = store.get_reply_task(int(envelope.source_id))
+        task_id = int(envelope.source_id)
+        current = store.get_reply_task(task_id)
+        task = (
+            store.get_reply_task_for_execution(task_id, current.execution_generation)
+            if current is not None else None
+        )
         if task is None or task.status != "processing":
             raise ValueError("reply dispatch source is not claimed")
         if task.channel == "dingtalk":
@@ -5072,7 +5077,7 @@ def main() -> None:
             )
         )
     elif args.command == "repository-updater":
-        from app.email_schema_release import prepare_email_schema_release
+        from app.store_schema_release import prepare_database_schema_release
         from app.repository_updater import (
             ExistingSchemaUpgradeStateStore, RepositoryUpdater,
             _default_start, _default_stop, load_persisted_operation,
@@ -5092,7 +5097,7 @@ def main() -> None:
             restart=_default_start,
             verification=lambda: verify_imports(_repo_root()),
             health=wait_for_health,
-            database_publication=lambda: prepare_email_schema_release(_repo_root(), settings.db_path),
+            database_publication=lambda: prepare_database_schema_release(_repo_root(), settings.db_path),
         ).execute(operation)
         print(json.dumps(result.__dict__, ensure_ascii=False, sort_keys=True))
     elif args.command == "repair-task-projects-plan":

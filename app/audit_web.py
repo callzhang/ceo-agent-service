@@ -1,3 +1,6 @@
+
+from app.store import REPLY_TASK_CURRENT_SQL
+from app.work_summary_payload import decode_work_summary_payload
 import json
 import asyncio
 import ipaddress
@@ -2772,7 +2775,7 @@ def _email_unsubscribe_task_queue_snapshot(
     rows = db.execute(
         f"""
         select lower(coalesce(status, '')) as status, count(*) as count
-        from reply_tasks
+        from ({REPLY_TASK_CURRENT_SQL})
         where {predicate}
         group by lower(coalesce(status, ''))
         order by status
@@ -2784,7 +2787,7 @@ def _email_unsubscribe_task_queue_snapshot(
     latest = db.execute(
         f"""
         select updated_at
-        from reply_tasks
+        from ({REPLY_TASK_CURRENT_SQL})
         where {predicate}
         order by updated_at desc, id desc
         limit 1
@@ -2793,7 +2796,7 @@ def _email_unsubscribe_task_queue_snapshot(
     latest_error = db.execute(
         f"""
         select error
-        from reply_tasks
+        from ({REPLY_TASK_CURRENT_SQL})
         where {predicate}
           and lower(status)='failed'
           and trim(coalesce(error, ''))<>''
@@ -3250,8 +3253,13 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
             "Work item",
             "work_summary_inputs",
             "status",
-            "source_type",
-            "payload_json",
+            "case when lower(source_type)='local_file' then "
+            "coalesce(nullif(json_extract(decode_work_summary_payload(payload_json), '$.source.title'), ''), "
+            "nullif(json_extract(decode_work_summary_payload(payload_json), '$.project_name'), ''), source_type) "
+            "else source_type end",
+            "coalesce(nullif(json_extract(decode_work_summary_payload(payload_json), '$.summary'), ''), "
+            "nullif(json_extract(decode_work_summary_payload(payload_json), '$.title'), ''), "
+            "nullif(json_extract(decode_work_summary_payload(payload_json), '$.project_name'), ''), source_ref)",
             "updated_at",
             "error",
             ("failed",),
@@ -3302,8 +3310,14 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
     rows: list[dict[str, str]] = []
     active_reply_task_triggers: set[tuple[str, str, str]] = set()
     with store._connect() as db:
+        db.create_function(
+            "decode_work_summary_payload",
+            1,
+            decode_work_summary_payload,
+            deterministic=True,
+        )
         if _sqlite_table_exists(db, "reply_tasks"):
-            reply_task_sql = """
+            reply_task_sql = f"""
                 select reply_tasks.id, reply_tasks.channel,
                        reply_tasks.conversation_id, reply_tasks.trigger_message_id,
                        reply_tasks.status,
@@ -3314,13 +3328,13 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                         where current_run.reply_task_id=reply_tasks.id
                           and current_run.execution_generation=reply_tasks.execution_generation
                         order by current_run.id desc limit 1) as current_run_error
-                from reply_tasks
+                from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
                 left join business_object_tasks current_business_object
                   on current_business_object.business_object_key=reply_tasks.business_object_key
                 -- Select IDs through the compact status index before reading
                 -- message payloads; lower(status) alone scans the whole table.
                 where reply_tasks.id in (
-                    select id from reply_tasks where lower(status) = 'failed'
+                    select id from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where lower(status) = 'failed'
                 )
                   and (
                     current_business_object.reply_task_id is null
@@ -3394,11 +3408,10 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 current_generation_filter = (
                     f"and not {external_task_error_sql(error_column)}"
                 )
-            work_source_column = ", source_ref" if table == "work_summary_inputs" else ""
             sql = f"""
                 select id, {status_column} as status, {context_column} as context,
                        {summary_column} as summary, {updated_column} as updated_at,
-                       {error_column} as error {work_source_column}
+                       {error_column} as error
                 from {table}
                 where id in (
                     select id from {table}
@@ -3420,24 +3433,14 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 params += (limit,)
             for row in db.execute(sql, params).fetchall():
                 summary = str(row["summary"] or "")
-                context = str(row["context"] or "")
                 if category == "Work item":
-                    from app.work_summary_payload import decode_work_summary_payload
-
-                    payload = json.loads(decode_work_summary_payload(row["summary"]))
-                    metadata = payload if isinstance(payload, dict) else {}
-                    source = metadata.get("source")
-                    source = source if isinstance(source, dict) else {}
-                    if context.lower() == "local_file":
-                        context = str(source.get("title") or metadata.get("project_name") or context)
-                    summary = str(metadata.get("summary") or metadata.get("title") or metadata.get("project_name") or row["source_ref"])
                     summary = _clean_work_item_attention_summary(summary)
                 rows.append(
                     {
                         "category": category,
                         "id": str(row["id"]),
                         "status": str(row["status"] or ""),
-                        "context": context,
+                        "context": str(row["context"] or ""),
                         "summary": summary,
                         "updated_at": str(row["updated_at"] or ""),
                         "error": str(row["error"] or ""),

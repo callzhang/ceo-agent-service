@@ -29,6 +29,13 @@ def _scan_now(now: datetime | None = None) -> datetime:
     return now if now is not None else datetime.now().astimezone()
 
 
+def _task_scheduled_consumer_payload(context: Any) -> dict[str, object]:
+    """Serialize the scheduled context needed by Task without frozen Skill bodies."""
+    payload = context.to_payload().copy()
+    payload.pop("skill_materials", None)
+    return payload
+
+
 def _read_text_excerpt_and_digest(path: Path, limit: int = 6000) -> tuple[str, str]:
     try:
         raw = path.read_bytes()
@@ -256,7 +263,9 @@ def minutes_work_item(
                 "source_conversation_title": title,
             },
             "scheduled_consumer": (
-                scheduled_consumer.to_payload() if scheduled_consumer else {}
+                _task_scheduled_consumer_payload(scheduled_consumer)
+                if scheduled_consumer
+                else {}
             ),
         }
     )
@@ -711,7 +720,7 @@ def scan_pending_oa_approvals(
                 **(
                     {
                         SERVICE_COMMAND_CONSUMER_CONTEXT_KEY: (
-                            scheduled_consumer.to_payload()
+                            _task_scheduled_consumer_payload(scheduled_consumer)
                         )
                     }
                     if scheduled_consumer

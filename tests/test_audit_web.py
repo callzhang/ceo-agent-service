@@ -12320,3 +12320,58 @@ def test_failed_reply_attention_does_not_use_stale_or_malformed_run(tmp_path, ol
     [row] = [r for r in audit_web_module._queue_attention_rows(store) if r['category']=='Reply task']
     assert row['error'] == 'task_fallback_error'
     assert row.get('error_code', '') in ('','task_fallback_error')
+
+
+@pytest.mark.parametrize("stored_as_blob", [False, True])
+def test_work_item_attention_codec_preserves_failed_filter_order_limit_and_stored_rows(
+    tmp_path, stored_as_blob
+):
+    from app.work_summary_payload import encode_work_summary_payload
+
+    store = AutoReplyStore(tmp_path / "attention-codec.sqlite3")
+    ids = []
+    for index, status in enumerate(("failed", "pending", "failed")):
+        ref = f"/fixture/source-{index}.md"
+        payload = json.dumps(
+            {
+                "source": {
+                    "type": "local_file",
+                    "ref": ref,
+                    "title": f"source-{index}.md",
+                },
+                "context": {"source_conversation_kind": "group"},
+                "summary": f"<!-- row_key: {index} -->\n# AI Summary\nFailed source {index}\n"
+                + "Detail " * 200,
+            }
+        )
+        encoded = encode_work_summary_payload(payload)
+        assert isinstance(encoded, bytes)
+        input_id = store.enqueue_work_summary_input("local_file", ref, payload)
+        ids.append(input_id)
+        with store._connect() as db:
+            db.execute(
+                "update work_summary_inputs set payload_json=?,status=?,updated_at=? where id=?",
+                (
+                    encoded if stored_as_blob else payload,
+                    status,
+                    f"2026-10-11 03:0{index}:00",
+                    input_id,
+                ),
+            )
+    with store._connect() as db:
+        before = [
+            tuple(row)
+            for row in db.execute("select * from work_summary_inputs order by id")
+        ]
+    rows = audit_web_module._queue_attention_rows(store, limit=1)
+    assert len(rows) == 1
+    assert rows[0]["id"] == str(ids[-1])
+    assert rows[0]["status"] == "failed"
+    assert rows[0]["context"] == "source-2.md"
+    assert rows[0]["summary"].startswith("Failed source 2 Detail")
+    assert "row_key" not in rows[0]["summary"]
+    with store._connect() as db:
+        assert [
+            tuple(row)
+            for row in db.execute("select * from work_summary_inputs order by id")
+        ] == before

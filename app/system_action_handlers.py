@@ -17,7 +17,9 @@ class DingTalkMessageHandler:
         self.sender = sender or ServiceMessageSender(store=store, dingtalk=dws)
 
     def _prepared(self, action: ProposedAction, candidate: dict[str, object]):
-        task = self.store.get_reply_task(candidate["task_id"])
+        task = self.store.get_reply_task_for_execution(
+            candidate["task_id"], candidate["execution_generation"]
+        )
         if task is None:
             return None, None
         delivery_key = agent_message_delivery_key(

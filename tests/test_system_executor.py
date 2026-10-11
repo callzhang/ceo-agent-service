@@ -557,7 +557,7 @@ def test_native_dingtalk_handler_requires_exact_prepared_body_and_receipt():
         def __init__(self):
             self.delivery_keys = []
 
-        def get_reply_task(self, task_id):
+        def get_reply_task_for_execution(self, task_id, generation):
             return type("Task", (), {"id": task_id, "business_object_key": "object:1", "execution_generation": "gen-1"})()
 
         def get_outbound_postfix(self, channel, delivery_key):
@@ -586,7 +586,7 @@ def test_native_dingtalk_handler_requires_exact_prepared_body_and_receipt():
         "operation": "send_message", "target": {"conversation_id": "cid"},
         "payload": {"content": "Prepared text"},
     }]).proposal.actions[0]
-    context = {"task_id": 1, "proposal_revision": 0}
+    context = {"task_id": 1, "proposal_revision": 0, "execution_generation": "gen-1"}
     assert handler.dispatch(action, action_key="key", candidate=context).status == "verified"
     assert sender.calls[0][0:2] == ("Prepared text", "cid")
     bad = action.model_copy(update={"payload": {"content": "Unreviewed text"}})

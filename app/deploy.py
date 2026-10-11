@@ -28,7 +28,7 @@ from uuid import uuid4
 from app.config import PRODUCTION_CHECKOUT_MESSAGE, read_env_file, service_root, worker_db_path
 from app.consumer_system_release import prepare_consumer_system_contracts
 from app.prompt_template_release import prepare_prompt_templates
-from app.email_schema_release import prepare_email_schema_release
+from app.store_schema_release import prepare_database_schema_release
 from app.deploy_maintenance import check_maintenance, prepare_maintenance, stop_for_maintenance
 from app.repository_updater import (
     ExistingSchemaUpgradeStateStore,
@@ -289,7 +289,7 @@ def deploy(
         verification=lambda: verify_imports(root),
         health=wait_for_health,
         publication=publication,
-        database_publication=lambda: prepare_email_schema_release(root, database_path),
+        database_publication=lambda: prepare_database_schema_release(root, database_path),
         pre_checkout_cleanup=restore_interrupted_target_docs if target_doc_changes else None,
     )
     # Unlocked for exactly the checkout + build + verify window; the source

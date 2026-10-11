@@ -90,19 +90,26 @@ def _insert_needs_human_projection(store, *, result, status="needs_human"):
     return attempt_id
 
 
-def _insert_reply_task(
-    store, *, channel="dingtalk", status="pending", updated_at="2026-08-07 00:59:00"
-):
+def _insert_canonical_reply_task(db, **overrides):
+    fields = dict(channel="dingtalk", conversation_id="conversation",
+                  conversation_title="group", single_chat=0,
+                  trigger_message_id="message", trigger_create_time="2026-08-07 00:00:00",
+                  trigger_sender="sender", trigger_text="trigger", trigger_message_json="{}",
+                  business_object_key="", oa_url="")
+    fields.update(overrides)
+    parent = {key: value for key, value in fields.items()
+              if key not in {"trigger_text", "trigger_message_json"}}
+    cursor = db.execute(f"insert into reply_tasks ({','.join(parent)}) values ({','.join('?' for _ in parent)})", tuple(parent.values()))
+    task_id = cursor.lastrowid
+    snapshot = {key: fields[key] for key in ("channel", "conversation_id", "conversation_title", "single_chat", "trigger_message_id", "trigger_create_time", "trigger_sender", "trigger_text", "trigger_message_json", "business_object_key", "oa_url")}
+    input_id = db.execute(f"insert into reply_task_inputs (reply_task_id,{','.join(snapshot)}) values ({','.join('?' for _ in range(len(snapshot)+1))})", (task_id, *snapshot.values())).lastrowid
+    db.execute("update reply_tasks set current_input_id=? where id=?", (input_id, task_id))
+    return cursor
+
+
+def _insert_reply_task(store, *, channel="dingtalk", status="pending", updated_at="2026-08-07 00:59:00"):
     with store._connect() as db:
-        db.execute(
-            """insert into reply_tasks (
-                channel, conversation_id, conversation_title, single_chat,
-                trigger_message_id, trigger_create_time, trigger_sender,
-                trigger_text, status, updated_at
-            ) values (?, 'conversation', 'group', 0, 'message',
-                '2026-08-07 00:00:00', 'sender', 'trigger', ?, ?)""",
-            (channel, status, updated_at),
-        )
+        _insert_canonical_reply_task(db, channel=channel, status=status, updated_at=updated_at)
 
 
 def test_quality_gate_fails_closed_when_a_required_source_is_missing(tmp_path):
@@ -227,8 +234,8 @@ def test_required_live_channels_skips_unused_lark_but_includes_referenced_lark(
 
     with store._connect() as db:
         db.execute(
-            """update reply_tasks set trigger_message_json=?
-               where conversation_id='conversation'""",
+            """update reply_task_inputs set trigger_message_json=?
+               where id=(select current_input_id from reply_tasks where conversation_id='conversation')""",
             ('{"link":"https://example.larksuite.com/docx/demo"}',),
         )
 
@@ -303,15 +310,7 @@ def test_quality_gate_does_not_count_email_tasks_as_generic_reply_backlog(tmp_pa
 def test_quality_gate_accepts_explicit_terminal_failures(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
-        db.execute(
-            """insert into reply_tasks (
-                channel, conversation_id, conversation_title, single_chat,
-                trigger_message_id, trigger_create_time, trigger_sender,
-                trigger_text, status, error
-            ) values ('dingtalk', 'conversation', 'group', 0, 'message',
-                '2026-08-07 00:00:00', 'sender', 'trigger', 'failed',
-                'image_dependency_unavailable')"""
-        )
+        _insert_canonical_reply_task(db, channel='dingtalk', conversation_id='conversation', conversation_title='group', single_chat=0, trigger_message_id='message', trigger_create_time='2026-08-07 00:00:00', trigger_sender='sender', trigger_text='trigger', status='failed', error='image_dependency_unavailable')
         db.execute(
             """insert into meeting_alignment_jobs
                (meeting_id, status, error)
@@ -612,16 +611,7 @@ def test_quality_gate_deduplicates_historical_attempts_after_a_later_success(tmp
 def test_quality_gate_ignores_dry_run_when_done_task_has_no_unknown_effect(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
-        db.execute(
-            """insert into reply_tasks (
-                channel, conversation_id, conversation_title, single_chat,
-                trigger_message_id, trigger_create_time, trigger_sender,
-                trigger_text, status,
-                updated_at
-            ) values ('dingtalk', 'conversation', 'group', 0, 'message',
-                '2026-08-07 00:00:00', 'sender', 'trigger', 'done',
-                '2026-08-07 00:59:00')"""
-        )
+        _insert_canonical_reply_task(db, channel='dingtalk', conversation_id='conversation', conversation_title='group', single_chat=0, trigger_message_id='message', trigger_create_time='2026-08-07 00:00:00', trigger_sender='sender', trigger_text='trigger', status='done', updated_at='2026-08-07 00:59:00')
         db.execute(
             """insert into reply_attempts (
                 conversation_id, conversation_title, trigger_message_id,
@@ -959,24 +949,8 @@ def test_quality_gate_excludes_needs_human_from_historical_business_object_task(
 ):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
-        historical_task = db.execute(
-            """insert into reply_tasks (
-                channel, conversation_id, conversation_title, single_chat,
-                trigger_message_id, trigger_create_time, trigger_sender,
-                trigger_text, business_object_key, status
-            ) values ('dingtalk', 'work-notice', '工作通知', 0, 'old-message',
-                '2026-08-07 00:00:00', 'OA审批', '旧审批通知', 'oa:process:task',
-                'done')"""
-        )
-        current_task = db.execute(
-            """insert into reply_tasks (
-                channel, conversation_id, conversation_title, single_chat,
-                trigger_message_id, trigger_create_time, trigger_sender,
-                trigger_text, business_object_key, status
-            ) values ('dingtalk', 'oa-pending-scan', '审批待办', 0, 'current-message',
-                '2026-08-07 00:30:00', 'OA审批', '当前审批任务', 'oa:process:task',
-                'done')"""
-        )
+        historical_task = _insert_canonical_reply_task(db, channel='dingtalk', conversation_id='work-notice', conversation_title='工作通知', single_chat=0, trigger_message_id='old-message', trigger_create_time='2026-08-07 00:00:00', trigger_sender='OA审批', trigger_text='旧审批通知', business_object_key='oa:process:task', status='done')
+        current_task = _insert_canonical_reply_task(db, channel='dingtalk', conversation_id='oa-pending-scan', conversation_title='审批待办', single_chat=0, trigger_message_id='current-message', trigger_create_time='2026-08-07 00:30:00', trigger_sender='OA审批', trigger_text='当前审批任务', business_object_key='oa:process:task', status='done')
         db.execute(
             """insert into business_object_tasks (business_object_key, reply_task_id)
             values ('oa:process:task', ?)""",
@@ -1122,14 +1096,7 @@ def test_quality_gate_counts_only_latest_oa_failure_per_approval_instance(tmp_pa
 def test_quality_gate_treats_user_rejected_wechat_delivery_as_terminal(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
-        task_id = db.execute(
-            """insert into reply_tasks (
-                channel, conversation_id, conversation_title, single_chat,
-                trigger_message_id, trigger_create_time, trigger_sender,
-                trigger_text, status
-            ) values ('wechat', 'conversation', 'chat', 1, 'message',
-                '2026-08-07 00:00:00', 'sender', 'trigger', 'done')"""
-        ).lastrowid
+        task_id = _insert_canonical_reply_task(db, channel='wechat', conversation_id='conversation', conversation_title='chat', single_chat=1, trigger_message_id='message', trigger_create_time='2026-08-07 00:00:00', trigger_sender='sender', trigger_text='trigger', status='done').lastrowid
     delivery_id = store.create_wechat_delivery(
         reply_task_id=task_id,
         account_id="account",
@@ -1212,14 +1179,7 @@ def test_quality_required_channels_skips_inactive_optional_channel(tmp_path):
 
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
-        db.execute(
-            """insert into reply_tasks (
-                channel, conversation_id, conversation_title, single_chat,
-                trigger_message_id, trigger_create_time, trigger_sender,
-                trigger_text, status
-            ) values ('lark', 'lark-group', 'Lark', 0, 'msg-lark',
-                '2026-08-12 10:00:00', 'Derek', 'check', 'pending')"""
-        )
+        _insert_canonical_reply_task(db, channel='lark', conversation_id='lark-group', conversation_title='Lark', single_chat=0, trigger_message_id='msg-lark', trigger_create_time='2026-08-12 10:00:00', trigger_sender='Derek', trigger_text='check', status='pending')
 
     assert _quality_required_channels(store.path) == {"dingtalk", "lark"}
 
@@ -1349,11 +1309,7 @@ def test_missing_native_delivery_evidence_is_reported_as_coverage_not_success(tm
 
     store = AutoReplyStore(tmp_path / "delivery.sqlite3")
     with store._connect() as db:
-        db.execute(
-            "insert into reply_tasks (channel, single_chat, conversation_id, conversation_title, "
-            "trigger_message_id, trigger_create_time, trigger_sender, trigger_text) "
-            "values ('dingtalk', 0, 'c', 'Group', 'm', '2026-10-10', 'Derek', 'reply')"
-        )
+        _insert_canonical_reply_task(db, channel='dingtalk', single_chat=0, conversation_id='c', conversation_title='Group', trigger_message_id='m', trigger_create_time='2026-10-10', trigger_sender='Derek', trigger_text='reply')
         task_id = db.execute("select last_insert_rowid()").fetchone()[0]
         db.execute(
             "insert into agent_runs (reply_task_id, execution_generation, role, status, completed_at) "

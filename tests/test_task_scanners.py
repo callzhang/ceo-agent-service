@@ -5,6 +5,7 @@ from app.agent_cron.commands import (
     SERVICE_COMMAND_OPTIONS,
     ServiceCommandConsumerContext,
     ServiceCommandRegistry,
+    ServiceCommandSkillMaterial,
 )
 from app.dws_client import DwsOaApprovalCandidate
 from app.skill_features import FeatureRegistry
@@ -70,6 +71,11 @@ def test_scan_meeting_todos_carries_scheduled_consumer_context(tmp_path):
         prompt="使用 $ceo-work-tracking 处理真实工作来源。",
         skill_names=("ceo-work-tracking",),
         skill_protocol="# Targeted Work Tracking Skill",
+        skill_materials=(
+            ServiceCommandSkillMaterial(
+                name="ceo-work-tracking", content="large frozen material " * 1000
+            ),
+        ),
     )
     implementations = {option.name: lambda: "unused" for option in SERVICE_COMMAND_OPTIONS}
     dws = FakeDws()
@@ -84,7 +90,10 @@ def test_scan_meeting_todos_carries_scheduled_consumer_context(tmp_path):
 
     [claimed] = store.claim_work_summary_inputs(limit=10)
     payload = json.loads(claimed.payload_json)
-    assert payload["scheduled_consumer"] == context.to_payload()
+    expected_context = context.to_payload()
+    expected_context.pop("skill_materials")
+    assert payload["scheduled_consumer"] == expected_context
+    assert context.skill_materials[0].content == "large frozen material " * 1000
     assert dws.list_limits == [50]
 
 
@@ -618,6 +627,14 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
         ),
         skill_names=("dingtalk-oa-approval", "stardust-oa-finance-review"),
         skill_protocol="# OA review skills",
+        skill_materials=(
+            ServiceCommandSkillMaterial(
+                name="dingtalk-oa-approval", content="approval material"
+            ),
+            ServiceCommandSkillMaterial(
+                name="stardust-oa-finance-review", content="finance material"
+            ),
+        ),
     )
     implementations = {
         option.name: (lambda: "unused") for option in SERVICE_COMMAND_OPTIONS
@@ -667,7 +684,9 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
     assert "procInstId=proc-1&taskId=102648910080" in task.oa_url
     assert '"source":"oa_pending_scan"' in task.trigger_message_json
     payload = json.loads(task.trigger_message_json)
-    assert payload["raw_payload"]["scheduled_consumer"] == context.to_payload()
+    expected_context = context.to_payload()
+    expected_context.pop("skill_materials")
+    assert payload["raw_payload"]["scheduled_consumer"] == expected_context
 
 
 def test_scan_pending_oa_approvals_closes_completed_oa_needs_human_attempt(tmp_path):

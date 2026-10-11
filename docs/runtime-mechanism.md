@@ -794,6 +794,20 @@ business_object 1 ── 1 current reply_attempt
 
 `reply_task_inputs` 的输入身份、版本和来源摘要保留；准确正文只供未结算的执行和恢复使用。符合既有终态结算条件后，当前任务、其输入版本及 Attempt 的输入正文改为来源引用与准确摘要，业务结果与执行回执不变。原生过程和准确原文缺失时明确不可用，不由其他结果拼造历史输入。
 
+Store schema `2026-10-11.1` 中，`reply_tasks.current_input_id` 与
+`claimed_input_id` 直接外键引用所属输入行。父表不保存正文、provenance 或精简标记副本；
+当前展示读取 current，当次队列领取后的执行和冻结 Skill 按代际校验读取 claimed 快照。
+再次领取仍捕获当时 current 输入，沿用原有恢复及版本水位行为。
+输入变化与指针、版本水位在原事务内更新；`input_version`／`claimed_input_version`
+仍用于原有并发判断。终态输入正文及重复精简 JSON 为空，旧 API 表示按 provenance 生成。
+已结算的真实历史身份不删除，无法证明的旧领取输入不推测。迁移必须在正式 quiet 停止窗口执行。
+配对逆迁恢复实际原表声明、索引、序列和旧正文投影，保留迁移后新增业务结果与回执；
+逆迁失败时沿用既有发布机制保持 replacement 停止。
+
+新建 Task 工作汇总输入只移除 Task Agent 不注入的 `scheduled_consumer.skill_materials`。
+共享 Consumer 上下文、prompt、Skill 名称、协议、来源及既有输入保持原样；
+WSI 原有无损压缩和终态清理继续执行，应用边界仍返回准确 JSON 字符串。
+
 OA 的稳定身份是 `process_instance_id + task_id`。同一 OA 从 webhook、pending scan、
 用户人工反馈进入时追加 input 并复用同一 task、同一兼容 Consumer session，在当前 run
 结束后提高 generation 并重新排队同一 task。服务修复运行时、路由或本地执行环境时，虽仍
@@ -1391,7 +1405,7 @@ DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。adap
 已移除。以 Agent 形式创建的旧 `dingtalk-message-check-v1`、`wechat-message-check-v1`、会议、OA、工作来源和
 `ceo-minutes-sync-daily-v1` 在启动时原地转换为命令形式（保留名称、Cron、时区和启用状态，已删除的不动）。
 其中“会议行动项”命令还会在同一轮只读发现管理周报、项目管理部周报和部门产研周报；报告按文档内容摘要建立带
-文档 ID、链接、统计周期和内容 digest 的 `work_summary` 输入，重复扫描同一 digest 不重复入队。SQLite 对较大的输入 JSON 保存带版本标记的无损压缩 BLOB，Task Agent、语义导入和项目修复在读取边界解码；小 payload 保持普通 JSON。`python -m app.work_summary_payload --db <database>` 只对仍需保留正文的非终态行按小批事务压缩，可续跑；done/skipped 行继续使用终态精简，不删数据或自动 VACUUM。
+文档 ID、链接、统计周期和内容 digest 的 `work_summary` 输入，重复扫描同一 digest 不重复入队。SQLite 对较大的输入 JSON 保存带版本标记的无损压缩 BLOB，Task Agent、语义导入、项目修复和 Attention JSON 投影在读取边界解码；副本回放按实际原始 TEXT/BLOB 做 CAS、按既有 codec 写入，准确来源／状态／正文指纹及 lease 校验不变；小 payload 保持普通 JSON。`python -m app.work_summary_payload --db <database>` 只对仍需保留正文的非终态行按小批事务压缩，可续跑；done/skipped 行继续使用终态精简，不删数据或自动 VACUUM。
 新安装创建的全部默认任务都是暂停状态，用户配好连接器后自行启用；seed 从不改变已有任务的启用状态
 （Derek 2026-09-23）。AI 听记同步不再需要 Skill 判断：分页读取
 摘要与逐字稿、写入本地归档、维护内容游标都由 `app/minutes_sync.py` 确定性完成，时长不足五分钟的
@@ -1888,6 +1902,11 @@ content. Correlate the caller with the operating system's WAL-lock owner and
 the affected run before changing transaction boundaries.
 Shared Store diagnostics retain up to eight caller frames so a context-manager
 wrapper cannot hide the business method that opened the connection.
+Slow AutoReplyStore write transactions additionally report time waiting in
+`BEGIN IMMEDIATE` separately from time holding the acquired transaction.
+Slow direct email-action claims report their read preflight, writer-lock wait,
+locked recheck and claim mutation separately. These measurements identify the
+slow phase; they do not change retry, claim or transaction behavior.
 
 Explicit and offline EmailStore callers perform full durable-row validation
 for email-message metadata, provider locators, recipients, references,

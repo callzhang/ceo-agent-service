@@ -2321,6 +2321,53 @@ def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill(
     assert item.scheduled_consumer == original
 
 
+def test_scheduled_skill_materials_do_not_change_task_prompt_or_mutate_context(
+    monkeypatch,
+):
+    import app.task_agent as task_agent
+
+    skill_path = (
+        Path(__file__).parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md"
+    )
+    monkeypatch.setattr(task_agent, "WORK_TRACKING_SKILL_PATH", skill_path)
+    full_context = {
+        "schema": "scheduled_consumer.v1",
+        "scheduled_task_id": 7,
+        "scheduled_task_run_id": 11,
+        "prompt": "处理已选定的工作流。",
+        "skill_names": ["ceo-work-tracking"],
+        "skill_protocol": "# frozen protocol",
+        "skill_protocol_source": "generated_discovery",
+        "skill_materials": [
+            {"name": "ceo-work-tracking", "content": "frozen body " * 1000}
+        ],
+    }
+    minimal_context = {
+        key: value for key, value in full_context.items() if key != "skill_materials"
+    }
+    full_payload = _work_item().model_dump(mode="json")
+    minimal_payload = _work_item().model_dump(mode="json")
+    full_payload["scheduled_consumer"] = full_context
+    minimal_payload["scheduled_consumer"] = minimal_context
+    full_item = WorkItem.model_validate(full_payload)
+    minimal_item = WorkItem.model_validate(minimal_payload)
+
+    full_prompt = build_task_agent_prompt(
+        full_item, "候选为空。", current_time="2026-10-11T00:00:00+00:00"
+    )
+    minimal_prompt = build_task_agent_prompt(
+        minimal_item, "候选为空。", current_time="2026-10-11T00:00:00+00:00"
+    )
+
+    assert full_prompt.encode("utf-8") == minimal_prompt.encode("utf-8")
+    assert full_item.scheduled_consumer == full_context
+    assert full_context["skill_names"] == ["ceo-work-tracking"]
+    assert full_context["scheduled_task_id"] == 7
+    assert full_context["scheduled_task_run_id"] == 11
+    assert full_context["skill_protocol"] == "# frozen protocol"
+    assert full_context["skill_protocol_source"] == "generated_discovery"
+
+
 def test_task_agent_prompt_does_not_inject_retrieved_business_examples():
     work_item = _work_item(project_name="宝马项目客户 Demo 推进")
     work_item.summary = "宝马项目周末攻坚要准备客户 Demo 原型，之前拆给测试不对。"

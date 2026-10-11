@@ -4745,17 +4745,20 @@ def test_send_attempt_command_refuses_unavailable_original_without_queue(
     if source != "missing":
         enqueue_trigger_task(store)
         if source == "compacted":
+            original = store.get_reply_task_for_message("cid-1", "msg-1")
+            provenance = store._reply_input_provenance(original.trigger_text, original.trigger_message_json)
             with sqlite3.connect(settings.db_path) as db:
                 db.execute(
-                    "update reply_tasks set input_compacted=1, trigger_text='', "
-                    "trigger_message_json=? where conversation_id='cid-1'",
-                    (json.dumps({"input_compacted": True, "open_message_id": "msg-1"}),),
+                    "update reply_task_inputs set input_compacted=1, trigger_text='', "
+                    "trigger_message_json='', input_provenance_json=? where id in "
+                    "(select current_input_id from reply_tasks where conversation_id='cid-1')",
+                    (provenance,),
                 )
         else:
             with sqlite3.connect(settings.db_path) as db:
                 db.execute(
-                    "update reply_tasks set trigger_message_json='{}' "
-                    "where conversation_id='cid-1'"
+                    "update reply_task_inputs set trigger_message_json='{}' "
+                    "where id in (select current_input_id from reply_tasks where conversation_id='cid-1')"
                 )
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1", conversation_title="Friday",
@@ -4815,11 +4818,14 @@ def test_send_attempt_email_requires_exact_uncompacted_action_payload(
         action="agent_run", sensitivity_kind="general", send_status="failed",
     )
     if compacted:
+        original = store.get_reply_task_for_message(conversation_id, action_identity, channel="email")
+        provenance = store._reply_input_provenance(original.trigger_text, original.trigger_message_json)
         with sqlite3.connect(settings.db_path) as db:
             db.execute(
-                "update reply_tasks set input_compacted=1, trigger_text='', "
-                "trigger_message_json=? where channel='email'",
-                (json.dumps({**payload, "input_compacted": True}),),
+                "update reply_task_inputs set input_compacted=1, trigger_text='', "
+                "trigger_message_json='', input_provenance_json=? where id in "
+                "(select current_input_id from reply_tasks where channel='email')",
+                (provenance,),
             )
         with pytest.raises(SystemExit, match="original trigger is unavailable"):
             send_attempt_command(settings, attempt_id)
@@ -7782,6 +7788,7 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
     monkeypatch, tmp_path
 ):
     captured = {}
+    executed = []
     blocked_started = threading.Event()
     release_blocked = threading.Event()
     pending_started = threading.Event()
@@ -7817,7 +7824,9 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
     )
     monkeypatch.setattr(cli, "ConsumerDispatcher", FakeDispatcher)
     monkeypatch.setattr(cli, "_scheduled_task_option_service", lambda *_: object())
-    monkeypatch.setattr(cli, "_create_service_worker", lambda *_: object())
+    monkeypatch.setattr(cli, "_create_service_worker", lambda *_: SimpleNamespace(
+        process_claimed_reply_task=lambda task, **kwargs: executed.append(task)
+    ))
     monkeypatch.setattr(cli, "_create_meeting_dws", lambda *_: object())
     monkeypatch.setattr(cli, "MeetingAlignmentCodexRunner", lambda **_: object())
     monkeypatch.setattr(cli, "TaskAgentCodexRunner", lambda **_: object())
@@ -7891,6 +7900,22 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
         "okr_review",
     }
     assert captured["shared_max_in_flight"] == 2
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="frozen-chat", conversation_title="Frozen", single_chat=False,
+        trigger_message_id="first-message", trigger_create_time="2026-10-11",
+        trigger_sender="first-sender", trigger_text="claimed input", trigger_message_json="{}",
+    )
+    task_id = store.get_reply_task_for_message("frozen-chat", "first-message").id
+    claimed = store.claim_reply_task(task_id)
+    store.update_reply_task_trigger(
+        task_id, trigger_text="new current input", trigger_message_json="{}"
+    )
+    captured["consumers"]["reply"](SimpleNamespace(source_id=str(task_id)), object())
+    assert len(executed) == 1
+    assert executed[0].trigger_text == "claimed input"
+    assert executed[0].execution_generation == claimed.execution_generation
+
     assert callable(captured["tick_observer"])
     tick_at = datetime(2026, 9, 8, 12, 0)
     captured["tick_observer"](tick_at)

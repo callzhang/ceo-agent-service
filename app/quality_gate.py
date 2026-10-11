@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 from app.agent_cron.scheduler import SCHEDULED_CAPABILITY_UNAVAILABLE_KINDS
 from app.config import forbidden_path_prefixes
 from app.leak_check import contains_credential, contains_local_runtime_leak
-from app.store import SERVICE_HEALTH_STATE_PREFIX
+from app.store import SERVICE_HEALTH_STATE_PREFIX, REPLY_TASK_CURRENT_SQL
 
 
 REQUIRED_SOURCES = (
@@ -197,8 +197,8 @@ def required_live_channels(db_path: Path | str) -> frozenset[str]:
     channels = {"dingtalk", "codex"}
     with sqlite3.connect(str(db_path)) as db:
         rows = db.execute(
-            """select channel, oa_url, trigger_message_json
-               from reply_tasks
+            f"""select channel, oa_url, trigger_message_json
+               from ({REPLY_TASK_CURRENT_SQL})
                where lower(status) in ('pending', 'processing', 'failed')"""
         )
         for channel, oa_url, trigger_json in rows:

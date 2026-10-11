@@ -8474,7 +8474,8 @@ def test_final_empty_inventory_clears_bootstrap_unresolved_after_safe_replacemen
         payload["lifecycle_version"] = "email_unsubscribe_audited_v2"
         with sqlite3.connect(database) as db:
             db.execute(
-                "update reply_tasks set trigger_message_json=? where id=?",
+                "update reply_task_inputs set trigger_message_json=? "
+                "where id=(select current_input_id from reply_tasks where id=?)",
                 (json.dumps(payload), legacy.id),
             )
         return ready_dependencies
@@ -8576,7 +8577,8 @@ def test_safe_replacement_after_inventory_is_unchanged_and_does_not_block_agent(
                     payload = json.loads(legacy.trigger_message_json)
                     payload["lifecycle_version"] = "email_unsubscribe_audited_v2"
                     db.execute(
-                        "update reply_tasks set trigger_message_json=? where id=?",
+                        "update reply_task_inputs set trigger_message_json=? "
+                        "where id=(select current_input_id from reply_tasks where id=?)",
                         (json.dumps(payload), legacy.id),
                     )
                 elif replacement == "non-email":
@@ -8586,8 +8588,8 @@ def test_safe_replacement_after_inventory_is_unchanged_and_does_not_block_agent(
                     )
                 elif replacement == "malformed":
                     db.execute(
-                        "update reply_tasks set trigger_message_json='{malformed' "
-                        "where id=?",
+                        "update reply_task_inputs set trigger_message_json='{malformed' "
+                        "where id=(select current_input_id from reply_tasks where id=?)",
                         (legacy.id,),
                     )
                 else:

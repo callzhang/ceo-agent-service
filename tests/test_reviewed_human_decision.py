@@ -194,7 +194,7 @@ def test_unbound_legacy_task_class_choices_survive_restart_without_becoming_exec
 def test_supplement_missing_execution_source_does_not_change_choice(tmp_path):
     store, task, candidate, review, attempt_id = _approved_question(tmp_path / "missing.sqlite3")
     with store._connect() as db:
-        db.execute("update reply_tasks set trigger_message_json='{}' where id=?", (task.id,))
+        db.execute("update reply_task_inputs set trigger_message_json='{}' where id=(select current_input_id from reply_tasks where id=?)", (task.id,))
     fields = dict(kind="supplement", candidate_id=candidate["id"],
                   review_id=review["id"], instruction="One new fact")
     assert _submit(store, attempt_id, **fields)[0] == 409
@@ -242,7 +242,8 @@ def test_scheduled_reviewed_question_accepts_exact_selection_and_new_facts(tmp_p
         "workspace": str(tmp_path), "reasoning_effort": "medium", "skill_protocol": "test",
     }
     with store._connect() as db:
-        db.execute("update reply_tasks set channel='scheduled', trigger_message_json=? where id=?",
+        db.execute("update reply_tasks set channel='scheduled' where id=?", (task.id,))
+        db.execute("update reply_task_inputs set channel='scheduled', trigger_message_json=? where id=(select current_input_id from reply_tasks where id=?)",
                    (json.dumps(saved_execution), task.id))
         db.execute("update reply_attempts set channel='scheduled' where id=?", (attempt_id,))
     scheduled_task = store.get_reply_task_for_message(task.conversation_id, task.trigger_message_id, channel="scheduled")

@@ -6,6 +6,8 @@ provider and never creates Agent, Audit, reply-task, or run records.
 
 from __future__ import annotations
 
+from app.store import REPLY_TASK_CURRENT_SQL
+
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
@@ -135,7 +137,7 @@ def _display_message_body(message: Message) -> str:
     return visible_email_text(payload)
 
 
-_AUDITED_UNSUBSCRIBE_LINEAGE_SQL = """
+_AUDITED_UNSUBSCRIBE_LINEAGE_SQL = f"""
     select effects.action_identity as effect_action_identity,
            effects.effect_digest as effect_digest,
            effects.audit_agent_run_id,
@@ -153,7 +155,7 @@ _AUDITED_UNSUBSCRIBE_LINEAGE_SQL = """
     from email_unsubscribe_effects as effects
     join agent_runs as audit_runs
       on audit_runs.id=effects.audit_agent_run_id
-    join reply_tasks as tasks
+    join ({REPLY_TASK_CURRENT_SQL}) as tasks
       on tasks.id=audit_runs.reply_task_id
     where effects.action_identity=? and effects.effect_digest=?
 """
@@ -2939,9 +2941,9 @@ class EmailStore:
 
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select id, execution_generation, status
-                from reply_tasks
+                from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
                 where channel='email'
                   and status in ('pending', 'processing')
                   and case
@@ -2984,9 +2986,9 @@ class EmailStore:
             raise ValueError("task_id must be positive")
         with self._connect() as db:
             row = db.execute(
-                """
+                f"""
                 select id, execution_generation, status
-                from reply_tasks
+                from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
                 where id=?
                   and channel='email'
                   and status in ('pending', 'processing')
@@ -4947,9 +4949,11 @@ class EmailStore:
         if db.execute(
             "select 1 from sqlite_master where type='table' and name='reply_tasks'"
         ).fetchone():
+            columns = {row[1] for row in db.execute("pragma table_info(reply_tasks)")}
+            table = "reply_task_inputs" if "current_input_id" in columns else "reply_tasks"
             db.execute(
-                """
-                update reply_tasks
+                f"""
+                update {table}
                 set trigger_message_json=json_remove(
                     trigger_message_json,
                     '$.unsubscribe_network_policy_reference',
@@ -4985,6 +4989,9 @@ class EmailStore:
         """
 
         for table in ("reply_task_inputs", "reply_tasks"):
+            columns = {row[1] for row in db.execute(f"pragma table_info({table})")}
+            if "trigger_message_json" not in columns:
+                continue
             if not db.execute(
                 "select 1 from sqlite_master where type='table' and name=?",
                 (table,),
@@ -10067,7 +10074,7 @@ class EmailStore:
             task_predicates = ""
             task_args: tuple[object, ...] = ()
             if task_id is not None:
-                task_join = "join reply_tasks as tasks on tasks.id=?"
+                task_join = f"join ({REPLY_TASK_CURRENT_SQL}) as tasks on tasks.id=?"
                 task_predicates = """
                   and tasks.status='processing'
                   and tasks.channel='email'
@@ -10968,7 +10975,7 @@ class EmailStore:
                     "unsubscribe terminal effect is missing its Audit run"
                 )
             row = db.execute(
-                """
+                f"""
                 select audit.id as audit_id, audit.reply_task_id,
                        audit.execution_generation, audit.role as audit_role,
                        audit.status as audit_status,
@@ -10991,7 +10998,7 @@ class EmailStore:
                 from agent_runs as audit
                 join agent_runs as consumer
                   on consumer.id=audit.parent_agent_run_id
-                join reply_tasks as tasks on tasks.id=audit.reply_task_id
+                join ({REPLY_TASK_CURRENT_SQL}) as tasks on tasks.id=audit.reply_task_id
                 where audit.id=?
                 """,
                 (audit_agent_run_id,),
@@ -13354,13 +13361,13 @@ class EmailStore:
             }
             task_clause = ""
             if task_tables == {"reply_tasks", "agent_runs"}:
-                task_clause = """
+                task_clause = f"""
                     or classifications.id in (
                         select json_extract(
                                    tasks.trigger_message_json,
                                    '$.classification_id'
                                )
-                        from reply_tasks as tasks
+                        from ({REPLY_TASK_CURRENT_SQL}) as tasks
                         where tasks.channel='email'
                           and json_valid(tasks.trigger_message_json)
                           and json_extract(
@@ -14004,11 +14011,11 @@ class EmailStore:
             task_rows: Sequence[sqlite3.Row] = ()
             if generic_tables == {"reply_tasks", "agent_runs"}:
                 task_rows = db.execute(
-                    """
+                    f"""
                     select id, conversation_id, trigger_message_id,
                            trigger_message_json, execution_generation,
                            status, error, created_at
-                    from reply_tasks
+                    from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
                     where channel='email'
                       and json_valid(trigger_message_json)
                       and json_extract(
@@ -16435,41 +16442,89 @@ class EmailStore:
                 return None
         # A read probe is not a reservation; recheck all dependencies under the
         # writer lock before claiming. Idle polls must not join the writer queue.
-        with self._connect() as db:
-            if self._next_direct_action_row(db, claimed_at, account_ids) is None:
-                return None
-        with self._connect() as db:
-            db.execute("begin immediate")
-            row = self._next_direct_action_row(db, claimed_at, account_ids)
-            if row is None:
-                return None
-            attempt_number = int(row["attempt_count"]) + 1
-            updated = db.execute(
-                """
-                update email_actions
-                set status='processing', started_at=?, finished_at='',
-                    next_attempt_at='',
-                    provider_operation='', provider_target='',
-                    provider_result_id='', error='', updated_at=?
-                where action_id=? and status=? and attempt_count=?
-                """,
-                (
-                    claimed_at,
-                    claimed_at,
-                    row["action_id"],
-                    row["status"],
-                    row["attempt_count"],
-                ),
-            ).rowcount
-            if updated != 1:
-                raise EmailActionAttemptConflict(
-                    f"direct action claim changed for {row['action_id']}"
+        started_at = monotonic()
+        preflight_seconds = 0.0
+        lock_wait_seconds = 0.0
+        locked_recheck_seconds = 0.0
+        claim_mutation_seconds = 0.0
+        outcome = "error"
+        try:
+            with self._connect() as db:
+                phase_started_at = monotonic()
+                try:
+                    candidate = self._next_direct_action_row(db, claimed_at, account_ids)
+                finally:
+                    preflight_seconds += monotonic() - phase_started_at
+                if candidate is None:
+                    outcome = "no_action"
+                    return None
+            with self._connect() as db:
+                phase_started_at = monotonic()
+                try:
+                    db.execute("begin immediate")
+                finally:
+                    lock_wait_seconds += monotonic() - phase_started_at
+                phase_started_at = monotonic()
+                try:
+                    row = self._next_direct_action_row(db, claimed_at, account_ids)
+                finally:
+                    locked_recheck_seconds += monotonic() - phase_started_at
+                if row is None:
+                    outcome = "raced"
+                    return None
+                phase_started_at = monotonic()
+                try:
+                    attempt_number = int(row["attempt_count"]) + 1
+                    updated = db.execute(
+                        """
+                        update email_actions
+                        set status='processing', started_at=?, finished_at='',
+                            next_attempt_at='',
+                            provider_operation='', provider_target='',
+                            provider_result_id='', error='', updated_at=?
+                        where action_id=? and status=? and attempt_count=?
+                        """,
+                        (
+                            claimed_at,
+                            claimed_at,
+                            row["action_id"],
+                            row["status"],
+                            row["attempt_count"],
+                        ),
+                    ).rowcount
+                    if updated != 1:
+                        raise EmailActionAttemptConflict(
+                            f"direct action claim changed for {row['action_id']}"
+                        )
+                    action = self._claimed_direct_action(
+                        row,
+                        attempt_number=attempt_number,
+                        claimed_at=claimed_at,
+                    )
+                finally:
+                    claim_mutation_seconds += monotonic() - phase_started_at
+            outcome = "claimed"
+            return action
+        finally:
+            elapsed = monotonic() - started_at
+            if elapsed >= 1.0:
+                caller = sys._getframe(1)
+                logging.getLogger(__name__).warning(
+                    "slow direct email action claim elapsed_seconds=%.3f "
+                    "preflight_seconds=%.3f writer_lock_wait_seconds=%.3f "
+                    "locked_recheck_seconds=%.3f claim_mutation_seconds=%.3f "
+                    "outcome=%s caller=%s:%s:%s",
+                    elapsed,
+                    preflight_seconds,
+                    lock_wait_seconds,
+                    locked_recheck_seconds,
+                    claim_mutation_seconds,
+                    outcome,
+                    Path(caller.f_code.co_filename).name,
+                    caller.f_lineno,
+                    caller.f_code.co_name,
                 )
-            return self._claimed_direct_action(
-                row,
-                attempt_number=attempt_number,
-                claimed_at=claimed_at,
-            )
+                del caller
 
     def _next_direct_action_row(
         self,
@@ -16741,7 +16796,7 @@ class EmailStore:
         _require_positive_int(expected_input_version, field="input_version")
         if not reason.strip() or not expected_action_identity or not expected_execution_generation:
             raise ValueError("explicit cancellation identity and reason are required")
-        task = db.execute("select * from reply_tasks where id=?", (task_id,)).fetchone()
+        task = db.execute(f"select * from ({REPLY_TASK_CURRENT_SQL}) as tasks where id=?", (task_id,)).fetchone()
         if (task is None or task["channel"] != "email"
                 or task["trigger_message_id"] != expected_action_identity
                 or task["execution_generation"] != expected_execution_generation
