@@ -75,7 +75,7 @@ def test_locator_migration_preserves_business_rows_uid_metadata_and_existing_ord
     assert after == before
     assert business_rows(path) == original_rows
     with sqlite3.connect(path) as db:
-        assert db.execute("select version from email_schema_migrations order by version").fetchall() == [(46,), (47,), (48,), (49,)]
+        assert db.execute("select version from email_schema_migrations order by version").fetchall() == [(46,), (47,), (48,), (49,), (50,)]
         assert db.execute("pragma foreign_key_check").fetchall() == []
         indexed = db.execute(f"pragma index_xinfo({INDEX})").fetchall()
     assert [row[2] for row in indexed if row[5]] == [
@@ -84,7 +84,7 @@ def test_locator_migration_preserves_business_rows_uid_metadata_and_existing_ord
     assert indexed[4][3] == 1
     EmailStore(path)
     with sqlite3.connect(path) as db:
-        assert db.execute("select version from email_schema_migrations order by version").fetchall() == [(46,), (47,), (48,), (49,)]
+        assert db.execute("select version from email_schema_migrations order by version").fetchall() == [(46,), (47,), (48,), (49,), (50,)]
 
 
 def test_locator_migration_validation_failure_rolls_back_index_and_version(tmp_path, monkeypatch):
