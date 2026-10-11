@@ -345,7 +345,7 @@ git commit -m "refactor(storage): remove duplicate provider identity lookup inde
 
 ## 上线与回退
 
-实现、测试、副本演练及提交后，使用已规定的 python -m app.deploy 路径；部署后的 PID、healthz、queues、Attention、History 均需回读。旧 schema 47 runtime 会拒绝 schema 48，所以不能只回滚代码；部署脚本现有备份/rollback 是否包含 DB 恢复必须另核实。生产产生新业务写入后不能恢复陈旧 DB。生产 VACUUM 不包含在本期默认部署，不按演练结果宣称 live 文件已缩小。
+实现、测试、副本演练及提交后，使用已规定的 python -m app.deploy 路径；部署后的 PID、healthz、queues、Attention、History 均需回读。旧 schema 47 runtime 会拒绝 schema 48，所以不能只回滚代码；已核实：repository_updater.execute 先停服务并备份，但异常分支恢复 checkout 并 restart，没有恢复数据库 schema/文件；publication.rollback 也不能代表数据库恢复。因此此计划不得直接走完当前 deploy 后声称可回滚，必须先完成单独明确的 schema 配对回退部署计划及演练。服务没有恢复写入前，可以恢复一致备份与旧代码；恢复写入后，禁止覆盖新业务结果/回执。本期是索引变更，可以设计恢复该索引及配对版本的逆迁，保留新业务行；逆迁需独立回归验证后才可用。生产产生新业务写入后不能恢复陈旧 DB。生产 VACUUM 不包含在本期默认部署，不按演练结果宣称 live 文件已缩小。
 
 ## 自检与状态
 

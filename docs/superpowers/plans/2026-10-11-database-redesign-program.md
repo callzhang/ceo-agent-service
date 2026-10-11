@@ -37,7 +37,7 @@
 
 1. 每阶段使用 SQLite backup API 创建一致副本，不复制 native trajectory。副本需 quick_check/integrity/FK 和业务结果核对；保留该流程最新已验证备份。
 2. 演练不调用外部 provider、不 enqueue Agent、不回放既有任务。准确 source_ref/版本或 native range 缺失，明确报告不可用，不伪造来源。
-3. DDL、schema validator、读写 DAO、直接 SQL 读取者和测试同一版本切换。不可将旧代码启动在新 schema 上；恢复需代码与 DB 配对。
+3. DDL、schema validator、读写 DAO、直接 SQL 读取者和测试同一版本切换。不可将旧代码启动在新 schema 上；恢复需代码与 DB 配对。当前 repository_updater 的异常回退恢复代码但没有恢复 DB schema，此边界已在源码核实；带版本变化的部署必须先补齐明确的配对回退计划与演练，不能仅凭 backup_path 存在宣称可回退。
 4. 生产产生新动作回执后，禁止用旧 DB 快照回滚覆盖新回执。需保持幂等事实的兼容逆迁或前向修复。
 5. 部署沿用 python -m app.deploy 和现有 mutex/quiet 等流程。只有需要新文件/schema 切换时才修改部署实现，并单独测试；不假设现部署已经支持完整重构。
 6. VACUUM 是独立回收步骤，在验收后的安静窗口进行。DROP INDEX 后通常只增 freelist，不宣称实际文件已经缩小。
