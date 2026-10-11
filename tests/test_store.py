@@ -4308,14 +4308,16 @@ def test_slow_sqlite_context_names_caller_without_local_values(tmp_path: Path, m
     assert private_value not in output
 
 
-def test_slow_transaction_names_business_caller_through_wrapper(tmp_path: Path, monkeypatch, capsys):
+def test_slow_transaction_names_business_caller_through_wrapper(tmp_path: Path, capsys):
+    import time
+
     store = AutoReplyStore(tmp_path / "wrapped-context.sqlite3")
-    ticks = iter((0.0, 1.0, 2.0, 4.0, 5.0, 7.0, 8.0, 9.0, 10.0, 11.0))
-    monkeypatch.setattr(store_module.time, "monotonic", lambda: next(ticks))
     with store._immediate_write_transaction() as db:
         db.execute("select 1").fetchone()
+        time.sleep(1.01)
     output = capsys.readouterr().err
-    assert "lock_wait_seconds=2.000 hold_seconds=2.000" in output
+    assert "lock_wait_seconds=0.000" in output
+    assert "hold_seconds=1." in output
     assert "test_slow_transaction_names_business_caller_through_wrapper" in output
 
 

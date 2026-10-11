@@ -2649,6 +2649,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         body_started = False
         try:
             for attempt in range(STORE_WRITE_LOCK_RETRY_ATTEMPTS):
+                acquired_at: float | None = None
                 try:
                     with self._connect() as db:
                         begin_started_at = time.monotonic()
@@ -2658,10 +2659,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                             lock_wait_seconds += time.monotonic() - begin_started_at
                         acquired_at = time.monotonic()
                         body_started = True
-                        try:
-                            yield db
-                        finally:
-                            transaction_hold_seconds += time.monotonic() - acquired_at
+                        yield db
                         return
                 except sqlite3.OperationalError as exc:
                     if (
@@ -2670,7 +2668,20 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         or attempt + 1 >= STORE_WRITE_LOCK_RETRY_ATTEMPTS
                     ):
                         raise
-                    time.sleep(STORE_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1))
+                    retry_wait_started_at = time.monotonic()
+                    try:
+                        time.sleep(
+                            STORE_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1)
+                        )
+                    finally:
+                        lock_wait_seconds += (
+                            time.monotonic() - retry_wait_started_at
+                        )
+                finally:
+                    if acquired_at is not None:
+                        transaction_hold_seconds += (
+                            time.monotonic() - acquired_at
+                        )
             raise RuntimeError("SQLite write transaction retry loop exhausted")
         finally:
             elapsed = time.monotonic() - started_at
