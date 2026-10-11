@@ -1737,6 +1737,55 @@ sanitized failure detail when supplied by the executor. Private response URLs an
 subscription tokens remain excluded. A rejected response is not a success
 receipt and cannot terminalize the unsubscribe as done.
 
+An empty unsubscribe email field uses the original message recipient, not the
+connected mailbox login. The direct operation obtains recipients from the
+classification's exact account and stable message identity; only one parsed
+recipient can be prepared. Missing or ambiguous recipients leave the field
+unavailable rather than substituting the primary mailbox. Authentication and
+mailbox OTP continue to use the connected account. The prepared recipient is
+part of the complete form control digest, so hidden controls, submitter, target,
+intent and form association remain checked before native submission. Prefilled
+email fields must also match the source recipient; a missing source or different
+prefilled address is rejected without submission. User
+instructions to retain a subscription must not be recorded as provider opt-out
+success or executed through an unsubscribe request.
+
+`cancel-failed-email-unsubscribe` records an explicit principal decision to retain
+one subscription. It requires the original task id, action identity, execution
+generation and input version. The default previews without writing a decision;
+`--apply` uses the configured browser profile's nonblocking lock and an immediate
+database transaction. A changed identity or current plan, active dispatcher,
+Agent history, unsubscribe claim, effect, step or provider receipt prevents
+cancellation and requires reconciliation first. An accepted decision is stored
+separately in EmailStore's `email_unsubscribe_cancellations` (schema 50), preserving the original failure and all history,
+and the original task becomes `skipped`; no provider receipt is created. Repeat
+apply is idempotent. The direct operation rejects the cancelled action, checks
+again inside the profile lock before opening a page, and the durable write-claim
+entry also rejects it. Missing-provider-receipt repair does not synthesize a
+receipt for these principal cancellations. This is not a blanket address-level
+unsubscribe policy or authorization to alter other mail actions.
+
+Cancellation preview uses a read-only SQLite connection without constructing
+execution stores or migrating schema; a pre-50 database must be deployed first.
+Direct browser execution and result persistence retain the same profile lease,
+including reentrant adapter calls that cross the session TTL. Before the first
+browser operation, a generation/input-digest-bound execution-pending record is
+written in the reply-task store's runtime metadata. Only an actual terminal
+receipt clears that exact record. A crash, unconfirmed result or failed receipt
+write leaves the record requiring external reconciliation and prevents a false
+subscription-retention closure. An explicit retry of a worker-finalized login
+or no-entry skip still requires its exact predecessor receipt digest; provider
+completion receipts do not permit replay.
+
+Real Chrome unsubscribe fixtures verify the persisted effect, continuation,
+step, claim and receipt fields separately: only the receipt's `entry_url` may
+contain the private entry. Returned redacted evidence must not contain it.
+Entry reads can load redirects and resources under the existing no-network-
+whitelist policy; these GETs are not proof of zero external effects. A discovered
+form still returns a continuation without submission or terminal completion
+until its control is accepted. Incremental Audit fixtures retain the exact
+GET/POST/POST progression and bind every proposal to its action identity.
+
 Successful multi-family email training runs use the successful `embedding-mlp`
 entry in `family_results` for description optimization. The compatibility
 `model_id` field may point at a traditional classifier and does not imply

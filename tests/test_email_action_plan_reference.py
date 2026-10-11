@@ -60,10 +60,10 @@ def test_v48_reference_migration_preserves_business_and_api(tmp_path):
     before = business_rows(path)
     rewind48(path)
     migrated = EmailStore(path)
-    assert EMAIL_SCHEMA_VERSION == 49
+    assert EMAIL_SCHEMA_VERSION == 50
     with sqlite3.connect(path) as db:
         assert 'action_plan_json' not in {row[1] for row in db.execute('pragma table_info(email_classifications)')}
-        assert db.execute('select max(version) from email_schema_migrations').fetchone()[0] == 49
+        assert db.execute('select max(version) from email_schema_migrations').fetchone()[0] == EMAIL_SCHEMA_VERSION
         assert db.execute('pragma foreign_key_check').fetchall() == []
     assert business_rows(path) == before
     assert [migrated.get_classification(index) for index in (1, 2)] == before_api

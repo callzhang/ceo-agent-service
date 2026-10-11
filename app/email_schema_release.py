@@ -151,7 +151,52 @@ class EmailActionPlanSchemaRelease:
         self.verify_loaded()
 
 
-def prepare_email_schema_release(root: Path, database_path: Path) -> EmailSchemaRelease | EmailActionPlanSchemaRelease | None:
+@dataclass
+class EmailUnsubscribeCancellationSchemaRelease:
+    root: Path
+    database_path: Path
+    versions: tuple[tuple[int, str], ...]
+    migrate: Callable[[Path, Path], None] = _migrate
+
+    def publish(self) -> None:
+        self.migrate(self.root, self.database_path)
+        self.verify_loaded()
+
+    def verify_loaded(self) -> None:
+        with closing(sqlite3.connect(self.database_path.as_uri() + "?mode=ro", uri=True)) as db:
+            versions = tuple(db.execute("select version,applied_at from email_schema_migrations order by version"))
+            columns = tuple(row[1] for row in db.execute("pragma table_info(email_unsubscribe_cancellations)"))
+            if (not versions or versions[-1][0] != 50 or versions[:-1] != self.versions
+                    or columns != ("action_identity", "decision_json")):
+                raise ValueError("Email schema50 cancellation relation readback mismatch")
+
+    def rollback(self) -> None:
+        with closing(sqlite3.connect(self.database_path)) as db, db:
+            db.execute("begin immediate")
+            versions = tuple(db.execute("select version,applied_at from email_schema_migrations order by version"))
+            table = db.execute("select 1 from sqlite_master where type='table' and name='email_unsubscribe_cancellations'").fetchone()
+            if versions == self.versions and table is None:
+                return
+            if not versions or versions[-1][0] != 50 or versions[:-1] != self.versions or table is None:
+                raise ValueError("Email schema rollback requires the exact49-to-50 cancellation transition")
+            if db.execute("select 1 from email_unsubscribe_cancellations limit 1").fetchone():
+                raise ValueError("Email schema rollback would discard principal cancellation decisions")
+            shared_state = db.execute("select 1 from sqlite_master where type='table' and name='service_state'").fetchone()
+            if shared_state is not None and db.execute(
+                "select 1 from service_state where substr(key,1,?)=? limit 1",
+                (len("email_unsubscribe_execution_pending:v1:"), "email_unsubscribe_execution_pending:v1:"),
+            ).fetchone():
+                raise ValueError("Email schema rollback would bypass an unknown unsubscribe execution")
+            db.execute("drop table email_unsubscribe_cancellations")
+            db.execute("delete from email_schema_migrations where version=50")
+            if tuple(db.execute("select version,applied_at from email_schema_migrations order by version")) != self.versions:
+                raise ValueError("Email cancellation rollback version readback mismatch")
+
+    def finalize(self) -> None:
+        self.verify_loaded()
+
+
+def prepare_email_schema_release(root: Path, database_path: Path) -> EmailSchemaRelease | EmailActionPlanSchemaRelease | EmailUnsubscribeCancellationSchemaRelease | None:
     root = root.resolve()
     database_path = database_path.resolve()
     if not database_path.exists():
@@ -164,6 +209,10 @@ def prepare_email_schema_release(root: Path, database_path: Path) -> EmailSchema
         target = _target_schema_version(root)
         if current == target:
             return None
+        if (current, target) == (49, 50):
+            if db.execute("select 1 from sqlite_master where type='table' and name='email_unsubscribe_cancellations'").fetchone():
+                raise ValueError("Email schema49 unexpectedly contains cancellation state")
+            return EmailUnsubscribeCancellationSchemaRelease(root, database_path, versions)
         if (current, target) == (48, 49):
             column = next((row for row in db.execute("pragma table_info(email_classifications)")
                            if row[1] == "action_plan_json"), None)

@@ -482,7 +482,7 @@ def test_direct_email_worker_unsubscribes_two_page_flow_and_preserves_evidence(
             allow_loopback_for_tests=True,
         )
 
-        def run_effect(effect, entry, *, one_click_verified, executed=None):
+        def run_effect(effect, entry, *, one_click_verified, executed=None, persist_result=None, start_execution=None):
             return run_unsubscribe_in_dedicated_profile(
                 effect,
                 entry,
@@ -490,6 +490,8 @@ def test_direct_email_worker_unsubscribes_two_page_flow_and_preserves_evidence(
                 one_click_verified=one_click_verified,
                 timeout_ms=3_000,
                 executed=executed,
+                persist_result=persist_result,
+                start_execution=start_execution,
             )
 
         unsubscribe_operation = DirectEmailUnsubscribeOperation(

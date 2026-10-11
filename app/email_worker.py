@@ -4460,6 +4460,7 @@ def build_direct_email_unsubscribe_operation(settings: object) -> object:
     """Build the one-call Email unsubscribe operation."""
 
     from app.email_unsubscribe import EmailUnsubscribeEffect, UnsubscribeEntry
+    from email.headerregistry import HeaderRegistry
     from app.agent_runtime_production import build_production_routed_codex_execution
     from app.email_unsubscribe_direct import (
         DirectEmailUnsubscribeOperation,
@@ -4486,6 +4487,8 @@ def build_direct_email_unsubscribe_operation(settings: object) -> object:
         *,
         one_click_verified: bool,
         executed: list | None = None,
+        persist_result: Callable | None = None,
+        start_execution: Callable | None = None,
     ):
         account = email_store.get_account(effect.account_id)
         if not isinstance(account, Mapping):
@@ -4493,12 +4496,35 @@ def build_direct_email_unsubscribe_operation(settings: object) -> object:
         connected_recipient = str(account.get("email_address") or "").strip()
         if not connected_recipient:
             raise ValueError("email unsubscribe recipient is unavailable")
+        classification = email_store.get_classification(effect.classification_id)
+        if (not isinstance(classification, Mapping)
+                or classification.get("account_id") != effect.account_id
+                or classification.get("stable_message_identity") != effect.stable_message_identity):
+            raise ValueError("email unsubscribe source identity changed")
+        recipients = classification.get("recipients")
+        recipient_header = HeaderRegistry()("To", ", ".join(recipients)) if (
+            isinstance(recipients, list) and all(isinstance(value, str) for value in recipients)
+        ) else None
+        # Authentication belongs to the account; subscription belongs to the
+        # original message recipient. Never substitute the former for the latter.
+        unsubscribe_recipient = ""
+        if (recipient_header is not None and not recipient_header.defects
+                and len(recipient_header.addresses) == 1):
+            address = recipient_header.addresses[0]
+            if address.username and address.domain:
+                unsubscribe_recipient = address.addr_spec
+
+        def before_open() -> None:
+            if email_store.get_email_unsubscribe_cancellation(effect.action_identity) is not None:
+                raise ValueError("unsubscribe cancelled by principal")
+
         return run_unsubscribe_in_dedicated_profile(
             effect,
             entry,
             profile=context.browser_profile,
             one_click_verified=one_click_verified,
             connected_recipient=connected_recipient,
+            unsubscribe_recipient=unsubscribe_recipient,
             email_otp_resolver=_build_connected_mailbox_otp_resolver(
                 account,
                 context.source_factory,
@@ -4506,6 +4532,9 @@ def build_direct_email_unsubscribe_operation(settings: object) -> object:
             session_manager=context.browser_session_manager,
             executed=executed,
             page_judge=page_judge,
+            before_open=before_open,
+            persist_result=persist_result,
+            start_execution=start_execution,
         )
 
     return DirectEmailUnsubscribeOperation(
@@ -4520,6 +4549,28 @@ def _service_workspace() -> Path:
     from app.config import workspace_path
 
     return workspace_path()
+
+
+def cancel_failed_email_unsubscribe(
+    settings: object, *, task_id: int, action_identity: str,
+    execution_generation: str, input_version: int, reason: str, apply: bool = False,
+) -> dict[str, object]:
+    """Preview or apply one explicit subscription-retention decision."""
+    from app.email_store import EmailStore
+
+    if not apply:
+        return EmailStore.preview_failed_email_unsubscribe_task(
+            settings.db_path, task_id=task_id, expected_action_identity=action_identity,
+            expected_execution_generation=execution_generation,
+            expected_input_version=input_version, reason=reason,
+        )
+    context = _build_email_unsubscribe_context(settings)
+    return context.email_store.cancel_failed_email_unsubscribe_task(
+        task_id=task_id, expected_action_identity=action_identity,
+        expected_execution_generation=execution_generation,
+        expected_input_version=input_version, reason=reason,
+        profile=context.browser_profile, apply=apply,
+    )
 
 
 def run_email_unsubscribe(db_path: str | Path, task_id: int) -> dict[str, object]:

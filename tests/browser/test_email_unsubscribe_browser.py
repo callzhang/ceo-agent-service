@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import sqlite3
 from threading import Event, Thread
 from urllib.parse import parse_qs, urlsplit
 
@@ -748,7 +749,31 @@ def test_dedicated_profile_resumes_live_page_across_audit_invocations_without_re
             assert _FixtureHandler.request_details[-1]["cookie"] == (
                 "audit_session=persistent-profile"
             )
-        assert private_url.encode() not in store.path.read_bytes()
+        assert private_url not in json.dumps(first.redacted)
+        assert private_url not in json.dumps(second.redacted)
+        if not remove_accepted_control:
+            receipt = store.get_email_unsubscribe_receipt(effect.action_identity)
+            assert receipt is not None
+            assert receipt["entry_url"] == private_url
+        else:
+            assert private_url.encode() not in store.path.read_bytes()
+        with sqlite3.connect(store.path) as database:
+            database.row_factory = sqlite3.Row
+            for table in (
+                "email_unsubscribe_effects", "email_unsubscribe_continuations",
+                "email_unsubscribe_steps", "email_unsubscribe_claims",
+                "email_unsubscribe_receipts",
+            ):
+                records = [
+                    {key: row[key] for key in row.keys() if key != "entry_url"}
+                    for row in database.execute(
+                        f"select * from {table} where action_identity=?",
+                        (effect.action_identity,),
+                    )
+                ]
+                persisted = json.dumps(records)
+                assert private_url not in persisted
+                assert "private-fixture-token" not in persisted
 
 
 @pytest.mark.parametrize(
@@ -1120,7 +1145,7 @@ def test_direct_success_fixture(tmp_path: Path, chrome_browser) -> None:
     assert requests[0][0] == "GET"
 
 
-def test_direct_form_fills_only_connected_recipient_before_native_submit(
+def test_direct_form_fills_source_recipient_not_login_before_native_submit(
     tmp_path: Path, chrome_browser,
 ) -> None:
     from app.email_unsubscribe_direct import run_direct_unsubscribe
@@ -1133,7 +1158,8 @@ def test_direct_form_fills_only_connected_recipient_before_native_submit(
         context = chrome_browser.new_context()
         browser = PlaywrightUnsubscribeBrowser(
             context.new_page(), timeout_ms=3_000,
-            connected_recipient="fixture@example.com",
+            connected_recipient="account@example.com",
+            unsubscribe_recipient="fixture@example.com",
         )
         try:
             result = run_direct_unsubscribe(browser, effect, entry)
@@ -1153,6 +1179,7 @@ def test_direct_form_fills_only_connected_recipient_before_native_submit(
 @pytest.mark.parametrize("case", [
     "missing_identity", "multiple", "hidden_changed", "target_changed",
     "association_changed", "intent_changed", "submitter_changed",
+    "prefilled_wrong", "prefilled_missing_source",
 ])
 def test_recipient_preparation_rejects_unsafe_form_without_post(
     chrome_browser, case: str,
@@ -1162,11 +1189,14 @@ def test_recipient_preparation_rejects_unsafe_form_without_post(
         page = context.new_page()
         browser = PlaywrightUnsubscribeBrowser(
             page, timeout_ms=3_000,
-            connected_recipient="" if case == "missing_identity" else "fixture@example.com",
+            connected_recipient="account@example.com",
+            unsubscribe_recipient="" if case in {"missing_identity", "prefilled_missing_source"} else "fixture@example.com",
         )
         try:
             page.goto(f"{origin}/recipient-form")
-            if case == "multiple":
+            if case in {"prefilled_wrong", "prefilled_missing_source"}:
+                page.locator('[type=email]').fill("wrong@example.com")
+            elif case == "multiple":
                 page.evaluate("""() => {
                     const field = document.createElement('input');
                     field.type = 'email'; field.name = 'other';
@@ -1202,6 +1232,7 @@ def test_recipient_preparation_preserves_existing_email_and_does_not_infer_text(
         page = context.new_page()
         browser = PlaywrightUnsubscribeBrowser(
             page, timeout_ms=3_000, connected_recipient="fixture@example.com",
+            unsubscribe_recipient="alias@example.com",
         )
         try:
             page.goto(f"{origin}/recipient-form")
@@ -1539,6 +1570,7 @@ def test_task9_to_incremental_audit_uses_only_discovered_opaque_controls(
         def accepted(operations: tuple[UnsubscribeOperation, ...]) -> ProposedAction:
             return ProposedAction.model_validate(
                 {
+                    "action_identity": metadata["action_identity"],
                     "description": "Execute one audited unsubscribe step",
                     "capability": "email_browser",
                     "operation": "unsubscribe",
@@ -1816,7 +1848,9 @@ def test_unknown_ordinary_page_fails_closed(
         operations=_operations(UnsubscribeOperationKind.OPEN_ENTRY),
     )
 
-    assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
+    assert result.outcome is UnsubscribeOutcome.SKIPPED_NO_RELIABLE_ENTRY
+    assert result.receipt is not None
+    assert result.receipt.evidence == "page-not-operable"
 
 
 def test_final_confirmation_click_fixture(tmp_path: Path, chrome_browser) -> None:
@@ -1931,21 +1965,23 @@ def test_uncertain_claim_on_fresh_blank_page_never_navigates(
 
 
 @pytest.mark.parametrize(
-    "path",
+    ("path", "expect_continuation", "expect_resource_requests"),
     (
-        "/malicious-redirect",
-        "/malicious-iframe",
-        "/malicious-fetch",
-        "/malicious-image",
-        "/malicious-form",
-        "/malicious-popup",
-        "/malicious-download",
+        ("/malicious-redirect", False, True),
+        ("/malicious-iframe", False, True),
+        ("/malicious-fetch", False, True),
+        ("/malicious-image", False, True),
+        ("/malicious-form", True, False),
+        ("/malicious-popup", False, False),
+        ("/malicious-download", False, False),
     ),
 )
-def test_unapproved_form_popup_and_download_have_zero_external_effect(
+def test_entry_reads_resources_without_submitting_unapproved_form(
     tmp_path: Path,
     chrome_browser,
     path: str,
+    expect_continuation: bool,
+    expect_resource_requests: bool,
 ) -> None:
     with _loopback_server_pair() as (allowed_origin, _blocked_origin):
         private_url = f"{allowed_origin}{path}"
@@ -1963,8 +1999,18 @@ def test_unapproved_form_popup_and_download_have_zero_external_effect(
         finally:
             context.close()
 
-    assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
-    assert _BlockedHandler.requests == []
+    if expect_continuation:
+        assert isinstance(result, UnsubscribeContinuationResult)
+        assert len(result.continuation.controls) == 1
+        assert store.get_email_unsubscribe_receipt(effect.action_identity) is None
+    else:
+        assert result.outcome is UnsubscribeOutcome.SKIPPED_NO_RELIABLE_ENTRY
+        assert result.receipt is not None
+        assert result.receipt.evidence == "page-not-operable"
+    assert _FixtureHandler.requests
+    assert all(request == ("GET", path) for request in _FixtureHandler.requests)
+    assert bool(_BlockedHandler.requests) is expect_resource_requests
+    assert all(request == ("GET", "/effect") for request in _BlockedHandler.requests)
 
 
 def test_verified_one_click_posts_exact_body_without_cookie(

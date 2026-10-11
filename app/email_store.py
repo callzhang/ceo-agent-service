@@ -9,7 +9,7 @@ from __future__ import annotations
 from app.store import REPLY_TASK_CURRENT_SQL
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.message import Message
@@ -73,7 +73,7 @@ from app.leak_check import assert_no_credentials, is_sensitive_url_component_nam
 from app.sqlite_schema_lock import schema_initialize_lock
 
 
-EMAIL_SCHEMA_VERSION = 49
+EMAIL_SCHEMA_VERSION = 50
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     {
         "email_model_promotion_configs",
@@ -441,6 +441,10 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "reference": ("text", True, None),
         "created_at": ("text", True, None),
     },
+    "email_unsubscribe_cancellations": {
+        "action_identity": ("text", False, None),
+        "decision_json": ("text", True, None),
+    },
     "email_unsubscribe_receipts": {
         "action_identity": ("text", False, None),
         "effect_digest": ("text", True, None),
@@ -698,6 +702,10 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "trim(reference) != ''",
         "trim(created_at) != ''",
     ),
+    "email_unsubscribe_cancellations": (
+        "trim(action_identity) != ''",
+        "json_valid(decision_json)",
+    ),
     "email_unsubscribe_receipts": (
         "trim(action_identity) != ''",
         "trim(effect_digest) != ''",
@@ -817,6 +825,7 @@ _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
     "email_unsubscribe_continuations": ("action_identity",),
     "email_unsubscribe_steps": ("id",),
     "email_unsubscribe_receipts": ("action_identity",),
+    "email_unsubscribe_cancellations": ("action_identity",),
     "email_training_snapshots": ("snapshot_id",),
     "email_provider_observations": ("account_id", "stable_message_identity"),
     "email_provider_folder_observation_generations": (
@@ -3209,6 +3218,9 @@ class EmailStore:
             if latest_version == 48:
                 self._migrate_v48_to_v49(db, replace_version=is_prototype)
                 latest_version = 49
+            if latest_version == 49:
+                self._migrate_v49_to_v50(db, replace_version=is_prototype)
+                latest_version = 50
             self._validate_durable_state(db)
             return True
 
@@ -5432,6 +5444,21 @@ class EmailStore:
                 (self._now(),),
             )
 
+    def _migrate_v49_to_v50(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Record the owned cancellation relation created by the migration DDL."""
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=50, applied_at=? where version=49",
+                (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version,applied_at) values (50,?)",
+                (self._now(),),
+            )
+
     def _validate_cached_action_plan_snapshots(self, db: sqlite3.Connection) -> None:
         """Validate the <=48 duplicate exactly before removing it."""
         plan_rows = {
@@ -6289,6 +6316,12 @@ class EmailStore:
                 foreign key(action_identity)
                     references email_unsubscribe_claims(action_identity)
                     on delete restrict
+            )
+            """,
+            """
+            create table if not exists email_unsubscribe_cancellations (
+                action_identity text primary key check(trim(action_identity) != ''),
+                decision_json text not null check(json_valid(decision_json))
             )
             """,
             """
@@ -10032,6 +10065,11 @@ class EmailStore:
         claimed_at = self._now()
         with self._connect() as db:
             db.execute("begin immediate")
+            if db.execute(
+                "select 1 from email_unsubscribe_cancellations where action_identity=?",
+                (action_identity,),
+            ).fetchone() is not None:
+                raise EmailUnsubscribeClaimConflict("unsubscribe cancelled by principal")
             task_join = ""
             task_predicates = ""
             task_args: tuple[object, ...] = ()
@@ -16696,6 +16734,123 @@ class EmailStore:
             plan_rows = self._current_action_plan_rows(db, hydrated_rows)
         return [self._classification_row(row, plan_rows) for row in hydrated_rows]
 
+    def get_email_unsubscribe_cancellation(self, action_identity: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select decision_json from email_unsubscribe_cancellations where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+        return None if row is None else _json_load(
+            row["decision_json"], field="unsubscribe cancellation", expected_type=dict,
+        )
+
+    def cancel_failed_email_unsubscribe_task(
+        self, *, task_id: int, expected_action_identity: str,
+        expected_execution_generation: str, expected_input_version: int,
+        reason: str, profile: object, apply: bool = False,
+    ) -> dict[str, Any]:
+        """Record an explicit retention decision, never a provider opt-out receipt."""
+        # The same profile lock serializes direct browser execution. Do not
+        # wait for a live operation and then mistake its effect for cancellation.
+        with profile.lock(timeout_seconds=0), self._connect() as db:
+            db.execute("begin immediate")
+            decision = self._unsubscribe_cancellation_decision(
+                db, task_id=task_id, expected_action_identity=expected_action_identity,
+                expected_execution_generation=expected_execution_generation,
+                expected_input_version=expected_input_version, reason=reason,
+            )
+            if not apply or db.execute(
+                "select 1 from email_unsubscribe_cancellations where action_identity=?",
+                (expected_action_identity,),
+            ).fetchone() is not None:
+                return decision
+            db.execute("insert into email_unsubscribe_cancellations(action_identity,decision_json) values (?,?)", (expected_action_identity, _json_dump(decision)))
+            db.execute(
+                "update reply_tasks set status='skipped', error='email_unsubscribe_cancelled_by_principal', "
+                "available_at='', locked_at=null, updated_at=? where id=?",
+                (decision["recorded_at"], task_id),
+            )
+            return decision
+
+    @classmethod
+    def preview_failed_email_unsubscribe_task(cls, database: str | Path, **identity: Any) -> dict[str, Any]:
+        """Read one existing schema without initializing stores or migrations."""
+        with closing(sqlite3.connect(Path(database).resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            db.row_factory = sqlite3.Row
+            db.execute("pragma query_only=on")
+            db.execute("begin")
+            if cls._read_schema_version(db) != EMAIL_SCHEMA_VERSION:
+                raise EmailPersistenceCorruption(f"cancellation requires deployed email schema {EMAIL_SCHEMA_VERSION}")
+            cls._validate_schema_shape(db)
+            return cls._unsubscribe_cancellation_decision(db, **identity)
+
+    @classmethod
+    def _unsubscribe_cancellation_decision(
+        cls, db: sqlite3.Connection, *, task_id: int, expected_action_identity: str,
+        expected_execution_generation: str, expected_input_version: int, reason: str,
+    ) -> dict[str, Any]:
+        from app.email_unsubscribe_audit import _task_payload, _validate_task_identity
+        from app.store import AutoReplyStore
+
+        _require_positive_int(task_id, field="task_id")
+        _require_positive_int(expected_input_version, field="input_version")
+        if not reason.strip() or not expected_action_identity or not expected_execution_generation:
+            raise ValueError("explicit cancellation identity and reason are required")
+        task = db.execute(f"select * from ({REPLY_TASK_CURRENT_SQL}) as tasks where id=?", (task_id,)).fetchone()
+        if (task is None or task["channel"] != "email"
+                or task["trigger_message_id"] != expected_action_identity
+                or task["execution_generation"] != expected_execution_generation
+                or task["input_version"] != expected_input_version):
+            raise EmailActionPlanConflict("unsubscribe cancellation task identity changed")
+        existing = db.execute("select decision_json from email_unsubscribe_cancellations where action_identity=?", (expected_action_identity,)).fetchone()
+        if existing is not None:
+            decision = _json_load(existing["decision_json"], field="unsubscribe cancellation", expected_type=dict)
+            if (decision["task_id"] == task_id and task["status"] == "skipped"
+                    and decision["execution_generation"] == expected_execution_generation
+                    and decision["input_version"] == expected_input_version):
+                return decision
+            raise EmailActionPlanConflict("unsubscribe cancellation decision changed")
+        if task["status"] != "failed" or task["locked_at"]:
+            raise EmailActionPlanConflict("unsubscribe cancellation task is active or terminal")
+        if db.execute(
+            "select 1 from service_state where key=?",
+            (f"email_unsubscribe_execution_pending:v1:{expected_action_identity}",),
+        ).fetchone():
+            raise EmailActionPlanConflict("unsubscribe execution requires reconciliation")
+        typed_task = AutoReplyStore._reply_task_from_row(task)
+        payload = _task_payload(typed_task)
+        _validate_task_identity(typed_task, payload)
+        source = db.execute(
+            "select 1 from email_classifications c join email_action_plans p "
+            "on p.action_plan_id=c.current_action_plan_id where c.id=? and c.status='processed' "
+            "and c.account_id=? and c.stable_message_identity=? "
+            "and p.action_plan_id=? and p.action_plan_version=?",
+            (payload["classification_id"], payload["account_id"],
+             payload["stable_message_identity"], payload["action_plan_id"],
+             payload["action_plan_version"]),
+        ).fetchone()
+        if source is None:
+            raise EmailActionPlanConflict("unsubscribe cancellation source changed")
+        if (db.execute("select 1 from agent_runs where reply_task_id=?", (task_id,)).fetchone()
+                or db.execute("select 1 from dispatcher_claim_leases where adapter_name in ('reply','scheduled_execution') and source_id=? and owner<>'' and coalesce(terminal_at,'')=''", (str(task_id),)).fetchone()
+                or db.execute("select 1 from email_unsubscribe_claims where action_identity=?", (expected_action_identity,)).fetchone()
+                or db.execute("select 1 from email_unsubscribe_effects where action_identity=?", (expected_action_identity,)).fetchone()
+                or db.execute("select 1 from email_unsubscribe_receipts where action_identity=?", (expected_action_identity,)).fetchone()):
+            raise EmailActionPlanConflict("unsubscribe cancellation has an active owner or effect")
+        last_step = db.execute(
+            "select state from email_unsubscribe_steps where action_identity=? order by sequence desc limit 1",
+            (expected_action_identity,),
+        ).fetchone()
+        if last_step is not None:
+            raise EmailActionPlanConflict("unsubscribe cancellation requires effect reconciliation")
+        return {
+            "decision": "retain_subscription", "task_id": task_id,
+            "action_identity": expected_action_identity,
+            "execution_generation": expected_execution_generation,
+            "input_version": expected_input_version, "reason": reason.strip(),
+            "previous_error": task["error"], "recorded_at": cls._now(),
+        }
+
     def list_terminal_unsubscribe_tasks_missing_receipts(self) -> list[dict[str, Any]]:
         """Find closed unsubscribe tasks whose durable receipt projection is absent.
 
@@ -16735,6 +16890,12 @@ class EmailStore:
                     (action_identity,),
                 ).fetchone()
                 if receipt is not None:
+                    continue
+                cancellation = db.execute(
+                    "select 1 from email_unsubscribe_cancellations where action_identity=?",
+                    (action_identity,),
+                ).fetchone()
+                if cancellation is not None:
                     continue
                 task = db.execute(
                     """

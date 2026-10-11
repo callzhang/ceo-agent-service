@@ -1539,6 +1539,7 @@ class PlaywrightUnsubscribeBrowser:
         ]
         | None = None,
         connected_recipient: str = "",
+        unsubscribe_recipient: str = "",
         email_otp_resolver: Callable[
             [EmailOtpChallenge], ConnectedMailboxOtp | None
         ]
@@ -1555,6 +1556,7 @@ class PlaywrightUnsubscribeBrowser:
         self.confirmation_receipt_resolver = confirmation_receipt_resolver
         self.confirmation_target_resolver = confirmation_target_resolver
         self.connected_recipient = connected_recipient.strip()
+        self.unsubscribe_recipient = unsubscribe_recipient.strip()
         self.email_otp_resolver = email_otp_resolver
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._challenge_bindings: dict[str, datetime] = {}
@@ -1977,7 +1979,7 @@ class PlaywrightUnsubscribeBrowser:
                 **semantics,
                 "successful_controls": [
                     {"name": name, "type": field_type,
-                     "value": self.connected_recipient if field_type == "email" else value}
+                     "value": self.unsubscribe_recipient if field_type == "email" else value}
                     for name, field_type, value in fields
                 ],
             })
@@ -3083,18 +3085,26 @@ class PlaywrightUnsubscribeBrowser:
             )
         email_fields = [field for field in binding.successful_controls
                         if field[1] == "email"]
-        if not any(not value.strip() for _name, _type, value in email_fields):
+        if not email_fields:
             return control_reference
         if len(email_fields) != 1 or not binding.field_selector:
             raise UnsubscribeBrowserError(
                 UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
                 "unsubscribe recipient field is ambiguous",
             )
-        if not self.connected_recipient:
+        if not self.unsubscribe_recipient:
             raise UnsubscribeBrowserError(
                 UnsubscribeBrowserFailure.STATE_READBACK_FAILED,
-                "connected recipient is unavailable",
+                "source unsubscribe recipient is unavailable",
             )
+        existing_recipient = email_fields[0][2].strip()
+        if existing_recipient:
+            if existing_recipient != self.unsubscribe_recipient:
+                raise UnsubscribeBrowserError(
+                    UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
+                    "unsubscribe form recipient does not match the source",
+                )
+            return control_reference
         field = self.page.locator(binding.field_selector)
         if (field.count() != 1 or field.input_value().strip()
                 or field.get_attribute("type").lower() != "email"
@@ -3106,7 +3116,7 @@ class PlaywrightUnsubscribeBrowser:
                 UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
                 "unsubscribe recipient field changed",
             )
-        field.fill(self.connected_recipient)
+        field.fill(self.unsubscribe_recipient)
         self._raise_if_blocked()
         prepared = [current for current in self._ordinary_controls()
                     if current.control.kind == "form"
@@ -3617,6 +3627,7 @@ def open_live_unsubscribe_session(
     *,
     timeout_ms: int = DEFAULT_UNSUBSCRIBE_BROWSER_TIMEOUT_MS,
     connected_recipient: str = "",
+    unsubscribe_recipient: str = "",
     email_otp_resolver: Callable[[EmailOtpChallenge], ConnectedMailboxOtp | None]
     | None = None,
     page_judge: Callable[[str, str, str, Sequence[str]], UnsubscribePageJudgement]
@@ -3655,6 +3666,7 @@ def open_live_unsubscribe_session(
             page,
             timeout_ms=timeout_ms,
             connected_recipient=connected_recipient,
+            unsubscribe_recipient=unsubscribe_recipient,
             email_otp_resolver=email_otp_resolver,
             page_judge=page_judge,
         )

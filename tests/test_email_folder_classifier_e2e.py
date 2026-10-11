@@ -925,9 +925,11 @@ def test_real_store_training_registry_runtime_and_historical_action_integration(
     browser_calls = []
 
     def fake_browser(effect, selected_entry, **_kwargs):
+        _kwargs["before_open"]()
+        _kwargs["start_execution"]()
         browser_calls.append((effect, selected_entry))
         assert selected_entry.reference == effect.entry_reference
-        return UnsubscribeExecutionResult(
+        result = UnsubscribeExecutionResult(
             outcome=UnsubscribeOutcome.DONE,
             disposition=disposition_for_unsubscribe_outcome(UnsubscribeOutcome.DONE),
             journal=(RedactedUnsubscribeStep(
@@ -945,6 +947,8 @@ def test_real_store_training_registry_runtime_and_historical_action_integration(
             started_at="2026-09-08T08:00:01+00:00",
             completed_at="2026-09-08T08:00:02+00:00",
         )
+        _kwargs["persist_result"](result)
+        return result
 
     monkeypatch.setattr(
         unsubscribe_module,

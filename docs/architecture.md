@@ -520,6 +520,8 @@ Email Console 的“模型训练”页读取后端统一计算的晋升资格。
 
 ### Repository Upgrade
 
+日备份目录按既有单副本保留策略，只保留一个最新的已验证日备份；未完成的副本不作为恢复依据。
+
 服务周期性读取配置的 `origin/main`，只识别可安全 fast-forward 的更新；分叉、状态指纹变化或
 脏工作树不会被静默覆盖。History 页面只展示状态并启动带 operation ID 的 detached updater；
 日备份循环只保留一个最新的已验证日备份；部署与日备份共用备份目录，仍只保留一个完整副本。

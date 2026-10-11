@@ -11007,6 +11007,44 @@ def test_a_page_a_rerun_would_read_identically_is_not_retried():
     assert captured["task_status"] == "failed"
 
 
+@pytest.mark.parametrize("recipients, expected", [
+    (["Alias <alias@example.com>"], "alias@example.com"),
+    ([], ""),
+    (["first@example.com", "second@example.com"], ""),
+    (["not-an-email"], ""),
+])
+def test_direct_unsubscribe_keeps_source_recipient_separate_from_login(monkeypatch, tmp_path, recipients, expected):
+    from app import email_worker, email_unsubscribe_direct, agent_runtime_production
+
+    classification = {
+        "account_id": "account-1", "stable_message_identity": "message-1",
+        "recipients": recipients,
+    }
+    seen = {}
+    context = SimpleNamespace(
+        email_store=SimpleNamespace(
+            get_account=lambda _id: {"email_address": "account@example.com"},
+            get_classification=lambda _id: classification,
+            get_email_unsubscribe_cancellation=lambda _identity: {"decision": "retain_subscription"},
+        ),
+        task_store=object(), browser_profile=object(), source_factory=object(),
+        browser_session_manager=object(), resolve_entries=lambda _effect: (),
+    )
+    monkeypatch.setattr(email_worker, "_build_email_unsubscribe_context", lambda _settings: context)
+    monkeypatch.setattr(email_worker, "_build_connected_mailbox_otp_resolver", lambda *_args: None)
+    monkeypatch.setattr(agent_runtime_production, "build_production_routed_codex_execution", lambda **_kwargs: object())
+    monkeypatch.setattr(email_unsubscribe_direct, "run_unsubscribe_in_dedicated_profile", lambda *args, **kwargs: seen.update(kwargs))
+    operation = email_worker.build_direct_email_unsubscribe_operation(SimpleNamespace(workspace=tmp_path))
+    operation.run_effect(
+        SimpleNamespace(account_id="account-1", classification_id=7, stable_message_identity="message-1", action_identity="action-1"),
+        object(), one_click_verified=False,
+    )
+    assert seen["connected_recipient"] == "account@example.com"
+    assert seen["unsubscribe_recipient"] == expected
+    with pytest.raises(ValueError, match="cancelled by principal"):
+        seen["before_open"]()
+
+
 def test_the_production_unsubscribe_effect_accepts_what_the_operation_passes(
     tmp_path,
 ):
