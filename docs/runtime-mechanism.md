@@ -2226,6 +2226,18 @@ restart callback 调用前即标记 attempted，使部分 bootstrap 失败也会
 replacement。bootout 报错只有在原生 launchctl print 明确证明 label 不存在
 时接受；权限或其他停止失败仍是错误。
 
-首次 47→48 上线必须由已更新的 deploy 调用方执行：已运行的旧 Python
+每次新 schema 逆迁的首次上线必须由已更新的 deploy 调用方执行：已运行的旧 Python
 updater 不会因为 fast-forward 而获得新 callback。后续更新后的独立 updater
 入口也使用相同的停止、数据库 publication 和启动机制。
+
+## Email current plan deduplication
+
+Email schema48→49 在初始化事务内先执行现有业务状态校验和旧 action_plan_json
+精确序列化校验，再删除 email_classifications.action_plan_json。计划由
+current_action_plan_id 指向 email_action_plans 唯一读取；当前写入不保存重复 JSON。
+分页列表一次批量查询相关计划，避免每条分类单独连接/查询。
+
+正式发布49→48的逆迁在一个事务内添加旧缓存列，以当前计划重建内容，恢复原版本历史；
+只捕获旧记录的序列化区别 ID 集合，不备份正文。新分类和修订按回退时的当前计划重建，
+新增业务记录和执行回执保留。校验或逆迁失败不会部分提交，也不以部署前数据库覆盖新写入。
+该逆迁仅适用于已验证的48→49发布，与47→48索引逆迁分别匹配。

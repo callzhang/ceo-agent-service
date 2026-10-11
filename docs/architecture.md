@@ -1678,9 +1678,19 @@ provider 状态、分类、刷新和外部动作语义不变。主键和文件�
 
 正式 deploy 在 quiet/停止服务及一致备份之后，先捕获 Email schema 的回退
 元信息，再在停止窗口执行数据库迁移，随后校验 imports、启动及 health。
-本次只支持经过验证的 47→48 provider 索引逆迁：恢复原索引 SQL，移除
-新增的版本 48 行；不覆盖数据库文件或业务记录。启动失败或 health/加载
-验证失败时，先停止可能已启动的 replacement、回退可选发布资产与 schema，
+已验证的 47→48 provider 索引逆迁恢复原索引 SQL，移除新增版本48行；
+48→49 移除分类的重复 action_plan_json，回退从当前不可变 plan 重建旧列并移除
+版本49行。回退捕获的原版本历史及旧序列化形式保持准确；不覆盖数据库文件或业务记录。
+启动失败或 health/加载验证失败时，先停止可能已启动的 replacement、回退可选发布资产与 schema，
 再恢复旧代码并启动。schema 逆迁失败时保持 replacement 停止并记录
 needs_manual，不将旧代码启动在不兼容数据库上。其他 schema 变化需要
 各自验证的逆迁，不能自动套用本次索引回退。
+
+## Canonical email action-plan reference
+
+Email schema49 删除 email_classifications.action_plan_json。分类只保留现有
+current_action_plan_id，当前计划及其授权、动作参数从 email_action_plans 读取；
+列表在同一连接内批量读取计划，详情、反馈重放、修订及退订修复也使用此唯一来源。
+48→49 在现有初始化事务内先验证旧缓存与计划完全一致，再删除列；当前读写不再维护副本。
+分类归属、连续计划版本、最高版本指针、分类字段与授权约束继续验证。
+49→48 回退只重建缓存列，保留迁移后新增的分类、计划修订、动作和执行回执。

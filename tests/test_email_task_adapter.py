@@ -2,6 +2,8 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import hashlib
 import sqlite3
+
+from tests.email_schema_fixtures import restore_action_plan_snapshot_column
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -142,6 +144,7 @@ def _email_store(tmp_path: Path) -> EmailStore:
 
 def _downgrade_email_database_to_v25(database: Path) -> None:
     with sqlite3.connect(database) as db:
+        restore_action_plan_snapshot_column(db)
         db.execute("pragma foreign_keys=off")
         for table in (
             "email_historical_classification_history",

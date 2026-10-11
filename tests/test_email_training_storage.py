@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 import json
 import sqlite3
+
+from tests.email_schema_fixtures import restore_action_plan_snapshot_column
 from types import SimpleNamespace
 
 import pytest
@@ -106,6 +108,7 @@ def test_training_storage_migrates_latest_complete_legacy_snapshot(tmp_path, cor
     store.persist_training_snapshot(old)
     store.persist_training_snapshot(new)
     with sqlite3.connect(path) as db:
+        restore_action_plan_snapshot_column(db)
         db.execute("drop trigger trg_email_training_snapshots_immutable_update")
         db.execute("drop trigger trg_email_training_observations_require_unfrozen_snapshot")
         for frozen in (old, new):
@@ -171,6 +174,7 @@ def test_training_migration_retains_latest_complete_snapshot_per_type(tmp_path):
         store.persist_training_snapshot(frozen)
 
     with sqlite3.connect(path) as db:
+        restore_action_plan_snapshot_column(db)
         expected_metadata = {
             row[0]: tuple(row[1:])
             for row in db.execute(

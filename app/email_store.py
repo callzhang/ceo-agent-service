@@ -71,7 +71,7 @@ from app.leak_check import assert_no_credentials, is_sensitive_url_component_nam
 from app.sqlite_schema_lock import schema_initialize_lock
 
 
-EMAIL_SCHEMA_VERSION = 48
+EMAIL_SCHEMA_VERSION = 49
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     {
         "email_model_promotion_configs",
@@ -224,7 +224,6 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "status": ("text", True, None),
         "classification_source": ("text", True, None),
         "agent_result_json": ("text", True, "'null'"),
-        "action_plan_json": ("text", True, "'null'"),
         "current_action_plan_id": ("text", False, None),
         "included_in_model_id": ("text", False, None),
         "legacy_processed_without_plan": ("integer", True, "0"),
@@ -3205,6 +3204,9 @@ class EmailStore:
             if latest_version == 47:
                 self._migrate_v47_to_v48(db, replace_version=is_prototype)
                 latest_version = 48
+            if latest_version == 48:
+                self._migrate_v48_to_v49(db, replace_version=is_prototype)
+                latest_version = 49
             self._validate_durable_state(db)
             return True
 
@@ -5405,6 +5407,80 @@ class EmailStore:
                 (self._now(),),
             )
 
+    def _migrate_v48_to_v49(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Keep current plans only in the immutable ActionPlan relation."""
+        self._validate_durable_state(db)
+        self._validate_cached_action_plan_snapshots(db)
+        db.execute("alter table email_classifications drop column action_plan_json")
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=49, applied_at=? "
+                "where version=48", (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (49, ?)",
+                (self._now(),),
+            )
+
+    def _validate_cached_action_plan_snapshots(self, db: sqlite3.Connection) -> None:
+        """Validate the <=48 duplicate exactly before removing it."""
+        plan_rows = {
+            row["action_plan_id"]: row
+            for row in db.execute("select * from email_action_plans")
+        }
+        for row in db.execute(
+            "select id, action_plan_json, current_action_plan_id from email_classifications"
+        ):
+            has_plan_snapshot = row["action_plan_json"] not in {"", "null"}
+            if row["current_action_plan_id"] is None:
+                if has_plan_snapshot:
+                    raise EmailPersistenceCorruption(
+                        f"classification {row['id']} has a snapshot without current ActionPlan"
+                    )
+                continue
+            if not has_plan_snapshot:
+                raise EmailPersistenceCorruption(
+                    f"processed classification {row['id']} has inconsistent ActionPlan state"
+                )
+            plan_row = plan_rows[row["current_action_plan_id"]]
+            current_plan = self._stored_action_plan(plan_row)
+            raw_action_plan = _json_load(
+                row["action_plan_json"],
+                field="action_plan_json",
+                expected_type=dict,
+            )
+            authorization_fields = {
+                "authorization_snapshot_format",
+                "action_authorizations",
+            }
+            present_authorization_fields = authorization_fields & set(raw_action_plan)
+            if not present_authorization_fields:
+                if (
+                    plan_row["legacy_serialization_pre_v16"] != 1
+                    or plan_row["authorization_snapshot_json"] is not None
+                ):
+                    raise EmailPersistenceCorruption(
+                        f"current ActionPlan snapshot mismatch for classification "
+                        f"{row['id']}"
+                    )
+                canonical_action_plan_json = current_plan.model_dump_json(
+                    exclude=authorization_fields
+                )
+            elif present_authorization_fields == authorization_fields:
+                canonical_action_plan_json = current_plan.model_dump_json()
+            else:
+                raise EmailPersistenceCorruption(
+                    f"current ActionPlan snapshot has partial authorization fields "
+                    f"for classification {row['id']}"
+                )
+            if row["action_plan_json"] != canonical_action_plan_json:
+                raise EmailPersistenceCorruption(
+                    f"current ActionPlan snapshot mismatch for classification {row['id']}"
+                )
+
     def _migrate_v40_to_v41(
         self, db: sqlite3.Connection, *, replace_version: bool = False
     ) -> None:
@@ -7191,12 +7267,10 @@ class EmailStore:
             messages[row["stable_message_identity"]] = row
 
         plans: dict[str, EmailActionPlan] = {}
-        plan_rows: dict[str, sqlite3.Row] = {}
         plans_by_classification: dict[int, list[EmailActionPlan]] = {}
         for row in db.execute("select * from email_action_plans"):
             plan = self._stored_action_plan(row)
             plans[plan.action_plan_id] = plan
-            plan_rows[plan.action_plan_id] = row
             plans_by_classification.setdefault(plan.classification_id, []).append(plan)
         for classification_id, stored_plans in plans_by_classification.items():
             ordered = sorted(plan.action_plan_version for plan in stored_plans)
@@ -7215,7 +7289,7 @@ class EmailStore:
                        predicted_category, confirmed_category, confidence,
                        probabilities_json, model_id, config_version, status,
                        classification_source, agent_result_json,
-                       action_plan_json, current_action_plan_id,
+                       current_action_plan_id,
                        legacy_processed_without_plan
                 from email_classifications
                 """
@@ -7346,7 +7420,6 @@ class EmailStore:
                     f"message locator mismatch for classification {row['id']}"
                 )
             classification_plans = plans_by_classification.get(row["id"], [])
-            has_plan_snapshot = row["action_plan_json"] not in {"", "null"}
             if row["status"] == EmailClassificationStatus.PENDING_FEEDBACK.value:
                 if row["classification_source"] not in {"model", "agent"}:
                     raise EmailPersistenceCorruption(
@@ -7366,8 +7439,7 @@ class EmailStore:
                         f"pending feedback classification {row['id']} carries a legacy marker"
                     )
                 if (
-                    has_plan_snapshot
-                    or row["current_action_plan_id"] is not None
+                    row["current_action_plan_id"] is not None
                     or classification_plans
                 ):
                     raise EmailPersistenceCorruption(
@@ -7399,15 +7471,14 @@ class EmailStore:
                 )
             if row["current_action_plan_id"] is None:
                 if (
-                    has_plan_snapshot
-                    or classification_plans
+                    classification_plans
                     or row["legacy_processed_without_plan"] != 1
                 ):
                     raise EmailPersistenceCorruption(
                         f"processed classification {row['id']} has no current ActionPlan"
                     )
                 continue
-            if row["legacy_processed_without_plan"] != 0 or not has_plan_snapshot:
+            if row["legacy_processed_without_plan"] != 0:
                 raise EmailPersistenceCorruption(
                     f"processed classification {row['id']} has inconsistent ActionPlan state"
                 )
@@ -7443,40 +7514,6 @@ class EmailStore:
             if plan_fields != expected_fields:
                 raise EmailPersistenceCorruption(
                     f"current ActionPlan classification fields mismatch for {row['id']}"
-                )
-            raw_action_plan = _json_load(
-                row["action_plan_json"],
-                field="action_plan_json",
-                expected_type=dict,
-            )
-            authorization_fields = {
-                "authorization_snapshot_format",
-                "action_authorizations",
-            }
-            present_authorization_fields = authorization_fields & set(raw_action_plan)
-            if not present_authorization_fields:
-                current_plan_row = plan_rows[current_plan.action_plan_id]
-                if (
-                    current_plan_row["legacy_serialization_pre_v16"] != 1
-                    or current_plan_row["authorization_snapshot_json"] is not None
-                ):
-                    raise EmailPersistenceCorruption(
-                        f"current ActionPlan snapshot mismatch for classification "
-                        f"{row['id']}"
-                    )
-                canonical_action_plan_json = current_plan.model_dump_json(
-                    exclude=authorization_fields
-                )
-            elif present_authorization_fields == authorization_fields:
-                canonical_action_plan_json = current_plan.model_dump_json()
-            else:
-                raise EmailPersistenceCorruption(
-                    f"current ActionPlan snapshot has partial authorization fields "
-                    f"for classification {row['id']}"
-                )
-            if row["action_plan_json"] != canonical_action_plan_json:
-                raise EmailPersistenceCorruption(
-                    f"current ActionPlan snapshot mismatch for classification {row['id']}"
                 )
 
         for stable_identity in messages:
@@ -8075,7 +8112,26 @@ class EmailStore:
                 )
 
     @staticmethod
-    def _classification_row(row: sqlite3.Row) -> dict[str, Any]:
+    def _current_action_plan_rows(
+        db: sqlite3.Connection, rows: Sequence[sqlite3.Row]
+    ) -> dict[str, sqlite3.Row]:
+        plan_ids = list({row["current_action_plan_id"] for row in rows
+                         if row["current_action_plan_id"] is not None})
+        if not plan_ids:
+            return {}
+        return {
+            row["action_plan_id"]: row
+            for row in db.execute(
+                "select * from email_action_plans "
+                "where action_plan_id in (select value from json_each(?))",
+                (_json_dump(plan_ids),),
+            )
+        }
+
+    @classmethod
+    def _classification_row(
+        cls, row: sqlite3.Row, plan_rows: Mapping[str, sqlite3.Row]
+    ) -> dict[str, Any]:
         probabilities = _json_load(
             row["probabilities_json"],
             field="probabilities_json",
@@ -8085,15 +8141,14 @@ class EmailStore:
             raise EmailPersistenceCorruption("invalid classification status")
         if row["classification_source"] not in _CLASSIFICATION_SOURCES:
             raise EmailPersistenceCorruption("invalid classification source")
-        action_plan: dict[str, Any] | None
-        if row["action_plan_json"] in {"", "null"}:
-            action_plan = None
-        else:
-            try:
-                plan = rehydrate_legacy_email_action_plan_json(row["action_plan_json"])
-            except ValueError as exc:
-                raise EmailPersistenceCorruption("invalid action_plan_json") from exc
-            action_plan = plan.model_dump(mode="json")
+        action_plan: dict[str, Any] | None = None
+        if row["current_action_plan_id"] is not None:
+            plan_row = plan_rows.get(row["current_action_plan_id"])
+            if plan_row is None or plan_row["classification_id"] != row["id"]:
+                raise EmailPersistenceCorruption(
+                    f"missing current ActionPlan for classification {row['id']}"
+                )
+            action_plan = cls._stored_action_plan(plan_row).model_dump(mode="json")
         if row["agent_result_json"] != "null":
             agent_result = _json_load(
                 row["agent_result_json"],
@@ -8134,8 +8189,10 @@ class EmailStore:
         }
 
     @classmethod
-    def _classification_evidence_row(cls, row: sqlite3.Row) -> dict[str, Any]:
-        item = cls._classification_row(row)
+    def _classification_evidence_row(
+        cls, row: sqlite3.Row, plan_rows: Mapping[str, sqlite3.Row]
+    ) -> dict[str, Any]:
+        item = cls._classification_row(row, plan_rows)
         raw_metadata = row["message_attachment_metadata_json"]
         if raw_metadata is None:
             item["attachment_metadata"] = []
@@ -8220,7 +8277,9 @@ class EmailStore:
                 f"feedback request {request['feedback_request_id']} has no result"
             )
         action_plan = self._stored_action_plan(plan_row)
-        confirmed = self._classification_row(classification)
+        confirmed = self._classification_row(
+            classification, self._current_action_plan_rows(db, [classification])
+        )
         confirmed.update(
             {
                 "category": action_plan.category,
@@ -8661,9 +8720,9 @@ class EmailStore:
                         model_text, received_at, category, predicted_category,
                         confirmed_category, confidence, margin, probabilities_json,
                         model_id, config_version, status, classification_source,
-                        agent_result_json, action_plan_json,
+                        agent_result_json,
                         current_action_plan_id, updated_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'null', null, ?)
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?)
                     """,
                     (
                         classification.classification_id,
@@ -8698,12 +8757,11 @@ class EmailStore:
                     db.execute(
                         """
                         update email_classifications
-                        set action_plan_json=?, current_action_plan_id=?,
+                        set current_action_plan_id=?,
                             legacy_processed_without_plan=0
                         where id=?
                         """,
                         (
-                            classification.action_plan.model_dump_json(),
                             classification.action_plan.action_plan_id,
                             classification.classification_id,
                         ),
@@ -8746,8 +8804,9 @@ class EmailStore:
                 "select * from email_classifications where id=?",
                 (classification.classification_id,),
             ).fetchone()
+            plan_rows = self._current_action_plan_rows(db, [row] if row else [])
         assert row is not None
-        return self._classification_row(row)
+        return self._classification_row(row, plan_rows)
 
     def persist_empty_scan_cursor(
         self,
@@ -13099,10 +13158,11 @@ class EmailStore:
                 """,
                 (*params, limit, offset),
             ).fetchall()
+            plan_rows = self._current_action_plan_rows(db, rows)
         items = []
         for row in rows:
             message = Parser().parsestr(row["message_text"] or "")
-            item = self._classification_evidence_row(row)
+            item = self._classification_evidence_row(row, plan_rows)
             item["message_text"] = _display_message_body(message)
             items.append(item)
         return items, total
@@ -13304,10 +13364,11 @@ class EmailStore:
                 """,
                 (*search_params, limit, offset),
             ).fetchall()
+            plan_rows = self._current_action_plan_rows(db, rows)
         items = []
         for row in rows:
             message = Parser().parsestr(row["message_text"] or "")
-            item = self._classification_evidence_row(row)
+            item = self._classification_evidence_row(row, plan_rows)
             item["message_text"] = _display_message_body(message)
             items.append(item)
         return items, total
@@ -13483,11 +13544,12 @@ class EmailStore:
                 """,
                 (classification_id,),
             ).fetchone()
+            plan_rows = self._current_action_plan_rows(db, [row] if row else [])
         if row is None:
             return None
         message = Parser().parsestr(row["message_text"] or "")
         return {
-            **self._classification_evidence_row(row),
+            **self._classification_evidence_row(row, plan_rows),
             "message_text": _display_message_body(message),
             "cc": message.get("Cc", ""),
             # The stored body carries no header block for almost every message,
@@ -13555,7 +13617,8 @@ class EmailStore:
                 "select * from email_classifications where stable_message_identity=?",
                 (stable_message_identity,),
             ).fetchone()
-        return None if row is None else self._classification_row(row)
+            plan_rows = self._current_action_plan_rows(db, [row] if row else [])
+        return None if row is None else self._classification_row(row, plan_rows)
 
     def has_stable_classification(self, stable_message_identity: str) -> bool:
         return (
@@ -15863,7 +15926,7 @@ class EmailStore:
                 update email_classifications
                 set category=?, confirmed_category=?, status=?,
                     classification_source='user', config_version=?,
-                    action_plan_json=?, current_action_plan_id=?,
+                    current_action_plan_id=?,
                     legacy_processed_without_plan=0,
                     agent_result_json='null',
                     confirmed_at=?, updated_at=?
@@ -15876,7 +15939,6 @@ class EmailStore:
                     category,
                     EmailClassificationStatus.PROCESSED.value,
                     config_version,
-                    action_plan.model_dump_json(),
                     action_plan.action_plan_id,
                     applied_at,
                     applied_at,
@@ -16098,13 +16160,12 @@ class EmailStore:
             db.execute(
                 """
                 update email_classifications
-                set action_plan_json=?, current_action_plan_id=?,
+                set current_action_plan_id=?,
                     config_version=?, legacy_processed_without_plan=0,
                     updated_at=?
                 where id=?
                 """,
                 (
-                    action_plan.model_dump_json(),
                     action_plan.action_plan_id,
                     # The plan carries the category's current configuration, and
                     # durable validation requires the row to say the same.
@@ -16117,7 +16178,8 @@ class EmailStore:
                 "select * from email_classifications where id=?",
                 (int(row["id"]),),
             ).fetchone()
-        return self._classification_row(updated)
+            plan_rows = self._current_action_plan_rows(db, [updated] if updated else [])
+        return self._classification_row(updated, plan_rows)
 
     def append_action_plan_version(
         self,
@@ -16171,7 +16233,7 @@ class EmailStore:
                     update email_classifications
                     set category=?, confirmed_category=?, status='processed',
                         classification_source=?, confidence=?, model_id=?,
-                        config_version=?, action_plan_json=?,
+                        config_version=?,
                         current_action_plan_id=?, legacy_processed_without_plan=0,
                         agent_result_json=?,
                         confirmed_at=?, updated_at=?
@@ -16184,7 +16246,6 @@ class EmailStore:
                         action_plan.confidence,
                         action_plan.model_id,
                         action_plan.config_version,
-                        action_plan.model_dump_json(),
                         action_plan.action_plan_id,
                         agent_result_json,
                         now,
@@ -16196,8 +16257,9 @@ class EmailStore:
                 "select * from email_classifications where id=?",
                 (classification_id,),
             ).fetchone()
+            plan_rows = self._current_action_plan_rows(db, [updated] if updated else [])
         assert updated is not None
-        return self._classification_row(updated)
+        return self._classification_row(updated, plan_rows)
 
     @staticmethod
     def _assert_no_email_reply_dispatch_in_flight(
@@ -16552,7 +16614,7 @@ class EmailStore:
                 ).fetchone()
                 if task is None:
                     missing_ids.append(int(row["id"]))
-            missing: list[dict[str, Any]] = []
+            hydrated_rows: list[sqlite3.Row] = []
             for offset in range(0, len(missing_ids), 500):
                 batch = missing_ids[offset : offset + 500]
                 placeholders = ",".join("?" for _ in batch)
@@ -16567,8 +16629,9 @@ class EmailStore:
                     """,
                     batch,
                 ).fetchall()
-                missing.extend(self._classification_row(row) for row in hydrated)
-        return missing
+                hydrated_rows.extend(hydrated)
+            plan_rows = self._current_action_plan_rows(db, hydrated_rows)
+        return [self._classification_row(row, plan_rows) for row in hydrated_rows]
 
     def list_terminal_unsubscribe_tasks_missing_receipts(self) -> list[dict[str, Any]]:
         """Find closed unsubscribe tasks whose durable receipt projection is absent.
@@ -16639,12 +16702,20 @@ class EmailStore:
                     continue
                 terminal.append(
                     {
-                        **self._classification_row(classification),
+                        "classification_row": classification,
                         "unsubscribe_action_identity": action_identity,
                         "unsubscribe_task": dict(task),
                     }
                 )
-        return terminal
+            plan_rows = self._current_action_plan_rows(
+                db, [item["classification_row"] for item in terminal]
+            )
+        return [
+            {**self._classification_row(item["classification_row"], plan_rows),
+             "unsubscribe_action_identity": item["unsubscribe_action_identity"],
+             "unsubscribe_task": item["unsubscribe_task"]}
+            for item in terminal
+        ]
 
     def repair_current_action_plan(
         self, action_plan: EmailActionPlan
@@ -16664,8 +16735,9 @@ class EmailStore:
                 "select * from email_classifications where id=?",
                 (action_plan.classification_id,),
             ).fetchone()
+            plan_rows = self._current_action_plan_rows(db, [updated] if updated else [])
         assert updated is not None
-        return self._classification_row(updated)
+        return self._classification_row(updated, plan_rows)
 
     def claim_direct_action(
         self, *, action_id: str, claimed_at: str

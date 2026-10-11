@@ -1,0 +1,675 @@
+{
+  "source_commit": "21bfe750",
+  "before": {
+    "schema": 48,
+    "page_bytes": 414822400,
+    "freelist": 3095,
+    "quick": "ok",
+    "fk": [
+      [
+        "meeting_alignment_runs",
+        2298,
+        "meeting_alignment_jobs",
+        0
+      ]
+    ]
+  },
+  "cache_bytes": 12566693,
+  "classifications": 8482,
+  "forward": {
+    "schema": 49,
+    "page_bytes": 414822400,
+    "freelist": 4968,
+    "quick": "ok",
+    "fk": [
+      [
+        "meeting_alignment_runs",
+        2298,
+        "meeting_alignment_jobs",
+        0
+      ]
+    ]
+  },
+  "forward_data_equal": true,
+  "api_equal": true,
+  "api": {
+    "schema": 49,
+    "count": 8482,
+    "total": 8482,
+    "digest": "5dfce4deb548d6ec53e9250208fd5f178ee9aac62a51e151967f162583489f4f"
+  },
+  "original_cache_exact": true,
+  "new_plan_version": 2,
+  "inverse": {
+    "schema": 48,
+    "page_bytes": 414822400,
+    "freelist": 1740,
+    "quick": "ok",
+    "fk": [
+      [
+        "meeting_alignment_runs",
+        2298,
+        "meeting_alignment_jobs",
+        0
+      ]
+    ]
+  },
+  "inverse_data_equal": true,
+  "old48_startup": true,
+  "inverse_api_equal": true,
+  "old48_data_equal": true,
+  "repeat_data_equal": true,
+  "copy_vacuum": {
+    "schema": 49,
+    "page_bytes": 387063808,
+    "freelist": 0,
+    "quick": "ok",
+    "fk": [
+      [
+        "meeting_alignment_runs",
+        2298,
+        "meeting_alignment_jobs",
+        0
+      ]
+    ]
+  },
+  "table_count": 149,
+  "table_fingerprints": {
+    "agent_effect_intents": {
+      "rows": 214,
+      "digest": "1b0d495563b3883eee4b47e04a96ff133345191cad6a4761309af51b31005f3f"
+    },
+    "agent_execution_receipts": {
+      "rows": 115,
+      "digest": "e680cea9b9ed6199ed1977b30fc1bea43f8e54026e82b6a20bc529b3a60fb8f7"
+    },
+    "agent_run_events": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "agent_run_state_events": {
+      "rows": 1151,
+      "digest": "abba6a3419bc8bd2010b5a9193c41716f94d6ec910ea6a6a63cc3d434c1565e5"
+    },
+    "agent_runs": {
+      "rows": 21603,
+      "digest": "5ed71fc140bf14e8fe0f0c0ce8dbbfc07e79c4eb07da2e4e517bd2a7adc2c276"
+    },
+    "agent_runtime_attempts": {
+      "rows": 22717,
+      "digest": "c3628c02d49c8fb2c3297e54e39ebc06dc837e31951a9292b1baa005dde77549"
+    },
+    "business_anchors": {
+      "rows": 50,
+      "digest": "14e57f9289da852a65b58aea9c48b32c8928ec96e53a7dbc65f5632f9e61cf2d"
+    },
+    "business_attention_events": {
+      "rows": 9,
+      "digest": "e5e6e468a0cbbaf47fd7858b68f2ab9be6629910cda5b1461543a9b5d07a5cf6"
+    },
+    "business_attention_items": {
+      "rows": 7,
+      "digest": "98b5cce0df005930604ee1959f4cb9119e00aa634e49bbebe1dd51693dfa02c5"
+    },
+    "business_attention_proposal_tasks": {
+      "rows": 2,
+      "digest": "f65fdb938b53a4f41f539823833c7b1d63c6fafb6ece3f772f3b16341fe1001a"
+    },
+    "business_attention_tasks": {
+      "rows": 2,
+      "digest": "f65fdb938b53a4f41f539823833c7b1d63c6fafb6ece3f772f3b16341fe1001a"
+    },
+    "business_legacy_links": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_object_tasks": {
+      "rows": 7077,
+      "digest": "474d9ba3bc8cba2e8ff298c21ac0226458d2c6a4b34c4c02ac9fceb82c5df2fe"
+    },
+    "business_project_candidates": {
+      "rows": 10,
+      "digest": "01b8e95b463ebff1fbfbcaf1d3225b0600d0b28170a090b1b636d371b1d09b5d"
+    },
+    "business_project_context_revisions": {
+      "rows": 5,
+      "digest": "98351ffa0f5de396c5e99ef462adaeb96c3a4712aabd28d5e25a3ca056d8fb93"
+    },
+    "business_project_evidence": {
+      "rows": 22,
+      "digest": "a317b673c99b7d4513313b2bbd03fa66c922cddb8d0be4312054d2eb9ead2710"
+    },
+    "business_projects": {
+      "rows": 32,
+      "digest": "04edb3f28f3f1ccc900b3b49d92f6614d25b855f44a3c748fe9ee509569636fc"
+    },
+    "business_source_documents": {
+      "rows": 161,
+      "digest": "7666488fdda615e168159d5bd7c2823bcaf797bf5edd1fc1c5aea2812f729bbf"
+    },
+    "business_task_anchor_links": {
+      "rows": 71,
+      "digest": "56632e2fc37e0ef9a5ffc253689c01d9b90e4fff77d581d53ae310c8e68c8785"
+    },
+    "business_task_date_evidence": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_dingtalk_links": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_events": {
+      "rows": 785,
+      "digest": "0ebd7b4ec275ca9b2593b7abb096de99de7ca4c2e064207a4e88d12b6409c43d"
+    },
+    "business_task_evidence": {
+      "rows": 788,
+      "digest": "d848e1a3a82f141c6b10f5076a6791c6c51fa5e251ea18ea85153ee2fd83b735"
+    },
+    "business_task_follow_up_send_attempts": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_follow_ups": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_relations": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_signals": {
+      "rows": 733,
+      "digest": "411b12f9a0dd340592fc0876b473ed0f91c8189e534855999457ecf1d9ab09a6"
+    },
+    "business_task_todo_sync_outbox": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_tasks": {
+      "rows": 510,
+      "digest": "b7a88423f0de747c28e5dcfcec2cd39cec6f1521a904749e255c24b90b8bc0c0"
+    },
+    "business_work_cluster_tasks": {
+      "rows": 16,
+      "digest": "e550fb6d13dfb105c12cafa4a11c793770cb5f0631e9bdb0d2a4e0ef743d594c"
+    },
+    "business_work_clusters": {
+      "rows": 16,
+      "digest": "0ff1c1e66970b9e1c0082d4337875da2d8b5d00ea1c5c8e9a70826a775205ded"
+    },
+    "candidate_action_attempts": {
+      "rows": 76,
+      "digest": "ac7f30a1bf325202093e63faebc8588d81047ffa2773c2dd44b69f68a3d0b7ea"
+    },
+    "candidate_executions": {
+      "rows": 75,
+      "digest": "de1a818ab6270cd5687d4e61eb0c47988d0a716320f5c829ce6e2551ea55cf78"
+    },
+    "candidate_reviews": {
+      "rows": 295,
+      "digest": "b257f8cd5ba1d849486a415432c586dfc2d482ed4912e5711de04cde8e74dbf3"
+    },
+    "candidate_selections": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "candidate_supplements": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "channel_login_reservations": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "codex_session_locks": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "codex_session_search_fts": {
+      "rows": 662,
+      "digest": "dbcf65446a7474bb9f62d66ef2522289114ebecba90e81a002956353d21cea3d"
+    },
+    "codex_session_search_fts_config": {
+      "rows": 1,
+      "digest": "7d6af8d5f3a5b7959afb40dd2dcc5bb8a3f5737f06e0e5f0b9b4fda81e65f1f5"
+    },
+    "codex_session_search_fts_data": {
+      "rows": 6,
+      "digest": "d3b39c9e56d8a5e059f45296e2e8db45548aabbcc209f6f1283c1f35cec6049f"
+    },
+    "codex_session_search_fts_docsize": {
+      "rows": 654,
+      "digest": "53317793ca4356bca55eeb2686b724fa4a257f799d912963d5cb898415f0e4e3"
+    },
+    "codex_session_search_fts_idx": {
+      "rows": 4,
+      "digest": "95d675ae444c85de227e3e2c2ea6168b98358cf825105e21776694525a869675"
+    },
+    "codex_session_search_index": {
+      "rows": 662,
+      "digest": "ab954a65ff9dce835e0a00b68e704993ded55be3129aef2c40a03c39c5bffb77"
+    },
+    "conversation_runtime_sessions": {
+      "rows": 5287,
+      "digest": "8bba1375366633007d6782cb55a6607897e19d0ad624d18f824112f64f361849"
+    },
+    "conversations": {
+      "rows": 499,
+      "digest": "f0064261677e7af983bb169c19fac2b4cddc1875298dc7fe49cb2b84494b6213"
+    },
+    "corpus_sources": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "daily_scan_state": {
+      "rows": 9,
+      "digest": "697f3915a9a34884fcb390b96f1cbac6ef2e692aa854a6c96c0ad769b969d78b"
+    },
+    "dispatcher_claim_leases": {
+      "rows": 10052,
+      "digest": "6e5c945188713a2b66df3a3038f4eeb39ae093b85b820743f47319fbc74edead"
+    },
+    "email_accounts": {
+      "rows": 2,
+      "digest": "bc95419992e44f0daed942fa6ea198e37bd6f1abfccf6cd2660b92947f97695c"
+    },
+    "email_action_attempts": {
+      "rows": 11847,
+      "digest": "b713b8f5547cf53bfee0dcbb6212f264965cbfd2a3e5b4114f5fe4539bacc9ae"
+    },
+    "email_action_plans": {
+      "rows": 9516,
+      "digest": "2fd9c4a7734c8da1a8f0bc8e2faf5f26d8c3e65bd2ee4f3e30e845e08065d236"
+    },
+    "email_actions": {
+      "rows": 9881,
+      "digest": "302f4ccdb403f616b3a36ee8607ae59e9a8136bef6e8ac1b6fd5fdc44f6c4164"
+    },
+    "email_agent_classification_tasks": {
+      "rows": 1348,
+      "digest": "f6bf89be539ad32288edd9e58fb1153a7410d419ad3295541c020ffdf3171936"
+    },
+    "email_category_configs": {
+      "rows": 11,
+      "digest": "8226fd38d1cef6edc3da0df5e4aabe0a5c0c259da04e1c2f38b0a58f43dd6e0c"
+    },
+    "email_category_description_revisions": {
+      "rows": 24,
+      "digest": "27e5b8103f0c4eed3c99b9ddbb0db932bf46295b5464ee61f8c87cdd437f62ed"
+    },
+    "email_category_folder_bindings": {
+      "rows": 22,
+      "digest": "79cd65d92a507c216a2293803099fc22ac6ff7164d1edca501717a7ceeed926f"
+    },
+    "email_classifications": {
+      "rows": 8482,
+      "digest": "c959be18379901e4c662b2e6e72504100e6aa113fd00c72994a00162f78ef812"
+    },
+    "email_classifier_runtime_samples": {
+      "rows": 2048,
+      "digest": "6e19ff65e33cf8f3babafa64295256f25cb0503daa5649fad0c2a6b9010ae77e"
+    },
+    "email_feedback_requests": {
+      "rows": 1413,
+      "digest": "a4277c9874e7e29512a88c0d45aa816e58976f1d1e049447426df2ff07cd1b5c"
+    },
+    "email_historical_candidates": {
+      "rows": 924,
+      "digest": "8e0dbb6d168671f5ab73d289f5a713297463afbfe3e5dcd8f144ac97b86a3015"
+    },
+    "email_historical_classification_history": {
+      "rows": 183,
+      "digest": "f9a73950ed57722d9e9f32ffc571266856324b3885f1cefbb62c4c209aa009e9"
+    },
+    "email_historical_operations": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_historical_traversals": {
+      "rows": 2,
+      "digest": "4f08867728eeff335ecbd6715a64f718f08bdc8bfcb6b08eee23c5908759596c"
+    },
+    "email_messages": {
+      "rows": 8482,
+      "digest": "e0b95ffe657e66964e4e70df1e3d8a5af65c0c8f8a68ba2db7c53df9d7596cbc"
+    },
+    "email_model_mode_transitions": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_model_promotion_configs": {
+      "rows": 4,
+      "digest": "eeedadc6bc71e190edde3218416610c63ceeb7e707a6f726171a1e6c9a75bb8c"
+    },
+    "email_provider_folder_observation_generations": {
+      "rows": 55,
+      "digest": "bbbd0af2539ed8b6f1f4320bb45ee3e72f0d612430820b07230b78985ad9af63"
+    },
+    "email_provider_observations": {
+      "rows": 72004,
+      "digest": "4c61683da3230fe4e7536b7d3bf8824db31f2479d869db5862eb045d0ba9e4a4"
+    },
+    "email_reply_dispatch_claims": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_reply_receipts": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_scan_cursors": {
+      "rows": 2,
+      "digest": "286aba3f7ba68165c649fd484d2e91712a2e63c0451b2f575df032e022d381db"
+    },
+    "email_training_snapshot_observations": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_training_snapshots": {
+      "rows": 122,
+      "digest": "be3fe66b1537252f611065b96c488af9f78d1a1129909f97ee9726797a3071ce"
+    },
+    "email_unsubscribe_claims": {
+      "rows": 1066,
+      "digest": "803037484f834a301ee30b667936d3967c2f5a1745e6dca54e30bc0b96f63d06"
+    },
+    "email_unsubscribe_continuations": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_unsubscribe_effects": {
+      "rows": 1153,
+      "digest": "0a22a8325fe678976aaa073c0ea9ef12f3a372487e431717a640baf9b371f677"
+    },
+    "email_unsubscribe_receipts": {
+      "rows": 1066,
+      "digest": "0946d0ab843883ed809e6de3906f9da9bc92c9eb1352810153f31df3d5f67ea2"
+    },
+    "email_unsubscribe_steps": {
+      "rows": 812,
+      "digest": "42af1b0cb0e181aefe881fa289c791433fa8c4d71d19e1adfb419902988ec782"
+    },
+    "errors": {
+      "rows": 15206,
+      "digest": "40b50b06d7b8d9b2baa344f551709d225c76170099f246c778c16972bf5fd644"
+    },
+    "external_action_results": {
+      "rows": 281,
+      "digest": "3223f45ee2706e4dabf3461df038096ba9f6db5777cd2da9659f9f7f493b68e9"
+    },
+    "feedback_events": {
+      "rows": 48,
+      "digest": "ed6af8a54804f5b9445ab2f2654b7e836d5c4e1a58fd67d11c8d87255cb331f7"
+    },
+    "feedback_iteration_decision_items": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "feedback_iteration_decisions": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "feedback_processing_batches": {
+      "rows": 3,
+      "digest": "77337b00616bc8c2074e5ad92358e09b342f4774d0e853564b84f826b69fedb2"
+    },
+    "feedback_processing_items": {
+      "rows": 48,
+      "digest": "79dcf6e73bc8ce9d96f631644d27fcac1bb19fd7b4eb51b774604f5bc12935f8"
+    },
+    "feedback_processing_rounds": {
+      "rows": 3,
+      "digest": "02590375603189b60fef0327a4928af23e3af9021aa2c20bd3490669d3800d2e"
+    },
+    "feedback_processing_transitions": {
+      "rows": 5,
+      "digest": "b2cacc695ca046c88753753f2110eb138bec5bd72c83b1afb36389dae4828f4b"
+    },
+    "follow_up_drafts": {
+      "rows": 2477,
+      "digest": "238c5562a5c69af68b0e7387183c17ecde1157be8f8eef8ceb4c963e34ace244"
+    },
+    "follow_up_send_attempts": {
+      "rows": 65,
+      "digest": "d62f46ffe8a34065795c1b9639a52424ad54ecb1c55d5c5b471619b143fad7de"
+    },
+    "managed_skill_export_receipts": {
+      "rows": 1920,
+      "digest": "7327d8da7946813678ddcd7074c5ae4a37c43526f7edc1a56b8e0158bdc3d870"
+    },
+    "managed_skill_revisions": {
+      "rows": 145,
+      "digest": "88e86e9829c2544c649eac5b11c7c6210bec5116cce33681db1fc13e16007c0a"
+    },
+    "managed_skills": {
+      "rows": 21,
+      "digest": "da5746e60d2e2102c7f858bd946ddcbfb23888e49cdbbacfc183c0d1639ebe57"
+    },
+    "meeting_alignment_delivery_claims": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "meeting_alignment_jobs": {
+      "rows": 679,
+      "digest": "6baf78d4b254c5052fff9aa6e5503dc2b94731747f5b3e77df02b8eb9b34b0f0"
+    },
+    "meeting_alignment_runs": {
+      "rows": 2526,
+      "digest": "435db7f643857deabe5c2d65188c09178f8ace28b1e0d6fdac7dadf61b440875"
+    },
+    "meeting_memory_write_events": {
+      "rows": 536,
+      "digest": "d1d5a5a3aa0213aa916ee570f7e7705b7738b1f517f7fdf4e570d4eb6fc9a474"
+    },
+    "memory_write_events": {
+      "rows": 476,
+      "digest": "cb856fd7af2d8f40eea61d10c6e665e439d2c949441037df31c97af2abdbfa34"
+    },
+    "native_reply_dispatches": {
+      "rows": 46,
+      "digest": "f0de6285eab68e99708b5b72967839eab0d2d68118569a5b64f5b59d1f7e4a8d"
+    },
+    "oa_notification_events": {
+      "rows": 11,
+      "digest": "df22d14e3698f5990e4bb519fed093af5db784e7cd606b6a006b38d07f9a3b48"
+    },
+    "okr_review_items": {
+      "rows": 413,
+      "digest": "ab6dc6d704803181eece8d265c4f0d1eb3cc979e28b383a90d991d239bfa1037"
+    },
+    "okr_review_requests": {
+      "rows": 20,
+      "digest": "0cbfcaf831b49c166fc28d5ba9fbfb5ff622bce0897c2ee488a4b76ffc423756"
+    },
+    "okr_review_runs": {
+      "rows": 22,
+      "digest": "c7ff822bb00d74d06fe7e61ae3836a3c2777af31960b64bf8013149d52eff87a"
+    },
+    "org_cache_metadata": {
+      "rows": 2,
+      "digest": "bfcba1fd5404a43ba66d191c3815383f59889f220786603ac1fa6d206e928346"
+    },
+    "org_user_profiles": {
+      "rows": 74,
+      "digest": "ce0a5200e4f8d788b7f7075177a94a204dc9c80be5ad6fa6d34b883d702a151d"
+    },
+    "outbound_postfix_receipts": {
+      "rows": 543,
+      "digest": "0a70b86027f826728fc529d4340971b17f120c440ddb38c5bff63ec22a06aa00"
+    },
+    "outbound_postfixes": {
+      "rows": 955,
+      "digest": "60aed5ee398bea640680c7adbc3406803d17f4f83d07f6cffdbc980ac26e1a57"
+    },
+    "reply_attempts": {
+      "rows": 14672,
+      "digest": "2063a53222151782a026d8c0101c4be6cf8741c5ae718d608a526e561c5a353f"
+    },
+    "reply_task_inputs": {
+      "rows": 7362,
+      "digest": "440e0fd7600fe0fa1c242c7f2305042787708ac54ba6cd38ff6e74989452badd"
+    },
+    "reply_tasks": {
+      "rows": 7257,
+      "digest": "c1c70d40774c24d875402ef5760aeab438e2eb76b1e42bb8916ce718ce92b40e"
+    },
+    "review_candidates": {
+      "rows": 302,
+      "digest": "01d3fa3d8f167fff624231d455f2297fa14e34b883529941eb2014543182ece0"
+    },
+    "runtime_feedback_iteration_capabilities": {
+      "rows": 18,
+      "digest": "e22672775e8fe4bb5a60c4e8bf13bcf7a160eb9d18fc034413a4a3b9ac8f0aea"
+    },
+    "runtime_route_pauses": {
+      "rows": 1,
+      "digest": "646836e9cc6ccaa9d4a6a32c2af48cf65e9978b1d6aee976f04f0401bec5f43e"
+    },
+    "runtime_skill_bindings": {
+      "rows": 227,
+      "digest": "bdebb53181a1eb3d59f681687094550354fe91af4e02b46c841b4fdfaeeb9c1a"
+    },
+    "runtime_skill_configs": {
+      "rows": 18,
+      "digest": "93ec085a4d099fcf8d357216be182383d9f0d1a02c4b07728170a6c412a3988f"
+    },
+    "runtime_skill_load_receipts": {
+      "rows": 3882,
+      "digest": "98c33760202a6421a834400aaa49e19850708c8adc39bfa83cd19b8c7cdd7d7e"
+    },
+    "scheduled_task_config_versions": {
+      "rows": 67,
+      "digest": "233f09c485cd2d0a46c745ba09e4068b3513cf1343976013190973ed0312cd59"
+    },
+    "scheduled_task_runs": {
+      "rows": 151209,
+      "digest": "6f67d0fcf1bdf585418b5b312c6636cb782ddd68044cb09ab6b65ae4d3cdb856"
+    },
+    "scheduled_task_skill_refs": {
+      "rows": 34,
+      "digest": "eb5b75c95cde5100a4ccca41702765864e771024ec45d63881e0868b3cb0f4ab"
+    },
+    "scheduled_tasks": {
+      "rows": 15,
+      "digest": "a686b4c43f1eed3b13562ec1eb4e0c5238c88e59a34b411b65663727f422dc0d"
+    },
+    "seen_messages": {
+      "rows": 7037,
+      "digest": "ff045213dda730fcd9cb16bdcd852229cc2651376e1a44b823f218d7b7e671fc"
+    },
+    "sent_replies": {
+      "rows": 2291,
+      "digest": "b5c03d93a82c1b462da1d3a2c030a07c8501c0112ad6838935fa702519bf0d14"
+    },
+    "sent_reply_observers": {
+      "rows": 270,
+      "digest": "b91780514dfc30db40c202a71fc060bbaafe530dfb7f7f45292d6175c1e69acc"
+    },
+    "service_bugfix_candidates": {
+      "rows": 3,
+      "digest": "26e075a971c87e4c171be1c8e60f6c92aa513e34ea7984c50b8789ac5bc59162"
+    },
+    "service_state": {
+      "rows": 215,
+      "digest": "93bb74fc9a2c80f6c866e7aafe73d532ff9a85727e348e4ba88c08c19844b4c4"
+    },
+    "setup_wizard_events": {
+      "rows": 22,
+      "digest": "63f0a812062f1d394d179bfad10fd1d17690d88239da7e0a7e2bd543c75c1c0f"
+    },
+    "setup_wizard_steps": {
+      "rows": 12,
+      "digest": "c7c5100c5b474be204d2b8ec07d17bd2a7523caf2da1217836bf3e18a2bafce2"
+    },
+    "sqlite_sequence": {
+      "rows": 61,
+      "digest": "a8dfffd7a07c9ae83a54292ef6c8762018d1e24a96ee4ecc4ae247fd4d1f826d"
+    },
+    "task_agent_runs": {
+      "rows": 10714,
+      "digest": "8db4ad2d6837235e2f97fda2431982a7fba417485a2f0c73d5c37065021cd6e0"
+    },
+    "task_memory_write_events": {
+      "rows": 332,
+      "digest": "e1b2a653d880f9f9ff5a75b9ed92265e979b48071e800052231f36da6c09b657"
+    },
+    "task_todo_sync_outbox": {
+      "rows": 242,
+      "digest": "5bbe05626ddc8b594046863886248cc27725f33c7f60cf7db11db6d901057c93"
+    },
+    "todo_evidence_candidates": {
+      "rows": 3,
+      "digest": "b8599a2074e5dd7c930c5403184da9b93e50619013484686f4c561ef09a52bb8"
+    },
+    "wechat_deliveries": {
+      "rows": 132,
+      "digest": "bac25be7dcb14f5b05cf755e2173900b6fb8c23047c0451bfe6c87e125f75dbb"
+    },
+    "wechat_memory_candidates": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "wechat_memory_import_jobs": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "wechat_read_state": {
+      "rows": 1,
+      "digest": "68d6b2f59c8136cbbd0907d74bca1628898bbe52eb632ebe46c83da50a8286a2"
+    },
+    "wechat_reply_scopes": {
+      "rows": 4,
+      "digest": "7de860cf86d3f27df05b10041fcf2c2cd3150c49fb4030c77af130f69c71c0d7"
+    },
+    "weekly_okr_analysis_jobs": {
+      "rows": 169,
+      "digest": "0f078c22be82f8740c6051d930df74bfb116acd6f6eab412ab81606710130b4b"
+    },
+    "work_projects": {
+      "rows": 975,
+      "digest": "ed0248007ece8142156befc09712e189241555528284830c51fd283d54d0e3ce"
+    },
+    "work_summary_inputs": {
+      "rows": 9080,
+      "digest": "bfdcfcc109913c663a01c5cb2c5ba650942b4fa8eb0dc4214481fa54649a4daf"
+    },
+    "work_todo_dingtalk_links": {
+      "rows": 875,
+      "digest": "55493ad2a87b09bdabfa8d9adee5670020dd30bff89d563af31f7e0e88c3aff8"
+    },
+    "work_todos": {
+      "rows": 3327,
+      "digest": "7f79a3b40f83711889d03ea7cb4b6b24c4e485f47c5c3be97fd8094e4be03569"
+    },
+    "work_updates": {
+      "rows": 5468,
+      "digest": "fc1a1a94004c2ab5f42e9c8ddd8fbed13f42a360e6106c42da9ce977df4ee7cf"
+    },
+    "workbench_artifacts": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "workbench_attachments": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "workbench_confirmations": {
+      "rows": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "workbench_events": {
+      "rows": 810,
+      "digest": "2fc51a2bbad33ae9657f40b269aef29eac7fa3c653fa2ea458441f0493eb2d56"
+    },
+    "workbench_tasks": {
+      "rows": 20,
+      "digest": "a8ed277e0ed6a3bdf1bd1dbe26eb2b06e46792be445daaa3555958a566533898"
+    },
+    "workbench_turns": {
+      "rows": 37,
+      "digest": "b693e2a7938933f0ee360448188b3f9e600370e5739a176a2b2a988a20dcdc95"
+    }
+  }
+}
