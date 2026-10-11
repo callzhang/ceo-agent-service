@@ -974,8 +974,9 @@ so deployed code/config readback is not a new-business-turn success claim.
 
 Task 386349 ended failed before this deployment, after an Audit approve and one
 System OA-comment dispatch. Readback shows a new remark near the dispatch time,
-but no exact comment identity/content receipt; the initial provider response was
-overwritten by subsequent reconciliation readback. Only one action attempt exists,
+but no exact comment identity/content receipt. The handler discards the initial
+provider response in its missing-comment-ID branch; subsequent reconciliation
+also overwrites the stored action outcome. Only one action attempt exists,
 and uncertain retries did not dispatch again. This independent external-action
 confirmation issue remains unresolved; it is not evidence that the input fix failed,
 and uncertain is not proof that the external comment was never written. No replay
