@@ -1,0 +1,229 @@
+{
+  "before": {
+    "code": "21bfe750201bea5f307db53bb0ac8a7fb83dcb7f",
+    "pid": [
+      "75090"
+    ],
+    "schema": 48,
+    "cache_column_exists": true,
+    "quick": "ok",
+    "fk": [
+      [
+        "meeting_alignment_runs",
+        2298,
+        "meeting_alignment_jobs",
+        0
+      ]
+    ],
+    "page_bytes": 414822400,
+    "freelist": 3094,
+    "classifications": 8482,
+    "missing_plans": 0,
+    "queues": {
+      "reply_tasks": {
+        "done": 7134,
+        "failed": 3,
+        "needs_human": 3,
+        "skipped": 117
+      },
+      "work_summary_inputs": {
+        "done": 4678,
+        "skipped": 4402
+      },
+      "agent_runtime_attempts": {
+        "completed": 15543,
+        "failed": 5747,
+        "superseded": 1427
+      },
+      "email_agent_classification_tasks": {
+        "done": 1348
+      },
+      "email_actions": {
+        "done": 9840,
+        "pending": 39,
+        "skipped": 2
+      },
+      "meeting_alignment_jobs": {
+        "no_action": 85,
+        "sent": 536,
+        "skipped": 58
+      }
+    },
+    "file_bytes": 414822400,
+    "wal_bytes": 4169472,
+    "api": {
+      "/healthz": {
+        "http": 200,
+        "keys": [
+          "ok",
+          "status"
+        ],
+        "returned_items": 0
+      },
+      "/api/console/status": {
+        "http": 200,
+        "keys": [
+          "item",
+          "meta"
+        ],
+        "returned_items": 0
+      },
+      "/api/console/attention?limit=1": {
+        "http": 200,
+        "keys": [
+          "items",
+          "meta"
+        ],
+        "returned_items": 0
+      },
+      "/api/console/history?limit=1": {
+        "http": 200,
+        "keys": [
+          "chart",
+          "items",
+          "meta"
+        ],
+        "returned_items": 1
+      },
+      "/api/console/email/classifications?status=processed&limit=1": {
+        "http": 200,
+        "keys": [
+          "items",
+          "meta"
+        ],
+        "returned_items": 20
+      }
+    }
+  },
+  "after": {
+    "code": "f7ada91638465b1772ddbce3006bde65ea3439ea",
+    "pid": [
+      "58988"
+    ],
+    "schema": 49,
+    "cache_column_exists": false,
+    "quick": "ok",
+    "fk": [
+      [
+        "meeting_alignment_runs",
+        2298,
+        "meeting_alignment_jobs",
+        0
+      ]
+    ],
+    "page_bytes": 414822400,
+    "freelist": 4851,
+    "classifications": 8487,
+    "missing_plans": 0,
+    "queues": {
+      "reply_tasks": {
+        "done": 7138,
+        "failed": 3,
+        "needs_human": 3,
+        "skipped": 117
+      },
+      "work_summary_inputs": {
+        "done": 4678,
+        "skipped": 4402
+      },
+      "agent_runtime_attempts": {
+        "completed": 15556,
+        "failed": 5747,
+        "superseded": 1427
+      },
+      "email_agent_classification_tasks": {
+        "done": 1348
+      },
+      "email_actions": {
+        "done": 9845,
+        "pending": 39,
+        "skipped": 2
+      },
+      "meeting_alignment_jobs": {
+        "no_action": 85,
+        "sent": 537,
+        "skipped": 59
+      }
+    },
+    "file_bytes": 414822400,
+    "wal_bytes": 35782232,
+    "api": {
+      "/healthz": {
+        "http": 200,
+        "keys": [
+          "ok",
+          "status"
+        ],
+        "returned_items": 0
+      },
+      "/api/console/status": {
+        "http": 200,
+        "keys": [
+          "item",
+          "meta"
+        ],
+        "returned_items": 0
+      },
+      "/api/console/attention?limit=1": {
+        "http": 200,
+        "keys": [
+          "items",
+          "meta"
+        ],
+        "returned_items": 0
+      },
+      "/api/console/history?limit=1": {
+        "http": 200,
+        "keys": [
+          "chart",
+          "items",
+          "meta"
+        ],
+        "returned_items": 20
+      },
+      "/api/console/email/classifications?status=processed&limit=1": {
+        "http": 200,
+        "keys": [
+          "items",
+          "meta"
+        ],
+        "returned_items": 20
+      }
+    }
+  },
+  "failure_comparison": {
+    "reply_tasks": {
+      "before": 3,
+      "after": 3,
+      "new_failed": 0
+    },
+    "email_agent_classification_tasks": {
+      "before": 0,
+      "after": 0,
+      "new_failed": 0
+    },
+    "email_actions": {
+      "before": 0,
+      "after": 0,
+      "new_failed": 0
+    },
+    "agent_runtime_attempts": {
+      "before": 5747,
+      "after": 5747,
+      "new_failed": 0
+    }
+  },
+  "deployment": {
+    "route": "normal app.deploy",
+    "source_commit": "21bfe750",
+    "installed_commit": "f7ada916",
+    "quiet_bypass": false,
+    "initial_execution_interrupted_before_checkout": true
+  },
+  "latest_backup": {
+    "count": 1,
+    "schema": 49,
+    "verified_complete": true,
+    "quick_check": "ok"
+  }
+}

@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 import json
 import sqlite3
+
+from tests.email_schema_fixtures import restore_action_plan_snapshot_column
 import threading
 
 import pytest
@@ -389,6 +391,7 @@ def test_v7_store_migrates_fenced_reply_dispatch_claims_without_changing_rows(
     store.create_account(ACCOUNT_VALUES)
     account_before = store.get_account("account-primary")
     with sqlite3.connect(database) as db:
+        restore_action_plan_snapshot_column(db)
         _remove_post_v16_unsubscribe_receipt_columns(db)
         db.execute("drop table email_reply_dispatch_claims")
         db.execute("update email_schema_migrations set version=7")
@@ -412,6 +415,7 @@ def test_v7_store_migrates_fenced_reply_dispatch_claims_without_changing_rows(
 def test_v8_store_preserves_existing_claim_as_fenced_history(tmp_path: Path) -> None:
     store, _, effect = _delivery_setup(tmp_path)
     with sqlite3.connect(store.path) as db:
+        restore_action_plan_snapshot_column(db)
         for trigger in (
             "trg_email_reply_dispatch_blocks_plan_switch",
             "trg_email_reply_dispatch_blocks_account_update",

@@ -120,6 +120,9 @@ class ScriptedBrowser:
         self.observations = list(observations)
         self.calls: list[tuple[str, str]] = []
 
+    def prepare_form_recipient(self, control_reference):
+        return control_reference
+
     def execute_operation(self, effect, private_url, operation):
         del effect, private_url
         self.calls.append((operation.kind.value, operation.target_reference))

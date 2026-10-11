@@ -213,6 +213,9 @@ Runtime-attempt detail reads filter by `agent_run_id` and order by
 `attempt_number`; the partial `idx_agent_runtime_attempts_run` index serves that
 lookup for run-bound attempts. Attempt details batch this indexed lookup across
 all runs on the page, avoiding one SQLite connection and query per run.
+Attempt detail loads the selected run's native event and result references in
+SQLite, closes the connection, then reads and parses the native transcript files.
+Slow or large local transcripts therefore do not keep a SQLite connection open.
 Generalized attempts without an `agent_run_id` remain outside this index and
 keep their existing workload-key indexes.
 
@@ -1056,6 +1059,11 @@ image/content material，只包含文件名、MIME、字节大小、数量和 in
 outcome 和脱敏后的页面原文。它只接受 task id 这一个调用方无法伪造的参数，其余全部从 durable 状态
 读出，所以没有 proposal 要抄写、没有 acceptance 要绑定、没有 Audit turn，也没有 continuation 要续。
 
+Direct 浏览器提交退订表单前，只为唯一的空 `type=email` 字段填写当前连接邮箱账户地址。
+已有字段值保持不变，不从普通文本字段名称推测身份；缺失账户身份或多个邮箱字段时停止提交。
+填写后重新读取真实控件，并核对提交目标、方法、编码、提交按钮和全部成功字段（包括隐藏字段）
+与填写前一致，仅允许该邮箱值变化，再使用新控件引用提交。旧结构化审核执行路径不隐式填写字段。
+
 幂等性只靠 receipt：`email_unsubscribe_receipts` 里每个动作身份一条，已有 receipt 时再调一次
 只会把它原样返回，不会重复退订。这取代了原先的 claim 租约、effect digest 链、owner fence 和
 Consumer→Audit 往返——退订在真实世界本来就是幂等的。同理，有浏览器步骤但没有 receipt
@@ -1752,6 +1760,11 @@ since moved to a newer execution generation, its runs are read without event
 payloads because only their status is needed for the current projection. The
 historical run rows and native transcript references are captured in SQLite
 first; native files are read and parsed only after that connection closes. The
+session path index is cached per file signature. If an indexed file was cleaned
+up, lookup checks its flat `archived_sessions` counterpart; if that is missing,
+the Attempt remains readable and reports native evidence unavailable without
+recursively walking the historical session trees. This does not alter persisted
+business results or audit evidence. The
 History chart projects lifecycle status only for reply
 attempts in the requested time window, avoiding a full-history status scan.
 Health readiness is not evidence that History requests or business actions
@@ -2077,6 +2090,8 @@ Consumer 和 Audit 每轮 Task 输入均传入当前任务已保存的专项指�
 
 后台 Consumer/Audit 使用原生 skills.config 禁用专项 Skill 的自动正文注入，避免原生加载、Developer inline 与工具读取三份重复。原生 project_doc_max_bytes=0 只关闭项目目录 AGENTS.md；全局 ~/.codex/AGENTS.md 仍由 CLI 加载，服务不修改原生 home 或全局规则文件。此设置仅适用于后台角色命令。
 
+Codex Consumer/Audit 使用原生 `mcp_servers.agent_cli.tools.read_task_skill.output_token_limit=30000`，仅增加不可变 Task Skill 的单工具模型历史输出额度，避免 MCP 完整返回后正文被 CLI 从中部裁剪。其他工具输出预算、角色、sandbox、审批方式和 session 绑定保持现有行为。该设置保障来源交付，不替代 Skill 精简或证明业务判断正确；验证及发布记录见 `docs/task-skill-native-output-validation.md`。
+
 System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；agent_cli.read_system_action_contract(capability, operation) 返回完整规范，包含原有角色、identity、payload、target、回执和完成条件。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。原生 output-schema 保持关闭：实际探测显示现有 RootModel 顶层 $ref 被拒绝，等价展开后 Consumer 的 oneOf 与 Audit 可选字段仍不满足原生 strict schema 限制；未通过弱化业务契约来适配。
 
 Worker 上下文回归分别验证当前业务事实、执行阶段和会话恢复，不要求把 Developer 的角色合同复制进用户上下文。Consumer 的真实命令捕获回归另行检查 Developer 中仍包含提案／审核／系统执行边界，且用户输入不重复该角色合同；精简上下文不代表移除安全合同。
@@ -2234,6 +2249,24 @@ restart callback 调用前即标记 attempted，使部分 bootstrap 失败也会
 replacement。bootout 报错只有在原生 launchctl print 明确证明 label 不存在
 时接受；权限或其他停止失败仍是错误。
 
-首次 47→48 上线必须由已更新的 deploy 调用方执行：已运行的旧 Python
+每次新 schema 逆迁的首次上线必须由已更新的 deploy 调用方执行：已运行的旧 Python
 updater 不会因为 fast-forward 而获得新 callback。后续更新后的独立 updater
 入口也使用相同的停止、数据库 publication 和启动机制。
+
+## Email current plan deduplication
+
+Email schema48→49 在初始化事务内先执行现有业务状态校验和旧 action_plan_json
+精确序列化校验，再删除 email_classifications.action_plan_json。计划由
+current_action_plan_id 指向 email_action_plans 唯一读取；当前写入不保存重复 JSON。
+分页列表一次批量查询相关计划，避免每条分类单独连接/查询。
+
+模型异常归因的存在性查询只查分类主记录，不加载计划，也不表示计划有效。扫描使用的
+原已有分类判断和完整读回继续
+校验不可变计划；已有分类的计划损坏或版本冲突必须报告持久化冲突，不能误判为尚未落库
+而回退到 Agent。迁移测试声明旧版本前，须重建该版本实际存在的缓存列；对分类元数据
+漂移的修复不能覆盖或修复被篡改的不可变计划。
+
+正式发布49→48的逆迁在一个事务内添加旧缓存列，以当前计划重建内容，恢复原版本历史；
+只捕获旧记录的序列化区别 ID 集合，不备份正文。新分类和修订按回退时的当前计划重建，
+新增业务记录和执行回执保留。校验或逆迁失败不会部分提交，也不以部署前数据库覆盖新写入。
+该逆迁仅适用于已验证的48→49发布，与47→48索引逆迁分别匹配。
