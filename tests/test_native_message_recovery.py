@@ -169,7 +169,7 @@ def test_positive_readback_cannot_use_wrong_or_ambiguous_message(monkeypatch, fa
     ('dingtalk-doc', 'create_doc_comment', {'node_id': 'exact-node'},
      ['doc', '+comment-list', '--node', 'exact-node', '--limit', '50', '--format', 'json']),
     ('dingtalk-oa', 'comment', {'process_instance_id': 'exact-process'},
-     ['oa', 'approval', 'records', '--instance-id', 'exact-process', '--format', 'json']),
+     ['oa', 'approval', 'detail', '--instance-id', 'exact-process', '--format', 'json']),
 ])
 def test_comment_uncertainty_reads_original_object_without_inferred_identity(
     capability, operation, target, expected_path,
@@ -197,8 +197,14 @@ def test_comment_uncertainty_reads_original_object_without_inferred_identity(
     outcome = handler.reconcile(action, action_key='original-key', candidate={})
     assert outcome is not None and outcome.status == 'uncertain'
     assert len(client.commands) == 1
-    assert outcome.provider_result['readback'] == {
-        'result': {'observations': ['unattributed existing comment']}}
+    if capability == 'dingtalk-doc':
+        assert outcome.provider_result['readback'] == {
+            'result': {'observations': ['unattributed existing comment']}}
+    else:
+        assert outcome.provider_result == {
+            'reason': 'comment_operation_identity_unavailable',
+            'process_instance_id': 'exact-process',
+        }
 
 
 @pytest.mark.parametrize('wire_time,verified', [

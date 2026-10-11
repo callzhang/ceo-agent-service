@@ -1,7 +1,8 @@
 """Native, typed handlers for reviewed service-owned actions."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
+from hashlib import sha256
 
 from app.agent_contracts import ProposedAction
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
@@ -437,10 +438,69 @@ class OaCommentHandler:
         return ActionOutcome("uncertain", {"reason": "oa_comment_id_missing"})
 
     def reconcile(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome | None:
-        return ActionOutcome("uncertain", {
+        process_id = action.target.get("process_instance_id")
+        content = action.payload.get("content")
+        unresolved = ActionOutcome("uncertain", {
             "reason": "comment_operation_identity_unavailable",
-            "process_instance_id": action.target["process_instance_id"],
-            "readback": self.dws.read_oa_approval_records(action.target["process_instance_id"]),
+            "process_instance_id": process_id,
+        })
+        if not isinstance(process_id, str) or not process_id.strip() or not isinstance(content, str) or not content.strip():
+            return unresolved
+        # The records endpoint contains only operation summaries. The native
+        # detail owns complete remarks, authors and millisecond event times.
+        response = self.dws.read_oa_approval_detail(process_id)
+        detail = response.get("result") if isinstance(response, dict) else None
+        if (
+            not isinstance(response, dict) or response.get("success") is not True
+            or not isinstance(detail, dict) or detail.get("processInstanceId") != process_id
+            or response.get("hasMore") is True or detail.get("hasMore") is True
+        ):
+            return unresolved
+        records = detail.get("operationRecords")
+        attempt = candidate.get("action_attempt")
+        if (
+            not isinstance(records, list) or not isinstance(attempt, dict)
+            or attempt.get("status") != "uncertain"
+            or attempt.get("external_action_key") != action_key
+        ):
+            return unresolved
+        try:
+            boundary = datetime.fromisoformat(attempt["created_at"])
+        except (KeyError, TypeError, ValueError):
+            return unresolved
+        if boundary.tzinfo is None:
+            return unresolved
+        principal = self.dws.get_current_user_id()
+        if not isinstance(principal, str) or not principal:
+            return unresolved
+        matches = []
+        observed_at = datetime.now(timezone.utc).timestamp() * 1000
+        for record in records:
+            if not isinstance(record, dict) or record.get("type") != "ADD_REMARK":
+                continue
+            author = record.get("userId")
+            remark = record.get("remark")
+            if isinstance(author, str) and author and author != principal:
+                continue
+            if isinstance(remark, str) and remark and remark != content:
+                continue
+            event_time = record.get("date")
+            if type(event_time) is not int or event_time <= 0 or event_time > observed_at:
+                return unresolved
+            if event_time < boundary.timestamp() * 1000:
+                continue
+            if author != principal or remark != content:
+                return unresolved
+            matches.append(record)
+        if len(matches) != 1:
+            return unresolved
+        record = matches[0]
+        return ActionOutcome("verified", {
+            "process_instance_id": process_id,
+            "operation_record": {
+                "type": record["type"], "user_id": principal, "date": record["date"],
+            },
+            "content_sha256": sha256(content.encode("utf-8")).hexdigest(),
         })
 
 
