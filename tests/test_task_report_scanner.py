@@ -84,7 +84,7 @@ def test_scan_task_reports_is_idempotent_and_preserves_report_provenance(tmp_pat
 
     with store._connect() as db:
         rows = db.execute(
-            "select source_type, source_ref, payload_json from work_summary_inputs order by id"
+            "select id, source_type, source_ref, payload_json from work_summary_inputs order by id"
         ).fetchall()
     assert {row["source_type"] for row in rows} == {
         WorkItemSourceType.MANAGEMENT_WEEKLY_REPORT.value,
@@ -92,7 +92,7 @@ def test_scan_task_reports_is_idempotent_and_preserves_report_provenance(tmp_pat
         WorkItemSourceType.DEPARTMENT_WEEKLY_REPORT.value,
     }
     management = next(row for row in rows if row["source_type"] == WorkItemSourceType.MANAGEMENT_WEEKLY_REPORT.value)
-    payload = json.loads(management["payload_json"])
+    payload = json.loads(store.get_work_summary_input(management["id"]).payload_json)
     assert payload["source"]["ref"].startswith("dingtalk-doc:management-39#sha256=")
     assert payload["source"]["title"] == "2026年9月26日-管理周报收集"
     assert "Friday" in json.loads(payload["summary"])["markdown"]

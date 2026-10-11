@@ -941,6 +941,7 @@ def _verified_replay_payload(item, source_payload):
 
 
 def replay_input(store, runner, input_id, *, source_ref, expected=None, source_payload=None):
+    from app.work_summary_payload import decode_work_summary_payload, encode_work_summary_payload
     from app.task_agent import process_work_item
     from app.task_agent_session import TaskAgentSessionLease
 
@@ -961,13 +962,16 @@ def replay_input(store, runner, input_id, *, source_ref, expected=None, source_p
     with lease:
         lease.assert_owned()
         with store._connect() as db:
+            stored = db.execute("select payload_json from work_summary_inputs where id=?", (input_id,)).fetchone()
+            if stored is None or decode_work_summary_payload(stored["payload_json"]) != item.payload_json:
+                raise ValueError("input changed before exact replay")
             updated = db.execute(
                 "update work_summary_inputs set status='processing', error='', available_at='', "
                 "payload_json=?, body_compacted=0, updated_at=current_timestamp "
                 "where id=? and source_type=? and source_ref=? and status=? "
                 "and body_compacted=? and body_sha256=? and body_bytes=? and payload_json=?",
-                (payload, input_id, item.source_type.value, item.source_ref, item.status.value,
-                 item.body_compacted, item.body_sha256, item.body_bytes, item.payload_json),
+                (encode_work_summary_payload(payload), input_id, item.source_type.value, item.source_ref, item.status.value,
+                 item.body_compacted, item.body_sha256, item.body_bytes, stored["payload_json"]),
             ).rowcount
             if updated != 1:
                 raise ValueError("input changed before exact replay")

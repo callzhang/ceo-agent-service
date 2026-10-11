@@ -3250,13 +3250,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
             "Work item",
             "work_summary_inputs",
             "status",
-            "case when lower(source_type)='local_file' then "
-            "coalesce(nullif(json_extract(payload_json, '$.source.title'), ''), "
-            "nullif(json_extract(payload_json, '$.project_name'), ''), source_type) "
-            "else source_type end",
-            "coalesce(nullif(json_extract(payload_json, '$.summary'), ''), "
-            "nullif(json_extract(payload_json, '$.title'), ''), "
-            "nullif(json_extract(payload_json, '$.project_name'), ''), source_ref)",
+            "source_type",
+            "payload_json",
             "updated_at",
             "error",
             ("failed",),
@@ -3399,10 +3394,11 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 current_generation_filter = (
                     f"and not {external_task_error_sql(error_column)}"
                 )
+            work_source_column = ", source_ref" if table == "work_summary_inputs" else ""
             sql = f"""
                 select id, {status_column} as status, {context_column} as context,
                        {summary_column} as summary, {updated_column} as updated_at,
-                       {error_column} as error
+                       {error_column} as error {work_source_column}
                 from {table}
                 where id in (
                     select id from {table}
@@ -3424,14 +3420,24 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 params += (limit,)
             for row in db.execute(sql, params).fetchall():
                 summary = str(row["summary"] or "")
+                context = str(row["context"] or "")
                 if category == "Work item":
+                    from app.work_summary_payload import decode_work_summary_payload
+
+                    payload = json.loads(decode_work_summary_payload(row["summary"]))
+                    metadata = payload if isinstance(payload, dict) else {}
+                    source = metadata.get("source")
+                    source = source if isinstance(source, dict) else {}
+                    if context.lower() == "local_file":
+                        context = str(source.get("title") or metadata.get("project_name") or context)
+                    summary = str(metadata.get("summary") or metadata.get("title") or metadata.get("project_name") or row["source_ref"])
                     summary = _clean_work_item_attention_summary(summary)
                 rows.append(
                     {
                         "category": category,
                         "id": str(row["id"]),
                         "status": str(row["status"] or ""),
-                        "context": str(row["context"] or ""),
+                        "context": context,
                         "summary": summary,
                         "updated_at": str(row["updated_at"] or ""),
                         "error": str(row["error"] or ""),
