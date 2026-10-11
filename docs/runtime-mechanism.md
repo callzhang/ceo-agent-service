@@ -1736,6 +1736,33 @@ prefilled address is rejected without submission. User
 instructions to retain a subscription must not be recorded as provider opt-out
 success or executed through an unsubscribe request.
 
+`cancel-failed-email-unsubscribe` records an explicit principal decision to retain
+one subscription. It requires the original task id, action identity, execution
+generation and input version. The default previews without writing a decision;
+`--apply` uses the configured browser profile's nonblocking lock and an immediate
+database transaction. A changed identity or current plan, active dispatcher,
+Agent history, unsubscribe claim, effect, step or provider receipt prevents
+cancellation and requires reconciliation first. An accepted decision is stored
+separately in EmailStore's `email_unsubscribe_cancellations` (schema 50), preserving the original failure and all history,
+and the original task becomes `skipped`; no provider receipt is created. Repeat
+apply is idempotent. The direct operation rejects the cancelled action, checks
+again inside the profile lock before opening a page, and the durable write-claim
+entry also rejects it. Missing-provider-receipt repair does not synthesize a
+receipt for these principal cancellations. This is not a blanket address-level
+unsubscribe policy or authorization to alter other mail actions.
+
+Cancellation preview uses a read-only SQLite connection without constructing
+execution stores or migrating schema; a pre-50 database must be deployed first.
+Direct browser execution and result persistence retain the same profile lease,
+including reentrant adapter calls that cross the session TTL. Before the first
+browser operation, a generation/input-digest-bound execution-pending record is
+written in the reply-task store's runtime metadata. Only an actual terminal
+receipt clears that exact record. A crash, unconfirmed result or failed receipt
+write leaves the record requiring external reconciliation and prevents a false
+subscription-retention closure. An explicit retry of a worker-finalized login
+or no-entry skip still requires its exact predecessor receipt digest; provider
+completion receipts do not permit replay.
+
 Successful multi-family email training runs use the successful `embedding-mlp`
 entry in `family_results` for description optimization. The compatibility
 `model_id` field may point at a traditional classifier and does not imply

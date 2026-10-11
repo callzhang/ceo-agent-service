@@ -354,6 +354,7 @@ def build_parser() -> argparse.ArgumentParser:
         "retry-work-summary-input",
         "retry-failed-email-unsubscribe",
         "release-failed-email-unsubscribe",
+        "cancel-failed-email-unsubscribe",
         "reconcile-email-actions",
         "reconcile-failed-agent-message",
         "skip-stale-wechat-delivery",
@@ -546,6 +547,13 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--limit", type=_positive_int)
         if command == "retry-work-summary-input":
             subparser.add_argument("--input-id", type=_positive_int, required=True)
+        if command == "cancel-failed-email-unsubscribe":
+            subparser.add_argument("--task-id", type=_positive_int, required=True)
+            subparser.add_argument("--action-identity", type=_non_blank, required=True)
+            subparser.add_argument("--execution-generation", type=_non_blank, required=True)
+            subparser.add_argument("--input-version", type=_positive_int, required=True)
+            subparser.add_argument("--reason", type=_non_blank, required=True)
+            subparser.add_argument("--apply", action="store_true")
         if command == "release-failed-email-unsubscribe":
             subparser.add_argument("--action-identity", type=_non_blank, required=True)
             subparser.add_argument(
@@ -4940,6 +4948,19 @@ def main() -> None:
             action_identity=args.action_identity,
             audit_agent_run_id=args.audit_agent_run_id,
         )
+    elif args.command == "cancel-failed-email-unsubscribe":
+        from app.email_worker import cancel_failed_email_unsubscribe
+
+        if args.apply and settings.dry_run:
+            raise SystemExit("--apply refused: dry-run is on")
+        decision = cancel_failed_email_unsubscribe(
+            settings, task_id=args.task_id, action_identity=args.action_identity,
+            execution_generation=args.execution_generation, input_version=args.input_version,
+            reason=args.reason, apply=args.apply,
+        )
+        print(json.dumps({
+            "task_id": decision["task_id"], "decision": decision["decision"], "applied": args.apply,
+        }), flush=True)
     elif args.command == "reconcile-email-actions":
         if args.apply and settings.dry_run:
             raise SystemExit(

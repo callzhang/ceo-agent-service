@@ -15,6 +15,77 @@ INDEX_SQL = (f"CREATE INDEX {LOOKUP_INDEX} ON email_provider_observations"
              "(account_id,stable_message_identity,observed_at desc)")
 
 
+def test_schema50_publication_has_verified_inverse_for_empty_cancellation_relation(tmp_path):
+    from app.email_store import EmailStore
+    from tests.test_email_unsubscribe_direct import _seed, CLASSIFICATION_ID
+
+    root = tmp_path / "target"
+    (root / "app").mkdir(parents=True)
+    # Use a real source file for the existing target-version parser.
+    (root / "app" / "email_store.py").write_text("EMAIL_SCHEMA_VERSION = 50\n", encoding="utf-8")
+    database = tmp_path / "schema49.sqlite3"
+    store = _seed(database)
+    original = store.get_classification(CLASSIFICATION_ID)
+    with sqlite3.connect(database) as db:
+        db.execute("drop table email_unsubscribe_cancellations")
+        db.execute("delete from email_schema_migrations where version>=50")
+        db.execute("insert or ignore into email_schema_migrations(version,applied_at) values (49,'original')")
+    publication = prepare_email_schema_release(root, database)
+    assert publication is not None
+    publication.migrate = lambda _root, path: EmailStore(path)
+    publication.publish()
+    publication.verify_loaded()
+    publication.rollback()
+    with sqlite3.connect(database) as db:
+        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == 49
+        assert db.execute("select 1 from sqlite_master where name='email_unsubscribe_cancellations'").fetchone() is None
+        assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
+    # Classification data is unchanged even when the target's new relation is removed.
+    with sqlite3.connect(database) as db:
+        assert db.execute("select current_action_plan_id from email_classifications where id=?", (CLASSIFICATION_ID,)).fetchone()[0] == original["current_action_plan_id"]
+
+
+@pytest.mark.parametrize("protected", ["decision", "unknown_execution"])
+def test_schema50_rollback_refuses_new_human_decision_or_unknown_effect(tmp_path, protected):
+    from hashlib import sha256
+    from app.email_store import EmailStore
+    from app.email_browser_profile import EmailBrowserProfile
+    from tests.test_email_unsubscribe_direct import _operation, ACTION_IDENTITY
+
+    root = tmp_path / "target"
+    (root / "app").mkdir(parents=True)
+    (root / "app" / "email_store.py").write_text("EMAIL_SCHEMA_VERSION = 50\n", encoding="utf-8")
+    operation, task, store, _browser = _operation(tmp_path, [])
+    database = tmp_path / "direct-unsubscribe.sqlite3"
+    with sqlite3.connect(database) as db:
+        db.execute("drop table email_unsubscribe_cancellations")
+        db.execute("delete from email_schema_migrations where version>=50")
+        db.execute("insert or ignore into email_schema_migrations(version,applied_at) values (49,'original')")
+    publication = prepare_email_schema_release(root, database)
+    publication.migrate = lambda _root, path: EmailStore(path)
+    publication.publish()
+    if protected == "decision":
+        operation.task_store.fail_reply_task(task.id, "failed", expected_execution_generation=task.execution_generation)
+        store.cancel_failed_email_unsubscribe_task(
+            task_id=task.id, expected_action_identity=ACTION_IDENTITY,
+            expected_execution_generation=task.execution_generation, expected_input_version=task.input_version,
+            reason="Retain subscription.", profile=EmailBrowserProfile(tmp_path / "runtime"), apply=True,
+        )
+    else:
+        operation.task_store.begin_direct_email_unsubscribe_execution(
+            task_id=task.id, action_identity=ACTION_IDENTITY, execution_generation=task.execution_generation,
+            input_version=task.input_version, input_digest=sha256(task.trigger_message_json.encode()).hexdigest(),
+        )
+    with pytest.raises(ValueError, match="discard|bypass"):
+        publication.rollback()
+    with sqlite3.connect(database) as db:
+        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == 50
+        if protected == "decision":
+            assert db.execute("select count(*) from email_unsubscribe_cancellations").fetchone()[0] == 1
+        else:
+            assert db.execute("select value from service_state where key=?", (f"email_unsubscribe_execution_pending:v1:{ACTION_IDENTITY}",)).fetchone() is not None
+
+
 def legacy_database(path):
     with closing(sqlite3.connect(path)) as db, db:
         db.execute("create table email_schema_migrations(version integer primary key,applied_at text)")
@@ -369,15 +440,32 @@ def action_plan_release(tmp_path):
     return path, prepare_email_schema_release(tmp_path, path)
 
 
-def test_plan_inverse_preserves_new_classification_and_canonical_versions(tmp_path):
+def schema49_runtime_store(path):
+    """Use the already-validated target-49 fixture without running future upgrades."""
     from app.email_store import EmailStore
+
+    store = object.__new__(EmailStore)
+    store.path = path
+    with store._connect() as db:
+        store._validate_durable_state(db)
+    return store
+
+
+def migrate_plan_reference_to49(_root, path):
+    store = schema49_runtime_store(path)
+    with store._connect() as db:
+        db.execute("begin immediate")
+        store._migrate_v48_to_v49(db)
+
+
+def test_plan_inverse_preserves_new_classification_and_canonical_versions(tmp_path):
     from app.email_classifier_contracts import EmailClassificationStatus
     from tests.test_email_store import _classification, _persist_scan, _versioned_plan
     from tests.test_email_action_plan_reference import business_rows
     path, publication = action_plan_release(tmp_path)
-    publication.migrate = lambda root, database: EmailStore(database)
+    publication.migrate = migrate_plan_reference_to49
     publication.publish()
-    store = EmailStore(path)
+    store = schema49_runtime_store(path)
     _persist_scan(store, _classification(status=EmailClassificationStatus.PROCESSED,
                                         classification_id=3, message_id='after-migration'))
     from app.email_classifier_contracts import EmailActionPlan
@@ -398,13 +486,12 @@ def test_plan_inverse_preserves_new_classification_and_canonical_versions(tmp_pa
         assert all(json.loads(snapshot)['classification_id'] == identity
                    for identity, snapshot in snapshots if snapshot != 'null')
         assert db.execute('pragma integrity_check').fetchone() == ('ok',)
-    assert EmailStore(path).get_classification(3) == api
+    assert schema49_runtime_store(path).get_classification(3) == api
 
 
 def test_plan_inverse_failure_is_atomic(tmp_path):
-    from app.email_store import EmailStore
     path, publication = action_plan_release(tmp_path)
-    publication.migrate = lambda root, database: EmailStore(database)
+    publication.migrate = migrate_plan_reference_to49
     publication.publish()
     with closing(sqlite3.connect(path)) as db:
         db.execute("create trigger plan_inverse_failure before delete on email_schema_migrations "
@@ -430,7 +517,7 @@ def test_plan_inverse_preserves_original_legacy_snapshot_byte_form(tmp_path, ful
         db.execute('update email_classifications set action_plan_json=? where id=1', (snapshot,))
         db.execute("update email_classifications set action_plan_json='' where id=2")
     publication = prepare_email_schema_release(tmp_path, path)
-    publication.migrate = lambda root, database: EmailStore(database)
+    publication.migrate = migrate_plan_reference_to49
     publication.publish()
     publication.rollback()
     with closing(sqlite3.connect(path)) as db:

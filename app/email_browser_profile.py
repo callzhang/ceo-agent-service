@@ -112,6 +112,7 @@ class EmailBrowserSessionManager:
         self._lease_ttl_seconds = lease_ttl_seconds
         self._owner = _BrowserOwnerThread()
         self._sessions: dict[str, _LiveEmailBrowserSession] = {}
+        self._active_actions: set[str] = set()
         self._references: dict[str, str] = {}
         self._lock = threading.RLock()
 
@@ -130,7 +131,7 @@ class EmailBrowserSessionManager:
         expired = {
             identity
             for identity, session in self._sessions.items()
-            if session.expires_at <= now
+            if session.expires_at <= now and identity not in self._active_actions
         }
         sessions = [self._sessions.pop(identity) for identity in expired]
         for session in sessions:
@@ -279,6 +280,16 @@ class EmailBrowserSessionManager:
                 return result
 
             return self._owner.call(interact)
+
+    def run_action(self, action_identity: str, operation: Callable[[], object]) -> object:
+        """Hold the live profile exclusion through an operation's durable result."""
+        with self._lock:
+            self._session(action_identity)
+            self._active_actions.add(action_identity)
+            try:
+                return operation()
+            finally:
+                self._active_actions.remove(action_identity)
 
     def close_action(self, action_identity: str) -> None:
         with self._lock:

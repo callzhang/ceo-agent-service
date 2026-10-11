@@ -16,6 +16,7 @@ the only durable fence, and the page's own redacted text is the evidence.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from hashlib import sha256
 
@@ -341,6 +342,9 @@ def run_unsubscribe_in_dedicated_profile(
     session_manager: object | None = None,
     executed: list[UnsubscribeOperation] | None = None,
     page_judge: object | None = None,
+    before_open: Callable[[], None] | None = None,
+    persist_result: Callable[[UnsubscribeExecutionResult], None] | None = None,
+    start_execution: Callable[[], None] | None = None,
 ) -> UnsubscribeExecutionResult:
     """Run one whole unsubscribe inside the locked headless profile.
 
@@ -355,6 +359,8 @@ def run_unsubscribe_in_dedicated_profile(
     manager = session_manager or email_browser_session_manager(profile)
 
     def open_session() -> tuple[object, object, object, object]:
+        if before_open is not None:
+            before_open()
         return open_live_unsubscribe_session(
             profile,
             timeout_ms=timeout_ms,
@@ -377,14 +383,22 @@ def run_unsubscribe_in_dedicated_profile(
             [],
             error_code="email_unsubscribe_browser_session_unavailable",
         )
-    try:
-        return run_direct_unsubscribe(
+    def execute_and_persist() -> UnsubscribeExecutionResult:
+        if start_execution is not None:
+            start_execution()
+        result = run_direct_unsubscribe(
             browser,
             effect,
             entry,
             one_click_verified=one_click_verified,
             executed=executed,
         )
+        if persist_result is not None:
+            persist_result(result)
+        return result
+
+    try:
+        return manager.run_action(effect.action_identity, execute_and_persist)
     finally:
         _close_session(manager, profile, effect.action_identity)
 
@@ -456,6 +470,8 @@ class DirectEmailUnsubscribeOperation:
             payload = _task_payload(task)
             identity = _validate_task_identity(task, payload)
             action_identity = str(identity["action_identity"])
+            if self.email_store.get_email_unsubscribe_cancellation(action_identity) is not None:
+                return _failed_call("unsubscribe_cancelled_by_principal")
             existing = self.email_store.get_email_unsubscribe_receipt(action_identity)
             # A skip is a reading of the page at that time, not a fact about the
             # link: "no reliable entry" and "login required" can each be a
@@ -517,27 +533,29 @@ class DirectEmailUnsubscribeOperation:
                 ),
             )
             executed: list[UnsubscribeOperation] = []
+            execution_record = ""
+            def start_execution() -> None:
+                nonlocal execution_record
+                execution_record = self.task_store.begin_direct_email_unsubscribe_execution(
+                    task_id=task.id, action_identity=action_identity,
+                    execution_generation=task.execution_generation, input_version=task.input_version,
+                    input_digest=sha256(task.trigger_message_json.encode("utf-8")).hexdigest(),
+                    previous_receipt_digest=effect.previous_effect_digest,
+                )
+
+            def persist_result(result: UnsubscribeExecutionResult) -> None:
+                if result.receipt:
+                    if not retrying_unreliable_entry or result.outcome.value != previous_outcome:
+                        self._persist(
+                            self._performed_effect(effect, executed), result,
+                            entry_url=entry.private_url,
+                        )
+                    self.task_store.settle_direct_email_unsubscribe_execution(action_identity, execution_record)
+
             result = self.run_effect(
-                effect,
-                entry,
-                one_click_verified=one_click_verified,
-                executed=executed,
+                effect, entry, one_click_verified=one_click_verified,
+                executed=executed, persist_result=persist_result, start_execution=start_execution,
             )
-            if (
-                isinstance(result, UnsubscribeExecutionResult)
-                and result.receipt
-                and (
-                    not retrying_unreliable_entry
-                    or result.outcome.value != previous_outcome
-                )
-            ):
-                # The effect that gets persisted is the one this run actually
-                # performed, not the single entry operation it started from.
-                self._persist(
-                    self._performed_effect(effect, executed),
-                    result,
-                    entry_url=entry.private_url,
-                )
             return _normalize_result(result).model_dump(mode="json")
         except Exception as exc:  # noqa: BLE001 - a public tool fails closed
             detail = _rejection_detail(exc)

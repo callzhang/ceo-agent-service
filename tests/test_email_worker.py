@@ -11023,6 +11023,7 @@ def test_direct_unsubscribe_keeps_source_recipient_separate_from_login(monkeypat
         email_store=SimpleNamespace(
             get_account=lambda _id: {"email_address": "account@example.com"},
             get_classification=lambda _id: classification,
+            get_email_unsubscribe_cancellation=lambda _identity: {"decision": "retain_subscription"},
         ),
         task_store=object(), browser_profile=object(), source_factory=object(),
         browser_session_manager=object(), resolve_entries=lambda _effect: (),
@@ -11033,11 +11034,13 @@ def test_direct_unsubscribe_keeps_source_recipient_separate_from_login(monkeypat
     monkeypatch.setattr(email_unsubscribe_direct, "run_unsubscribe_in_dedicated_profile", lambda *args, **kwargs: seen.update(kwargs))
     operation = email_worker.build_direct_email_unsubscribe_operation(SimpleNamespace(workspace=tmp_path))
     operation.run_effect(
-        SimpleNamespace(account_id="account-1", classification_id=7, stable_message_identity="message-1"),
+        SimpleNamespace(account_id="account-1", classification_id=7, stable_message_identity="message-1", action_identity="action-1"),
         object(), one_click_verified=False,
     )
     assert seen["connected_recipient"] == "account@example.com"
     assert seen["unsubscribe_recipient"] == expected
+    with pytest.raises(ValueError, match="cancelled by principal"):
+        seen["before_open"]()
 
 
 def test_the_production_unsubscribe_effect_accepts_what_the_operation_passes(

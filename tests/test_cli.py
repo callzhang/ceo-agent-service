@@ -52,6 +52,22 @@ from app.task_agent_session import TASK_AGENT_SESSION_SCOPE_ID, TaskAgentSession
 from app.task_models import TaskAgentDecision, WorkItem
 
 
+def test_email_unsubscribe_cancellation_requires_exact_identity_and_explicit_apply():
+    arguments = [
+        "cancel-failed-email-unsubscribe", "--task-id", "77",
+        "--action-identity", "email-action:fixture", "--execution-generation", "original",
+        "--input-version", "1", "--reason", "Retain this subscription.",
+    ]
+    preview = build_parser().parse_args(arguments)
+    assert preview.task_id == 77
+    assert preview.execution_generation == "original"
+    assert preview.input_version == 1
+    assert preview.apply is False
+    assert build_parser().parse_args([*arguments, "--apply"]).apply is True
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["cancel-failed-email-unsubscribe", "--task-id", "77"])
+
+
 def test_task_project_repair_commands_parse_required_paths():
     plan = build_parser().parse_args(
         [

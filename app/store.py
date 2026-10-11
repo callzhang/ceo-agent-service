@@ -1,6 +1,7 @@
 import errno
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -15646,6 +15647,53 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
         delay = min(60 * (2 ** max(int(attempts) - 1, 0)), 900)
         return (now_value + timedelta(seconds=delay)).strftime("%Y-%m-%d %H:%M:%S")
+
+    def begin_direct_email_unsubscribe_execution(
+        self, *, task_id: int, action_identity: str, execution_generation: str,
+        input_version: int, input_digest: str, previous_receipt_digest: str = "",
+    ) -> str:
+        """Fence an external attempt before opening its possibly effective URL."""
+        from app.email_unsubscribe_direct import _RETRYABLE_SKIP_OUTCOMES
+
+        key = f"email_unsubscribe_execution_pending:v1:{action_identity}"
+        with self._immediate_write_transaction() as db:
+            task = db.execute("select * from reply_tasks where id=?", (task_id,)).fetchone()
+            if (task is None or task["channel"] != "email"
+                    or task["status"] not in {"failed", "pending", "processing", "done", "skipped"}
+                    or task["trigger_message_id"] != action_identity
+                    or task["execution_generation"] != execution_generation
+                    or task["input_version"] != input_version
+                    or hashlib.sha256(str(task["trigger_message_json"]).encode("utf-8")).hexdigest() != input_digest):
+                raise AgentRunLeaseLostError("unsubscribe execution identity changed")
+            if db.execute("select 1 from service_state where key=?", (key,)).fetchone():
+                raise ValueError("unsubscribe execution requires reconciliation")
+            receipt = db.execute("select effect_digest,outcome from email_unsubscribe_receipts where action_identity=?", (action_identity,)).fetchone()
+            if receipt is not None and (
+                receipt["effect_digest"] != previous_receipt_digest or receipt["outcome"] not in _RETRYABLE_SKIP_OUTCOMES
+            ):
+                raise ValueError("unsubscribe already has a terminal receipt")
+            if receipt is None and previous_receipt_digest:
+                raise ValueError("unsubscribe predecessor receipt changed")
+            if task["status"] in {"done", "skipped"} and receipt is None:
+                raise ValueError("finalized unsubscribe has no retryable receipt")
+            value = json.dumps({
+                "task_id": task_id, "action_identity": action_identity,
+                "execution_generation": execution_generation, "input_version": input_version,
+                "input_digest": input_digest, "owner_pid": os.getpid(),
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            }, sort_keys=True)
+            db.execute("insert into service_state(key,value) values (?,?)", (key, value))
+            return value
+
+    def settle_direct_email_unsubscribe_execution(self, action_identity: str, execution_record: str) -> None:
+        """Clear only this attempt's fence after a real terminal receipt exists."""
+        with self._immediate_write_transaction() as db:
+            if db.execute("select 1 from email_unsubscribe_receipts where action_identity=?", (action_identity,)).fetchone() is None:
+                raise ValueError("unsubscribe terminal receipt is unavailable")
+            db.execute(
+                "delete from service_state where key=? and value=?",
+                (f"email_unsubscribe_execution_pending:v1:{action_identity}", execution_record),
+            )
 
     def complete_reply_task(
         self,

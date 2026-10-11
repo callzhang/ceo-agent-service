@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -417,14 +418,19 @@ def _operation(tmp_path: Path, observations: list[object]):
         del locator, expected_reference
         return (ENTRY,)
 
-    def run_effect(effect, entry, *, one_click_verified, executed=None):
-        return run_direct_unsubscribe(
+    def run_effect(effect, entry, *, one_click_verified, executed=None, persist_result=None, start_execution=None):
+        if start_execution is not None:
+            start_execution()
+        result = run_direct_unsubscribe(
             browser,
             effect,
             entry,
             one_click_verified=one_click_verified,
             executed=executed,
         )
+        if persist_result is not None:
+            persist_result(result)
+        return result
 
     operation = DirectEmailUnsubscribeOperation(
         task_store=task_store,
@@ -584,6 +590,8 @@ def test_an_explicit_retry_promotes_a_previous_unreliable_entry_skip(
     assert first["outcome"] == "skipped_no_reliable_entry"
     old_receipt = email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY)
     assert old_receipt is not None
+    operation.task_store.complete_reply_task(task.id, expected_execution_generation=task.execution_generation)
+    assert operation.task_store.get_reply_task(task.id).status == "done"
 
     browser.observations.append(
         _terminal(
@@ -974,3 +982,276 @@ def test_a_malformed_link_does_not_hide_a_good_one():
     )
 
     assert [entry for entry in entries if good in getattr(entry, "private_url", "")]
+
+
+def test_principal_cancellation_preserves_subscription_without_provider_receipt(tmp_path):
+    from app.email_browser_profile import EmailBrowserProfile
+    from app.email_store import EmailUnsubscribeClaimConflict
+
+    operation, task, email_store, browser = _operation(tmp_path, [])
+    operation.task_store.fail_reply_task(
+        task.id, "original-browser-failure",
+        expected_execution_generation=task.execution_generation,
+    )
+    profile = EmailBrowserProfile(tmp_path / "runtime")
+    preview = email_store.cancel_failed_email_unsubscribe_task(
+        task_id=task.id, expected_action_identity=ACTION_IDENTITY,
+        expected_execution_generation=task.execution_generation,
+        expected_input_version=task.input_version, reason="Keep subscription.", profile=profile,
+    )
+    assert preview["decision"] == "retain_subscription"
+    assert operation.task_store.get_reply_task(task.id).status == "failed"
+    assert email_store.get_email_unsubscribe_cancellation(ACTION_IDENTITY) is None
+    result = email_store.cancel_failed_email_unsubscribe_task(
+        task_id=task.id, expected_action_identity=ACTION_IDENTITY,
+        expected_execution_generation=task.execution_generation,
+        expected_input_version=task.input_version,
+        reason="Principal explicitly chose to retain this subscription.",
+        profile=profile, apply=True,
+    )
+    assert result["decision"] == "retain_subscription"
+    assert result["previous_error"] == "original-browser-failure"
+    current = operation.task_store.get_reply_task(task.id)
+    assert current.status == "skipped"
+    assert current.execution_generation == task.execution_generation
+    assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
+    assert email_store.list_terminal_unsubscribe_tasks_missing_receipts() == []
+    assert operation.execute(task.id)["error"]["code"] == "unsubscribe_cancelled_by_principal"
+    assert browser.calls == []
+    assert email_store.cancel_failed_email_unsubscribe_task(
+        task_id=task.id, expected_action_identity=ACTION_IDENTITY,
+        expected_execution_generation=task.execution_generation,
+        expected_input_version=task.input_version, reason="Keep subscription.", profile=profile, apply=True,
+    ) == result
+    effect = _effect()
+    with pytest.raises(EmailUnsubscribeClaimConflict, match="cancelled by principal"):
+        email_store.claim_email_unsubscribe_write(
+            action_identity=ACTION_IDENTITY, effect_digest=effect.effect_digest,
+            action_plan_id=PLAN.action_plan_id, action_plan_version=PLAN.action_plan_version,
+            classification_id=CLASSIFICATION_ID, account_id=ACCOUNT_ID,
+            stable_message_identity=MESSAGE_IDENTITY, thread_identity=THREAD_IDENTITY,
+            entry_reference=ENTRY.reference, operations=effect.operation_mappings,
+            owner={"owner_id": "owner", "generation": 1, "lease_token": "lease"},
+        )
+
+
+@pytest.mark.parametrize("changed", ["generation", "input", "action", "active_task", "profile_busy"])
+def test_principal_cancellation_rejects_changed_or_active_identity(tmp_path, changed):
+    from app.email_browser_profile import EmailBrowserProfile, EmailBrowserProfileError
+    from app.email_store import EmailActionPlanConflict
+
+    operation, task, email_store, browser = _operation(tmp_path, [])
+    if changed != "active_task":
+        operation.task_store.fail_reply_task(task.id, "original-browser-failure", expected_execution_generation=task.execution_generation)
+    profile = EmailBrowserProfile(tmp_path / "runtime")
+    args = dict(
+        task_id=task.id, expected_action_identity=ACTION_IDENTITY,
+        expected_execution_generation=task.execution_generation,
+        expected_input_version=task.input_version, reason="Keep subscription.", profile=profile, apply=True,
+    )
+    if changed == "generation":
+        args["expected_execution_generation"] = "other"
+    elif changed == "input":
+        args["expected_input_version"] = task.input_version + 1
+    elif changed == "action":
+        args["expected_action_identity"] = "other-action"
+    if changed == "profile_busy":
+        with profile.lock():
+            with pytest.raises(EmailBrowserProfileError):
+                email_store.cancel_failed_email_unsubscribe_task(**args)
+    else:
+        with pytest.raises(EmailActionPlanConflict):
+            email_store.cancel_failed_email_unsubscribe_task(**args)
+    assert operation.task_store.get_reply_task(task.id).status == ("processing" if changed == "active_task" else "failed")
+    assert email_store.get_email_unsubscribe_cancellation(ACTION_IDENTITY) is None
+    assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
+    assert browser.calls == []
+
+
+def test_cancellation_storage_migrates_schema49_without_changing_plan_or_receipt(tmp_path):
+    database = tmp_path / "schema49.sqlite3"
+    store = _seed(database)
+    original = store.get_classification(CLASSIFICATION_ID)
+    with sqlite3.connect(database) as db:
+        db.execute("drop table email_unsubscribe_cancellations")
+        db.execute("delete from email_schema_migrations where version>=50")
+        db.execute("insert into email_schema_migrations(version,applied_at) values (49,'2026-10-11T00:00:00Z')")
+    migrated = EmailStore(database)
+    assert migrated.get_classification(CLASSIFICATION_ID) == original
+    assert migrated.get_email_unsubscribe_cancellation(ACTION_IDENTITY) is None
+    assert migrated.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
+    with sqlite3.connect(database) as db:
+        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == 50
+        assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
+
+
+def test_cancellation_cli_preview_refuses_schema49_without_store_initialization(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from app import email_worker
+    from app.email_store import EmailPersistenceCorruption
+
+    operation, task, email_store, _browser = _operation(tmp_path, [])
+    database = tmp_path / "direct-unsubscribe.sqlite3"
+    with sqlite3.connect(database) as db:
+        db.execute("drop table email_unsubscribe_cancellations")
+        db.execute("delete from email_schema_migrations where version>=50")
+        db.execute("insert or ignore into email_schema_migrations(version,applied_at) values (49,'2026-10-11T00:00:00Z')")
+        before = db.execute("select type,name,sql from sqlite_master order by name").fetchall()
+    def forbidden(_settings):
+        raise AssertionError("preview initialized writable stores")
+    monkeypatch.setattr(email_worker, "_build_email_unsubscribe_context", forbidden)
+    with pytest.raises(EmailPersistenceCorruption, match="requires deployed email schema"):
+        email_worker.cancel_failed_email_unsubscribe(
+            SimpleNamespace(db_path=database), task_id=task.id, action_identity=ACTION_IDENTITY,
+            execution_generation=task.execution_generation, input_version=task.input_version,
+            reason="Retain subscription.",
+        )
+    with sqlite3.connect(database) as db:
+        assert db.execute("select type,name,sql from sqlite_master order by name").fetchall() == before
+        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == 49
+
+
+@pytest.mark.parametrize("adapter", ["reply", "scheduled_execution", "meeting"])
+def test_cancellation_owner_check_uses_dispatcher_namespace(tmp_path, adapter):
+    from app.email_browser_profile import EmailBrowserProfile
+    from app.email_store import EmailActionPlanConflict
+
+    operation, task, email_store, _browser = _operation(tmp_path, [])
+    operation.task_store.fail_reply_task(task.id, "failed", expected_execution_generation=task.execution_generation)
+    with sqlite3.connect(tmp_path / "direct-unsubscribe.sqlite3") as db:
+        db.execute(
+            "insert into dispatcher_claim_leases(adapter_name,source_id,owner,lease_expires_at) values (?,?,?,?)",
+            (adapter, str(task.id), "owner", "2099-01-01T00:00:00Z"),
+        )
+    args = dict(
+        task_id=task.id, expected_action_identity=ACTION_IDENTITY,
+        expected_execution_generation=task.execution_generation, expected_input_version=task.input_version,
+        reason="Retain subscription.", profile=EmailBrowserProfile(tmp_path / "runtime"),
+    )
+    if adapter == "meeting":
+        assert email_store.cancel_failed_email_unsubscribe_task(**args)["decision"] == "retain_subscription"
+    else:
+        with pytest.raises(EmailActionPlanConflict, match="active owner"):
+            email_store.cancel_failed_email_unsubscribe_task(**args)
+
+
+def test_cancellation_cannot_interleave_before_direct_receipt_persistence(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from app import email_unsubscribe
+    from app.email_browser_profile import EmailBrowserProfile, EmailBrowserProfileError
+    from app.email_unsubscribe_direct import run_unsubscribe_in_dedicated_profile
+
+    effect = _effect()
+    operation, task, email_store, browser = _operation(
+        tmp_path, [_terminal(effect, UnsubscribePageState.DONE, "Unsubscribed.")],
+    )
+    operation.task_store.fail_reply_task(task.id, "failed", expected_execution_generation=task.execution_generation)
+    profile = EmailBrowserProfile(tmp_path / "runtime")
+    monkeypatch.setattr(email_unsubscribe, "open_live_unsubscribe_session", lambda *_args, **_kwargs: (None, None, browser, lambda: None))
+    operation.run_effect = lambda effect, entry, **kwargs: run_unsubscribe_in_dedicated_profile(
+        effect, entry, profile=profile, one_click_verified=kwargs["one_click_verified"], executed=kwargs["executed"],
+        persist_result=kwargs["persist_result"],
+        start_execution=kwargs["start_execution"],
+    )
+    reached_persist, release_persist = Event(), Event()
+    original_persist = operation._persist
+    def paused_persist(*args, **kwargs):
+        reached_persist.set()
+        assert release_persist.wait(10)
+        return original_persist(*args, **kwargs)
+    monkeypatch.setattr(operation, "_persist", paused_persist)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(operation.execute, task.id)
+        try:
+            assert reached_persist.wait(10)
+            with pytest.raises(EmailBrowserProfileError, match="busy"):
+                email_store.cancel_failed_email_unsubscribe_task(
+                    task_id=task.id, expected_action_identity=ACTION_IDENTITY,
+                    expected_execution_generation=task.execution_generation,
+                    expected_input_version=task.input_version, reason="Retain subscription.",
+                    profile=profile, apply=True,
+                )
+        finally:
+            release_persist.set()
+        assert future.result(timeout=10)["status"] == "done"
+    assert email_store.get_email_unsubscribe_cancellation(ACTION_IDENTITY) is None
+    assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) is not None
+
+
+def test_current_schema_cli_preview_reads_without_constructing_execution_context(tmp_path, monkeypatch, capsys):
+    import sys
+    from types import SimpleNamespace
+    from app import cli, email_worker
+
+    operation, task, email_store, _browser = _operation(tmp_path, [])
+    operation.task_store.fail_reply_task(task.id, "failed", expected_execution_generation=task.execution_generation)
+    database = tmp_path / "direct-unsubscribe.sqlite3"
+    with sqlite3.connect(database) as db:
+        before = db.execute("select type,name,sql from sqlite_master order by name").fetchall()
+        original_task = db.execute("select * from reply_tasks where id=?", (task.id,)).fetchone()
+    def forbidden(_settings):
+        raise AssertionError("preview constructed writable execution stores")
+    monkeypatch.setattr(email_worker, "_build_email_unsubscribe_context", forbidden)
+    monkeypatch.setattr(cli, "settings_from_args", lambda _args: SimpleNamespace(db_path=database, dry_run=True))
+    monkeypatch.setattr(sys, "argv", [
+        "ceo", "cancel-failed-email-unsubscribe", "--task-id", str(task.id),
+        "--action-identity", ACTION_IDENTITY, "--execution-generation", task.execution_generation,
+        "--input-version", str(task.input_version), "--reason", "Retain subscription.",
+    ])
+    cli.main()
+    assert json.loads(capsys.readouterr().out) == {
+        "task_id": task.id, "decision": "retain_subscription", "applied": False,
+    }
+    with sqlite3.connect(database) as db:
+        assert db.execute("select type,name,sql from sqlite_master order by name").fetchall() == before
+        assert db.execute("select * from reply_tasks where id=?", (task.id,)).fetchone() == original_task
+    assert email_store.get_email_unsubscribe_cancellation(ACTION_IDENTITY) is None
+
+
+def test_active_browser_action_keeps_profile_lease_across_reentrant_expiry(tmp_path):
+    from types import SimpleNamespace
+    from app.email_browser_profile import EmailBrowserProfile, EmailBrowserSessionManager, EmailBrowserProfileError
+
+    clock = [0.0]
+    profile = EmailBrowserProfile(tmp_path / "runtime")
+    manager = EmailBrowserSessionManager(profile, clock=lambda: clock[0], lease_ttl_seconds=1)
+    _reference, browser = manager.start(
+        action_identity=ACTION_IDENTITY, effect_digest=_effect().effect_digest,
+        open_session=lambda: (None, None, SimpleNamespace(ping=lambda: "ok"), lambda: None),
+    )
+    def operation():
+        clock[0] = 2.0
+        assert browser.ping() == "ok"
+        with pytest.raises(EmailBrowserProfileError, match="busy"):
+            with profile.lock(timeout_seconds=0):
+                pass
+    try:
+        manager.run_action(ACTION_IDENTITY, operation)
+    finally:
+        manager.close_action(ACTION_IDENTITY)
+    with profile.lock(timeout_seconds=0):
+        pass
+
+
+def test_failed_receipt_persistence_requires_reconciliation_before_cancellation(tmp_path, monkeypatch):
+    from app.email_browser_profile import EmailBrowserProfile
+    from app.email_store import EmailActionPlanConflict
+
+    operation, task, email_store, _browser = _operation(
+        tmp_path, [_terminal(_effect(), UnsubscribePageState.DONE, "Unsubscribed.")],
+    )
+    operation.task_store.fail_reply_task(task.id, "failed", expected_execution_generation=task.execution_generation)
+    def failed_persist(*_args, **_kwargs):
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(operation, "_persist", failed_persist)
+    assert operation.execute(task.id)["status"] == "failed"
+    assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
+    with pytest.raises(EmailActionPlanConflict, match="execution requires reconciliation"):
+        email_store.cancel_failed_email_unsubscribe_task(
+            task_id=task.id, expected_action_identity=ACTION_IDENTITY,
+            expected_execution_generation=task.execution_generation,
+            expected_input_version=task.input_version, reason="Retain subscription.",
+            profile=EmailBrowserProfile(tmp_path / "runtime"), apply=True,
+        )
+    assert operation.task_store.get_reply_task(task.id).status == "failed"

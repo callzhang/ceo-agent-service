@@ -9,6 +9,11 @@
 
 ## Unreleased
 
+- Add exact-identity, preview-first cancellation for failed email unsubscribe
+  tasks when the principal explicitly chooses to retain the subscription.
+  Preserve failure history without a provider receipt; fence cancelled actions
+  in direct execution, locked browser preflight and durable write claims.
+
 - Keep stable email classification existence checks independent of ActionPlan
   hydration so corrupt committed plans remain durable conflicts. Update legacy
   migration and provider-index fixtures without relaxing immutable-plan checks.
