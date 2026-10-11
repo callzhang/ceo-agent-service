@@ -1094,7 +1094,7 @@ Derek 2026-09-24：长期记忆由执行 Agent A 在结果里给出、系统写�
 
 ### Audit Agent B
 
-Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`，并将任务绑定的 `mcp__agent_cli` 设为 `direct_only_tool_namespaces`，使其以原生具名工具调用，不经过 V8 的工具发现和结果包装。其他工具保留原生 CodeMode 路径；已有角色工具列表、functions 排除、沙箱、会话和路线保持不变。直接调用不能保证超长工具结果不被原生运行时截断，完整事实仍需按实际 trajectory 验证。
+Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`，并将任务绑定的 `mcp__agent_cli` 设为 `direct_only_tool_namespaces`，直接向模型声明具名任务工具。已验证的成功 MCP 读取使用原生直接调用；Agent 仍可能先尝试 CodeMode，再从错误中恢复，不能把声明方式等同于模型必定采用的调用过程。其他工具保留原生 CodeMode 路径；已有角色工具列表、functions 排除、沙箱、会话和路线保持不变。直接调用不能保证超长工具结果不被原生运行时截断，完整事实仍需按实际 trajectory 验证。
 
 Audit 使用实际只读工具接口审核候选，没有受控发送、审批或命令执行能力。Consumer 保留任务绑定的文档和报告操作；Codex Consumer 使用原生 shell、unified execution、补丁和 V8 host 在当前 task/generation 的 consumer-artifacts 目录执行普通本地代码。原生 workspace-write 沙箱允许任务目录及原生临时目录写入，命令网络关闭；MCP 进程仍从服务源码目录启动，受控发送、OA 等注册操作仍只由 System 执行。Audit 排除内建 functions namespace 并保留 read-only 沙箱。两种角色均不开放 browser、image generation、委派、自动 Skill 安装、记忆写入或未登记 MCP 操作。Claude 仍只有受限内建读取与角色 MCP 工件工具，没有 shell 代码执行；Friday 不能承担这两个角色。原生执行验证必须保留实际命令结果和文件回读，写出代码文件不等于执行代码。
 

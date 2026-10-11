@@ -659,4 +659,67 @@ submit complete Developer with Task, Settings uses the same assembly, Consumer
 role-boundary content remains, and session IDs, hash calculation and routes
 were unchanged. The review's stale-test findings were addressed in the final
 scoped run. This is code/input-assembly evidence; the changed bytes have not
-yet been released or validated in a new complete native business matrix.
+yet been released. The native business matrix below validates this change within
+its controlled fixture scope.
+
+### Native business comparison of single contract injection
+
+Manifests: `evals/trajectory_optimization/role_contract_matrix.v1.json` and
+`role_contract_matrix.v2.json`; accepted native references and technical result
+metadata: `role_contract_matrix.results.v2.json`. Baseline assembly is
+`266b8c99`, candidate is `84300f77`. Both use OAuth `gpt-5.6-luna`, medium effort,
+native output-schema off, 180-second timeout and at most two parallel invocations.
+Prompt configuration, Audit rules, 342 frozen Skill bodies and their referenced
+Markdown, source facts, clock and criteria are identical. Actual current role
+tool schemas are used, but every production callback is replaced with a fixture.
+Assembly uses the frozen helper inputs rather than a task DB producer; actual
+producer behavior has separate submitted-input regressions above.
+
+| Business criterion | Baseline | Candidate |
+| --- | --- | --- |
+| Shanghai invitation crosses the Los Angeles date boundary; midnight Blocked event does not overlap | pass | pass |
+| Real 23:00–23:30 calendar overlap; decline the exact event | pass | pass |
+| Same-session continuation rereads accepted state; no duplicate response | pass | pass |
+| Completed mail conversation; no unnecessary reply | pass | pass |
+| Document capacity, date and budget contradictions; request reconciliation | pass | pass |
+| Existing unresolved remediation; retain owner/deadline and avoid duplicate task | pass | pass |
+| Audit returns incorrect factual conclusion with matching revision and digest | pass | pass |
+
+A fresh read-only reviewer, given anonymous X/Y groups and complete outputs,
+judged both groups **7/7** against the fixed criteria. The Audit fixture uses
+canonical `payload.content` and exact task-context binding, with an intentionally
+incorrect factual conclusion. It does not test the older `payload.body` defect.
+The result is no observed business regression in these fixtures, not evidence
+of improved quality, provider execution or production acceptance.
+
+Independent technical review verified all 14 accepted invocations: exit zero,
+no timeout, matching native session start and terminal `turn.completed`, canonical
+result, and both continuations retaining their own valid cold-session ID.
+There are 57 successful stubbed MCP callbacks, all read/list, with correct source
+IDs and no MCP error. Thirty native direct Skill outputs across 12 distinct
+sessions match the frozen Skill strings exactly. This establishes content in
+native `function_call_output`, not every provider request byte or freedom from
+later context compaction. Consumer Task removes 893 characters per invocation;
+Audit removes 2,548 Task and 2,565 Developer characters. No source facts are cut.
+
+Initial v1 fixture failures are retained separately and are not timely passes.
+Two resume commands exited 2 before model work because hand-inserted MCP options
+split a `-c` option from its value. V2 uses existing `ControlledCliConfig` with
+`make_role_agent_command`; the production helper needed no patch. Several v1
+network resets caused wrapper timeouts; killing the Node wrapper left Rust
+children able to finish late. Original timeout records are preserved, and late
+outputs are not counted as accepted runs. V2 starts each invocation in its own
+process group and waits for its recorded process to exit. V2 also rejects wrong
+fixture source IDs and matches production's empty Task `audit_rules`; neutral
+case requirements remain explicit. The four timely v1 calendar cold runs plus
+ten completed v2 runs form the accepted set. This is a fixture correction,
+not an application retry, fallback or process-policy change.
+
+Some model turns attempt MCP calls inside CodeMode and receive `TypeError`
+before recovering through direct tools. Failed attempts contain no Skill text;
+all successful Skill reads above are direct. Accordingly architecture/runtime
+documentation now distinguishes direct tool declaration from the model's actual
+calling behavior. The extra failed attempts remain an observed optimization
+candidate; no prompt rule or capability restriction is added to suppress them.
+All accepted processes are terminal. No live business action, service setting,
+provider setting, merge or deployment was performed for this comparison.

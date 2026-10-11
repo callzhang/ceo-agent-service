@@ -1,0 +1,20 @@
+{
+  "version": 2,
+  "base_manifest": "role_contract_matrix.v1.json",
+  "baseline_commit": "266b8c99",
+  "candidate_commit": "84300f77",
+  "case_source": "evals/task_scoped_prompts/v1.json",
+  "fixture_corrections": [
+    "Use existing ControlledCliConfig in make_role_agent_command; do not insert MCP options between resume session and prompt.",
+    "Start each test invocation in its own process group and reap that group on timeout; preserve prior late completions separately.",
+    "Audit context.audit_rules is empty as in production; case requirements use a neutral Task section.",
+    "Reject wrong document node and message conversation IDs in fixture callbacks."
+  ],
+  "continuation": "First validate both corrected same-session calendar continuations using the verified v1 cold sessions; retain v1 resume startup failures.",
+  "remaining_cold_cases": ["mail-already-handled", "document-material-conflicts", "work-tracking-existing-remediation", "audit-document-feedback"],
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "medium",
+  "maximum_parallel_calls": 2,
+  "timeout_seconds": 180,
+  "acceptance": "Same complete criteria as v1; do not count original wrapper timeout as a timely pass or process exit/valid JSON as business proof."
+}
