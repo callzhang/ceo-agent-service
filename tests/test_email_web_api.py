@@ -215,22 +215,49 @@ def test_processing_progress_reports_exact_queue_counts_and_scan_cursors(tmp_pat
     assert payload["scans"][0]["last_success_at"]
 
 
+def _signal_failed_move_plan(
+    store: EmailStore, classification_id: int, *, attempts: int, error: str
+) -> None:
+    plan = build_versioned_email_action_plan(
+        action_plan_version=1, classification_id=classification_id,
+        account_id="account-1", category=EmailCategory.NOTIFICATION,
+        classification_source="user", confidence=0.5,
+        model_id="m", config_version="v1", actions=(EmailAction.MOVE,),
+        action_parameters={EmailAction.MOVE: {"target_folder": "Archive"}},
+        created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+    )
+    store.append_action_plan_version(
+        classification_id, plan, confirmed_category=EmailCategory.NOTIFICATION
+    )
+    with sqlite3.connect(store.path) as db:
+        action_id = db.execute(
+            "select action_id from email_actions where action_plan_id=?", (plan.action_plan_id,)
+        ).fetchone()[0]
+    for number in range(1, attempts + 1):
+        store.append_action_attempt(
+            action_id=action_id, attempt_number=number, status="failed",
+            provider_operation="move", provider_target="Archive", provider_result_id="",
+            error=error, started_at="2020-01-01T00:00:00+00:00",
+            finished_at="2020-01-01T00:01:00+00:00",
+        )
+
+
 def test_processing_progress_counts_a_failed_action_the_way_the_list_filter_does(tmp_path: Path):
     client, store, identity = _signal_client(tmp_path, _FakeSignalProvider(set()))
+    _signal_failed_move_plan(
+        store, identity, attempts=3, error="provider_read_failed:ImapMessageUnavailable"
+    )
     # A failure from three days ago: outside the 24-hour window, still failed.
     with sqlite3.connect(store.path) as db:
-        db.execute("update email_classifications set current_action_plan_id='plan-1' where id=?", (identity,))
         db.execute(
-            "insert into email_actions (action_id, action_plan_id, classification_id, account_id,"
-            " action_type, parameters_json, config_version, status, attempt_count, error,"
-            " created_at, updated_at) values ('a1','plan-1',?,'account-1','move','{}','v1',"
-            "'failed',3,'provider_read_failed:ImapMessageUnavailable',"
-            "'2020-01-01T00:00:00+00:00','2020-01-01T00:00:00+00:00')",
+            "update email_actions set "
+            "created_at='2020-01-01T00:00:00+00:00', updated_at='2020-01-01T00:00:00+00:00' "
+            "where classification_id=?",
             (identity,),
         )
 
     progress = client.get("/api/console/email/processing-progress").json()
-    listed = client.get("/api/console/email/classifications?status=pending_feedback&action_status=failed").json()
+    listed = client.get("/api/console/email/classifications?status=processed&action_status=failed").json()
 
     assert progress["provider_actions"]["failed"] == 1 == listed["meta"]["total"]
     # Exhausted with no service-transient reason recognized: not retriable.
@@ -240,20 +267,21 @@ def test_processing_progress_counts_a_failed_action_the_way_the_list_filter_does
 
 def test_processing_progress_and_the_list_filter_split_failed_actions_by_whether_they_retry(tmp_path: Path):
     client, store, identity = _signal_client(tmp_path, _FakeSignalProvider(set()))
+    _signal_failed_move_plan(
+        store, identity, attempts=1, error="provider_read_failed:ImapConnectionError"
+    )
     with sqlite3.connect(store.path) as db:
-        db.execute("update email_classifications set current_action_plan_id='plan-1' where id=?", (identity,))
         db.execute(
-            "insert into email_actions (action_id, action_plan_id, classification_id, account_id,"
-            " action_type, parameters_json, config_version, status, attempt_count, next_attempt_at,"
-            " error, created_at, updated_at) values ('a1','plan-1',?,'account-1','move','{}','v1',"
-            "'failed',1,'2099-01-01T00:00:00+00:00','provider_read_failed:ImapConnectionError',"
-            "'2020-01-01T00:00:00+00:00','2020-01-01T00:00:00+00:00')",
+            "update email_actions set "
+            "next_attempt_at='2099-01-01T00:00:00+00:00', "
+            "created_at='2020-01-01T00:00:00+00:00', updated_at='2020-01-01T00:00:00+00:00' "
+            "where classification_id=?",
             (identity,),
         )
 
     progress = client.get("/api/console/email/processing-progress").json()
-    retriable = client.get("/api/console/email/classifications?status=pending_feedback&action_status=failed_retriable").json()
-    not_retriable = client.get("/api/console/email/classifications?status=pending_feedback&action_status=failed_not_retriable").json()
+    retriable = client.get("/api/console/email/classifications?status=processed&action_status=failed_retriable").json()
+    not_retriable = client.get("/api/console/email/classifications?status=processed&action_status=failed_not_retriable").json()
 
     assert progress["provider_actions"]["failed"] == 1
     assert progress["provider_actions"]["failed_retriable"] == 1

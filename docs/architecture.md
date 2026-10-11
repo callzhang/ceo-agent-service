@@ -1592,6 +1592,8 @@ Consumer 和 Audit 的 Task 输入都携带当前任务已保存的专项指令�
 
 后台 Consumer/Audit 使用原生 skills.config 禁用专项 Skill 的自动正文注入，避免原生加载、Developer inline 与工具读取三份重复。原生 project_doc_max_bytes=0 只关闭项目目录 AGENTS.md；全局 ~/.codex/AGENTS.md 仍由 CLI 加载，服务不修改原生 home 或全局规则文件。此设置仅适用于后台角色命令。
 
+Codex Consumer/Audit 使用原生 `mcp_servers.agent_cli.tools.read_task_skill.output_token_limit=30000`，仅增加不可变 Task Skill 的单工具模型历史输出额度，避免 MCP 完整返回后正文被 CLI 从中部裁剪。其他工具输出预算、角色、sandbox、审批方式和 session 绑定保持现有行为。该设置保障来源交付，不替代 Skill 精简或证明业务判断正确；验证及发布记录见 `docs/task-skill-native-output-validation.md`。
+
 System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；agent_cli.read_system_action_contract(capability, operation) 返回完整规范，包含原有角色、identity、payload、target、回执和完成条件。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。原生 output-schema 保持关闭：实际探测显示现有 RootModel 顶层 $ref 被拒绝，等价展开后 Consumer 的 oneOf 与 Audit 可选字段仍不满足原生 strict schema 限制；未通过弱化业务契约来适配。
 
 
@@ -1678,9 +1680,19 @@ provider 状态、分类、刷新和外部动作语义不变。主键和文件�
 
 正式 deploy 在 quiet/停止服务及一致备份之后，先捕获 Email schema 的回退
 元信息，再在停止窗口执行数据库迁移，随后校验 imports、启动及 health。
-本次只支持经过验证的 47→48 provider 索引逆迁：恢复原索引 SQL，移除
-新增的版本 48 行；不覆盖数据库文件或业务记录。启动失败或 health/加载
-验证失败时，先停止可能已启动的 replacement、回退可选发布资产与 schema，
+已验证的 47→48 provider 索引逆迁恢复原索引 SQL，移除新增版本48行；
+48→49 移除分类的重复 action_plan_json，回退从当前不可变 plan 重建旧列并移除
+版本49行。回退捕获的原版本历史及旧序列化形式保持准确；不覆盖数据库文件或业务记录。
+启动失败或 health/加载验证失败时，先停止可能已启动的 replacement、回退可选发布资产与 schema，
 再恢复旧代码并启动。schema 逆迁失败时保持 replacement 停止并记录
 needs_manual，不将旧代码启动在不兼容数据库上。其他 schema 变化需要
 各自验证的逆迁，不能自动套用本次索引回退。
+
+## Canonical email action-plan reference
+
+Email schema49 删除 email_classifications.action_plan_json。分类只保留现有
+current_action_plan_id，当前计划及其授权、动作参数从 email_action_plans 读取；
+列表在同一连接内批量读取计划，详情、反馈重放、修订及退订修复也使用此唯一来源。
+48→49 在现有初始化事务内先验证旧缓存与计划完全一致，再删除列；当前读写不再维护副本。
+分类归属、连续计划版本、最高版本指针、分类字段与授权约束继续验证。
+49→48 回退只重建缓存列，保留迁移后新增的分类、计划修订、动作和执行回执。

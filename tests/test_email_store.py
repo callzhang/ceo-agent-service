@@ -13,6 +13,9 @@ from threading import Barrier
 import pytest
 
 import app.email_store as email_store_module
+from tests.email_schema_fixtures import (
+    restore_action_plan_snapshot_column, restore_schema48_action_plan_snapshots,
+)
 from app.email_training_snapshot import (
     MODEL_INPUT_SCHEMA_VERSION,
     build_folder_training_snapshot,
@@ -184,6 +187,7 @@ def _unsigned_time_legacy_manifest(snapshot, *, include_counts: bool):
 def _rewind_email_schema(db: sqlite3.Connection, *, version: int) -> None:
     """Remove migration records and objects introduced after a fixture version."""
 
+    restore_action_plan_snapshot_column(db)
     db.execute("drop index if exists idx_email_training_observations_provider_truth")
     db.execute("drop table if exists email_classifier_runtime_samples")
     db.execute("delete from email_schema_migrations where version > ?", (version,))
@@ -800,6 +804,7 @@ def test_real_store_persists_and_reopens_custom_category(tmp_path: Path):
 
 def _replace_feedback_requests_with_v18_table(database: Path) -> None:
     with sqlite3.connect(database) as db:
+        restore_action_plan_snapshot_column(db)
         db.execute("pragma foreign_keys=off")
         db.execute("drop table email_feedback_requests")
         db.execute(
@@ -930,6 +935,7 @@ def test_reopen_rehydrates_legacy_reserved_classification_plan_and_feedback(
     plan_payload["action_plan_id"] = legacy_plan_id
     plan_payload["category"] = legacy_category
     with sqlite3.connect(database) as db:
+        restore_schema48_action_plan_snapshots(db)
         db.execute("pragma foreign_keys=off")
         db.execute(
             "update email_action_plans set action_plan_id=?, category=? "
@@ -1968,6 +1974,7 @@ def _downgrade_email_database_to_v16(database: Path) -> None:
     """Recreate the exact parent-v16 receipt shape from a current fixture."""
 
     with sqlite3.connect(database) as db:
+        restore_action_plan_snapshot_column(db)
         db.execute(
             "drop index if exists idx_email_unsubscribe_receipts_classification_action"
         )
@@ -3169,6 +3176,7 @@ def test_v10_unsubscribe_claim_migrates_to_v11_effect_prefix_chain(
     )["acquired"]
     _downgrade_email_database_to_v16(database)
     with sqlite3.connect(database) as db:
+        restore_action_plan_snapshot_column(db)
         db.execute("drop table email_unsubscribe_continuations")
         db.execute("drop table email_unsubscribe_effects")
         db.execute("update email_schema_migrations set version=10")
@@ -3205,6 +3213,7 @@ def test_exact_v14_unsubscribe_schema_migrates_with_nullable_positive_audit_run(
     _downgrade_email_database_to_v16(database)
 
     with sqlite3.connect(database) as db:
+        restore_action_plan_snapshot_column(db)
         db.execute("pragma foreign_keys=off")
         db.executescript(
             """
@@ -3333,6 +3342,7 @@ def test_v11_unsubscribe_schema_migrates_missing_phase_and_receipt_evidence(
     # Reproduce the deployed v11 shape: the tables already exist, but the
     # later phase/result evidence constraints were never rebuilt in place.
     with sqlite3.connect(database) as db:
+        restore_action_plan_snapshot_column(db)
         db.execute("pragma foreign_keys = off")
         for trigger in (
             "trg_email_unsubscribe_blocks_plan_switch",
@@ -3439,6 +3449,7 @@ def test_v9_store_atomically_adds_unsubscribe_durability_without_data_loss(
     authorization = _unsubscribe_authorization(store)
     account_before = store.get_account(str(authorization["account_id"]))
     with sqlite3.connect(database) as db:
+        restore_action_plan_snapshot_column(db)
         for trigger in (
             "trg_email_unsubscribe_blocks_plan_switch",
             "trg_email_unsubscribe_blocks_account_update",
@@ -4826,6 +4837,7 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
     )
     historical_plan_id = classification.action_plan.action_plan_id
     with sqlite3.connect(database) as db:
+        restore_schema48_action_plan_snapshots(db)
         db.execute(
             "update email_classifications set action_plan_json=?",
             (legacy_json,),
@@ -4843,15 +4855,20 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
             )
     _downgrade_email_database_to_v16(database)
     with sqlite3.connect(database) as db:
+        restore_action_plan_snapshot_column(db)
         db.execute("update email_schema_migrations set version=15")
 
     reopened = EmailStore(database)
 
     persisted = _fetchall(
         database,
-        "select action_plan_json, current_action_plan_id from email_classifications",
+        "select current_action_plan_id from email_classifications",
     )[0]
-    assert persisted["action_plan_json"] == legacy_json
+    projected_plan = reopened.get_classification(classification.classification_id)["action_plan"]
+    assert {
+        key: value for key, value in projected_plan.items()
+        if key not in {"authorization_snapshot_format", "action_authorizations"}
+    } == json.loads(legacy_json)
     assert persisted["current_action_plan_id"] == historical_plan_id
     [stored_plan] = _fetchall(database, "select * from email_action_plans")
     assert stored_plan["action_plan_id"] == historical_plan_id
@@ -4883,6 +4900,7 @@ def test_new_v16_action_plan_rejects_legacy_canonical_json_without_provenance(
         exclude={"authorization_snapshot_format", "action_authorizations"}
     )
     with sqlite3.connect(database) as db:
+        restore_schema48_action_plan_snapshots(db)
         db.execute(
             "update email_classifications set action_plan_json=?",
             (stripped_json,),
@@ -4915,6 +4933,7 @@ def test_upgraded_database_does_not_extend_legacy_permission_to_new_v16_plan(
     )
     legacy_plan_id = legacy.action_plan.action_plan_id
     with sqlite3.connect(database) as db:
+        restore_schema48_action_plan_snapshots(db)
         db.execute(
             "update email_classifications set action_plan_json=? where id=?",
             (legacy_json, legacy.classification_id),
@@ -4932,6 +4951,7 @@ def test_upgraded_database_does_not_extend_legacy_permission_to_new_v16_plan(
             )
     _downgrade_email_database_to_v16(database)
     with sqlite3.connect(database) as db:
+        restore_action_plan_snapshot_column(db)
         db.execute("update email_schema_migrations set version=15")
 
     upgraded = EmailStore(database)
@@ -4941,10 +4961,10 @@ def test_upgraded_database_does_not_extend_legacy_permission_to_new_v16_plan(
     assert (
         _fetchall(
             database,
-            "select action_plan_json from email_classifications where id=?",
+            "select current_action_plan_id from email_classifications where id=?",
             (legacy.classification_id,),
-        )[0]["action_plan_json"]
-        == legacy_json
+        )[0]["current_action_plan_id"]
+        == legacy_plan_id
     )
 
     current = _classification(
@@ -4969,6 +4989,7 @@ def test_upgraded_database_does_not_extend_legacy_permission_to_new_v16_plan(
         exclude={"authorization_snapshot_format", "action_authorizations"}
     )
     with sqlite3.connect(database) as db:
+        restore_schema48_action_plan_snapshots(db)
         db.execute(
             "update email_classifications set action_plan_json=? where id=?",
             (stripped_current_json, current.classification_id),
@@ -5164,9 +5185,8 @@ def test_prototype_plan_migration_backfills_plan_and_direct_actions(tmp_path: Pa
 
     persisted = _fetchall(
         database,
-        "select action_plan_json, current_action_plan_id from email_classifications",
+        "select current_action_plan_id from email_classifications",
     )[0]
-    assert persisted["action_plan_json"] == classification.action_plan.model_dump_json()
     assert (
         persisted["current_action_plan_id"] == classification.action_plan.action_plan_id
     )
@@ -5180,6 +5200,7 @@ def test_prototype_plan_migration_backfills_plan_and_direct_actions(tmp_path: Pa
     ] == [("label", "pending", 0)]
     projected = store.get_classification(classification.classification_id)
     assert projected is not None
+    assert projected["action_plan"] == classification.action_plan.model_dump(mode="json")
     assert projected["action_plan"]["action_plan_id"] == (
         classification.action_plan.action_plan_id
     )
@@ -5304,6 +5325,7 @@ def test_versioned_task3_upgrade_does_not_run_prototype_backfill(tmp_path: Path)
         db.execute("delete from email_actions")
     _downgrade_email_database_to_v16(database)
     with sqlite3.connect(database) as db:
+        restore_action_plan_snapshot_column(db)
         db.execute("update email_schema_migrations set version=2")
 
     with pytest.raises(EmailPersistenceCorruption, match="direct action row set"):
@@ -5502,11 +5524,10 @@ def test_startup_rejects_current_action_plan_pointer_rollback(tmp_path: Path):
         db.execute(
             """
             update email_classifications
-            set current_action_plan_id=?, action_plan_json=?
+            set current_action_plan_id=?
             """,
             (
                 classification.action_plan.action_plan_id,
-                classification.action_plan.model_dump_json(),
             ),
         )
 
@@ -5642,7 +5663,7 @@ def test_startup_rejects_normal_processed_classification_without_plan(
         db.execute(
             """
             update email_classifications
-            set action_plan_json='null', current_action_plan_id=null
+            set current_action_plan_id=null
             """
         )
 
@@ -5658,6 +5679,7 @@ def test_startup_rejects_noncanonical_current_action_plan_snapshot(tmp_path: Pat
         _classification(status=EmailClassificationStatus.PROCESSED),
     )
     with sqlite3.connect(database) as db:
+        restore_schema48_action_plan_snapshots(db)
         db.execute(
             "update email_classifications set action_plan_json=' ' || action_plan_json"
         )
@@ -7847,6 +7869,7 @@ def test_v21_schema_migrates_to_allow_flag_important_actions(tmp_path: Path):
         ),
     )
     with sqlite3.connect(database) as db:
+        restore_action_plan_snapshot_column(db)
         db.execute("update email_schema_migrations set version=21")
 
     migrated = EmailStore(database)
@@ -9436,6 +9459,7 @@ def _create_task2_category(
 
 def _replace_category_schema_with_v19(database: Path) -> None:
     with sqlite3.connect(database) as db:
+        restore_action_plan_snapshot_column(db)
         db.execute("pragma foreign_keys=off")
         db.execute("drop table if exists email_category_folder_bindings")
         db.execute("drop table email_category_configs")
@@ -9523,7 +9547,8 @@ def test_v19_category_config_migration_maps_active_rows_and_preserves_history(
             """,
             (persisted["id"],),
         )
-        history_before = tuple(
+        db.row_factory = sqlite3.Row
+        history_before = dict(
             db.execute(
                 "select * from email_classifications where id=?",
                 (persisted["id"],),
@@ -9554,7 +9579,8 @@ def test_v19_category_config_migration_maps_active_rows_and_preserves_history(
     )
     assert migrated.list_account_folder_bindings() == []
     with sqlite3.connect(database) as db:
-        history_after = tuple(
+        db.row_factory = sqlite3.Row
+        history_after = dict(
             db.execute(
                 "select * from email_classifications where id=?",
                 (persisted["id"],),
@@ -9566,6 +9592,7 @@ def test_v19_category_config_migration_maps_active_rows_and_preserves_history(
                 "select version from email_schema_migrations order by version"
             )
         ]
+    history_before.pop("action_plan_json")
     assert history_after == history_before
     assert migrated.get_classification(persisted["id"])["category"] == "billing"
     assert versions[-1] == email_store_module.EMAIL_SCHEMA_VERSION
@@ -9820,6 +9847,7 @@ def test_v19_migration_rejects_structured_legacy_hybrid_table(tmp_path: Path):
     database = tmp_path / "hybrid-category-table.sqlite3"
     EmailStore(database)
     with sqlite3.connect(database) as db:
+        restore_action_plan_snapshot_column(db)
         db.execute("alter table email_category_configs add column description text")
         db.execute("delete from email_schema_migrations where version >= 20")
         db.execute(
@@ -10049,6 +10077,7 @@ def test_v20_folder_binding_schema_migrates_without_stripping_provider_names(
         ),
     )
     with sqlite3.connect(database) as db:
+        restore_action_plan_snapshot_column(db)
         db.execute("drop index idx_email_category_folder_bindings_active_provider")
         db.execute(
             "alter table email_category_folder_bindings "
@@ -10460,6 +10489,7 @@ def test_v36_drops_policy_keys_from_immutable_email_task_inputs(tmp_path: Path) 
         }
     )
     with sqlite3.connect(database) as db:
+        restore_action_plan_snapshot_column(db)
         db.execute("delete from email_schema_migrations where version > 35")
         db.execute(
             "insert or ignore into email_schema_migrations(version, applied_at) "
@@ -10932,6 +10962,7 @@ def test_v42_and_v43_give_existing_mailboxes_default_dual_windows(tmp_path: Path
     store.create_account(_task2_account_values("primary"))
     gc.collect()
     with sqlite3.connect(database) as db:
+        restore_action_plan_snapshot_column(db)
         db.executescript(
             """
             alter table email_accounts drop column agent_lookback_days;
@@ -10964,6 +10995,7 @@ def test_v43_preserves_agent_window_and_adds_one_year_model_window(tmp_path: Pat
     )
     gc.collect()
     with sqlite3.connect(database) as db:
+        restore_action_plan_snapshot_column(db)
         columns = {
             row[1] for row in db.execute("pragma table_info(email_accounts)")
         }
