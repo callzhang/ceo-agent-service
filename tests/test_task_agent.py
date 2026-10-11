@@ -1274,9 +1274,10 @@ class FakeCodexWithAuditEvents(FakeCodex):
 
 
 class FakeRoutedTaskExecution:
-    def __init__(self, raw, *, session_id="", transcript_end=0):
+    def __init__(self, raw, *, session_id="", transcript_start=0, transcript_end=0):
         self.raw = raw
         self.session_id = session_id
+        self.transcript_start = transcript_start
         self.transcript_end = transcript_end
         self.calls = []
 
@@ -1290,7 +1291,7 @@ class FakeRoutedTaskExecution:
             route_name="codex_oauth",
             attempt_id=1,
             session_id=self.session_id,
-            transcript_start=0,
+            transcript_start=self.transcript_start,
             transcript_end=self.transcript_end,
         )
 
@@ -2456,6 +2457,46 @@ def test_process_work_item_accepts_none_session_id(tmp_path):
             "select summary_input_id, codex_session_id from task_agent_runs",
         ).fetchone()
     assert run_row == (input_id, "")
+
+
+def test_process_work_item_reads_current_native_transcript_range(tmp_path):
+    store = AutoReplyStore(tmp_path / "task-transcript-range.sqlite3")
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    routed = FakeRoutedTaskExecution(
+        json.dumps({
+            "project_decisions": [],
+            "project_assessments": [],
+            "update_summary": "本轮没有相关 Project。",
+            "task_decisions": [
+                {"action": "skip", "transition": "none", "skip_reason": "一次性对话。"}
+            ],
+        }),
+        session_id="task-session-1",
+        transcript_start=1,
+        transcript_end=10,
+    )
+    codex = TaskAgentCodexRunner(routed_execution=routed)
+    observed_ranges = []
+
+    def read_native_events(session_id, *, start_line, end_line, limit):
+        observed_ranges.append((session_id, start_line, end_line, limit))
+        return []
+
+    codex._extract_codex_audit_events_from_session = read_native_events
+    process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    with sqlite3.connect(tmp_path / "task-transcript-range.sqlite3") as db:
+        run_row = db.execute(
+            "select summary_input_id, codex_session_id from task_agent_runs"
+        ).fetchone()
+    assert run_row == (input_id, "task-session-1")
+    assert observed_ranges == [("task-session-1", 1, 10, 200)]
 
 
 def test_task_agent_codex_runner_parses_jsonl_payload(tmp_path):

@@ -62,4 +62,23 @@ Verification: `tests/test_repository_updater.py` and
 `tests/test_database_backup.py` passed together (50 tests). Ruff passed for the
 changed Python files, and the new documentation/code diff has no whitespace
 errors. Unrelated Task Agent tests, leave-rule Skill changes and local draft
-files remain uncommitted.
+files were left outside those three commits.
+
+## Remaining pre-sync work
+
+On 2026-10-11 Derek requested committing the old pending changes and leaving
+new changes alone. Both tracked diffs match the pre-sync stash (the Task test
+patch IDs are identical), and the four untracked artifact blobs also match.
+
+The old Task regression was duplicated and selected non-existent transcript
+columns from `task_agent_runs`. It is reconciled into one end-to-end check:
+the Task run preserves its session identity and the existing native event
+reader receives the exact current transcript range. No database columns or
+runtime behavior are added. The current-range, session-event and no-session
+checks passed (3 tests), and Ruff passed.
+
+The entitlement-leave Skill diff matches the installed Skill byte-for-byte;
+committing it records the existing rule rather than changing the installed
+copy. Skill file checks passed (13 tests). The historical artifact inventory
+is in `docs/handoffs/pre-sync-artifacts.md`; preserving its patches does not
+apply or approve their proposed algorithms.
