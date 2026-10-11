@@ -25,3 +25,16 @@ Consumer and Audit and the worker's exhausted-attempt path.
 Shared claim conflicts retain the current board and restore the missing
 patch-handoff, deployment-backup, entitlement-leave and runtime-draft entries.
 The original storage and Workbench entries are already present in main.
+
+## Native prompt tests
+
+`tests/test_codex_runner.py` keeps the current new-session and resume tests:
+they parse the native configuration JSON and check the supplied explicit role
+instructions. Assertions about an older globally injected Pydantic contract
+or escaped newlines are not restored.
+
+The Consumer prompt unit test now explicitly selects the repository's default
+Developer and User templates. Before this correction it failed by loading an
+obsolete local User template, before reaching the assertions under test.
+The five focused Consumer prompt and native new/resume command checks passed
+without changing local or production prompt configuration.
