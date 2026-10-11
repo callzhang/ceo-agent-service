@@ -3785,16 +3785,16 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_46_persists_external_training_payload(tmp_path: Path) -> None:
+def test_current_email_schema_persists_external_training_payload(tmp_path: Path) -> None:
     from app.email_training_data import read_snapshot
 
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 46
+    assert email_store_module.EMAIL_SCHEMA_VERSION >= 46
     store = EmailStore(tmp_path / "schema-46.sqlite3")
     snapshot = _frozen_training_snapshot()
     store.persist_training_snapshot(snapshot)
     assert read_snapshot(store.path, snapshot.snapshot_digest).to_dict() == snapshot.to_dict()
     with sqlite3.connect(store.path) as db:
-        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == 46
+        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == email_store_module.EMAIL_SCHEMA_VERSION
         assert db.execute("select count(*) from email_training_snapshot_observations").fetchone()[0] == 0
         summary = json.loads(db.execute(
             "select manifest_json from email_training_snapshots where snapshot_id=?",
@@ -3925,6 +3925,7 @@ def test_current_schema_initialization_preserves_delete_journal_mode(
         "pragma table_info",
         "pragma index_list",
         "pragma index_info",
+        "pragma index_xinfo",
         "pragma foreign_key_list",
     )
     assert all(

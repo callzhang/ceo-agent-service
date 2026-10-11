@@ -71,7 +71,7 @@ from app.leak_check import assert_no_credentials, is_sensitive_url_component_nam
 from app.sqlite_schema_lock import schema_initialize_lock
 
 
-EMAIL_SCHEMA_VERSION = 46
+EMAIL_SCHEMA_VERSION = 47
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     {
         "email_model_promotion_configs",
@@ -923,6 +923,10 @@ _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
         "email_classifications",
         ("account_id", "status", "updated_at"),
     ),
+    "idx_email_classifications_account_locator": (
+        "email_classifications",
+        ("account_id", "folder", "uidvalidity", "status", "updated_at", "uid"),
+    ),
     "idx_email_agent_classification_tasks_status": (
         "email_agent_classification_tasks",
         ("status", "available_at", "lease_expires_at", "task_id"),
@@ -970,6 +974,12 @@ _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
     "idx_email_classifier_runtime_model_id": (
         "email_classifier_runtime_samples",
         ("model_id", "id"),
+    ),
+}
+_REQUIRED_INDEX_KEY_PROPERTIES: Mapping[str, tuple[tuple[int, str], ...]] = {
+    "idx_email_classifications_account_locator": (
+        (0, "binary"), (0, "binary"), (0, "binary"),
+        (0, "binary"), (1, "binary"), (0, "binary"),
     ),
 }
 _REQUIRED_PARTIAL_UNIQUE_INDEXES: Mapping[
@@ -3193,6 +3203,9 @@ class EmailStore:
             if latest_version == 45:
                 self._migrate_v45_to_v46(db, replace_version=is_prototype)
                 latest_version = 46
+            if latest_version == 46:
+                self._migrate_v46_to_v47(db, replace_version=is_prototype)
+                latest_version = 47
             self._validate_durable_state(db)
             return True
 
@@ -5362,6 +5375,21 @@ class EmailStore:
                 (self._now(),),
             )
 
+    def _migrate_v46_to_v47(
+        self, db: sqlite3.Connection, *, replace_version: bool = False
+    ) -> None:
+        """Record the additive locator index created in this upgrade transaction."""
+        if replace_version:
+            db.execute(
+                "update email_schema_migrations set version=47, applied_at=? "
+                "where version=46", (self._now(),),
+            )
+        else:
+            db.execute(
+                "insert into email_schema_migrations(version, applied_at) values (47, ?)",
+                (self._now(),),
+            )
+
     def _migrate_v40_to_v41(
         self, db: sqlite3.Connection, *, replace_version: bool = False
     ) -> None:
@@ -6356,6 +6384,12 @@ class EmailStore:
             on email_classifications(account_id, status, updated_at desc)
             """,
             """
+            create index if not exists idx_email_classifications_account_locator
+            on email_classifications(
+                account_id, folder, uidvalidity, status, updated_at desc, uid
+            )
+            """,
+            """
             create index if not exists idx_email_messages_account_locator
             on email_messages(account_id, folder, uidvalidity, uid)
             """,
@@ -6903,6 +6937,17 @@ class EmailStore:
                     raise EmailPersistenceCorruption(
                         f"required index {index_name} is missing or malformed"
                     )
+                key_properties = _REQUIRED_INDEX_KEY_PROPERTIES.get(index_name)
+                if key_properties is not None:
+                    actual_properties = tuple(
+                        (row["desc"], str(row["coll"]).casefold())
+                        for row in db.execute(f"pragma index_xinfo({index_name})")
+                        if row["key"]
+                    )
+                    if actual_properties != key_properties:
+                        raise EmailPersistenceCorruption(
+                            f"required index {index_name} has malformed key order or collation"
+                        )
 
             for index_name, (
                 table,
