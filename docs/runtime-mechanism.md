@@ -1,5 +1,13 @@
 # Current Runtime Mechanism
 
+The meeting delivery batch poll reads the exact ready, unlocked and due
+eligibility before requesting SQLite's shared writer lock. An ineligible poll
+returns without joining the writer queue. This read is not a reservation: the
+existing immediate transaction rechecks eligibility, locks the selected rows
+and writes delivery claim tokens atomically. Competing claims, token-bound
+cleanup, retry timing and external sending are unchanged. This removes idle
+meeting delivery lock waits, not every possible source of SQLite contention.
+
 Manual rerun of a compacted DingTalk message reads the exact original message ID
 through the native `+messages-mget` contract, without reactions, threads or
 resource downloads. Complete message results and matching conversation/message
