@@ -2066,6 +2066,8 @@ System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.
 
 Worker 上下文回归分别验证当前业务事实、执行阶段和会话恢复，不要求把 Developer 的角色合同复制进用户上下文。Consumer 的真实命令捕获回归另行检查 Developer 中仍包含提案／审核／系统执行边界，且用户输入不重复该角色合同；精简上下文不代表移除安全合同。
 
+Task Agent 的当前 Skill 合同回归核对所选根目录的准确文件与完整内容，不固定旧版本号。定时输入仍验证未采用历史冻结正文、保留运行身份且未修改原输入，当前 Project／Task 输出边界断言继续保留。
+
 
 运行输入的分段来源由同一装配函数提供：每段记录 name、source、placement（Developer/Task）及脱敏正文 characters，不重复保存分段全文，长度不含段间分隔符。runtime.prompt 保存本轮分段回执；Settings 当前公共预览使用当前角色装配，任务绑定预览明确区分当前 Developer 与保存任务来源，旧任务正文完整保留，必要的当前 Skill 提示作为独立来源段展示。历史预览只读已保存回执，缺少分段来源时标记未记录，不从当前配置猜测。日历时区解释流程位于 ceo-calendar-invite Skill，Runtime Context 仅保留显式参与者时区事实。
 

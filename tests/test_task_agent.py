@@ -2272,7 +2272,9 @@ def test_fresh_task_agent_loads_current_project_contract_from_selected_skill_roo
     skill = fresh_agent["WORK_TRACKING_SKILL_PATH"].read_text()
     prompt = fresh_agent["build_task_agent_prompt"](_work_item(), "无候选项目")
     assert skill in prompt
-    assert "version: 5" in prompt
+    assert fresh_agent["WORK_TRACKING_SKILL_PATH"] == (
+        root / "ci/shared-skills/ceo-work-tracking/SKILL.md"
+    )
     assert "project_decisions" in prompt
     assert "Project can have zero Tasks" in prompt
     assert "project_proposal" not in prompt
@@ -2307,7 +2309,7 @@ def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill(
     assert "# Old Work Tracking Snapshot" not in prompt
     assert "Return update_project with todo_changes." not in prompt
     assert '"scheduled_task_run_id": 11' in prompt
-    assert "version: 5" in prompt
+    assert skill_path.read_text().strip() in prompt
     assert "native CLI manages compaction" in prompt
     assert (
         "current independent Project/Task/assessment envelope controls output" in prompt
