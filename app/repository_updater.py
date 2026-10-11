@@ -191,6 +191,14 @@ def _default_stop() -> None:
         timeout=30,
     )
     if result.returncode != 0:
+        state = subprocess.run(
+            ["launchctl", "print", f"gui/{_uid()}/com.ceo-agent-service.main"],
+            check=False, capture_output=True, text=True, timeout=30,
+        )
+        if state.returncode != 0 and "could not find service" in (
+            state.stdout + state.stderr
+        ).lower():
+            return
         raise UpgradeFailed("launchd stop failed")
 
 
@@ -372,6 +380,7 @@ class RepositoryUpdater:
         health: Callable[[], bool] = _default_health,
         wait_for_quiet: Callable[[], None] = lambda: None,
         publication: Callable[[], UpgradePublication] | None = None,
+        database_publication: Callable[[], UpgradePublication | None] | None = None,
         pre_checkout_cleanup: Callable[[], None] | None = None,
     ) -> None:
         self.repository = GitRepository(repository_root)
@@ -386,6 +395,7 @@ class RepositoryUpdater:
         self.health = health
         self.wait_for_quiet = wait_for_quiet
         self.publication = publication
+        self.database_publication = database_publication
         self.pre_checkout_cleanup = pre_checkout_cleanup
 
     @property
@@ -407,6 +417,7 @@ class RepositoryUpdater:
             self.stop()
             backup_path = self._backup(operation)
             published: UpgradePublication | None = None
+            database_release: UpgradePublication | None = None
             replacement_started = False
             try:
                 self._persist(operation, "updating", backup_path=backup_path)
@@ -419,8 +430,12 @@ class RepositoryUpdater:
                     ["merge", "--ff-only", self.remote_ref],
                     category="upgrade_merge",
                 )
+                if self.database_publication is not None:
+                    database_release = self.database_publication()
                 self._persist(operation, "verifying", backup_path=backup_path)
                 self.dependency_sync()
+                if database_release is not None:
+                    database_release.publish()
                 self.verification()
                 if self.publication is not None:
                     # Hold the restoration snapshot before the first asset
@@ -428,19 +443,23 @@ class RepositoryUpdater:
                     published = self.publication()
                     published.publish()
                 self._persist(operation, "restarting", backup_path=backup_path)
-                self.restart()
                 replacement_started = True
+                self.restart()
                 if not self.health():
                     raise UpgradeFailed("replacement service health check failed")
+                if database_release is not None:
+                    database_release.verify_loaded()
                 if published is not None:
                     published.verify_loaded()
             except Exception as exc:
                 rollback_status = "failed"
                 try:
+                    if replacement_started:
+                        self.stop()
                     if published is not None:
-                        if replacement_started:
-                            self.stop()
                         published.rollback()
+                    if database_release is not None:
+                        database_release.rollback()
                     installed = self.repository.resolve_ref(self.target_ref)
                     if installed == operation.target_commit and not self.repository.status_records():
                         self.repository._run(
@@ -481,9 +500,11 @@ class RepositoryUpdater:
                 )
                 raise UpgradeFailed("upgrade verification or restart failed") from exc
             finalize_error = ""
-            if published is not None:
+            for release in (database_release, published):
+                if release is None:
+                    continue
                 try:
-                    published.finalize()
+                    release.finalize()
                 except Exception as exc:
                     # The replacement passed health and loaded-file readback.
                     # Receipt cleanup failure must not turn a healthy service
@@ -629,9 +650,9 @@ def main() -> int:
     parser.add_argument("--db", required=True)
     args = parser.parse_args()
 
-    from app.store import AutoReplyStore
+    from app.email_schema_release import prepare_email_schema_release
 
-    store = AutoReplyStore(Path(args.db))
+    store = ExistingSchemaUpgradeStateStore(Path(args.db))
     operation = load_persisted_operation(store, args.operation_id)
     repository_root = Path(args.repo)
     repository = GitRepository(repository_root)
@@ -649,6 +670,9 @@ def main() -> int:
         store,
         database_path=Path(args.db),
         wait_for_quiet=lambda: wait_until_quiet(Path(args.db)),
+        stop=_default_stop,
+        restart=_default_start,
+        database_publication=lambda: prepare_email_schema_release(repository_root, Path(args.db)),
         dependency_sync=lambda: build_frontend(repository_root, changed_paths()),
         verification=lambda: verify_imports(repository_root),
         health=lambda: wait_for_health(),

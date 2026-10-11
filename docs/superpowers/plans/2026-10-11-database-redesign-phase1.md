@@ -1,6 +1,6 @@
 # Provider Lookup Index Deduplication Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. 本阶段可由当前会话顺序执行，无需为了机械索引变更启动多名 agent。
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking. 本阶段可由当前会话顺序执行，无需为了机械索引变更启动多名 agent。
 
 **Goal:** 移除重复 provider lookup 索引，保持当前 provider 库存、查询结果及现有主键/文件夹索引不变。
 
@@ -18,13 +18,14 @@
 - Create: `tests/test_email_provider_lookup_index.py`
 - Read: `app/email_store.py:3018` 初始化事务及 schema validator
 
-- [ ] **Step 1: 创建完整测试文件**
+- [x] **Step 1: 创建完整测试文件**
 
 ```python
 import sqlite3
 
 import pytest
 
+from app.email_classifier_contracts import EmailClassificationStatus
 from app.email_store import EmailPersistenceCorruption, EmailStore
 from tests.test_email_store import _classification, _persist_scan
 
@@ -42,7 +43,7 @@ def index_names(db):
 
 def seed_provider(path):
     store = EmailStore(path)
-    _persist_scan(store, _classification())
+    _persist_scan(store, _classification(status=EmailClassificationStatus.PROCESSED))
     with sqlite3.connect(path) as db:
         db.execute(
             "insert into email_provider_observations "
@@ -154,7 +155,7 @@ def test_required_folder_index_is_not_silently_recreated(tmp_path):
         EmailStore(path, validate_rows=False)
 ```
 
-- [ ] **Step 2: 运行新测试，验证明确失败**
+- [x] **Step 2: 运行新测试，验证明确失败**
 
 ```bash
 uv run --extra dev pytest -q tests/test_email_provider_lookup_index.py
@@ -167,7 +168,7 @@ uv run --extra dev pytest -q tests/test_email_provider_lookup_index.py
 **Files:**
 - Modify: `app/email_store.py:74`、`:966`、`:3207`、`:5380`、`:6425`
 
-- [ ] **Step 1: 版本常量和迁移链**
+- [x] **Step 1: 版本常量和迁移链**
 
 将 `EMAIL_SCHEMA_VERSION = 47` 改为 `48`。在 46→47 分支之后、最终 `_validate_durable_state` 之前加入：
 
@@ -177,7 +178,7 @@ uv run --extra dev pytest -q tests/test_email_provider_lookup_index.py
                 latest_version = 48
 ```
 
-- [ ] **Step 2: 添加完整 migration 方法**
+- [x] **Step 2: 添加完整 migration 方法**
 
 ```python
     def _migrate_v47_to_v48(
@@ -199,7 +200,7 @@ uv run --extra dev pytest -q tests/test_email_provider_lookup_index.py
 
 只使用现有初始化事务，不新增事务/锁/异常 fallback。失败由现有 connection transaction rollback。
 
-- [ ] **Step 3: 删除新建与 required-schema 中的重复索引**
+- [x] **Step 3: 删除新建与 required-schema 中的重复索引**
 
 从 required index mapping 删除以下整个条目：
 
@@ -221,7 +222,7 @@ on email_provider_observations(
 
 不得删除 `idx_email_provider_observations_folder`、主键、分类 locator 索引或任何业务触发器。
 
-- [ ] **Step 4: 验证新测试全部通过**
+- [x] **Step 4: 验证新测试全部通过**
 
 ```bash
 uv run --extra dev pytest -q tests/test_email_provider_lookup_index.py
@@ -234,7 +235,7 @@ uv run --extra dev pytest -q tests/test_email_provider_lookup_index.py
 **Files:**
 - Modify: `tests/test_email_classification_locator_index.py`
 
-- [ ] **Step 1: 更新升级后的版本历史断言**
+- [x] **Step 1: 更新升级后的版本历史断言**
 
 现有两个 `== [(46,), (47,)]` 改为：
 
@@ -244,7 +245,7 @@ uv run --extra dev pytest -q tests/test_email_provider_lookup_index.py
 
 保持升级前 46 的断言、业务行相等、index sort/collation/covering 和 FK 检查不变。
 
-- [ ] **Step 2: 让故障注入仍在最终校验发生**
+- [x] **Step 2: 让故障注入仍在最终校验发生**
 
 文件导入改为：
 
@@ -261,7 +262,7 @@ from app.email_store import EMAIL_SCHEMA_VERSION, EmailPersistenceCorruption, Em
 
 仍要求整个 46→47→48 事务失败回滚到 46，不得通过删测试规避 migration 行为。
 
-- [ ] **Step 3: 执行精确测试组**
+- [x] **Step 3: 执行精确测试组**
 
 ```bash
 uv run --extra dev pytest -q tests/test_email_provider_lookup_index.py tests/test_email_classification_locator_index.py tests/test_email_store_startup_validation.py tests/test_email_folder_truth.py tests/test_email_provider_actions.py
@@ -277,7 +278,7 @@ uv run --extra dev pytest -q tests/test_email_provider_lookup_index.py tests/tes
 - Modify: `docs/agent-claims.md`
 - Read: `app/database_backup.py:create_database_backup`
 
-- [ ] **Step 1: 在 task-owned 临时目录演练一致副本**
+- [x] **Step 1: 在 task-owned 临时目录演练一致副本**
 
 下面是独立演练命令内容，不保存生产数据副本到仓库。命令不输出业务行或凭据，只输出统计；使用 Python 临时目录在结束时清理。
 
@@ -313,7 +314,7 @@ PY
 
 预期 quick/integrity/FK 通过、provider 行逐值相等、重复索引消失、folder 索引存在。这个演练只证明副本，不证明生产已释放空间。before 与 after 的文件差值包含该副本已有空页，不能全部归因本次索引。
 
-- [ ] **Step 2: 在测试通过后更新行为文档**
+- [x] **Step 2: 在测试通过后更新行为文档**
 
 architecture.md 增加/更新：
 
@@ -332,7 +333,7 @@ folder 索引仍为 required schema，缺失时沿用既有失败行为。
 DROP INDEX 只释放数据库页；文件空间回收是独立的演练/维护步骤。
 ```
 
-- [ ] **Step 3: 审阅并仅提交本期 hunks**
+- [x] **Step 3: 审阅并仅提交本期 hunks**
 
 ```bash
 git diff --check
@@ -349,4 +350,6 @@ git commit -m "refactor(storage): remove duplicate provider identity lookup inde
 
 ## 自检与状态
 
-本计划覆盖 fresh DB、旧 schema、重复启动、失败回滚、主键唯一性、点查与文件夹查询、required schema 校验、已有 locator 索引回归、在线 provider 库存读取、副本 integrity/FK、文档及部署边界。未变动页面 DTO/业务状态，Email 页面显示需在实际发布后按主程序矩阵读回。计划中的代码尚未写入运行文件，命令尚未执行，测试与生产迁移均未完成。
+实施状态：索引代码、定向测试和副本演练已完成；新增独立 schema publication/inverse 实现及206项测试通过。回退元信息在依赖/验证前捕获，迁移在停止窗口执行，旧版47已打开真实回退副本。原“回退必须另行落实”项现已实现；上线读回记录见 docs/storage-phase1-validation.md。
+
+本计划覆盖 fresh DB、旧 schema、重复启动、失败回滚、主键唯一性、点查与文件夹查询、required schema 校验、已有 locator 索引回归、在线 provider 库存读取、副本 integrity/FK、文档及部署边界。未变动页面 DTO/业务状态，Email 页面显示需在实际发布后按主程序矩阵读回。本阶段代码和副本验证已完成，生产上线尚待执行。

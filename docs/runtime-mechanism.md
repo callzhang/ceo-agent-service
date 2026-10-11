@@ -2211,3 +2211,21 @@ Email schema 47→48 在现有初始化事务内删除
 或要求该索引，重复启动不重建它；folder 索引仍为 required schema。
 点查使用原主键，文件夹查询使用原 folder 索引。删除索引释放数据库内部页，
 不代表 SQLite 文件已经缩小；实际文件回收是独立的维护步骤。
+
+## Schema publication and failed-start rollback
+
+app.deploy、独立 repository_updater 模块和 CLI repository-updater 命令使用
+ExistingSchemaUpgradeStateStore 读取部署状态，避免在 quiet/停止/备份前
+构造 AutoReplyStore。数据库 publication 在 checkout 后、dependency/import
+验证前捕获旧 schema；在停止窗口迁移后再验证和启动。
+
+47→48 的回退只恢复捕获的 provider lookup 索引和准确的原版本历史，
+新增业务数据及 provider 回执原样保留。回退接受已捕获的原 47 状态或
+准确的 47+48 追加状态；遇到不兼容 schema 不删数据、不尝试旧代码启动。
+restart callback 调用前即标记 attempted，使部分 bootstrap 失败也会停止
+replacement。bootout 报错只有在原生 launchctl print 明确证明 label 不存在
+时接受；权限或其他停止失败仍是错误。
+
+首次 47→48 上线必须由已更新的 deploy 调用方执行：已运行的旧 Python
+updater 不会因为 fast-forward 而获得新 callback。后续更新后的独立 updater
+入口也使用相同的停止、数据库 publication 和启动机制。

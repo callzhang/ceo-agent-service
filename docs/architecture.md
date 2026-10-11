@@ -1673,3 +1673,14 @@ Email provider 当前库存以 `(account_id, stable_message_identity)` 主键定
 按账户/文件夹使用独立 `idx_email_provider_observations_folder` 索引。
 Email schema 48 移除覆盖同一身份键的 `observed_at` lookup 索引，
 provider 状态、分类、刷新和外部动作语义不变。主键和文件夹索引仍保留。
+
+## Reversible Email schema release
+
+正式 deploy 在 quiet/停止服务及一致备份之后，先捕获 Email schema 的回退
+元信息，再在停止窗口执行数据库迁移，随后校验 imports、启动及 health。
+本次只支持经过验证的 47→48 provider 索引逆迁：恢复原索引 SQL，移除
+新增的版本 48 行；不覆盖数据库文件或业务记录。启动失败或 health/加载
+验证失败时，先停止可能已启动的 replacement、回退可选发布资产与 schema，
+再恢复旧代码并启动。schema 逆迁失败时保持 replacement 停止并记录
+needs_manual，不将旧代码启动在不兼容数据库上。其他 schema 变化需要
+各自验证的逆迁，不能自动套用本次索引回退。
