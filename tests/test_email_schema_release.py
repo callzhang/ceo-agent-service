@@ -357,3 +357,81 @@ def test_cli_updater_uses_existing_schema_state_and_release(monkeypatch, tmp_pat
     assert captured['stop'] is updater._default_stop
     assert captured['restart'] is updater._default_start
     assert captured['database_publication']() == (tmp_path, tmp_path/'db')
+
+
+def action_plan_release(tmp_path):
+    from tests.test_email_action_plan_reference import seed, rewind48
+    path = tmp_path / 'plans.sqlite3'
+    seed(path)
+    rewind48(path)
+    (tmp_path / 'app').mkdir()
+    (tmp_path / 'app/email_store.py').write_text('EMAIL_SCHEMA_VERSION = 49\n')
+    return path, prepare_email_schema_release(tmp_path, path)
+
+
+def test_plan_inverse_preserves_new_classification_and_canonical_versions(tmp_path):
+    from app.email_store import EmailStore
+    from app.email_classifier_contracts import EmailClassificationStatus
+    from tests.test_email_store import _classification, _persist_scan, _versioned_plan
+    from tests.test_email_action_plan_reference import business_rows
+    path, publication = action_plan_release(tmp_path)
+    publication.migrate = lambda root, database: EmailStore(database)
+    publication.publish()
+    store = EmailStore(path)
+    _persist_scan(store, _classification(status=EmailClassificationStatus.PROCESSED,
+                                        classification_id=3, message_id='after-migration'))
+    from app.email_classifier_contracts import EmailActionPlan
+    original = EmailActionPlan.model_validate_json(json.dumps(store.get_classification(3)['action_plan']))
+    newer = _versioned_plan(original, version=2, category=original.category,
+                            actions=original.actions, action_parameters=original.action_parameters)
+    store.append_action_plan_version(3, newer, confirmed_category=newer.category)
+    before = business_rows(path)
+    api = store.get_classification(3)
+    publication.rollback()
+    publication.rollback()
+    assert business_rows(path) == before
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute('select max(version) from email_schema_migrations').fetchone()[0] == 48
+        snapshots = db.execute('select id, action_plan_json from email_classifications').fetchall()
+        assert len(snapshots) == 3
+        assert {identity: json.loads(snapshot) is None for identity, snapshot in snapshots} == {1: False, 2: True, 3: False}
+        assert all(json.loads(snapshot)['classification_id'] == identity
+                   for identity, snapshot in snapshots if snapshot != 'null')
+        assert db.execute('pragma integrity_check').fetchone() == ('ok',)
+    assert EmailStore(path).get_classification(3) == api
+
+
+def test_plan_inverse_failure_is_atomic(tmp_path):
+    from app.email_store import EmailStore
+    path, publication = action_plan_release(tmp_path)
+    publication.migrate = lambda root, database: EmailStore(database)
+    publication.publish()
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("create trigger plan_inverse_failure before delete on email_schema_migrations "
+                   "begin select raise(abort,'plan inverse failed'); end")
+    with pytest.raises(sqlite3.IntegrityError, match='plan inverse failed'):
+        publication.rollback()
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute('select max(version) from email_schema_migrations').fetchone()[0] == 49
+        assert 'action_plan_json' not in {row[1] for row in db.execute('pragma table_info(email_classifications)')}
+
+
+@pytest.mark.parametrize('full_legacy_snapshot', [True, False])
+def test_plan_inverse_preserves_original_legacy_snapshot_byte_form(tmp_path, full_legacy_snapshot):
+    from app.email_store import EmailStore
+    path, _ = action_plan_release(tmp_path)
+    with closing(sqlite3.connect(path)) as db, db:
+        db.row_factory = sqlite3.Row
+        db.execute('update email_action_plans set legacy_serialization_pre_v16=1, authorization_snapshot_json=null')
+        row = db.execute('select * from email_action_plans where classification_id=1').fetchone()
+        plan = EmailStore._stored_action_plan(row)
+        excluded = set() if full_legacy_snapshot else {'authorization_snapshot_format', 'action_authorizations'}
+        snapshot = plan.model_dump_json(exclude=excluded)
+        db.execute('update email_classifications set action_plan_json=? where id=1', (snapshot,))
+        db.execute("update email_classifications set action_plan_json='' where id=2")
+    publication = prepare_email_schema_release(tmp_path, path)
+    publication.migrate = lambda root, database: EmailStore(database)
+    publication.publish()
+    publication.rollback()
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute('select action_plan_json from email_classifications order by id').fetchall() == [(snapshot,), ('',)]

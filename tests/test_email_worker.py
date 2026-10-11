@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+
+from tests.email_schema_fixtures import restore_action_plan_snapshot_column
 import time
 from contextlib import contextmanager
 from email import policy
@@ -2871,6 +2873,7 @@ def test_v29_historical_queue_migration_securely_redacts_legacy_provider_record(
         "listUnsubscribe": "<https://private.test/u?token=LEGACY-PRIVATE-TOKEN>",
     }
     with sqlite3.connect(database) as db:
+        restore_action_plan_snapshot_column(db)
         db.execute("pragma secure_delete = on")
         db.execute("delete from email_schema_migrations")
         db.execute(

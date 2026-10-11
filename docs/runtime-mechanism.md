@@ -2074,6 +2074,8 @@ Consumer 和 Audit 每轮 Task 输入均传入当前任务已保存的专项指�
 
 后台 Consumer/Audit 使用原生 skills.config 禁用专项 Skill 的自动正文注入，避免原生加载、Developer inline 与工具读取三份重复。原生 project_doc_max_bytes=0 只关闭项目目录 AGENTS.md；全局 ~/.codex/AGENTS.md 仍由 CLI 加载，服务不修改原生 home 或全局规则文件。此设置仅适用于后台角色命令。
 
+Codex Consumer/Audit 使用原生 `mcp_servers.agent_cli.tools.read_task_skill.output_token_limit=30000`，仅增加不可变 Task Skill 的单工具模型历史输出额度，避免 MCP 完整返回后正文被 CLI 从中部裁剪。其他工具输出预算、角色、sandbox、审批方式和 session 绑定保持现有行为。该设置保障来源交付，不替代 Skill 精简或证明业务判断正确；验证及发布记录见 `docs/task-skill-native-output-validation.md`。
+
 System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；agent_cli.read_system_action_contract(capability, operation) 返回完整规范，包含原有角色、identity、payload、target、回执和完成条件。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。原生 output-schema 保持关闭：实际探测显示现有 RootModel 顶层 $ref 被拒绝，等价展开后 Consumer 的 oneOf 与 Audit 可选字段仍不满足原生 strict schema 限制；未通过弱化业务契约来适配。
 
 Worker 上下文回归分别验证当前业务事实、执行阶段和会话恢复，不要求把 Developer 的角色合同复制进用户上下文。Consumer 的真实命令捕获回归另行检查 Developer 中仍包含提案／审核／系统执行边界，且用户输入不重复该角色合同；精简上下文不代表移除安全合同。
@@ -2231,6 +2233,18 @@ restart callback 调用前即标记 attempted，使部分 bootstrap 失败也会
 replacement。bootout 报错只有在原生 launchctl print 明确证明 label 不存在
 时接受；权限或其他停止失败仍是错误。
 
-首次 47→48 上线必须由已更新的 deploy 调用方执行：已运行的旧 Python
+每次新 schema 逆迁的首次上线必须由已更新的 deploy 调用方执行：已运行的旧 Python
 updater 不会因为 fast-forward 而获得新 callback。后续更新后的独立 updater
 入口也使用相同的停止、数据库 publication 和启动机制。
+
+## Email current plan deduplication
+
+Email schema48→49 在初始化事务内先执行现有业务状态校验和旧 action_plan_json
+精确序列化校验，再删除 email_classifications.action_plan_json。计划由
+current_action_plan_id 指向 email_action_plans 唯一读取；当前写入不保存重复 JSON。
+分页列表一次批量查询相关计划，避免每条分类单独连接/查询。
+
+正式发布49→48的逆迁在一个事务内添加旧缓存列，以当前计划重建内容，恢复原版本历史；
+只捕获旧记录的序列化区别 ID 集合，不备份正文。新分类和修订按回退时的当前计划重建，
+新增业务记录和执行回执保留。校验或逆迁失败不会部分提交，也不以部署前数据库覆盖新写入。
+该逆迁仅适用于已验证的48→49发布，与47→48索引逆迁分别匹配。
