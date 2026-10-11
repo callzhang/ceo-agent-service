@@ -263,6 +263,91 @@ def test_compacted_replay_requires_verified_source_before_state_change(tmp_path)
     assert store.get_work_summary_input(target) == before
 
 
+@pytest.mark.parametrize("mismatch", ["source_identity", "byte_length"])
+def test_compacted_replay_rejects_identity_and_length_without_mutation(tmp_path, mismatch):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "identity.sqlite3")
+    item = report_item()
+    target = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json()
+    )
+    store.mark_work_summary_input_done(target)
+    payload = item.model_dump_json()
+    if mismatch == "source_identity":
+        payload = item.model_copy(update={
+            "source": item.source.model_copy(update={"ref": "other-source"})
+        }).model_dump_json()
+    else:
+        with store._connect() as db:
+            db.execute("update work_summary_inputs set body_bytes=body_bytes+1 where id=?", (target,))
+    before = store.get_work_summary_input(target)
+    with pytest.raises(ValueError, match="identity|digest"):
+        tool.replay_input(store, None, target, source_ref=item.source.ref, source_payload=payload)
+    assert store.get_work_summary_input(target) == before
+
+
+def test_replay_cas_rejects_input_changed_after_verification(tmp_path, monkeypatch):
+    from app.task_agent_session import TaskAgentSessionLease
+
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "race.sqlite3")
+    item = report_item()
+    target = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json()
+    )
+    store.mark_work_summary_input_done(target)
+    original = TaskAgentSessionLease.try_acquire
+
+    def acquire_with_changed_input(current_store):
+        with current_store._connect() as db:
+            db.execute("update work_summary_inputs set body_sha256=? where id=?", ("f" * 64, target))
+        return original(current_store)
+
+    monkeypatch.setattr(TaskAgentSessionLease, "try_acquire", acquire_with_changed_input)
+    with pytest.raises(ValueError, match="changed before exact replay"):
+        tool.replay_input(store, None, target, source_ref=item.source.ref,
+                          source_payload=item.model_dump_json())
+    current = store.get_work_summary_input(target)
+    assert current.status == "done" and current.body_compacted
+    assert current.body_sha256 == "f" * 64
+    with store._connect() as db:
+        assert db.execute("select count(*) from task_agent_runs").fetchone()[0] == 0
+
+
+def test_fixed_source_version_cas_preserves_changed_prior_input(tmp_path, monkeypatch):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "version-race.sqlite3")
+    first = report_item()
+    second = first.model_copy(update={
+        "summary": "Next exact source version",
+        "source": first.source.model_copy(update={"created_at": "2026-10-12T10:00:00Z"}),
+    })
+    calls = []
+
+    def complete_then_change(current_store, runner, input_id, **kwargs):
+        calls.append(input_id)
+        current_store.mark_work_summary_input_done(input_id)
+        with current_store._connect() as db:
+            db.execute("update work_summary_inputs set body_sha256=? where id=?", ("e" * 64, input_id))
+        return {"passed": True, "run_status": "completed", "failures": []}
+
+    monkeypatch.setattr(tool, "replay_input", complete_then_change)
+    case = {
+        "source_inputs": [first.model_dump(mode="json"), second.model_dump(mode="json")],
+        "work_item": second.model_dump(mode="json"),
+        "existing_context": {"projects": [], "tasks": [], "attention": []},
+        "expected": {},
+    }
+    with pytest.raises(ValueError, match="source version changed"):
+        tool.replay_case(store, None, case)
+    assert len(calls) == 1
+    current = store.get_work_summary_input(calls[0])
+    assert current.status == "done" and current.body_compacted
+    assert current.body_sha256 == "e" * 64
+    with store._connect() as db:
+        assert db.execute("select count(*) from task_agent_runs").fetchone()[0] == 0
+
+
 def test_evaluation_replays_exact_input_without_claiming_pending_or_rewriting_runs(
     tmp_path,
 ):
