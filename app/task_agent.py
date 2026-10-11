@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import re
@@ -691,9 +692,21 @@ Apply the Skill before returning:
   action. Infer a concrete action from the risk. An existing Task suppresses this
   suggestion only if it addresses the same unresolved risk; a completed or unrelated
   Project deliverable does not. Prefer one suggestion for one material Project risk:
-  do not create separate candidates for substeps or for each role involved. Create
-  multiple suggestions only when current evidence identifies separately completable
-  actions with distinct outcomes.
+  do not create separate candidates for substeps or for each role involved. When
+  one next step is a stated prerequisite or upstream gate for another, treat them
+  as sequentially dependent next steps and create one candidate for the nearest
+  blocking outcome; include the downstream impact in its description instead of
+  creating a second candidate for the dependent confirmation. Create multiple
+  suggestions only when current evidence identifies separately completable,
+  non-dependent actions with distinct outcomes. For example, acceptance-material
+  confirmation and payment-date confirmation in one delivery/collection chain are
+  not two candidates just because different Project responsibilities match them;
+  choose the nearest blocking outcome and mention the payment impact in its
+  description. A Task title must include the decisive unresolved Project outcome
+  as well as any upstream gate needed to reach it. For a payment-risk suggestion,
+  name the payment date/schedule in the title even when confirming an upstream
+  acceptance condition is the first step; do not hide the key outcome behind a
+  broad title such as “update the plan”.
   Return every list-valued field as a JSON array; use `[]` when empty and never
   `null` (including `decision_indexes`, `task_ids`, `todo_changes`,
   `follow_up_changes`, and `search_trace`).
@@ -2342,6 +2355,8 @@ def apply_task_agent_decision(
                         == "same_external_task_id",
                         explicit_source_reference=proposal.identity_evidence.basis
                         == "explicit_source_reference",
+                        same_source_item_same_owner=proposal.identity_evidence.basis
+                        == "same_source_item_same_owner",
                         same_deliverable=proposal.identity_evidence.basis
                         == "same_deliverable_owner_context_time",
                         same_owner=proposal.identity_evidence.basis
@@ -3182,6 +3197,61 @@ def _save_projection_receipt(
         )
 
 
+def _task_owner_identity_evidence(task) -> dict[str, object]:
+    try:
+        value = json.loads(task.owner_evidence_json)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _versioned_dingtalk_document_ref(source_ref: str) -> tuple[str, str]:
+    prefix = "dingtalk-doc:"
+    version_marker = "#sha256="
+    if not source_ref.startswith(prefix):
+        return "", ""
+    node, separator, digest = source_ref[len(prefix) :].partition(version_marker)
+    if (
+        not separator
+        or not node.strip()
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+    ):
+        return "", ""
+    return node, digest
+
+
+def _canonical_report_item(value: str) -> str:
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    if len(lines) != 1:
+        return ""
+    line = lines[0]
+    if len(line) >= 2 and line[0] in "-*+" and line[1].isspace():
+        return line[2:].strip()
+    marker, separator, remainder = line.partition(" ")
+    if separator and len(marker) > 1 and marker[-1] in ".)":
+        if marker[:-1].isdigit():
+            return remainder.strip()
+    return line
+
+
+def _report_item_source_body(evidence_text: str) -> str:
+    try:
+        payload = json.loads(evidence_text)
+    except (TypeError, json.JSONDecodeError):
+        return evidence_text
+    if isinstance(payload, dict) and isinstance(payload.get("markdown"), str):
+        return payload["markdown"]
+    return ""
+
+
+def _report_item_occurrences(source_body: str, expected_item: str) -> int:
+    return sum(
+        _canonical_report_item(line) == expected_item
+        for line in source_body.splitlines()
+    )
+
+
 def _validate_identity_proposal(
     store, proposal, *, db: sqlite3.Connection | None
 ) -> None:
@@ -3200,6 +3270,20 @@ def _validate_identity_proposal(
             return store.get_business_task_signal(signal_id)
         return store.get_business_task_signal_in_transaction(
             signal_id=signal_id, _db=db
+        )
+
+    def get_task_source_signal(task_id: int, source_ref: str, source_type: str):
+        if db is None:
+            return store.get_business_task_signal_for_task_source_ref(
+                task_id=task_id,
+                source_ref=source_ref,
+                source_type=source_type,
+            )
+        return store.get_business_task_signal_for_task_source_ref_in_transaction(
+            task_id=task_id,
+            source_ref=source_ref,
+            source_type=source_type,
+            _db=db,
         )
 
     proof = proposal.identity_evidence
@@ -3236,6 +3320,98 @@ def _validate_identity_proposal(
         ):
             raise ValueError(
                 "explicit_source_reference identity evidence does not match source records"
+            )
+        return
+    if proof.basis == "same_source_item_same_owner":
+        source_owner = _task_owner_identity_evidence(source_task)
+        target_owner = _task_owner_identity_evidence(target_task)
+        source_node, source_digest = _versioned_dingtalk_document_ref(
+            source_signal.source_ref
+        )
+        target_node, target_digest = _versioned_dingtalk_document_ref(
+            target_signal.source_ref
+        )
+        source_owner_ref = str(source_owner.get("source_ref") or "")
+        target_owner_ref = str(target_owner.get("source_ref") or "")
+        source_owner_signal = get_task_source_signal(
+            source_task.id, source_owner_ref, source_signal.source_type
+        )
+        target_owner_signal = get_task_source_signal(
+            target_task.id, target_owner_ref, target_signal.source_type
+        )
+        source_item = _canonical_report_item(str(source_owner.get("excerpt") or ""))
+        target_item = _canonical_report_item(str(target_owner.get("excerpt") or ""))
+        source_body = _report_item_source_body(source_signal.evidence_text).strip()
+        target_body = _report_item_source_body(target_signal.evidence_text).strip()
+        source_owner_body = (
+            _report_item_source_body(source_owner_signal.evidence_text).strip()
+            if source_owner_signal is not None
+            else ""
+        )
+        target_owner_body = (
+            _report_item_source_body(target_owner_signal.evidence_text).strip()
+            if target_owner_signal is not None
+            else ""
+        )
+        source_owner_node, source_owner_digest = _versioned_dingtalk_document_ref(
+            source_owner_ref
+        )
+        target_owner_node, target_owner_digest = _versioned_dingtalk_document_ref(
+            target_owner_ref
+        )
+        owner_names = (
+            source_task.owner_name.strip().casefold(),
+            target_task.owner_name.strip().casefold(),
+            str(source_owner.get("name") or "").strip().casefold(),
+            str(target_owner.get("name") or "").strip().casefold(),
+        )
+        owner_ids = {
+            value
+            for value in (
+                source_task.owner_user_id.strip(),
+                target_task.owner_user_id.strip(),
+                str(source_owner.get("user_id") or "").strip(),
+                str(target_owner.get("user_id") or "").strip(),
+            )
+            if value
+        }
+        if not (
+            source_signal.source_type == target_signal.source_type
+            and source_node
+            and source_node == target_node
+            and source_owner_signal is not None
+            and target_owner_signal is not None
+            and source_owner_signal.source_ref == source_owner_ref
+            and target_owner_signal.source_ref == target_owner_ref
+            and source_owner_signal.source_type == source_signal.source_type
+            and target_owner_signal.source_type == target_signal.source_type
+            and source_owner_node == source_node
+            and target_owner_node == target_node
+            and source_digest == hashlib.sha256(source_body.encode("utf-8")).hexdigest()
+            and target_digest == hashlib.sha256(target_body.encode("utf-8")).hexdigest()
+            and source_owner_digest
+            == hashlib.sha256(source_owner_body.encode("utf-8")).hexdigest()
+            and target_owner_digest
+            == hashlib.sha256(target_owner_body.encode("utf-8")).hexdigest()
+            and source_item
+            and source_item == target_item
+            and _report_item_occurrences(source_owner_body, source_item) == 1
+            and _report_item_occurrences(target_owner_body, target_item) == 1
+            and _report_item_occurrences(
+                source_body, source_item
+            )
+            == 1
+            and _report_item_occurrences(
+                target_body, target_item
+            )
+            == 1
+            and all(owner_names)
+            and len(set(owner_names)) == 1
+            and len(owner_ids) <= 1
+        ):
+            raise ValueError(
+                "same_source_item_same_owner identity evidence must prove the same "
+                "unique versioned source item and owner"
             )
         return
     same_owner = (
