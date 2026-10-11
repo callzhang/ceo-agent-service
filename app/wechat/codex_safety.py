@@ -224,6 +224,7 @@ def make_role_agent_command(
             "sandbox_mode=", "sandbox_workspace_write.", "default_permissions=",
             *(f"features.{feature}=" for feature in ROLE_DISABLED_NATIVE_FEATURES),
             "features.code_mode=", "features.code_mode_only=",
+            "features.code_mode.enabled=",
             "features.code_mode.excluded_tool_namespaces=",
             "features.code_mode.direct_only_tool_namespaces=",
             "skills.config=", "project_doc_max_bytes=",
@@ -236,14 +237,14 @@ def make_role_agent_command(
               role == "consumer" and feature in {"shell_tool", "unified_exec"}
           )
           for option in ("-c", f"features.{feature}=false")),
-        # CodeModeOnly models need the native V8 host to call task-bound MCP
-        # tools. Audit excludes built-in execution callbacks; Consumer runs them
-        # in the native task workspace sandbox.
+        # Expose the task-bound MCP namespace directly; keep native CodeMode
+        # for the remaining tools. Role tool selection and sandbox stay intact.
         "-c", "features.code_mode_host=true",
         "-c", "features.code_mode_only=true",
+        "-c", "features.code_mode.enabled=true",
         "-c", "features.code_mode.excluded_tool_namespaces="
         + json.dumps([] if role == "consumer" else ["functions"]),
-        "-c", 'features.code_mode.direct_only_tool_namespaces=[]',
+        "-c", 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli"]',
         "-c",
         'sandbox_mode="workspace-write"' if role == "consumer" else 'sandbox_mode="read-only"',
         "-c",

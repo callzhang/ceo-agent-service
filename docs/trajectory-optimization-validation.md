@@ -368,3 +368,166 @@ large-source delivery or suitability for all service tools. The next controlled
 test can use identical bounded source pages and unchanged business Skill with
 default versus direct-only transport; source order and metadata must be valid,
 all unique pages/records verified, and global role/tool-schema overhead measured.
+
+### Identical bounded pages, default versus native direct transport
+
+`native_paged_direct.v1.json` corrects timestamps to strictly ascending UTC
+minutes 10:00–11:39, retaining the original IDs, full text, business owners and
+amounts. Both arms use the identical corrected source hash
+`3b236a29ace1b89a2c11b09e50b6c32e11d5b875f0387a589861ab3cc3b4f18d`,
+same original 5,683-character business prompt/Skill, same model/effort and
+five-record page API. No notify guidance or prescribed extraction code is added.
+
+| Metric | Default transport | Direct-only transport |
+| --- | --- | --- |
+| Native session | `01a127d2-bf7c-7940-9a4b-8a42f7df843c` | `01a127d2-bf7c-7e71-a6a2-7fcbb5888efe` |
+| Unique source pages | 20 | 20 |
+| Exact full original records in saved outputs | 100 | 100 |
+| Source output truncation warnings | 0 | 0 |
+| Native exec cells / direct function calls | 21 / 0 | 0 / 20 |
+| Model requests | 22 | 21 |
+| Sum of request input tokens | 1,129,678 | 729,974 |
+| Cached request input tokens | 1,039,872 | 672,512 |
+| Uncached request input tokens | 89,806 | 57,462 |
+| Last request input tokens | 86,473 | 50,463 |
+| Request output tokens | 2,190 | 1,901 |
+
+Both return exact gold for 42/Avery/32000 and 99/Alex/58000 with source_count
+100; no fixture-specific source filtering, shell/file calls or business actions.
+Default transport reads each page in a separate exec cell and prints the MCP
+envelope, retaining duplicate text/structured representations. Direct outputs
+contain only the source ledger, with a `Wall time... Output:` prefix. Parsing
+that prefix correctly confirms all twenty pages and all full record equalities.
+Independent read-only review recomputed every count, timestamp, full-record
+equality, final result and usage total from the two complete native trajectories.
+
+Direct transport reduces cumulative input 35.38% and uncached input about 36.0%
+within this fixture. These are per-request sums (including repeated history),
+not a prompt-size measurement or dollar-cost claim. Twenty-one model requests
+remain substantial; bounded pages should not become an unconditional tiny-page
+policy for all source sizes. Neither a global mode switch nor a production
+page API is adopted. Mixed message fields, multi-group sources, the actual
+role catalog, configured provider routes and production report behavior remain
+separate gates. Saved output bytes and aggregate token counts do not expose the
+literal model request payload.
+
+The actual service role factory forces `code_mode_only=true`, excludes nested
+`functions` for Audit, and resets direct-only namespaces to an empty list.
+Standalone fixture success therefore does not establish compatibility with
+service invocation profiles. A separate read-only Audit-profile capability
+probe preserves those restrictions and tests nested direct-only overrides;
+it changes no production role policy or command builder.
+
+### Existing Audit profile and full role-catalog compatibility
+
+`native_audit_transport.v1.json` failed before model execution: combining
+`--ignore-user-config` with role-factory inherited-server disabling overrides
+created disabled server tables without transports (`brightdata`). v2 uses the
+standard native home/configuration expected by production; no placeholder
+transport or compatibility shim is added.
+
+v2 baseline `01a127df-2ad0-7480-a94c-48edcb3716c6` uses native exec discovery
+and source invocation. Candidate `01a127df-2b04-7343-8438-785d89ca15db` directly
+calls the same allowed group reader. Both read once and return the exact random
+marker. Effective commands retain `sandbox_mode="read-only"`, CodeModeOnly and
+host enabled, excluded namespace `["functions"]`, shell/unified-exec disabled,
+and the same Audit allowed-tool list. Candidate adds only nested CodeMode
+enabled/direct-only namespace settings in its temporary test command. No
+production command builder, read-only policy or tool authorization changes.
+
+`native_role_catalog.v1.json`/v2 expand the fixture to actual role tool
+declarations from `build_role_server`: 41 Consumer and 37 Audit tools (input
+schemas/descriptions total 15,234/13,530 JSON characters). Before server startup,
+all actual callbacks are replaced with fixture stubs: only the existing group
+reader returns a marker, every other invocation is recorded and fails without
+effects. SDK Tool.run was inspected to confirm it calls the replaced `fn`,
+preventing real DWS, task, artifact or delivery operations in this test.
+
+v1 Consumer commands duplicated `--skip-git-repo-check` already owned by the
+Consumer factory; CLI rejected both before any model or source work. v1 Audit
+completed and is retained. v2 reruns Consumer with that fixture error corrected.
+
+| Role/arm | Native session | Model requests | Initial input | Sum request input | Uncached input |
+| --- | --- | --- | --- | --- | --- |
+| Audit/default | `01a127e5-a68b-7e33-a958-d778e6d4d94d` | 3 | 9,178 | 33,692 | 12,700 |
+| Audit/direct | `01a127e5-a684-7031-a2b6-aadf60ef15c5` | 2 | 10,253 | 20,697 | 10,713 |
+| Consumer/default | `01a1282d-cd91-7ad2-b74e-328dde67b174` | 3 | 10,917 | 33,588 | 12,596 |
+| Consumer/direct | `01a1282d-cdf9-7dc1-ac04-6d59fd6e2ea3` | 2 | 12,150 | 24,501 | 12,469 |
+
+All four exit zero, read the marker once, match its exact JSON and record zero
+unexpected callbacks, shell/file calls or business effects. Default uses two
+exec cells; direct uses one native function call. Direct declarations increase
+initial input about 1.1–1.2k tokens in these samples but avoid one discovery
+request. These are role-catalog and command-profile capability tests on the
+configured OAuth model, not Consumer/Audit business judgment, API providers,
+session-resume acceptance or generalized cost estimates.
+
+### Existing API routes: exact terminal evidence
+
+The current production configuration declares `codex_api` (gpt-5.6-luna) and
+`qwen_gpu4` (qwen3.8-27b) in addition to OAuth routes. Existing credentials were
+reused under the approved plan, without printing, creating or changing them.
+The API fixture uses native adapter provider settings/environment and the
+actual 37-tool Audit declarations with every production callback stubbed.
+
+`native_api_catalog.v1.json` failed before model work because the full service
+manifest needed MEMORY_CONNECTOR_URL absent from the test process. v2 uses the
+existing native CodexRunner/provider settings plus only the fixture transport;
+no placeholder memory server or application fallback was introduced.
+
+| Route/arm | Native session | Source calls | Terminal evidence |
+| --- | --- | --- | --- |
+| codex_api/default | `01a1283a-6bfa-7443-8e92-758db5243308` | 0 | turn.failed, exceeded retry limit, last HTTP status 429 |
+| codex_api/direct | `01a1283a-6bfa-7332-b734-020155b640c5` | 0 | same HTTP 429 failure |
+| qwen/default | `01a1283a-7caf-7750-a6f9-29665aad7921` | 0 | turn.completed, assistant reports only wait/request_user_input available; no exact marker |
+| qwen/direct | `01a1283a-7d4d-7ac1-8c44-be93170267b2` | 1 | native function call, exact marker JSON, turn.completed |
+| qwen/enabled-only control | `01a1283f-55ff-75f3-9931-114f2c1a3506` | 0 | turn.completed, same tool-unavailable response |
+
+The original v2 harness incorrectly failed Qwen/direct by requiring the CLI
+last-message output file. That file was absent even though stdout/native JSONL
+contains the exact final JSON. Existing service `parse_typed_agent_result` with
+a strict one-field marker model validates that same stream against the actual
+fixture nonce. The corrected result is a tool-transport pass with zero unexpected
+callbacks, not a full business-output/schema pass. The original file-based
+false fail is retained rather than hiding this evidence correction.
+
+The harness's failure classifier also returned a transport-disconnected code
+after noticing model-list refresh warnings. Full trajectories supersede that
+interpretation: OpenAI-compatible route failures are explicit HTTP 429 before
+source work; Qwen/default and enabled-only complete with tool-unavailable text;
+Qwen/direct completes the requested read and typed JSON despite the same warning.
+Thus neither the model-list warning nor process exit/file absence establishes
+schema incompatibility or final-result failure.
+
+`native_api_catalog.v3.json` changes only CodeMode enablement while retaining
+an empty direct-only namespace list. Its failure to invoke the source, contrasted
+with the direct arm, shows that enablement alone does not restore this allowed
+MCP read in the tested Qwen role profile. The native direct namespace configuration
+restores that read without prompt rules or model-route changes. Literal model
+request tool definitions are not exposed by these traces; underlying model
+capability attribution remains narrower than this controlled behavioral result.
+OpenAI-compatible 429 capacity and full business cold/resume cases remain open;
+no production transport or role policy has been changed.
+
+### Narrow native transport implementation
+
+The development command profile now explicitly sets
+`features.code_mode.enabled=true` and
+`features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli"]` for
+Consumer/Audit, removing stale incoming overrides of those settings. This is
+the exact combination validated above; other MCP namespaces stay on their
+existing path. Role tool lists, sandbox, Audit functions exclusion, sessions,
+routes, and authorization options are unchanged. No prompt rule was added.
+
+The updated regression first failed on missing explicit native enablement.
+After the implementation, the five affected test files passed: **275 passed,
+4 skipped**. The initial sandboxed broader run had 15 write-permission failures
+in schema/prompt fixtures; rerunning with write access to this isolated
+development worktree resolved every failure. Independent read-only review found
+no actionable defect and confirmed the native probe evidence supports this
+exact configuration, with the API 429 and business-workflow limits intact.
+
+This implementation remains local and unpushed. It does not establish full
+business schema compatibility, real report correctness, or production readback.
+Native CLI metadata, stored trajectory and turn-runner verification also passed:
+**71 passed**. Combined focused verification: **346 passed, 4 skipped**.

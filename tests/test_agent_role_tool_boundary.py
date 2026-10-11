@@ -25,8 +25,9 @@ def _codex_command() -> list[str]:
         "-c", "features.image_generation=true",
         "-c", "features.code_mode_host=false",
         "-c", "features.code_mode_only=false",
+        "-c", "features.code_mode.enabled=false",
         "-c", 'features.code_mode.excluded_tool_namespaces=[]',
-        "-c", 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli"]',
+        "-c", 'features.code_mode.direct_only_tool_namespaces=["functions", "mcp__future_executor"]',
         "-",
     ]
 
@@ -62,8 +63,10 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
         assert "features.code_mode_host=false" not in command
         assert "features.code_mode_only=true" in command
         assert "features.code_mode_only=false" not in command
-        assert 'features.code_mode.direct_only_tool_namespaces=[]' in command
-        assert 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli"]' not in command
+        assert "features.code_mode.enabled=true" in command
+        assert "features.code_mode.enabled=false" not in command
+        assert 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli"]' in command
+        assert sum(option.startswith("features.code_mode.direct_only_tool_namespaces=") for option in command) == 1
         assert "mcp_servers.node_repl.enabled=false" in command
         assert "mcp_servers.plaud.enabled=false" in command
         assert "mcp_servers.future_executor.enabled=false" in command

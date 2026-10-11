@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "low",
+  "mechanism": "Expose actual build_role_server Consumer/Audit tool declarations with every production callback replaced by a fixture stub before server starts. Only the existing group-window tool returns an anonymous marker; other callbacks record an unexpected invocation and fail without effects. Use current role command factory and standard native home; direct candidate preserves exclusions and CodeModeOnly with nested direct namespace overrides.",
+  "criteria": "Marker equality; exactly one expected source callback; zero unexpected callbacks and executed shell/file/business calls. Verify 41 Consumer and 37 Audit declarations and compare actual per-request token usage. This is tool-catalog/profile compatibility, not business review or configured API route acceptance.",
+  "arms": ["consumer-baseline", "consumer-direct", "audit-baseline", "audit-direct"]
+}

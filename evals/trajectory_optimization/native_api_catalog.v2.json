@@ -1,0 +1,8 @@
+{
+  "version": 2,
+  "routes": ["codex_api", "qwen_gpu4"],
+  "fixture_correction": "v1 failed before model invocation because full service MCP manifest construction required MEMORY_CONNECTOR_URL absent in the test process. Use the adapter's existing provider settings/environment with its native CodexRunner command builder, and attach only the fixture MCP server. No placeholder memory URL or app fallback added.",
+  "mechanism": "Existing production route models, endpoints and credentials; actual 37-tool Audit declarations with side-effect-free stubs; existing role profile; baseline versus nested direct-only namespace overrides.",
+  "criteria": "One expected marker read, exact JSON, zero unexpected callbacks/shell/file/business effects. Distinguish provider failures from schema defects; no output-schema or business review acceptance claimed.",
+  "timeout_seconds": 90
+}

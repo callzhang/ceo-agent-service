@@ -1,5 +1,9 @@
 # Concurrent agent file claims
 
+| codex-native-agent-cli-direct-transport | Isolated trajectory-optimization worktree: app/wechat/codex_safety.py, tests/test_agent_role_tool_boundary.py, docs/architecture.md, docs/runtime-mechanism.md, docs/trajectory-optimization-validation.md; evals/trajectory_optimization/native_audit_transport.v1/v2.json, native_role_catalog.v1/v2.json, native_api_catalog.v1/v2/v3.json | Enable documented native CodeMode and direct agent_cli calls verified in OAuth Consumer/Audit and Qwen Audit probes; preserve versioned fixture corrections and failed controls. Preserve existing role tool lists, sandbox, functions exclusions, sessions and routing. No new policy or prompt rules. | 2026-10-10 |
+
+| codex-native-paged-direct-comparison | Isolated trajectory-optimization worktree: evals/trajectory_optimization/native_paged_direct.v1.json, docs/trajectory-optimization-validation.md | Compare identical anonymous five-record pages under default and documented native direct-only transport. Correct ascending timestamps; unchanged business Skill. No production API/config, audit or provider mutation. | 2026-10-10 |
+
 | codex-native-output-chunk-probe | Isolated trajectory-optimization worktree: evals/trajectory_optimization/native_output_chunks.v1.json, docs/trajectory-optimization-validation.md | Verify native notify/yield delivery using anonymous complete source records and actual model-facing outputs. Capability-only evidence; no business Skill, provider, runtime or audit changes. | 2026-10-10 |
 
 | codex-native-source-pagination-probe | Isolated trajectory-optimization worktree: evals/trajectory_optimization/daily_source_pagination.v1.json, docs/trajectory-optimization-validation.md | Read-only anonymous native comparison of full group-window result against existing DWS page-token semantics. Same source/model/Skill; no production API, prompt, audit or provider mutation. | 2026-10-10 |

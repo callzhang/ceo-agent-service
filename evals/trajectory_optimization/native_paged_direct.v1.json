@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "low",
+  "source_session": "01a127c9-80fe-7e31-a2b5-2271cd21646e",
+  "original_delivered_source_sha256": "cd74f194cfdb459035baf93dc106d969e94e68cbfd44d3a9051907ff6f2fc4d5",
+  "records": 100,
+  "page_records": 5,
+  "fixture_correction": "Assign monotonically increasing UTC createTime from 2026-10-10T10:00:00+00:00 in one-minute steps; retain IDs, all original text, senders, decisions and window. Same corrected source in both arms.",
+  "mechanism": "Both arms expose identical five-record group-window pages using page_token, hasMore and nextPageToken. Candidate uses features.code_mode={enabled=true,direct_only_tool_namespaces=[mcp__agent_cli]}; baseline defaults. Same model/settings and original business Skill/prompt, no notify guidance.",
+  "criteria": "All 20 unique pages read, both original decision IDs/owners/numeric amounts, source_count 100, no truncated tool result, no fixture-specific prefilter or shell/file/business effect. Count actual model requests and input tokens; direct function transport must appear in trajectory.",
+  "gold": [{"id":"msg:42","owner":"Avery","amount":32000},{"id":"msg:99","owner":"Alex","amount":58000}],
+  "known_limits": "Single synthetic text-only group; does not establish multi-group, optional-field, production-report or all-route acceptance. Persisted native output bytes are distinguished from actual model input."
+}

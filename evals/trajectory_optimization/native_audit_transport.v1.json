@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "low",
+  "mechanism": "Build both test commands with the current make_role_agent_command(role=audit), preserving CodeModeOnly, functions namespace exclusion, read-only sandbox and role tool allowlist. Candidate adds only nested code_mode.enabled=true and direct_only_tool_namespaces=[mcp__agent_cli] overrides. One allowed mocked group-window read returns an anonymous marker.",
+  "criteria": "One allowed source read; exact marker; no executed shell/file/business calls; native function versus exec transport verified from trajectory. Audit business review, full role catalog and provider routes are separate gates.",
+  "known_limits": "Temporary read-only CLI capability probe, no production profile or policy modification."
+}
