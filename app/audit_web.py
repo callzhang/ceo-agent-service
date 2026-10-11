@@ -143,6 +143,7 @@ from app.store import (
     AgentRole,
     AgentRun,
     AutoReplyStore,
+    ManualRerunConflict,
     FeedbackEvent,
     OperationLog,
     ReplyAttempt,
@@ -9648,19 +9649,23 @@ def handle_rerun_attempt_post(
                 "<p>Original execution payload is unavailable; rerun was not queued.</p>",
             ),
         )
-    store.enqueue_manual_rerun_reply_task(
-        conversation_id=attempt.conversation_id,
-        conversation_title=conversation_title,
-        single_chat=single_chat,
-        trigger_message_id=attempt.trigger_message_id,
-        trigger_create_time=trigger_create_time,
-        trigger_sender=attempt.trigger_sender,
-        trigger_text=trigger_text,
-        trigger_message_json=trigger_message_json,
-        oa_url=attempt.oa_url,
-        attempt_id=attempt.id,
-        channel=channel,
-    )
+    try:
+        store.enqueue_manual_rerun_reply_task(
+            conversation_id=attempt.conversation_id,
+            conversation_title=conversation_title,
+            single_chat=single_chat,
+            trigger_message_id=attempt.trigger_message_id,
+            trigger_create_time=trigger_create_time,
+            trigger_sender=attempt.trigger_sender,
+            trigger_text=trigger_text,
+            trigger_message_json=trigger_message_json,
+            oa_url=attempt.oa_url,
+            attempt_id=attempt.id,
+            channel=channel,
+            expected_execution_generation=existing_task.execution_generation,
+        )
+    except ManualRerunConflict as exc:
+        return 409, {}, render_page("Rerun unavailable", f"<p>{escape(str(exc))}</p>")
     return 303, {"Location": _safe_action_return_to(return_to, attempt_id)}, ""
 
 

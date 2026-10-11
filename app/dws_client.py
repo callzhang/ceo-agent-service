@@ -2151,11 +2151,21 @@ class DwsClient:
             self.dws_bin, "chat", "+messages-mget", "--msg-ids", message_id,
             "--no-reactions", "--no-threads", "--format", "json",
         ])
-        if (payload.get("contractVersion") != "im.message-list.v1"
+        if (not isinstance(payload, dict)
+                or payload.get("contractVersion") != "im.message-list.v1"
                 or payload.get("complete") is not True
                 or payload.get("messagesComplete") is not True
                 or payload.get("hasMore") is not False
                 or payload.get("failures") != []):
+            return None
+        rows = payload.get("messages")
+        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+            return None
+        row = rows[0]
+        if (any(not isinstance(row.get(key), str) for key in (
+                "conversationId", "messageId", "sender", "createTime"))
+                or "text" not in row
+                or (row["text"] is not None and not isinstance(row["text"], str))):
             return None
         messages = self.parse_messages(
             payload, conversation_title=conversation.title,

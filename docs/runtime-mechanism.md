@@ -5,7 +5,12 @@ through the native `+messages-mget` contract, without reactions, threads or
 resource downloads. Complete message results and matching conversation/message
 identities are required before a new generation is queued. Display fields never
 substitute for message content. Historical provider risk refusal is checked
-before this read and remains non-replayable. Other channel payload requirements
+before this read and remains non-replayable. The enqueue transaction also checks
+the captured execution generation, current attempt retirement, and structured
+refusals of the current generation; a stale source read cannot rotate a newly
+refused generation. Raw source rows are validated before message normalization,
+so malformed entries cannot be silently dropped to manufacture a unique match.
+Other channel payload requirements
 and the Consumer/Audit/System execution lifecycle are unchanged.
 
 An instance supplement that rotates execution generation requires the original

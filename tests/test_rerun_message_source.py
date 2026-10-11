@@ -4,7 +4,7 @@ import pytest
 
 from app.audit_web import handle_rerun_attempt_post
 from app.dws_client import DingTalkConversation, DingTalkMessage, DwsClient, DwsError
-from app.store import AgentRole, AutoReplyStore
+from app.store import AgentRole, AutoReplyStore, ManualRerunConflict
 
 
 def source_message():
@@ -65,7 +65,8 @@ def test_compacted_rerun_requires_exact_provider_message(tmp_path, monkeypatch, 
         assert current.trigger_text == source.content
 
 
-@pytest.mark.parametrize("invalid", [None, "partial", "wrong-message", "wrong-conversation"])
+@pytest.mark.parametrize("invalid", [None, "partial", "wrong-message", "wrong-conversation",
+                                     "extra-malformed", "missing", "null", "wrong-type", "bad-sender"])
 def test_exact_message_reader_rejects_unverified_sources(monkeypatch, invalid):
     row = {"conversationId": "source-cid", "messageId": "source-message",
            "sender": "Sender", "createTime": "2026-10-10 10:00:00",
@@ -79,6 +80,16 @@ def test_exact_message_reader_rejects_unverified_sources(monkeypatch, invalid):
         row["messageId"] = "another-message"
     elif invalid == "wrong-conversation":
         row["conversationId"] = "another-cid"
+    elif invalid == "extra-malformed":
+        payload["messages"].append({})
+    elif invalid == "missing":
+        del payload["messages"]
+    elif invalid == "null":
+        payload["messages"] = None
+    elif invalid == "wrong-type":
+        payload["messages"] = {"message": row}
+    elif invalid == "bad-sender":
+        row["sender"] = {"name": "Sender"}
     client = DwsClient()
     commands = []
     monkeypatch.setattr(client, "run_json", lambda command: commands.append(command) or payload)
@@ -133,4 +144,69 @@ def test_provider_read_failure_does_not_rotate_generation(tmp_path, monkeypatch)
     monkeypatch.setattr(DwsClient, "read_message_by_id", failed_read)
     with pytest.raises(DwsError, match="provider unavailable"):
         handle_rerun_attempt_post(store, attempt_id)
+    assert store.get_reply_task(task.id) == before
+
+
+def test_source_fetch_cannot_reopen_a_newly_refused_generation(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "refusal-race.sqlite3")
+    task, attempt_id = settled_task(store)
+    source = source_message()
+    new_generations = []
+
+    def read_then_refuse(*args):
+        newer = store.enqueue_manual_rerun_reply_task(
+            conversation_id=task.conversation_id, conversation_title=task.conversation_title,
+            single_chat=task.single_chat, trigger_message_id=task.trigger_message_id,
+            trigger_create_time=source.create_time, trigger_sender=source.sender_name,
+            trigger_text=source.content, trigger_message_json=source.model_dump_json(),
+            attempt_id=attempt_id,
+        )
+        new_generations.append(newer.execution_generation)
+        claimed = store.claim_reply_task(newer.id)
+        run = store.claim_agent_run(
+            claimed.id, claimed.execution_generation, role=AgentRole.AUDIT,
+            proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+            operation_id="new-refusal", owner="new-refusal-fixture",
+        ).run
+        store.fail_agent_run(run.id, {"code": "provider_risk_rejected", "retryable": False},
+                             owner="new-refusal-fixture")
+        store.fail_reply_task(newer.id, "provider_risk_rejected",
+                              expected_execution_generation=newer.execution_generation)
+        with store._connect() as db:
+            db.execute("update reply_attempts set agent_run_id=?,send_status='failed' where id=?",
+                       (run.id, attempt_id))
+        return source
+
+    monkeypatch.setattr(DwsClient, "read_message_by_id", read_then_refuse)
+    assert handle_rerun_attempt_post(store, attempt_id)[0] == 409
+    current = store.get_reply_task(task.id)
+    assert current.execution_generation == new_generations[0]
+    assert current.status == "failed"
+    assert current.error == "provider_risk_rejected"
+
+
+def test_current_generation_refusal_is_checked_in_enqueue_transaction(tmp_path):
+    store = AutoReplyStore(tmp_path / "atomic-refusal.sqlite3")
+    task, attempt_id = settled_task(store)
+    source = source_message()
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='processing' where id=?", (task.id,))
+    run = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="atomic-refusal", owner="atomic-refusal-fixture",
+    ).run
+    store.fail_agent_run(run.id, {"code": "provider_risk_rejected", "retryable": False},
+                         owner="atomic-refusal-fixture")
+    store.fail_reply_task(task.id, "agent_reported_failure",
+                          expected_execution_generation=task.execution_generation)
+    before = store.get_reply_task(task.id)
+    with pytest.raises(ManualRerunConflict):
+        store.enqueue_manual_rerun_reply_task(
+            conversation_id=task.conversation_id, conversation_title=task.conversation_title,
+            single_chat=task.single_chat, trigger_message_id=task.trigger_message_id,
+            trigger_create_time=source.create_time, trigger_sender=source.sender_name,
+            trigger_text=source.content, trigger_message_json=source.model_dump_json(),
+            attempt_id=attempt_id, expected_execution_generation=task.execution_generation,
+        )
     assert store.get_reply_task(task.id) == before
