@@ -28,4 +28,10 @@ No database snapshot overwrite after replacement writes. Inverse failure keeps t
 
 ## Live deployment
 
-Pending: push reviewed commits, normal quiet deploy from updated worktree, then read PID, healthz, queues, Attention, History, schema48/index absence/remaining indexes and actual file/WAL/freelist sizes. No production VACUUM in default deploy.
+Completed via updated worktree `.venv/bin/python -m app.deploy`: `3249d40e → 21bfe750`. Production PID `47237 → 75090`; Email schema **48**. Redundant lookup index absent; primary-key and folder indexes present; provider inventory **72,004**. quick_check returns ok. One pre-existing FK violation remains unchanged.
+
+healthz, Status, Attention and History readbacks all HTTP200. In-flight count at readback0; no new failed reply tasks, email classification tasks/actions or runtime attempts versus the consistent-copy baseline. Two `reply_task_already_settled` metadata entries observed since copy were already resolved; no failure was hidden or deleted.
+
+Live logical/file size: **414,822,400 bytes**, WAL at readback **2,533,832 bytes**. Freelist pages **320 → 3128**; new writes can reuse those pages. No production VACUUM performed; live file reduction is not claimed. Latest retained backup was read back as schema48, verified-complete, quick_check ok; backup folder contains exactly one SQLite backup.
+
+Latest acceptance update is documentation-only. Production runtime remains21bfe750; publishing this acceptance does not require another restart.

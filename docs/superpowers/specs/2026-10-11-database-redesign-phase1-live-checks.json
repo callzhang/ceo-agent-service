@@ -1,0 +1,140 @@
+{
+  "before": {
+    "code": "3249d40e74039c0b031ef10724fc7b7b354b0636",
+    "pid": [
+      "47237"
+    ],
+    "schema": 47,
+    "logical_bytes": 414822400,
+    "freelist_pages": 320,
+    "healthz": 200
+  },
+  "after": {
+    "code": "21bfe750201bea5f307db53bb0ac8a7fb83dcb7f",
+    "pid": [
+      "75090"
+    ],
+    "schema": 48,
+    "lookup_index_exists": false,
+    "folder_index_exists": true,
+    "primary_key_index_exists": true,
+    "quick_check": "ok",
+    "foreign_key_violations": 1,
+    "foreign_key_relations": [
+      [
+        "meeting_alignment_runs",
+        "meeting_alignment_jobs",
+        1
+      ]
+    ],
+    "logical_bytes": 414822400,
+    "freelist_pages": 3128,
+    "provider_rows": 72004,
+    "queues": {
+      "reply_tasks": {
+        "done": 7130,
+        "failed": 4,
+        "needs_human": 3,
+        "pending": 1,
+        "skipped": 117
+      },
+      "work_summary_inputs": {
+        "done": 4678,
+        "skipped": 4402
+      },
+      "agent_runtime_attempts": {
+        "completed": 15539,
+        "failed": 5747,
+        "superseded": 1425
+      },
+      "email_agent_classification_tasks": {
+        "done": 1348
+      },
+      "email_actions": {
+        "done": 9838,
+        "pending": 39,
+        "skipped": 2
+      },
+      "meeting_alignment_jobs": {
+        "no_action": 85,
+        "sent": 536,
+        "skipped": 58
+      }
+    },
+    "new_errors_since_copy": {
+      "reply_task_already_settled": 1
+    },
+    "in_flight_work": 0,
+    "file_bytes": 414822400,
+    "wal_bytes": 2533832,
+    "api": {
+      "/healthz": {
+        "http_status": 200
+      },
+      "/api/console/status": {
+        "http_status": 200,
+        "keys": [
+          "item",
+          "meta"
+        ]
+      },
+      "/api/console/attention?limit=1": {
+        "http_status": 200,
+        "keys": [
+          "items",
+          "meta"
+        ],
+        "returned_items": 1
+      },
+      "/api/console/history?limit=1": {
+        "http_status": 200,
+        "keys": [
+          "chart",
+          "items",
+          "meta"
+        ],
+        "returned_items": 20
+      }
+    }
+  },
+  "failure_comparison": {
+    "reply_tasks": {
+      "baseline_failed": 5,
+      "live_failed": 3,
+      "new_failed": 0
+    },
+    "email_agent_classification_tasks": {
+      "baseline_failed": 0,
+      "live_failed": 0,
+      "new_failed": 0
+    },
+    "email_actions": {
+      "baseline_failed": 0,
+      "live_failed": 0,
+      "new_failed": 0
+    },
+    "agent_runtime_attempts": {
+      "baseline_failed": 5747,
+      "live_failed": 5747,
+      "new_failed": 0
+    },
+    "new_error_metadata": [
+      {
+        "kind": "reply_task_already_settled",
+        "created_at": "2026-10-11 07:13:04",
+        "resolved_at": "2026-10-11 07:13:04"
+      },
+      {
+        "kind": "reply_task_already_settled",
+        "created_at": "2026-10-11 07:21:23",
+        "resolved_at": "2026-10-11 07:21:23"
+      }
+    ]
+  },
+  "latest_backup_verified": {
+    "count": 1,
+    "schema": 48,
+    "quick_check": "ok",
+    "complete": true
+  }
+}

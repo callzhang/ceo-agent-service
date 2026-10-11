@@ -352,4 +352,4 @@ git commit -m "refactor(storage): remove duplicate provider identity lookup inde
 
 实施状态：索引代码、定向测试和副本演练已完成；新增独立 schema publication/inverse 实现及206项测试通过。回退元信息在依赖/验证前捕获，迁移在停止窗口执行，旧版47已打开真实回退副本。原“回退必须另行落实”项现已实现；上线读回记录见 docs/storage-phase1-validation.md。
 
-本计划覆盖 fresh DB、旧 schema、重复启动、失败回滚、主键唯一性、点查与文件夹查询、required schema 校验、已有 locator 索引回归、在线 provider 库存读取、副本 integrity/FK、文档及部署边界。未变动页面 DTO/业务状态，Email 页面显示需在实际发布后按主程序矩阵读回。本阶段代码和副本验证已完成，生产上线尚待执行。
+本计划覆盖 fresh DB、旧 schema、重复启动、失败回滚、主键唯一性、点查与文件夹查询、required schema 校验、已有 locator 索引回归、在线 provider 库存读取、副本 integrity/FK、文档及部署边界。未变动页面 DTO/业务状态，Email 页面显示需在实际发布后按主程序矩阵读回。本阶段代码、副本验证、schema 回退演练和生产上线已完成；生产代码21bfe750、schema48，正式回读见 docs/storage-phase1-validation.md。
