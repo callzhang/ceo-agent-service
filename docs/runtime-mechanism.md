@@ -866,6 +866,8 @@ Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`，并将任
 
 ## 用户反馈处理轮次
 
+Consumer/Audit 的通用应用结果合同只在 Developer 注入一次，不在每轮 Task context 复制。Audit 的重复 Role Boundary 合并到“应用结果合同”段；Task 中显式自定义 Audit Rules、完整候选与 digest、当前事实、阶段和反馈继续保留。会话绑定、角色政策和 wire schema 保持不变，Settings 的当前预览沿用同一装配函数，历史视图继续读取原始已保存输入。
+
 用户反馈处理有自己的当前投影：
 
 ```text

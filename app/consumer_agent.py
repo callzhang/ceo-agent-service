@@ -918,7 +918,7 @@ def audit_developer_sections(
             "instead of requesting another content revision. Return return or reject when the "
             "candidate must change, and ordinary failed when a dependency does not "
             "complete."
-        ), role_boundary=AUDIT_ROLE_BOUNDARY,
+        ), role_boundary=None,
     )
     return sections + (
         PromptSection("决策证据", "服务决策质量合同", "developer", DECISION_QUALITY_GATE_INSTRUCTIONS),
@@ -1034,9 +1034,9 @@ def _role_developer_sections(
     role_sections: tuple[PromptSection, ...],
     *,
     capability_instructions: str,
-    role_boundary: str,
+    role_boundary: str | None,
 ) -> tuple[PromptSection, ...]:
-    return role_sections + (
+    sections = role_sections + (
         PromptSection(
             "能力边界",
             "服务能力合同",
@@ -1053,10 +1053,12 @@ def _role_developer_sections(
         "as a session-start prerequisite. Use Memory tools only when the current "
             "business task specifically needs durable memory evidence.",
         ),
-        PromptSection(
+    )
+    if role_boundary is not None:
+        sections += (PromptSection(
             "角色边界",
             "服务角色合同",
             "developer",
             "## Role Boundary\n" + role_boundary,
-        ),
-    )
+        ),)
+    return sections

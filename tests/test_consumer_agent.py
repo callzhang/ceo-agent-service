@@ -211,6 +211,9 @@ def test_consumer_uses_scheduled_prompt_and_targeted_skill_protocol(
 
     assert "SCHEDULED CONSUMER PROMPT" in executor.prompts[0]
     command_text = "\n".join(executor.commands[0])
+    setting = next(value for value in executor.commands[0] if value.startswith("developer_instructions="))
+    developer = json.loads(setting.split("=", 1)[1])
+    assert (developer + executor.prompts[0]).count(_CONSUMER_AGENT_RULES) == 1
     assert "TARGETED SKILL PROTOCOL" in executor.prompts[0]
     assert "TARGETED SKILL PROTOCOL" not in command_text
     assert "Installed Business Skills" not in command_text

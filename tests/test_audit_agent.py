@@ -353,7 +353,7 @@ def test_actual_audit_runner_uses_production_review_instructions(setup):
     rendered_rules = render_audit_rules(AgentRole.AUDIT)
     assert actual == audit_developer_instructions(rendered_rules, runtime_context="") + "\n\n" + snapshot["runtime_context"]
     assert actual == snapshot["developer_instructions"]
-    assert actual.count(_AUDIT_AGENT_RULES) == 2
+    assert (actual + executor.prompts[0]).count(_AUDIT_AGENT_RULES) == 1
     assert f"## Audit Rules\n{rendered_rules}" in actual
     task_rules = executor.prompts[0].partition("## Audit Rules\n")[2].partition(
         "\n\n## Context Facts"

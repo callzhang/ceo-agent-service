@@ -632,3 +632,31 @@ the analogous 2,546-character contract. This is a confirmed instruction assembly
 duplication, not permission to remove current facts, Skill entries or feedback.
 The current runtime explicitly disables native output-schema, so the Developer's
 wire schema remains necessary until the independent native schema gate is closed.
+
+### Complete application contract injected once
+
+Actual Consumer/Audit producer regressions, capturing the submitted Developer
+and Task rather than a standalone template, first failed with two Consumer
+copies and three Audit copies. Audit's Role Boundary was the exact same
+_AUDIT_AGENT_RULES string as its named Application Result Contract. Both common
+Task copies and that duplicate Audit Developer section are removed; the full
+unchanged contract remains once in Developer. Explicit Task audit instructions,
+complete candidate and source facts, digest, stage and feedback remain intact.
+No matching by keywords, policy rewrite, route change or session reset is added.
+
+Consumer Task removes 893 characters including separators; Audit Task removes
+2,548 and Audit Developer removes 2,565. These are exact removed duplicate bytes
+as Unicode character counts, not estimated cost savings. Current role Developer
+and actual complete producer input each contain the canonical contract once.
+Tests cover full candidate/source preservation, distinct boolean/number source
+facts, retained custom Audit requirements and Settings previews. Scoped final
+run: **235 passed, 4 skipped**. Two context tests and two earlier compaction
+assertions that deliberately expected duplicate contract copies were updated
+to verify the complete common contract in Developer and facts in Task.
+
+Independent read-only call-site review confirmed production producers always
+submit complete Developer with Task, Settings uses the same assembly, Consumer
+role-boundary content remains, and session IDs, hash calculation and routes
+were unchanged. The review's stale-test findings were addressed in the final
+scoped run. This is code/input-assembly evidence; the changed bytes have not
+yet been released or validated in a new complete native business matrix.
