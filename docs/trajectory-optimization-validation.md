@@ -935,3 +935,48 @@ the task requirement was absent. After fixing input assembly and using the
 existing snapshot `characters` field, 61 focused tests passed. The parallel larger
 run passed 210 other tests with 4 skips but used the earlier incorrect test-only
 snapshot field assertion; it is not recorded as an all-green run.
+
+### V3 profile comparison and production publication
+
+V3 fixes the Consumer project-document fixture's Skill binding, keeping all
+source facts and reply criteria; original V1/V2 failures remain recorded.
+Independent anonymous complete-trajectory review passed both arms 8/8, including
+true cross-midnight overlap and valid same-session continuation. The baseline
+recovered a macOS date-format failure through Python zoneinfo and an unsupported
+fixture global-AGENTS read after reading the required Audit document. These
+errors are retained in `profile_flow_index.results.v3.json`; valid JSON alone
+was not the business acceptance criterion.
+
+The approved candidate removes only the two message/calendar workflow paragraphs
+from Profile E, without a new global Skill index. Raw text is 8,803 -> 8,238;
+rendered Profile is 9,097 -> 8,532 characters (565 fewer, about 6.2 percent of
+Profile). Every other authored Profile clause, complete Audit Rules, Developer
+and User template remains unchanged. Settings save preflight matched the complete
+frozen baseline exactly; HTTP 200 plus exact raw/rendered readback confirmed the
+candidate. Personal Profile content is not copied into this repository.
+
+Formal deploy `deploy-1838189f-03ac-4d25-8da4-db3f5dbda87c` succeeded at
+2026-10-11T03:18:40Z, production 55cbecef -> fa95463f, clean checkout and
+healthz ok. A separate existing single-Skill sync published only the reviewed
+work-tracking description/version; the entire body was byte-identical. Installed
+file SHA is `1cd05b1a3589437d795001723ec5bfb332456db16f21ff79b7f23bce6af5b101`;
+actual parsed runtime discovery names the Task Agent scope. Formal restart then
+completed, main PID 6031 (first deploy PID 3023), worker load receipts had no
+error, and startup captured Skill revision 145. Managed runtime bindings remain
+configuration 18; no migration or wholesale replacement of their older revisions
+is claimed. The actual runtime discovery reads the installed tree.
+
+Final readback: processing 0, five pending Email provider actions, Attention total
+5 and History available. The deploy-specific backup receipt path was removed by
+the existing daily backup retention; retained daily backup is 412,696,576 bytes,
+`quick_check=ok`. No post-deploy Consumer/Audit role turn existed at this checkpoint,
+so deployed code/config readback is not a new-business-turn success claim.
+
+Task 386349 ended failed before this deployment, after an Audit approve and one
+System OA-comment dispatch. Readback shows a new remark near the dispatch time,
+but no exact comment identity/content receipt; the initial provider response was
+overwritten by subsequent reconciliation readback. Only one action attempt exists,
+and uncertain retries did not dispatch again. This independent external-action
+confirmation issue remains unresolved; it is not evidence that the input fix failed,
+and uncertain is not proof that the external comment was never written. No replay
+or incidental effect-reconciliation policy change was made.
