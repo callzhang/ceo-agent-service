@@ -322,7 +322,7 @@ def persist_model_primary_classification(
         except Exception as readback_exc:
             has_durable = bool(
                 stable_identity
-                and email_store.has_stable_classification(stable_identity)
+                and email_store.has_stable_classification_record(stable_identity)
             )
             if has_durable:
                 raise OnlineModelDurableConflict(

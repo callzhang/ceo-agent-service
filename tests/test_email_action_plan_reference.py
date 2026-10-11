@@ -25,6 +25,23 @@ def rewind48(path):
         db.execute("insert or ignore into email_schema_migrations values(48, '2026-10-11T00:00:00Z')")
 
 
+def test_stable_classification_existence_does_not_hydrate_corrupt_plan(tmp_path):
+    path = tmp_path / "existence.sqlite3"
+    store = seed(path)
+    identity = store.get_classification(1)["stable_message_identity"]
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "update email_action_plans set action_plan_version=action_plan_version+1 "
+            "where classification_id=1"
+        )
+    assert store.has_stable_classification_record(identity)
+    assert not store.has_stable_classification_record("absent-message")
+    with pytest.raises(EmailPersistenceCorruption):
+        store.has_stable_classification(identity)
+    with pytest.raises(EmailPersistenceCorruption):
+        store.get_classification_by_stable_identity(identity)
+
+
 def business_rows(path):
     with sqlite3.connect(path) as db:
         columns = [row[1] for row in db.execute('pragma table_info(email_classifications)')

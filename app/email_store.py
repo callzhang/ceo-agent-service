@@ -13626,6 +13626,14 @@ class EmailStore:
             is not None
         )
 
+    def has_stable_classification_record(self, stable_message_identity: str) -> bool:
+        """Check durable row presence without claiming its plan is valid."""
+        with self._connect() as db:
+            return db.execute(
+                "select 1 from email_classifications where stable_message_identity=?",
+                (stable_message_identity,),
+            ).fetchone() is not None
+
     def classified_stable_message_identities(
         self, identities: Sequence[str]
     ) -> frozenset[str]:

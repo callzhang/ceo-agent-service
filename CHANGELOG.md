@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- Keep stable email classification existence checks independent of ActionPlan
+  hydration so corrupt committed plans remain durable conflicts. Update legacy
+  migration and provider-index fixtures without relaxing immutable-plan checks.
+
 - Fill a unique empty native email field from the connected account before direct
   unsubscribe form submission. Rebind the complete control semantics, preserve
   existing values and hidden fields, and retain the separate email-OTP path.
