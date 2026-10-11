@@ -1,8 +1,8 @@
 {
   "store_version": "2026-10-11.1",
   "email_version": 49,
-  "reply_tasks": 7261,
-  "reply_inputs": 7788,
+  "reply_tasks": 7262,
+  "reply_inputs": 7789,
   "invalid_current_refs": 0,
   "invalid_claimed_refs": 0,
   "retired_copied_json_rows": 0,
@@ -15,7 +15,7 @@
   },
   "queues": {
     "reply_tasks": {
-      "done": 7138,
+      "done": 7139,
       "failed": 3,
       "needs_human": 3,
       "skipped": 117
@@ -25,7 +25,7 @@
       "skipped": 4402
     },
     "agent_runs": {
-      "completed": 6613,
+      "completed": 6615,
       "failed": 15002
     },
     "meeting_alignment_jobs": {
@@ -48,10 +48,10 @@
   ],
   "quick_check": "ok",
   "file_bytes": 414822400,
-  "wal_bytes": 35782232,
+  "wal_bytes": 4140632,
   "page_size": 4096,
   "page_count": 101275,
-  "freelist_count": 4570,
+  "freelist_count": 4523,
   "business_tables_equal": {
     "external_action_results": 281,
     "agent_execution_receipts": 115,
@@ -62,8 +62,18 @@
     "reply_attempts": 14676,
     "work_summary_inputs": 9080
   },
-  "production_commit": "3cdc72ec25b41632f60385fdb6d556964c87f37a",
-  "pid": 48118,
+  "new_business_rows": {
+    "external_action_results": 1,
+    "agent_execution_receipts": 0,
+    "review_candidates": 1,
+    "candidate_reviews": 1,
+    "candidate_action_attempts": 1,
+    "sent_replies": 1,
+    "reply_attempts": 1,
+    "work_summary_inputs": 0
+  },
+  "production_commit": "5d25497e0079eb2f726fe6810c8d3564a1639537",
+  "pid": 61974,
   "api": [
     {
       "endpoint": "/healthz",
@@ -93,15 +103,51 @@
       "health": null
     }
   ],
-  "backup": {
-    "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-11.sqlite3",
-    "files": 1,
-    "complete_stamp": true,
-    "quick_check": "ok",
-    "store_version": "2026-10-10.2",
-    "email_version": 49,
-    "reply_tasks": 7261,
-    "bytes": 414822400
+  "target_table_space_at_first_final_deploy_readback": {
+    "reply_tasks": {
+      "rows": 7261,
+      "table_pages_bytes": 11153408
+    },
+    "reply_task_inputs": {
+      "rows": 7788,
+      "table_pages_bytes": 11272192
+    },
+    "work_summary_inputs": {
+      "rows": 9080,
+      "table_pages_bytes": 4521984
+    },
+    "retired_reply_inputs": [
+      7736,
+      0,
+      0,
+      4124164
+    ],
+    "terminal_summary_inputs": [
+      9080,
+      18160
+    ]
   },
-  "production_vacuum": false
+  "post_deploy_new_business": {
+    "new_task": [
+      386363,
+      "done",
+      252015,
+      252015
+    ],
+    "new_action_attempt_status": "verified",
+    "new_reply_send_status": "completed"
+  },
+  "quality_ci": {
+    "run_id": 38140069414,
+    "url": "https://github.com/callzhang/ceo-agent-service/actions/runs/38140069414",
+    "commit": "5d25497e0079eb2f726fe6810c8d3564a1639537",
+    "conclusion": "success",
+    "python_passed": 11627,
+    "python_skipped": 97,
+    "python_deselected": 44,
+    "frontend_passed": 722,
+    "frontend_skipped": 2,
+    "browser_passed": 2,
+    "build": "success"
+  }
 }
