@@ -9,6 +9,12 @@
 
 ## Unreleased
 
+- Align real Chrome unsubscribe fixtures with current contracts: keep private
+  entry URLs only in the permitted receipt field, validate redacted persisted
+  records, bind incremental proposals to action identity, and distinguish
+  permitted page-load GETs from unapproved form submissions. Browser network
+  policy is unchanged.
+
 - Add exact-identity, preview-first cancellation for failed email unsubscribe
   tasks when the principal explicitly chooses to retain the subscription.
   Preserve failure history without a provider receipt; fence cancelled actions

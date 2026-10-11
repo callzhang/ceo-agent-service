@@ -1777,6 +1777,15 @@ subscription-retention closure. An explicit retry of a worker-finalized login
 or no-entry skip still requires its exact predecessor receipt digest; provider
 completion receipts do not permit replay.
 
+Real Chrome unsubscribe fixtures verify the persisted effect, continuation,
+step, claim and receipt fields separately: only the receipt's `entry_url` may
+contain the private entry. Returned redacted evidence must not contain it.
+Entry reads can load redirects and resources under the existing no-network-
+whitelist policy; these GETs are not proof of zero external effects. A discovered
+form still returns a continuation without submission or terminal completion
+until its control is accepted. Incremental Audit fixtures retain the exact
+GET/POST/POST progression and bind every proposal to its action identity.
+
 Successful multi-family email training runs use the successful `embedding-mlp`
 entry in `family_results` for description optimization. The compatibility
 `model_id` field may point at a traditional classifier and does not imply
