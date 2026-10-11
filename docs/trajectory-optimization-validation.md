@@ -881,3 +881,31 @@ Profile. No profile/rule change or external business action was performed.
 Remaining work is a controlled candidate comparison that maps repeated task
 flows to existing applicable Skills while preserving preferences and current
 business rules, plus the independent native output-schema provider gate.
+
+### Single-contract regression assertions and Task Skill discovery scope
+
+The reported Quality run 38104147210 contained three stale prompt assertions.
+Focused reproduction failed those three assertions (33 other tests passed).
+The revised tests check the exact complete Consumer/Audit application contract
+once in the combined Developer/Task input, preserve Task source/stage assertions,
+and retain host-instruction isolation checks. Audit no longer requires a second
+identical Role Boundary section. No runtime contract or business criterion changes.
+The three files plus prompt compaction passed 42 tests; adding business Skill
+coverage passed 80 tests. This does not classify or resolve the other CI failures.
+
+The V2 Consumer project-document fixture requested a source reply but selected
+`ceo-work-tracking`, whose unchanged body is explicitly a Task Agent reader with
+`project_decisions`, `task_decisions`, `project_assessments` and no source reply.
+The candidate followed that instruction and returned `no_action`; preserve the
+original failed criterion rather than calling it a successful reply. Correct the
+fixture role/Skill binding to document review in a new comparison. Consumer
+project review does not validate Task Agent extraction.
+
+The CI Skill description now names the existing Task Agent scope and Consumer
+document/message entry points. Only frontmatter description/version changed;
+the body SHA-256 remains
+`353be24fd6c84df24f55fd8fa709adc737416ab712d8d2e902959d4851067edf`.
+The parsed-catalog regression failed with the old description and passed with
+the candidate CI asset. Independent read-only review found no relaxed business
+or permission oracle. Installed Skill publication and production load remain
+separate, unverified steps at this checkpoint.

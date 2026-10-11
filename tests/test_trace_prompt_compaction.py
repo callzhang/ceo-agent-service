@@ -48,6 +48,9 @@ def test_wire_schema_compaction_retains_validation_constraints():
 
 
 def test_task_context_retains_original_result_rules_facts_and_stage():
+    from app.agent_context import _CONSUMER_AGENT_RULES
+    from app.consumer_agent import consumer_developer_instructions
+
     context = AgentTaskContext(
         task_id=1, channel="dingtalk", conversation_id="conversation", conversation_title="fixture",
         single_chat=True, trigger_message_id="message", trigger_sender="sender",
@@ -55,7 +58,9 @@ def test_task_context_retains_original_result_rules_facts_and_stage():
         messages=(), materials=(), prior_receipts=(), trigger_raw_payload={"source_fact": "KEEP"},
     )
     rendered = context.render(current_time="2026-10-07T10:00:00+08:00")
-    assert rendered.count("## Application Result Contract") == 1
+    developer = consumer_developer_instructions(runtime_context="", work_profile="")
+    assert (developer + rendered).count(_CONSUMER_AGENT_RULES) == 1
+    assert _CONSUMER_AGENT_RULES not in rendered
     assert "UNMODIFIED_SOURCE" in rendered
     assert '"source_fact": "KEEP"' in rendered
     assert "### Execution stage" in rendered
