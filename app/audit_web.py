@@ -1,5 +1,6 @@
 
 from app.store import REPLY_TASK_CURRENT_SQL
+from app.work_summary_payload import decode_work_summary_payload
 import json
 import asyncio
 import ipaddress
@@ -3253,12 +3254,12 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
             "work_summary_inputs",
             "status",
             "case when lower(source_type)='local_file' then "
-            "coalesce(nullif(json_extract(payload_json, '$.source.title'), ''), "
-            "nullif(json_extract(payload_json, '$.project_name'), ''), source_type) "
+            "coalesce(nullif(json_extract(decode_work_summary_payload(payload_json), '$.source.title'), ''), "
+            "nullif(json_extract(decode_work_summary_payload(payload_json), '$.project_name'), ''), source_type) "
             "else source_type end",
-            "coalesce(nullif(json_extract(payload_json, '$.summary'), ''), "
-            "nullif(json_extract(payload_json, '$.title'), ''), "
-            "nullif(json_extract(payload_json, '$.project_name'), ''), source_ref)",
+            "coalesce(nullif(json_extract(decode_work_summary_payload(payload_json), '$.summary'), ''), "
+            "nullif(json_extract(decode_work_summary_payload(payload_json), '$.title'), ''), "
+            "nullif(json_extract(decode_work_summary_payload(payload_json), '$.project_name'), ''), source_ref)",
             "updated_at",
             "error",
             ("failed",),
@@ -3309,6 +3310,12 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
     rows: list[dict[str, str]] = []
     active_reply_task_triggers: set[tuple[str, str, str]] = set()
     with store._connect() as db:
+        db.create_function(
+            "decode_work_summary_payload",
+            1,
+            decode_work_summary_payload,
+            deterministic=True,
+        )
         if _sqlite_table_exists(db, "reply_tasks"):
             reply_task_sql = f"""
                 select reply_tasks.id, reply_tasks.channel,

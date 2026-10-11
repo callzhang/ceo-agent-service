@@ -105,7 +105,7 @@ Runtime、Skill 或工作目录。判断标准是这次执行本身有没有判�
 `app/minutes_sync.py` 确定性完成，因此它也是服务命令。
 “工作来源”扫描还会只读发现管理周报、项目管理部周报和部门产研周报，按文档 ID、链接、统计周期和内容 digest
 建立 Task-first `work_summary` 输入；同一文档版本重复扫描保持幂等，报告内容仍由 Task Agent 提取 Project 和 Task。
-这些输入的 `payload_json` 在 SQLite 中以带版本标记的 zlib BLOB 无损压缩（内容较小时仍存原始 JSON），应用模型和离线导入/修复入口读取时统一还原为原始 JSON 文本。迁移命令 `python -m app.work_summary_payload --db <database>` 按小批事务压缩仍需保留正文的非终态行；`done` 和 `skipped` 行继续使用终态精简，命令可重复运行、不删除记录且不执行 VACUUM，必须在维护窗口及已验证备份后单独执行。
+这些输入的 `payload_json` 在 SQLite 中以带版本标记的 zlib BLOB 无损压缩（内容较小时仍存原始 JSON），应用模型和离线导入/修复入口读取时统一还原为原始 JSON 文本。Attention 的 JSON 字段投影在该查询连接上使用同一解码器；副本回放比较准确解码正文后，CAS 仍绑定实际存储的 TEXT/BLOB，写入沿用编码器。迁移命令 `python -m app.work_summary_payload --db <database>` 按小批事务压缩仍需保留正文的非终态行；`done` 和 `skipped` 行继续使用终态精简，命令可重复运行、不删除记录且不执行 VACUUM，必须在维护窗口及已验证备份后单独执行。
 scheduled adapter 领取 trigger 后，Dispatcher 在本进程内直接运行该命令；成功时把
 `service_command + 命令名` 记为 trigger 的 execution link、保存命令返回的单行结果摘要并标记 `dispatched`，失败时 trigger
 以 `failed` 结束并进入 Attention。服务命令任务不创建 synthetic scheduled reply task、agent run
@@ -522,6 +522,8 @@ Email Console 的“模型训练”页读取后端统一计算的晋升资格。
 
 服务周期性读取配置的 `origin/main`，只识别可安全 fast-forward 的更新；分叉、状态指纹变化或
 脏工作树不会被静默覆盖。History 页面只展示状态并启动带 operation ID 的 detached updater；
+日备份循环只保留一个最新的已验证日备份；部署与日备份共用备份目录，仍只保留一个完整副本。
+
 updater 在共享 Git 锁内重新校验指纹，必要时按用户确认的分支名和提交信息保存本地改动。服务停止后，优先复用数据库旁 `backups/` 中同一数据库最近 24 小时内的完整备份；日备份与此前部署创建的备份均可复用，选择有完成标记且修改时间最新的副本，忽略过期、未完成及未来时间的副本。没有合格副本时，仍调用既有 SQLite 在线备份流程创建并验证新备份；新建失败则不更新代码，并通过既有回退流程恢复原服务。每小时备份循环在确认当天副本完整后，也清理数据库目录中超过 24 小时的 `auto-reply.sqlite3.pre-*` 快照及 SQLite sidecar。备份不用临时文件，每次正式备份前先删掉备份目录里的旧副本，直接写成最终文件名，通过完整性检查后才盖上完成标记（`application_id`），失败或被打断的半成品当场或下次备份时删除，不算「今天已备份」；文件夹级别的锁让两个备份互不删除对方；此前每次备份被重启打断都会留下 2.9 GB 的隐藏临时文件，一天堆到 30 GB 写满磁盘。随后执行依赖同步和测试，重启
 launchd 后验证新 PID、HTTP 健康与 Store 可读性。
 等待静默期间，updater 不向共享 SQLite 写部署进度，避免与仍在运行的业务写事务争锁；服务静默并停止后，才用不触发 schema 初始化的窄状态存储记录后续阶段。该短写仍对意外的并发 SQLite 锁做有限次数重试。

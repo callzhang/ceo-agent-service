@@ -325,3 +325,61 @@ def test_baseline_missing_project_storage_is_an_explicit_comparison_failure(tmp_
     assert result["comparison_capabilities"]["missing_tables"] == ["business_project_context_revisions", "business_project_evidence", "business_source_documents"]
     assert not result["passed"]
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("stored_as_blob", [False, True])
+def test_replay_exact_cas_accepts_actual_plain_or_compressed_storage_and_keeps_codec(
+    tmp_path, stored_as_blob
+):
+    from app.task_models import WorkItem
+    from app.work_summary_payload import (
+        decode_work_summary_payload,
+        encode_work_summary_payload,
+    )
+
+    store = AutoReplyStore(tmp_path / "codec-replay.sqlite3")
+    item = WorkItem.model_validate(
+        {
+            "source": {"type": "ai_minutes", "ref": "m:codec-replay"},
+            "context": {"source_conversation_kind": "group"},
+            "summary": "Storage reader fixture. " * 200,
+        }
+    )
+    payload = item.model_dump_json()
+    encoded = encode_work_summary_payload(payload)
+    assert isinstance(encoded, bytes)
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, payload
+    )
+    with store._connect() as db:
+        db.execute(
+            "update work_summary_inputs set payload_json=? where id=?",
+            (encoded if stored_as_blob else payload, input_id),
+        )
+    observed = []
+
+    class Runner:
+        codex = None
+
+        def decide(self, current, *args, **kwargs):
+            with store._connect() as db:
+                raw, status = db.execute(
+                    "select payload_json,status from work_summary_inputs where id=?",
+                    (input_id,),
+                ).fetchone()
+            assert isinstance(raw, bytes)
+            assert decode_work_summary_payload(raw) == payload
+            assert status == "processing"
+            observed.append(current.summary)
+            return TaskAgentDecision(
+                project_decisions=[],
+                task_decisions=[],
+                project_assessments=[],
+                update_summary="This storage fixture contains no business Project.",
+            )
+
+    result = _tool().replay_input(
+        store, Runner(), input_id, source_ref=item.source.ref, source_payload=payload
+    )
+    assert "execution_error" not in result, result.get("execution_error")
+    assert observed == [item.summary]
