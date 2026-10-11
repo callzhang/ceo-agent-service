@@ -187,8 +187,8 @@ def find_codex_session_path(
         return None
     root = codex_home or DEFAULT_CODEX_HOME
     indexed = _indexed_session(session_id, root)
-    if indexed:
-        return indexed.path
+    if indexed is not None:
+        return indexed.path if indexed.path.is_file() else None
     search_roots = [root / "sessions", root / "archived_sessions"]
     for search_root in search_roots:
         if not search_root.exists():
@@ -245,12 +245,27 @@ def _indexed_session(session_id: str, root: Path) -> IndexedCodexSession | None:
     path = Path(path_text)
     if not path.is_absolute():
         path = root / path
-    if not _session_index_record_matches_file(record, path):
-        return None
     line_count = record.get("line_count")
+    stored_line_count = line_count if isinstance(line_count, int) else None
+    if path.is_file():
+        if not _session_index_record_matches_file(record, path):
+            return None
+        return IndexedCodexSession(path=path, line_count=stored_line_count)
+
+    # Codex moves archived sessions out of their dated `sessions/` tree into
+    # one flat directory. Check that deterministic counterpart before treating
+    # an old index entry as a missing transcript. If it is absent too, the
+    # index already proves this ID was known; callers must not recursively walk
+    # every historical session directory looking for a file that was cleaned
+    # up.
+    archived_path = root / "archived_sessions" / path.name
+    if archived_path.is_file():
+        if not _session_index_record_matches_file(record, archived_path):
+            return None
+        return IndexedCodexSession(path=archived_path, line_count=stored_line_count)
     return IndexedCodexSession(
         path=path,
-        line_count=line_count if isinstance(line_count, int) else None,
+        line_count=stored_line_count,
     )
 
 

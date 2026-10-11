@@ -1399,6 +1399,10 @@ Attempt 详情只为页面展示的历史执行代批量读取 Agent 工具事�
 索引文件变更后下一次解析自动失效并重建该缓存；缓存只加速 session 路径发现，不改变
 SQLite 投影、JSONL 原文或审计证据。
 
+若索引记录仍在、其原路径已清理，路径解析会直接检查 Codex 平铺的 `archived_sessions/`
+对应文件名；若也不存在，就按 transcript unavailable 返回，不再递归枚举全部历史会话目录。
+因此清理掉的旧 transcript 不会拖慢 Attempt 详情，也不会改变 SQLite 中的业务结果与审计记录。
+
 详情页判断既有外部动作时只重放已持久化的工具事件和 provider 回执；它不得为了渲染
 History 再启动原生 CLI 去发现命令元数据。运行时发现失败属于执行事实，不能成为一次
 只读 History 请求的延迟或副作用。
