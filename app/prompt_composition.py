@@ -120,6 +120,14 @@ def _task_content_sections(
     return tuple(sections)
 
 
+def task_specific_instructions(prompt: str, skill_protocol: str = "") -> str:
+    """Keep saved task instructions separate from their existing Skill appendix."""
+    appended = "\n\n" + skill_protocol
+    if skill_protocol and prompt.endswith(appended):
+        return prompt[: -len(appended)]
+    return prompt
+
+
 def compose_consumer_task_assembly(
     configuration: PromptConfiguration,
     *,
@@ -138,10 +146,7 @@ def compose_consumer_task_assembly(
 
     validate_consumer_task_template(configuration.user_template)
 
-    if skill_protocol:
-        appended = "\n\n" + skill_protocol
-        if scheduled_prompt.endswith(appended):
-            scheduled_prompt = scheduled_prompt[: -len(appended)]
+    scheduled_prompt = task_specific_instructions(scheduled_prompt, skill_protocol)
     if skill_names:
         skill_discovery = render_task_skill_discovery(
             skill_names,

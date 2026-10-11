@@ -909,3 +909,29 @@ The parsed-catalog regression failed with the old description and passed with
 the candidate CI asset. Independent read-only review found no relaxed business
 or permission oracle. Installed Skill publication and production load remain
 separate, unverified steps at this checkpoint.
+
+### Actual production task-specific input asymmetry
+
+Read-only inspection of task 386349 covered the complete native Consumer
+session `01a128e7-c971-7f92-abbd-8c42d920b76c` and Audit sessions
+`01a128ea-bbf8-7b21-818a-4ea84d1c6703`,
+`01a128ed-035c-7331-b050-df36d972797a`,
+`01a128ee-4c54-76d3-9b4a-78e9209cab16` (runs 25703–25708).
+Consumer received an 844-character saved task prompt including explicitly
+applicable individual requirements. All three Audit inputs omitted that text;
+the first Audit rejected a candidate's application of a requirement as unsupported
+by the generic Skill. The next feedback reversed its earlier recommended action
+order without new source facts. All 54 direct calls succeeded; identical reads
+returned unchanged source and frozen Skill content. This is input asymmetry,
+not proof of a tool-schema defect or model hallucination. The final approve
+does not prove complete-rule review or external execution.
+
+The fix passes the saved task instructions to Audit once through existing task
+sections/snapshots. It preserves every rule and does not decide a new precedence
+or inject an OA exception. The existing exact Skill-appendix separation is shared
+with Consumer; custom Skill instructions remain in the separate Skill section.
+The selected-Skill regression first failed in both generated/custom cases because
+the task requirement was absent. After fixing input assembly and using the
+existing snapshot `characters` field, 61 focused tests passed. The parallel larger
+run passed 210 other tests with 4 skips but used the earlier incorrect test-only
+snapshot field assertion; it is not recorded as an all-green run.

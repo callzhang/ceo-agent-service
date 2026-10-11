@@ -2015,6 +2015,8 @@ Prompts 内容标题随当前查看方式显示「模板」或「渲染结果」
 
 Developer Prompt 只承载适用于所有任务的角色、能力、证据、系统动作、完整 Pydantic 输出契约及共同工作原则；工作人格仍注入 Consumer 与 Audit，Audit Rules 只进入 Audit。OA、日历、消息受众、OKR、招聘和文档等专项流程由当前任务选择的 Skill 承载，不再作为全任务 Developer 规则重复注入。User Prompt 是 Consumer 的完整任务模板，必须包含恰好一个 `{{task_context}}`，仅支持普通文本和这个插槽。任务来源、定时要求、stage、反馈、既有回执及 continuation 先由服务组装成完整上下文，再填入插槽；不将旧消息块模板叠加到后台任务。Workbench、独立 WeChat、纯服务命令及 Email 退订保留各自入口和显式指令。
 
+Consumer 和 Audit 每轮 Task 输入均传入当前任务已保存的专项指令，来源为「已保存任务配置」，现有运行输入快照记录该段来源和长度。Audit 不只从候选转述推断任务规则。`task_specific_instructions` 复用 Consumer 已有的精确 Skill 附录分离逻辑；只分离已知的完整末尾附录，不截断正文或按业务关键词改写。生成发现提示不重复预载，自定义 Skill 约定仍在 Skill 段保留。没有专项指令的任务不添加空段；审核权限、规则优先级、反馈和 session 行为不变。
+
 服务组装的 Consumer/Audit Developer Prompt 不再读取或复制本机 `~/.agents/AGENT.md` 开发规则，也不注入缺失文件的占位段或旧的重读提示。业务角色、能力、输出契约和后台 Memory bootstrap 说明仍由原有代码提供；本机原生 CLI 的指令加载与开发 Agent 的 AGENTS.md 文件不在此变更范围。
 
 后台 Consumer/Audit 使用原生 skills.config 禁用专项 Skill 的自动正文注入，避免原生加载、Developer inline 与工具读取三份重复。原生 project_doc_max_bytes=0 只关闭项目目录 AGENTS.md；全局 ~/.codex/AGENTS.md 仍由 CLI 加载，服务不修改原生 home 或全局规则文件。此设置仅适用于后台角色命令。

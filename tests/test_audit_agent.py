@@ -374,10 +374,12 @@ def test_audit_task_carries_selected_frozen_skill_discovery_on_every_turn(
     setup, protocol_source, protocol_present, fact_source
 ):
     store, task, parent, context, _config, _router = setup
+    saved_task_instruction = "Apply this task's exact private review requirement."
     context = replace(
         context,
         task=replace(
             context.task,
+            consumer_prompt=saved_task_instruction + "\n\nOLD SELECTED PROTOCOL MUST NOT BE PRELOADED",
             skill_names=("ceo-document-review",),
             skill_protocol_override="OLD SELECTED PROTOCOL MUST NOT BE PRELOADED",
             skill_protocol_source=protocol_source,
@@ -406,6 +408,7 @@ def test_audit_task_carries_selected_frozen_skill_discovery_on_every_turn(
 
     runner.run(selected_task, context, turn_attempt=0, parent_agent_run_id=parent.id)
 
+    assert executor.prompts[0].count(saved_task_instruction) == 1
     assert "ceo-document-review" in executor.prompts[0]
     assert "agent_cli.read_task_skill(name)" in executor.prompts[0]
     assert (
@@ -422,6 +425,12 @@ def test_audit_task_carries_selected_frozen_skill_discovery_on_every_turn(
     task_sections = [
         section for section in snapshot["sections"] if section["placement"] == "task"
     ]
+    task_instruction_sections = [section for section in task_sections if section["name"] == "任务专项指令"]
+    assert len(task_instruction_sections) == 1
+    assert task_instruction_sections[0]["source"] == "已保存任务配置"
+    saved_section = "## Scheduled Consumer Prompt\n" + saved_task_instruction
+    assert saved_section in executor.prompts[0]
+    assert task_instruction_sections[0]["characters"] == len(saved_section)
     assert any(section["name"] == "任务 Skill 入口" for section in task_sections)
     assert snapshot["invocation_facts"]["skill_protocol_source"] == fact_source
     assert snapshot["invocation_facts"]["skill_names"] == ["ceo-document-review"]
