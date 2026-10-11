@@ -2643,34 +2643,46 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     @contextmanager
     def _immediate_write_transaction(self) -> Iterator[sqlite3.Connection]:
         """Acquire a short SQLite write transaction with bounded lock retry."""
+        started_at = time.monotonic()
+        lock_wait_seconds = 0.0
+        transaction_hold_seconds = 0.0
         body_started = False
-        for attempt in range(STORE_WRITE_LOCK_RETRY_ATTEMPTS):
-            try:
-                with self._connect() as db:
-                    try:
-                        db.execute("begin immediate")
-                    except sqlite3.OperationalError as exc:
-                        if (
-                            not _is_sqlite_lock_error(exc)
-                            or attempt + 1 >= STORE_WRITE_LOCK_RETRY_ATTEMPTS
-                        ):
-                            raise
-                        time.sleep(
-                            STORE_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1)
-                        )
-                        continue
-                    body_started = True
-                    yield db
-                    return
-            except sqlite3.OperationalError as exc:
-                if (
-                    body_started
-                    or not _is_sqlite_lock_error(exc)
-                    or attempt + 1 >= STORE_WRITE_LOCK_RETRY_ATTEMPTS
-                ):
-                    raise
-                time.sleep(STORE_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1))
-        raise RuntimeError("SQLite write transaction retry loop exhausted")
+        try:
+            for attempt in range(STORE_WRITE_LOCK_RETRY_ATTEMPTS):
+                try:
+                    with self._connect() as db:
+                        begin_started_at = time.monotonic()
+                        try:
+                            db.execute("begin immediate")
+                        finally:
+                            lock_wait_seconds += time.monotonic() - begin_started_at
+                        acquired_at = time.monotonic()
+                        body_started = True
+                        try:
+                            yield db
+                        finally:
+                            transaction_hold_seconds += time.monotonic() - acquired_at
+                        return
+                except sqlite3.OperationalError as exc:
+                    if (
+                        body_started
+                        or not _is_sqlite_lock_error(exc)
+                        or attempt + 1 >= STORE_WRITE_LOCK_RETRY_ATTEMPTS
+                    ):
+                        raise
+                    time.sleep(STORE_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1))
+            raise RuntimeError("SQLite write transaction retry loop exhausted")
+        finally:
+            elapsed = time.monotonic() - started_at
+            if elapsed >= 1.0:
+                print(
+                    f"slow sqlite write transaction elapsed_seconds={elapsed:.3f} "
+                    f"lock_wait_seconds={lock_wait_seconds:.3f} "
+                    f"hold_seconds={transaction_hold_seconds:.3f} "
+                    f"callers={_sqlite_caller_chain(sys._getframe(2))}",
+                    file=sys.stderr,
+                    flush=True,
+                )
 
     def _open_connection(self) -> sqlite3.Connection:
         connection: sqlite3.Connection | None = None

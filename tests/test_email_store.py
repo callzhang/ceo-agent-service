@@ -10631,6 +10631,31 @@ def test_slow_connection_names_caller_without_logging_body_data(
         db.execute("select 1")
 
 
+def test_slow_direct_action_claim_reports_only_stage_timings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import time
+
+    store = EmailStore(tmp_path / "slow-direct-action-claim.sqlite3")
+
+    def slow_empty_probe(self, db, claimed_at, account_ids):
+        time.sleep(1.01)
+        return None
+
+    monkeypatch.setattr(EmailStore, "_next_direct_action_row", slow_empty_probe)
+
+    assert store.claim_next_direct_action(
+        claimed_at="2026-10-11T00:00:00+00:00",
+    ) is None
+    assert "slow direct email action claim" in caplog.text
+    assert "preflight_seconds=" in caplog.text
+    assert "writer_lock_wait_seconds=0.000" in caplog.text
+    assert "locked_recheck_seconds=0.000" in caplog.text
+    assert "outcome=no_action" in caplog.text
+
+
 @pytest.mark.skipif(
     not os.path.isdir("/dev/fd"), reason="process fd listing requires /dev/fd"
 )

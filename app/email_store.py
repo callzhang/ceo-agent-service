@@ -16397,41 +16397,89 @@ class EmailStore:
                 return None
         # A read probe is not a reservation; recheck all dependencies under the
         # writer lock before claiming. Idle polls must not join the writer queue.
-        with self._connect() as db:
-            if self._next_direct_action_row(db, claimed_at, account_ids) is None:
-                return None
-        with self._connect() as db:
-            db.execute("begin immediate")
-            row = self._next_direct_action_row(db, claimed_at, account_ids)
-            if row is None:
-                return None
-            attempt_number = int(row["attempt_count"]) + 1
-            updated = db.execute(
-                """
-                update email_actions
-                set status='processing', started_at=?, finished_at='',
-                    next_attempt_at='',
-                    provider_operation='', provider_target='',
-                    provider_result_id='', error='', updated_at=?
-                where action_id=? and status=? and attempt_count=?
-                """,
-                (
-                    claimed_at,
-                    claimed_at,
-                    row["action_id"],
-                    row["status"],
-                    row["attempt_count"],
-                ),
-            ).rowcount
-            if updated != 1:
-                raise EmailActionAttemptConflict(
-                    f"direct action claim changed for {row['action_id']}"
+        started_at = monotonic()
+        preflight_seconds = 0.0
+        lock_wait_seconds = 0.0
+        locked_recheck_seconds = 0.0
+        claim_mutation_seconds = 0.0
+        outcome = "error"
+        try:
+            with self._connect() as db:
+                phase_started_at = monotonic()
+                try:
+                    candidate = self._next_direct_action_row(db, claimed_at, account_ids)
+                finally:
+                    preflight_seconds += monotonic() - phase_started_at
+                if candidate is None:
+                    outcome = "no_action"
+                    return None
+            with self._connect() as db:
+                phase_started_at = monotonic()
+                try:
+                    db.execute("begin immediate")
+                finally:
+                    lock_wait_seconds += monotonic() - phase_started_at
+                phase_started_at = monotonic()
+                try:
+                    row = self._next_direct_action_row(db, claimed_at, account_ids)
+                finally:
+                    locked_recheck_seconds += monotonic() - phase_started_at
+                if row is None:
+                    outcome = "raced"
+                    return None
+                phase_started_at = monotonic()
+                try:
+                    attempt_number = int(row["attempt_count"]) + 1
+                    updated = db.execute(
+                        """
+                        update email_actions
+                        set status='processing', started_at=?, finished_at='',
+                            next_attempt_at='',
+                            provider_operation='', provider_target='',
+                            provider_result_id='', error='', updated_at=?
+                        where action_id=? and status=? and attempt_count=?
+                        """,
+                        (
+                            claimed_at,
+                            claimed_at,
+                            row["action_id"],
+                            row["status"],
+                            row["attempt_count"],
+                        ),
+                    ).rowcount
+                    if updated != 1:
+                        raise EmailActionAttemptConflict(
+                            f"direct action claim changed for {row['action_id']}"
+                        )
+                    action = self._claimed_direct_action(
+                        row,
+                        attempt_number=attempt_number,
+                        claimed_at=claimed_at,
+                    )
+                finally:
+                    claim_mutation_seconds += monotonic() - phase_started_at
+            outcome = "claimed"
+            return action
+        finally:
+            elapsed = monotonic() - started_at
+            if elapsed >= 1.0:
+                caller = sys._getframe(1)
+                logging.getLogger(__name__).warning(
+                    "slow direct email action claim elapsed_seconds=%.3f "
+                    "preflight_seconds=%.3f writer_lock_wait_seconds=%.3f "
+                    "locked_recheck_seconds=%.3f claim_mutation_seconds=%.3f "
+                    "outcome=%s caller=%s:%s:%s",
+                    elapsed,
+                    preflight_seconds,
+                    lock_wait_seconds,
+                    locked_recheck_seconds,
+                    claim_mutation_seconds,
+                    outcome,
+                    Path(caller.f_code.co_filename).name,
+                    caller.f_lineno,
+                    caller.f_code.co_name,
                 )
-            return self._claimed_direct_action(
-                row,
-                attempt_number=attempt_number,
-                claimed_at=claimed_at,
-            )
+                del caller
 
     def _next_direct_action_row(
         self,

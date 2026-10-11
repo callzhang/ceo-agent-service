@@ -1848,6 +1848,11 @@ content. Correlate the caller with the operating system's WAL-lock owner and
 the affected run before changing transaction boundaries.
 Shared Store diagnostics retain up to eight caller frames so a context-manager
 wrapper cannot hide the business method that opened the connection.
+Slow AutoReplyStore write transactions additionally report time waiting in
+`BEGIN IMMEDIATE` separately from time holding the acquired transaction.
+Slow direct email-action claims report their read preflight, writer-lock wait,
+locked recheck and claim mutation separately. These measurements identify the
+slow phase; they do not change retry, claim or transaction behavior.
 
 Explicit and offline EmailStore callers perform full durable-row validation
 for email-message metadata, provider locators, recipients, references,
