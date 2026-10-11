@@ -45,6 +45,12 @@ def _approved_question(path: Path):
         conversation_id="cid-choice", conversation_title="Applicant", single_chat=True,
         trigger_message_id="msg-choice", trigger_create_time="2026-10-04 10:00:00",
         trigger_sender="Applicant", trigger_text="Please choose",
+        trigger_message_json=json.dumps({
+            "open_conversation_id": "cid-choice", "open_message_id": "msg-choice",
+            "conversation_title": "Applicant", "single_chat": True,
+            "sender_name": "Applicant", "content": "Please choose",
+            "create_time": "2026-10-04 10:00:00", "message_type": "text",
+        }),
     )
     task = store.claim_reply_tasks(1)[0]
     question = _question()
@@ -183,6 +189,19 @@ def test_unbound_legacy_task_class_choices_survive_restart_without_becoming_exec
     with reopened._connect() as db:
         assert db.execute("select count(*) from candidate_selections").fetchone()[0] == 0
         assert db.execute("select count(*) from candidate_executions").fetchone()[0] == 0
+
+
+def test_supplement_missing_execution_source_does_not_change_choice(tmp_path):
+    store, task, candidate, review, attempt_id = _approved_question(tmp_path / "missing.sqlite3")
+    with store._connect() as db:
+        db.execute("update reply_tasks set trigger_message_json='{}' where id=?", (task.id,))
+    fields = dict(kind="supplement", candidate_id=candidate["id"],
+                  review_id=review["id"], instruction="One new fact")
+    assert _submit(store, attempt_id, **fields)[0] == 409
+    assert store.get_review_candidate(candidate["id"])["invalidated_at"] == ""
+    assert store.get_reply_task(task.id).execution_generation == task.execution_generation
+    with store._connect() as db:
+        assert db.execute("select count(*) from candidate_supplements").fetchone()[0] == 0
 
 
 def test_supplement_and_generation_rerun_commit_together(tmp_path, monkeypatch):

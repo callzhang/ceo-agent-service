@@ -1,5 +1,10 @@
 # Current Runtime Mechanism
 
+An instance supplement that rotates execution generation requires the original
+schema-valid execution payload. Missing source material rejects the request
+without persisting a supplement, invalidating the candidate, or changing its
+generation; the supplement and rerun remain one transaction.
+
 The isolated Task replay tool accepts `--source-payload` for a retired work
 input. It verifies the exact original UTF-8 hash, byte length and source identity
 before taking a lease or changing input status, then uses that same verified
