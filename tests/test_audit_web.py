@@ -512,9 +512,13 @@ def test_attempt_detail_hides_nested_failed_consumer_error_values(tmp_path: Path
 
 def test_attempt_detail_keeps_old_consumer_result_while_current_generation_runs(
     tmp_path: Path,
+    monkeypatch,
 ):
+    from app.dws_client import DingTalkMessage, DwsClient
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = _consumer_result_task(store)
+    monkeypatch.setattr(DwsClient, "read_message_by_id",
+                        lambda *_: DingTalkMessage.model_validate_json(task.trigger_message_json))
     consumer = _complete_consumer_run(store, task)
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
 
@@ -10941,8 +10945,9 @@ def test_handle_rerun_attempt_post_rejects_unavailable_original_json(
     assert task.trigger_message_json == "{}"
 
 
-def test_compacted_original_never_becomes_a_rerun_trigger(tmp_path: Path):
+def test_compacted_original_never_becomes_a_rerun_trigger(tmp_path: Path, monkeypatch):
     from app.audit_web import _is_valid_rerun_trigger_json
+    from app.dws_client import DwsClient
 
     store = AutoReplyStore(tmp_path / "compacted-rerun.sqlite3")
     trigger = DingTalkMessage(
@@ -10968,9 +10973,10 @@ def test_compacted_original_never_becomes_a_rerun_trigger(tmp_path: Path):
     compacted = store.get_reply_task(task.id)
     assert compacted is not None and compacted.input_compacted
     assert not _is_valid_rerun_trigger_json(compacted.trigger_message_json)
+    monkeypatch.setattr(DwsClient, "read_message_by_id", lambda *_: None)
     status, headers, html = handle_rerun_attempt_post(store, attempt_id)
     assert status == 409 and headers == {}
-    assert "Original execution payload is unavailable" in html
+    assert "Original message could not be verified" in html
     with pytest.raises(ValueError, match="original reply task input is unavailable"):
         handle_reviewed_message_reply(store, attempt_id=attempt_id,
                                       reply_text="Revised", reviewer_feedback="Review")

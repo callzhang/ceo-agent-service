@@ -119,7 +119,7 @@ from app.developer_prompt import (
 from app.prompt import work_profile_instruction, write_work_profile
 from app.dingtalk_models import DingTalkMessage
 from app.wechat.models import WechatMessage
-from app.dws_client import DwsClient
+from app.dws_client import DingTalkConversation, DwsClient
 from app.feedback_spike import (
     FeedbackLinkContext,
     extract_feedback_link_context,
@@ -9620,6 +9620,23 @@ def handle_rerun_attempt_post(
         trigger_message_json = existing_task.trigger_message_json
         trigger_text = existing_task.trigger_text
         trigger_create_time = existing_task.trigger_create_time
+        conversation_title = existing_task.conversation_title
+        single_chat = existing_task.single_chat
+    elif existing_task is not None and existing_task.input_compacted and channel == "dingtalk":
+        conversation = DingTalkConversation(
+            open_conversation_id=existing_task.conversation_id,
+            title=existing_task.conversation_title, single_chat=existing_task.single_chat,
+            unread_point=0,
+        )
+        trigger = DwsClient().read_message_by_id(conversation, existing_task.trigger_message_id)
+        if (trigger is None or trigger.open_conversation_id != existing_task.conversation_id
+                or trigger.open_message_id != existing_task.trigger_message_id):
+            return 409, {}, render_page(
+                "Trigger unavailable", "<p>Original message could not be verified; rerun was not queued.</p>"
+            )
+        trigger_message_json = trigger.model_dump_json()
+        trigger_text = trigger.content
+        trigger_create_time = trigger.create_time
         conversation_title = existing_task.conversation_title
         single_chat = existing_task.single_chat
     else:

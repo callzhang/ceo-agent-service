@@ -936,9 +936,12 @@ def test_attempt_detail_names_a_recorded_delivery_when_the_task_is_done(
     assert item["status"]["message"] == "已向 Consumer API result 发送回复，并已记录投递回执。"
 
 
-def test_attempt_detail_labels_a_manual_rerun_as_not_audit_feedback(tmp_path: Path):
+def test_attempt_detail_labels_a_manual_rerun_as_not_audit_feedback(tmp_path: Path, monkeypatch):
+    from app.dws_client import DingTalkMessage, DwsClient
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = _consumer_result_task(store)
+    monkeypatch.setattr(DwsClient, "read_message_by_id",
+                        lambda *_: DingTalkMessage.model_validate_json(task.trigger_message_json))
     consumer = _complete_consumer_run(store, task, owner="manual-rerun-api")
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
 
@@ -1094,9 +1097,13 @@ def test_attempt_detail_api_recovers_consumer_when_audit_parent_is_invalid(
 
 def test_attempt_detail_api_keeps_old_metrics_while_current_generation_is_pending_then_running(
     tmp_path: Path,
+    monkeypatch,
 ):
+    from app.dws_client import DingTalkMessage, DwsClient
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = _consumer_result_task(store)
+    monkeypatch.setattr(DwsClient, "read_message_by_id",
+                        lambda *_: DingTalkMessage.model_validate_json(task.trigger_message_json))
     consumer = _complete_consumer_run(store, task, owner="completed-api")
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
 

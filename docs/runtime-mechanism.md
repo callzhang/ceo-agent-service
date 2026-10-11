@@ -1,5 +1,13 @@
 # Current Runtime Mechanism
 
+Manual rerun of a compacted DingTalk message reads the exact original message ID
+through the native `+messages-mget` contract, without reactions, threads or
+resource downloads. Complete message results and matching conversation/message
+identities are required before a new generation is queued. Display fields never
+substitute for message content. Historical provider risk refusal is checked
+before this read and remains non-replayable. Other channel payload requirements
+and the Consumer/Audit/System execution lifecycle are unchanged.
+
 An instance supplement that rotates execution generation requires the original
 schema-valid execution payload. Missing source material rejects the request
 without persisting a supplement, invalidating the candidate, or changing its
