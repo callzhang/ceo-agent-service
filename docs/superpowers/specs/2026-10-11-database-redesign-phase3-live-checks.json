@@ -51,8 +51,19 @@
   "wal_bytes": 35782232,
   "page_size": 4096,
   "page_count": 101275,
-  "freelist_count": 4587,
-  "production_commit": "984168d616764b576a243cfaae158b4c231b4b0f",
+  "freelist_count": 4570,
+  "business_tables_equal": {
+    "external_action_results": 281,
+    "agent_execution_receipts": 115,
+    "review_candidates": 308,
+    "candidate_reviews": 301,
+    "candidate_action_attempts": 76,
+    "sent_replies": 2291,
+    "reply_attempts": 14676,
+    "work_summary_inputs": 9080
+  },
+  "production_commit": "3cdc72ec25b41632f60385fdb6d556964c87f37a",
+  "pid": 48118,
   "api": [
     {
       "endpoint": "/healthz",
@@ -82,7 +93,6 @@
       "health": null
     }
   ],
-  "pid": 28507,
   "backup": {
     "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-11.sqlite3",
     "files": 1,
@@ -92,18 +102,6 @@
     "email_version": 49,
     "reply_tasks": 7261,
     "bytes": 414822400
-  },
-  "business_and_receipt_tables": {
-    "baseline_equal": {
-      "external_action_results": 281,
-      "agent_execution_receipts": 115,
-      "review_candidates": 308,
-      "candidate_reviews": 301,
-      "candidate_action_attempts": 76,
-      "sent_replies": 2291,
-      "reply_attempts": 14676,
-      "work_summary_inputs": 9080
-    }
   },
   "production_vacuum": false
 }

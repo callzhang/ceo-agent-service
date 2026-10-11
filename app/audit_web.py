@@ -3334,7 +3334,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 -- Select IDs through the compact status index before reading
                 -- message payloads; lower(status) alone scans the whole table.
                 where reply_tasks.id in (
-                    select id from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where lower(status) = 'failed'
+                    select id from reply_tasks where lower(status) = 'failed'
                 )
                   and (
                     current_business_object.reply_task_id is null

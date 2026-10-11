@@ -505,7 +505,9 @@ def test_deterministic_native_runner_calendar_clarification_contract(
         trigger_text="Calendar invitation event-1",
         execution_generation="calendar-contract",
     )
-    task = store.get_reply_task_for_message("cid-1", "msg-1")
+    queued = store.get_reply_task_for_message("cid-1", "msg-1")
+    assert queued is not None
+    task = store.claim_reply_task(queued.id)
     assert task is not None
     context = AgentTaskContext(
         task_id=task.id,
