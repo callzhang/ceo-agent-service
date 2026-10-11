@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import closing, nullcontext
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -13,13 +13,19 @@ import time
 from typing import Callable, Protocol
 from urllib.request import urlopen
 
-from app.database_backup import create_database_backup, prune_database_backups
+from app.database_backup import (
+    _backup_directory_lock,
+    backup_is_complete,
+    create_database_backup,
+    prune_database_backups,
+)
 from app.repository_upgrade import GitRepository
 
 
 UPGRADE_OPERATION_STATE_KEY = "repository_upgrade_operation:v1"
 UPGRADE_STATE_WRITE_RETRY_ATTEMPTS = 3
 UPGRADE_STATE_WRITE_RETRY_DELAY_SECONDS = 0.25
+DEPLOY_BACKUP_MAX_AGE = timedelta(hours=24)
 
 
 class UpgradePreconditionError(RuntimeError):
@@ -405,10 +411,11 @@ class RepositoryUpdater:
             records = self._recheck(operation)
             self.wait_for_quiet()
             self.stop()
-            backup_path = self._backup(operation)
+            backup_path = None
             published: UpgradePublication | None = None
             replacement_started = False
             try:
+                backup_path = self._backup(operation)
                 self._persist(operation, "updating", backup_path=backup_path)
                 if self.pre_checkout_cleanup is not None:
                     self.pre_checkout_cleanup()
@@ -579,9 +586,20 @@ class RepositoryUpdater:
     def _backup(self, operation: UpgradeOperation) -> Path | None:
         if self.database_path is None or not self.database_path.exists():
             return None
+        backup_dir = self.database_path.parent / "backups"
+        now = datetime.now(timezone.utc).timestamp()
+        oldest_allowed = now - DEPLOY_BACKUP_MAX_AGE.total_seconds()
+        with _backup_directory_lock(backup_dir):
+            recent = [
+                path
+                for path in backup_dir.glob(f"{self.database_path.stem}-*.sqlite3")
+                if oldest_allowed <= path.stat().st_mtime <= now
+                and backup_is_complete(path)
+            ]
+            if recent:
+                return max(recent, key=lambda path: path.stat().st_mtime)
         destination = (
-            self.database_path.parent
-            / "backups"
+            backup_dir
             / f"{self.database_path.stem}-before-upgrade-{operation.operation_id}.sqlite3"
         )
         backup_path = create_database_backup(self.database_path, destination)

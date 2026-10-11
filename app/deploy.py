@@ -4,8 +4,9 @@ Derek, 2026-09-25: the service runs from its own checkout (``~/Services`` by
 default, ``CEO_SERVICE_ROOT`` to override) that nobody edits, so any session
 may deploy: what goes live is always a complete, pushed commit. This runs the
 repository updater the console's upgrade uses: wait until no work is in flight,
-back up the database, fast-forward to ``origin/main``, build the console,
-check the imports, restart and wait for health, rolling back on failure.
+reuse a verified database backup from the last 24 hours or create a fresh one,
+fast-forward to ``origin/main``, build the console, check the imports, restart
+and wait for health, rolling back on failure.
 
 Usage: ``python -m app.deploy`` from any checkout. An explicitly requested
 ``--skip-quiet-wait`` bypasses only the in-flight-work wait; the service is

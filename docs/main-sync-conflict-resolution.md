@@ -38,3 +38,28 @@ Developer and User templates. Before this correction it failed by loading an
 obsolete local User template, before reaching the assertions under test.
 The five focused Consumer prompt and native new/resume command checks passed
 without changing local or production prompt configuration.
+
+## Deployment backups
+
+The previous uncommitted proposal refused deployment when the scheduled backup
+was missing. Derek corrected that behavior: prefer a recent verified backup;
+when none qualifies, create and verify a fresh one and continue deployment.
+
+`RepositoryUpdater._backup` now reuses the newest complete backup for its
+database within 24 hours, including earlier deployment backups. Backup creation
+is inside the existing upgrade rollback block, so a creation failure does not
+leave the original service stopped or advance the checkout. The deployment
+description, architecture and runtime mechanism describe the same behavior.
+
+The pre-change regression run reproduced unnecessary copies and an uncaught
+backup creation failure. The updater tests cover reuse without changing the
+existing snapshot, missing/stale/incomplete/future snapshots, candidate
+selection for the correct database, and restart of the original service on
+creation failure. All tests use temporary local Git repositories and SQLite
+databases; no production deployment is performed.
+
+Verification: `tests/test_repository_updater.py` and
+`tests/test_database_backup.py` passed together (50 tests). Ruff passed for the
+changed Python files, and the new documentation/code diff has no whitespace
+errors. Unrelated Task Agent tests, leave-rule Skill changes and local draft
+files remain uncommitted.

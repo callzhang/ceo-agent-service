@@ -151,11 +151,9 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-main-conflict-resolution | app/repository_updater.py, app/deploy.py (backup description only), tests/test_repository_updater.py, docs/architecture.md and docs/runtime-mechanism.md (deployment backup only), docs/main-sync-conflict-resolution.md, docs/agent-claims.md (restored rows and this row only) | Derek authorized resolving the restored local conflicts and committing by function. Preserve the current dependency retry/native prompt implementation; reuse a recent verified backup, otherwise create one through the existing backup/recovery flow. No push or production action. | 2026-10-10 |
-
 | codex-unapplied-project-retrieval-patch-handoff | docs/handoffs/unapplied-project-retrieval-patches/ (two user-provided patch artifacts only), docs/agent-claims.md (this row only) | Move two unmerged retrieval patches out of Documents/memory into the CEO Agent Service development workspace without applying, committing, or deciding whether to adopt their algorithms. | 2026-10-10 |
 
-| codex-deploy-reuse-daily-db-backup | app/repository_updater.py (deployment backup selection only), app/deploy.py (deployment behavior description only), docs/architecture.md and docs/runtime-mechanism.md (deployment backup only), docs/agent-claims.md (this row only) | Original work reconciled by codex-main-conflict-resolution at Derek's request: reuse a verified backup from the preceding 24 hours; create and verify a fresh backup when none qualifies. | 2026-10-10 |
+| codex-deploy-reuse-daily-db-backup | app/repository_updater.py (deployment backup selection only), app/deploy.py (deployment behavior description only), docs/architecture.md and docs/runtime-mechanism.md (deployment backup only), docs/agent-claims.md (this row only) | Original work reconciled at Derek's request: reuse a verified backup from the preceding 24 hours; create and verify a fresh backup when none qualifies. Backup creation failures use the existing original-service recovery path. | done 2026-10-10 |
 
 | codex-entitlement-leave-rule | ci/shared-skills/stardust-oa-attendance-travel-review/SKILL.md; installed copy `/Users/derek/.agents/skills/stardust-oa-attendance-travel-review/SKILL.md`; docs/agent-claims.md (this row only) | Clarify that legally or company-policy entitled leave (e.g. marriage leave) is an employee right and is exempt from discretionary long-leave justification; retain eligibility, schedule and handover checks. | done |
 

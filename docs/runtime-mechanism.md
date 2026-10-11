@@ -1609,8 +1609,16 @@ boundaries. The deployer first waits for the persisted work leases to drain.
 This includes valid dispatcher leases before an Agent runtime exists, meeting
 preparation, and already-claimed meeting deliveries. Expired or terminal claims
 and unclaimed ready-to-send work do not count as active execution.
-It then bootstraps no new claims by stopping the launchd service before taking a
-database backup or changing the production checkout. It starts the service
+It then bootstraps no new claims by stopping the launchd service before selecting
+a database backup or changing the production checkout. Under the existing backup
+directory lock it selects the newest complete backup for the same database from
+the preceding 24 hours, including a daily or earlier deployment backup. The
+completion marker proves the existing integrity-checked backup process finished;
+stale, incomplete and future-dated copies are not reused. If none qualifies, it
+creates and verifies a fresh backup through the existing backup process. Backup
+creation failure enters the existing rollback path before checkout changes and
+restarts the original service. A reused backup retains its original recovery
+time, up to 24 hours before deployment. It starts the service
 again with launchd `bootstrap` after verification, then performs the normal
 health and queue readback. This prevents the deployment process and worker
 process from writing the same SQLite database concurrently.
