@@ -219,6 +219,11 @@ business_object（稳定业务对象，例如一条 OA 审批节点）
   只更新一个 `reply_task` 当前投影，每次输入追加到 `reply_task_inputs`；活动输入保留准确正文，已结算正文按存储保留契约改为来源与摘要。
 - `reply_task` 负责排队、领取、重试、`execution_generation` 和 worker 所有权。
   新输入到达正在执行的 task 时，本轮结束后重新排队同一个 task，不创建并行任务。
+  正文和 provenance 只保存在 `reply_task_inputs`；`current_input_id` 外键指向当前输入，
+  每次队列领取保存 `claimed_input_id`，当次执行和冻结 Skill 按代际校验读取领取快照。
+  延后或恢复后的再次领取沿用原有版本水位语义，捕获当时的当前输入。
+  `input_version`／`claimed_input_version` 继续作为原有并发版本水位，不充当输入 ID。
+  已结算输入不另存从 provenance 可生成的精简 JSON；API 按来源摘要投影原有展示形式。
 - Provider 若原地更新同一个 DingTalk 日程卡片而继续复用消息 ID，近期消息恢复会把
   `input_revision_key` 不同的新快照追加到 `reply_task_inputs`，同时更新同一个
   `reply_task` 的当前投影和 `input_version`。只有卡片内容变化、日程仍有效且本人仍待响应时
@@ -1682,9 +1687,9 @@ Email provider 当前库存以 `(account_id, stable_message_identity)` 主键定
 Email schema 48 移除覆盖同一身份键的 `observed_at` lookup 索引，
 provider 状态、分类、刷新和外部动作语义不变。主键和文件夹索引仍保留。
 
-## Reversible Email schema release
+## Reversible database schema release
 
-正式 deploy 在 quiet/停止服务及一致备份之后，先捕获 Email schema 的回退
+正式 deploy 在 quiet/停止服务及一致备份之后，先捕获本次 Store 或 Email schema 的回退
 元信息，再在停止窗口执行数据库迁移，随后校验 imports、启动及 health。
 已验证的 47→48 provider 索引逆迁恢复原索引 SQL，移除新增版本48行；
 48→49 移除分类的重复 action_plan_json，回退从当前不可变 plan 重建旧列并移除
@@ -1693,6 +1698,14 @@ provider 状态、分类、刷新和外部动作语义不变。主键和文件�
 再恢复旧代码并启动。schema 逆迁失败时保持 replacement 停止并记录
 needs_manual，不将旧代码启动在不兼容数据库上。其他 schema 变化需要
 各自验证的逆迁，不能自动套用本次索引回退。
+
+Store `2026-10-10.2→2026-10-11.1` 移除 reply_tasks 的四个正文／provenance 缓存列，
+增加指向准确输入的 current／claimed 外键。迁移只选择完全匹配的现有输入，无法匹配时
+从实际旧投影追加准确快照，保留旧输入 ID、来源、版本水位、业务结果和执行回执。
+历史终态不推测领取输入；旧 processing 领取必须先达到正式 quiet 条件。
+逆迁从迁移后的当前 canonical 输入重建捕获的原表声明、索引、序列及四列内容，
+包括旧格式所需的精简 JSON，保留 replacement 新增记录和回执；不覆盖旧备份。
+未验证的 Store／Email 同时版本变化不能合并发布。Email 本期保持 schema49。
 
 ## Canonical email action-plan reference
 

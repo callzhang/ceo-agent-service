@@ -185,7 +185,10 @@ class ScheduledAgentConsumer:
     def __call__(self, envelope: DispatchEnvelope, guard: ClaimGuard) -> None:
         now = self._now().astimezone(UTC)
         guard.assert_current(now)
-        task = self._store.get_reply_task(int(envelope.source_id))
+        current = self._store.get_reply_task(int(envelope.source_id))
+        task = (self._store.get_reply_task_for_execution(
+            current.id, current.execution_generation
+        ) if current is not None else None)
         if task is None or task.channel != "scheduled" or task.status != "processing":
             raise ValueError("scheduled execution source is not claimed")
         run = self._store.get_scheduled_task_run_for_reply_execution(task.id)

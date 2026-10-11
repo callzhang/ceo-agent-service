@@ -2899,9 +2899,14 @@ def test_email_detail_omits_lineage_when_exact_audited_chain_conflicts(
                 payload["action_plan_id"] = "email-plan:wrong"
             else:
                 payload["classification_id"] = fixture.classification_id + 1
+            # This fixture is settled: retained source facts, rather than a
+            # retired JSON cache, are the authoritative lineage binding.
             db.execute(
-                "update reply_tasks set trigger_message_json=? where id=?",
-                (json.dumps(payload, sort_keys=True), fixture.task.id),
+                "update reply_task_inputs set input_provenance_json=json_set("
+                "input_provenance_json, '$.source.account_id', ?, "
+                "'$.source.action_plan_id', ?, '$.source.classification_id', ?) "
+                "where id=(select current_input_id from reply_tasks where id=?)",
+                (payload["account_id"], payload["action_plan_id"], payload["classification_id"], fixture.task.id),
             )
         elif mismatch == "conversation":
             db.execute(

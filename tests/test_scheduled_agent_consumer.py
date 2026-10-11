@@ -702,6 +702,8 @@ def test_execution_uses_persisted_preflight_context_after_current_options_change
     store, run, options = fixture(tmp_path)
     persisted = dispatch(store, run, options)
     task_id = int(persisted.execution_id)
+    adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
+    envelope, guard = claim(adapter, task_id, "execution")
     task = store.get_reply_task(task_id)
     for role in ("consumer", "audit"):
         read = build_role_server(
@@ -737,8 +739,6 @@ def test_execution_uses_persisted_preflight_context_after_current_options_change
                 summary="done", error=AgentError(code="", retryable=False),
                 consumer_result=result, audit_result=None)
 
-    adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
-    envelope, guard = claim(adapter, task_id, "execution")
     consumer = ScheduledAgentConsumer(
         store=store, option_service=options,
         orchestrator_factory=lambda built: (
@@ -763,9 +763,10 @@ def test_damaged_duplicate_frozen_material_is_not_repaired_or_replaced(tmp_path)
     )
     with store._immediate_write_transaction() as db:
         db.execute(
-            "update reply_tasks set trigger_message_json=? where id=?",
+            "update reply_task_inputs set trigger_message_json=? where id=(select current_input_id from reply_tasks where id=?)",
             (json.dumps(trigger), task_id),
         )
+    store.claim_reply_task(task_id)
     read = build_role_server(
         "consumer",
         task_id=task_id,
@@ -784,7 +785,7 @@ def test_malformed_persisted_execution_context_is_audited_skip(tmp_path):
     task_id = int(dispatch(store, run, options).execution_id)
     with store._immediate_write_transaction() as db:
         db.execute(
-            "update reply_tasks set trigger_message_json=? where id=?",
+            "update reply_task_inputs set trigger_message_json=? where id=(select current_input_id from reply_tasks where id=?)",
             ("{\"schema\":\"old_context\"}", task_id),
         )
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)

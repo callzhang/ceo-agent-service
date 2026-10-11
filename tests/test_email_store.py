@@ -13,6 +13,7 @@ from threading import Barrier
 import pytest
 
 import app.email_store as email_store_module
+from app.store import REPLY_TASK_CURRENT_SQL
 from tests.email_schema_fixtures import (
     restore_action_plan_snapshot_column, restore_schema48_action_plan_snapshots,
 )
@@ -1346,9 +1347,9 @@ def test_lists_only_nonterminal_legacy_unsubscribe_attempt_bindings_read_only(
         tuple(row)
         for row in _fetchall(
             database,
-            """
+            f"""
             select id, channel, status, trigger_message_json
-            from reply_tasks
+            from ({REPLY_TASK_CURRENT_SQL})
             order by id
             """,
         )
@@ -1360,9 +1361,9 @@ def test_lists_only_nonterminal_legacy_unsubscribe_attempt_bindings_read_only(
         tuple(row)
         for row in _fetchall(
             database,
-            """
+            f"""
             select id, channel, status, trigger_message_json
-            from reply_tasks
+            from ({REPLY_TASK_CURRENT_SQL})
             order by id
             """,
         )
@@ -1603,7 +1604,7 @@ def test_legacy_terminalization_race_fails_closed_without_modifying_replacement(
                 sort_keys=True,
             )
             db.execute(
-                "update reply_tasks set trigger_message_json=? where id=?",
+                "update reply_task_inputs set trigger_message_json=? where id=(select current_input_id from reply_tasks where id=?)",
                 (replacement_payload, original.id),
             )
     before = tuple(
@@ -4606,8 +4607,9 @@ def test_audited_unsubscribe_lineage_query_uses_exact_primary_key_chain(
     assert any(
         "SEARCH audit_runs USING INTEGER PRIMARY KEY" in detail for detail in details
     )
-    assert any("SEARCH tasks USING INTEGER PRIMARY KEY" in detail for detail in details)
-    assert not any("SCAN tasks" in detail for detail in details)
+    assert any("SEARCH parent USING INTEGER PRIMARY KEY" in detail for detail in details)
+    assert any("SEARCH canonical USING INTEGER PRIMARY KEY" in detail for detail in details)
+    assert not any("SCAN parent" in detail or "SCAN canonical" in detail for detail in details)
 
 
 def test_current_schema_missing_required_foreign_key_is_domain_corruption(

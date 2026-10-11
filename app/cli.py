@@ -1219,7 +1219,12 @@ def run_agent_cron_dispatcher_loop(
 
     def consume_reply(envelope, guard) -> None:
         nonlocal wechat_consumer
-        task = store.get_reply_task(int(envelope.source_id))
+        task_id = int(envelope.source_id)
+        current = store.get_reply_task(task_id)
+        task = (
+            store.get_reply_task_for_execution(task_id, current.execution_generation)
+            if current is not None else None
+        )
         if task is None or task.status != "processing":
             raise ValueError("reply dispatch source is not claimed")
         if task.channel == "dingtalk":

@@ -247,6 +247,17 @@ REPLY_TASK_CURRENT_SQL = """select parent.*, canonical.trigger_text,
     join reply_task_inputs as canonical
       on canonical.id=parent.current_input_id and canonical.reply_task_id=parent.id"""
 
+# Queue-claim source headers and bytes belong to the claimed snapshot.
+REPLY_TASK_CLAIMED_SQL = """select canonical.channel, canonical.conversation_id,
+                       canonical.conversation_title, canonical.single_chat,
+                       canonical.trigger_message_id, canonical.trigger_create_time,
+                       canonical.trigger_sender, canonical.oa_url, canonical.business_object_key,
+                       parent.*, canonical.trigger_text,
+                       canonical.trigger_message_json, canonical.input_provenance_json,
+                       canonical.input_compacted from reply_tasks parent
+                join reply_task_inputs canonical on canonical.id=parent.claimed_input_id
+                  and canonical.reply_task_id=parent.id"""
+
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
 STORE_SCHEMA_VERSION = "2026-10-11.1"
 # One row per finished task execution: the durable memories its Consumer
@@ -2528,6 +2539,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             for table_name, required_columns in STORE_SCHEMA_REQUIRED_COLUMNS.items()
         )
+        reply_input_foreign_keys = {
+            (row["from"], row["table"], row["to"])
+            for row in db.execute("pragma foreign_key_list(reply_tasks)")
+        }
+        reply_input_foreign_keys_present = {
+            ("current_input_id", "reply_task_inputs", "id"),
+            ("claimed_input_id", "reply_task_inputs", "id"),
+        }.issubset(reply_input_foreign_keys)
         removed_columns_present = any(
             set(removed_columns).intersection(
                 {
@@ -2544,6 +2563,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             and required_trigger_definitions_present
             and feedback_processing_round_storage_valid
             and required_columns_present
+            and reply_input_foreign_keys_present
             and not removed_columns_present
             and (
                 not include_run_snapshots
@@ -10677,15 +10697,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "universal_plan_executions",
                 "universal_action_executions",
             }.issubset(tables):
+                reply_source = f"({REPLY_TASK_CURRENT_SQL})" if "current_input_id" in {row[1] for row in db.execute("pragma table_info(reply_tasks)")} else "reply_tasks"
                 rows = db.execute(
-                    """
+                    f"""
                     select actions.*, tasks.conversation_id, tasks.conversation_title,
                            tasks.trigger_message_id, tasks.trigger_sender,
                            tasks.trigger_text
                     from universal_action_executions as actions
                     join universal_plan_executions as plans
                       on plans.execution_scope_id=actions.execution_scope_id
-                    join reply_tasks as tasks on tasks.id=plans.reply_task_id
+                    join {reply_source} as tasks on tasks.id=plans.reply_task_id
                     left join reply_attempts as attempts
                       on attempts.id=actions.attempt_id
                     where attempts.id is null
@@ -11266,30 +11287,68 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def _migrate_known_reply_input_schema(self) -> bool:
         """Upgrade the preceding healthy schema without replaying old backfills."""
         with self._connect() as db:
-            marker = db.execute(
-                "select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)
-            ).fetchone() if db.execute(
-                "select 1 from sqlite_master where name='service_state'"
-            ).fetchone() else None
+            marker = (
+                db.execute(
+                    "select value from service_state where key=?",
+                    (STORE_SCHEMA_VERSION_KEY,),
+                ).fetchone()
+                if db.execute(
+                    "select 1 from sqlite_master where name='service_state'"
+                ).fetchone()
+                else None
+            )
             if marker is None or marker[0] != "2026-10-10.2":
                 return False
-            tables = {row[0] for row in db.execute("select name from sqlite_master where type='table'")}
-            if not set(STORE_SCHEMA_REQUIRED_TABLES).issubset(tables):
+            tables = {
+                row[0]
+                for row in db.execute("select name from sqlite_master where type='table'")
+            }
+            if not set(STORE_SCHEMA_REQUIRED_TABLES).issubset(tables) or set(
+                STORE_SCHEMA_REMOVED_TABLES
+            ).intersection(tables):
                 return False
             for table, required in STORE_SCHEMA_REQUIRED_COLUMNS.items():
                 columns = {row[1] for row in db.execute(f"pragma table_info({table})")}
                 expected = set(required)
                 if table == "reply_tasks":
                     expected = expected - {"current_input_id", "claimed_input_id"} | {
-                        "trigger_text", "trigger_message_json", "input_provenance_json", "input_compacted"
+                        "trigger_text",
+                        "trigger_message_json",
+                        "input_provenance_json",
+                        "input_compacted",
                     }
                 if not expected.issubset(columns):
                     return False
+            indexes = {
+                row[0]
+                for row in db.execute("select name from sqlite_master where type='index'")
+            }
+            triggers = {
+                row[0]: _normalize_schema_sql(str(row[1] or ""))
+                for row in db.execute(
+                    "select name,sql from sqlite_master where type='trigger'"
+                )
+            }
+            if (
+                not set(STORE_SCHEMA_REQUIRED_INDEXES).issubset(indexes)
+                or any(
+                    triggers.get(name) != sql
+                    for name, sql in STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS.items()
+                )
+                or not self._feedback_processing_round_storage_is_valid(db)
+                or not self._scheduled_task_run_snapshots_are_current(db)
+            ):
+                return False
             db.execute("begin immediate")
             self._migrate_reply_task_input_references(db)
-            if not self._schema_manifest_is_current_in_connection(db):
+            if not self._schema_manifest_is_current_in_connection(
+                db, include_run_snapshots=True
+            ):
                 raise RuntimeError("canonical reply input migration manifest differs")
-            db.execute("update service_state set value=? where key=?", (STORE_SCHEMA_VERSION, STORE_SCHEMA_VERSION_KEY))
+            db.execute(
+                "update service_state set value=? where key=?",
+                (STORE_SCHEMA_VERSION, STORE_SCHEMA_VERSION_KEY),
+            )
             return True
 
     @classmethod
@@ -11298,40 +11357,97 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if "current_input_id" in columns:
             cls._validate_reply_input_references(db)
             return
-        if db.execute("select 1 from reply_tasks where status='processing' limit 1").fetchone():
-            raise RuntimeError("legacy reply input migration requires quiet processing claims")
-        fields = ("channel", "conversation_id", "conversation_title", "single_chat",
-                  "trigger_message_id", "trigger_create_time", "trigger_sender",
-                  "trigger_text", "trigger_message_json", "oa_url", "business_object_key",
-                  "input_provenance_json", "input_compacted")
+        if db.execute(
+            "select 1 from reply_tasks where status='processing' limit 1"
+        ).fetchone():
+            raise RuntimeError(
+                "legacy reply input migration requires quiet processing claims"
+            )
+        fields = (
+            "channel",
+            "conversation_id",
+            "conversation_title",
+            "single_chat",
+            "trigger_message_id",
+            "trigger_create_time",
+            "trigger_sender",
+            "trigger_text",
+            "trigger_message_json",
+            "oa_url",
+            "business_object_key",
+            "input_provenance_json",
+            "input_compacted",
+        )
         # Verify retired representations before deleting their redundant JSON.
         for row in db.execute("select * from reply_task_inputs where input_compacted=1"):
-            if str(row["trigger_text"]) != "" or str(row["trigger_message_json"]) != cls._compact_reply_input_json(row["input_provenance_json"]):
-                raise RuntimeError("retired reply input compact projection is not derivable")
+            if str(row["trigger_text"]) != "" or str(
+                row["trigger_message_json"]
+            ) != cls._compact_reply_input_json(row["input_provenance_json"]):
+                raise RuntimeError(
+                    "retired reply input compact projection is not derivable"
+                )
         tasks = db.execute("select * from reply_tasks order by id").fetchall()
         for task in tasks:
-            if task["input_compacted"] and (str(task["trigger_text"]) != "" or str(task["trigger_message_json"]) != cls._compact_reply_input_json(task["input_provenance_json"])):
+            if task["input_compacted"] and (
+                str(task["trigger_text"]) != ""
+                or str(task["trigger_message_json"])
+                != cls._compact_reply_input_json(task["input_provenance_json"])
+            ):
                 raise RuntimeError("retired current reply projection is not derivable")
-        db.execute("alter table reply_tasks add column current_input_id integer references reply_task_inputs(id)")
-        db.execute("alter table reply_tasks add column claimed_input_id integer references reply_task_inputs(id)")
+        db.execute(
+            "alter table reply_tasks add column current_input_id integer references reply_task_inputs(id)"
+        )
+        db.execute(
+            "alter table reply_tasks add column claimed_input_id integer references reply_task_inputs(id)"
+        )
         for task in tasks:
-            matching = next((row for row in db.execute("select * from reply_task_inputs where reply_task_id=? order by id", (task["id"],))
-                             if all(row[field] == task[field] for field in fields)), None)
+            matching = next(
+                (
+                    row
+                    for row in db.execute(
+                        "select * from reply_task_inputs where reply_task_id=? order by id",
+                        (task["id"],),
+                    )
+                    if all(row[field] == task[field] for field in fields)
+                ),
+                None,
+            )
             if matching is None:
-                digest = hashlib.sha256(json.dumps([task["id"], *[task[field] for field in fields]], ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+                digest = hashlib.sha256(
+                    json.dumps(
+                        [task["id"], *[task[field] for field in fields]],
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()
                 revision = f"canonical-migration:{task['id']}:{digest}"
                 cursor = db.execute(
-                    f"insert into reply_task_inputs (reply_task_id, {', '.join(fields)}, input_revision_key, created_at) values ({','.join('?' for _ in range(len(fields)+3))})",
-                    (task["id"], *[task[field] for field in fields], revision, task["updated_at"]),
+                    f"insert into reply_task_inputs (reply_task_id, {', '.join(fields)}, input_revision_key, created_at) values ({','.join('?' for _ in range(len(fields) + 3))})",
+                    (
+                        task["id"],
+                        *[task[field] for field in fields],
+                        revision,
+                        task["updated_at"],
+                    ),
                 )
                 input_id = cursor.lastrowid
             else:
                 input_id = matching["id"]
-            db.execute("update reply_tasks set current_input_id=? where id=?", (input_id, task["id"]))
+            db.execute(
+                "update reply_tasks set current_input_id=? where id=?",
+                (input_id, task["id"]),
+            )
         cls._validate_reply_input_references(db)
-        db.execute("update reply_task_inputs set trigger_message_json='' where input_compacted=1")
+        db.execute(
+            "update reply_task_inputs set trigger_message_json='' where input_compacted=1"
+        )
         db.execute("drop index if exists idx_reply_tasks_email_unsubscribe_status")
-        for field in ("trigger_text", "trigger_message_json", "input_provenance_json", "input_compacted"):
+        for field in (
+            "trigger_text",
+            "trigger_message_json",
+            "input_provenance_json",
+            "input_compacted",
+        ):
             db.execute(f"alter table reply_tasks drop column {field}")
 
     @staticmethod
@@ -11347,63 +11463,105 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
     @classmethod
     def restore_reply_task_input_schema(
-        cls, db: sqlite3.Connection, *, original_tasks_sql: str,
+        cls,
+        db: sqlite3.Connection,
+        *,
+        original_tasks_sql: str,
         original_indexes: Sequence[str],
     ) -> None:
         """Restore the captured parent DDL from latest canonical rows; caller owns transaction."""
         if db.execute("pragma foreign_keys").fetchone()[0]:
             raise ValueError("reply schema inverse requires caller foreign_keys=OFF")
         cls._validate_reply_input_references(db)
-        tasks = db.execute(f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks order by id").fetchall()
-        seq = db.execute("select seq from sqlite_sequence where name='reply_tasks'").fetchone()
+        tasks = db.execute(
+            f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks order by id"
+        ).fetchall()
+        seq = db.execute(
+            "select seq from sqlite_sequence where name='reply_tasks'"
+        ).fetchone()
         db.execute("drop table reply_tasks")
         db.execute(original_tasks_sql)
         columns = [row[1] for row in db.execute("pragma table_info(reply_tasks)")]
         for task in tasks:
             values = dict(task)
             if values["input_compacted"]:
-                values["trigger_message_json"] = cls._compact_reply_input_json(values["input_provenance_json"])
-            db.execute(f"insert into reply_tasks ({','.join(columns)}) values ({','.join('?' for _ in columns)})", [values[name] for name in columns])
-        for row in db.execute("select id,input_provenance_json from reply_task_inputs where input_compacted=1").fetchall():
-            db.execute("update reply_task_inputs set trigger_message_json=? where id=?", (cls._compact_reply_input_json(row["input_provenance_json"]), row["id"]))
+                values["trigger_message_json"] = cls._compact_reply_input_json(
+                    values["input_provenance_json"]
+                )
+            db.execute(
+                f"insert into reply_tasks ({','.join(columns)}) values ({','.join('?' for _ in columns)})",
+                [values[name] for name in columns],
+            )
+        for row in db.execute(
+            "select id,input_provenance_json from reply_task_inputs where input_compacted=1"
+        ).fetchall():
+            db.execute(
+                "update reply_task_inputs set trigger_message_json=? where id=?",
+                (cls._compact_reply_input_json(row["input_provenance_json"]), row["id"]),
+            )
         for statement in original_indexes:
             db.execute(statement)
         if seq is not None:
-            db.execute("update sqlite_sequence set seq=? where name='reply_tasks'", (seq[0],))
+            db.execute("delete from sqlite_sequence where name='reply_tasks'")
+            db.execute(
+                "insert into sqlite_sequence(name,seq) values ('reply_tasks',?)", (seq[0],)
+            )
 
     @classmethod
     def _append_reply_input_snapshot(
-        cls, db: sqlite3.Connection, task_id: int, snapshot: Mapping[str, object],
-        *, revision_key: str,
+        cls,
+        db: sqlite3.Connection,
+        task_id: int,
+        snapshot: Mapping[str, object],
+        *,
+        revision_key: str,
     ) -> int:
-        fields = ("channel", "conversation_id", "conversation_title", "single_chat",
-                  "trigger_message_id", "trigger_create_time", "trigger_sender",
-                  "trigger_text", "trigger_message_json", "oa_url", "business_object_key")
+        fields = (
+            "channel",
+            "conversation_id",
+            "conversation_title",
+            "single_chat",
+            "trigger_message_id",
+            "trigger_create_time",
+            "trigger_sender",
+            "trigger_text",
+            "trigger_message_json",
+            "oa_url",
+            "business_object_key",
+        )
         db.execute(
-            f"insert or ignore into reply_task_inputs (reply_task_id,{','.join(fields)},input_revision_key) values ({','.join('?' for _ in range(len(fields)+2))})",
+            f"insert or ignore into reply_task_inputs (reply_task_id,{','.join(fields)},input_revision_key) values ({','.join('?' for _ in range(len(fields) + 2))})",
             (task_id, *[snapshot[field] for field in fields], revision_key),
         )
-        row = db.execute("select * from reply_task_inputs where channel=? and conversation_id=? and trigger_message_id=? and input_revision_key=?", (snapshot["channel"], snapshot["conversation_id"], snapshot["trigger_message_id"], revision_key)).fetchone()
+        row = db.execute(
+            "select * from reply_task_inputs where channel=? and conversation_id=? and trigger_message_id=? and input_revision_key=?",
+            (
+                snapshot["channel"],
+                snapshot["conversation_id"],
+                snapshot["trigger_message_id"],
+                revision_key,
+            ),
+        ).fetchone()
         if row is None or row["reply_task_id"] != task_id:
-            raise ReplyTaskIdentityConflict("canonical reply input identity belongs to another task")
+            raise ReplyTaskIdentityConflict(
+                "canonical reply input identity belongs to another task"
+            )
         if any(row[field] != snapshot[field] for field in fields):
-            raise ReplyTaskIdentityConflict("canonical reply input revision has different bytes")
+            raise ReplyTaskIdentityConflict(
+                "canonical reply input revision has different bytes"
+            )
         return int(row["id"])
 
     def get_reply_task_for_execution(
-        self, task_id: int, execution_generation: str,
+        self,
+        task_id: int,
+        execution_generation: str,
     ) -> ReplyTask | None:
         with self._connect() as db:
-            row = db.execute("""select canonical.channel, canonical.conversation_id,
-                       canonical.conversation_title, canonical.single_chat,
-                       canonical.trigger_message_id, canonical.trigger_create_time,
-                       canonical.trigger_sender, canonical.oa_url, canonical.business_object_key,
-                       parent.*, canonical.trigger_text,
-                       canonical.trigger_message_json, canonical.input_provenance_json,
-                       canonical.input_compacted from reply_tasks parent
-                join reply_task_inputs canonical on canonical.id=parent.claimed_input_id
-                  and canonical.reply_task_id=parent.id
-                where parent.id=? and parent.execution_generation=?""", (task_id, execution_generation)).fetchone()
+            row = db.execute(
+                f"select * from ({REPLY_TASK_CLAIMED_SQL}) where id=? and execution_generation=?",
+                (task_id, execution_generation),
+            ).fetchone()
             return self._reply_task_from_row(row) if row is not None else None
 
     @staticmethod
@@ -17195,7 +17353,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("WeChat delivery target must be complete")
         with self._immediate_write_transaction() as db:
             task = db.execute(
-                f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where id=? and status='processing' "
+                f"select * from ({REPLY_TASK_CLAIMED_SQL}) as reply_tasks where id=? and status='processing' "
                 "and execution_generation=? and channel='wechat'",
                 (task_id, expected_execution_generation),
             ).fetchone()
@@ -20891,29 +21049,74 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def codex_session_lock(self, conversation_id: str, owner: str) -> CodexSessionLock:
         return CodexSessionLock(self, conversation_id, owner)
 
-    def update_reply_task_trigger(self, task_id: int, *, trigger_text: str, trigger_message_json: str) -> int:
+    def update_reply_task_trigger(
+        self, task_id: int, *, trigger_text: str, trigger_message_json: str
+    ) -> int:
         with self._immediate_write_transaction() as db:
-            row = db.execute(f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where id=? and status='pending' and attempts=0", (task_id,)).fetchone()
+            row = db.execute(
+                f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where id=? and status='pending' and attempts=0",
+                (task_id,),
+            ).fetchone()
             if row is None:
                 return 0
-            self._refresh_reply_input_in_transaction(db, row, trigger_text, trigger_message_json)
+            self._refresh_reply_input_in_transaction(
+                db, row, trigger_text, trigger_message_json
+            )
             return 1
 
     @classmethod
-    def _refresh_reply_input_in_transaction(cls, db: sqlite3.Connection, row: sqlite3.Row, trigger_text: str, trigger_message_json: str) -> int:
+    def _refresh_reply_input_in_transaction(
+        cls,
+        db: sqlite3.Connection,
+        row: sqlite3.Row,
+        trigger_text: str,
+        trigger_message_json: str,
+    ) -> int:
         snapshot = dict(row)
-        snapshot.update(trigger_text=trigger_text, trigger_message_json=trigger_message_json)
-        digest = hashlib.sha256(json.dumps([trigger_text, trigger_message_json], ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
-        input_id = cls._append_reply_input_snapshot(db, int(row["id"]), snapshot, revision_key=f"refresh:{row['input_version'] + 1}:{digest}")
-        db.execute("update reply_tasks set current_input_id=?, input_version=input_version+1, updated_at=current_timestamp where id=?", (input_id, row["id"]))
+        snapshot.update(
+            trigger_text=trigger_text, trigger_message_json=trigger_message_json
+        )
+        digest = hashlib.sha256(
+            json.dumps(
+                [trigger_text, trigger_message_json],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        input_id = cls._append_reply_input_snapshot(
+            db,
+            int(row["id"]),
+            snapshot,
+            revision_key=f"refresh:{row['input_version'] + 1}:{digest}",
+        )
+        db.execute(
+            "update reply_tasks set current_input_id=?, input_version=input_version+1, updated_at=current_timestamp where id=?",
+            (input_id, row["id"]),
+        )
         return input_id
 
-    def update_pending_reply_task_trigger_for_message(self, conversation_id: str, trigger_message_id: str, *, trigger_text: str, trigger_message_json: str, channel: str = "dingtalk") -> int:
+    def update_pending_reply_task_trigger_for_message(
+        self,
+        conversation_id: str,
+        trigger_message_id: str,
+        *,
+        trigger_text: str,
+        trigger_message_json: str,
+        channel: str = "dingtalk",
+    ) -> int:
         with self._immediate_write_transaction() as db:
-            row = db.execute(f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where channel=? and conversation_id=? and trigger_message_id=? and status='pending' and attempts=0", (channel, conversation_id, trigger_message_id)).fetchone()
-            if row is None or (row["trigger_text"] == trigger_text and row["trigger_message_json"] == trigger_message_json):
+            row = db.execute(
+                f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where channel=? and conversation_id=? and trigger_message_id=? and status='pending' and attempts=0",
+                (channel, conversation_id, trigger_message_id),
+            ).fetchone()
+            if row is None or (
+                row["trigger_text"] == trigger_text
+                and row["trigger_message_json"] == trigger_message_json
+            ):
                 return 0
-            self._refresh_reply_input_in_transaction(db, row, trigger_text, trigger_message_json)
+            self._refresh_reply_input_in_transaction(
+                db, row, trigger_text, trigger_message_json
+            )
             return 1
 
     def requeue_terminal_reply_task_for_revised_trigger(
@@ -21092,13 +21295,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     updated_at=?
                 where id=?
                   and execution_generation=?
-                  and (
-                    trigger_message_id != ?
-                    or trigger_create_time != ?
-                    or trigger_sender != ?
-                    or available_at != ?
-                    or error != ?
-                  )
                 """,
                 (
                     trigger_message_id,
@@ -21110,11 +21306,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     now_text,
                     task_id,
                     current_generation,
-                    trigger_message_id,
-                    trigger_create_time,
-                    trigger_sender,
-                    available_at,
-                    error,
                 ),
             )
             duplicate_rows = db.execute(
@@ -26944,9 +27135,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
                 return source_attempt_id, task
             existing = db.execute(
-                """
+                f"""
                 select attempts.id as attempt_id, tasks.*
-                from reply_tasks as tasks
+                from ({REPLY_TASK_CURRENT_SQL}) as tasks
                 join reply_attempts as attempts
                   on attempts.id=tasks.manual_rerun_attempt_id
                 where tasks.channel=?
@@ -32407,7 +32598,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id
-                from reply_tasks
+                from ({REPLY_TASK_CURRENT_SQL})
                 union all
                 select
                     'reply:' || id as id,
@@ -32423,7 +32614,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         -- owning task generation supplies its send outcome.
                         when channel='wechat' and send_status='failed' and exists (
                             select 1 from wechat_deliveries as delivery
-                            join reply_tasks as delivery_task
+                            join ({REPLY_TASK_CURRENT_SQL}) as delivery_task
                               on delivery_task.id=delivery.reply_task_id
                             where delivery_task.channel=reply_attempts.channel
                               and delivery.conversation_id=reply_attempts.conversation_id
@@ -32449,7 +32640,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         when send_status='failed' and exists (
                             select 1
                             from agent_runs as handed_over_runs
-                            join reply_tasks as handed_over_tasks
+                            join ({REPLY_TASK_CURRENT_SQL}) as handed_over_tasks
                               on handed_over_tasks.id=handed_over_runs.reply_task_id
                             where handed_over_runs.id=reply_attempts.agent_run_id
                               and handed_over_tasks.status='needs_human'
@@ -32471,7 +32662,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                             )
                             or exists (
                                 select 1
-                                from reply_tasks as terminal_tasks
+                                from ({REPLY_TASK_CURRENT_SQL}) as terminal_tasks
                                 where terminal_tasks.channel=reply_attempts.channel
                                   and terminal_tasks.conversation_id=reply_attempts.conversation_id
                                   and terminal_tasks.trigger_message_id=reply_attempts.trigger_message_id
@@ -32480,7 +32671,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                             or exists (
                                 select 1
                                 from business_object_tasks as current_business_object
-                                join reply_tasks as current_task
+                                join ({REPLY_TASK_CURRENT_SQL}) as current_task
                                   on current_task.id=current_business_object.reply_task_id
                                 where current_business_object.business_object_key=(
                                     'message:' || reply_attempts.channel || ':' ||

@@ -10036,7 +10036,7 @@ class EmailStore:
             task_predicates = ""
             task_args: tuple[object, ...] = ()
             if task_id is not None:
-                task_join = "join reply_tasks as tasks on tasks.id=?"
+                task_join = f"join ({REPLY_TASK_CURRENT_SQL}) as tasks on tasks.id=?"
                 task_predicates = """
                   and tasks.status='processing'
                   and tasks.channel='email'

@@ -7766,6 +7766,7 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
     monkeypatch, tmp_path
 ):
     captured = {}
+    executed = []
     blocked_started = threading.Event()
     release_blocked = threading.Event()
     pending_started = threading.Event()
@@ -7801,7 +7802,9 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
     )
     monkeypatch.setattr(cli, "ConsumerDispatcher", FakeDispatcher)
     monkeypatch.setattr(cli, "_scheduled_task_option_service", lambda *_: object())
-    monkeypatch.setattr(cli, "_create_service_worker", lambda *_: object())
+    monkeypatch.setattr(cli, "_create_service_worker", lambda *_: SimpleNamespace(
+        process_claimed_reply_task=lambda task, **kwargs: executed.append(task)
+    ))
     monkeypatch.setattr(cli, "_create_meeting_dws", lambda *_: object())
     monkeypatch.setattr(cli, "MeetingAlignmentCodexRunner", lambda **_: object())
     monkeypatch.setattr(cli, "TaskAgentCodexRunner", lambda **_: object())
@@ -7875,6 +7878,22 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
         "okr_review",
     }
     assert captured["shared_max_in_flight"] == 2
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="frozen-chat", conversation_title="Frozen", single_chat=False,
+        trigger_message_id="first-message", trigger_create_time="2026-10-11",
+        trigger_sender="first-sender", trigger_text="claimed input", trigger_message_json="{}",
+    )
+    task_id = store.get_reply_task_for_message("frozen-chat", "first-message").id
+    claimed = store.claim_reply_task(task_id)
+    store.update_reply_task_trigger(
+        task_id, trigger_text="new current input", trigger_message_json="{}"
+    )
+    captured["consumers"]["reply"](SimpleNamespace(source_id=str(task_id)), object())
+    assert len(executed) == 1
+    assert executed[0].trigger_text == "claimed input"
+    assert executed[0].execution_generation == claimed.execution_generation
+
     assert callable(captured["tick_observer"])
     tick_at = datetime(2026, 9, 8, 12, 0)
     captured["tick_observer"](tick_at)

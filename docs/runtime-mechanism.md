@@ -794,6 +794,20 @@ business_object 1 ── 1 current reply_attempt
 
 `reply_task_inputs` 的输入身份、版本和来源摘要保留；准确正文只供未结算的执行和恢复使用。符合既有终态结算条件后，当前任务、其输入版本及 Attempt 的输入正文改为来源引用与准确摘要，业务结果与执行回执不变。原生过程和准确原文缺失时明确不可用，不由其他结果拼造历史输入。
 
+Store schema `2026-10-11.1` 中，`reply_tasks.current_input_id` 与
+`claimed_input_id` 直接外键引用所属输入行。父表不保存正文、provenance 或精简标记副本；
+当前展示读取 current，当次队列领取后的执行和冻结 Skill 按代际校验读取 claimed 快照。
+再次领取仍捕获当时 current 输入，沿用原有恢复及版本水位行为。
+输入变化与指针、版本水位在原事务内更新；`input_version`／`claimed_input_version`
+仍用于原有并发判断。终态输入正文及重复精简 JSON 为空，旧 API 表示按 provenance 生成。
+已结算的真实历史身份不删除，无法证明的旧领取输入不推测。迁移必须在正式 quiet 停止窗口执行。
+配对逆迁恢复实际原表声明、索引、序列和旧正文投影，保留迁移后新增业务结果与回执；
+逆迁失败时沿用既有发布机制保持 replacement 停止。
+
+新建 Task 工作汇总输入只移除 Task Agent 不注入的 `scheduled_consumer.skill_materials`。
+共享 Consumer 上下文、prompt、Skill 名称、协议、来源及既有输入保持原样；
+WSI 原有无损压缩和终态清理继续执行，应用边界仍返回准确 JSON 字符串。
+
 OA 的稳定身份是 `process_instance_id + task_id`。同一 OA 从 webhook、pending scan、
 用户人工反馈进入时追加 input 并复用同一 task、同一兼容 Consumer session，在当前 run
 结束后提高 generation 并重新排队同一 task。服务修复运行时、路由或本地执行环境时，虽仍

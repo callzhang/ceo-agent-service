@@ -136,7 +136,7 @@ def test_read_task_skill_fails_for_missing_unknown_ambiguous_or_stale_material(
     with sqlite3.connect(db) as connection:
         empty = _context().to_payload()
         connection.execute(
-            "update reply_tasks set trigger_message_json=? where id=7",
+            "update reply_task_inputs set trigger_message_json=? where reply_task_id=7",
             (json.dumps({"raw_payload": {"scheduled_consumer": empty}}),),
         )
     with pytest.raises(ValueError, match="unavailable"):
