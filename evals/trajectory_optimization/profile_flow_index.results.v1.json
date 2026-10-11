@@ -1,0 +1,153 @@
+{
+  "manifest": "profile_flow_index.v1.json",
+  "baseline_manifest": "current_profile_recheck.v1.json",
+  "candidate_change": {
+    "baseline_root": "/private/tmp/ceo-current-profile-recheck-fa7hppn4",
+    "profile_characters_before": 9097,
+    "profile_characters_after": 8635,
+    "removed_characters": 462,
+    "profile_text_sha256_before": "21c8b79ca30f82cbfa2cbcae688c4eea6cb231a130165878752c5ccf1874cca7",
+    "profile_text_sha256_after": "55c503f4e5ac446e419dff3dd68b0e50f8e34a82f17f1d2b69894bb6dd6b16c7",
+    "unchanged_tail_from_section_F": true,
+    "all_other_config_fields_unchanged": true
+  },
+  "mapping": {
+    "baseline": "X",
+    "candidate": "Y"
+  },
+  "candidate_runs": [
+    {
+      "arm": "candidate",
+      "case": "calendar-cross-midnight",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128cf-ddca-7d22-9357-83f83588dc1e",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "candidate",
+      "case": "calendar-real-overlap",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128cf-dee0-75c1-a7fc-1b9dcad895c6",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_skill",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "candidate",
+      "case": "mail-already-handled",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128d0-4382-7533-ab0b-cbc9df3e2a28",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_messages"
+      ],
+      "canonical_valid": true,
+      "outcome": "no_action"
+    },
+    {
+      "arm": "candidate",
+      "case": "document-material-conflicts",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128d0-65e0-7df2-a5ee-a057a780ceb2",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "candidate",
+      "case": "audit-document-feedback",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128d0-abcb-7912-99f6-17de4828e487",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "return"
+    },
+    {
+      "arm": "candidate",
+      "case": "work-tracking-existing-remediation",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128d0-7ad9-78d0-bfd6-65c0824f25b3",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "candidate",
+      "case": "calendar-cross-midnight",
+      "phase": "resume",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128cf-ddca-7d22-9357-83f83588dc1e",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events"
+      ],
+      "canonical_valid": true,
+      "outcome": "no_action"
+    }
+  ],
+  "independent_blind_review": {
+    "baseline": "7/7",
+    "candidate": "6/7",
+    "failed_case": "calendar-cross-midnight cold",
+    "failure": "Original criterion requires observing adjacent cal-block-after, but candidate queried a window fully covering the actual invitation and not the next-day non-overlapping Blocked event. Correct acceptance and source claims bounded to read scope do not meet the extra original criterion.",
+    "subsequent_criteria_review": "Separate reviewer confirmed the original Task/Skill does not require reading non-overlapping next-day occupancy; preserve original fail and use new independently frozen full-interval and true crossing-overlap cases."
+  },
+  "publication": "Not published; original v1 failure retained. No causal claim that paragraph changes caused query-window selection."
+}

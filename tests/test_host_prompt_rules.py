@@ -33,5 +33,12 @@ def test_role_prompt_does_not_inject_host_development_rules(tmp_path, monkeypatc
     assert "Do not reopen AGENT.md" not in instructions
     assert role in instructions
     assert "ROLE_CAPABILITIES" in instructions
-    assert "Role Boundary" in instructions
+    from app.agent_context import _AUDIT_AGENT_RULES, _CONSUMER_AGENT_RULES
+
+    contract = _CONSUMER_AGENT_RULES if role == "Consumer" else _AUDIT_AGENT_RULES
+    assert instructions.count(contract) == 1
+    if role == "Consumer":
+        assert "Role Boundary" in instructions
+    else:
+        assert consumer_agent.AUDIT_ROLE_BOUNDARY == contract
     assert "bootstrap requirements do not apply" in instructions

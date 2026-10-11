@@ -1,9 +1,9 @@
 ---
 name: ceo-work-tracking
-description: Use when source context concerns business Projects, their facts, responsibilities or material risks, actual Tasks, display-only next-action suggestions, ownership, commitment, typed dates or completion. Aggregate original sources into real Project context, preserve standalone Tasks and return structured local decisions; external operations belong to their service workflows.
+description: Use for the Task Agent's structured Project/Task extraction and assessment. This reader returns local decisions without replying to the source. Consumer source replies use ceo-document-review or ceo-message-triage; external operations use their service workflows.
 metadata:
   managed_by: ceo-agent-service
-  version: 5
+  version: 6
 ---
 
 # CEO Work Tracking

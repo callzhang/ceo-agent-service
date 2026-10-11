@@ -777,3 +777,207 @@ application ID 1128615746 and passes read-only `quick_check=ok`. Native referenc
 for all twelve distinct matrix sessions remain present, and neither of the
 two task-owned matrix fixture directories has a running test process. Their
 intermediate evidence remains temporary while this investigation continues.
+
+### Post-release instruction inventory and native global instructions
+
+Read-only production checks still show PID 56046, and no new role run was
+present after the deployment receipt when queried in this turn. Do not substitute
+that absence for production business acceptance or launch a real task merely
+to create a receipt.
+
+Current Settings source-length receipts identify the remaining size precisely:
+
+| Segment | Consumer characters | Audit characters |
+| --- | ---: | ---: |
+| Work Profile | 9,097 | 9,097 |
+| Wire schema | 9,079 | 1,575 |
+| Configured and fixed Audit Rules | not injected | 7,608 |
+| Capability instructions | 3,529 | 828 |
+| Runtime context | 2,660 | 2,430 |
+
+Thus Audit bulk is primarily Profile and rules, not its wire schema. Profile
+has explicit scope/precedence, judgment/evidence, six models/limits,
+business/people, scenarios, external decision conditions and expression/privacy
+sections. It is not the repository's short seed or the current generated
+profile format, and no research appendix is present. Removing a presumed
+bibliography would not address this actual profile. A separate read-only
+review checks actual clauses against existing Skills and task metadata before
+any profile or policy change; no user-authored configuration was overwritten.
+
+Manifest `evals/trajectory_optimization/native_global_instructions.v1.json`
+records a local CLI-only reproduction. `codex debug prompt-input` with
+`project_doc_max_bytes=0` exits zero and still injects all 4,323 trimmed
+characters of the current global AGENTS file verbatim in its initial user
+message. The file contains the canonical shared-rules bootstrap. Cold matrix
+trajectories also contain the bootstrap and some Consumers read the shared
+rules afterwards. This is separate from service-owned Developer/Task assembly
+and is not visible in Settings' intentionally bounded service input preview.
+
+Official source at `cc7ba33601286a751477832b01de7b6f8de0dd9c`,
+`codex-rs/codex-home/src/instructions/mod.rs`, loads global instructions from
+the native home through its own provider. That provider accepts a home path
+and has no project-document byte budget. Installed CLI help offers no dedicated
+global-instruction switch; `--ignore-user-config` documents config.toml omission,
+not global AGENTS omission. The public configuration schema supplies no global
+provider toggle. Exact installed-source equality is not claimed, but actual
+installed prompt behavior is reproduced. Do not silently switch CLI home,
+overwrite a global bootstrap, assume an undocumented override works, or add
+another prompt rule as a substitute for a native opt-out.
+
+Independent read-only Profile/Rules review confirmed the actual authored
+profile has no evidence-ID appendix. Its scene workflows overlap existing
+message, mail, document, calendar, OA and personnel Skills. Generic root-cause
+repair/code/persistence directions also appear in the profile used by read-only
+Audit. The profile's external-decision section still prescribes numeric outcome
+thresholds, whereas current `DECISION_QUALITY_GATE_INSTRUCTIONS` expressly
+treats those scores as evidence-quality measures rather than numerical outcome
+gates. This is a confirmed instruction inconsistency, not yet a demonstrated
+cause of a specific model failure. Do not silently overwrite authored Profile
+or delete review policies based on static comparison alone.
+
+Audit Rules combine a 224-character role wrapper, 1,210-character business
+context contract, 645-character publication-scope contract, 1,676-character
+message-audience contract and 3,844-character authored rules. Their OA-specific
+rule is approximately 1,504 characters and overlaps the task's applicable OA
+Skills. Actual task `skill_names`, channel and live OA processCode/registry are
+available mapping anchors; trigger keywords are not. Before any relocation,
+the same complete rules must remain available for applicable tasks and fixed
+business comparison must show no loss of required review or audience checks.
+No production rule, Profile, tool permission or prompt was changed in this
+read-only investigation. The next evidence step is a fixed comparison using
+this actual Profile/Rules, rather than the earlier matrix's smaller frozen
+configuration, plus complete trajectories for any newly observed failure.
+
+### Actual authored Profile native recheck
+
+Manifest `evals/trajectory_optimization/current_profile_recheck.v1.json` and
+`current_profile_recheck.results.v1.json` close the earlier short-Profile fixture
+gap. Production prompts are read through the read-only prompts endpoint and
+rendered Audit Rules through public prompt-preview. Full current Profile is
+9,097 characters including its wrapper, versus the earlier fixture's 591;
+authored body is 8,803 characters. Actual Developer and User templates are frozen
+too. Personal content stays in temporary fixtures/native context, not the result
+artifact. Code assembly and actual role tool schemas remain the released version,
+with all production callbacks replaced. Skill bodies, source cases, clock, model,
+effort, timeout, concurrency and business criteria retain the frozen controls.
+
+All six cold cases and the valid same-session calendar continuation finish
+within their timeout, exit zero and parse canonically. Independent read-only
+review reads complete results and actual completed source-tool inputs/outputs
+and judges **7/7 phases pass**, including all document contradictions, no duplicate
+task or calendar response, and exact Audit revision/digest feedback. The resume
+retains `01a128c5-b4ab-7db3-bd30-e7c1165bd25c` and rereads accepted live state.
+Thirty-three direct MCP outputs contain no MCP errors; seventeen native Skill
+outputs match frozen content exactly. Two CodeMode TypeErrors are recovered.
+The calendar directory's callback log is overwritten when the resume fixture
+server starts, so cold-call evidence comes from the distinct cold stream/native
+turn rather than that current callback log.
+
+The actual Profile did not cause a wrong rejection, escalation or action in
+these samples, but their scores also satisfy its older numeric thresholds.
+No phase explicitly cited those thresholds. This does not establish that the
+thresholds never matter, resolve the static inconsistency, or validate a trimmed
+Profile. No profile/rule change or external business action was performed.
+Remaining work is a controlled candidate comparison that maps repeated task
+flows to existing applicable Skills while preserving preferences and current
+business rules, plus the independent native output-schema provider gate.
+
+### Single-contract regression assertions and Task Skill discovery scope
+
+The reported Quality run 38104147210 contained three stale prompt assertions.
+Focused reproduction failed those three assertions (33 other tests passed).
+The revised tests check the exact complete Consumer/Audit application contract
+once in the combined Developer/Task input, preserve Task source/stage assertions,
+and retain host-instruction isolation checks. Audit no longer requires a second
+identical Role Boundary section. No runtime contract or business criterion changes.
+The three files plus prompt compaction passed 42 tests; adding business Skill
+coverage passed 80 tests. This does not classify or resolve the other CI failures.
+
+The V2 Consumer project-document fixture requested a source reply but selected
+`ceo-work-tracking`, whose unchanged body is explicitly a Task Agent reader with
+`project_decisions`, `task_decisions`, `project_assessments` and no source reply.
+The candidate followed that instruction and returned `no_action`; preserve the
+original failed criterion rather than calling it a successful reply. Correct the
+fixture role/Skill binding to document review in a new comparison. Consumer
+project review does not validate Task Agent extraction.
+
+The CI Skill description now names the existing Task Agent scope and Consumer
+document/message entry points. Only frontmatter description/version changed;
+the body SHA-256 remains
+`353be24fd6c84df24f55fd8fa709adc737416ab712d8d2e902959d4851067edf`.
+The parsed-catalog regression failed with the old description and passed with
+the candidate CI asset. Independent read-only review found no relaxed business
+or permission oracle. Installed Skill publication and production load remain
+separate, unverified steps at this checkpoint.
+
+### Actual production task-specific input asymmetry
+
+Read-only inspection of task 386349 covered the complete native Consumer
+session `01a128e7-c971-7f92-abbd-8c42d920b76c` and Audit sessions
+`01a128ea-bbf8-7b21-818a-4ea84d1c6703`,
+`01a128ed-035c-7331-b050-df36d972797a`,
+`01a128ee-4c54-76d3-9b4a-78e9209cab16` (runs 25703–25708).
+Consumer received an 844-character saved task prompt including explicitly
+applicable individual requirements. All three Audit inputs omitted that text;
+the first Audit rejected a candidate's application of a requirement as unsupported
+by the generic Skill. The next feedback reversed its earlier recommended action
+order without new source facts. All 54 direct calls succeeded; identical reads
+returned unchanged source and frozen Skill content. This is input asymmetry,
+not proof of a tool-schema defect or model hallucination. The final approve
+does not prove complete-rule review or external execution.
+
+The fix passes the saved task instructions to Audit once through existing task
+sections/snapshots. It preserves every rule and does not decide a new precedence
+or inject an OA exception. The existing exact Skill-appendix separation is shared
+with Consumer; custom Skill instructions remain in the separate Skill section.
+The selected-Skill regression first failed in both generated/custom cases because
+the task requirement was absent. After fixing input assembly and using the
+existing snapshot `characters` field, 61 focused tests passed. The parallel larger
+run passed 210 other tests with 4 skips but used the earlier incorrect test-only
+snapshot field assertion; it is not recorded as an all-green run.
+
+### V3 profile comparison and production publication
+
+V3 fixes the Consumer project-document fixture's Skill binding, keeping all
+source facts and reply criteria; original V1/V2 failures remain recorded.
+Independent anonymous complete-trajectory review passed both arms 8/8, including
+true cross-midnight overlap and valid same-session continuation. The baseline
+recovered a macOS date-format failure through Python zoneinfo and an unsupported
+fixture global-AGENTS read after reading the required Audit document. These
+errors are retained in `profile_flow_index.results.v3.json`; valid JSON alone
+was not the business acceptance criterion.
+
+The approved candidate removes only the two message/calendar workflow paragraphs
+from Profile E, without a new global Skill index. Raw text is 8,803 -> 8,238;
+rendered Profile is 9,097 -> 8,532 characters (565 fewer, about 6.2 percent of
+Profile). Every other authored Profile clause, complete Audit Rules, Developer
+and User template remains unchanged. Settings save preflight matched the complete
+frozen baseline exactly; HTTP 200 plus exact raw/rendered readback confirmed the
+candidate. Personal Profile content is not copied into this repository.
+
+Formal deploy `deploy-1838189f-03ac-4d25-8da4-db3f5dbda87c` succeeded at
+2026-10-11T03:18:40Z, production 55cbecef -> fa95463f, clean checkout and
+healthz ok. A separate existing single-Skill sync published only the reviewed
+work-tracking description/version; the entire body was byte-identical. Installed
+file SHA is `1cd05b1a3589437d795001723ec5bfb332456db16f21ff79b7f23bce6af5b101`;
+actual parsed runtime discovery names the Task Agent scope. Formal restart then
+completed, main PID 6031 (first deploy PID 3023), worker load receipts had no
+error, and startup captured Skill revision 145. Managed runtime bindings remain
+configuration 18; no migration or wholesale replacement of their older revisions
+is claimed. The actual runtime discovery reads the installed tree.
+
+Final readback: processing 0, five pending Email provider actions, Attention total
+5 and History available. The deploy-specific backup receipt path was removed by
+the existing daily backup retention; retained daily backup is 412,696,576 bytes,
+`quick_check=ok`. No post-deploy Consumer/Audit role turn existed at this checkpoint,
+so deployed code/config readback is not a new-business-turn success claim.
+
+Task 386349 ended failed before this deployment, after an Audit approve and one
+System OA-comment dispatch. Readback shows a new remark near the dispatch time,
+but no exact comment identity/content receipt. The handler discards the initial
+provider response in its missing-comment-ID branch; subsequent reconciliation
+also overwrites the stored action outcome. Only one action attempt exists,
+and uncertain retries did not dispatch again. This independent external-action
+confirmation issue remains unresolved; it is not evidence that the input fix failed,
+and uncertain is not proof that the external comment was never written. No replay
+or incidental effect-reconciliation policy change was made.

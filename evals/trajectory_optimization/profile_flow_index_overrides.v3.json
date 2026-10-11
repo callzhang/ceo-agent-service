@@ -1,0 +1,104 @@
+{
+  "version": 3,
+  "criteria_overrides": {
+    "calendar-cross-midnight": {
+      "cold": [
+        "treat 2026-10-10 13:30 Asia/Shanghai as 2026-10-09 22:30 America/Los_Angeles with UTC-07:00",
+        "calendar query coverage must include the complete LA 22:30-23:30 meeting interval; any no-conflict statement must stay within actual read scope and not invent next-day facts",
+        "propose exactly one accepted response for cal-cross-midnight and no response change for cal-block-after"
+      ]
+    }
+  },
+  "additional_cases": [
+    {
+      "id": "calendar-midnight-overlap",
+      "role": "consumer",
+      "domain": "calendar",
+      "skill_name": "ceo-calendar-invite",
+      "task": "Review the live invitation cal-midnight-overlap and the relevant local schedule, then return the complete typed Consumer result for the action, if any.",
+      "trigger": {
+        "channel": "scheduled",
+        "conversation_id": "eval-calendar-conversation",
+        "conversation_title": "Synthetic calendar review",
+        "message_id": "trigger-calendar-midnight-overlap",
+        "sender": "Synthetic calendar source",
+        "text": "A new invitation requires review. Exact event id: cal-midnight-overlap.",
+        "create_time": "2026-10-08T09:55:00-07:00",
+        "raw_payload": {
+          "event_id": "cal-midnight-overlap",
+          "principal_timezone": "America/Los_Angeles",
+          "invitation_timezone": "Asia/Shanghai",
+          "participant_timezones": [
+            {
+              "participant_id": "principal",
+              "timezone": "America/Los_Angeles",
+              "source_ref": "synthetic-principal-profile",
+              "applies_on": "2026-10-09"
+            },
+            {
+              "participant_id": "principal",
+              "timezone": "America/Los_Angeles",
+              "source_ref": "synthetic-principal-profile",
+              "applies_on": "2026-10-10"
+            }
+          ]
+        }
+      },
+      "phases": {
+        "cold": {
+          "calendar_events": [
+            {
+              "event_id": "cal-midnight-overlap",
+              "title": "Customer launch decision",
+              "start_time": "2026-10-10T14:30:00+08:00",
+              "end_time": "2026-10-10T15:30:00+08:00",
+              "timezone": "Asia/Shanghai",
+              "organizer": {
+                "user_id": "organizer-midnight-overlap",
+                "verified": true
+              },
+              "principal_response_status": "needsAction",
+              "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+            },
+            {
+              "event_id": "cal-block-after",
+              "title": "Blocked",
+              "start_time": "2026-10-10T00:00:00-07:00",
+              "end_time": "2026-10-10T00:30:00-07:00",
+              "timezone": "America/Los_Angeles",
+              "organizer": {
+                "user_id": "principal",
+                "verified": true
+              },
+              "principal_response_status": "accepted",
+              "description": "Personal blocked time."
+            }
+          ]
+        }
+      },
+      "criteria": {
+        "required_tool_calls": [
+          "read_task_skill",
+          "read_dingtalk_calendar_event",
+          "list_dingtalk_calendar_events"
+        ],
+        "cold": [
+          "treat 2026-10-10 14:30-15:30 Asia/Shanghai as 2026-10-09 23:30 through 2026-10-10 00:30 America/Los_Angeles with UTC-07:00",
+          "query coverage must include the complete meeting interval across local midnight and actually retrieve cal-block-after at 00:00-00:30",
+          "recognize the real 00:00-00:30 overlap and decline cal-midnight-overlap; do not accept or tentatively accept either event",
+          "notify only verified organizer-midnight-overlap of the conflicting local-night commitment, as required by the unchanged calendar Skill"
+        ]
+      }
+    }
+  ],
+  "case_bindings": {
+    "work-tracking-existing-remediation": {
+      "id": "project-review-existing-remediation",
+      "domain": "project_document_review",
+      "skill_name": "ceo-document-review",
+      "role": "consumer",
+      "source_facts_unchanged": true,
+      "criteria_unchanged": true
+    }
+  }
+}

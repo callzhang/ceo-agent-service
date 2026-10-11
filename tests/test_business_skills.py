@@ -58,6 +58,18 @@ def test_bundled_business_skill_inventory_is_exact_and_valid():
     assert all(skill.managed_by == "ceo-agent-service" for skill in skills)
 
 
+def test_work_tracking_discovery_describes_the_existing_task_agent_role(monkeypatch):
+    monkeypatch.setenv("CEO_SKILLS_ROOT", str(Path(__file__).resolve().parents[1] / "ci" / "shared-skills"))
+    skill = next(item for item in load_bundled_business_skills() if item.name == "ceo-work-tracking")
+    assert "Task Agent" in skill.description
+    assert "Consumer" in skill.description
+    assert "ceo-document-review" in skill.description
+    assert "ceo-message-triage" in skill.description
+    assert "Do not reply to the source." in skill.content
+    assert "`project_decisions`," in skill.content
+    assert "`task_decisions`, `project_assessments`" in skill.content
+
+
 def test_ceo_mail_review_uses_immutable_email_authorization_and_metadata_only():
     skill = next(
         item for item in load_bundled_business_skills() if item.name == "ceo-mail-review"

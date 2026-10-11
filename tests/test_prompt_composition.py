@@ -51,11 +51,14 @@ def test_developer_sections_are_named_and_keep_canonical_contracts():
     }
     assert {section.name for section in audit_sections} >= {
         "角色合同", "审核规则", "系统动作目录",
-        "输出契约", "角色边界", "应用结果合同",
+        "输出契约", "应用结果合同",
         "工作人格",
     }
-    assert _CONSUMER_AGENT_RULES in render_prompt_sections(consumer_sections, placement="developer")
-    assert _AUDIT_AGENT_RULES in render_prompt_sections(audit_sections, placement="developer", omit_empty=False)
+    assert render_prompt_sections(consumer_sections, placement="developer").count(_CONSUMER_AGENT_RULES) == 1
+    assert render_prompt_sections(audit_sections, placement="developer", omit_empty=False).count(_AUDIT_AGENT_RULES) == 1
+    assert next(section.text for section in audit_sections if section.name == "应用结果合同") == _AUDIT_AGENT_RULES
+    from app.consumer_agent import AUDIT_ROLE_BOUNDARY
+    assert AUDIT_ROLE_BOUNDARY == _AUDIT_AGENT_RULES
 
 
 def test_selected_task_skills_stay_in_task_and_do_not_inject_other_flows(

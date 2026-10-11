@@ -497,6 +497,12 @@ Email worker 的汇总健康状态代替任务状态。
 切换不会中断正在进行的生命周期。缺少或校验失败的关联 Skill 会让该功能标记为配置不完整，
 并阻止它继续创建新任务；其他功能不受影响。
 
+Skill 发现描述必须对应其正文的调用角色：`ceo-work-tracking` 是 Task Agent 的
+Project/Task 结构化读取器，不回复来源；Consumer 的项目文档审阅及来源回复使用
+`ceo-document-review`，一般消息判断使用 `ceo-message-triage`。这不改变现有
+任务分类、工具权限或 Skill 正文。仓库 CI 资产与实际加载的安装资产分别验证，
+不能从 CI 文件更新推断生产已经加载新描述。
+
 ## Runtime-managed Skill 修订与启动配置
 
 Settings 不再直接编辑项目目录或 `~/.agents/skills`。每次保存会在 SQLite 中创建一条不可变的
@@ -2049,6 +2055,8 @@ Prompts 的 Developer/User/Profile 各自保留 Template 与 Rendered preview �
 Prompts 内容标题随当前查看方式显示「模板」或「渲染结果」，与所选 Developer/User/Profile 页签对应；完整运行输入仍位于独立只读「运行输入」页签。
 
 Developer Prompt 只承载适用于所有任务的角色、能力、证据、系统动作、完整 Pydantic 输出契约及共同工作原则；工作人格仍注入 Consumer 与 Audit，Audit Rules 只进入 Audit。OA、日历、消息受众、OKR、招聘和文档等专项流程由当前任务选择的 Skill 承载，不再作为全任务 Developer 规则重复注入。User Prompt 是 Consumer 的完整任务模板，必须包含恰好一个 `{{task_context}}`，仅支持普通文本和这个插槽。任务来源、定时要求、stage、反馈、既有回执及 continuation 先由服务组装成完整上下文，再填入插槽；不将旧消息块模板叠加到后台任务。Workbench、独立 WeChat、纯服务命令及 Email 退订保留各自入口和显式指令。
+
+Consumer 和 Audit 每轮 Task 输入均传入当前任务已保存的专项指令，来源为「已保存任务配置」，现有运行输入快照记录该段来源和长度。Audit 不只从候选转述推断任务规则。`task_specific_instructions` 复用 Consumer 已有的精确 Skill 附录分离逻辑；只分离已知的完整末尾附录，不截断正文或按业务关键词改写。生成发现提示不重复预载，自定义 Skill 约定仍在 Skill 段保留。没有专项指令的任务不添加空段；审核权限、规则优先级、反馈和 session 行为不变。
 
 服务组装的 Consumer/Audit Developer Prompt 不再读取或复制本机 `~/.agents/AGENT.md` 开发规则，也不注入缺失文件的占位段或旧的重读提示。业务角色、能力、输出契约和后台 Memory bootstrap 说明仍由原有代码提供；本机原生 CLI 的指令加载与开发 Agent 的 AGENTS.md 文件不在此变更范围。
 

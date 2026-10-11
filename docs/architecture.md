@@ -753,7 +753,7 @@ Skill。
 
 每个 Consumer 回合的 developer instructions 都携带八个已安装业务 Skill 的精确名称和路径，并把
 至少一次业务 Skill 读取定义为返回任何业务结论之前的协议前置条件。目录只声明可用能力，不替 Agent
-选择领域；选择仍由 A 根据完整上下文完成。目录或 wire contract 变化时会轮换旧的对话 session。
+选择领域；选择仍由 A 根据完整上下文完成。目录或 wire contract 指纹变化时更新记录并续用现有可访问的对话 session，不因指令精简清空会话。
 
 Service 也不读取正文后替 Agent 解释业务材料。它只传递 trigger、上下文、原始 process/task ID、
 链接、本地受控材料引用和可执行的精确读取命令。文档、文件夹、图片、表格、日历、听记和 OA
@@ -776,10 +776,15 @@ SQLite 继续保存既有 task/run/attempt/provider result identifier 状态；�
 | `ceo-meeting-work` | 听记、静默会、会议总结与行动项 | `dingtalk-minutes`、`dingtalk-chat` |
 | `ceo-mail-review` | 完整邮件线程审阅和回复 | `dingtalk-mail` |
 | `ceo-personnel-communication` | 人事信息的受众、可见性和最小披露 | 候选人/通讯录操作 Skill |
-| `ceo-work-tracking` | 从来源提取 Task、证据化归属/承诺、关联正式 Project 与关注事项 | Task Agent 不直接写外部 TODO；合格 Task 经 Task 7 outbox 镜像 |
+| `ceo-work-tracking` | Task Agent 从来源提取 Task、证据化归属/承诺、关联正式 Project 与关注事项；返回结构化判断，不回复来源 | Task Agent 不直接写外部 TODO；合格 Task 经 Task 7 outbox 镜像 |
 | `ceo-sales-weekly-report` | 按需核对销售目标、CRM 实际、公司及业务线进度评分并生成 workspace 周报 | `ceo-weekly-report`、`fxiaoke-crm-cli` |
 
 `ceo-sales-weekly-report` 没有独立 producer 或功能开关。它由 Consumer 根据明确的销售周报请求动态选择，直接使用安装用户已有的 `sharecrm` 登录态；CRM 只读限制由 Skill 和 Codex automatic review 约束，不表示 service 建立了 `sharecrm` 命令白名单。
+
+`ceo-work-tracking` 的发现描述与正文均限定 Task Agent 的结构化读取职责。Consumer
+审阅项目文档并回复来源时使用 `ceo-document-review`，一般消息判断使用
+`ceo-message-triage`；文档包含项目事实不改变调用角色。这是现有 Skill 职责的说明，
+不增加正文关键词路由或改变工具权限。CI 资产的描述修订不等于已安装运行资产已发布。
 
 ### 项目为中心的工作跟踪（已发布；业务验收部分完成）
 
@@ -1573,6 +1578,8 @@ Prompts 的 Developer/User/Profile 各自保留 Template 与 Rendered preview �
 不再占用 Developer/User 模板的 Rendered preview；该页没有 Template 或保存操作。
 
 Developer Prompt 只承载适用于所有任务的角色、能力、证据、系统动作、完整 Pydantic 输出契约及共同工作原则；工作人格仍注入 Consumer 与 Audit，Audit Rules 只进入 Audit。OA、日历、消息受众、OKR、招聘和文档等专项流程由当前任务选择的 Skill 承载，不再作为全任务 Developer 规则重复注入。User Prompt 是 Consumer 的完整任务模板，必须包含恰好一个 `{{task_context}}`，仅支持普通文本和这个插槽。任务来源、定时要求、stage、反馈、既有回执及 continuation 先由服务组装成完整上下文，再填入插槽；不将旧消息块模板叠加到后台任务。Workbench、独立 WeChat、纯服务命令及 Email 退订保留各自入口和显式指令。
+
+Consumer 和 Audit 的 Task 输入都携带当前任务已保存的专项指令一次。Audit 将它作为候选审核的任务要求，来源记为「已保存任务配置」；不将其放进通用 Developer，也不依赖候选转述任务规则。两者复用已有的精确 Skill 附录分离逻辑，生成的发现提示不重复预载，自定义 Skill 约定仍在独立的 Skill 段保留。此输入修复不改变业务规则、规则优先级、审核或执行权限。
 
 服务组装的 Consumer/Audit Developer Prompt 不再读取或复制本机 `~/.agents/AGENT.md` 开发规则，也不注入缺失文件的占位段或旧的重读提示。业务角色、能力、输出契约和后台 Memory bootstrap 说明仍由原有代码提供；本机原生 CLI 的指令加载与开发 Agent 的 AGENTS.md 文件不在此变更范围。
 

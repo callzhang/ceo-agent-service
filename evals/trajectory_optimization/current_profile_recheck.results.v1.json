@@ -1,0 +1,168 @@
+{
+  "manifest": "current_profile_recheck.v1.json",
+  "assembly_commit": "55cbecef890bac80784bfaf872cf0eb9d01fa8d4",
+  "configuration_characters": {
+    "developer_template": 625,
+    "developer_instructions": 625,
+    "user_template": 17,
+    "work_profile": 9097,
+    "work_profile_text": 8803,
+    "audit_rules": 7593
+  },
+  "profile_text_sha256": "21c8b79ca30f82cbfa2cbcae688c4eea6cb231a130165878752c5ccf1874cca7",
+  "accepted_runs": [
+    {
+      "arm": "actual",
+      "case": "calendar-cross-midnight",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128c5-b4ab-7db3-bd30-e7c1165bd25c",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal",
+      "independent_business_review": "pass"
+    },
+    {
+      "arm": "actual",
+      "case": "mail-already-handled",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128c6-75e4-7262-ae1b-fa5ecead5000",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_messages"
+      ],
+      "canonical_valid": true,
+      "outcome": "no_action",
+      "independent_business_review": "pass"
+    },
+    {
+      "arm": "actual",
+      "case": "calendar-real-overlap",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128c5-b4a8-7e80-9849-fb1894afd299",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal",
+      "independent_business_review": "pass"
+    },
+    {
+      "arm": "actual",
+      "case": "work-tracking-existing-remediation",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128c6-acef-76c1-a43a-76578a70e909",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal",
+      "independent_business_review": "pass"
+    },
+    {
+      "arm": "actual",
+      "case": "audit-document-feedback",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128c6-f908-7502-ba61-3e7645ec3216",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "return",
+      "independent_business_review": "pass"
+    },
+    {
+      "arm": "actual",
+      "case": "document-material-conflicts",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128c6-a9c0-7b62-833d-b98e671cd06b",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal",
+      "independent_business_review": "pass"
+    },
+    {
+      "arm": "actual",
+      "case": "calendar-cross-midnight",
+      "phase": "resume",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128c5-b4ab-7db3-bd30-e7c1165bd25c",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events"
+      ],
+      "canonical_valid": true,
+      "outcome": "no_action",
+      "independent_business_review": "pass"
+    }
+  ],
+  "technical_review": {
+    "invocations": 7,
+    "distinct_native_sessions": 6,
+    "completed_direct_MCP_outputs": 33,
+    "exact_native_skill_outputs": 17,
+    "code_mode_type_errors": 2,
+    "errors": [],
+    "configuration_sha256": {
+      "config.json": "8ba3ec41eb8875f60c334a53ab60f1c3497f655e700075449ab25d44f516c0cf",
+      "audit_rules.txt": "bf06e0eaca4a3c211fe6f83e134110d90f53a8bb16b4e02ecab6f5d44c13850a",
+      "cases.json": "9e6bb578a321cee3865c20051f47762de12710c1076b2e4fbf1c333008a192af",
+      "skills.json": "b971763de8549644bd05f30ee72c73eb881a697a7d06da61705b0888cc91905c",
+      "refs.json": "0f7f18635ec9a5061b1ac883fe0aade1a8c5a72189c9050b34d4b51d6a4b9881"
+    }
+  },
+  "business_review": {
+    "passed_phases": 7,
+    "failed_phases": 0,
+    "complete_output_and_source_review": true,
+    "scope": "Synthetic frozen sources; no production/provider action. Actual authored Profile unchanged. Scores satisfy old thresholds, so no causality or trimming improvement is established."
+  },
+  "native_evidence": "Session UUIDs refer to complete native JSONL; cold and resume outputs are distinct. Personal Profile content stays in task-owned temporary fixtures and native context, not this repository result."
+}

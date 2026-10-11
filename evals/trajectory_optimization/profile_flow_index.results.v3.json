@@ -1,0 +1,335 @@
+{
+  "version": 3,
+  "manifest": "profile_flow_index.v3.json",
+  "technical_summary": [
+    {
+      "arm": "candidate",
+      "case": "calendar-cross-midnight",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128ed-1507-7ed0-9596-2aa1da821c6b",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "baseline",
+      "case": "calendar-cross-midnight",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128ed-14dc-7171-be75-d1b9b0b0a5c1",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "candidate",
+      "case": "calendar-real-overlap",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128ed-7b2a-7571-a995-7a04e74f04a5",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_skill",
+        "read_system_action_contract",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "baseline",
+      "case": "mail-already-handled",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128ed-dae4-7582-8a23-aef603ae2c0c",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_dingtalk_messages"
+      ],
+      "canonical_valid": true,
+      "outcome": "no_action"
+    },
+    {
+      "arm": "baseline",
+      "case": "calendar-real-overlap",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128ed-6455-7c10-8e46-5c2e692be3c0",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "candidate",
+      "case": "mail-already-handled",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128ee-3109-7bc2-8533-c77ae687da4a",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_messages"
+      ],
+      "canonical_valid": true,
+      "outcome": "no_action"
+    },
+    {
+      "arm": "baseline",
+      "case": "document-material-conflicts",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128ee-3916-77a3-ba48-3de0faf622bd",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "candidate",
+      "case": "document-material-conflicts",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128ee-b981-78e0-bcef-f35448fccbdf",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "baseline",
+      "case": "project-review-existing-remediation",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128ee-e9dd-7a30-ab7e-03b078b78032",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "baseline",
+      "case": "audit-document-feedback",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128ef-a51b-7843-8a38-7b0eff318564",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract",
+        "read_text_file"
+      ],
+      "canonical_valid": true,
+      "outcome": "return"
+    },
+    {
+      "arm": "candidate",
+      "case": "project-review-existing-remediation",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128ef-6242-7971-96b2-961fd5c4a422",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "candidate",
+      "case": "audit-document-feedback",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128ef-eef7-7501-9439-b471cd75a156",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "return"
+    },
+    {
+      "arm": "candidate",
+      "case": "calendar-midnight-overlap",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128f0-33ae-7e90-9b5f-dcb39828bd06",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_skill",
+        "read_system_action_contract",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "baseline",
+      "case": "calendar-midnight-overlap",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128f0-06d3-75e0-ba77-c435aa2deb75",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract",
+        "read_system_action_contract",
+        "read_skill"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "baseline",
+      "case": "calendar-cross-midnight",
+      "phase": "resume",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128ed-14dc-7171-be75-d1b9b0b0a5c1",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events"
+      ],
+      "canonical_valid": true,
+      "outcome": "no_action"
+    },
+    {
+      "arm": "candidate",
+      "case": "calendar-cross-midnight",
+      "phase": "resume",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128ed-1507-7ed0-9596-2aa1da821c6b",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events"
+      ],
+      "canonical_valid": true,
+      "outcome": "no_action"
+    }
+  ],
+  "profile_change": {
+    "profile_characters_before": 9097,
+    "profile_characters_after": 8532,
+    "removed_characters": 565,
+    "profile_text_sha256_before": "21c8b79ca30f82cbfa2cbcae688c4eea6cb231a130165878752c5ccf1874cca7",
+    "profile_text_sha256_after": "e4be121c07ac1a7a78bc4d617579116c67125ae545864fef6426b38cdb51a93a",
+    "all_other_config_fields_unchanged": true
+  },
+  "independent_business_review": {
+    "baseline": "8/8",
+    "candidate": "8/8",
+    "both_arms_pass": [
+      "complete meeting-interval query coverage",
+      "true cross-midnight overlap decline and exact verified organizer",
+      "valid cold session and same-session no duplicate action",
+      "complete handled email thread no action",
+      "three document conflicts",
+      "Consumer project reply with existing task-auth-1",
+      "Audit revision/digest and actual document feedback"
+    ],
+    "task_agent_extraction_claimed": false,
+    "source_or_external_actions_executed": false,
+    "tool_errors_preserved": [
+      {
+        "arm": "baseline",
+        "case": "calendar-cross-midnight",
+        "error": "macOS date format error, exit1",
+        "recovery": "Python datetime/zoneinfo exit0 correct conversion"
+      },
+      {
+        "arm": "baseline",
+        "case": "audit-document-feedback",
+        "error": "read_text_file global AGENTS unsupported fixture callback",
+        "recovery": "Required doc-audit-1 already read; return feedback grounded in source"
+      }
+    ]
+  },
+  "production_candidate_published": false
+}

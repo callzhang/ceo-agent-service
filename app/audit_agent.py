@@ -158,6 +158,7 @@ class AuditAgentRunner:
             load_prompt_configuration,
             prompt_section_facts,
             render_prompt_sections,
+            task_specific_instructions,
         )
 
         configuration = load_prompt_configuration(role="audit")
@@ -255,6 +256,19 @@ class AuditAgentRunner:
                 context.render(),
             ),
         ]
+        saved_task_instructions = task_specific_instructions(
+            context.task.consumer_prompt, task_skill_protocol or "",
+        )
+        if saved_task_instructions:
+            task_sections.insert(
+                0,
+                PromptSection(
+                    "任务专项指令",
+                    "已保存任务配置",
+                    "task",
+                    "## Scheduled Consumer Prompt\n" + saved_task_instructions,
+                ),
+            )
         if correction:
             task_sections.append(
                 PromptSection(
