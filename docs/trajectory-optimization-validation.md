@@ -743,3 +743,37 @@ Pre-release readback: production checkout clean, PID 72634, health status ok,
 Status/Attention/History APIs readable. This remains pre-release evidence;
 post-deploy behavior must be recorded separately. Native output-schema PR31
 is excluded from this branch and still requires its independent provider gate.
+
+### Production release readback
+
+Formal `python -m app.deploy` operation
+`deploy-b19a9fcd-ea1f-4f63-a173-c557a603f496` succeeded, installing
+`55cbecef890bac80784bfaf872cf0eb9d01fa8d4` from production's prior `452b4d83`.
+Receipt time: `2026-10-11T02:05:01.245495+00:00`. PID changed from 72634 to
+56046; production checkout is clean and health reports ok. No manual process
+control, production source edit or output-schema publication was performed.
+
+Status, Attention and History readbacks succeed. Dispatcher queues have zero
+running/due work and business queues have zero processing. There are five
+pending email provider actions, with latest update before release, twelve
+failed counts in the queue summary and four Attention records. Current failed
+and needs_human reply-task rows were last updated before release; Attention's
+latest timestamp is `2026-10-10 09:21:24`. They remain unresolved existing work,
+not a claim that the service has no failures. The latest Consumer/Audit pair
+25701/25702 completed before the deployment receipt; no post-release role
+business result is counted by this readback.
+
+Settings current public previews are available on codex_oauth and contain the
+complete canonical role contract exactly once: Consumer Developer 32,729
+characters, Audit Developer 29,270, each with the 24-character unbound-task
+placeholder. This verifies deployed public assembly, not a submitted task or
+CLI-internal context. Full wire schema remains while native output-schema is
+disabled, so the Developer is still substantial.
+
+The receipt's pre-upgrade backup path no longer exists after the service's
+existing daily backup retention replaces earlier backups. The retained
+`auto-reply-2026-10-10.sqlite3` is 411,848,704 bytes, has the completed-backup
+application ID 1128615746 and passes read-only `quick_check=ok`. Native references
+for all twelve distinct matrix sessions remain present, and neither of the
+two task-owned matrix fixture directories has a running test process. Their
+intermediate evidence remains temporary while this investigation continues.
