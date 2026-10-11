@@ -154,7 +154,7 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-unapplied-project-retrieval-patch-handoff | docs/handoffs/unapplied-project-retrieval-patches/ (two user-provided patch artifacts only), docs/agent-claims.md (this row only) | Move two unmerged retrieval patches out of Documents/memory into the CEO Agent Service development workspace without applying, committing, or deciding whether to adopt their algorithms. | 2026-10-10 |
+| codex-unapplied-project-retrieval-patch-handoff | docs/handoffs/unapplied-project-retrieval-patches/ (two pre-sync patch artifacts only), docs/handoffs/pre-sync-artifacts.md, docs/agent-claims.md (this row only) | Moved candidates out of Documents/memory. On 2026-10-11 Derek authorized committing old pending work; preserve these as unapplied historical artifacts without deciding whether to adopt their algorithms. | done 2026-10-11 |
 
 | codex-deploy-reuse-daily-db-backup | app/repository_updater.py (deployment backup selection only), app/deploy.py (deployment behavior description only), docs/architecture.md and docs/runtime-mechanism.md (deployment backup only), docs/agent-claims.md (this row only) | Original work reconciled at Derek's request: reuse a verified backup from the preceding 24 hours; create and verify a fresh backup when none qualifies. Backup creation failures use the existing original-service recovery path. | done 2026-10-10 |
 

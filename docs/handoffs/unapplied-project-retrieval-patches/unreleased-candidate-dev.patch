@@ -1,0 +1,414 @@
+diff --git a/app/task_agent.py b/app/task_agent.py
+index 6817378b..63abe442 100644
+--- a/app/task_agent.py
++++ b/app/task_agent.py
+@@ -629,6 +629,16 @@ Apply the Skill before returning:
+   current ProjectContext whenever new facts or roles are learned. Retain unchanged
+   facts/roles with their original citations and add or update only what this source
+   establishes; do not omit prior context or cite an unrelated current message.
++  A complete snapshot does not redefine or replace the entire Project: reuse its
++  saved verified goal and scope and valid historical evidence; the current source
++  need not reprove unchanged goal, scope or ownership. Merge material new facts
++  and roles with exact current quotes into that saved context. A known active anchor
++  needs no new registration. The overall owner may remain unknown.
++  An existing Task addressing the action, retained Attention, or no new Task/Attention
++  does not excuse omitting a Project context update. Omit a context update only when
++  there are no new supported Project facts or roles. Preserve the source's distinction
++  between a goal, a target, a gate and uncertainty; do not turn a target or conditional
++  gate into an achieved result or a new Project definition.
+ - Task.project uses anchor_id or project_decision_index (index into project_decisions).
+   project_link_evidence proves a new association and requires that Project selector;
+   for a standalone Task omit both fields, and for an existing confirmed association
+@@ -3299,6 +3309,9 @@ def process_work_item(
+                     + "\n\nDecision validation rejected the previous candidate before any "
+                     "domain writes. Correct this evidence error without inventing facts: "
+                     + str(exc)
++                    + "\nPreserve original-supported Project coverage and context while correcting rejected evidence. "
++                    "Keep valid saved facts/roles and their original citations, and merge supported current facts/roles. "
++                    "Remove unsupported claims rather than inventing replacements."
+                     + "\nPrevious candidate:\n"
+                     + _json_dumps(decision)
+                 )
+diff --git a/app/task_retrieval.py b/app/task_retrieval.py
+index 50e37453..68573745 100644
+--- a/app/task_retrieval.py
++++ b/app/task_retrieval.py
+@@ -9,7 +9,7 @@ from app.store import AutoReplyStore
+ from app.task_models import WorkItem, WorkProject, WorkTodo
+ from app.task_semantic_models import (
+     AttentionStatus, BusinessAttentionItem, BusinessAttentionTask,
+-    BusinessActorKind, BusinessAnchor, BusinessProject, BusinessTask, BusinessTaskAnchorLink,
++    BusinessActorKind, BusinessAnchor, BusinessAnchorType, BusinessProject, BusinessTask, BusinessTaskAnchorLink,
+     BusinessTaskEvidence, BusinessTaskRelation, BusinessTaskSignal,
+     BusinessWorkCluster, BusinessWorkClusterTask, BusinessRelationStatus, FormalTaskBasis,
+     BusinessProjectContextRevision, BusinessProjectEvidence, SourceCitation,
+@@ -319,7 +319,18 @@ def retrieve_task_semantic_context(
+         limit=limit_per_kind,
+     )
+     linked_anchor_ids = {row.anchor_id for row in links}
+-    projects = tuple({project.id: project for project in initial_projects + tuple(project for project in all_projects if project.canonical_anchor_id in linked_anchor_ids)}.values())
++    selected_project_anchor_ids = {
++        anchor.id for anchor in anchors
++        if anchor.active and anchor.anchor_type is BusinessAnchorType.PROJECT
++        and _semantic_score(query_terms, anchor.title) > 0
++    }
++    # Deliver existing registration for matching selected Project anchors;
++    # zero-score registry padding does not expand Project context or Attention.
++    projects = tuple({project.id: project for project in (
++        initial_projects
++        + tuple(project for project in all_projects if project.canonical_anchor_id in linked_anchor_ids)
++        + tuple(project for project in all_projects if project.canonical_anchor_id in selected_project_anchor_ids)
++    )}.values())
+     project_contexts = tuple(
+         revision for project in projects
+         for revision in store.list_business_project_context_revisions(project.id, limit=1)
+diff --git a/ci/shared-skills/ceo-work-tracking/SKILL.md b/ci/shared-skills/ceo-work-tracking/SKILL.md
+index 0a368d00..d34217c9 100644
+--- a/ci/shared-skills/ceo-work-tracking/SKILL.md
++++ b/ci/shared-skills/ceo-work-tracking/SKILL.md
+@@ -3,7 +3,7 @@ name: ceo-work-tracking
+ description: Use when source context concerns business Projects, their facts, responsibilities or material risks, actual Tasks, display-only next-action suggestions, ownership, commitment, typed dates or completion. Aggregate original sources into real Project context, preserve standalone Tasks and return structured local decisions; external operations belong to their service workflows.
+ metadata:
+   managed_by: ceo-agent-service
+-  version: 5
++  version: 6
+ ---
+ 
+ # CEO Work Tracking
+@@ -96,7 +96,16 @@ to make business judgments.
+    roles' and facts' historical references when updating a snapshot. Whenever new
+    facts or roles are learned, read the saved context and return the complete current
+    snapshot, retaining prior valid items with their citations; do not return only
+-   this source's delta. Each dated fact names
++   this source's delta. A complete snapshot does not redefine or replace the entire
++   Project: reuse its saved verified goal and scope and valid historical evidence;
++   the current source need not reprove unchanged goal, scope or ownership. Merge
++   material new facts and roles with exact current quotes into that saved context.
++   A known active anchor needs no new registration. The overall owner may remain unknown.
++   An existing Task addressing the action, retained Attention, or no new Task/Attention
++   does not excuse omitting a Project context update. Omit a context update only when
++   there are no new supported Project facts or roles. Preserve the source's distinction
++   between a goal, a target, a gate and uncertainty; do not turn a target or conditional
++   gate into an achieved result or a new Project definition. Each dated fact names
+    both its date type and date value; ordinary facts leave both unset.
+    Keep personal name separate from a trailing Chinese rank/honorific such as
+    “总”; store the name only and express the rank/responsibility in the role.
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 0f734473..7db514dc 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -735,10 +735,12 @@ SQLite 继续保存既有 task/run/attempt/provider result identifier 状态；
+ 
+ ### 项目为中心的工作跟踪（已发布；业务验收部分完成）
+ 
+-2026-10-04 获批设计的代码经 PR #16/#17 发布；当前生产运行 `a385b86d`，
+-包含 2026-10-06 确认的项目 Memory 写入规则。真实生产样本已保存 4 份独立 ProjectContext，
++2026-10-04 获批设计的代码经 PR #16/#17 发布；2026-10-07 00:12 PDT 读回生产运行
++`1e3711a0`，包含项目 Memory 写入规则及既有预算内的完整证据纠错反馈。
++真实生产样本已保存 4 份独立 ProjectContext，
+ 并在没有 Task 成员时生成 2 张关注卡片；这不代表全部项目或多来源业务验收完成。
+-较新会议因不连续原文引文在领域应用阶段失败，项目身份覆盖、历史上下文补充、
++较新会议首轮因不连续原文引文失败，后续生产 run 虽 completed 但只判断会议主题。
++纠错后的真实副本已有具体项目风险判断，却仍未刷新项目上下文；项目身份覆盖、历史上下文补充、
+ 真实建议/Memory/客户关联正向读回仍有未完成项。发布记录、预期与实际及证据边界见
+ `docs/task-project-centered-validation.md` 当前状态；本节描述当前契约，不宣称所有样本通过。
+ 
+@@ -769,6 +771,13 @@ context=null 只补 Project↔Signal 关系；明确提供空分工快照才清
+ 当前 Project 读取最新 context revision，不双存可失配的 current JSON；相同结构快照不追加版本。
+ Agent 得到新事实时仍须返回完整的当前 ProjectContext 快照，带回先前有效职责、事实和出处；
+ 不能因本轮只讨论一项新风险，就把未变化资料从快照中丢掉。
++完整快照不是重定义或替换整个 Project；沿用已核实的 goal、scope 和仍有效的历史原文证据，
++当前来源不必重新证明未改变的目标、范围或负责人。已知活动 anchor 的更新不需要重新登记，
++overall_owner 可继续未知；合并当前来源支持的重要新事实和职责，并引用当前连续逐字原文。
++已有 Task 处理该行动、保留 Attention 或没有新增 Task/Attention，都不能替代 ProjectContext 更新；
++只有没有新的、有来源支持的项目事实或职责时才可不更新 context。保留来源中目标、预期指标、
++条件门槛与不确定性的区别，不把预期或条件改写成已实现结果。既有证据修正提示要求保留原文支持的
++Project 覆盖和 context，纠正被拒引文并保留有效旧证据；无依据主张可删除，不编造替代内容。
+ 仅描述“某人负责某业务领域”的职责陈述只进入 ProjectContext，不单独生成 Task/candidate；
+ Task 需要来源明确的、可独立完成的交付物或行动，或由已证实重大风险引出的独立建议下一步。
+ 正常项目序列中的例行里程碑和下一步即使写成行动句，也只记为 Project fact，不生成 Task/candidate。
+@@ -903,6 +912,11 @@ Project；原有关系即使 anchor 后来退休也仅作历史证明保留。
+ 不通过忽略外键或修改 frozen baseline 隐藏。这里没有新审批、工具白名单或风险关键词逻辑。
+ 
+ 检索先读取正式 Project 当前资料/证据，再相关 Tasks；同来源旧身份强制保留，预算先给它们。
++已选中的 active project anchor 若标题按既有查询评分大于零，且有 canonical_anchor_id 精确对应的既有正式 Project，
++一并补入真实注册记录及其现有 context/证据路径；初选和 Task 关联 Project 顺序保留，缺项按注册顺序追加去重。
++因此注册记录数可超过初选预算，但增量仅来自已选 Project anchors；不改 anchor/Task 排名和各项目证据、Attention 上限，
++新增匹配 Project 仍通过既有 Attention 读取顺序参与该上限。注册表选择的零分填充项不扩展 Project context/证据/Attention；
++非 Project、inactive、未注册 anchor 不经此路径补入，标题评分不作为正式身份依据。
+ 零 Task 项目仍可读 context、当前职责/事实证明与有界近期来源，context revision limit=1，
+ 证据有界并固定保留引用 ID。current_project_attention 保留真实卡成员和原 assessment 原文。
+ source_documents 提供精确版本的共享正文一次，source_signals 保留所有 ID/元数据并指向正文；
+diff --git a/docs/runtime-mechanism.md b/docs/runtime-mechanism.md
+index 34d02ca6..98663f54 100644
+--- a/docs/runtime-mechanism.md
++++ b/docs/runtime-mechanism.md
+@@ -264,13 +264,15 @@ Consumer 的任务改成另一个消息、日程或审批事项。Audit 返回 `
+ Audit 只反馈修改要求，不直接替换 Consumer 的业务正文。
+ ### Task Agent 的项目、任务与判断（已发布；业务验收部分完成）
+ 
+-2026-10-04 获批设计的代码经 PR #16/#17 发布；2026-10-06 22:34 PDT 读回生产为
+-`f4a889df`，包含项目 Memory 写入规则及当前来源项目引文的 bounded repair 修复。
++2026-10-04 获批设计的代码经 PR #16/#17 发布；2026-10-07 00:12 PDT 读回生产为
++`1e3711a0`，包含项目 Memory 写入规则、当前来源项目引文及原有 stored Project/Attention
++证据校验的 bounded repair 反馈；原子应用校验和纠正预算不变。
+ 生产 input `27465` / run `10690`
+ 保存了 4 份 ProjectContext 和 2 张零 Task 成员的业务关注卡片。input `27497` /
+ run `10691` 的项目引文不连续，被领域校验拒绝并回滚，原失败保留；其后的
+-run `10692` 虽 completed，但只判断会议主题，具体项目覆盖不通过。后续副本对照
+-仍有引文纠正耗尽和旧关注卡原证据声明错误，详见验证记录；不把修复发布当成业务通过。
++run `10692` 虽 completed，但只判断会议主题，具体项目覆盖不通过。后续共同修复的副本
++对照已实际纠正并保存具体项目判断，但仍为 0 个项目更新、未刷新上下文，详见验证记录；
++原纠正耗尽/旧卡原证据声明失败保留，不把修复发布当成业务通过。
+ 历史项目覆盖及近期多来源结果尚未全部达到设计预期。
+ 当前预期/实际、发布与未完成验收见 `docs/task-project-centered-validation.md`，
+ 不能把健康检查、非零关注或已发布代码单独当成全部业务效果证明。
+@@ -302,6 +304,13 @@ context=null 只补 Project↔Signal 关系；明确提供空分工快照才清
+ 当前 Project 读取最新 context revision，不双存可失配的 current JSON；相同结构快照不追加版本。
+ Agent 得到新事实时仍须返回完整的当前 ProjectContext 快照，带回先前有效职责、事实和出处；
+ 不能因本轮只讨论一项新风险，就把未变化资料从快照中丢掉。
++完整快照不是重定义或替换整个 Project；沿用已核实的 goal、scope 和仍有效的历史原文证据，
++当前来源不必重新证明未改变的目标、范围或负责人。已知活动 anchor 的更新不需要重新登记，
++overall_owner 可继续未知；合并当前来源支持的重要新事实和职责，并引用当前连续逐字原文。
++已有 Task 处理该行动、保留 Attention 或没有新增 Task/Attention，都不能替代 ProjectContext 更新；
++只有没有新的、有来源支持的项目事实或职责时才可不更新 context。保留来源中目标、预期指标、
++条件门槛与不确定性的区别，不把预期或条件改写成已实现结果。既有证据修正提示要求保留原文支持的
++Project 覆盖和 context，纠正被拒引文并保留有效旧证据；无依据主张可删除，不编造替代内容。
+ 仅描述“某人负责某业务领域”的职责陈述只进入 ProjectContext，不单独生成 Task/candidate；
+ Task 需要来源明确的、可独立完成的交付物或行动，或由已证实重大风险引出的独立建议下一步。
+ 正常项目序列中的例行里程碑和下一步即使写成行动句，也只记为 Project fact，不生成 Task/candidate。
+@@ -428,6 +437,11 @@ Project；原有关系即使 anchor 后来退休也仅作历史证明保留。
+ 不通过忽略外键或修改 frozen baseline 隐藏。这里没有新审批、工具白名单或风险关键词逻辑。
+ 
+ 检索先读取正式 Project 当前资料/证据，再相关 Tasks；同来源旧身份强制保留，预算先给它们。
++已选中的 active project anchor 若标题按既有查询评分大于零，且有 canonical_anchor_id 精确对应的既有正式 Project，
++一并补入真实注册记录及其现有 context/证据路径；初选和 Task 关联 Project 顺序保留，缺项按注册顺序追加去重。
++因此注册记录数可超过初选预算，但增量仅来自已选 Project anchors；不改 anchor/Task 排名和各项目证据、Attention 上限，
++新增匹配 Project 仍通过既有 Attention 读取顺序参与该上限。注册表选择的零分填充项不扩展 Project context/证据/Attention；
++非 Project、inactive、未注册 anchor 不经此路径补入，标题评分不作为正式身份依据。
+ 零 Task 项目仍可读 context、当前职责/事实证明与有界近期来源，context revision limit=1，
+ 证据有界并固定保留引用 ID。current_project_attention 保留真实卡成员和原 assessment 原文。
+ source_documents 提供精确版本的共享正文一次，source_signals 保留所有 ID/元数据并指向正文；
+diff --git a/tests/test_task_agent.py b/tests/test_task_agent.py
+index ba23e7a4..29ef7fbd 100644
+--- a/tests/test_task_agent.py
++++ b/tests/test_task_agent.py
+@@ -474,6 +474,22 @@ def test_independent_project_unknown_clue_is_recorded_without_fake_project_or_ta
+     )
+ 
+ 
++def test_project_context_refresh_reuses_saved_definition_independently_of_tasks():
++    prompt = " ".join(build_task_agent_prompt(
++        _independent_project_work_item(), "bounded context"
++    ).split())
++    for guidance in (
++        "A complete snapshot does not redefine or replace the entire Project",
++        "reuse its saved verified goal and scope and valid historical evidence",
++        "A known active anchor needs no new registration",
++        "The overall owner may remain unknown",
++        "An existing Task addressing the action, retained Attention, or no new Task/Attention does not excuse omitting a Project context update",
++        "Omit a context update only when there are no new supported Project facts or roles",
++        "Preserve the source's distinction between a goal, a target, a gate and uncertainty",
++    ):
++        assert guidance in prompt
++
++
+ def test_independent_project_prompt_and_skill_have_one_current_contract():
+     prompt = build_task_agent_prompt(
+         _independent_project_work_item(), "bounded context"
+@@ -2270,7 +2286,7 @@ def test_fresh_task_agent_loads_current_project_contract_from_selected_skill_roo
+     skill = fresh_agent["WORK_TRACKING_SKILL_PATH"].read_text()
+     prompt = fresh_agent["build_task_agent_prompt"](_work_item(), "无候选项目")
+     assert skill in prompt
+-    assert "version: 5" in prompt
++    assert "version: 6" in prompt
+     assert "project_decisions" in prompt
+     assert "Project can have zero Tasks" in prompt
+     assert "project_proposal" not in prompt
+@@ -2303,7 +2319,7 @@ def test_task_agent_prompt_uses_scheduled_consumer_prompt_and_targeted_skill(
+     assert "# Old Work Tracking Snapshot" not in prompt
+     assert "Return update_project with todo_changes." not in prompt
+     assert '"scheduled_task_run_id": 11' in prompt
+-    assert "version: 5" in prompt
++    assert "version: 6" in prompt
+     assert "native CLI manages compaction" in prompt
+     assert (
+         "current independent Project/Task/assessment envelope controls output" in prompt
+@@ -2914,6 +2930,8 @@ def test_process_work_item_repairs_current_project_quote_before_atomic_apply(
+     assert len(codex.calls) == 2
+     assert "current Project quote is absent" in codex.prompts[1]
+     assert "Previous candidate:" in codex.prompts[1]
++    assert "Preserve original-supported Project coverage and context while correcting rejected evidence" in codex.prompts[1]
++    assert "Remove unsupported claims rather than inventing replacements" in codex.prompts[1]
+     assert codex.calls[1]["workload_key"] == codex.calls[0]["workload_key"] + ":decision_repair.1"
+     assert len(store.list_business_projects()) == 1
+     assert store.get_work_summary_input(input_id).status.value == "done"
+diff --git a/tests/test_task_retrieval.py b/tests/test_task_retrieval.py
+index b1ace462..2265e96a 100644
+--- a/tests/test_task_retrieval.py
++++ b/tests/test_task_retrieval.py
+@@ -1,5 +1,7 @@
+ import json
+ 
++import pytest
++
+ from app.store import AutoReplyStore
+ from app.task_models import WorkItem
+ from app.task_semantic_models import AttentionStatus, BusinessTaskStage
+@@ -23,6 +25,129 @@ def _work_item(summary: str) -> WorkItem:
+     })
+ 
+ 
++def _register_context_project(store, resolver, *, ref, title, goal, signal_ids=()):
++    from app.project_context_service import ProjectContextService
++    from app.task_semantic_models import ProjectContext
++
++    anchor = resolver.register_anchor(anchor_type="project", anchor_ref=ref, title=title)
++    project = resolver.register_official_project(anchor_id=anchor, registry_source=f"registry:{ref}")
++    with store.business_task_transaction() as db:
++        ProjectContextService(store).apply(
++            project_id=project,
++            context=ProjectContext(goal=goal, scope="", overall_owner=None, responsibilities=[], facts=[]),
++            signal_ids=signal_ids, db=db,
++        )
++    return anchor, project
++
++
++def test_selected_project_anchor_delivers_exact_registry_record_outside_initial_budget(tmp_path):
++    from app.project_context_service import ProjectContextService
++    from app.task_business_resolution import BusinessResolutionService
++
++    store = AutoReplyStore(tmp_path / "anchor-registry.sqlite3")
++    resolver = BusinessResolutionService(store)
++    target_anchor, target_project = _register_context_project(
++        store, resolver, ref="p:target", title="alpha", goal="saved context",
++    )
++    initial_anchor, initial_project = _register_context_project(
++        store, resolver, ref="p:initial", title="beta", goal="alpha beta",
++    )
++    unrelated_anchor = resolver.register_anchor(anchor_type="project", anchor_ref="p:other", title="gamma")
++    unrelated_project = resolver.register_official_project(anchor_id=unrelated_anchor, registry_source="registry:other")
++    signals = [store.create_business_task_signal(
++        source_type="message", source_ref=f"proof:{i}", evidence_text=f"saved detail {i}", dedupe_key=f"proof:{i}",
++    ) for i in range(3)]
++    with store.business_task_transaction() as db:
++        ProjectContextService(store).apply(project_id=target_project, context=None, signal_ids=signals, db=db)
++
++    item = _work_item("alpha beta")
++    context = retrieve_task_semantic_context(store, item, limit_per_kind=1)
++    # Context makes beta the initial Project; alpha is the selected remaining anchor.
++    assert [row.id for row in context.anchors] == [initial_anchor, target_anchor]
++    assert [row.id for row in context.official_projects] == [initial_project, target_project]
++    assert unrelated_project not in {row.id for row in context.official_projects}
++    assert [row.project_id for row in context.project_contexts] == [initial_project, target_project]
++    assert [row.signal_id for row in context.project_evidence] == [signals[-1]]
++    assert [row.id for row in context.evidence_signals] == [signals[-1]]
++    assert context.task_candidates == context.formal_tasks == ()
++    payload = json.loads(render_task_semantic_context(context, work_item=item))
++    assert payload["official_project_registry"][1]["registry_source"] == "registry:p:target"
++    assert len(payload["source_signals"]) == 1
++    assert len(payload["source_documents"]) == 2
++
++
++@pytest.mark.parametrize("excluded_kind", ["nonproject", "inactive", "unregistered"])
++def test_selected_anchor_does_not_promote_ineligible_registry_records(tmp_path, excluded_kind):
++    from app.task_business_resolution import BusinessResolutionService
++
++    store = AutoReplyStore(tmp_path / "ineligible-anchor.sqlite3")
++    resolver = BusinessResolutionService(store)
++    target_anchor = resolver.register_anchor(
++        anchor_type="customer" if excluded_kind == "nonproject" else "project",
++        anchor_ref="a:target", title="alpha",
++    )
++    if excluded_kind == "inactive":
++        # A previously formal Project may retain a now inactive anchor.
++        with store.business_task_transaction() as db:
++            store.create_business_project_in_transaction(
++                canonical_anchor_id=target_anchor, title="alpha", registry_source="registry:target", _db=db,
++            )
++            db.execute("update business_anchors set active=0 where id=?", (target_anchor,))
++    initial_anchor, initial_project = _register_context_project(
++        store, resolver, ref="p:initial", title="beta", goal="alpha beta",
++    )
++    context = retrieve_task_semantic_context(store, _work_item("alpha beta"), limit_per_kind=1)
++    assert [row.id for row in context.anchors] == [initial_anchor, target_anchor]
++    assert [row.id for row in context.official_projects] == [initial_project]
++    assert [row.project_id for row in context.project_contexts] == [initial_project]
++    assert context.project_evidence == context.evidence_signals == ()
++
++
++def test_selected_project_registry_record_is_not_duplicated_by_initial_or_task_links(tmp_path):
++    from app.task_business_resolution import BusinessResolutionService
++
++    store = AutoReplyStore(tmp_path / "duplicate-registry.sqlite3")
++    resolver = BusinessResolutionService(store)
++    anchor, project = _register_context_project(store, resolver, ref="p:one", title="alpha", goal="alpha")
++    task = store.create_business_task(title="alpha action", stage="candidate")
++    signal = store.create_business_task_signal(
++        source_type="message", source_ref="proof:link", evidence_text="alpha action", dedupe_key="proof:link",
++    )
++    resolver.confirm_anchor_match(task_id=task, anchor_id=anchor, evidence_signal_id=signal)
++    context = retrieve_task_semantic_context(store, _work_item("alpha"), limit_per_kind=1)
++    assert [row.id for row in context.official_projects] == [project]
++    assert [row.project_id for row in context.project_contexts] == [project]
++    assert [row.id for row in context.task_candidates] == [task]
++
++
++def test_selected_zero_score_project_anchor_does_not_expand_context_or_attention(tmp_path):
++    from app.task_business_resolution import BusinessResolutionService
++
++    store = AutoReplyStore(tmp_path / "zero-score-anchor.sqlite3")
++    resolver = BusinessResolutionService(store)
++    noise_anchor, noise_project = _register_context_project(
++        store, resolver, ref="p:noise", title="gamma", goal="saved detail",
++    )
++    initial_anchor, initial_project = _register_context_project(
++        store, resolver, ref="p:initial", title="alpha", goal="alpha beta",
++    )
++    signal = store.create_business_task_signal(
++        source_type="message", source_ref="proof:noise", evidence_text="saved detail", dedupe_key="proof:noise",
++    )
++    with store.business_task_transaction() as db:
++        store.create_business_attention_item_in_transaction(
++            stable_key="noise:attention", category="watch", title="saved detail",
++            business_area="delivery", why_attention="saved detail", current_state="saved detail",
++            ceo_action="review", anchor_id=noise_anchor, evidence_signal_id=signal,
++            assessment_json=json.dumps({"inference": "saved detail"}), now="2026-10-07T00:00:00Z", _db=db,
++        )
++    context = retrieve_task_semantic_context(store, _work_item("alpha beta"), limit_per_kind=1)
++    assert [row.id for row in context.anchors] == [initial_anchor, noise_anchor]
++    assert [row.id for row in context.official_projects] == [initial_project]
++    assert noise_project not in {row.project_id for row in context.project_contexts}
++    assert context.attention_items == context.project_evidence == context.evidence_signals == ()
++
++
+ def test_project_context_without_task_is_retrieved_from_its_own_sources(tmp_path):
+     from app.project_context_service import ProjectContextService
+     from app.task_business_resolution import BusinessResolutionService
+diff --git a/tests/test_work_tracking_skill.py b/tests/test_work_tracking_skill.py
+index ffdae036..40296129 100644
+--- a/tests/test_work_tracking_skill.py
++++ b/tests/test_work_tracking_skill.py
+@@ -47,6 +47,22 @@ def test_work_tracking_skill_owns_judgment_and_delegates_only_mechanics():
+         assert forbidden not in text
+ 
+ 
++def test_candidate_skill_refreshes_context_without_redefining_project():
++    text = " ".join((ROOT / "ci/shared-skills/ceo-work-tracking/SKILL.md").read_text(
++        encoding="utf-8"
++    ).split())
++    for guidance in (
++        "A complete snapshot does not redefine or replace the entire Project",
++        "reuse its saved verified goal and scope and valid historical evidence",
++        "A known active anchor needs no new registration",
++        "The overall owner may remain unknown",
++        "An existing Task addressing the action, retained Attention, or no new Task/Attention does not excuse omitting a Project context update",
++        "Omit a context update only when there are no new supported Project facts or roles",
++        "Preserve the source's distinction between a goal, a target, a gate and uncertainty",
++    ):
++        assert guidance in text
++
++
+ def test_candidate_skill_repeats_crm_customer_citation_in_project_evidence():
+     text = (ROOT / "ci/shared-skills/ceo-work-tracking/SKILL.md").read_text(
+         encoding="utf-8"
