@@ -575,3 +575,60 @@ existing value; its regression failed before allowing that null. The automated
 complete Skill fixture now includes all three reviewed null cases, preserves
 the exact input, and remains publishable. Installed report_contract.py and
 validate_run.py hashes match the repository fixture sources used by that test.
+
+### Qwen direct transport with native output-schema control
+
+Versioned cases: `evals/trajectory_optimization/qwen_direct_schema.v1.json`.
+Current command profile `19124d8d`, existing qwen_gpu4 model/credentials,
+low effort, one cold session per arm, serial concurrency, same prompt and actual
+Audit role catalog with every production callback replaced. Only the native
+output-schema argument varies. Source marker is random and absent from prompts;
+the sole allowed source returns it. Canonical Audit parsing and terminal
+completion are necessary but insufficient: the exact read and marker are required.
+
+| Arm | Native session | Source calls | Canonical result | Exact marker |
+| --- | --- | ---: | --- | --- |
+| Schema off | `01a12856-5d3f-7163-8440-067fe82d3aae` | 1 | valid, completed | matches |
+| Minimal schema | `01a12856-8b80-7320-9f6a-40cf92157f90` | 0 | valid, completed | does not match |
+| Complete draft Audit schema | `01a12856-a680-7d23-8ce4-12392f701204` | 0 | valid, completed | does not match |
+
+All processes exited zero and no unexpected callbacks occurred. Schema-off
+has a native source function call and matching return; both schema arms contain
+no function call and fill the summary with literal marker/context text instead
+of the hidden source value. Thus those arms fail the requested source-backed
+task despite structurally valid output. Optional CLI output files were not used
+as a success criterion. Complete native trajectories were read.
+
+This confirms that the direct namespace repair does not resolve the configured
+Qwen native tool-plus-output-schema gate. Failure also occurs with the minimal
+schema, so changing the full business schema alone is not established as a repair.
+Underlying provider grammar causality remains a hypothesis without the actual
+request/server parser evidence; the earlier isolated upstream grammar result is
+not a served-model acceptance result. No provider configuration or service code
+was changed and no real Audit/business action was performed.
+
+Independent read-only review verified all three complete native trajectories,
+the 37-tool catalogs, identical hidden-source files, canonical parsing and
+callback counts. The output-schema flag follows the saved harness and native
+runner code; process argv was not captured by native session JSONL. The full
+schema is reproducible from immutable Git commit
+`3a4942a8a7c45a0aaccc01b233b499eaf1ae2eb1` at
+`app/schemas/audit_agent_native_output.schema.json`, with SHA recorded in the
+manifest. It is not claimed to exist in this current checkout. Written prompts
+are identical; auto-injected environment text differs slightly with each arm's
+temporary cwd. No matching resume gate is counted for the failed schema arms.
+
+### Actual session reuse and repeated Task contract inventory
+
+Production sessions `01a12734-cf45-79b2-96cf-6c5cebde7388` (three turns),
+`01a12739-9d46-7e12-b361-ec5517f12421` (two turns) and
+`01a1251c-4d03-7160-903b-aae3dd549109` (seven turns) each inject the initial
+service Developer once and continue Task messages in the same native session.
+Their initial Developer texts are 32,843/32,843/32,940 characters. It is false
+to multiply that initial text by the number of turns as duplicate injection.
+Consumer context.render does, however, repeat the exact 891-character
+Application Result Contract already present in Consumer Developer; Audit uses
+the analogous 2,546-character contract. This is a confirmed instruction assembly
+duplication, not permission to remove current facts, Skill entries or feedback.
+The current runtime explicitly disables native output-schema, so the Developer's
+wire schema remains necessary until the independent native schema gate is closed.

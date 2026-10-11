@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "route": "qwen_gpu4",
+  "target_ref": "19124d8d",
+  "schema_ref": "codex/native-output-schema:app/schemas/audit_agent_native_output.schema.json",
+  "schema_source": "git object; reconstruct with git show <schema_commit>:app/schemas/audit_agent_native_output.schema.json, not a file in the current checkout",
+  "schema_commit": "3a4942a8a7c45a0aaccc01b233b499eaf1ae2eb1",
+  "schema_sha256": "d328078ce53eb8189a495dfd8f83855135caa6a135691a8c0f18373881a3a1de",
+  "model": "existing configured model",
+  "reasoning_effort": "low",
+  "timeout_seconds": 90,
+  "concurrency": 1,
+  "cases": ["schema_off", "schema_minimal", "schema_full_audit"],
+  "same_conditions": "Same anonymous Audit prompt, actual role catalog with stubbed callbacks, native direct agent_cli profile and hidden source nonce. Only output-schema argument changes.",
+  "acceptance": "Exactly one read_dingtalk_messages_in_window source callback, zero other callbacks, terminal valid canonical Audit result whose summary equals the nonce. Output file absence is not failure; parse native stdout. Full native trajectory required."
+}
