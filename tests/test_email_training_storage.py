@@ -129,8 +129,9 @@ def test_training_storage_migrates_latest_complete_legacy_snapshot(tmp_path, cor
             db.execute("update email_training_snapshot_observations "
                        "set ordered_record_digest=? where snapshot_id='new'", ("0" * 64,))
             db.execute(email_store_module._REQUIRED_TRIGGER_SQL["trg_email_training_observations_immutable_update"])
-        db.execute("delete from email_schema_migrations where version=46")
+        db.execute("delete from email_schema_migrations where version>45")
         db.execute("insert into email_schema_migrations(version, applied_at) values (45, '2026-10-09T00:00:00+00:00')")
+        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == 45
     for file in (tmp_path / "legacy-training-data").glob("*.json"):
         file.unlink()
     migrated = EmailStore(path)
@@ -208,11 +209,12 @@ def test_training_migration_retains_latest_complete_snapshot_per_type(tmp_path):
         db.execute(email_store_module._REQUIRED_TRIGGER_SQL[
             "trg_email_training_snapshots_immutable_update"
         ])
-        db.execute("delete from email_schema_migrations where version=46")
+        db.execute("delete from email_schema_migrations where version>45")
         db.execute(
             "insert into email_schema_migrations(version, applied_at) "
             "values (45, '2026-10-09T00:00:00+00:00')"
         )
+        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == 45
     for file in (tmp_path / "legacy-both-types-training-data").glob("*.json"):
         file.unlink()
 
