@@ -27,4 +27,10 @@ Temporary copies contain working validation data only and are removed after acce
 
 ## Live deployment
 
-Pending formal app.deploy and production readback.
+Normal updated `python -m app.deploy` completed:21bfe750→f7ada916. No quiet bypass was used. An initial tool execution was interrupted before checkout; retry waited for a normal quiet window and finished successfully. Actual installed commit is verified by production HEAD and deploy completion, including the concurrent History fixes that landed on main during this work.
+
+PID75090→58988; Email schema49; action_plan_json column absent;8,487 classifications and zero missing current-plan references. quick_check ok and the one pre-existing FK orphan unchanged. healthz, Status, Attention, History and Email classifications all HTTP200. No new failed IDs in reply_tasks, email_agent_classification_tasks, email_actions or agent_runtime_attempts compared with pre-deploy evidence.
+
+Live SQLite file414,822,400 bytes; freelist3,094 before→4,851 at readback; WAL35,782,232 bytes. The file has not been compacted; freed internal pages are available for reuse. These live observations include normal intervening writes; the consistent-copy figures isolate schema migration behavior. Latest retained backup:exactly one SQLite backup, schema49, verified-complete marker and quick_check ok.
+
+The13 tests covering the concurrent Task Skill merge passed separately; they are additional to this phase's650 cases. History changes have their own committed validation report. Acceptance publication is documentation-only; production runtime remainsf7ada916.

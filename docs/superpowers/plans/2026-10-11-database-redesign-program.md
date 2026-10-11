@@ -37,7 +37,7 @@
 
 1. 每阶段使用 SQLite backup API 创建一致副本，不复制 native trajectory。副本需 quick_check/integrity/FK 和业务结果核对；保留该流程最新已验证备份。
 2. 演练不调用外部 provider、不 enqueue Agent、不回放既有任务。准确 source_ref/版本或 native range 缺失，明确报告不可用，不伪造来源。
-3. DDL、schema validator、读写 DAO、直接 SQL 读取者和测试同一版本切换。不可将旧代码启动在新 schema 上；恢复需代码与 DB 配对。当前 repository_updater 的异常回退恢复代码但没有恢复 DB schema，此边界已在源码核实；带版本变化的部署必须先补齐明确的配对回退计划与演练，不能仅凭 backup_path 存在宣称可回退。
+3. DDL、schema validator、读写 DAO、直接 SQL 读取者和测试同一版本切换。不可将旧代码启动在新 schema 上；恢复需代码与 DB 配对。设计基线时 repository_updater 的异常回退尚未配对 DB schema。第1/2期已分别验证47→48索引逆迁和48→49缓存列逆迁；后续版本变化仍需各自明确的配对回退计划与演练，不能仅凭 backup_path 或前一期逆迁存在宣称可回退。
 4. 生产产生新动作回执后，禁止用旧 DB 快照回滚覆盖新回执。需保持幂等事实的兼容逆迁或前向修复。
 5. 部署沿用 python -m app.deploy 和现有 mutex/quiet 等流程。只有需要新文件/schema 切换时才修改部署实现，并单独测试；不假设现部署已经支持完整重构。
 6. VACUUM 是独立回收步骤，在验收后的安静窗口进行。DROP INDEX 后通常只增 freelist，不宣称实际文件已经缩小。
@@ -45,3 +45,7 @@
 ## 文档
 
 已确认结构与原基线保存在 docs/superpowers/specs/2026-10-11-database-redesign-design.md 及同前缀 inventory/field-map/schema-baseline。每一期行为代码提交同时更新 docs/architecture.md 和 docs/runtime-mechanism.md，区分当前行为与未来已批准方向。文档计划提交不宣称迁移、测试、部署或空间回收完成。
+
+## Current acceptance
+
+第1期索引精简和第2期 current-plan 指针读取已上线，当前生产f7ada916/Email schema49。第2期650项定向测试、149表副本/逆迁/实际旧48启动及生产读回完成，见 docs/storage-phase2-validation.md。后续第3期起仍需先核对最新生产与读者依赖，分别制定逐任务计划；未实施表合并或新增保留期限。
