@@ -3450,8 +3450,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                        ) as summary,
                        updated_at, error
                 from email_agent_classification_tasks
-                where task_id in (
-                    select task_id from email_agent_classification_tasks
+                where rowid in (
+                    select rowid from email_agent_classification_tasks
                     where lower(status)='failed'
                 )
                 order by updated_at desc, task_id desc

@@ -28,6 +28,11 @@ def test_email_attention_reads_payloads_only_for_failed_ids(tmp_path):
             ("failed-id", "FAILED", '{"message":{"subject":"failed subject"}}',
              "stable-id", "2026-10-11", "provider failed", "", ""),
         )
+        db.execute(
+            "insert into email_agent_classification_tasks values (?,?,?,?,?,?,?,?)",
+            (None, "failed", '{"message":{"subject":"nullable identity"}}',
+             "nullable-stable-id", "2026-10-12", "nullable error", "", ""),
+        )
     plans = []
 
     class Connection(sqlite3.Connection):
@@ -55,7 +60,13 @@ def test_email_attention_reads_payloads_only_for_failed_ids(tmp_path):
     with store.read_snapshot():
         rows = _queue_attention_rows(store)
     assert [(row["id"], row["summary"], row["error"]) for row in rows] == [
+        ("None", "nullable identity", "nullable error"),
         ("failed-id", "failed subject", "provider failed")
+    ]
+    with store.read_snapshot():
+        limited = _queue_attention_rows(store, limit=1)
+    assert [(row["id"], row["summary"]) for row in limited] == [
+        ("None", "nullable identity")
     ]
     assert any("USING COVERING INDEX idx_email_agent_classification_tasks_status" in p
                for p in plans)
