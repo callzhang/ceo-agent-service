@@ -14384,10 +14384,15 @@ def test_single_chat_recovery_requeues_revised_pending_calendar_card(
     assert recovered.execution_generation != before.execution_generation
     assert recovered.input_version == before.input_version + 1
     inputs = worker.store.list_reply_task_inputs(task_id)
-    assert [item["trigger_text"] for item in inputs] == [
-        original.content,
-        revised.content,
-    ]
+    assert len(inputs) == 2
+    assert inputs[0]["input_compacted"] == 1
+    assert inputs[0]["trigger_text"] == ""
+    assert json.loads(inputs[0]["input_provenance_json"])["trigger_text"] == {
+        "sha256": hashlib.sha256(original.content.encode("utf-8")).hexdigest(),
+        "bytes": len(original.content.encode("utf-8")),
+    }
+    assert inputs[1]["input_compacted"] == 0
+    assert inputs[1]["trigger_text"] == revised.content
     assert inputs[0]["input_revision_key"] == ""
     assert inputs[1]["input_revision_key"]
     assert worker.produce_once(recovery=True) == 0
@@ -14477,7 +14482,11 @@ def test_single_chat_recovery_does_not_requeue_resolved_calendar_card(
     unchanged = worker.store.get_reply_task(task_id)
     assert unchanged is not None
     assert unchanged.status == "done"
-    assert unchanged.trigger_text == original.content
+    assert unchanged.input_compacted and unchanged.trigger_text == ""
+    assert json.loads(unchanged.input_provenance_json)["trigger_text"] == {
+        "sha256": hashlib.sha256(original.content.encode("utf-8")).hexdigest(),
+        "bytes": len(original.content.encode("utf-8")),
+    }
 
 
 def test_single_chat_recovery_does_not_coalesce_across_current_user_context(
@@ -15937,9 +15946,18 @@ def test_group_mentions_are_processed_by_message_time_not_fetch_order(
     assert len(agent_runner(worker).calls) == 1
     assert len(attempts) == 1
     assert attempts[0].trigger_message_id == "msg-newer-mention"
-    assert (
-        attempts[0].trigger_text == "@Alex Chen(明哥) 明哥请审一下这个文档，给一下意见"
-    )
+    assert attempts[0].trigger_text == ""
+    provenance = json.loads(attempts[0].trigger_text_provenance_json)
+    assert {key: provenance[key] for key in ("sha256", "bytes")} == {
+        "sha256": hashlib.sha256(newer_mention.content.encode("utf-8")).hexdigest(),
+        "bytes": len(newer_mention.content.encode("utf-8")),
+    }
+    settled_task = worker.store.get_reply_task(provenance["reply_task_id"])
+    assert settled_task is not None
+    assert settled_task.trigger_message_id == newer_mention.open_message_id
+    assert provenance["matching_input_id"] in {
+        item["id"] for item in worker.store.list_reply_task_inputs(settled_task.id)
+    }
 
 
 def test_current_user_file_does_not_hide_unanswered_group_mention(

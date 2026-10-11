@@ -6,6 +6,8 @@ finish idempotently after its historical input has been compacted. This read use
 the existing candidate, Audit, and System receipt state machine and dispatches
 no action. Nonterminal generations still require complete validated context and
 the ordinary source reread before any new Agent turn or controlled execution.
+Settled-input assertions use exact original UTF-8 hashes and byte counts plus
+stable task/input lineage; a revised pending input must still retain its body.
 
 Attention selects failed email classification task IDs from the existing compact
 status index before reading task payloads. Physical row IDs preserve nullable
