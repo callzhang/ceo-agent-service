@@ -201,6 +201,7 @@ def test_existing_card_assessment_replay_is_idempotent_with_actual_ids(
         input_id,
         source_ref=case["work_item"]["source"]["ref"],
         expected=case["expected"],
+        source_payload=WorkItem.model_validate(case["work_item"]).model_dump_json(),
     )
     assert first["passed"], {
         "failures": first["failures"],
@@ -236,6 +237,32 @@ def test_existing_card_assessment_replay_is_idempotent_with_actual_ids(
     assert domain_snapshot() == after_first_domain
 
 
+def test_compacted_replay_requires_verified_source_before_state_change(tmp_path):
+    tool = evaluation_tool()
+    store = AutoReplyStore(tmp_path / "compacted.sqlite3")
+    item = report_item()
+    target = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json()
+    )
+    store.mark_work_summary_input_done(target)
+    before = store.get_work_summary_input(target)
+    with pytest.raises(ValueError, match="source payload"):
+        tool.replay_input(store, None, target, source_ref=item.source.ref)
+    assert store.get_work_summary_input(target) == before
+    altered = item.model_copy(update={"summary": "Changed original content"})
+    with pytest.raises(ValueError, match="digest"):
+        tool.readback(
+            store, input_id=target, before=tool.read_domain(store),
+            source_payload=altered.model_dump_json(),
+        )
+    with pytest.raises(ValueError, match="digest"):
+        tool.replay_input(
+            store, None, target, source_ref=item.source.ref,
+            source_payload=altered.model_dump_json(),
+        )
+    assert store.get_work_summary_input(target) == before
+
+
 def test_evaluation_replays_exact_input_without_claiming_pending_or_rewriting_runs(
     tmp_path,
 ):
@@ -266,12 +293,18 @@ def test_evaluation_replays_exact_input_without_claiming_pending_or_rewriting_ru
     from app.task_agent import TaskAgentRunner
 
     runner = tool.scoped_runner(TaskAgentRunner, Codex())
-    result = tool.replay_input(store, runner, target, source_ref=item.source.ref)
+    result = tool.replay_input(
+        store, runner, target, source_ref=item.source.ref,
+        source_payload=item.model_dump_json(),
+    )
     assert result["input_status"] == "done"
     assert result["proposal_count"] == 1
     assert result["persisted_attention_count"] == 1
     assert result["evidence_valid"] is True
-    replay = tool.replay_input(store, runner, target, source_ref=item.source.ref)
+    replay = tool.replay_input(
+        store, runner, target, source_ref=item.source.ref,
+        source_payload=item.model_dump_json(),
+    )
     assert replay["cards"][0]["id"] == result["cards"][0]["id"]
     assert replay["changes"]["tasks"]["created_ids"] == []
     assert replay["changes"]["projects"]["created_ids"] == []

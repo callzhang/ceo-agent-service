@@ -419,9 +419,11 @@ def _assessment_evidence_matches(actual, *, required, alternatives):
     )
 
 
-def readback(store, *, input_id, before, expected=None, project_before=None):
+def readback(store, *, input_id, before, expected=None, project_before=None, source_payload=None):
     from app.native_standalone import latest_task_ref, task_decision_value
 
+    if source_payload is not None:
+        _verified_replay_payload(store.get_work_summary_input(input_id), source_payload)
     capabilities = comparison_capabilities(store)
     after = read_domain(store)
     with store._connect() as db:
@@ -669,7 +671,8 @@ def readback(store, *, input_id, before, expected=None, project_before=None):
                 store.get_work_summary_input(input_id) if input_id is not None else None
             )
             work_item = (
-                json.loads(input_row.payload_json) if input_row is not None else {}
+                json.loads(source_payload if source_payload is not None else input_row.payload_json)
+                if input_row is not None else {}
             )
             source = work_item.get("source", {})
             source_text = work_item.get("summary", "")
@@ -916,15 +919,38 @@ def readback(store, *, input_id, before, expected=None, project_before=None):
     }
 
 
-def replay_input(store, runner, input_id, *, source_ref, expected=None):
+def _verified_replay_payload(item, source_payload):
+    from app.task_models import WorkItem
+
+    if item is None:
+        raise ValueError("source payload has no bound input")
+    if item.body_compacted and source_payload is None:
+        raise ValueError("compacted replay requires the exact original source payload")
+    payload = item.payload_json if source_payload is None else source_payload
+    original = WorkItem.model_validate_json(payload)
+    if original.source.ref != item.source_ref or original.source.type != item.source_type:
+        raise ValueError("source payload identity does not match fixed input")
+    if item.body_compacted:
+        encoded = payload.encode("utf-8")
+        if (hashlib.sha256(encoded).hexdigest() != item.body_sha256
+                or len(encoded) != item.body_bytes):
+            raise ValueError("source payload digest does not match retired original")
+    elif payload != item.payload_json:
+        raise ValueError("source payload digest does not match active original")
+    return payload
+
+
+def replay_input(store, runner, input_id, *, source_ref, expected=None, source_payload=None):
     from app.task_agent import process_work_item
     from app.task_agent_session import TaskAgentSessionLease
 
+    require_copy(store.path)
     item = store.get_work_summary_input(input_id)
     if item is None or item.source_ref != source_ref:
         raise ValueError("input missing or source_ref does not match fixed source")
     if item.status not in ("pending", "done", "skipped", "failed"):
         raise ValueError("input is already processing")
+    payload = _verified_replay_payload(item, source_payload)
     lease = TaskAgentSessionLease.try_acquire(store)
     if lease is None:
         raise RuntimeError("database-copy Task Agent session lease is occupied")
@@ -935,10 +961,16 @@ def replay_input(store, runner, input_id, *, source_ref, expected=None):
     with lease:
         lease.assert_owned()
         with store._connect() as db:
-            db.execute(
-                "update work_summary_inputs set status='processing', error='', available_at='', updated_at=current_timestamp where id=?",
-                (input_id,),
-            )
+            updated = db.execute(
+                "update work_summary_inputs set status='processing', error='', available_at='', "
+                "payload_json=?, body_compacted=0, updated_at=current_timestamp "
+                "where id=? and source_type=? and source_ref=? and status=? "
+                "and body_compacted=? and body_sha256=? and body_bytes=? and payload_json=?",
+                (payload, input_id, item.source_type.value, item.source_ref, item.status.value,
+                 item.body_compacted, item.body_sha256, item.body_bytes, item.payload_json),
+            ).rowcount
+            if updated != 1:
+                raise ValueError("input changed before exact replay")
         try:
             process_work_item(
                 store,
@@ -949,7 +981,10 @@ def replay_input(store, runner, input_id, *, source_ref, expected=None):
         except Exception as exc:
             # Failed model/schema turns are comparison evidence, never normalized.
             error = f"{type(exc).__name__}: {exc}"
-    result = readback(store, input_id=input_id, before=before, expected=expected, project_before=project_before)
+    result = readback(
+        store, input_id=input_id, before=before, expected=expected,
+        project_before=project_before, source_payload=payload,
+    )
     result["context_deliveries"] = getattr(runner, "context_deliveries", [])[delivery_start:]
     if error is not None:
         result["execution_error"] = error
@@ -961,6 +996,7 @@ def replay_case(store, runner, case):
     """Each original version is enqueued immediately before its existing turn."""
     from app.task_models import WorkItem
 
+    require_copy(store.path)
     inputs = case["source_inputs"] if "source_inputs" in case else [case["work_item"]]
     if not inputs or inputs[-1] != case["work_item"]:
         raise ValueError("source_inputs must end with the fixed work_item")
@@ -968,14 +1004,35 @@ def replay_case(store, runner, case):
     initial_project = domain_snapshot(store)
     steps = []
     seen = set()
+    prior_sources = {}
     for index, raw in enumerate(inputs):
         item = WorkItem.model_validate(raw)
         before_repeat = domain_snapshot(store)
         key = item.model_dump_json()
+        source_key = (item.source.type.value, item.source.ref)
+        prior = prior_sources.get(source_key)
+        if prior is not None and prior[1] != key:
+            prior_id, prior_payload = prior
+            encoded = key.encode("utf-8")
+            with store._connect() as db:
+                changed = db.execute(
+                    "update work_summary_inputs set status='pending', payload_json=?, "
+                    "body_compacted=0, body_sha256=?, body_bytes=?, source_created_at=?, "
+                    "error='', available_at='' where id=? and status in ('done','skipped') "
+                    "and source_type=? and source_ref=? and body_sha256=?",
+                    (key, hashlib.sha256(encoded).hexdigest(), len(encoded),
+                     str(item.source.created_at), prior_id, *source_key,
+                     hashlib.sha256(prior_payload.encode("utf-8")).hexdigest()),
+                ).rowcount
+                if changed != 1:
+                    raise ValueError("fixed source version changed before next replay turn")
         input_id = seed_case(store, {**case, "work_item": raw}) if index == 0 else store.enqueue_work_summary_input(
             item.source.type.value, item.source.ref, item.model_dump_json()
         )
-        step = replay_input(store, runner, input_id, source_ref=item.source.ref)
+        step = replay_input(
+            store, runner, input_id, source_ref=item.source.ref,
+            source_payload=item.model_dump_json(),
+        )
         step.update(source_ref=item.source.ref, source_time=item.source.created_at)
         if key in seen and case["expected"].get("repeat_domain_unchanged") and domain_snapshot(store) != before_repeat:
             step["failures"].append("repeat_domain_changed")
@@ -984,8 +1041,12 @@ def replay_case(store, runner, case):
         seen.add(key)
         if step.get("execution_error") or step["run_status"] != "completed" or "projection_not_successful" in step["failures"]:
             break
+        prior_sources[source_key] = (input_id, key)
     expected = {key: value for key, value in case["expected"].items() if key != "repeat_domain_unchanged"}
-    result = readback(store, input_id=input_id, before=initial, expected=expected, project_before=initial_project)
+    result = readback(
+        store, input_id=input_id, before=initial, expected=expected,
+        project_before=initial_project, source_payload=item.model_dump_json(),
+    )
     result["source_steps"] = steps
     if len(steps) != len(inputs) or any(not step["passed"] for step in steps):
         incomplete = ["source_sequence_incomplete"] if len(steps) != len(inputs) else []
@@ -1010,6 +1071,8 @@ def main():
         "--code-root", type=Path, default=Path(__file__).resolve().parents[1]
     )
     parser.add_argument("--source-ref", default=W39_SOURCE_REF)
+    parser.add_argument("--source-payload", type=Path,
+                        help="exact original UTF-8 WorkItem payload for a compacted input")
     args = parser.parse_args()
     sys.path.insert(0, str(args.code_root.resolve()))
     from app.config import load_env_file, workspace_path
@@ -1060,7 +1123,9 @@ def main():
         TaskAgentRunner, TaskAgentCodexRunner(routed_execution=routed)
     )
     result = replay_case(store, runner, case) if args.case_id else replay_input(
-        store, runner, input_id, source_ref=source_ref, expected=expected
+        store, runner, input_id, source_ref=source_ref, expected=expected,
+        source_payload=(args.source_payload.read_text(encoding="utf-8")
+                        if args.source_payload is not None else None),
     )
     result.update(
         case_id=args.case_id,

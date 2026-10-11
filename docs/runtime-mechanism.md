@@ -1,5 +1,13 @@
 # Current Runtime Mechanism
 
+The isolated Task replay tool accepts `--source-payload` for a retired work
+input. It verifies the exact original UTF-8 hash, byte length and source identity
+before taking a lease or changing input status, then uses that same verified
+source for execution and evidence readback. Missing or changed material is
+rejected without changing the input. Frozen multi-version cases advance only
+after the preceding turn completes and compare-and-swap its prior source hash;
+this is a database-copy evaluation operation, not a production semantic import.
+
 Reply consumption reads the current generation's persisted orchestration terminal
 result before parsing its trigger input. A completed generation can therefore
 finish idempotently after its historical input has been compacted. This read uses
