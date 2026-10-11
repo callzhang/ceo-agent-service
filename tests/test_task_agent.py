@@ -2105,6 +2105,9 @@ def test_task_agent_existing_project_link_contract_is_distinct_from_registration
     assert "cites the decision index only" in text
     assert "current null-ID evidence" in text
     assert "Prefer one suggestion for one material Project risk" in text
+    assert "sequentially dependent next steps" in text
+    assert "nearest blocking outcome" in text
+    assert "A Task title must include the decisive unresolved Project outcome" in text
     assert (
         "Do not use `anchor_id` when a matching `project_decisions` entry exists"
         in text

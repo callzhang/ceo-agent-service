@@ -1,5 +1,83 @@
 # Project-centered work validation
 
+## Finalization integration on refreshed main: 2026-10-10
+
+The release candidate includes the versioned same-report-item identity slice and
+the dependent-risk suggestion guidance. It was integrated onto origin/main
+`36e42c17`, preserving main's session-bound repair continuation. It excludes
+the optional two-stage evaluator and the general capability-probe configuration
+changes, which remain saved in development commit `13d24e94`.
+
+Focused verification on this integrated candidate:
+`pytest -q tests/test_task_report_item_identity.py tests/test_task_agent.py tests/test_work_tracking_skill.py tests/test_task_agent_runtime_repair.py tests/test_task_models.py tests/test_task_semantic_rules.py`
+completed **414 passed** in 13.97 seconds. Ruff passed for the changed Task
+Python modules and tests; `git diff --check` passed. These checks do not execute
+a native model, merge production duplicates, or demonstrate deployment.
+
+## 最新生产读回与重复 Task 证据：2026-10-10 01:56 PDT（只读）
+
+已从当前生产 checkout 只读确认版本 `6b01a3c7`，`/healthz` 返回 ok。同一时间窗口的
+Tasks API 快照：32 个 Project、484 个 Task、7 条业务 Attention。Project #37
+“Subway 数据中台项目”有明确目标和非空 `attention_reason`，但 `overall_owner`、
+`overall_responsibility`、`responsible_content` 仍为空；API 显示 6 个 open/confirmed
+Tasks。故“项目已被概括”和“已有关注卡”并不代表负责字段完成。
+
+生产中 #208、#286、#361、#397、#430 是相同 Subway 商务立项、同一命名负责人 Claire
+Huang(Claire)、均 open 且 assigned_unaccepted 的五条记录。只读 SQLite 证据检查显示
+#286/#361/#397/#430 的 Assignment Signal 来自同一个稳定 DingTalk 周报节点
+`YMyQA2dXW7xZQ1yqs1BOo5p6VzlwrZgb` 的不同版本；#397 保存的 owner-evidence 版本比
+Assignment Signal 更早，但对应旧版本 Signal 仍关联在该 Task。四个 Task 的来源及
+owner-evidence 引用正文中，该事项行都经 `markdown` 字段解包、各自 SHA-256 核验后
+恰好出现一次。#208 来自另一份周报节点 `amweZ92PV6xpLPY5sqP1nw1R8xEKBD6p`，因此
+不能仅凭标题和负责人相同就并入该组。生产五条记录均没有非空人员 user ID。
+
+这一证据确认了一个可安全提案的最小合并簇（#286/#361/#397/#430），并证实 source body
+在生产库实际以 JSON 报告包装存储、Markdown 位于 `markdown` 字段。对应本地隔离实现已
+补充解包，并用与真实存储格式相同的版本化引用、唯一事项行和空 user ID 回归验证；本地
+真实事务测试确认源 Task 成为 merged、目标 Task 的标题/负责人/原有证据保留，并覆盖
+owner-evidence 指向同文档较早版本、该版本 Signal 仍关联 Task 的情形。随后用同一只读
+validator 直接核验生产行：四条同节点记录的 6 种 pairwise 配对全部通过，跨节点
+#208→#286 被拒绝。这里只是身份资格验证，不执行任何 merge；没有修改生产 Task、
+Signal、项目字段或关注卡，也没有部署本地改动。仍需满足业务评测与发布流程后才能对
+线上做合并或负责人回填。
+
+## 周报事项身份的严格合并条件：2026-10-10（隔离开发验证，未发布）
+
+在当前 `origin/main` 的干净集成分支上，为“同一周报行、同一负责人”的重复 Task
+合并增加可验证的身份依据。只有两条来源引用都带版本 SHA-256、指向同一稳定 DingTalk
+文档节点；双方保存的负责人证据逐字指向各自完整正文中唯一出现的同一事项行；且
+Task 与证据中的负责人姓名一致、非空用户 ID 不冲突，才允许合并。项目名/Task 标题
+相似度、跨文档同名事项、同文档不同事项行、重复歧义行、无版本引用和负责人冲突均
+不能通过该身份规则。Workshop 等不同交付事项保持分开。
+
+新增真实临时 Store 应用测试 10 项，覆盖一条正向合并及多类证据不足拒绝，包括任务来源或
+负责人证明版本摘要不匹配；连同 Task Agent、模型、语义规则、语义服务及 Skill 回归共
+477 项通过，Ruff 与 diff check 通过。这仅证明身份规则与隔离存储写入契约，不证明原生
+Agent 在完整真实上下文中会提出正确合并，也不证明当前生产重复记录已修复；没有生产
+写入、数据迁移、部署或 API 回放。
+
+`v36` 原生对照判为无效，不用于 A-only 优劣结论：实际路由回退到 Claude/Sonnet，
+且未读取 `/transcript_paragraphs`。已查明临时 Codex workspace 缺少可信 Git 元数据且
+runner 未传 `--skip-git-repo-check`，因此触发 fallback。后续 `v38` 已锁定 Codex，
+但读取的是会议摘要、Projects/Tasks 等部分接口，仍没有逐字稿完整段落回执；`v39`
+trajectory 仅见 Skill 读取和最终输出，没有任何逐字稿段落接口调用。两者均不能证明
+模型读过完整原文，也不能作为输入覆盖修复有效的对照。
+
+本轮只读预检在原冻结输入上实际读取 `/transcript_paragraphs`：962 段索引连续
+`[0]..[961]`，82,151 字符、21 个区间；payload SHA-256 为
+`362c046e9c4b623261f8be9868f7c61d97518c35653f789e38fb2984ef439faa`，数据库 inode、
+size、mtime 前后相同，input 27500 仍为 pending。之后对 runner 的 21 条区间回执做了
+独立连续性断言，确认从偏移 0 无间隙覆盖到 82,151，最后一段 `has_more=false`。预检
+证明隔离 API 能提供全量来源，不证明 Task Agent 已经读取。下一次唯一运行的 runner 已加入服务端逐请求回执以及
+provider/model/`--skip-git-repo-check` 断言，但真正启动云端 Codex 前被审批拦截：
+它会把完整会议/经营资料发送给云端模型，当前授权未明确覆盖该敏感数据外发。模型未
+启动、无决策产生，也没有业务/生产写入。不得通过别的 CLI、MCP 或代理绕过该拦截。
+
+因此，输入完整性/原生业务对照仍未通过验收。若要继续此一步，需要明确授权将这份完整
+冻结会议资料提交给 Codex 云端处理；否则可继续做本地代码、契约与不含真实业务正文的
+合成测试，但不能声称真实业务效果或全源覆盖已验证。`v36` 的 6 个 Project/7 个 Task
+proposals 同样不能作为业务效果证据。
+
 ## 输入缺口与部署协调核对：2026-10-07 01:33 PDT
 
 只读调用当前 `_document_projection` 做最小对照：同一 4357 字符历史正文，中间

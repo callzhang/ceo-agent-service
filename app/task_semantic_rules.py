@@ -35,6 +35,7 @@ class IdentityEvidence:
     same_owner: bool = False
     same_context: bool = False
     compatible_time_window: bool = False
+    same_source_item_same_owner: bool = False
 
 
 def resolve_formality(evidence: FormalityEvidence) -> FormalityResolution:
@@ -76,6 +77,8 @@ def resolve_formality(evidence: FormalityEvidence) -> FormalityResolution:
 
 def resolve_identity(evidence: IdentityEvidence) -> Literal["merge", "link", "separate"]:
     if evidence.same_external_task_id or evidence.explicit_source_reference:
+        return "merge"
+    if evidence.same_source_item_same_owner:
         return "merge"
     if (
         evidence.same_deliverable

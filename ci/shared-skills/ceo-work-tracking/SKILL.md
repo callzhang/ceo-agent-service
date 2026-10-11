@@ -147,6 +147,13 @@ to make business judgments.
    Before later-source updates match and carry the real Task ID. Repeated proof,
    title similarity or changed reason wording alone does not establish identity.
    Merge only identical deliverables supported by explicit identity proof.
+   For a report-item merge across source versions, both versioned DingTalk refs
+   must identify the same stable document node; both saved owner-evidence citations
+   must identify the same single actionable source line, present exactly once in
+   each full source body, and the persisted named owners and nonblank user IDs
+   must agree. If the document/version, unique line or owner proof is missing or
+   conflicts, do not merge. Project membership and Task title similarity are not
+   proof of identity.
    Scope/content additions update the existing Task, not a duplicate deliverable.
    New Tasks need a nonblank title; only update_fields changes a provided title.
    Promotion, acceptance and merge preserve the stored title.
@@ -261,8 +268,20 @@ out an assignment or action. Infer the concrete action from the risk. An existin
 Task suppresses this suggestion only if it addresses the same unresolved risk; a
 completed or unrelated Project deliverable does not. Prefer one suggestion for one
 material Project risk: do not create separate candidates for substeps or for each
-role involved. Create multiple suggestions only when current evidence identifies
-separately completable actions with distinct outcomes.
+role involved. When one next step is a stated prerequisite or upstream gate for
+another, treat them as sequentially dependent next steps and create one candidate
+for the nearest blocking outcome; include the downstream impact in its description
+instead of creating a second candidate for the dependent confirmation. Create
+multiple suggestions only when current evidence identifies separately completable,
+non-dependent actions with distinct outcomes. For example, acceptance-material
+confirmation and payment-date confirmation in one delivery/collection chain are
+not two candidates just because different Project responsibilities match them;
+choose the nearest blocking outcome and mention the payment impact in its
+description. A Task title must include the decisive unresolved Project outcome
+as well as any upstream gate needed to reach it. For a payment-risk suggestion,
+name the payment date/schedule in the title even when confirming an upstream
+acceptance condition is the first step; do not hide the key outcome behind a
+broad title such as “update the plan”.
 
 A retained existing_attention_id claims that card's original proof, not an update
 target. Cite at least one stored assessment_json.evidence triple unchanged and
