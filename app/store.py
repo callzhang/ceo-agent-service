@@ -157,6 +157,7 @@ from app.task_semantic_models import (
     FormalTaskBasis,
     ProjectContext,
 )
+from app.work_summary_payload import encode_work_summary_payload
 from app.task_source_documents import source_document_key, source_is_observed
 from app.wechat.models import WechatReplyScope
 
@@ -27934,7 +27935,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     payload_json=excluded.payload_json,
                     updated_at=current_timestamp
                 """,
-                (source_type, source_ref, payload_json),
+                (source_type, source_ref, encode_work_summary_payload(payload_json)),
             )
             row = db.execute(
                 """

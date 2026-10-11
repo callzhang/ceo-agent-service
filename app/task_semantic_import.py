@@ -18,6 +18,7 @@ from typing import Literal
 
 from app.store import AutoReplyStore
 from app.task_semantic_models import BusinessActorKind, FormalTaskBasis
+from app.work_summary_payload import decode_work_summary_payload
 from app.task_semantic_rules import FormalityEvidence
 from app.task_semantic_service import (
     RecordFormalTask,
@@ -72,6 +73,12 @@ def _digest(value: object) -> str:
     return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
 
 
+def _work_summary_input_digest(row: sqlite3.Row | dict[str, object]) -> str:
+    normalized = dict(row)
+    normalized["payload_json"] = decode_work_summary_payload(normalized["payload_json"])
+    return _digest(normalized)
+
+
 def _connect(path: str | Path, *, read_only: bool) -> sqlite3.Connection:
     location = Path(path).resolve()
     mode = "ro" if read_only else "rw"
@@ -108,6 +115,8 @@ def _fingerprint(path: str | Path, db: sqlite3.Connection) -> str:
         "select source_type, source_ref, payload_json from work_summary_inputs "
         "order by source_type, source_ref"
     )]
+    for row in source_inputs:
+        row["payload_json"] = decode_work_summary_payload(row["payload_json"])
     return _digest({"path": str(Path(path).resolve()), "source": source,
                     "source_inputs": source_inputs, "registry": registry})
 
@@ -221,7 +230,8 @@ def _plan_items(db: sqlite3.Connection) -> tuple[LegacyImportItem, ...]:
     by_update = {int(row["id"]): row for row in updates}
     source_inputs = {
         (str(row["source_type"]), str(row["source_ref"])): (
-            _json_object(row["payload_json"]), _digest(dict(row))
+            _json_object(decode_work_summary_payload(row["payload_json"])),
+            _work_summary_input_digest(row),
         )
         for row in db.execute(
             "select source_type, source_ref, payload_json from work_summary_inputs"
@@ -414,7 +424,7 @@ def _check_supporting_source(
         or source_input is None
         or int(update["project_id"]) != item.legacy_project_id
         or _digest(dict(update)) != details["source_update_digest"]
-        or _digest(dict(source_input)) != details["source_input_digest"]
+        or _work_summary_input_digest(source_input) != details["source_input_digest"]
     ):
         raise ValueError("task semantic import supporting source digest mismatch")
 
