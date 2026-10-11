@@ -213,6 +213,11 @@ def test_consumer_uses_scheduled_prompt_and_targeted_skill_protocol(
     command_text = "\n".join(executor.commands[0])
     setting = next(value for value in executor.commands[0] if value.startswith("developer_instructions="))
     developer = json.loads(setting.split("=", 1)[1])
+    assert "## Runtime Invariants" in developer
+    assert "Consumer Agent A gathers facts and proposes a typed candidate" in developer
+    assert "Audit Agent B reads and reviews the whole candidate" in developer
+    assert "system code executes the exact persisted approved action plan" in developer
+    assert "Consumer Agent A gathers facts and proposes a typed candidate" not in executor.prompts[0]
     assert (developer + executor.prompts[0]).count(_CONSUMER_AGENT_RULES) == 1
     assert "TARGETED SKILL PROTOCOL" in executor.prompts[0]
     assert "TARGETED SKILL PROTOCOL" not in command_text

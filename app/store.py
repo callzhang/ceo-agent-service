@@ -1485,6 +1485,10 @@ class ReplyTaskIdentityConflict(RuntimeError):
     """A queue identity already exists with different immutable input."""
 
 
+class ManualRerunConflict(ValueError):
+    """The source request no longer names an eligible execution generation."""
+
+
 class EmailReplyTaskAuthorizationConflict(RuntimeError):
     """The requested email plan is not the current persisted authorization."""
 
@@ -12156,8 +12160,45 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         attempt_id: int = 0,
         channel: str = "dingtalk",
         force_rotation: bool = False,
+        expected_execution_generation: str | None = None,
     ) -> ReplyTask:
         with self._immediate_write_transaction() as db:
+            if expected_execution_generation is not None:
+                from app.agent_reported_error import (
+                    PROVIDER_RISK_REJECTION_RERUN_BLOCK_REASON, is_provider_risk_rejection,
+                )
+
+                current = db.execute(
+                    "select id,execution_generation,error from reply_tasks "
+                    "where channel=? and conversation_id=? and trigger_message_id=?",
+                    (channel, conversation_id, trigger_message_id),
+                ).fetchone()
+                if current is None or current["execution_generation"] != expected_execution_generation:
+                    raise ManualRerunConflict("reply task generation changed during source read")
+                attempt = db.execute(
+                    "select agent_run_id,send_status,send_error,resolved_at,resolution "
+                    "from reply_attempts where id=? and channel=? "
+                    "and conversation_id=? and trigger_message_id=?",
+                    (attempt_id, channel, conversation_id, trigger_message_id),
+                ).fetchone()
+                if attempt is None:
+                    raise ManualRerunConflict("manual rerun attempt identity changed")
+                if attempt["resolved_at"] and attempt["send_status"] in {"needs_human", "skipped"}:
+                    raise ManualRerunConflict(attempt["resolution"] or "historical attempt was retired")
+                terminal = db.execute(
+                    "select structured_error_json from agent_runs where id=?",
+                    (attempt["agent_run_id"],),
+                ).fetchone()
+                current_errors = db.execute(
+                    "select structured_error_json from agent_runs "
+                    "where reply_task_id=? and execution_generation=?",
+                    (current["id"], expected_execution_generation),
+                ).fetchall()
+                if (is_provider_risk_rejection(
+                        terminal[0] if terminal is not None else "", attempt_error=attempt["send_error"])
+                        or is_provider_risk_rejection("", attempt_error=current["error"])
+                        or any(is_provider_risk_rejection(row[0]) for row in current_errors)):
+                    raise ManualRerunConflict(PROVIDER_RISK_REJECTION_RERUN_BLOCK_REASON)
             revision_key = self._manual_rerun_revision_key(db, attempt_id)
             task = self._enqueue_manual_rerun_reply_task_in_connection(
                 db,

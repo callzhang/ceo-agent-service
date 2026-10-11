@@ -325,6 +325,9 @@ class FakeAgentOrchestrator:
     def __init__(self, worker: "DingTalkAutoReplyWorker") -> None:
         self.worker = worker
 
+    def persisted_terminal_result(self, task) -> OrchestrationResult | None:
+        return None
+
     def process(self, task, context, *, refresh_context) -> OrchestrationResult:
         runner = self.worker._test_agent_runner
         assert runner is not None
@@ -404,6 +407,9 @@ class ScriptedAgentOrchestrator:
     def __init__(self, *results: OrchestrationResult) -> None:
         self.results = list(results)
         self.calls = []
+
+    def persisted_terminal_result(self, task) -> OrchestrationResult | None:
+        return None
 
     def process(self, task, context, *, refresh_context) -> OrchestrationResult:
         self.calls.append((task, context))
@@ -12743,7 +12749,9 @@ def test_resume_prompt_only_includes_turn_message_without_repeating_thread_promp
     prompt = agent_prompt(worker)
     assert agent_runner(worker).calls[0][3] == ""
     assert codex.calls == []
-    assert "1. [role_boundary] Consumer Agent A forms the candidate" in prompt
+    assert "## Context Facts" in prompt
+    assert "### Execution stage" in prompt
+    assert "## Runtime Invariants" not in prompt
     assert "CEO Agent Prompt" not in prompt
     assert "你是 Alex 的钉钉自动回复分身" not in prompt
     assert "回答任何问题前，先检索本地 workspace" not in prompt
@@ -13424,7 +13432,9 @@ def test_force_new_rerun_starts_fresh_codex_session(tmp_path: Path, monkeypatch)
     )
     assert run is not None
     assert run.codex_session_id != "old-session"
-    assert "1. [role_boundary] Consumer Agent A forms the candidate" in agent_prompt(worker)
+    assert "## Context Facts" in agent_prompt(worker)
+    assert "### Execution stage" in agent_prompt(worker)
+    assert "## Runtime Invariants" not in agent_prompt(worker)
     assert "你是 Alex 的钉钉自动回复分身" not in agent_prompt(worker)
 
 
@@ -13637,7 +13647,9 @@ def test_prompt_includes_dynamic_similar_corpus_examples_without_static_style_pr
     assert "先看岗位匹配" not in prompt
     assert "cid-style-1" not in prompt
     assert '"conversation_title": "Friday"' in prompt
-    assert "1. [role_boundary] Consumer Agent A forms the candidate" in prompt
+    assert "## Context Facts" in prompt
+    assert "### Execution stage" in prompt
+    assert "## Runtime Invariants" not in prompt
 
 
 def test_prompt_includes_similar_human_feedback_examples(tmp_path: Path, monkeypatch):
@@ -14378,10 +14390,15 @@ def test_single_chat_recovery_requeues_revised_pending_calendar_card(
     assert recovered.execution_generation != before.execution_generation
     assert recovered.input_version == before.input_version + 1
     inputs = worker.store.list_reply_task_inputs(task_id)
-    assert [item["trigger_text"] for item in inputs] == [
-        original.content,
-        revised.content,
-    ]
+    assert len(inputs) == 2
+    assert inputs[0]["input_compacted"] == 1
+    assert inputs[0]["trigger_text"] == ""
+    assert json.loads(inputs[0]["input_provenance_json"])["trigger_text"] == {
+        "sha256": hashlib.sha256(original.content.encode("utf-8")).hexdigest(),
+        "bytes": len(original.content.encode("utf-8")),
+    }
+    assert inputs[1]["input_compacted"] == 0
+    assert inputs[1]["trigger_text"] == revised.content
     assert inputs[0]["input_revision_key"] == ""
     assert inputs[1]["input_revision_key"]
     assert worker.produce_once(recovery=True) == 0
@@ -14471,7 +14488,11 @@ def test_single_chat_recovery_does_not_requeue_resolved_calendar_card(
     unchanged = worker.store.get_reply_task(task_id)
     assert unchanged is not None
     assert unchanged.status == "done"
-    assert unchanged.trigger_text == original.content
+    assert unchanged.input_compacted and unchanged.trigger_text == ""
+    assert json.loads(unchanged.input_provenance_json)["trigger_text"] == {
+        "sha256": hashlib.sha256(original.content.encode("utf-8")).hexdigest(),
+        "bytes": len(original.content.encode("utf-8")),
+    }
 
 
 def test_single_chat_recovery_does_not_coalesce_across_current_user_context(
@@ -15931,9 +15952,18 @@ def test_group_mentions_are_processed_by_message_time_not_fetch_order(
     assert len(agent_runner(worker).calls) == 1
     assert len(attempts) == 1
     assert attempts[0].trigger_message_id == "msg-newer-mention"
-    assert (
-        attempts[0].trigger_text == "@Alex Chen(明哥) 明哥请审一下这个文档，给一下意见"
-    )
+    assert attempts[0].trigger_text == ""
+    provenance = json.loads(attempts[0].trigger_text_provenance_json)
+    assert {key: provenance[key] for key in ("sha256", "bytes")} == {
+        "sha256": hashlib.sha256(newer_mention.content.encode("utf-8")).hexdigest(),
+        "bytes": len(newer_mention.content.encode("utf-8")),
+    }
+    settled_task = worker.store.get_reply_task(provenance["reply_task_id"])
+    assert settled_task is not None
+    assert settled_task.trigger_message_id == newer_mention.open_message_id
+    assert provenance["matching_input_id"] in {
+        item["id"] for item in worker.store.list_reply_task_inputs(settled_task.id)
+    }
 
 
 def test_current_user_file_does_not_hide_unanswered_group_mention(

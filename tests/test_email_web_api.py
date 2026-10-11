@@ -2821,7 +2821,7 @@ def test_email_detail_projects_safe_unsubscribe_continuation_state(
             "reference": "private-browser-step",
         },
         owner={
-            "owner_id": "email-audit-worker",
+            "owner_id": f"email-audit-worker:{fixture.audit.id}",
             "generation": 1,
             "lease_token": "unsubscribe-observability-lease",
         },

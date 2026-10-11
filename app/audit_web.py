@@ -119,7 +119,7 @@ from app.developer_prompt import (
 from app.prompt import work_profile_instruction, write_work_profile
 from app.dingtalk_models import DingTalkMessage
 from app.wechat.models import WechatMessage
-from app.dws_client import DwsClient
+from app.dws_client import DingTalkConversation, DwsClient
 from app.feedback_spike import (
     FeedbackLinkContext,
     extract_feedback_link_context,
@@ -143,6 +143,7 @@ from app.store import (
     AgentRole,
     AgentRun,
     AutoReplyStore,
+    ManualRerunConflict,
     FeedbackEvent,
     OperationLog,
     ReplyAttempt,
@@ -3450,7 +3451,10 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                        ) as summary,
                        updated_at, error
                 from email_agent_classification_tasks
-                where lower(status)='failed'
+                where rowid in (
+                    select rowid from email_agent_classification_tasks
+                    where lower(status)='failed'
+                )
                 order by updated_at desc, task_id desc
             """
             email_task_params: tuple[object, ...] = ()
@@ -9619,6 +9623,23 @@ def handle_rerun_attempt_post(
         trigger_create_time = existing_task.trigger_create_time
         conversation_title = existing_task.conversation_title
         single_chat = existing_task.single_chat
+    elif existing_task is not None and existing_task.input_compacted and channel == "dingtalk":
+        conversation = DingTalkConversation(
+            open_conversation_id=existing_task.conversation_id,
+            title=existing_task.conversation_title, single_chat=existing_task.single_chat,
+            unread_point=0,
+        )
+        trigger = DwsClient().read_message_by_id(conversation, existing_task.trigger_message_id)
+        if (trigger is None or trigger.open_conversation_id != existing_task.conversation_id
+                or trigger.open_message_id != existing_task.trigger_message_id):
+            return 409, {}, render_page(
+                "Trigger unavailable", "<p>Original message could not be verified; rerun was not queued.</p>"
+            )
+        trigger_message_json = trigger.model_dump_json()
+        trigger_text = trigger.content
+        trigger_create_time = trigger.create_time
+        conversation_title = existing_task.conversation_title
+        single_chat = existing_task.single_chat
     else:
         return (
             409,
@@ -9628,19 +9649,23 @@ def handle_rerun_attempt_post(
                 "<p>Original execution payload is unavailable; rerun was not queued.</p>",
             ),
         )
-    store.enqueue_manual_rerun_reply_task(
-        conversation_id=attempt.conversation_id,
-        conversation_title=conversation_title,
-        single_chat=single_chat,
-        trigger_message_id=attempt.trigger_message_id,
-        trigger_create_time=trigger_create_time,
-        trigger_sender=attempt.trigger_sender,
-        trigger_text=trigger_text,
-        trigger_message_json=trigger_message_json,
-        oa_url=attempt.oa_url,
-        attempt_id=attempt.id,
-        channel=channel,
-    )
+    try:
+        store.enqueue_manual_rerun_reply_task(
+            conversation_id=attempt.conversation_id,
+            conversation_title=conversation_title,
+            single_chat=single_chat,
+            trigger_message_id=attempt.trigger_message_id,
+            trigger_create_time=trigger_create_time,
+            trigger_sender=attempt.trigger_sender,
+            trigger_text=trigger_text,
+            trigger_message_json=trigger_message_json,
+            oa_url=attempt.oa_url,
+            attempt_id=attempt.id,
+            channel=channel,
+            expected_execution_generation=existing_task.execution_generation,
+        )
+    except ManualRerunConflict as exc:
+        return 409, {}, render_page("Rerun unavailable", f"<p>{escape(str(exc))}</p>")
     return 303, {"Location": _safe_action_return_to(return_to, attempt_id)}, ""
 
 

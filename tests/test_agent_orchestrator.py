@@ -126,6 +126,25 @@ def orchestrator(store, consumer, audit, handler=None):
     ), handler
 
 
+@pytest.mark.parametrize("outcome", ["no_action", "proposal"])
+def test_persisted_terminal_read_needs_no_context_or_new_effect(tmp_path, outcome):
+    store, task, context = task_and_context(tmp_path)
+    consumer = ScriptedConsumer(store, candidate(outcome=outcome))
+    audit = ScriptedAudit(store, "approve")
+    runner, handler = orchestrator(store, consumer, audit)
+    assert runner.persisted_terminal_result(task) is None
+    assert not consumer.calls and not audit.calls and not handler.calls
+    result = runner.process(task, context, refresh_context=lambda: context)
+    calls = (len(consumer.calls), len(audit.calls), len(handler.calls))
+    terminal = runner.persisted_terminal_result(task)
+    assert terminal == result
+    assert (len(consumer.calls), len(audit.calls), len(handler.calls)) == calls
+    assert runner.persisted_terminal_result(
+        task.model_copy(update={"execution_generation": "new-unprocessed-generation"})
+    ) is None
+    assert (len(consumer.calls), len(audit.calls), len(handler.calls)) == calls
+
+
 def test_approved_candidate_executes_after_audit_and_persists_receipt(tmp_path):
     store, task, context = task_and_context(tmp_path)
     consumer = ScriptedConsumer(store, candidate())
