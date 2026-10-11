@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+import sqlite3
 import threading
 
 import pytest
@@ -17,6 +18,7 @@ from app.agent_cron.scheduler import (
     PREVIOUS_EXECUTION_ACTIVE,
     RUNTIME_UNAVAILABLE,
     SERVICE_COMMAND_UNAVAILABLE,
+    SQLITE_CONTENTION_RETRY_SECONDS,
 )
 from app.store import AutoReplyStore
 
@@ -672,6 +674,64 @@ def test_bounded_reload_preserves_an_unchanged_due_instant(tmp_path: Path) -> No
     runs = store.list_scheduled_task_runs(task.id)
     assert len(runs) == 1
     assert runs[0].scheduled_for == NOW + timedelta(minutes=1)
+
+
+def test_scheduler_retries_same_due_trigger_after_sqlite_contention(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _task(store)
+    scheduler = _scheduler(store)
+    original_create = store.create_scheduled_task_run_if_current
+    create_attempts = 0
+    clock_calls = 0
+
+    def fail_once_with_busy(*args, **kwargs):
+        nonlocal create_attempts
+        create_attempts += 1
+        if create_attempts == 1:
+            error = sqlite3.OperationalError("database is locked")
+            error.sqlite_errorcode = sqlite3.SQLITE_BUSY
+            raise error
+        return original_create(*args, **kwargs)
+
+    monkeypatch.setattr(store, "create_scheduled_task_run_if_current", fail_once_with_busy)
+
+    class StopLoop(Exception):
+        pass
+
+    class RetryEvent:
+        wait_calls = 0
+
+        def wait(self, timeout: float) -> bool:
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                assert timeout <= 60
+                return False
+            if self.wait_calls == 2:
+                assert timeout == SQLITE_CONTENTION_RETRY_SECONDS
+                return False
+            raise StopLoop
+
+        def clear(self) -> None:
+            raise AssertionError("contention retry is a timeout, not a local wake")
+
+    def clock() -> datetime:
+        nonlocal clock_calls
+        clock_calls += 1
+        return NOW if clock_calls <= 2 else NOW + timedelta(minutes=1)
+
+    with caplog.at_level("WARNING", logger="app.agent_cron.scheduler"):
+        with pytest.raises(StopLoop):
+            scheduler.run_forever(wake_event=RetryEvent(), now=clock)
+
+    runs = store.list_scheduled_task_runs(task.id)
+    assert create_attempts == 2
+    assert len(runs) == 1
+    assert runs[0].scheduled_for == NOW + timedelta(minutes=1)
+    assert "agent_cron_scheduler_database_contention" in caplog.text
 
 
 def test_command_task_is_gated_only_by_its_command_not_by_runtime_or_skills(
