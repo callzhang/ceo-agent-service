@@ -10,7 +10,7 @@ import json
 import os
 from pathlib import Path
 from threading import Event, Thread
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -37,6 +37,7 @@ from app.email_unsubscribe import (
     ConfirmationNavigationTarget,
     EmailUnsubscribeEffect,
     PlaywrightUnsubscribeBrowser,
+    UnsubscribeBrowserError,
     UnsubscribeAuthenticationControlsError,
     UnsubscribeEntry,
     UnsubscribeEntrySource,
@@ -128,6 +129,14 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     receipt="receipt-direct",
                 )
             )
+        elif path == "/recipient-form":
+            self._send(_page(
+                "action_required", "Enter your email to unsubscribe",
+                content='<form method="post" action="/recipient-form-terminal">'
+                '<input type="hidden" name="opaque-binding" value="fixture-value">'
+                '<input type="email" name="contact" required>'
+                '<button type="submit">Unsubscribe</button></form>',
+            ))
         elif path == "/script-form":
             self._send(_page(
                 "action_required", "Choose unsubscribe",
@@ -521,7 +530,13 @@ class _FixtureHandler(BaseHTTPRequestHandler):
             }
         )
         path = urlsplit(self.path).path
-        if path == "/two-step-second":
+        if path == "/recipient-form-terminal":
+            assert parse_qs(body.decode()) == {
+                "contact": ["fixture@example.com"],
+                "opaque-binding": ["fixture-value"],
+            }
+            self._send(_page("done", "You are unsubscribed"))
+        elif path == "/two-step-second":
             self._send(
                 _page(
                     "action_required",
@@ -1103,6 +1118,105 @@ def test_direct_success_fixture(tmp_path: Path, chrome_browser) -> None:
     )
     assert result.outcome is UnsubscribeOutcome.DONE
     assert requests[0][0] == "GET"
+
+
+def test_direct_form_fills_only_connected_recipient_before_native_submit(
+    tmp_path: Path, chrome_browser,
+) -> None:
+    from app.email_unsubscribe_direct import run_direct_unsubscribe
+
+    with _loopback_server() as origin:
+        private_url = f"{origin}/recipient-form?opaque=private-fixture-token"
+        _store, effect, entry = _setup(
+            tmp_path, private_url, _operations(UnsubscribeOperationKind.OPEN_ENTRY),
+        )
+        context = chrome_browser.new_context()
+        browser = PlaywrightUnsubscribeBrowser(
+            context.new_page(), timeout_ms=3_000,
+            connected_recipient="fixture@example.com",
+        )
+        try:
+            result = run_direct_unsubscribe(browser, effect, entry)
+            assert result.outcome is UnsubscribeOutcome.DONE, (
+                result.error_code, result.error_detail, _FixtureHandler.requests,
+            )
+            assert result.receipt is not None
+            assert sum(method == "POST" for method, _ in _FixtureHandler.requests) == 1
+            assert parse_qs(_FixtureHandler.request_details[-1]["body"]) == {
+                "contact": ["fixture@example.com"],
+                "opaque-binding": ["fixture-value"],
+            }
+        finally:
+            context.close()
+
+
+@pytest.mark.parametrize("case", [
+    "missing_identity", "multiple", "hidden_changed", "target_changed",
+    "association_changed", "intent_changed", "submitter_changed",
+])
+def test_recipient_preparation_rejects_unsafe_form_without_post(
+    chrome_browser, case: str,
+) -> None:
+    with _loopback_server() as origin:
+        context = chrome_browser.new_context()
+        page = context.new_page()
+        browser = PlaywrightUnsubscribeBrowser(
+            page, timeout_ms=3_000,
+            connected_recipient="" if case == "missing_identity" else "fixture@example.com",
+        )
+        try:
+            page.goto(f"{origin}/recipient-form")
+            if case == "multiple":
+                page.evaluate("""() => {
+                    const field = document.createElement('input');
+                    field.type = 'email'; field.name = 'other';
+                    document.querySelector('form').append(field);
+                }""")
+            elif case != "missing_identity":
+                page.evaluate("""caseName => {
+                    document.querySelector('[type=email]').addEventListener('input', () => {
+                        if (caseName === 'hidden_changed')
+                            document.querySelector('[type=hidden]').value = 'changed';
+                        else if (caseName === 'target_changed')
+                            document.querySelector('form').action = '/wrong-action';
+                        else if (caseName === 'association_changed')
+                            document.querySelector('form').id = 'changed-form';
+                        else if (caseName === 'intent_changed')
+                            document.querySelector('button').textContent = 'Confirm';
+                        else document.querySelector('button').name = 'changed-submitter';
+                    });
+                }""", case)
+            binding = browser._ordinary_controls()[0]
+            with pytest.raises(UnsubscribeBrowserError):
+                browser.prepare_form_recipient(binding.control.reference)
+            assert all(method != "POST" for method, _ in _FixtureHandler.requests)
+        finally:
+            context.close()
+
+
+def test_recipient_preparation_preserves_existing_email_and_does_not_infer_text(
+    chrome_browser,
+) -> None:
+    with _loopback_server() as origin:
+        context = chrome_browser.new_context()
+        page = context.new_page()
+        browser = PlaywrightUnsubscribeBrowser(
+            page, timeout_ms=3_000, connected_recipient="fixture@example.com",
+        )
+        try:
+            page.goto(f"{origin}/recipient-form")
+            page.locator('[type=email]').fill("alias@example.com")
+            binding = browser._ordinary_controls()[0]
+            assert browser.prepare_form_recipient(binding.control.reference) == binding.control.reference
+            assert page.locator('[type=email]').input_value() == "alias@example.com"
+            page.evaluate("document.querySelector('[type=email]').type = 'text'")
+            page.locator('[type=text]').fill("")
+            binding = browser._ordinary_controls()[0]
+            assert browser.prepare_form_recipient(binding.control.reference) == binding.control.reference
+            assert page.locator('[type=text]').input_value() == ""
+            assert all(method != "POST" for method, _ in _FixtureHandler.requests)
+        finally:
+            context.close()
 
 
 def test_empty_form_response_is_recorded_as_provider_accepted(

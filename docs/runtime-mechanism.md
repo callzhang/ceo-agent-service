@@ -1056,6 +1056,11 @@ image/content material，只包含文件名、MIME、字节大小、数量和 in
 outcome 和脱敏后的页面原文。它只接受 task id 这一个调用方无法伪造的参数，其余全部从 durable 状态
 读出，所以没有 proposal 要抄写、没有 acceptance 要绑定、没有 Audit turn，也没有 continuation 要续。
 
+Direct 浏览器提交退订表单前，只为唯一的空 `type=email` 字段填写当前连接邮箱账户地址。
+已有字段值保持不变，不从普通文本字段名称推测身份；缺失账户身份或多个邮箱字段时停止提交。
+填写后重新读取真实控件，并核对提交目标、方法、编码、提交按钮和全部成功字段（包括隐藏字段）
+与填写前一致，仅允许该邮箱值变化，再使用新控件引用提交。旧结构化审核执行路径不隐式填写字段。
+
 幂等性只靠 receipt：`email_unsubscribe_receipts` 里每个动作身份一条，已有 receipt 时再调一次
 只会把它原样返回，不会重复退订。这取代了原先的 claim 租约、effect digest 链、owner fence 和
 Consumer→Audit 往返——退订在真实世界本来就是幂等的。同理，有浏览器步骤但没有 receipt

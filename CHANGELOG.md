@@ -9,6 +9,10 @@
 
 ## Unreleased
 
+- Fill a unique empty native email field from the connected account before direct
+  unsubscribe form submission. Rebind the complete control semantics, preserve
+  existing values and hidden fields, and retain the separate email-OTP path.
+
 - Bind native DingTalk attachments to verified stable message/resource identities
   and content digests instead of persisting expiring download capabilities in
   reviewed candidates. Preserve source-change, credential and action guards.
