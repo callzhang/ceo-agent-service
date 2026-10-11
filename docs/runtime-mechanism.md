@@ -213,6 +213,9 @@ Runtime-attempt detail reads filter by `agent_run_id` and order by
 `attempt_number`; the partial `idx_agent_runtime_attempts_run` index serves that
 lookup for run-bound attempts. Attempt details batch this indexed lookup across
 all runs on the page, avoiding one SQLite connection and query per run.
+Attempt detail loads the selected run's native event and result references in
+SQLite, closes the connection, then reads and parses the native transcript files.
+Slow or large local transcripts therefore do not keep a SQLite connection open.
 Generalized attempts without an `agent_run_id` remain outside this index and
 keep their existing workload-key indexes.
 

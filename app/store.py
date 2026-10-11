@@ -12391,6 +12391,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         return cls._reply_task_from_row(row)
 
     def get_agent_run(self, run_id: int, *, load_events: bool = True) -> AgentRun | None:
+        from app.native_trajectory import (
+            hydrate_run_events_from_attempts,
+            read_native_result_json_from_attempt,
+        )
+
         with self._connect() as db:
             row = db.execute(
                 """select agent_runs.*,
@@ -12404,7 +12409,36 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                    where agent_runs.id=?""",
                 (run_id,),
             ).fetchone()
-            return self._agent_run_from_row(row, db=db, load_events=load_events) if row is not None else None
+            if row is None:
+                return None
+            run = self._agent_run_from_row(row, db=db, load_events=False)
+            if not load_events:
+                return run
+            event_attempts = db.execute(
+                "select runtime_kind, session_id, transcript_reference, "
+                "transcript_start, transcript_end, started_at, finished_at "
+                "from agent_runtime_attempts "
+                "where agent_run_id=? and session_id<>'' order by id",
+                (run_id,),
+            ).fetchall()
+            result_attempt = db.execute(
+                "select runtime_kind, session_id, transcript_start, transcript_end "
+                "from agent_runtime_attempts "
+                "where agent_run_id=? and status='completed' "
+                "order by id desc limit 1",
+                (run_id,),
+            ).fetchone()
+            db_path = str(self.path.resolve())
+
+        return run.model_copy(update={
+            "tool_events": hydrate_run_events_from_attempts(
+                row, event_attempts, db_path
+            ),
+            "final_result_json": (
+                read_native_result_json_from_attempt(row, result_attempt)
+                if run.status == "completed" else ""
+            ),
+        })
 
     def get_agent_run_for_turn(
         self,
