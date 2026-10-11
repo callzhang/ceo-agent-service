@@ -325,6 +325,9 @@ class FakeAgentOrchestrator:
     def __init__(self, worker: "DingTalkAutoReplyWorker") -> None:
         self.worker = worker
 
+    def persisted_terminal_result(self, task) -> OrchestrationResult | None:
+        return None
+
     def process(self, task, context, *, refresh_context) -> OrchestrationResult:
         runner = self.worker._test_agent_runner
         assert runner is not None
@@ -404,6 +407,9 @@ class ScriptedAgentOrchestrator:
     def __init__(self, *results: OrchestrationResult) -> None:
         self.results = list(results)
         self.calls = []
+
+    def persisted_terminal_result(self, task) -> OrchestrationResult | None:
+        return None
 
     def process(self, task, context, *, refresh_context) -> OrchestrationResult:
         self.calls.append((task, context))

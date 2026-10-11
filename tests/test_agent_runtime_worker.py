@@ -115,6 +115,9 @@ class NoActionOrchestrator:
         self.store = store
         self.calls: list[tuple[object, AgentTaskContext]] = []
 
+    def persisted_terminal_result(self, task) -> OrchestrationResult | None:
+        return None
+
     def process(self, task, context, *, refresh_context) -> OrchestrationResult:
         self.calls.append((task, context))
         claim = self.store.claim_agent_run(
@@ -165,6 +168,9 @@ class PoisonedSessionFailureOrchestrator:
         self.role = role
         self.run_id = 0
         self.observed_resume_sessions: list[str] = []
+
+    def persisted_terminal_result(self, task) -> OrchestrationResult | None:
+        return None
 
     def process(self, task, context, *, refresh_context) -> OrchestrationResult:
         del context, refresh_context
@@ -529,7 +535,7 @@ class ScriptedTaskOrchestrator:
         self.read_only_values: list[bool] = []
         self.owner = "scripted-agent"
 
-    def process(self, task, context, *, refresh_context) -> OrchestrationResult:
+    def persisted_terminal_result(self, task) -> OrchestrationResult | None:
         persisted = self.store.list_agent_runs_for_task_generation(
             task.id,
             task.execution_generation,
@@ -566,6 +572,12 @@ class ScriptedTaskOrchestrator:
                     feedback_cycles=final_run.proposal_revision,
                     consumer_result=consumer_result,
                 )
+        return None
+
+    def process(self, task, context, *, refresh_context) -> OrchestrationResult:
+        terminal = self.persisted_terminal_result(task)
+        if terminal is not None:
+            return terminal
         self.calls.append((task.id, task.execution_generation, context))
         self.read_only_values.append(True)
         script = self.scripts.pop(0)

@@ -262,6 +262,9 @@ class LocalPipelineOrchestrator:
         self.no_action = no_action
         self.system_executor = SystemExecutor(store, dws=dws)
 
+    def persisted_terminal_result(self, task) -> OrchestrationResult | None:
+        return None
+
     def process(self, task, context, *, refresh_context) -> OrchestrationResult:
         del refresh_context
         consumer_claim = self.store.claim_agent_run(

@@ -171,6 +171,11 @@ class AgentOrchestrator:
             system_executor,
         )
 
+    def persisted_terminal_result(self, task: ReplyTask) -> OrchestrationResult | None:
+        """Read a terminal generation without rebuilding its retired input."""
+        state = self._derive_state(task)
+        return state if isinstance(state, OrchestrationResult) else None
+
     def process(
         self,
         task: ReplyTask,

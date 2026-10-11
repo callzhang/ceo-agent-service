@@ -2302,6 +2302,9 @@ class DingTalkAutoReplyWorker:
     def _process_queued_task(
         self, conversation: DingTalkConversation, task: ReplyTask
     ) -> bool:
+        terminal = self._agent_orchestrator().persisted_terminal_result(task)
+        if terminal is not None:
+            return self._apply_orchestration_result(task, terminal)
         trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
         _context_messages, prompt_context_messages = (
             self._queued_task_prompt_context_messages(conversation, trigger)

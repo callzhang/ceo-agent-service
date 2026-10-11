@@ -1,5 +1,12 @@
 # Current Runtime Mechanism
 
+Reply consumption reads the current generation's persisted orchestration terminal
+result before parsing its trigger input. A completed generation can therefore
+finish idempotently after its historical input has been compacted. This read uses
+the existing candidate, Audit, and System receipt state machine and dispatches
+no action. Nonterminal generations still require complete validated context and
+the ordinary source reread before any new Agent turn or controlled execution.
+
 Attention selects failed email classification task IDs from the existing compact
 status index before reading task payloads. Physical row IDs preserve nullable
 legacy task identities. Case-insensitive failure matching and
