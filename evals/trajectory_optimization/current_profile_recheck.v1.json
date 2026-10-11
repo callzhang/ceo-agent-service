@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "assembly_commit": "55cbecef890bac80784bfaf872cf0eb9d01fa8d4",
+  "case_source": "evals/task_scoped_prompts/v1.json",
+  "cases": ["calendar-cross-midnight", "calendar-real-overlap", "mail-already-handled", "document-material-conflicts", "work-tracking-existing-remediation", "audit-document-feedback"],
+  "continuation": "calendar-cross-midnight, same valid cold native session after accepted source state",
+  "configuration_source": "Read-only production prompts and Audit prompt-preview; freeze complete Developer/User/Profile and rendered Audit Rules locally. Do not publish personal Profile body.",
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "medium",
+  "output_schema": false,
+  "maximum_parallel_calls": 2,
+  "timeout_seconds": 180,
+  "tools": "Same actual current role schemas and frozen Skill/read-source fixtures as role_contract_matrix.v2; every production callback replaced.",
+  "acceptance": "Complete native trajectory, timely terminal result, canonical parsing, exact source and action IDs, required Skill/source reads, same-session no duplicate continuation, independent full-output business review.",
+  "scope": "Current authored Profile configuration recheck before editing it. No profile change, provider action or production task execution. Earlier short-Profile results are not relabeled as this recheck."
+}
