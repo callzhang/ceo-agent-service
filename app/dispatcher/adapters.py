@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.store import REPLY_TASK_CURRENT_SQL
+
 import sqlite3
 import os
 from collections.abc import Callable
@@ -497,7 +499,7 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
             source_id = str(row["id"])
             cursor = db.execute(
                 "update reply_tasks set status='processing', attempts=attempts+1, "
-                "claimed_input_version=input_version, locked_at=?, available_at='', "
+                "claimed_input_version=input_version, claimed_input_id=current_input_id, locked_at=?, available_at='', "
                 "updated_at=? where id=? and status in ('pending','processing') and "
                 + self._channel_clause("reply_tasks"),
                 (now_text, now_text, row["id"]),
@@ -514,7 +516,7 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
                 now=now_text,
             )
             claimed = db.execute(
-                "select * from reply_tasks where id=?", (row["id"],)
+                f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where id=?", (row["id"],)
             ).fetchone()
             assert claimed is not None
         return DispatchEnvelope(

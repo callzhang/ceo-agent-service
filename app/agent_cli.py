@@ -969,8 +969,10 @@ def _read_bound_task_skill(
             sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True)
         ) as connection:
             row = connection.execute(
-                "select execution_generation, trigger_message_json "
-                "from reply_tasks where id=?",
+                "select tasks.execution_generation, inputs.trigger_message_json "
+                "from reply_tasks tasks join reply_task_inputs inputs "
+                "on inputs.id=tasks.claimed_input_id and inputs.reply_task_id=tasks.id "
+                "where tasks.id=?",
                 (task_id,),
             ).fetchone()
     except sqlite3.Error as exc:

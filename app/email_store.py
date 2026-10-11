@@ -6,6 +6,8 @@ provider and never creates Agent, Audit, reply-task, or run records.
 
 from __future__ import annotations
 
+from app.store import REPLY_TASK_CURRENT_SQL
+
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -135,7 +137,7 @@ def _display_message_body(message: Message) -> str:
     return visible_email_text(payload)
 
 
-_AUDITED_UNSUBSCRIBE_LINEAGE_SQL = """
+_AUDITED_UNSUBSCRIBE_LINEAGE_SQL = f"""
     select effects.action_identity as effect_action_identity,
            effects.effect_digest as effect_digest,
            effects.audit_agent_run_id,
@@ -153,7 +155,7 @@ _AUDITED_UNSUBSCRIBE_LINEAGE_SQL = """
     from email_unsubscribe_effects as effects
     join agent_runs as audit_runs
       on audit_runs.id=effects.audit_agent_run_id
-    join reply_tasks as tasks
+    join ({REPLY_TASK_CURRENT_SQL}) as tasks
       on tasks.id=audit_runs.reply_task_id
     where effects.action_identity=? and effects.effect_digest=?
 """
@@ -2930,9 +2932,9 @@ class EmailStore:
 
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select id, execution_generation, status
-                from reply_tasks
+                from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
                 where channel='email'
                   and status in ('pending', 'processing')
                   and case
@@ -2975,9 +2977,9 @@ class EmailStore:
             raise ValueError("task_id must be positive")
         with self._connect() as db:
             row = db.execute(
-                """
+                f"""
                 select id, execution_generation, status
-                from reply_tasks
+                from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
                 where id=?
                   and channel='email'
                   and status in ('pending', 'processing')
@@ -4935,9 +4937,11 @@ class EmailStore:
         if db.execute(
             "select 1 from sqlite_master where type='table' and name='reply_tasks'"
         ).fetchone():
+            columns = {row[1] for row in db.execute("pragma table_info(reply_tasks)")}
+            table = "reply_task_inputs" if "current_input_id" in columns else "reply_tasks"
             db.execute(
-                """
-                update reply_tasks
+                f"""
+                update {table}
                 set trigger_message_json=json_remove(
                     trigger_message_json,
                     '$.unsubscribe_network_policy_reference',
@@ -4973,6 +4977,9 @@ class EmailStore:
         """
 
         for table in ("reply_task_inputs", "reply_tasks"):
+            columns = {row[1] for row in db.execute(f"pragma table_info({table})")}
+            if "trigger_message_json" not in columns:
+                continue
             if not db.execute(
                 "select 1 from sqlite_master where type='table' and name=?",
                 (table,),
@@ -10930,7 +10937,7 @@ class EmailStore:
                     "unsubscribe terminal effect is missing its Audit run"
                 )
             row = db.execute(
-                """
+                f"""
                 select audit.id as audit_id, audit.reply_task_id,
                        audit.execution_generation, audit.role as audit_role,
                        audit.status as audit_status,
@@ -10953,7 +10960,7 @@ class EmailStore:
                 from agent_runs as audit
                 join agent_runs as consumer
                   on consumer.id=audit.parent_agent_run_id
-                join reply_tasks as tasks on tasks.id=audit.reply_task_id
+                join ({REPLY_TASK_CURRENT_SQL}) as tasks on tasks.id=audit.reply_task_id
                 where audit.id=?
                 """,
                 (audit_agent_run_id,),
@@ -13316,13 +13323,13 @@ class EmailStore:
             }
             task_clause = ""
             if task_tables == {"reply_tasks", "agent_runs"}:
-                task_clause = """
+                task_clause = f"""
                     or classifications.id in (
                         select json_extract(
                                    tasks.trigger_message_json,
                                    '$.classification_id'
                                )
-                        from reply_tasks as tasks
+                        from ({REPLY_TASK_CURRENT_SQL}) as tasks
                         where tasks.channel='email'
                           and json_valid(tasks.trigger_message_json)
                           and json_extract(
@@ -13966,11 +13973,11 @@ class EmailStore:
             task_rows: Sequence[sqlite3.Row] = ()
             if generic_tables == {"reply_tasks", "agent_runs"}:
                 task_rows = db.execute(
-                    """
+                    f"""
                     select id, conversation_id, trigger_message_id,
                            trigger_message_json, execution_generation,
                            status, error, created_at
-                    from reply_tasks
+                    from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
                     where channel='email'
                       and json_valid(trigger_message_json)
                       and json_extract(

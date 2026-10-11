@@ -8,7 +8,7 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
-from app.store import AutoReplyStore
+from app.store import AutoReplyStore, REPLY_TASK_CURRENT_SQL
 
 
 def compact_done_email_classification_inputs(database: Path) -> dict[str, int]:
@@ -59,7 +59,7 @@ def compact_settled_reply_inputs(database: Path) -> dict[str, int]:
         db.row_factory = sqlite3.Row
         db.execute("begin immediate")
         task_ids = [int(row["id"]) for row in db.execute(
-            "select id from reply_tasks where status in ('done','skipped') "
+            f"select id from ({REPLY_TASK_CURRENT_SQL}) where status in ('done','skipped') "
             "and input_compacted=0 order by id"
         ).fetchall()]
         before = _reply_input_storage_counts(db)
@@ -82,7 +82,7 @@ def _reply_input_storage_counts(db: sqlite3.Connection) -> tuple[int, int, int, 
         "coalesce(sum(length(cast(trigger_text as blob)) + "
         "length(cast(trigger_message_json as blob)) + "
         "length(cast(input_provenance_json as blob))),0) as bytes "
-        "from reply_tasks where status in ('done','skipped')",
+        f"from ({REPLY_TASK_CURRENT_SQL}) where status in ('done','skipped')",
     ).fetchone()
     inputs = db.execute(
         "select count(*)-coalesce(sum(input_compacted),0) as uncompact, "
@@ -100,7 +100,7 @@ def _reply_input_storage_counts(db: sqlite3.Connection) -> tuple[int, int, int, 
     return (
         int(task["uncompact"]), int(inputs["uncompact"]),
         int(attempts["uncleared"] or 0),
-        int(task["bytes"]) + int(inputs["bytes"]) + int(attempts["bytes"]),
+        int(inputs["bytes"]) + int(attempts["bytes"]),
     )
 
 

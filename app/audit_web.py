@@ -1,3 +1,5 @@
+
+from app.store import REPLY_TASK_CURRENT_SQL
 import json
 import asyncio
 import ipaddress
@@ -2772,7 +2774,7 @@ def _email_unsubscribe_task_queue_snapshot(
     rows = db.execute(
         f"""
         select lower(coalesce(status, '')) as status, count(*) as count
-        from reply_tasks
+        from ({REPLY_TASK_CURRENT_SQL})
         where {predicate}
         group by lower(coalesce(status, ''))
         order by status
@@ -2784,7 +2786,7 @@ def _email_unsubscribe_task_queue_snapshot(
     latest = db.execute(
         f"""
         select updated_at
-        from reply_tasks
+        from ({REPLY_TASK_CURRENT_SQL})
         where {predicate}
         order by updated_at desc, id desc
         limit 1
@@ -2793,7 +2795,7 @@ def _email_unsubscribe_task_queue_snapshot(
     latest_error = db.execute(
         f"""
         select error
-        from reply_tasks
+        from ({REPLY_TASK_CURRENT_SQL})
         where {predicate}
           and lower(status)='failed'
           and trim(coalesce(error, ''))<>''
@@ -3308,7 +3310,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
     active_reply_task_triggers: set[tuple[str, str, str]] = set()
     with store._connect() as db:
         if _sqlite_table_exists(db, "reply_tasks"):
-            reply_task_sql = """
+            reply_task_sql = f"""
                 select reply_tasks.id, reply_tasks.channel,
                        reply_tasks.conversation_id, reply_tasks.trigger_message_id,
                        reply_tasks.status,
@@ -3319,13 +3321,13 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                         where current_run.reply_task_id=reply_tasks.id
                           and current_run.execution_generation=reply_tasks.execution_generation
                         order by current_run.id desc limit 1) as current_run_error
-                from reply_tasks
+                from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
                 left join business_object_tasks current_business_object
                   on current_business_object.business_object_key=reply_tasks.business_object_key
                 -- Select IDs through the compact status index before reading
                 -- message payloads; lower(status) alone scans the whole table.
                 where reply_tasks.id in (
-                    select id from reply_tasks where lower(status) = 'failed'
+                    select id from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where lower(status) = 'failed'
                 )
                   and (
                     current_business_object.reply_task_id is null
