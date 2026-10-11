@@ -1,10 +1,13 @@
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
+import os
 import subprocess
 import json
 import sqlite3
 
 import pytest
 
+from app.database_backup import backup_is_complete, create_database_backup
 from app.repository_updater import (
     UpgradeFailed,
     RepositoryUpdater,
@@ -235,7 +238,7 @@ def test_persisted_operation_can_be_loaded_by_id():
     )
 
 
-def test_upgrade_backups_keep_only_one_snapshot(tmp_path: Path):
+def test_upgrade_reuses_its_recent_complete_backup(tmp_path: Path):
     local, _ = fixture_repo(tmp_path)
     db_path = tmp_path / "worker.sqlite3"
     with sqlite3.connect(db_path) as db:
@@ -250,8 +253,132 @@ def test_upgrade_backups_keep_only_one_snapshot(tmp_path: Path):
     second = updater._backup(second_operation)
 
     snapshots = sorted((tmp_path / "backups").glob("*.sqlite3"))
-    assert first != second
-    assert snapshots == [second]
+    assert first == second
+    assert snapshots == [first]
+
+
+def test_upgrade_reuses_recent_verified_daily_backup(tmp_path: Path):
+    local, _ = fixture_repo(tmp_path)
+    op = operation(local)
+    db_path = tmp_path / "worker.sqlite3"
+    with sqlite3.connect(db_path) as db:
+        db.execute("create table state (value text)")
+        db.execute("insert into state values ('before')")
+    daily = db_path.parent / "backups" / (
+        f"{db_path.stem}-{datetime.now(timezone.utc).date().isoformat()}.sqlite3"
+    )
+    create_database_backup(db_path, daily)
+    with sqlite3.connect(db_path) as db:
+        db.execute("update state set value = 'after'")
+    calls = []
+    updater = RepositoryUpdater(
+        local, StateStore(), database_path=db_path,
+        stop=lambda: calls.append("stop"),
+        restart=lambda: calls.append("restart"),
+        health=lambda: True,
+    )
+
+    result = updater.execute(op)
+
+    assert result.status == "succeeded"
+    assert result.backup_path == str(daily)
+    assert backup_is_complete(daily)
+    with sqlite3.connect(daily) as backup:
+        assert backup.execute("select value from state").fetchone() == ("before",)
+    assert list(daily.parent.glob("*.sqlite3")) == [daily]
+    assert calls == ["stop", "restart"]
+    assert git(local, "rev-parse", "HEAD") == op.target_commit
+
+
+@pytest.mark.parametrize("existing", ["missing", "stale", "incomplete", "future"])
+def test_upgrade_creates_backup_when_none_qualifies(tmp_path: Path, existing: str):
+    local, _ = fixture_repo(tmp_path)
+    op = operation(local)
+    db_path = tmp_path / "worker.sqlite3"
+    with sqlite3.connect(db_path) as db:
+        db.execute("create table state (value text)")
+        db.execute("insert into state values ('before')")
+    daily = db_path.parent / "backups" / (
+        f"{db_path.stem}-{datetime.now(timezone.utc).date().isoformat()}.sqlite3"
+    )
+    if existing != "missing":
+        create_database_backup(db_path, daily)
+        if existing == "incomplete":
+            with sqlite3.connect(daily) as backup:
+                backup.execute("pragma application_id = 0")
+        else:
+            age = timedelta(hours=25 if existing == "stale" else -1)
+            timestamp = (datetime.now(timezone.utc) - age).timestamp()
+            os.utime(daily, (timestamp, timestamp))
+    with sqlite3.connect(db_path) as db:
+        db.execute("update state set value = 'current'")
+    calls = []
+    updater = RepositoryUpdater(
+        local, StateStore(), database_path=db_path,
+        stop=lambda: calls.append("stop"),
+        restart=lambda: calls.append("restart"),
+        health=lambda: True,
+    )
+
+    result = updater.execute(op)
+
+    assert result.status == "succeeded"
+    fresh = Path(result.backup_path)
+    assert fresh != daily
+    assert backup_is_complete(fresh)
+    with sqlite3.connect(fresh) as backup:
+        assert backup.execute("select value from state").fetchone() == ("current",)
+    assert list(fresh.parent.glob("*.sqlite3")) == [fresh]
+    assert calls == ["stop", "restart"]
+    assert git(local, "rev-parse", "HEAD") == op.target_commit
+
+
+def test_backup_selects_newest_complete_snapshot_for_its_database(tmp_path: Path):
+    local, _ = fixture_repo(tmp_path)
+    db_path = tmp_path / "worker.sqlite3"
+    with sqlite3.connect(db_path) as db:
+        db.execute("create table state (value text)")
+    older = tmp_path / "backups" / "worker-before-upgrade-older.sqlite3"
+    create_database_backup(db_path, older)
+    newer = older.with_name("worker-before-upgrade-newer.sqlite3")
+    newer.write_bytes(older.read_bytes())
+    unrelated = older.with_name("other-before-upgrade-newest.sqlite3")
+    unrelated.write_bytes(older.read_bytes())
+    now = datetime.now(timezone.utc).timestamp()
+    os.utime(older, (now - 7200, now - 7200))
+    os.utime(newer, (now - 3600, now - 3600))
+    incomplete = older.with_name("worker-before-upgrade-incomplete.sqlite3")
+    with sqlite3.connect(incomplete) as db:
+        db.execute("create table state (value text)")
+    updater = RepositoryUpdater(local, StateStore(), database_path=db_path)
+
+    assert updater._backup(operation(local)) == newer
+    assert backup_is_complete(newer)
+    assert not backup_is_complete(incomplete)
+
+
+def test_backup_failure_restarts_original_service_without_updating(tmp_path: Path):
+    local, _ = fixture_repo(tmp_path)
+    op = operation(local)
+    db_path = tmp_path / "worker.sqlite3"
+    db_path.write_bytes(b"not a sqlite database")
+    calls = []
+    store = StateStore()
+    updater = RepositoryUpdater(
+        local, store, database_path=db_path,
+        wait_for_quiet=lambda: calls.append("quiet"),
+        stop=lambda: calls.append("stop"),
+        restart=lambda: calls.append("restart"),
+        health=lambda: calls.append("health") or True,
+    )
+
+    with pytest.raises(UpgradeFailed):
+        updater.execute(op)
+
+    assert git(local, "rev-parse", "HEAD") == op.original_commit
+    assert calls == ["quiet", "stop", "restart", "health"]
+    assert json.loads(store.values["repository_upgrade_operation:v1"])["status"] == "rolled_back"
+    assert list((db_path.parent / "backups").glob("*.sqlite3")) == []
 
 
 def test_busy_service_is_never_updated_or_restarted(tmp_path: Path):

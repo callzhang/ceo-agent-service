@@ -943,7 +943,10 @@ def test_consumer_instructions_require_reply_level_risk_controls_for_autonomous_
     assert "information_completeness" in instructions
 
 
-def test_consumer_prompt_declares_common_quality_fields_and_priority():
+def test_consumer_prompt_declares_common_quality_fields_and_priority(monkeypatch):
+    defaults = Path(__file__).resolve().parents[1] / "app" / "defaults"
+    monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(defaults / "developer_prompt.md"))
+    monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(defaults / "user_prompt.md"))
     instructions = " ".join(
         consumer_developer_instructions("Verify every supported fact.").split()
     )

@@ -1,4 +1,5 @@
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -13,6 +14,7 @@ from app.config import (
     repository_upgrade_check_interval_seconds,
     repository_upgrade_enabled,
     repository_upgrade_remote,
+    wechat_mirror_dir,
 )
 
 
@@ -90,3 +92,11 @@ def test_repository_upgrade_configuration_has_safe_defaults_and_overrides(monkey
     assert repository_upgrade_branch() == "stable"
     assert repository_upgrade_check_interval_seconds() == 30
     assert repository_upgrade_enabled() is False
+
+
+def test_wechat_mirror_dir_defaults_to_toolkit_export_directory_and_allows_override(monkeypatch):
+    monkeypatch.delenv("CEO_WECHAT_MIRROR_DIR", raising=False)
+    assert wechat_mirror_dir() == Path.home() / "wx_plain"
+
+    monkeypatch.setenv("CEO_WECHAT_MIRROR_DIR", "~/custom-wechat-mirror")
+    assert wechat_mirror_dir() == Path.home() / "custom-wechat-mirror"

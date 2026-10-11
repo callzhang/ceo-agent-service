@@ -120,7 +120,7 @@ def compact_terminal_work_summary_inputs(database: Path) -> dict[str, int]:
             "and body_compacted=0 order by id"
         ).fetchall()
         for row in rows:
-            payload = str(row["payload_json"])
+            payload = row["payload_json"]
             source_created_at, digest, body_bytes = AutoReplyStore._work_summary_input_provenance(payload)
             db.execute(
                 "update work_summary_inputs set payload_json='{}', source_created_at=?, "

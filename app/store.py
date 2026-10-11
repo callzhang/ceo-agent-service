@@ -157,6 +157,10 @@ from app.task_semantic_models import (
     FormalTaskBasis,
     ProjectContext,
 )
+from app.work_summary_payload import (
+    decode_work_summary_payload,
+    encode_work_summary_payload,
+)
 from app.task_source_documents import source_document_key, source_is_observed
 from app.wechat.models import WechatReplyScope
 
@@ -2658,34 +2662,57 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     @contextmanager
     def _immediate_write_transaction(self) -> Iterator[sqlite3.Connection]:
         """Acquire a short SQLite write transaction with bounded lock retry."""
+        started_at = time.monotonic()
+        lock_wait_seconds = 0.0
+        transaction_hold_seconds = 0.0
         body_started = False
-        for attempt in range(STORE_WRITE_LOCK_RETRY_ATTEMPTS):
-            try:
-                with self._connect() as db:
+        try:
+            for attempt in range(STORE_WRITE_LOCK_RETRY_ATTEMPTS):
+                acquired_at: float | None = None
+                try:
+                    with self._connect() as db:
+                        begin_started_at = time.monotonic()
+                        try:
+                            db.execute("begin immediate")
+                        finally:
+                            lock_wait_seconds += time.monotonic() - begin_started_at
+                        acquired_at = time.monotonic()
+                        body_started = True
+                        yield db
+                        return
+                except sqlite3.OperationalError as exc:
+                    if (
+                        body_started
+                        or not _is_sqlite_lock_error(exc)
+                        or attempt + 1 >= STORE_WRITE_LOCK_RETRY_ATTEMPTS
+                    ):
+                        raise
+                    retry_wait_started_at = time.monotonic()
                     try:
-                        db.execute("begin immediate")
-                    except sqlite3.OperationalError as exc:
-                        if (
-                            not _is_sqlite_lock_error(exc)
-                            or attempt + 1 >= STORE_WRITE_LOCK_RETRY_ATTEMPTS
-                        ):
-                            raise
                         time.sleep(
                             STORE_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1)
                         )
-                        continue
-                    body_started = True
-                    yield db
-                    return
-            except sqlite3.OperationalError as exc:
-                if (
-                    body_started
-                    or not _is_sqlite_lock_error(exc)
-                    or attempt + 1 >= STORE_WRITE_LOCK_RETRY_ATTEMPTS
-                ):
-                    raise
-                time.sleep(STORE_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1))
-        raise RuntimeError("SQLite write transaction retry loop exhausted")
+                    finally:
+                        lock_wait_seconds += (
+                            time.monotonic() - retry_wait_started_at
+                        )
+                finally:
+                    if acquired_at is not None:
+                        transaction_hold_seconds += (
+                            time.monotonic() - acquired_at
+                        )
+            raise RuntimeError("SQLite write transaction retry loop exhausted")
+        finally:
+            elapsed = time.monotonic() - started_at
+            if elapsed >= 1.0:
+                print(
+                    f"slow sqlite write transaction elapsed_seconds={elapsed:.3f} "
+                    f"lock_wait_seconds={lock_wait_seconds:.3f} "
+                    f"hold_seconds={transaction_hold_seconds:.3f} "
+                    f"callers={_sqlite_caller_chain(sys._getframe(2))}",
+                    file=sys.stderr,
+                    flush=True,
+                )
 
     def _open_connection(self) -> sqlite3.Connection:
         connection: sqlite3.Connection | None = None
@@ -28555,7 +28582,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     updated_at=current_timestamp
                 where work_summary_inputs.status not in ('processing', 'done', 'skipped')
                 """,
-                (source_type, source_ref, payload_json, source_created_at, body_sha256, body_bytes),
+                (
+                    source_type,
+                    source_ref,
+                    encode_work_summary_payload(payload_json),
+                    source_created_at,
+                    body_sha256,
+                    body_bytes,
+                ),
             )
             row = db.execute(
                 """
@@ -28567,14 +28601,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return int(row["id"])
 
     @staticmethod
-    def _work_summary_input_provenance(payload_json: str) -> tuple[str, str, int]:
+    def _work_summary_input_provenance(payload_json: str | bytes) -> tuple[str, str, int]:
+        payload_text = decode_work_summary_payload(payload_json)
         try:
-            decoded = json.loads(payload_json)
+            decoded = json.loads(payload_text)
         except json.JSONDecodeError:
             decoded = {}
         source = decoded.get("source", {}) if isinstance(decoded, dict) else {}
         source_created_at = str(source.get("created_at") or "") if isinstance(source, dict) else ""
-        body = payload_json.encode("utf-8")
+        body = payload_text.encode("utf-8")
         return source_created_at, hashlib.sha256(body).hexdigest(), len(body)
 
     @classmethod

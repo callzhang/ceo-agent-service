@@ -1,0 +1,138 @@
+diff --git a/app/task_retrieval.py b/app/task_retrieval.py
+index 50e37453..6cf20249 100644
+--- a/app/task_retrieval.py
++++ b/app/task_retrieval.py
+@@ -191,6 +191,12 @@ def retrieve_task_semantic_context(
+     ))
+     ranked_projects = sorted(all_projects, key=lambda project: (
+         project.id not in same_source_project_ids,
++        # Literal registered titles with complete query tokens outrank
++        # incidental character overlap; this does not establish identity.
++        not (
++            project.title.strip() and project.title.strip() in work_item.summary
++            and set(tokenize(project.title)).issubset(query_terms)
++        ),
+         -_semantic_score(query_terms, _project_document(project)), project.id,
+     ))
+     initial_projects = tuple(project for project in ranked_projects if project.id in same_source_project_ids)
+diff --git a/tests/test_task_retrieval.py b/tests/test_task_retrieval.py
+index b1ace462..b4e1f150 100644
+--- a/tests/test_task_retrieval.py
++++ b/tests/test_task_retrieval.py
+@@ -23,6 +23,116 @@ def _work_item(summary: str) -> WorkItem:
+     })
+ 
+ 
++def test_project_literal_source_title_precedes_incidental_character_overlap(tmp_path):
++    from app.task_business_resolution import BusinessResolutionService
++
++    store = AutoReplyStore(tmp_path / "literal-project-title.sqlite3")
++    resolver = BusinessResolutionService(store)
++    project_ids = []
++    for index, title in enumerate(("量子", "交付计划预算审核风险进度")):
++        anchor = resolver.register_anchor(
++            anchor_type="project", anchor_ref=f"project:{index}", title=title,
++        )
++        project_ids.append(resolver.register_official_project(
++            anchor_id=anchor, registry_source=f"registry:{index}",
++        ))
++    item = _work_item("量子：交付预算需要审核，计划进度存在风险。")
++
++    context = retrieve_task_semantic_context(store, item, limit_per_kind=1)
++
++    assert [project.id for project in context.official_projects] == [project_ids[0]]
++
++
++def test_project_same_source_preservation_precedes_literal_title_and_rank_limit(tmp_path):
++    from app.project_context_service import ProjectContextService
++    from app.task_business_resolution import BusinessResolutionService
++
++    store = AutoReplyStore(tmp_path / "same-source-project-title.sqlite3")
++    resolver = BusinessResolutionService(store)
++    signal = store.create_business_task_signal(
++        source_type="reply_attempt", source_ref="message:42#old",
++        evidence_text="此前记录两个项目", dedupe_key="same-source-projects",
++    )
++    own_projects = []
++    for index, title in enumerate(("历史项目甲", "历史项目乙", "量子")):
++        anchor = resolver.register_anchor(
++            anchor_type="project", anchor_ref=f"project:{index}", title=title,
++        )
++        project = resolver.register_official_project(
++            anchor_id=anchor,
++            registry_source="message:42#old" if index < 2 else "registry:other",
++        )
++        if index < 2:
++            own_projects.append(project)
++            with store.business_task_transaction() as db:
++                ProjectContextService(store).apply(
++                    project_id=project, context=None, signal_ids=(signal,), db=db,
++                )
++
++    context = retrieve_task_semantic_context(store, _work_item("量子"), limit_per_kind=1)
++
++    assert {project.id for project in context.official_projects} == set(own_projects)
++
++
++def test_project_nonliteral_overlap_keeps_lexical_ranking_without_identity_writes(tmp_path):
++    from app.task_business_resolution import BusinessResolutionService
++
++    store = AutoReplyStore(tmp_path / "nonliteral-project-title.sqlite3")
++    resolver = BusinessResolutionService(store)
++    projects = []
++    for index, title in enumerate(("量子", "交付计划预算审核风险进度")):
++        anchor = resolver.register_anchor(
++            anchor_type="project", anchor_ref=f"project:{index}", title=title,
++        )
++        projects.append(resolver.register_official_project(
++            anchor_id=anchor, registry_source=f"registry:{index}",
++        ))
++    before_projects = store.list_business_projects()
++    before_anchors = store.list_business_anchors()
++    item = _work_item("量和子是分别讨论的；交付预算需要审核，计划进度存在风险。")
++
++    context = retrieve_task_semantic_context(store, item, limit_per_kind=1)
++
++    assert [project.id for project in context.official_projects] == [projects[1]]
++    assert context.task_candidates == context.formal_tasks == ()
++    assert store.list_business_projects() == before_projects
++    assert store.list_business_anchors() == before_anchors
++    assert store.list_business_tasks() == ()
++
++
++def test_project_embedded_latin_title_does_not_receive_literal_priority(tmp_path):
++    from app.project_context_service import ProjectContextService
++    from app.task_business_resolution import BusinessResolutionService
++    from app.task_semantic_models import ProjectContext
++
++    store = AutoReplyStore(tmp_path / "embedded-latin-project-title.sqlite3")
++    resolver = BusinessResolutionService(store)
++    projects = []
++    for index, title in enumerate(("AI", "delivery progress budget review planning")):
++        anchor = resolver.register_anchor(
++            anchor_type="project", anchor_ref=f"project:{index}", title=title,
++        )
++        projects.append(resolver.register_official_project(
++            anchor_id=anchor, registry_source=f"registry:{index}",
++        ))
++    # Other context words match, so a positive overall score cannot establish
++    # that the short registered title was mentioned as a complete token.
++    with store.business_task_transaction() as db:
++        ProjectContextService(store).apply(
++            project_id=projects[0],
++            context=ProjectContext(
++                goal="delivery progress", scope="", overall_owner=None,
++                responsibilities=[], facts=[],
++            ),
++            signal_ids=(), db=db,
++        )
++    item = _work_item("TRAIN has delivery progress and budget review planning.")
++
++    context = retrieve_task_semantic_context(store, item, limit_per_kind=1)
++
++    assert [project.id for project in context.official_projects] == [projects[1]]
++
++
+ def test_project_context_without_task_is_retrieved_from_its_own_sources(tmp_path):
+     from app.project_context_service import ProjectContextService
+     from app.task_business_resolution import BusinessResolutionService

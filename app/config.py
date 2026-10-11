@@ -525,7 +525,7 @@ def wechat_passphrase_file() -> Path:
 
 
 def wechat_mirror_dir() -> Path:
-    return env_path("CEO_WECHAT_MIRROR_DIR", "~/.cache/wx_read/plain")
+    return env_path("CEO_WECHAT_MIRROR_DIR", "~/wx_plain")
 
 
 def wechat_reader_socket() -> Path:

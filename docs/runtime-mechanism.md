@@ -1391,7 +1391,7 @@ DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。adap
 已移除。以 Agent 形式创建的旧 `dingtalk-message-check-v1`、`wechat-message-check-v1`、会议、OA、工作来源和
 `ceo-minutes-sync-daily-v1` 在启动时原地转换为命令形式（保留名称、Cron、时区和启用状态，已删除的不动）。
 其中“会议行动项”命令还会在同一轮只读发现管理周报、项目管理部周报和部门产研周报；报告按文档内容摘要建立带
-文档 ID、链接、统计周期和内容 digest 的 `work_summary` 输入，重复扫描同一 digest 不重复入队。
+文档 ID、链接、统计周期和内容 digest 的 `work_summary` 输入，重复扫描同一 digest 不重复入队。SQLite 对较大的输入 JSON 保存带版本标记的无损压缩 BLOB，Task Agent、语义导入和项目修复在读取边界解码；小 payload 保持普通 JSON。`python -m app.work_summary_payload --db <database>` 只对仍需保留正文的非终态行按小批事务压缩，可续跑；done/skipped 行继续使用终态精简，不删数据或自动 VACUUM。
 新安装创建的全部默认任务都是暂停状态，用户配好连接器后自行启用；seed 从不改变已有任务的启用状态
 （Derek 2026-09-23）。AI 听记同步不再需要 Skill 判断：分页读取
 摘要与逐字稿、写入本地归档、维护内容游标都由 `app/minutes_sync.py` 确定性完成，时长不足五分钟的
@@ -1624,8 +1624,16 @@ boundaries. The deployer first waits for the persisted work leases to drain.
 This includes valid dispatcher leases before an Agent runtime exists, meeting
 preparation, and already-claimed meeting deliveries. Expired or terminal claims
 and unclaimed ready-to-send work do not count as active execution.
-It then bootstraps no new claims by stopping the launchd service before taking a
-database backup or changing the production checkout. It starts the service
+It then bootstraps no new claims by stopping the launchd service before selecting
+a database backup or changing the production checkout. Under the existing backup
+directory lock it selects the newest complete backup for the same database from
+the preceding 24 hours, including a daily or earlier deployment backup. The
+completion marker proves the existing integrity-checked backup process finished;
+stale, incomplete and future-dated copies are not reused. If none qualifies, it
+creates and verifies a fresh backup through the existing backup process. Backup
+creation failure enters the existing rollback path before checkout changes and
+restarts the original service. A reused backup retains its original recovery
+time, up to 24 hours before deployment. It starts the service
 again with launchd `bootstrap` after verification, then performs the normal
 health and queue readback. This prevents the deployment process and worker
 process from writing the same SQLite database concurrently.
@@ -1840,6 +1848,11 @@ content. Correlate the caller with the operating system's WAL-lock owner and
 the affected run before changing transaction boundaries.
 Shared Store diagnostics retain up to eight caller frames so a context-manager
 wrapper cannot hide the business method that opened the connection.
+Slow AutoReplyStore write transactions additionally report time waiting in
+`BEGIN IMMEDIATE` separately from time holding the acquired transaction.
+Slow direct email-action claims report their read preflight, writer-lock wait,
+locked recheck and claim mutation separately. These measurements identify the
+slow phase; they do not change retry, claim or transaction behavior.
 
 Explicit and offline EmailStore callers perform full durable-row validation
 for email-message metadata, provider locators, recipients, references,
