@@ -3311,7 +3311,8 @@ def test_recipient_preparation_requires_exact_form_semantics(monkeypatch, mutati
         structures=[{"textLength": 24, "controlCount": 1}],
         texts=["Manage your preferences"],
     )
-    browser.connected_recipient = "fixture@example.com"
+    browser.connected_recipient = "account@example.com"
+    browser.unsubscribe_recipient = "fixture@example.com"
     snapshot = _unsubscribe_form_snapshot()
     snapshot["fields"].append({
         "name": "contact", "type": "email", "value": "", "selector": "#contact",

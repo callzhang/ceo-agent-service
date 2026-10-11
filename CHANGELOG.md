@@ -13,9 +13,11 @@
   hydration so corrupt committed plans remain durable conflicts. Update legacy
   migration and provider-index fixtures without relaxing immutable-plan checks.
 
-- Fill a unique empty native email field from the connected account before direct
-  unsubscribe form submission. Rebind the complete control semantics, preserve
-  existing values and hidden fields, and retain the separate email-OTP path.
+- Fill a unique empty native email field from the original message recipient
+  before direct unsubscribe form submission, never from the account login.
+  Missing, invalid or ambiguous recipients cannot substitute the primary mailbox.
+  Rebind the complete control semantics, preserve existing values and hidden
+  fields, and retain the separate connected-account email-OTP path.
 
 - Bind native DingTalk attachments to verified stable message/resource identities
   and content digests instead of persisting expiring download capabilities in

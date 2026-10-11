@@ -1120,7 +1120,7 @@ def test_direct_success_fixture(tmp_path: Path, chrome_browser) -> None:
     assert requests[0][0] == "GET"
 
 
-def test_direct_form_fills_only_connected_recipient_before_native_submit(
+def test_direct_form_fills_source_recipient_not_login_before_native_submit(
     tmp_path: Path, chrome_browser,
 ) -> None:
     from app.email_unsubscribe_direct import run_direct_unsubscribe
@@ -1133,7 +1133,8 @@ def test_direct_form_fills_only_connected_recipient_before_native_submit(
         context = chrome_browser.new_context()
         browser = PlaywrightUnsubscribeBrowser(
             context.new_page(), timeout_ms=3_000,
-            connected_recipient="fixture@example.com",
+            connected_recipient="account@example.com",
+            unsubscribe_recipient="fixture@example.com",
         )
         try:
             result = run_direct_unsubscribe(browser, effect, entry)
@@ -1153,6 +1154,7 @@ def test_direct_form_fills_only_connected_recipient_before_native_submit(
 @pytest.mark.parametrize("case", [
     "missing_identity", "multiple", "hidden_changed", "target_changed",
     "association_changed", "intent_changed", "submitter_changed",
+    "prefilled_wrong", "prefilled_missing_source",
 ])
 def test_recipient_preparation_rejects_unsafe_form_without_post(
     chrome_browser, case: str,
@@ -1162,11 +1164,14 @@ def test_recipient_preparation_rejects_unsafe_form_without_post(
         page = context.new_page()
         browser = PlaywrightUnsubscribeBrowser(
             page, timeout_ms=3_000,
-            connected_recipient="" if case == "missing_identity" else "fixture@example.com",
+            connected_recipient="account@example.com",
+            unsubscribe_recipient="" if case in {"missing_identity", "prefilled_missing_source"} else "fixture@example.com",
         )
         try:
             page.goto(f"{origin}/recipient-form")
-            if case == "multiple":
+            if case in {"prefilled_wrong", "prefilled_missing_source"}:
+                page.locator('[type=email]').fill("wrong@example.com")
+            elif case == "multiple":
                 page.evaluate("""() => {
                     const field = document.createElement('input');
                     field.type = 'email'; field.name = 'other';
@@ -1202,6 +1207,7 @@ def test_recipient_preparation_preserves_existing_email_and_does_not_infer_text(
         page = context.new_page()
         browser = PlaywrightUnsubscribeBrowser(
             page, timeout_ms=3_000, connected_recipient="fixture@example.com",
+            unsubscribe_recipient="alias@example.com",
         )
         try:
             page.goto(f"{origin}/recipient-form")

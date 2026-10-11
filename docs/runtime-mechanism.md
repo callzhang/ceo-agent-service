@@ -1723,6 +1723,19 @@ sanitized failure detail when supplied by the executor. Private response URLs an
 subscription tokens remain excluded. A rejected response is not a success
 receipt and cannot terminalize the unsubscribe as done.
 
+An empty unsubscribe email field uses the original message recipient, not the
+connected mailbox login. The direct operation obtains recipients from the
+classification's exact account and stable message identity; only one parsed
+recipient can be prepared. Missing or ambiguous recipients leave the field
+unavailable rather than substituting the primary mailbox. Authentication and
+mailbox OTP continue to use the connected account. The prepared recipient is
+part of the complete form control digest, so hidden controls, submitter, target,
+intent and form association remain checked before native submission. Prefilled
+email fields must also match the source recipient; a missing source or different
+prefilled address is rejected without submission. User
+instructions to retain a subscription must not be recorded as provider opt-out
+success or executed through an unsubscribe request.
+
 Successful multi-family email training runs use the successful `embedding-mlp`
 entry in `family_results` for description optimization. The compatibility
 `model_id` field may point at a traditional classifier and does not imply

@@ -4460,6 +4460,7 @@ def build_direct_email_unsubscribe_operation(settings: object) -> object:
     """Build the one-call Email unsubscribe operation."""
 
     from app.email_unsubscribe import EmailUnsubscribeEffect, UnsubscribeEntry
+    from email.headerregistry import HeaderRegistry
     from app.agent_runtime_production import build_production_routed_codex_execution
     from app.email_unsubscribe_direct import (
         DirectEmailUnsubscribeOperation,
@@ -4493,12 +4494,30 @@ def build_direct_email_unsubscribe_operation(settings: object) -> object:
         connected_recipient = str(account.get("email_address") or "").strip()
         if not connected_recipient:
             raise ValueError("email unsubscribe recipient is unavailable")
+        classification = email_store.get_classification(effect.classification_id)
+        if (not isinstance(classification, Mapping)
+                or classification.get("account_id") != effect.account_id
+                or classification.get("stable_message_identity") != effect.stable_message_identity):
+            raise ValueError("email unsubscribe source identity changed")
+        recipients = classification.get("recipients")
+        recipient_header = HeaderRegistry()("To", ", ".join(recipients)) if (
+            isinstance(recipients, list) and all(isinstance(value, str) for value in recipients)
+        ) else None
+        # Authentication belongs to the account; subscription belongs to the
+        # original message recipient. Never substitute the former for the latter.
+        unsubscribe_recipient = ""
+        if (recipient_header is not None and not recipient_header.defects
+                and len(recipient_header.addresses) == 1):
+            address = recipient_header.addresses[0]
+            if address.username and address.domain:
+                unsubscribe_recipient = address.addr_spec
         return run_unsubscribe_in_dedicated_profile(
             effect,
             entry,
             profile=context.browser_profile,
             one_click_verified=one_click_verified,
             connected_recipient=connected_recipient,
+            unsubscribe_recipient=unsubscribe_recipient,
             email_otp_resolver=_build_connected_mailbox_otp_resolver(
                 account,
                 context.source_factory,

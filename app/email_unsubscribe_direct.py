@@ -336,6 +336,7 @@ def run_unsubscribe_in_dedicated_profile(
     one_click_verified: bool = False,
     timeout_ms: int = DEFAULT_UNSUBSCRIBE_BROWSER_TIMEOUT_MS,
     connected_recipient: str = "",
+    unsubscribe_recipient: str = "",
     email_otp_resolver: object | None = None,
     session_manager: object | None = None,
     executed: list[UnsubscribeOperation] | None = None,
@@ -358,6 +359,7 @@ def run_unsubscribe_in_dedicated_profile(
             profile,
             timeout_ms=timeout_ms,
             connected_recipient=connected_recipient,
+            unsubscribe_recipient=unsubscribe_recipient,
             email_otp_resolver=email_otp_resolver,
             page_judge=page_judge,
         )
