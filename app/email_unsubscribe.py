@@ -1429,6 +1429,8 @@ class UnsubscribeContinuationResult:
 
 
 class UnsubscribeBrowser(Protocol):
+    def prepare_form_recipient(self, control_reference: str) -> str: ...
+
     def find_confirmation_receipt(
         self, effect: EmailUnsubscribeEffect
     ) -> UnsubscribeTerminalReceipt | None: ...
@@ -1482,6 +1484,7 @@ class _AuditedControlBinding:
     challenge_context_reference: str = ""
     challenge_opened_at: datetime | None = None
     challenge_expires_at: datetime | None = None
+    prepared_recipient_reference: str = ""
 
 
 def _audited_control_reference(semantics: Mapping[str, object]) -> str:
@@ -1943,6 +1946,10 @@ class PlaywrightUnsubscribeBrowser:
             (str(item["name"]), str(item["type"]), str(item["value"]))
             for item in snapshot["fields"]
         )
+        email_fields = [
+            item for item in snapshot["fields"]
+            if item["type"] == "email"
+        ]
         semantics = {
             "enctype": enctype,
             "form_association": snapshot["formAssociation"],
@@ -1964,6 +1971,16 @@ class PlaywrightUnsubscribeBrowser:
             kind="form",
             intent=intent,
         )
+        prepared_reference = ""
+        if len(email_fields) == 1 and not str(email_fields[0]["value"]).strip():
+            prepared_reference = _audited_control_reference({
+                **semantics,
+                "successful_controls": [
+                    {"name": name, "type": field_type,
+                     "value": self.connected_recipient if field_type == "email" else value}
+                    for name, field_type, value in fields
+                ],
+            })
         return _AuditedControlBinding(
             control=control,
             target_url=target_url,
@@ -1971,6 +1988,11 @@ class PlaywrightUnsubscribeBrowser:
             enctype=enctype,
             successful_controls=fields,
             click_selector=str(snapshot["submitterSelector"]),
+            field_selector=(str(email_fields[0]["selector"])
+                            if len(email_fields) == 1 else ""),
+            field_name=(str(email_fields[0]["name"])
+                        if len(email_fields) == 1 else ""),
+            prepared_recipient_reference=prepared_reference,
         )
 
     def _ordinary_controls(self) -> tuple[_AuditedControlBinding, ...]:
@@ -2219,7 +2241,8 @@ class PlaywrightUnsubscribeBrowser:
                   }
                   if (trustedMatches(field, ':disabled') || !name) continue;
                   if (field === node) {
-                    fields.push({name, type: fieldType, value: readValue(field) || ''});
+                    fields.push({name, type: fieldType, value: readValue(field) || '',
+                      selector: elementPath(field)});
                     continue;
                   }
                   if (fieldTag === 'button' ||
@@ -2233,7 +2256,8 @@ class PlaywrightUnsubscribeBrowser:
                     }
                     if (['checkbox', 'radio'].includes(fieldType) &&
                         !reflectApply(inputChecked, field, [])) continue;
-                    fields.push({name, type: fieldType, value: readValue(field) || ''});
+                    fields.push({name, type: fieldType, value: readValue(field) || '',
+                      selector: elementPath(field)});
                     continue;
                   }
                   if (fieldTag === 'textarea') {
@@ -3039,6 +3063,61 @@ class PlaywrightUnsubscribeBrowser:
                 UnsubscribeBrowserFailure.STATE_READBACK_FAILED,
                 "browser state readback failed",
             ) from None
+
+    def prepare_form_recipient(self, control_reference: str) -> str:
+        """Prepare one ordinary Email form, outside the audited execution path."""
+        bindings = [binding for binding in self._ordinary_controls()
+                    if binding.control.reference == control_reference]
+        if len(bindings) != 1:
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
+                "unsubscribe form changed before recipient preparation",
+            )
+        binding = bindings[0]
+        if binding.control.kind == "email_otp":
+            return control_reference
+        if binding.control.kind != "form":
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
+                "unsubscribe form control is unavailable",
+            )
+        email_fields = [field for field in binding.successful_controls
+                        if field[1] == "email"]
+        if not any(not value.strip() for _name, _type, value in email_fields):
+            return control_reference
+        if len(email_fields) != 1 or not binding.field_selector:
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
+                "unsubscribe recipient field is ambiguous",
+            )
+        if not self.connected_recipient:
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.STATE_READBACK_FAILED,
+                "connected recipient is unavailable",
+            )
+        field = self.page.locator(binding.field_selector)
+        if (field.count() != 1 or field.input_value().strip()
+                or field.get_attribute("type").lower() != "email"
+                or field.get_attribute("name") != binding.field_name
+                or not any(current.control.reference == control_reference
+                           and current.field_selector == binding.field_selector
+                           for current in self._ordinary_controls())):
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
+                "unsubscribe recipient field changed",
+            )
+        field.fill(self.connected_recipient)
+        self._raise_if_blocked()
+        prepared = [current for current in self._ordinary_controls()
+                    if current.control.kind == "form"
+                    and current.field_selector == binding.field_selector
+                    and current.control.reference == binding.prepared_recipient_reference]
+        if len(prepared) != 1:
+            raise UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.CONTROL_UNAVAILABLE,
+                "unsubscribe form changed during recipient preparation",
+            )
+        return prepared[0].control.reference
 
     def _execute_audited_control(
         self,

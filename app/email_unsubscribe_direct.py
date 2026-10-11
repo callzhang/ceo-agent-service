@@ -248,6 +248,11 @@ def run_direct_unsubscribe(
     performed = executed if executed is not None else []
     for _ in range(max(1, max_controls) + 1):
         try:
+            if operation.kind is UnsubscribeOperationKind.SUBMIT_FORM:
+                operation = replace(
+                    operation,
+                    target_reference=browser.prepare_form_recipient(operation.target_reference),
+                )
             observation = browser.execute_operation(
                 effect, entry.private_url, operation
             )

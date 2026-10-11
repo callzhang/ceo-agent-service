@@ -175,9 +175,10 @@ def test_latest_snapshot_and_provider_truth_use_set_queries_and_lookup_index(
             """,
             ("account-1", "stable-1"),
         ).fetchall()
-    assert "idx_email_provider_observations_lookup" in indexes
+    assert "idx_email_provider_observations_lookup" not in indexes
+    assert "sqlite_autoindex_email_provider_observations_1" in indexes
     assert any(
-        "USING INDEX" in str(row[3]).upper()
+        "USING INDEX sqlite_autoindex_email_provider_observations_1" in str(row[3])
         for row in plan
     )
     assert not any(" over " in statement.lower() for statement in select_statements)

@@ -3093,6 +3093,21 @@ def test_visible_text_returns_the_trimmed_body_without_deciding_the_state() -> N
     assert browser._visible_text() == ""
 
 
+def test_recipient_preparation_preserves_email_otp_control(monkeypatch) -> None:
+    from app.email_unsubscribe import _AuditedControlBinding
+
+    browser = object.__new__(PlaywrightUnsubscribeBrowser)
+    binding = _AuditedControlBinding(
+        control=UnsubscribeDiscoveredControl(
+            reference="otp-control", kind="email_otp", intent="unsubscribe",
+        ),
+        target_url="https://example.com/verify", method="POST",
+        enctype="application/x-www-form-urlencoded", successful_controls=(),
+    )
+    monkeypatch.setattr(browser, "_ordinary_controls", lambda: (binding,))
+    assert browser.prepare_form_recipient("otp-control") == "otp-control"
+
+
 def _unsubscribe_form_snapshot(label: str = "Unsubscribe") -> dict[str, object]:
     return {
         "acceptCharset": "",
@@ -3284,6 +3299,67 @@ def test_form_submission_uses_its_native_audited_submitter() -> None:
     browser._execute_audited_control(binding)
     assert len(clicks) == 1
     assert clicks[0]["no_wait_after"] is False
+
+
+@pytest.mark.parametrize("mutation", [
+    "none", "uppercase_type", "association", "intent", "submitter", "target", "hidden",
+    "field_name_before_fill", "field_type_before_fill",
+])
+def test_recipient_preparation_requires_exact_form_semantics(monkeypatch, mutation) -> None:
+    browser = _discovery_browser(
+        control_snapshots=[{"blocked": False, "forms": [], "links": []}],
+        structures=[{"textLength": 24, "controlCount": 1}],
+        texts=["Manage your preferences"],
+    )
+    browser.connected_recipient = "fixture@example.com"
+    snapshot = _unsubscribe_form_snapshot()
+    snapshot["fields"].append({
+        "name": "contact", "type": "email", "value": "", "selector": "#contact",
+    })
+    original = browser._form_binding(snapshot)
+    fills = []
+
+    class Control:
+        def count(self):
+            return 1
+
+        def input_value(self):
+            return ""
+
+        def get_attribute(self, name):
+            if mutation == "uppercase_type" and name == "type":
+                return "EMAIL"
+            if mutation == "field_name_before_fill" and name == "name":
+                return "other"
+            if mutation == "field_type_before_fill" and name == "type":
+                return "password"
+            return snapshot["fields"][-1][name]
+
+        def fill(self, value):
+            fills.append(value)
+            snapshot["fields"][-1]["value"] = value
+            if mutation == "association":
+                snapshot["formAssociation"]["formId"] = "changed"
+            elif mutation == "intent":
+                snapshot["submitterLabel"] = "Confirm"
+            elif mutation == "submitter":
+                snapshot["submitter"]["name"] = "other"
+            elif mutation == "target":
+                snapshot["action"] = "/changed"
+            elif mutation == "hidden":
+                snapshot["fields"][0]["value"] = "changed"
+
+    monkeypatch.setattr(browser.page, "locator", lambda _selector: Control(), raising=False)
+    monkeypatch.setattr(browser, "_ordinary_controls", lambda: (browser._form_binding(snapshot),))
+    monkeypatch.setattr(browser, "_raise_if_blocked", lambda: None)
+    if mutation in {"none", "uppercase_type"}:
+        prepared = browser.prepare_form_recipient(original.control.reference)
+        assert prepared == browser._form_binding(snapshot).control.reference
+        assert prepared != original.control.reference
+    else:
+        with pytest.raises(UnsubscribeBrowserError):
+            browser.prepare_form_recipient(original.control.reference)
+    assert fills == ([] if mutation.endswith("before_fill") else ["fixture@example.com"])
 
 
 def test_confirmation_button_clicks_only_its_modelled_exact_selector() -> None:

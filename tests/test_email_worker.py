@@ -697,8 +697,9 @@ def test_reconciliation_still_records_a_receipt_for_a_task_that_closed_without_o
     assert receipt is not None and receipt["outcome"] == "skipped_no_reliable_entry"
 
 
+@pytest.mark.parametrize("corrupt_canonical", (False, True))
 def test_model_action_reconciliation_skips_nonunsubscribe_and_reports_conflict(
-    tmp_path,
+    tmp_path, corrupt_canonical,
 ):
     module = _module()
     database = tmp_path / "model-task-repair-conflict.sqlite3"
@@ -766,12 +767,27 @@ def test_model_action_reconciliation_skips_nonunsubscribe_and_reports_conflict(
             "set classification_source='agent' where id=?",
             (classification_id,),
         )
-        db.execute(
-            "update email_action_plans set classification_source='agent' "
-            "where action_plan_id=?",
-            (action_plan_id,),
-        )
+        if corrupt_canonical:
+            db.execute(
+                "update email_action_plans set classification_source='agent' "
+                "where action_plan_id=?",
+                (action_plan_id,),
+            )
     health = []
+
+    if corrupt_canonical:
+        from app.email_store import EmailPersistenceCorruption
+
+        with pytest.raises(EmailPersistenceCorruption, match="invalid immutable ActionPlan"):
+            module.reconcile_missing_model_action_tasks(
+                email_store,
+                EmailActionTaskProducer(task_store, email_store),
+                load_message=lambda _classification: None,
+                record_health=lambda scope, payload: health.append((scope, payload)),
+            )
+        assert task_store.list_reply_tasks(channel="email") == []
+        assert health == []
+        return
 
     result = module.reconcile_missing_model_action_tasks(
         email_store,

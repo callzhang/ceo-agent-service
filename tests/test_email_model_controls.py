@@ -7,6 +7,8 @@ from uuid import UUID
 
 import pytest
 
+from tests.email_schema_fixtures import restore_action_plan_snapshot_column
+
 from app.email_store import (
     EMAIL_SCHEMA_VERSION,
     EmailFolderBindingConflict,
@@ -206,6 +208,7 @@ def test_v33_migration_backup_and_restart(tmp_path):
         db.execute("drop table email_model_mode_transitions")
         db.execute("drop table email_model_promotion_configs")
         db.execute("drop table email_category_description_revisions")
+        restore_action_plan_snapshot_column(db)
         db.execute("delete from email_schema_migrations")
         db.execute("insert into email_schema_migrations values (33, 'before')")
         with sqlite3.connect(tmp_path / "before.sqlite3") as backup:
