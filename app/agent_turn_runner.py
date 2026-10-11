@@ -2053,18 +2053,24 @@ def _validate_runtime_reference_domain_result(
     source_bindings = authored_result.pop("source_bindings", [])
     _validate_runtime_reference_text_bounds(authored_result)
     for binding in source_bindings:
+        metadata = {key: value for key, value in binding.items() if key != "value"}
         _validate_runtime_reference_text_bounds(
-            {key: value for key, value in binding.items() if key != "value"}, depth=2,
+            metadata, depth=2,
         )
         _validate_runtime_reference_text_bounds(binding["value"], depth=3, authored=False)
         if _contains_sensitive_value(binding["value"]):
             raise RuntimeResultValidationError("runtime_result_source_invalid") from ValueError(
                 "agent_result_contains_sensitive_value"
             )
-    sensitive_projection = domain_result
-    if _contains_sensitive_value(sensitive_projection):
+        if _contains_sensitive_value(metadata):
+            raise ValueError("agent_result_contains_sensitive_value")
+        if _contains_local_runtime_value(metadata) or _contains_local_runtime_value(binding["value"]):
+            raise RuntimeResultValidationError("runtime_result_contains_local_runtime_leak")
+    # Each source already has its own bounds; the envelope must not charge
+    # those values again for list/binding wrappers and JSON-decoding depth.
+    if _contains_sensitive_value(authored_result):
         raise ValueError("agent_result_contains_sensitive_value")
-    if _contains_local_runtime_value(domain_result):
+    if _contains_local_runtime_value(authored_result):
         raise RuntimeResultValidationError("runtime_result_contains_local_runtime_leak")
     encoded = json.dumps(
         domain_result,

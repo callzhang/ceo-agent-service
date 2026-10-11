@@ -2,6 +2,7 @@
 from app.agent_contracts import ConsumerAgentResult, ReviewedSourceBinding
 from app.agent_result import AgentError
 from app.dws_client import DwsError
+from app.message_resource_source import MessageResourceDigest, MessageResourceReference, message_source_facts
 
 
 class ReviewedSourceReadError(ValueError):
@@ -22,9 +23,10 @@ class ReviewedSourceReadError(ValueError):
 
 
 def context_source(context):
+    raw, _ = message_source_facts(context)
     return {
         "trigger_text": context.trigger_text,
-        "trigger_raw_payload": context.trigger_raw_payload,
+        "trigger_raw_payload": raw,
         "messages": [{"message_id": m.message_id, "sender": m.sender, "text": m.text} for m in context.messages],
         "materials": [{"kind": m.kind, "reference": m.reference, "source_message_id": m.source_message_id} for m in context.materials],
     }
@@ -32,6 +34,14 @@ def context_source(context):
 
 def capture_candidate_sources(candidate: ConsumerAgentResult, context, dws):
     bindings = [ReviewedSourceBinding(provider="task_context", object_ref=context.trigger_message_id, value=context_source(context))]
+    _, references = message_source_facts(context)
+    for reference in references:
+        ref = reference.model_dump_json()
+        try:
+            value = read_provider_source(dws, "dingtalk-message-resource", ref)
+        except (DwsError, ValueError) as exc:
+            raise ReviewedSourceReadError(exc) from exc
+        bindings.append(ReviewedSourceBinding(provider="dingtalk-message-resource", object_ref=ref, value=value))
     plans = [candidate.proposal] if candidate.proposal else []
     plans.extend(option.plan for option in candidate.decision_options if option.plan)
     objects = set()
@@ -59,6 +69,14 @@ def capture_candidate_sources(candidate: ConsumerAgentResult, context, dws):
 def read_provider_source(dws, provider, object_ref):
     if dws is None:
         raise ValueError("reviewed source client unavailable")
+    if provider == "dingtalk-message-resource":
+        reference = MessageResourceReference.model_validate_json(object_ref)
+        value = MessageResourceDigest.model_validate(dws.read_message_resource_digest(reference.model_dump()))
+        if any(getattr(value, key) != item for key, item in reference.model_dump().items()):
+            raise ValueError("reviewed resource identity mismatch")
+        if len(bytes.fromhex(value.sha256)) != 32:
+            raise ValueError("reviewed resource digest invalid")
+        return value.model_dump()
     if provider == "dingtalk-oa":
         data = dws.read_oa_approval_detail(object_ref)
         if isinstance(data, dict) and data.get("success") is False:

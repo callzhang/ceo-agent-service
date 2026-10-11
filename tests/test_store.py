@@ -1,4 +1,5 @@
 import errno
+import hashlib
 import importlib.util
 import inspect
 import json
@@ -3247,6 +3248,50 @@ def test_complete_reply_task_never_hides_failed_current_run(tmp_path: Path) -> N
     assert updated is not None
     assert updated.status == "failed"
     assert updated.error == "runtime_result_validation_failed"
+
+
+def test_done_with_failed_latest_run_keeps_exact_input_until_settlement(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "failed-latest.sqlite3")
+    task = store.ensure_reply_task(
+        conversation_id="cid-failed-latest", conversation_title="Group",
+        single_chat=False, trigger_message_id="msg-failed-latest",
+        trigger_create_time="2026-10-10 10:00:00", trigger_sender="Sender",
+        trigger_text="Recoverable original", trigger_message_json='{"content":"Recoverable original"}',
+    )
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+    run = _claim_audit_run(store, task.id, claimed.execution_generation, owner="audit").run
+    store.fail_agent_run(run.id, {"code": "runtime_result_validation_failed"}, owner="audit")
+    store.complete_reply_task(task.id, expected_execution_generation=claimed.execution_generation)
+    assert store.get_reply_task(task.id).status == "failed"
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='done' where id=?", (task.id,))
+        assert not store._compact_settled_reply_task_input(db, task.id)
+    unchanged = store.get_reply_task(task.id)
+    assert unchanged is not None and unchanged.trigger_text == "Recoverable original"
+    assert not unchanged.input_compacted
+    assert store.reconcile_done_reply_tasks_with_failed_current_run() == 1
+    assert store.get_reply_task(task.id).status == "failed"
+
+
+def test_reply_input_compaction_rolls_back_with_terminal_transaction(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "rollback-input.sqlite3")
+    task = store.ensure_reply_task(
+        conversation_id="cid-rollback", conversation_title="Group", single_chat=False,
+        trigger_message_id="msg-rollback", trigger_create_time="2026-10-10 10:00:00",
+        trigger_sender="Sender", trigger_text="Original before rollback",
+        trigger_message_json='{"content":"Original before rollback"}',
+    )
+    with pytest.raises(RuntimeError, match="abort terminal write"):
+        with store._immediate_write_transaction() as db:
+            db.execute("update reply_tasks set status='done' where id=?", (task.id,))
+            assert store._compact_settled_reply_task_input(db, task.id)
+            raise RuntimeError("abort terminal write")
+    after = store.get_reply_task(task.id)
+    assert after is not None and after.status == "pending"
+    assert not after.input_compacted and after.trigger_text == "Original before rollback"
+    [input_row] = store.list_reply_task_inputs(task.id)
+    assert input_row["input_compacted"] == 0
 
 
 def test_skip_failed_reply_task_superseded_by_terminal_business_object(
@@ -7294,6 +7339,77 @@ def test_schema_upgrade_aliases_historical_oa_comment_to_the_known_node(
         assert db.execute("select count(*) from reply_tasks").fetchone()[0] == 2
 
 
+def test_schema_upgrade_preserves_unchanged_business_object_mapping_rows(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    for message_id in ("first", "second"):
+        store.ensure_reply_task(
+            channel="dingtalk", conversation_id="cid", conversation_title="Chat",
+            single_chat=False, trigger_message_id=message_id,
+            trigger_create_time="2026-10-10 00:00:00", trigger_sender="Sender",
+            trigger_text=f"Input {message_id}",
+        )
+    with store._connect() as db:
+        db.execute(
+            "update business_object_tasks set created_at=?, updated_at=?",
+            ("2020-01-02 03:04:05", "2021-02-03 04:05:06"),
+        )
+        before = [tuple(row) for row in db.execute(
+            "select business_object_key, reply_task_id, created_at, updated_at "
+            "from business_object_tasks order by business_object_key"
+        )]
+        db.execute(
+            "update service_state set value='2026-10-09.0' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    upgraded = AutoReplyStore(db_path)
+    with upgraded._connect() as db:
+        after = [tuple(row) for row in db.execute(
+            "select business_object_key, reply_task_id, created_at, updated_at "
+            "from business_object_tasks order by business_object_key"
+        )]
+    assert after == before
+
+
+def test_schema_upgrade_keeps_latest_business_object_remapping(tmp_path: Path) -> None:
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    first = store.ensure_reply_task(
+        channel="dingtalk", conversation_id="cid", conversation_title="Chat",
+        single_chat=False, trigger_message_id="first",
+        trigger_create_time="2026-10-10 00:00:00", trigger_sender="Sender",
+        trigger_text="First input",
+    )
+    second = store.ensure_reply_task(
+        channel="dingtalk", conversation_id="cid", conversation_title="Chat",
+        single_chat=False, trigger_message_id="second",
+        trigger_create_time="2026-10-10 00:01:00", trigger_sender="Sender",
+        trigger_text="Second input",
+    )
+    assert first.id < second.id
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set business_object_key=? where id=?",
+            (first.business_object_key, second.id),
+        )
+        db.execute(
+            "update service_state set value='2026-10-09.0' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    upgraded = AutoReplyStore(db_path)
+    with upgraded._connect() as db:
+        rows = [tuple(row) for row in db.execute(
+            "select business_object_key, reply_task_id from business_object_tasks"
+        )]
+    assert rows == [(first.business_object_key, second.id)]
+
+
 def test_different_oa_nodes_keep_separate_current_reply_tasks(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     first = store.ensure_reply_task(
@@ -8228,6 +8344,119 @@ def test_complete_reply_task_marks_generation_bound_task_done(tmp_path: Path):
     tasks = store.list_reply_tasks(limit=1)
     assert tasks[0].status == "done"
     assert tasks[0].error == ""
+
+
+def test_settled_reply_input_compacts_exact_copies_and_keeps_identity(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "reply-input.sqlite3")
+    original = json.dumps({"schema": "email_agent_action.v1",
+                           "lifecycle_version": "email_unsubscribe_audited_v2",
+                           "action_type": "unsubscribe", "action_identity": "action-1",
+                           "classification_id": 42, "body": "long copied input"})
+    spec = dict(channel="email", conversation_id="email:thread-1",
+                conversation_title="Mail", single_chat=True,
+                trigger_message_id="action-1", trigger_create_time="2026-10-10 10:00:00",
+                trigger_sender="Sender", trigger_text="long copied input",
+                trigger_message_json=original)
+    task = store.ensure_reply_task(**spec)
+    attempt_id = store.record_reply_attempt(
+        channel="email", conversation_id=spec["conversation_id"],
+        conversation_title="Mail", trigger_message_id="action-1",
+        trigger_sender="Sender", trigger_text="an earlier rendering",
+        action="agent_run", sensitivity_kind="normal", send_status="completed",
+    )
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+    store.complete_reply_task(task.id, expected_execution_generation=claimed.execution_generation)
+    settled = store.get_reply_task(task.id)
+    assert settled is not None and settled.status == "done"
+    assert settled.input_compacted and settled.trigger_text == ""
+    assert json.loads(settled.input_provenance_json)["trigger_message_json"] == {
+        "sha256": hashlib.sha256(original.encode()).hexdigest(),
+        "bytes": len(original.encode()),
+    }
+    marker = json.loads(settled.trigger_message_json)
+    assert marker["input_compacted"] is True
+    assert (marker["schema"], marker["lifecycle_version"], marker["action_type"],
+            marker["classification_id"]) == (
+                "email_agent_action.v1", "email_unsubscribe_audited_v2", "unsubscribe", 42)
+    [input_row] = store.list_reply_task_inputs(task.id)
+    assert input_row["input_compacted"] == 1 and input_row["trigger_text"] == ""
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None and attempt.trigger_text == ""
+    assert json.loads(attempt.trigger_text_provenance_json)["sha256"] == hashlib.sha256(
+        "an earlier rendering".encode()).hexdigest()
+    assert store.ensure_reply_tasks([spec])[0].id == task.id
+    with pytest.raises(store_module.ReplyTaskIdentityConflict):
+        store.ensure_reply_tasks([{**spec, "trigger_text": "changed original"}])
+    assert store.get_reply_task(task.id).input_compacted
+
+
+def test_compacted_reply_input_revised_card_starts_new_exact_generation(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "revised.sqlite3")
+    task = store.ensure_reply_task(
+        conversation_id="cid-card", conversation_title="Card", single_chat=False,
+        trigger_message_id="msg-card", trigger_create_time="2026-10-10 10:00:00",
+        trigger_sender="Sender", trigger_text="First card",
+        trigger_message_json=(
+            '{"content":"First card","scheduled_consumer":'
+            '{"scheduled_task_run_id":1}}'
+        ),
+    )
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+    store.complete_reply_task(task.id, expected_execution_generation=claimed.execution_generation)
+    assert store.get_reply_task(task.id).input_compacted
+    assert not store.requeue_terminal_reply_task_for_revised_trigger(
+        conversation_id="cid-card", conversation_title="Card", single_chat=False,
+        trigger_message_id="msg-card", trigger_create_time="2026-10-10 10:00:00",
+        trigger_sender="Sender", trigger_text="First card",
+        trigger_message_json=(
+            '{"content":"First card","scheduled_consumer":'
+            '{"scheduled_task_run_id":2}}'
+        ),
+    )
+    assert store.get_reply_task(task.id).input_compacted
+    assert len(store.list_reply_task_inputs(task.id)) == 1
+    assert store.requeue_terminal_reply_task_for_revised_trigger(
+        conversation_id="cid-card", conversation_title="Card", single_chat=False,
+        trigger_message_id="msg-card", trigger_create_time="2026-10-10 10:01:00",
+        trigger_sender="Sender", trigger_text="Updated card",
+        trigger_message_json='{"content":"Updated card"}',
+    )
+    revised = store.get_reply_task(task.id)
+    assert revised is not None and revised.status == "pending"
+    assert not revised.input_compacted and revised.input_provenance_json == "{}"
+    assert revised.trigger_text == "Updated card"
+    assert revised.execution_generation != claimed.execution_generation
+    assert len(store.list_reply_task_inputs(task.id)) == 2
+
+
+def test_scheduled_reply_compaction_keeps_run_and_frozen_skill_identity():
+    payload = json.dumps({
+        "schema": "scheduled_agent_execution.v1",
+        "context": {"trigger_raw_payload": {
+            "scheduled_task_id": 5, "scheduled_task_version": 3,
+            "scheduled_task_run_id": 17,
+            "skills": [
+                {"source": "managed", "name": "daily", "skill_id": 8,
+                 "revision_id": 11, "sha256": "a" * 64},
+                {"source": "operation", "name": "ops", "path": "/skills/ops/SKILL.md",
+                 "sha256": "b" * 64},
+            ],
+        }},
+        "skill_names": ["daily", "ops"],
+        "skill_materials": [{"name": "daily", "content": "frozen body"}],
+    })
+    provenance = AutoReplyStore._reply_input_provenance("prompt", payload)
+    compact = json.loads(AutoReplyStore._compact_reply_input_json(provenance))
+    assert compact["input_compacted"] is True
+    assert compact["context"]["trigger_raw_payload"]["scheduled_task_run_id"] == 17
+    assert compact["skills"][0]["revision_id"] == 11
+    assert compact["skills"][1]["path"] == "/skills/ops/SKILL.md"
+    assert "frozen body" not in json.dumps(compact)
+    assert json.loads(provenance)["source"]["skill_materials"][0]["content"] == {
+        "sha256": hashlib.sha256(b"frozen body").hexdigest(), "bytes": 11,
+    }
 
 
 
@@ -11501,6 +11730,104 @@ def test_terminal_work_summary_input_resolves_its_own_error(tmp_path: Path):
         row = db.execute("select resolved_at from errors").fetchone()
     assert row is not None
     assert row["resolved_at"]
+
+
+def test_terminal_work_input_compacts_atomically_with_adopted_project(tmp_path: Path):
+    import hashlib
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    payload = json.dumps({"source": {"type": "local_file", "ref": "file#v1",
+                                     "created_at": "2026-01-01T09:00:00Z"},
+                          "summary": "private source body"})
+    input_id = store.enqueue_work_summary_input("local_file", "file#v1", payload)
+    [claimed] = store.claim_work_summary_inputs(1)
+    assert store.enqueue_work_summary_input(
+        "local_file", "file#v1", '{"summary":"later scan while processing"}'
+    ) == input_id
+    assert store.get_work_summary_input(input_id).payload_json == payload
+    with pytest.raises(RuntimeError, match="rollback"):
+        with store.task_agent_domain_apply_transaction() as db:
+            db.execute("insert into work_projects(title, goal) values('adopted', '')")
+            store.mark_work_summary_input_done(claimed.id, _db=db)
+            raise RuntimeError("rollback")
+    assert store.get_work_summary_input(input_id).payload_json == payload
+    with store._connect() as db:
+        assert db.execute("select count(*) from work_projects").fetchone()[0] == 0
+
+    with store.task_agent_domain_apply_transaction() as db:
+        db.execute("insert into work_projects(title, goal) values('adopted', '')")
+        store.mark_work_summary_input_done(claimed.id, _db=db)
+    done = store.get_work_summary_input(input_id)
+    assert done.status == "done"
+    assert done.payload_json == "{}"
+    assert done.source_created_at == "2026-01-01T09:00:00Z"
+    assert done.body_sha256 == hashlib.sha256(payload.encode()).hexdigest()
+    assert done.body_bytes == len(payload.encode())
+    with store._connect() as db:
+        assert db.execute("select count(*) from work_projects").fetchone()[0] == 1
+
+    duplicate = store.enqueue_work_summary_input("local_file", "file#v1", '{"summary":"later"}')
+    assert duplicate == input_id
+    assert store.get_work_summary_input(input_id) == done
+    log = next(log for log in store.list_operation_logs(source_tables=("work_summary_inputs",))
+               if log.source_id == input_id)
+    assert "private source body" not in log.summary
+    assert "file#v1" in log.summary
+    assert done.body_sha256 in log.summary
+
+
+def test_skipped_compacts_but_failed_and_requeued_keep_exact_input(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    payload = '{"source":{"type":"local_file","ref":"retry"},"summary":"exact"}'
+    failed_id = store.enqueue_work_summary_input("local_file", "retry", payload)
+    skipped_id = store.enqueue_work_summary_input("local_file", "skip", payload)
+    [failed, skipped] = store.claim_work_summary_inputs(2)
+    store.mark_work_summary_input_failed(failed.id, "invalid")
+    store.mark_work_summary_input_skipped(skipped.id, "irrelevant")
+    assert store.get_work_summary_input(failed_id).payload_json == payload
+    assert store.get_work_summary_input(skipped_id).payload_json == "{}"
+    assert store.requeue_failed_work_summary_input(failed_id, "reviewed")
+    assert store.get_work_summary_input(failed_id).payload_json == payload
+
+
+def test_work_input_provenance_schema_is_checked_on_store_reopen(tmp_path: Path):
+    path = tmp_path / "worker.sqlite3"
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        db.execute("alter table work_summary_inputs drop column body_compacted")
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    reopened = AutoReplyStore(path)
+    with reopened._connect() as db:
+        columns = {row["name"] for row in db.execute("pragma table_info(work_summary_inputs)")}
+    assert "body_compacted" in columns
+
+
+@pytest.mark.parametrize("terminal_status", ["done", "skipped"])
+def test_late_work_input_failure_or_retry_cannot_reopen_compacted_input(
+    tmp_path: Path, terminal_status: str
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    payload = '{"source":{"type":"local_file","ref":"file#v1"},"summary":"original"}'
+    input_id = store.enqueue_work_summary_input("local_file", "file#v1", payload)
+    [claimed] = store.claim_work_summary_inputs(1)
+    if terminal_status == "done":
+        store.mark_work_summary_input_done(claimed.id)
+    else:
+        store.mark_work_summary_input_skipped(claimed.id, "no actionable task")
+    terminal = store.get_work_summary_input(input_id)
+    assert terminal.payload_json == "{}"
+    assert terminal.body_compacted == 1
+
+    store.mark_work_summary_input_failed(input_id, "late failure")
+    store.schedule_work_summary_input_retry(
+        input_id, "late retry", available_at="2026-12-01 00:00:00"
+    )
+    store.defer_work_summary_input_for_capacity(
+        input_id, "late capacity", available_at="2026-12-01 00:00:00"
+    )
+    assert not store.requeue_failed_work_summary_input(input_id, "late manual requeue")
+    assert store.get_work_summary_input(input_id) == terminal
+    assert store.claim_work_summary_inputs(1) == []
 
 
 def test_reopening_drops_the_second_copy_of_a_run_trajectory(tmp_path: Path):

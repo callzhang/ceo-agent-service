@@ -10586,6 +10586,17 @@ def test_handle_feedback_post_creates_manual_event_without_spike_token(tmp_path:
 def test_handle_rerun_attempt_post_requeues_task_and_redirects(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
+    store.ensure_reply_task(
+        conversation_id="cid-1", conversation_title="技术部", single_chat=False,
+        trigger_message_id="msg-1", trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Xiaomin", trigger_text="@Alex Chen 这个怎么处理？",
+        trigger_message_json=DingTalkMessage(
+            open_conversation_id="cid-1", open_message_id="msg-1",
+            conversation_title="技术部", single_chat=False,
+            sender_name="Xiaomin", create_time="2026-05-13 18:00:00",
+            content="@Alex Chen 这个怎么处理？",
+        ).model_dump_json(),
+    )
 
     status, headers, html = handle_rerun_attempt_post(
         store,
@@ -10903,7 +10914,7 @@ def test_scheduled_rerun_payload_is_valid_execution_context():
     assert not _is_valid_rerun_trigger_json("{}", channel="scheduled")
 
 
-def test_handle_rerun_attempt_post_replaces_invalid_legacy_task_json(
+def test_handle_rerun_attempt_post_rejects_unavailable_original_json(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -10921,14 +10932,49 @@ def test_handle_rerun_attempt_post_replaces_invalid_legacy_task_json(
 
     status, headers, html = handle_rerun_attempt_post(store, attempt_id)
 
-    assert status == 303
-    assert headers["Location"] == f"/attempts/{attempt_id}"
-    assert html == ""
+    assert status == 409
+    assert headers == {}
+    assert "Original execution payload is unavailable" in html
     task = store.get_reply_task_for_message("cid-1", "msg-1")
     assert task is not None
-    trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
-    assert trigger.open_message_id == "msg-1"
-    assert trigger.content == "@Alex Chen 这个怎么处理？"
+    assert task.status == "pending"
+    assert task.trigger_message_json == "{}"
+
+
+def test_compacted_original_never_becomes_a_rerun_trigger(tmp_path: Path):
+    from app.audit_web import _is_valid_rerun_trigger_json
+
+    store = AutoReplyStore(tmp_path / "compacted-rerun.sqlite3")
+    trigger = DingTalkMessage(
+        open_conversation_id="cid-compact", open_message_id="msg-compact",
+        conversation_title="Group", single_chat=False, sender_name="Sender",
+        create_time="2026-10-10 10:00:00", content="Original message",
+    )
+    task = store.ensure_reply_task(
+        conversation_id="cid-compact", conversation_title="Group", single_chat=False,
+        trigger_message_id="msg-compact", trigger_create_time="2026-10-10 10:00:00",
+        trigger_sender="Sender", trigger_text="Original message",
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-compact", conversation_title="Group",
+        trigger_message_id="msg-compact", trigger_sender="Sender",
+        trigger_text="Original message", action="agent_run",
+        sensitivity_kind="normal", send_status="failed",
+    )
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+    store.complete_reply_task(task.id, expected_execution_generation=claimed.execution_generation)
+    compacted = store.get_reply_task(task.id)
+    assert compacted is not None and compacted.input_compacted
+    assert not _is_valid_rerun_trigger_json(compacted.trigger_message_json)
+    status, headers, html = handle_rerun_attempt_post(store, attempt_id)
+    assert status == 409 and headers == {}
+    assert "Original execution payload is unavailable" in html
+    with pytest.raises(ValueError, match="original reply task input is unavailable"):
+        handle_reviewed_message_reply(store, attempt_id=attempt_id,
+                                      reply_text="Revised", reviewer_feedback="Review")
+    assert store.get_reply_task(task.id).status == "done"
 
 
 def test_handle_recall_post_calls_dws_message_recall_and_records_success(
@@ -11063,6 +11109,12 @@ def test_handle_reviewed_message_reply_uses_immutable_attempt_binding(tmp_path: 
         trigger_create_time="2026-07-30 09:00:00",
         trigger_sender="Avery",
         trigger_text="重复正文",
+        trigger_message_json=DingTalkMessage(
+            open_conversation_id="cid-stable", open_message_id="msg-stable",
+            conversation_title="同名群", single_chat=False,
+            sender_name="Avery", create_time="2026-07-30 09:00:00",
+            content="重复正文",
+        ).model_dump_json(),
     )
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-stable",

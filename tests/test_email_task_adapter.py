@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 import json
+import hashlib
 import sqlite3
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -11,7 +12,7 @@ from urllib.parse import quote
 import pytest
 
 from app.agent_context import PriorReceipt
-from app.agent_cron.commands import ServiceCommandConsumerContext
+from app.agent_cron.commands import ServiceCommandConsumerContext, ServiceCommandSkillMaterial
 from app.agent_contracts import ProposedAction
 from app.email_classifier_contracts import (
     EmailAction,
@@ -279,6 +280,109 @@ def test_duplicate_email_scan_keeps_first_trigger_context_without_conflict(
     persisted = json.loads(duplicate.input_json)["scheduled_consumer"]
     assert persisted["scheduled_task_run_id"] == 101
     assert persisted["skill_names"] == ["ceo-email-classifier"]
+
+
+def test_completed_classification_compacts_input_and_keeps_immutable_identity(tmp_path: Path):
+    store = _email_store(tmp_path)
+    adapter = EmailClassificationTaskAdapter(store)
+    context = ServiceCommandConsumerContext(
+        scheduled_task_id=10, scheduled_task_run_id=101,
+        prompt="classify " + "prompt body " * 100,
+        skill_names=("ceo-email-classifier",),
+        skill_protocol="frozen protocol " * 100,
+        skill_materials=(ServiceCommandSkillMaterial(
+            name="ceo-email-classifier",
+            content="## Managed Skill: ceo-email-classifier\nrevision_id: 71\nsha256: "
+                    + "b" * 64 + "\n\nfrozen Skill body " * 100,
+        ),),
+    )
+    original = replace(
+        _classification_input(uid=191),
+        message={"text": "private message body " * 500},
+        unsubscribe_candidates=({
+            "index": 0, "source": "header_https", "digest": "a" * 64,
+            "reference": "unsubscribe-entry:" + "a" * 64,
+        },),
+        scheduled_consumer=context.to_payload(),
+    )
+    pending = adapter.ensure_task(original)
+    claimed = adapter.claim_next(owner="worker")
+    assert claimed is not None and claimed.input_json == pending.input_json
+    result = {"classification_id": 191, "decision_status": "processed"}
+    adapter.complete(claimed, result)
+    done = adapter.get_task(pending.task_id)
+    assert done is not None and done.status == "done"
+    assert json.loads(done.result_json) == result
+    compact = json.loads(done.input_json)
+    assert compact["input_compacted"] is True
+    assert compact["input_bytes"] == len(pending.input_json.encode("utf-8"))
+    assert compact["input_sha256"] == hashlib.sha256(
+        pending.input_json.encode("utf-8")
+    ).hexdigest()
+    assert compact["provider_locator"] == json.loads(pending.input_json)["provider_locator"]
+    assert compact["unsubscribe_candidates"] == [original.unsubscribe_candidates[0]]
+    assert compact["scheduled_consumer_reference"]["scheduled_task_run_id"] == 101
+    assert compact["scheduled_consumer_reference"]["skill_materials"][0]["name"] == "ceo-email-classifier"
+    assert compact["scheduled_consumer_reference"]["skill_materials"][0]["content_sha256"] == hashlib.sha256(
+        context.skill_materials[0].content.encode("utf-8")
+    ).hexdigest()
+    assert "private message body" not in done.input_json
+    assert "frozen Skill body" not in done.input_json
+    assert adapter.stable_provider_uids(
+        account_id="account-primary", folder="INBOX", uidvalidity=42
+    ) == frozenset({191})
+    assert adapter.ensure_task(original).task_id == pending.task_id
+    assert adapter.ensure_task(replace(
+        original, scheduled_consumer=replace(context, scheduled_task_run_id=102).to_payload()
+    )).task_id == pending.task_id
+    with pytest.raises(ValueError, match="stable classification task input changed"):
+        adapter.ensure_task(replace(original, message={"text": "different"}))
+    EmailStore(store.path)  # Full durable-row validation accepts the compacted row.
+
+
+def test_compacted_classifier_input_never_copies_custom_skill_preamble():
+    body = "private custom Skill body " * 600
+    context = ServiceCommandConsumerContext(
+        scheduled_task_id=10, scheduled_task_run_id=101,
+        prompt="classify", skill_names=("ceo-email-classifier",),
+        skill_protocol="custom protocol", skill_protocol_source="explicit_custom",
+        skill_materials=(ServiceCommandSkillMaterial(
+            name="ceo-email-classifier",
+            content="## Managed Skill: ceo-email-classifier\n" + body + "\n\nmore body",
+        ),),
+    )
+    task_input = replace(_classification_input(uid=193),
+                         scheduled_consumer=context.to_payload())
+    original = json.dumps(task_input.payload(), ensure_ascii=False, sort_keys=True,
+                          separators=(",", ":"))
+    compact = EmailClassificationTaskAdapter.compact_done_input_json(original)
+    material = json.loads(compact)["scheduled_consumer_reference"]["skill_materials"][0]
+    assert material == {
+        "name": "ceo-email-classifier",
+        "content_sha256": hashlib.sha256(context.skill_materials[0].content.encode("utf-8")).hexdigest(),
+    }
+    assert body not in compact
+    assert "more body" not in compact
+
+
+def test_classification_failed_and_retry_inputs_remain_exact(tmp_path: Path):
+    adapter = EmailClassificationTaskAdapter(_email_store(tmp_path), retry_base_seconds=0)
+    task = adapter.ensure_task(replace(
+        _classification_input(uid=192), message={"text": "retry body " * 200}
+    ))
+    first = adapter.claim_next(owner="worker")
+    assert first is not None
+    adapter.fail(first, error="temporary", retryable=True)
+    pending = adapter.get_task(task.task_id)
+    assert pending is not None and pending.input_json == task.input_json
+    second = adapter.claim_next(owner="worker")
+    assert second is not None and second.input_json == task.input_json
+    adapter.fail(second, error="terminal", retryable=False)
+    failed = adapter.get_task(task.task_id)
+    assert failed is not None and failed.status == "failed"
+    assert failed.input_json == task.input_json
+    assert adapter.retry_failed_tasks([task.task_id]) == 1
+    assert adapter.get_task(task.task_id).input_json == task.input_json
 
 
 def test_classifier_queue_schema_is_owned_by_email_store_not_adapter(tmp_path: Path):

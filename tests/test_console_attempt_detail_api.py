@@ -200,14 +200,21 @@ def test_attempt_detail_loads_task_runs_when_attempt_has_no_run_id(tmp_path: Pat
 
 
 TRIGGER_PAYLOAD = {
+    "schema": "email_agent_action.v1",
+    "lifecycle_version": "email_unsubscribe_audited_v2",
     "account_id": "mailbox",
     "action_identity": TRIGGER,
     "action_type": "unsubscribe",
     "category": "junk",
     "classification_id": 42,
     "action_plan_id": "email-action-plan:plan-digest",
+    "action_plan_version": 1,
     "stable_message_identity": "mailbox:message-id:<msg@host>",
-    "action_parameters": {"candidate_source": "body_html_https"},
+    "thread_identity": "thread-digest",
+    "action_parameters": {
+        "candidate_source": "body_html_https",
+        "instruction": "Private execution detail that must not remain in completed input",
+    },
 }
 
 
@@ -675,6 +682,42 @@ def test_email_attempt_carries_its_message_and_unsubscribe_receipt(tmp_path: Pat
     assert email["unsubscribe"]["steps"] == [
         {"sequence": 1, "operation": "open_entry", "state": "skipped_no_reliable_entry"}
     ]
+
+
+def test_completed_email_attempt_keeps_adopted_metadata_after_input_compaction(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = _seed_email_attempt(store, with_agent_runs=False)
+    _, before = build_attempt_detail(
+        store, attempt_id, email_store_factory=_FakeEmailStore,
+    )
+    assert before is not None
+    original_email = before["email"]
+    assert original_email["category"] == "junk"
+    assert original_email["candidate_source"] == "body_html_https"
+
+    task = store.get_reply_task_for_message(CONVERSATION, TRIGGER, channel="email")
+    assert task is not None
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+    store.complete_reply_task(
+        task.id, expected_execution_generation=claimed.execution_generation,
+    )
+    compacted = store.get_reply_task(task.id)
+    assert compacted is not None and compacted.input_compacted
+    assert compacted.trigger_text == ""
+    projection = json.loads(compacted.trigger_message_json)
+    assert projection["category"] == "junk"
+    assert projection["action_parameters"] == {
+        "candidate_source": "body_html_https"
+    }
+
+    _, after = build_attempt_detail(
+        store, attempt_id, email_store_factory=_FakeEmailStore,
+    )
+    assert after is not None
+    assert after["email"] == original_email
 
 
 def test_non_email_attempt_has_no_email_context(tmp_path: Path):

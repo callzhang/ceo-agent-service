@@ -178,6 +178,27 @@ def test_agent_written_evidence_without_source_input_stays_unresolved(tmp_path):
     assert item.disposition == "history_only"
 
 
+def test_compacted_source_is_explicitly_unavailable_for_semantic_import(tmp_path):
+    store = AutoReplyStore(tmp_path / "legacy.sqlite3")
+    _, todo_id, _ = _source_backed_todo(
+        store, basis="explicit_assignment", source_type="reply_attempt",
+        author_user_id="assigner",
+    )
+    before = build_task_semantic_import_manifest(store.path)
+    assert next(item for item in before.items if item.legacy_row_id == todo_id
+                and item.legacy_kind == "work_todos").disposition == "formal_task"
+    with store._connect() as db:
+        input_id = db.execute("select id from work_summary_inputs").fetchone()["id"]
+    store.mark_work_summary_input_done(input_id)
+    after = build_task_semantic_import_manifest(store.path)
+    item = next(item for item in after.items if item.legacy_row_id == todo_id
+                and item.legacy_kind == "work_todos")
+    assert item.disposition == "history_only"
+    assert item.reason == "source input unavailable after compaction"
+    with pytest.raises(ValueError, match="fingerprint"):
+        apply_task_semantic_import_manifest(store.path, before)
+
+
 def test_candidate_evidence_is_retained_in_history_not_promoted(tmp_path):
     store = AutoReplyStore(tmp_path / "legacy.sqlite3")
     project_id = store.create_work_project(title="客户推进")

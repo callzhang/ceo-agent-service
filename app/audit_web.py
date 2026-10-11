@@ -8196,7 +8196,7 @@ def _reply_task_item(task: ReplyTask) -> str:
         "</div>"
         "</div>"
         "<div class=\"attempt-lines\">"
-        f"{_attempt_text_line('问', task.trigger_text, 260)}"
+        f"{_attempt_text_line('问', task.trigger_text if not task.input_compacted else '原始输入正文已精简；可按消息 ID 和来源回查', 260)}"
         f"{_attempt_text_line('进', _reply_task_progress_text(task), 320)}"
         "</div>"
         f"{error_html}"
@@ -9610,15 +9610,16 @@ def handle_rerun_attempt_post(
                 f"<p>Conversation not found: {escape(attempt.conversation_id)}</p>",
             ),
         )
-    if existing_task is not None and _is_valid_rerun_trigger_json(
+    if existing_task is not None and not existing_task.input_compacted and _is_valid_rerun_trigger_json(
         existing_task.trigger_message_json,
         channel=channel,
     ):
         trigger_message_json = existing_task.trigger_message_json
+        trigger_text = existing_task.trigger_text
         trigger_create_time = existing_task.trigger_create_time
         conversation_title = existing_task.conversation_title
         single_chat = existing_task.single_chat
-    elif channel in {"wechat", "scheduled"}:
+    else:
         return (
             409,
             {},
@@ -9627,29 +9628,6 @@ def handle_rerun_attempt_post(
                 "<p>Original execution payload is unavailable; rerun was not queued.</p>",
             ),
         )
-    elif conversation_record is None:
-        return (
-            404,
-            {},
-            render_page(
-                "Conversation not found",
-                f"<p>Conversation not found: {escape(attempt.conversation_id)}</p>",
-            ),
-        )
-    else:
-        trigger_message = DingTalkMessage(
-            open_conversation_id=attempt.conversation_id,
-            open_message_id=attempt.trigger_message_id,
-            conversation_title=conversation_record.title,
-            single_chat=conversation_record.single_chat,
-            sender_name=attempt.trigger_sender,
-            create_time=attempt.created_at,
-            content=attempt.trigger_text,
-        )
-        trigger_message_json = trigger_message.model_dump_json()
-        trigger_create_time = trigger_message.create_time
-        conversation_title = conversation_record.title
-        single_chat = conversation_record.single_chat
     store.enqueue_manual_rerun_reply_task(
         conversation_id=attempt.conversation_id,
         conversation_title=conversation_title,
@@ -9657,7 +9635,7 @@ def handle_rerun_attempt_post(
         trigger_message_id=attempt.trigger_message_id,
         trigger_create_time=trigger_create_time,
         trigger_sender=attempt.trigger_sender,
-        trigger_text=attempt.trigger_text,
+        trigger_text=trigger_text,
         trigger_message_json=trigger_message_json,
         oa_url=attempt.oa_url,
         attempt_id=attempt.id,
@@ -9737,15 +9715,40 @@ def _is_valid_rerun_trigger_json(
     trigger_message_json: str, *, channel: str = "dingtalk",
 ) -> bool:
     try:
+        payload = json.loads(trigger_message_json)
+        if isinstance(payload, dict) and payload.get("input_compacted") is True:
+            return False
         if channel == "scheduled":
             from app.agent_cron.context import ScheduledAgentContext
 
             ScheduledAgentContext.from_execution_json(trigger_message_json, reply_task_id=0)
         elif channel == "wechat":
             WechatMessage.model_validate_json(trigger_message_json)
+        elif channel == "email":
+            if not isinstance(payload, dict) or payload.get("schema") != "email_agent_action.v1":
+                return False
+            lifecycle = {
+                "auto_reply": "consumer_audit_v1",
+                "unsubscribe": "email_unsubscribe_audited_v2",
+            }.get(payload.get("action_type"))
+            if lifecycle is None or payload.get("lifecycle_version") != lifecycle:
+                return False
+            if any(
+                not isinstance(payload.get(key), str) or not payload[key].strip()
+                for key in (
+                    "account_id", "stable_message_identity", "thread_identity",
+                    "action_identity", "action_plan_id",
+                )
+            ):
+                return False
+            if any(
+                type(payload.get(key)) is not int or payload[key] <= 0
+                for key in ("action_plan_version", "classification_id")
+            ):
+                return False
         else:
             DingTalkMessage.model_validate_json(trigger_message_json)
-    except ValueError:
+    except (TypeError, ValueError):
         return False
     return True
 
@@ -9782,32 +9785,16 @@ def handle_reviewed_message_reply(
         source.trigger_message_id,
         channel=source.channel,
     )
-    if task is not None and _is_valid_rerun_trigger_json(
+    if task is not None and not task.input_compacted and _is_valid_rerun_trigger_json(
         task.trigger_message_json, channel=source.channel,
     ):
         trigger_message_json = task.trigger_message_json
+        trigger_text = task.trigger_text
         trigger_create_time = task.trigger_create_time
         conversation_title = task.conversation_title
         single_chat = task.single_chat
     else:
-        if source.channel == "scheduled":
-            raise ValueError("scheduled decision has no valid original task input")
-        conversation = store.get_conversation(source.conversation_id)
-        single_chat = conversation.single_chat if conversation is not None else False
-        conversation_title = (
-            conversation.title if conversation is not None else source.conversation_title
-        )
-        trigger = DingTalkMessage(
-            open_conversation_id=source.conversation_id,
-            open_message_id=source.trigger_message_id,
-            conversation_title=conversation_title,
-            single_chat=single_chat,
-            sender_name=source.trigger_sender,
-            create_time=source.created_at,
-            content=source.trigger_text,
-        )
-        trigger_message_json = trigger.model_dump_json()
-        trigger_create_time = trigger.create_time
+        raise ValueError("original reply task input is unavailable")
     if actionable_source_attempt_id > 0:
         reviewed_attempt_id, _task = store.record_actionable_attempt_decision(
             actionable_source_attempt_id,
@@ -9816,6 +9803,7 @@ def handle_reviewed_message_reply(
             single_chat=single_chat,
             trigger_create_time=trigger_create_time,
             trigger_message_json=trigger_message_json,
+            trigger_text=trigger_text,
             review_candidate_id=review_candidate_id,
             supplement_instruction=supplement_instruction,
         )
@@ -9827,7 +9815,7 @@ def handle_reviewed_message_reply(
             trigger_message_id=source.trigger_message_id,
             trigger_create_time=trigger_create_time,
             trigger_sender=source.trigger_sender,
-            trigger_text=source.trigger_text,
+            trigger_text=trigger_text,
             trigger_message_json=trigger_message_json,
             suggested_reply_text=reply_text,
             reviewer_feedback=reviewer_feedback,
@@ -9841,7 +9829,7 @@ def handle_reviewed_message_reply(
         "attempt_id": reviewed_attempt_id,
         "conversation_title": conversation_title,
         "trigger_sender": source.trigger_sender,
-        "trigger_text": source.trigger_text,
+        "trigger_text": trigger_text,
         "send_status": "queued",
         "final_reply_text": "",
         "reviewer_feedback": attempt.reviewer_feedback,
@@ -11341,6 +11329,13 @@ def _attempt_detail_body(
         ("updated", _format_local_time(attempt.updated_at)),
         ("reviewed", _format_local_time(attempt.reviewed_at or "")),
     ]
+    if attempt.trigger_text_provenance_json != "{}":
+        provenance = json.loads(attempt.trigger_text_provenance_json)
+        fields.extend((
+            ("original trigger SHA-256", str(provenance.get("sha256", ""))),
+            ("original trigger bytes", str(provenance.get("bytes", ""))),
+            ("input source task", str(provenance.get("reply_task_id", ""))),
+        ))
     revision_count = len(
         {run.proposal_revision for run in agent_runs if run.role is AgentRole.CONSUMER}
     )
@@ -11385,7 +11380,11 @@ def _attempt_detail_body(
             closed_after_review=closed_after_review,
         ),
         trigger_title="Trigger",
-        trigger_text=_trigger_text(attempt),
+        trigger_text=(
+            _trigger_text(attempt)
+            if attempt.trigger_text_provenance_json == "{}" else
+            "原始输入正文已精简；来源消息 ID 与准确摘要见上方。"
+        ),
         reason_title="审计说明",
         reason_text=_attempt_reason_text(attempt),
         reply_title="生成回复",

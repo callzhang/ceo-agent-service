@@ -445,7 +445,7 @@ class DurableMemory(BaseModel):
 class ReviewedSourceBinding(BaseModel):
     """Provider facts captured by the service before the candidate is reviewed."""
     model_config = ConfigDict(extra="forbid", strict=True)
-    provider: Literal["task_context", "dingtalk-oa", "dingtalk-doc"]
+    provider: Literal["task_context", "dingtalk-oa", "dingtalk-doc", "dingtalk-message-resource"]
     object_ref: str = Field(min_length=1)
     value: JsonValue
 

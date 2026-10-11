@@ -1,4 +1,5 @@
 import os
+import json
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from app.business_skills import (
     codex_skill_config_override,
     default_skill_catalog,
     expand_skill_dependencies,
+    frozen_task_skill_materials,
     install_bundled_business_skills,
     installed_runtime_skill_paths,
     installed_runtime_skills,
@@ -32,6 +34,18 @@ EXPECTED_NAMES = (
     "ceo-work-tracking",
     "ceo-sales-weekly-report",
 )
+
+
+def test_compacted_scheduled_skill_source_is_explicitly_unavailable():
+    compacted = json.dumps({
+        "schema": "scheduled_agent_execution.v1",
+        "input_compacted": True,
+        "skill_names": ["ceo-work-tracking"],
+        "skills": [{"source": "operation", "name": "ceo-work-tracking",
+                    "path": "/skills/ceo-work-tracking/SKILL.md", "sha256": "a" * 64}],
+    })
+    with pytest.raises(ValueError, match="task Skill material is unavailable"):
+        frozen_task_skill_materials(compacted)
 
 
 def test_bundled_business_skill_inventory_is_exact_and_valid():

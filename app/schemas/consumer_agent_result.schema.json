@@ -559,7 +559,8 @@
           "enum": [
             "task_context",
             "dingtalk-oa",
-            "dingtalk-doc"
+            "dingtalk-doc",
+            "dingtalk-message-resource"
           ],
           "title": "Provider",
           "type": "string"

@@ -8,6 +8,133 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
+from app.store import AutoReplyStore
+
+
+def compact_done_email_classification_inputs(database: Path) -> dict[str, int]:
+    """Explicit, idempotent cleanup of historical completed classifier inputs.
+
+    Caller owns backup, quiet-service coordination and physical page reclamation.
+    Store initialization does not run this historical batch.
+    """
+    from app.email_task_adapter import EmailClassificationTaskAdapter
+
+    counts = {"tasks_compacted": 0, "logical_bytes_removed": 0}
+    with closing(sqlite3.connect(database, timeout=60)) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("begin immediate")
+        rows = db.execute(
+            "select task_id, input_json from email_agent_classification_tasks "
+            "where status='done' and json_extract(input_json, '$.input_compacted') is not 1 "
+            "order by task_id"
+        ).fetchall()
+        for row in rows:
+            compact = EmailClassificationTaskAdapter.compact_done_input_json(
+                row["input_json"]
+            )
+            updated = db.execute(
+                "update email_agent_classification_tasks set input_json=? "
+                "where task_id=? and status='done'",
+                (compact, row["task_id"]),
+            ).rowcount
+            counts["tasks_compacted"] += updated
+            counts["logical_bytes_removed"] += updated * max(
+                0, len(row["input_json"].encode("utf-8")) - len(compact.encode("utf-8"))
+            )
+        if db.execute("pragma quick_check").fetchone()[0] != "ok":
+            raise RuntimeError("database integrity check failed")
+        db.commit()
+    return counts
+
+
+def compact_settled_reply_inputs(database: Path) -> dict[str, int]:
+    """Explicit, idempotent cleanup of historical settled reply input copies.
+
+    The caller owns backup, quiet-service coordination and page reclamation.
+    Store initialization never runs this historical batch.
+    """
+    counts = {"tasks_compacted": 0, "inputs_compacted": 0,
+              "attempts_cleared": 0, "logical_bytes_removed": 0}
+    with closing(sqlite3.connect(database, timeout=60)) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("begin immediate")
+        task_ids = [int(row["id"]) for row in db.execute(
+            "select id from reply_tasks where status in ('done','skipped') "
+            "and input_compacted=0 order by id"
+        ).fetchall()]
+        before = _reply_input_storage_counts(db)
+        for task_id in task_ids:
+            AutoReplyStore._compact_settled_reply_task_input(db, task_id)
+        after = _reply_input_storage_counts(db)
+        counts["tasks_compacted"] = before[0] - after[0]
+        counts["inputs_compacted"] = before[1] - after[1]
+        counts["attempts_cleared"] = before[2] - after[2]
+        counts["logical_bytes_removed"] = max(0, before[3] - after[3])
+        if db.execute("pragma quick_check").fetchone()[0] != "ok":
+            raise RuntimeError("database integrity check failed")
+        db.commit()
+    return counts
+
+
+def _reply_input_storage_counts(db: sqlite3.Connection) -> tuple[int, int, int, int]:
+    task = db.execute(
+        "select count(*)-coalesce(sum(input_compacted),0) as uncompact, "
+        "coalesce(sum(length(cast(trigger_text as blob)) + "
+        "length(cast(trigger_message_json as blob)) + "
+        "length(cast(input_provenance_json as blob))),0) as bytes "
+        "from reply_tasks where status in ('done','skipped')",
+    ).fetchone()
+    inputs = db.execute(
+        "select count(*)-coalesce(sum(input_compacted),0) as uncompact, "
+        "coalesce(sum(length(cast(trigger_text as blob)) + "
+        "length(cast(trigger_message_json as blob)) + "
+        "length(cast(input_provenance_json as blob))),0) as bytes "
+        "from reply_task_inputs",
+    ).fetchone()
+    attempts = db.execute(
+        """select coalesce(sum(case when trigger_text<>'' then 1 else 0 end),0) as uncleared,
+                  coalesce(sum(length(cast(trigger_text as blob)) +
+                               length(cast(trigger_text_provenance_json as blob))),0) as bytes
+           from reply_attempts""",
+    ).fetchone()
+    return (
+        int(task["uncompact"]), int(inputs["uncompact"]),
+        int(attempts["uncleared"] or 0),
+        int(task["bytes"]) + int(inputs["bytes"]) + int(attempts["bytes"]),
+    )
+
+
+def compact_terminal_work_summary_inputs(database: Path) -> dict[str, int]:
+    """Explicit, idempotent migration of historical done/skipped input bodies.
+
+    This function does not run on store initialization or during deployment.
+    Caller owns backup, quiet-service coordination and physical page reclamation.
+    """
+    counts = {"rows_compacted": 0, "logical_bytes_removed": 0}
+    with closing(sqlite3.connect(database, timeout=60)) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("begin immediate")
+        rows = db.execute(
+            "select id, payload_json, source_created_at, body_sha256, body_bytes "
+            "from work_summary_inputs where status in ('done', 'skipped') "
+            "and body_compacted=0 order by id"
+        ).fetchall()
+        for row in rows:
+            payload = str(row["payload_json"])
+            source_created_at, digest, body_bytes = AutoReplyStore._work_summary_input_provenance(payload)
+            db.execute(
+                "update work_summary_inputs set payload_json='{}', source_created_at=?, "
+                "body_sha256=?, body_bytes=?, body_compacted=1 "
+                "where id=? and status in ('done', 'skipped') and body_compacted=0",
+                (source_created_at, digest, body_bytes, row["id"]),
+            )
+            counts["rows_compacted"] += 1
+            counts["logical_bytes_removed"] += max(0, body_bytes - 2)
+        if db.execute("pragma quick_check").fetchone()[0] != "ok":
+            raise RuntimeError("database integrity check failed")
+        db.commit()
+    return counts
+
 def compact_native_duplicates(database: Path) -> dict[str, int]:
     """Remove all persisted trajectory copies, including missing-native history.
 
@@ -107,8 +234,26 @@ def _clear_workbench_event_bodies(db: sqlite3.Connection, counts: dict[str, int]
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, required=True)
+    parser.add_argument("--work-summary-inputs", action="store_true",
+                        help="compact historical done/skipped work inputs only")
+    parser.add_argument("--settled-reply-inputs", action="store_true",
+                        help="compact historical settled reply input copies only")
+    parser.add_argument("--done-email-classification-inputs", action="store_true",
+                        help="compact historical done email classification inputs only")
     arguments = parser.parse_args()
-    print(json.dumps(compact_native_duplicates(arguments.db)))
+    if sum((arguments.work_summary_inputs, arguments.settled_reply_inputs,
+            arguments.done_email_classification_inputs)) > 1:
+        parser.error("select one historical compaction target")
+    result = (
+        compact_terminal_work_summary_inputs(arguments.db)
+        if arguments.work_summary_inputs else
+        compact_settled_reply_inputs(arguments.db)
+        if arguments.settled_reply_inputs else
+        compact_done_email_classification_inputs(arguments.db)
+        if arguments.done_email_classification_inputs else
+        compact_native_duplicates(arguments.db)
+    )
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":

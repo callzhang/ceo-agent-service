@@ -91,7 +91,7 @@ Consumer → Audit → feedback revision 生命周期：
 scheduled_tasks
   -> scheduled_task_runs (trigger fact)
   -> Dispatcher: scheduled adapter
-  -> reply_tasks[channel=scheduled] (immutable execution input)
+  -> reply_tasks[channel=scheduled] (exact active input; settled source provenance)
   -> Dispatcher: scheduled_execution adapter
   -> Consumer Agent -> Audit Agent -> feedback/revision
   -> reply_attempt / agent_runs / provider facts
@@ -206,7 +206,7 @@ OA 定时任务冻结传入通用 `dingtalk-oa-approval` 与 Stardust 财务、�
 
 ```text
 business_object（稳定业务对象，例如一条 OA 审批节点）
-  ├── reply_task_inputs（不同入口收到的不可变输入）
+  ├── reply_task_inputs（不同入口的不可变输入身份；结算后保留摘要和来源）
   └── reply_task（唯一当前队列投影）
         ├── agent_runs（多次真实 Agent 执行）
         └── reply_attempt（稳定的业务结果当前投影）
@@ -215,7 +215,7 @@ business_object（稳定业务对象，例如一条 OA 审批节点）
 - `business_object` 表示外部系统中的同一件业务事项。OA 使用
   `process_instance_id + task_id`；普通消息在没有更稳定身份时才回退到
   `channel + conversation_id + message_id`。同一事项从轮询、事件或人工重试进入时，
-  只更新一个 `reply_task` 当前投影，每次输入追加到 `reply_task_inputs`。
+  只更新一个 `reply_task` 当前投影，每次输入追加到 `reply_task_inputs`；活动输入保留准确正文，已结算正文按存储保留契约改为来源与摘要。
 - `reply_task` 负责排队、领取、重试、`execution_generation` 和 worker 所有权。
   新输入到达正在执行的 task 时，本轮结束后重新排队同一个 task，不创建并行任务。
 - Provider 若原地更新同一个 DingTalk 日程卡片而继续复用消息 ID，近期消息恢复会把
@@ -224,13 +224,13 @@ business_object（稳定业务对象，例如一条 OA 审批节点）
   才开启新的 `execution_generation`；普通已读消息仍按消息 ID 去重。
 - `agent_run` 表示一次实际 Consumer 或 Audit Agent 执行。重试、服务重启接管或
   新的 generation 都会产生新的 run；run 的状态、session、revision、transcript
-  范围、tool event 和原始错误是不可覆盖的执行事实。
+  范围是不可覆盖的执行事实；tool event 与原始错误按准确范围从原生记录读取，缺失时明确不可用。
 - `reply_attempt` 表示同一 trigger/channel 的业务结果当前投影。重跑更新原 attempt
   的当前状态、结果和错误，复用原 ID，不创建第二个业务 attempt。
 
 Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许在同一 attempt
 下切换查看多个底层 `agent_runs`。因此“当前结果可以被修正”与“执行历史不可抹除”
-可以同时成立：列表显示最新结论，详情保留每一次 run 的真实轨迹。
+可以同时成立：列表显示最新结论，详情按引用读取每一次 run 的真实原生轨迹；来源缺失时保留运行状态并明确过程不可用。
 
 #### 为什么这是系统级边界
 
@@ -241,12 +241,12 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
 
 因此所有业务类型共同遵守以下约束：
 
-1. 先解析稳定的 `business_object_key`，再排队；入口消息只作为 append-only input。
+1. 先解析稳定的 `business_object_key`，再排队；入口输入身份和版本只追加，已结算正文改为来源摘要与引用。
 2. 每个业务对象只有一个 current `reply_task` 和一个 current `reply_attempt`。
 3. 重试、反馈和服务恢复只追加 `agent_run`，不得创建第二个业务 attempt。
 4. 只有稳定动作身份对应的 provider 成功结果可以阻止重放；应用层不根据命令、工具、Skill、
    read-only 分类、receipt 格式或所谓“未知效果”推断业务是否完成。
-5. Attention、Workers 和质量门只统计 current projection；History 才展示旧 task、旧 run 和原始失败。
+5. Attention、Workers 和质量门只统计 current projection；History 展示旧 task、旧 run 和失败状态，原始过程按需从可用的原生来源读取。
 
 失败 Reply task 的 Attention 诊断读取该任务当前执行代的最新 run，展示原始 `source_code`
 （没有时使用 `code`）、来源与明确标注为「Agent 说明」的 `reported_summary`。旧代或无法
@@ -1370,9 +1370,9 @@ Codex 原生 session JSONL 是详细审计来源，保存每个 Agent turn 的�
 - A/B session ID 与 transcript 行范围；
 - operation、target、provider result identifier（仅在 provider 返回时保存）；
 - run 状态、租约和下一次可用时间；
-- 结构化最终结果和精确去重键。
-- provider 原始工具事件按执行顺序 append-only 保存；应用层不分类命令、读写模式或工具权限。
-  原始参数与工具结果仍以 Codex session JSONL 为详细来源。
+- 服务采用的业务结果和精确去重键，原始最终输出只从原生来源读取。
+- provider 原始工具事件按执行顺序在原生 session 保存；SQLite 只保留定位引用，应用层不分类命令、读写模式或工具权限。
+  原始参数与工具结果以 Codex session JSONL 为详细来源。
 
 服务不在 SQLite 复制完整 Codex transcript，也不维护另一套业务审计日志。History 页面按
 session 指针读取 JSONL，并只向普通用户展示业务结果；内部角色、规划标签和原始敏感工具
@@ -1589,7 +1589,7 @@ System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.
 
 Prompts 设置读取先返回 Developer/User 的已保存原文；某份模板验证或渲染失败时，仅该份渲染预览为空并返回明确的 `preview_errors`，编辑器仍显示原文供修正。保存仍需通过现有验证，后台角色调用仍严格验证，不自动迁移或覆盖旧模板。
 
-精简只移除重复或已由任务 Skill 承载的流程说明，不改变角色边界、身份与证据规则、完整效果判断、业务结果模型或 Pydantic 校验。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。定时服务命令在 `scheduled_consumer.skill_materials` 冻结完整 managed revision 或 operation snapshot；通用 Scheduled Agent 在 `scheduled_agent_execution.v1` 顶层保存有序 `skill_names`、`skill_materials` 及其来源，原始 trigger 投影只保留结构化 Skill 身份事实，不再次复制正文。冷启动和续接都从同一持久输入恢复，每一轮 Consumer 与 Audit Task 只列当前选中 Skill 的名称、极简用途和按需读取入口。保存输入声明该名称为冻结 Skill 时使用 `agent_cli.read_task_skill(name)`；材料重复、损坏或缺失由精确读取报告技术错误，不得改读当前磁盘版本。没有冻结声明的已选 Skill 使用目录中的实际授权绝对路径调用 `agent_cli.read_skill(path=...)`；Skill 正文引用的其他已安装 Skill 通过 `agent_cli.read_skill(name=...)` 精确读取，不把依赖目录预装进 Task。旧任务的显式 inline Task 约定仍在每轮保留。正文不复制进新 prompt，也不根据任务文字猜测来源。未选择 Skill 时 Task 只给 `agent_cli.read_skill()` 发现入口；该调用按需返回授权目录内的 name、用途和路径元数据，不返回正文，Agent 再按精确 name 或 path 读取。目录查询和 name 解析沿用相同授权根，越界符号链接不会进入元数据，重名明确报错。目录 frontmatter 只提取顶层 name/description，嵌套产品 metadata 不会隐藏可用 Skill。无论有无选中 Skill，显式自定义 Task 约定都继续在每轮 Task 保留；服务生成的发现文字由结构化来源标记识别，不重复注入。新运行事实记录实际入口来源与本轮 `skill_names`；未注入的旧全量目录不再作为 `skill_protocol` 保存。Email 分类、Meeting Alignment 与独立 WeChat 没有任务内读取工具，仍直接使用完整冻结正文。Runtime Context 缩短工具说明，保留原有准确 server.tool 名称和其他环境事实。无业务调用的旧 build_turn_prompt、ceo_agent_thread_prompt 及 CodexRunner 的隐含业务 Developer 默认入口已退休；底层 native 指令保留模式及真实调用者显式指令不变。
+精简只移除重复或已由任务 Skill 承载的流程说明，不改变角色边界、身份与证据规则、完整效果判断、业务结果模型或 Pydantic 校验。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。未结算的定时服务命令在 `scheduled_consumer.skill_materials` 冻结完整 managed revision 或 operation snapshot；未结算的通用 Scheduled Agent 在 `scheduled_agent_execution.v1` 顶层保存有序 `skill_names`、`skill_materials` 及其来源，原始 trigger 投影只保留结构化 Skill 身份事实，不再次复制正文。冷启动和续接都从同一未结算持久输入恢复；已结算输入改为来源摘要，冻结正文读取明确不可用。每一轮 Consumer 与 Audit Task 只列当前选中 Skill 的名称、极简用途和按需读取入口。保存输入声明该名称为冻结 Skill 时使用 `agent_cli.read_task_skill(name)`；材料重复、损坏或缺失由精确读取报告技术错误，不得改读当前磁盘版本。没有冻结声明的已选 Skill 使用目录中的实际授权绝对路径调用 `agent_cli.read_skill(path=...)`；Skill 正文引用的其他已安装 Skill 通过 `agent_cli.read_skill(name=...)` 精确读取，不把依赖目录预装进 Task。旧任务的显式 inline Task 约定仍在每轮保留。正文不复制进新 prompt，也不根据任务文字猜测来源。未选择 Skill 时 Task 只给 `agent_cli.read_skill()` 发现入口；该调用按需返回授权目录内的 name、用途和路径元数据，不返回正文，Agent 再按精确 name 或 path 读取。目录查询和 name 解析沿用相同授权根，越界符号链接不会进入元数据，重名明确报错。目录 frontmatter 只提取顶层 name/description，嵌套产品 metadata 不会隐藏可用 Skill。无论有无选中 Skill，显式自定义 Task 约定都继续在每轮 Task 保留；服务生成的发现文字由结构化来源标记识别，不重复注入。新运行事实记录实际入口来源与本轮 `skill_names`；未注入的旧全量目录不再作为 `skill_protocol` 保存。Email 分类、Meeting Alignment 与独立 WeChat 没有任务内读取工具，仍直接使用完整冻结正文。Runtime Context 缩短工具说明，保留原有准确 server.tool 名称和其他环境事实。无业务调用的旧 build_turn_prompt、ceo_agent_thread_prompt 及 CodexRunner 的隐含业务 Developer 默认入口已退休；底层 native 指令保留模式及真实调用者显式指令不变。
 
 Developer 保存先以现有渲染器验证，未知变量或不可渲染内容返回具体错误且不覆盖已保存正文；该检查属于配置格式合同。
 
@@ -1621,6 +1621,10 @@ ProcessingReaction 在现有 service_state 保存文字表情模板与每条源�
 该进度展示不改变 Consumer/Audit 生命周期、发送授权或现有业务效果检查。
 ## Storage retention (2026-10-09)
 
+已完成或明确跳过的工作汇总输入不长期保留正文。`work_summary_inputs` 在业务投影提交的同一事务中将正文替换为空对象，并保留来源类型和引用、来源时间、原始 UTF-8 正文的 SHA-256 与字节数、明确的精简标记、状态、尝试次数和错误，以及既有原生运行引用。扫描器再次发现同一终态来源不会写回正文，执行中的输入也不会被重复入队覆盖；迟到的失败或重试不能重新打开已精简终态。待处理、执行中和失败输入保留准确正文以供恢复；已采纳的业务证据、业务结果和执行回执继续保存。历史终态正文通过显式存储维护清理，不在初始化中批量清理。History 展示来源元数据；依赖原始正文的历史语义导入明确报告来源不可用，不将空对象当作原文或由业务结果重建输入。
+
+回复输入在 `done`／`skipped` 且按既有条件已结算后精简：当前任务、其输入版本与对应 Attempt 不再保留输入文字副本，原始文字和 JSON 的准确摘要、字节数、消息身份、输入版本及运行引用继续保存。Attempt 的摘要按它自己的原文计算，只有准确匹配时才绑定输入版本；业务回复、采用计划、审查决定和执行回执保持原样。执行中或待恢复的任务、待人工处理、较新输入版本、活动执行／调度租约和未结束的微信投递保留准确输入；最新运行失败且既有回执／结算条件未满足的 `done` 也保留。正常完成与回执结算使用针对该任务的精简方法，调度租约释放后在同一事务重新检查该任务，不增加历史扫描循环。精简 JSON 保留已有查询及回执校验所需的邮件动作、计划版本、邮箱／消息／线程身份、分类字段、脱敏退订入口与认证引用，以及定时运行／配置与冻结 Skill 的版本、路径和摘要引用，并明确标记不可执行。原有不可变输入校验的批量入口以原文摘要核对，普通消息仍按身份去重，均不写回副本；准确的新输入仍按既有修订／代际逻辑入队。历史重跑或冻结 Skill 读取缺少准确原文时明确不可用，不用 Attempt 文字、业务结果或当前 Skill 重建历史输入。
+
 训练数据正文和观察明细放在数据库旁的 `*-training-data` 目录，SQLite 只保留快照摘要与训练/评估元数据。运行时按快照类型保留最新完整基线，与各类型标签水位累计一致；已启动训练的 run pin 暂时保留其选定数据，结束后清理同类型旧快照。历史摘要不能恢复已经清理的数据，读取明确报告不可用。迁移先写出并校验每种独立数据类型的最新完整快照，再移除旧正文表；运行时不从摘要重建已删除的基线。既有迁移遗漏的当前基线仅从身份、水位及摘要完全匹配的已验证原始备份显式恢复，并读回校验，不恢复历史版本集合。
 
 完整 Agent trajectory 的唯一数据源是 Codex/Claude 原生 session 或 Friday operation。服务仅持久化服务任务状态及定位原生运行所需的引用和准确范围；调用正文、精简事件、原始最终结果、runtime result envelope、审查调用正文及派生搜索正文不再保存第二份。当前调用流和解析结果仅在内存中使用，历史详情按需读取原生记录。迁移清除历史数据库副本，原生文件缺失的过程详情明确不可用，不回退到数据库副本。服务自己提交的业务状态、待执行输入和外部动作账本继续作为服务数据保存。
@@ -1642,3 +1646,9 @@ Workbench 的实时文字和工具正文仅在运行时 RAM 中使用；SQLite �
 描述优化提案保持产生它时的快照身份与引用证据不变。若提案尚未评估而源快照已被最新数据替代，提案一次性转为 `unavailable`，原因 `description_proposal_source_unavailable`；不反复启动失败的评估，也不把旧证据套到新数据上。下一次基于最新数据的训练可产生新的提案。
 
 Status API 的 SystemHealth 使用严格类型的 native_delivery_coverage（checked、unavailable）展示原生轨迹可用性；该字段仅实时计算，不写入质量快照，也不改变质量违规判断。
+
+已完成的邮件分类任务不长期保存分类输入正文：`email_agent_classification_tasks.status=done` 在既有租约／代际校验的完成事务内，将 `input_json` 改为明确标记的来源记录，保留原始 JSON 摘要和字节数、去除 `scheduled_consumer` 后的不可变输入摘要、稳定邮件身份、provider locator、配置版本及脱敏退订候选引用。定时配置与 Skill 只保留运行／版本／摘要引用；模型输入、邮件正文和冻结 Skill 正文不再复制。重复发现以既有不可变输入语义核对摘要，不补回正文；内容变化仍按既有错误处理。pending／running／failed 保留完整输入以便恢复，分类结果、任务状态和执行回执保持原样。历史精简由显式维护命令执行，不在初始化时扫描。`email_classifications.model_text` 仍是训练／人工标注使用的准确特征文本，与邮件原文不同，本阶段保留。
+
+存储 schema 升级迁移业务对象映射时，只插入新键、删除已不存在的键或更新变化的任务绑定；绑定未变的 `business_object_tasks` 原行及创建／更新时间保持不变，最新任务与 OA 别名选择规则不变。
+
+精简后的邮件来源记录同时保留业务分类 `category` 和候选来源 `action_parameters.candidate_source`，确保已完成 Attempt 详情的业务显示不变；其他参数正文不复制。日历卡片修订仍只比较呈现正文（精简后使用原文摘要），定时扫描运行 ID 的变化不会重新打开已完成任务。

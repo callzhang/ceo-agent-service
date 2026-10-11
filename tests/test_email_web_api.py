@@ -2314,6 +2314,8 @@ def _audited_email_detail_fixture(
         "query_token": "secret-query",
         "raw_tool_transcript": "private transcript",
     }
+    entry_url = "https://news.example.com/unsubscribe?token=fixture-entry"
+    entry_reference = "unsubscribe-entry:" + sha256(entry_url.encode("utf-8")).hexdigest()
     task_payload = {
         "schema": "email_agent_action.v1",
         "lifecycle_version": "email_unsubscribe_audited_v2",
@@ -2325,6 +2327,15 @@ def _audited_email_detail_fixture(
         "account_id": account_id,
         "stable_message_identity": stable_message_identity,
         "thread_identity": thread_identity,
+        "unsubscribe_entries": [{
+            "index": 0, "source": "header_https",
+            "digest": entry_reference.removeprefix("unsubscribe-entry:"),
+            "reference": entry_reference,
+        }],
+        "unsubscribe_authentication": {
+            "evidence_reference": "unsubscribe-auth:observability-41",
+            "one_click_verified": False,
+        },
         **private_markers,
     }
     task = task_store.ensure_reply_task(
@@ -2352,8 +2363,6 @@ def _audited_email_detail_fixture(
         send_status="done",
         channel="email",
     )
-    entry_url = "https://news.example.com/unsubscribe?token=fixture-entry"
-    entry_reference = "unsubscribe-entry:" + sha256(entry_url.encode("utf-8")).hexdigest()
     operations = ({"operation_reference": "step-observability-1", "kind": "open_entry", "target_reference": entry_reference},)
     proposal = _synthetic_email_proposal(action_identity, account_id, stable_message_identity, thread_identity, entry_reference, operations)
     consumer = task_store.claim_agent_run(
@@ -2394,7 +2403,7 @@ def _audited_email_detail_fixture(
     }
     effect_digest = email_unsubscribe_effect_digest(**binding)
     claim_owner = {
-        "owner_id": "email-audit-worker",
+        "owner_id": f"email-audit-worker:{audit.id}",
         "generation": 1,
         "lease_token": "unsubscribe-observability-lease",
     }
@@ -2582,6 +2591,39 @@ def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
 
     _assert_no_audited_lineage(legacy_event)
     assert fixture.unrelated_run.id not in legacy_event["consumer_run_ids"]
+
+
+def test_compacted_email_unsubscribe_keeps_terminal_receipt_readable(
+    tmp_path: Path,
+) -> None:
+    fixture = _audited_email_detail_fixture(tmp_path)
+    task = fixture.task_store.get_reply_task(fixture.task.id)
+    assert task is not None and task.input_compacted
+    assert task.trigger_text == ""
+    compact = json.loads(task.trigger_message_json)
+    assert compact["input_compacted"] is True
+    assert compact["action_plan_id"] == fixture.plan.action_plan_id
+    assert compact["action_plan_version"] == fixture.plan.action_plan_version
+    assert compact["account_id"] == fixture.account_id
+    assert compact["stable_message_identity"] == fixture.stable_message_identity
+    assert compact["thread_identity"] == fixture.thread_identity
+    assert compact["unsubscribe_entries"] == fixture.task_payload["unsubscribe_entries"]
+    assert compact["unsubscribe_authentication"] == fixture.task_payload[
+        "unsubscribe_authentication"
+    ]
+    assert "private_url" not in compact
+    assert "provider_locator" not in compact
+
+    terminal = fixture.store.get_email_unsubscribe_terminal_snapshot(
+        fixture.action_identity, fixture.effect_digest,
+        task_id=task.id,
+        task_execution_generation=task.execution_generation,
+    )
+    assert terminal is not None
+    assert terminal["receipt"]["receipt_id"] == fixture.receipt["receipt_id"]
+    assert _audited_observability_event(fixture)["receipt_id"] == fixture.receipt[
+        "receipt_id"
+    ]
 
 
 def test_email_detail_marks_terminal_no_reliable_entry_as_non_success(

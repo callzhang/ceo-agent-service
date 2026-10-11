@@ -2478,3 +2478,41 @@ def test_reply_handler_errors_stop_after_three_claims_with_backoff(tmp_path, sch
         else:
             assert task.status == 'failed'
             assert adapter.claim(when + timedelta(days=1), owner='test', owner_pid=101, lease=timedelta(minutes=5)) is None
+
+
+@pytest.mark.parametrize("scheduled", [False, True])
+@pytest.mark.parametrize("expired", [False, True])
+def test_reply_lease_completion_compacts_deferred_settled_input(tmp_path, scheduled, expired):
+    from app.dispatcher.adapters import ScheduledExecutionQueueAdapter
+
+    store = _store(tmp_path)
+    task = store.ensure_reply_task(
+        channel="scheduled" if scheduled else "dingtalk",
+        conversation_id="cid-compact-lease", conversation_title="Source",
+        single_chat=False, trigger_message_id="msg-compact-lease",
+        trigger_create_time=NOW.isoformat(), trigger_sender="Sender",
+        trigger_text="Original input with dispatcher lease",
+        trigger_message_json='{"content":"Original input with dispatcher lease"}',
+    )
+    adapter = (ScheduledExecutionQueueAdapter if scheduled else ReplyQueueAdapter)(store)
+    when = datetime.now(UTC)
+    envelope = adapter.claim(when, owner="owner-a", owner_pid=101,
+                             lease=timedelta(minutes=5))
+    assert envelope is not None
+    if expired:
+        with store._connect() as db:
+            db.execute(
+                "update dispatcher_claim_leases set lease_expires_at=? "
+                "where adapter_name=? and source_id=?",
+                ("2000-01-01 00:00:00", adapter.name, str(task.id)),
+            )
+    claimed = store.get_reply_task(task.id)
+    assert claimed is not None
+    store.complete_reply_task(task.id,
+                              expected_execution_generation=claimed.execution_generation)
+    assert store.get_reply_task(task.id).status == "done"
+    assert not store.get_reply_task(task.id).input_compacted
+    adapter.complete(envelope, owner="owner-a", now=when + timedelta(seconds=1))
+    settled = store.get_reply_task(task.id)
+    assert settled is not None and settled.input_compacted
+    assert settled.trigger_text == ""
