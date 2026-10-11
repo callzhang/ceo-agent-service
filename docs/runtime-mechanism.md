@@ -456,6 +456,12 @@ Email worker 的汇总健康状态代替任务状态。
 切换不会中断正在进行的生命周期。缺少或校验失败的关联 Skill 会让该功能标记为配置不完整，
 并阻止它继续创建新任务；其他功能不受影响。
 
+Skill 发现描述必须对应其正文的调用角色：`ceo-work-tracking` 是 Task Agent 的
+Project/Task 结构化读取器，不回复来源；Consumer 的项目文档审阅及来源回复使用
+`ceo-document-review`，一般消息判断使用 `ceo-message-triage`。这不改变现有
+任务分类、工具权限或 Skill 正文。仓库 CI 资产与实际加载的安装资产分别验证，
+不能从 CI 文件更新推断生产已经加载新描述。
+
 ## Runtime-managed Skill 修订与启动配置
 
 Settings 不再直接编辑项目目录或 `~/.agents/skills`。每次保存会在 SQLite 中创建一条不可变的

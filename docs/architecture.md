@@ -776,10 +776,15 @@ SQLite 继续保存既有 task/run/attempt/provider result identifier 状态；�
 | `ceo-meeting-work` | 听记、静默会、会议总结与行动项 | `dingtalk-minutes`、`dingtalk-chat` |
 | `ceo-mail-review` | 完整邮件线程审阅和回复 | `dingtalk-mail` |
 | `ceo-personnel-communication` | 人事信息的受众、可见性和最小披露 | 候选人/通讯录操作 Skill |
-| `ceo-work-tracking` | 从来源提取 Task、证据化归属/承诺、关联正式 Project 与关注事项 | Task Agent 不直接写外部 TODO；合格 Task 经 Task 7 outbox 镜像 |
+| `ceo-work-tracking` | Task Agent 从来源提取 Task、证据化归属/承诺、关联正式 Project 与关注事项；返回结构化判断，不回复来源 | Task Agent 不直接写外部 TODO；合格 Task 经 Task 7 outbox 镜像 |
 | `ceo-sales-weekly-report` | 按需核对销售目标、CRM 实际、公司及业务线进度评分并生成 workspace 周报 | `ceo-weekly-report`、`fxiaoke-crm-cli` |
 
 `ceo-sales-weekly-report` 没有独立 producer 或功能开关。它由 Consumer 根据明确的销售周报请求动态选择，直接使用安装用户已有的 `sharecrm` 登录态；CRM 只读限制由 Skill 和 Codex automatic review 约束，不表示 service 建立了 `sharecrm` 命令白名单。
+
+`ceo-work-tracking` 的发现描述与正文均限定 Task Agent 的结构化读取职责。Consumer
+审阅项目文档并回复来源时使用 `ceo-document-review`，一般消息判断使用
+`ceo-message-triage`；文档包含项目事实不改变调用角色。这是现有 Skill 职责的说明，
+不增加正文关键词路由或改变工具权限。CI 资产的描述修订不等于已安装运行资产已发布。
 
 ### 项目为中心的工作跟踪（已发布；业务验收部分完成）
 
