@@ -1,5 +1,10 @@
 # Current Runtime Mechanism
 
+Attention selects failed email classification task IDs from the existing compact
+status index before reading task payloads. Case-insensitive failure matching and
+the displayed source fields remain unchanged. This avoids scanning completed
+classification input payloads; it does not introduce a cache or schema change.
+
 Native DingTalk message resources are reviewed as stable conversation/message/
 resource identities plus verified byte length and SHA-256. The provider reader
 downloads by those identities in a task-owned temporary directory, requires
