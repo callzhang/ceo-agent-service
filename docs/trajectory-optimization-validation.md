@@ -723,3 +723,23 @@ calling behavior. The extra failed attempts remain an observed optimization
 candidate; no prompt rule or capability restriction is added to suppress them.
 All accepted processes are terminal. No live business action, service setting,
 provider setting, merge or deployment was performed for this comparison.
+
+### Current-main integration verification
+
+Merged `origin/main` at `4a84d06b` into this isolated branch as `bd048ec8`.
+The two document conflicts retain both claim sets and current main's complete
+unsettled/settled input-source semantics, plus the verified Meeting Skill sentence.
+A bounded read-only reviewer found no concrete runtime conflict: active source
+inputs remain complete during role turns, Task repair uses WorkSummaryInput,
+and email projection occurs before classification result adoption. Storage,
+lease, delivery, route and business-state policies are unchanged by this branch.
+
+Affected test files for role context/Consumer/Audit assembly, compaction, native
+tool boundary, agent CLI, Task processing/repair/routing, email classification
+and meeting-work Skill: **624 passed, 4 skipped in 99.37 seconds**. The changed
+tool-free Meeting Alignment frozen-Skill regression separately passed
+**1 test, 129 deselected**. No full suite was run alongside the service.
+Pre-release readback: production checkout clean, PID 72634, health status ok,
+Status/Attention/History APIs readable. This remains pre-release evidence;
+post-deploy behavior must be recorded separately. Native output-schema PR31
+is excluded from this branch and still requires its independent provider gate.
