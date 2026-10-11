@@ -777,3 +777,73 @@ application ID 1128615746 and passes read-only `quick_check=ok`. Native referenc
 for all twelve distinct matrix sessions remain present, and neither of the
 two task-owned matrix fixture directories has a running test process. Their
 intermediate evidence remains temporary while this investigation continues.
+
+### Post-release instruction inventory and native global instructions
+
+Read-only production checks still show PID 56046, and no new role run was
+present after the deployment receipt when queried in this turn. Do not substitute
+that absence for production business acceptance or launch a real task merely
+to create a receipt.
+
+Current Settings source-length receipts identify the remaining size precisely:
+
+| Segment | Consumer characters | Audit characters |
+| --- | ---: | ---: |
+| Work Profile | 9,097 | 9,097 |
+| Wire schema | 9,079 | 1,575 |
+| Configured and fixed Audit Rules | not injected | 7,608 |
+| Capability instructions | 3,529 | 828 |
+| Runtime context | 2,660 | 2,430 |
+
+Thus Audit bulk is primarily Profile and rules, not its wire schema. Profile
+has explicit scope/precedence, judgment/evidence, six models/limits,
+business/people, scenarios, external decision conditions and expression/privacy
+sections. It is not the repository's short seed or the current generated
+profile format, and no research appendix is present. Removing a presumed
+bibliography would not address this actual profile. A separate read-only
+review checks actual clauses against existing Skills and task metadata before
+any profile or policy change; no user-authored configuration was overwritten.
+
+Manifest `evals/trajectory_optimization/native_global_instructions.v1.json`
+records a local CLI-only reproduction. `codex debug prompt-input` with
+`project_doc_max_bytes=0` exits zero and still injects all 4,323 trimmed
+characters of the current global AGENTS file verbatim in its initial user
+message. The file contains the canonical shared-rules bootstrap. Cold matrix
+trajectories also contain the bootstrap and some Consumers read the shared
+rules afterwards. This is separate from service-owned Developer/Task assembly
+and is not visible in Settings' intentionally bounded service input preview.
+
+Official source at `cc7ba33601286a751477832b01de7b6f8de0dd9c`,
+`codex-rs/codex-home/src/instructions/mod.rs`, loads global instructions from
+the native home through its own provider. That provider accepts a home path
+and has no project-document byte budget. Installed CLI help offers no dedicated
+global-instruction switch; `--ignore-user-config` documents config.toml omission,
+not global AGENTS omission. The public configuration schema supplies no global
+provider toggle. Exact installed-source equality is not claimed, but actual
+installed prompt behavior is reproduced. Do not silently switch CLI home,
+overwrite a global bootstrap, assume an undocumented override works, or add
+another prompt rule as a substitute for a native opt-out.
+
+Independent read-only Profile/Rules review confirmed the actual authored
+profile has no evidence-ID appendix. Its scene workflows overlap existing
+message, mail, document, calendar, OA and personnel Skills. Generic root-cause
+repair/code/persistence directions also appear in the profile used by read-only
+Audit. The profile's external-decision section still prescribes numeric outcome
+thresholds, whereas current `DECISION_QUALITY_GATE_INSTRUCTIONS` expressly
+treats those scores as evidence-quality measures rather than numerical outcome
+gates. This is a confirmed instruction inconsistency, not yet a demonstrated
+cause of a specific model failure. Do not silently overwrite authored Profile
+or delete review policies based on static comparison alone.
+
+Audit Rules combine a 224-character role wrapper, 1,210-character business
+context contract, 645-character publication-scope contract, 1,676-character
+message-audience contract and 3,844-character authored rules. Their OA-specific
+rule is approximately 1,504 characters and overlaps the task's applicable OA
+Skills. Actual task `skill_names`, channel and live OA processCode/registry are
+available mapping anchors; trigger keywords are not. Before any relocation,
+the same complete rules must remain available for applicable tasks and fixed
+business comparison must show no loss of required review or audience checks.
+No production rule, Profile, tool permission or prompt was changed in this
+read-only investigation. The next evidence step is a fixed comparison using
+this actual Profile/Rules, rather than the earlier matrix's smaller frozen
+configuration, plus complete trajectories for any newly observed failure.
