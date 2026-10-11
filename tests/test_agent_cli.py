@@ -2,18 +2,91 @@ import asyncio
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 import zipfile
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
+from mcp.server.fastmcp.exceptions import ToolError
 
 import app.agent_cli as agent_cli
 from app.agent_result import EffectKind
 from app.feedback_spike import prepare_outgoing_reply_text
 from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.native_cli_metadata import AgentReadOnlyViolationError
+
+
+def test_weekly_report_tool_declares_metric_array_and_rejects_object_mapping():
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
+    arguments = {"manifest": {}, "report": {"company_metrics": {"orders": {"current": "无数据"}}}, "previous_issues": []}
+    with pytest.raises(ValidationError) as error:
+        tool.fn_metadata.arg_model.model_validate(arguments)
+    assert ("report", "company_metrics") in [entry["loc"] for entry in error.value.errors()]
+    report_schema = tool.parameters["$defs"]["WeeklyReport"]
+    assert report_schema["properties"]["company_metrics"]["type"] == "array"
+
+
+def test_weekly_report_tool_preserves_complete_input_and_business_checks():
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
+    arguments = {
+        "manifest": {"future_metadata": {"nested": [None, True, 3]}},
+        "report": {"company_metrics": [{"key": "orders", "current": "无数据", "future_value": {"a": [1, None]}}], "future_section": {"data": True}},
+        "previous_issues": [{"id": "COMP-001", "future_evidence": [False]}],
+    }
+    assert tool.fn_metadata.arg_model.model_validate(arguments).model_dump() == arguments
+
+
+@pytest.mark.parametrize("field", ["minutes", "messages", "target", "previous", "business_reports"])
+def test_weekly_report_tool_rejects_list_where_manifest_requires_object(field):
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
+    with pytest.raises(ValidationError) as error:
+        tool.fn_metadata.arg_model.model_validate({"manifest": {field: []}, "report": {}, "previous_issues": []})
+    assert ("manifest", field) in [entry["loc"] for entry in error.value.errors()]
+
+
+def test_weekly_report_native_tool_reports_shape_error_before_business_call(monkeypatch):
+    def unexpected_business_call(*args):
+        pytest.fail("malformed input reached business validation")
+
+    monkeypatch.setattr(agent_cli, "_bound_report", unexpected_business_call)
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
+    with pytest.raises(ToolError, match=r"report.company_metrics"):
+        asyncio.run(tool.run({"manifest": {}, "report": {"company_metrics": {"orders": {}}}, "previous_issues": []}))
+
+
+def test_weekly_report_tool_preserves_nullable_business_values():
+    arguments = {"manifest": {}, "report": {
+        "company_metrics": [{"key": "orders", "current": "无数据", "data_date": None, "decision_critical": False, "responsible_user_id": None}],
+        "issues": [{"id": "COMP-001", "deadline": None, "as_of": None, "status": None}],
+        "claims": [{"type": "hypothesis_pending_validation", "evidence": None}],
+    }, "previous_issues": []}
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
+    assert tool.fn_metadata.arg_model.model_validate(arguments).model_dump() == arguments
+
+
+def test_weekly_report_complete_skill_fixture_remains_publishable():
+    # Isolate the standalone Skill's `scripts` package from the service package.
+    code = '''
+import pathlib, runpy, sys
+from app.agent_cli import build_role_server
+root = pathlib.Path("ci/shared-skills/ceo-weekly-report").resolve()
+sys.path.insert(0, str(root))
+fixture = runpy.run_path(str(root / "tests/test_report_contract.py"))
+sample = fixture["ReportContractTests"]()
+report = sample.complete_report()
+report["company_metrics"][0]["data_date"] = None
+report["issues"] = [{"id": "COMP-001", "deadline": None}]
+report["claims"] = [{"type": "hypothesis_pending_validation", "evidence": None}]
+arguments = {"manifest": sample.complete_manifest(), "report": report, "previous_issues": []}
+tool = build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
+validated = tool.fn_metadata.arg_model.model_validate(arguments).model_dump()
+assert validated == arguments
+assert fixture["validate_run"](**arguments) == fixture["validate_run"](**validated) == {"publishable": True, "errors": []}
+'''
+    subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[1], check=True, capture_output=True, text=True)
 
 
 def test_agent_cli_mcp_tools_publish_searchable_descriptions():

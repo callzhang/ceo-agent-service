@@ -531,3 +531,47 @@ This implementation remains local and unpushed. It does not establish full
 business schema compatibility, real report correctness, or production readback.
 Native CLI metadata, stored trajectory and turn-runner verification also passed:
 **71 passed**. Combined focused verification: **346 passed, 4 skipped**.
+
+### Real weekly-report input-contract failure, run 25688
+
+Read-only production DB and complete native session
+`01a12730-290b-79e1-a7f2-1b6f74248e5c` identify a failed Consumer with eight
+weekly validation calls and no rendering/publication call. The actual tool
+catalog declared manifest/report as unconstrained objects. Early attempts used
+a list for manifest.minutes; later attempts used a nonempty keyed object for
+report.company_metrics. The installed validators expect an object and an array
+of objects respectively, and raised list/str `.get` errors instead of reporting
+field errors. An anonymous complete fixture with only company_metrics changed
+to a mapping reproduces the exact str error at metric_by_key construction.
+
+Combined five-Skill output and several source outputs were truncated. No separate
+reference read occurs in this trajectory, but the referenced contract also lacks
+complete JSON shape definitions. Truncation is a contributing hypothesis, not
+a proven sole cause; the generic native tool parameter contract is confirmed.
+Independent read-only review checked the whole trajectory and corroborated both
+shape failures. The prior native direct transport fix alone does not repair them.
+
+Development now exposes the existing weekly-report structures through typed
+native validate/render parameters. Unknown fields are retained, no missing
+business sections are filled, and installed business checks are unchanged.
+Regression first failed because malformed object/list input entered the old
+parameter model. The updated interface rejects it with exact nested field paths.
+The complete valid Skill fixture survives argument validation with identical
+JSON values and still returns publishable=true with no errors. Focused
+Agent CLI, role-boundary and materials tests: **65 passed**. Existing standalone
+Skill tests: **49 passed** (run from its own root, as its scripts imports require).
+No production run was retried or external document changed.
+
+Independent implementation review found an initial overly strict scalar schema:
+optional metric data_date and issue deadline nulls were valid under the installed
+Skill but rejected at the new tool boundary. The null regression failed before
+correction. Business-valued fields now retain their existing value range;
+container types and existing string text requirements remain discoverable.
+The full publishable fixture with optional nulls is unchanged after validation
+and still publishable. Actual FastMCP Tool.run rejects a wrong metric mapping
+before any business callback, with the exact report.company_metrics field path.
+The reviewer also identified evidence=null on a hypothesis claim as an accepted
+existing value; its regression failed before allowing that null. The automated
+complete Skill fixture now includes all three reviewed null cases, preserves
+the exact input, and remains publishable. Installed report_contract.py and
+validate_run.py hashes match the repository fixture sources used by that test.

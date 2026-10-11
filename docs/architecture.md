@@ -1359,6 +1359,8 @@ DingTalk 原始发送方法或 WeChat IPC runner。Email 不属于该文本发�
 
 ## 持久化与审计
 
+周报的 `validate_weekly_report` 和 `render_weekly_report` 使用 `app/weekly_report_contracts.py` 中的原生工具参数结构。Agent 可从工具 schema 查询现有报告字段与嵌套容器类型；格式不符时 SDK 在执行前返回字段路径错误。结构声明不注入 prompt；额外字段完整保留，缺失业务章节和发布要求仍由安装的周报 Skill 校验，不转换对象映射为数组，也不修改候选内容。
+
 Codex 原生 session JSONL 是详细审计来源，保存每个 Agent turn 的提示、工具调用、输出和
 结果。SQLite 只保存恢复所需的最小状态：
 

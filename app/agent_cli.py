@@ -28,6 +28,7 @@ from pypdf.errors import PdfReadError
 
 from app.action_contract_catalog import read_system_action_contract as load_system_action_contract
 from app.agent_result import EffectKind
+from app.weekly_report_contracts import WeeklyReport, WeeklyReportManifest
 from app.agent_effects import McpToolEffectRegistry
 from app.agent_skill_usage import resolve_authorized_skill_path
 from app.bounded_process import (
@@ -1659,7 +1660,7 @@ def build_role_server(
         bound.add_tool(consumer_artifact_write, name="consumer_artifact_write", annotations=write)
 
         def validate_weekly_report(
-            manifest: dict, report: dict, previous_issues: list[dict],
+            manifest: WeeklyReportManifest, report: WeeklyReport, previous_issues: list[dict],
         ) -> dict[str, object]:
             """Validate a scheduled CEO weekly report using its installed Skill."""
             _store, _run, kind = _bound_report(db_path, task_id)
@@ -1670,7 +1671,7 @@ def build_role_server(
             )
 
         def render_weekly_report(
-            report: dict, before: list,
+            report: WeeklyReport, before: list,
         ) -> dict[str, object]:
             """Render and validate weekly report JSONML and its full draft."""
             from app.dws_client import DwsClient
