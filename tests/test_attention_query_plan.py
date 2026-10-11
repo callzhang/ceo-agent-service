@@ -4,6 +4,7 @@ import pytest
 
 from app.audit_web import _queue_attention_rows, _queue_latest_error, _reply_task_queue_snapshot
 from app.store import AutoReplyStore
+from app.work_summary_payload import decode_work_summary_payload
 
 
 def _failed_task(store: AutoReplyStore, status: str):
@@ -47,9 +48,14 @@ def test_attention_selects_failed_ids_without_scanning_task_payloads(
     )
     with store._connect() as db:
         plan = [row[3] for row in db.execute("explain query plan " + query)]
-    assert any("SEARCH reply_tasks USING INTEGER PRIMARY KEY" in step for step in plan), plan
+    assert any("SEARCH parent USING INTEGER PRIMARY KEY" in step for step in plan), plan
+    assert any("SEARCH canonical USING INTEGER PRIMARY KEY" in step for step in plan), plan
     assert any("COVERING INDEX idx_reply_tasks_status" in step for step in plan), plan
-    assert "SCAN reply_tasks" not in plan, plan
+    assert not any(
+        step.startswith(("SCAN parent", "SCAN canonical", "SCAN reply_tasks"))
+        and "COVERING" not in step
+        for step in plan
+    ), plan
 
 
 @pytest.mark.parametrize("status", ["failed", "FAILED", "FaIlEd"])
@@ -112,6 +118,11 @@ def test_failure_diagnostics_do_not_scan_queue_payloads(
                     table = "tasks"
     query = next(sql for sql in statements if needle in sql)
     with store._connect() as db:
+        if surface == "work_attention":
+            db.create_function(
+                "decode_work_summary_payload", 1, decode_work_summary_payload,
+                deterministic=True,
+            )
         plan = [row[3] for row in db.execute("explain query plan " + query)]
     assert any(f"SEARCH {table} USING INTEGER PRIMARY KEY" in step for step in plan), plan
     assert not any(step.startswith(f"SCAN {table}") and "COVERING" not in step for step in plan), plan
