@@ -2203,3 +2203,11 @@ Email schema 47 为分类表增加非唯一定位索引，前缀为 account_id�
 存储 schema 升级迁移业务对象映射时，只插入新键、删除已不存在的键或更新变化的任务绑定；绑定未变的 `business_object_tasks` 原行及创建／更新时间保持不变，最新任务与 OA 别名选择规则不变。
 
 精简后的邮件来源记录同时保留业务分类 `category` 和候选来源 `action_parameters.candidate_source`，确保已完成 Attempt 详情的业务显示不变；其他参数正文不复制。日历卡片修订仍只比较呈现正文（精简后使用原文摘要），定时扫描运行 ID 的变化不会重新打开已完成任务。
+
+## Provider identity index migration
+
+Email schema 47→48 在现有初始化事务内删除
+`idx_email_provider_observations_lookup` 并推进 schema 版本。新库不创建
+或要求该索引，重复启动不重建它；folder 索引仍为 required schema。
+点查使用原主键，文件夹查询使用原 folder 索引。删除索引释放数据库内部页，
+不代表 SQLite 文件已经缩小；实际文件回收是独立的维护步骤。

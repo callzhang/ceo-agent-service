@@ -3,7 +3,7 @@ import sqlite3
 import pytest
 
 from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
-from app.email_store import EmailPersistenceCorruption, EmailStore
+from app.email_store import EMAIL_SCHEMA_VERSION, EmailPersistenceCorruption, EmailStore
 from tests.test_email_store import _classification, _persist_scan
 
 
@@ -69,7 +69,7 @@ def test_locator_migration_preserves_business_rows_uid_metadata_and_existing_ord
     assert after == before
     assert business_rows(path) == original_rows
     with sqlite3.connect(path) as db:
-        assert db.execute("select version from email_schema_migrations order by version").fetchall() == [(46,), (47,)]
+        assert db.execute("select version from email_schema_migrations order by version").fetchall() == [(46,), (47,), (48,)]
         assert db.execute("pragma foreign_key_check").fetchall() == []
         indexed = db.execute(f"pragma index_xinfo({INDEX})").fetchall()
     assert [row[2] for row in indexed if row[5]] == [
@@ -78,7 +78,7 @@ def test_locator_migration_preserves_business_rows_uid_metadata_and_existing_ord
     assert indexed[4][3] == 1
     EmailStore(path)
     with sqlite3.connect(path) as db:
-        assert db.execute("select version from email_schema_migrations order by version").fetchall() == [(46,), (47,)]
+        assert db.execute("select version from email_schema_migrations order by version").fetchall() == [(46,), (47,), (48,)]
 
 
 def test_locator_migration_validation_failure_rolls_back_index_and_version(tmp_path, monkeypatch):
@@ -87,7 +87,7 @@ def test_locator_migration_validation_failure_rolls_back_index_and_version(tmp_p
     validate = EmailStore._validate_durable_state
 
     def fail_after_migration(self, db):
-        if db.execute("select max(version) from email_schema_migrations").fetchone()[0] == 47:
+        if db.execute("select max(version) from email_schema_migrations").fetchone()[0] == EMAIL_SCHEMA_VERSION:
             raise RuntimeError("injected locator migration failure")
         return validate(self, db)
 
