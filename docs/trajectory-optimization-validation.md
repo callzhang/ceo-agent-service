@@ -847,3 +847,37 @@ No production rule, Profile, tool permission or prompt was changed in this
 read-only investigation. The next evidence step is a fixed comparison using
 this actual Profile/Rules, rather than the earlier matrix's smaller frozen
 configuration, plus complete trajectories for any newly observed failure.
+
+### Actual authored Profile native recheck
+
+Manifest `evals/trajectory_optimization/current_profile_recheck.v1.json` and
+`current_profile_recheck.results.v1.json` close the earlier short-Profile fixture
+gap. Production prompts are read through the read-only prompts endpoint and
+rendered Audit Rules through public prompt-preview. Full current Profile is
+9,097 characters including its wrapper, versus the earlier fixture's 591;
+authored body is 8,803 characters. Actual Developer and User templates are frozen
+too. Personal content stays in temporary fixtures/native context, not the result
+artifact. Code assembly and actual role tool schemas remain the released version,
+with all production callbacks replaced. Skill bodies, source cases, clock, model,
+effort, timeout, concurrency and business criteria retain the frozen controls.
+
+All six cold cases and the valid same-session calendar continuation finish
+within their timeout, exit zero and parse canonically. Independent read-only
+review reads complete results and actual completed source-tool inputs/outputs
+and judges **7/7 phases pass**, including all document contradictions, no duplicate
+task or calendar response, and exact Audit revision/digest feedback. The resume
+retains `01a128c5-b4ab-7db3-bd30-e7c1165bd25c` and rereads accepted live state.
+Thirty-three direct MCP outputs contain no MCP errors; seventeen native Skill
+outputs match frozen content exactly. Two CodeMode TypeErrors are recovered.
+The calendar directory's callback log is overwritten when the resume fixture
+server starts, so cold-call evidence comes from the distinct cold stream/native
+turn rather than that current callback log.
+
+The actual Profile did not cause a wrong rejection, escalation or action in
+these samples, but their scores also satisfy its older numeric thresholds.
+No phase explicitly cited those thresholds. This does not establish that the
+thresholds never matter, resolve the static inconsistency, or validate a trimmed
+Profile. No profile/rule change or external business action was performed.
+Remaining work is a controlled candidate comparison that maps repeated task
+flows to existing applicable Skills while preserving preferences and current
+business rules, plus the independent native output-schema provider gate.
