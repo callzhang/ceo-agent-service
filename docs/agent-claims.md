@@ -1,5 +1,8 @@
 # Concurrent agent file claims
 
+| codex-database-redesign-plan | Isolated database-redesign-plan worktree: docs/superpowers/specs/2026-10-11-database-redesign-*; docs/superpowers/plans/2026-10-11-database-redesign-*; docs/agent-claims.md | Approved structural design and phased implementation planning only. No runtime code, live DB writes, retention deadline, push or deployment. Preserve other sessions and production data. | 2026-10-11 |
+
+
 | codex-audit-task-input-parity | Isolated trajectory-optimization worktree: app/audit_agent.py (task instruction input only), app/prompt_composition.py (shared exact saved Skill suffix normalization), tests/test_audit_agent.py, tests/test_prompt_composition.py, docs/architecture.md, docs/runtime-mechanism.md, docs/trajectory-optimization-validation.md | Native production task386349 proves Consumer saved task rules absent from all three Audit inputs. Pass same saved task instructions to Audit once, with provenance in existing input snapshot. No business rule, audit policy, permission, route, conflict precedence or live task intervention. | 2026-10-10 |
 | codex-work-tracking-skill-role-description | Isolated trajectory-optimization worktree: ci/shared-skills/ceo-work-tracking/SKILL.md (description/version only), tests/test_business_skills.py (parsed role-scope regression), docs/architecture.md and docs/runtime-mechanism.md (Task Skill role scope), docs/trajectory-optimization-validation.md | Make discovery description match existing Task-Agent-only envelope/no-source-reply body; preserve all business rules. Correct Consumer project-document fixture to ceo-document-review, keep invalid old fixture results. No keyword router, permissions or result-contract changes. | 2026-10-10 |
 
