@@ -115,6 +115,14 @@ def test_every_skill_runtime_eval_declares_skill_outcome_and_assertions():
         assert case.required_assertions
 
 
+def test_legacy_skill_runtime_live_entry_rejects_obsolete_role_contract(capsys):
+    assert main(["--live"]) == 2
+    output = json.loads(capsys.readouterr().out)
+    assert output["mode"] == "validation"
+    assert "legacy" in output["error"]
+    assert "consumer_audit_system_execution" in output["error"]
+
+
 @pytest.mark.parametrize("terminal_outcome", ["no_action", "needs_human", "failed"])
 def test_non_proposal_case_schema_requires_audit_not_applicable(
     terminal_outcome: str,

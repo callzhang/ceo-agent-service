@@ -1,0 +1,389 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "case_id": "w39-project-risk",
+      "work_item": {
+        "source": {
+          "type": "project_weekly_report",
+          "ref": "eval:w39-project-risk",
+          "created_at": "2026-10-01T12:00:00Z"
+        },
+        "context": {
+          "source_conversation_kind": "group"
+        },
+        "summary": "{\"report\":{\"reporting_period\":\"2026-W39\"},\"markdown\":\"## 手头项目\\n| 项目名 | 负责内容 | 目标 | DDL | 状态 |\\n| --- | --- | --- | --- | --- |\\n| 中汽创智 | 回款、毛利复算、供应商付款 | 降低回款及现金流风险 | 09-30前 | ⚠️有风险 |\\n| 岚图 | 存量结算争议 | 完成对账并确定法律/商务方案 | 09-30 | ⚠️有风险 |\\n## 本周进展\\n中汽创智：8月约100万元已交付但因客户邮件确认延迟计入9月，需同步回款与供应商付款节奏。\\n8月整体收入达成率76%，中汽验收延迟、岚图结算争议是主要影响因素。\\n岚图暂停增量业务，优先解决存量结算争议；目标9月30日前完成对账，必要时联合供应商推进法律及商务协商。\\n## 下周工作重点\\n复核中汽创智回款、毛利及供应商付款计划。\\n完成岚图存量结算对账，沟通法律及商务方案。\\n梳理NPS贬损原因并形成客户调研计划。\"}"
+      },
+      "existing_context": {
+        "projects": [],
+        "tasks": [],
+        "attention": []
+      },
+      "expected": {
+        "attention_projects": [
+          "中汽创智",
+          "岚图"
+        ],
+        "project_titles": [
+          "中汽创智",
+          "岚图"
+        ],
+        "allowed_task_counts": [3, 4, 5],
+        "minimum_evidence_sources": 1,
+        "reuse_attention": false,
+        "required_source_refs": [
+          "eval:w39-project-risk"
+        ]
+      }
+    },
+    {
+      "case_id": "meeting-new-risk",
+      "work_item": {
+        "source": {
+          "type": "ai_minutes",
+          "ref": "eval:meeting-new-risk",
+          "created_at": "2026-10-01T12:00:00Z"
+        },
+        "context": {
+          "source_conversation_kind": "minutes"
+        },
+        "summary": "会议：示例交付项目客户取消原定验收，预计回款再延迟一个月，供应商本周到期款项已无法按原计划支付。\n行动项：复核示例交付项目客户验收及回款计划，补充验收取消后的供应商延期付款安排。"
+      },
+      "existing_context": {
+        "projects": [
+          {
+            "ref": "eval:project:delivery",
+            "title": "示例交付项目",
+            "registry_source": "project_weekly_report"
+          }
+        ],
+        "tasks": [
+          {
+            "title": "复核示例交付项目客户验收及回款计划",
+            "description": "复核示例交付项目客户验收及回款计划。",
+            "project_title": "示例交付项目",
+            "signal": {
+              "source_type": "project_weekly_report",
+              "source_ref": "eval:historical-report",
+              "source_time": "2026-09-24T12:00:00Z",
+              "evidence_text": "复核示例交付项目客户验收及回款计划。\n示例交付项目客户验收已延迟两周，回款推迟导致供应商付款需要协调。",
+              "dedupe_key": "eval:historical-report:task"
+            }
+          }
+        ],
+        "attention": [
+          {
+            "project_title": "示例交付项目",
+            "task_titles": [
+              "复核示例交付项目客户验收及回款计划"
+            ],
+            "title": "示例交付项目回款风险",
+            "why_attention": "回款延迟可能影响供应商付款",
+            "current_state": "客户验收延迟两周",
+            "ceo_action": "当前无需你处理；观察客户验收和回款结果。"
+          }
+        ]
+      },
+      "expected": {
+        "attention_projects": [
+          "示例交付项目"
+        ],
+        "project_titles": [
+          "示例交付项目"
+        ],
+        "allowed_task_counts": [1, 2],
+        "minimum_evidence_sources": 1,
+        "reuse_attention": true,
+        "required_source_refs": [
+          "eval:meeting-new-risk"
+        ]
+      }
+    },
+    {
+      "case_id": "chat-with-report-context",
+      "work_item": {
+        "source": {
+          "type": "reply_attempt",
+          "ref": "eval:chat-with-report-context",
+          "created_at": "2026-10-01T12:00:00Z"
+        },
+        "context": {
+          "source_conversation_kind": "group"
+        },
+        "summary": "项目群：示例交付项目客户今天确认验收再延期，供应商通知若本周不能付款将停止交付。上期周报中的回款延迟仍未解决。\n行动：复核示例交付项目客户验收及回款计划，增加供应商停交风险及延期付款协商结果。"
+      },
+      "existing_context": {
+        "projects": [
+          {
+            "ref": "eval:project:delivery",
+            "title": "示例交付项目",
+            "registry_source": "project_weekly_report"
+          }
+        ],
+        "tasks": [
+          {
+            "title": "复核示例交付项目客户验收及回款计划",
+            "description": "复核示例交付项目客户验收及回款计划。",
+            "project_title": "示例交付项目",
+            "signal": {
+              "source_type": "project_weekly_report",
+              "source_ref": "eval:historical-report",
+              "source_time": "2026-09-24T12:00:00Z",
+              "evidence_text": "复核示例交付项目客户验收及回款计划。\n示例交付项目客户验收已延迟两周，回款推迟导致供应商付款需要协调。",
+              "dedupe_key": "eval:historical-report:task"
+            }
+          }
+        ],
+        "attention": [
+          {
+            "project_title": "示例交付项目",
+            "task_titles": [
+              "复核示例交付项目客户验收及回款计划"
+            ],
+            "title": "示例交付项目回款风险",
+            "why_attention": "回款延迟可能影响供应商付款",
+            "current_state": "客户验收延迟两周",
+            "ceo_action": "当前无需你处理；观察客户验收和回款结果。"
+          }
+        ]
+      },
+      "expected": {
+        "attention_projects": [
+          "示例交付项目"
+        ],
+        "project_titles": [
+          "示例交付项目"
+        ],
+        "task_count": 1,
+        "minimum_evidence_sources": 2,
+        "reuse_attention": true,
+        "required_source_refs": [
+          "eval:chat-with-report-context",
+          "eval:historical-report"
+        ]
+      }
+    },
+    {
+      "case_id": "newer-conflicting-chat",
+      "work_item": {
+        "source": {
+          "type": "reply_attempt",
+          "ref": "eval:newer-conflicting-chat",
+          "created_at": "2026-10-01T12:00:00Z"
+        },
+        "context": {
+          "source_conversation_kind": "group"
+        },
+        "summary": "项目群：示例交付项目今天验收被客户拒绝，原定本周回款不能兑现，与上期周报“验收正常、付款按计划”冲突，待核对。\n行动：复核示例交付项目客户验收及回款计划，补充验收拒绝原因和双方证据。"
+      },
+      "existing_context": {
+        "projects": [
+          {
+            "ref": "eval:project:delivery",
+            "title": "示例交付项目",
+            "registry_source": "project_weekly_report"
+          }
+        ],
+        "tasks": [
+          {
+            "title": "复核示例交付项目客户验收及回款计划",
+            "description": "复核示例交付项目客户验收及回款计划。",
+            "project_title": "示例交付项目",
+            "signal": {
+              "source_type": "project_weekly_report",
+              "source_ref": "eval:historical-report",
+              "source_time": "2026-09-24T12:00:00Z",
+              "evidence_text": "复核示例交付项目客户验收及回款计划。\n示例交付项目：验收正常、付款按计划。",
+              "dedupe_key": "eval:historical-report:task"
+            }
+          }
+        ],
+        "attention": []
+      },
+      "expected": {
+        "attention_projects": [
+          "示例交付项目"
+        ],
+        "project_titles": [
+          "示例交付项目"
+        ],
+        "task_count": 1,
+        "minimum_evidence_sources": 2,
+        "reuse_attention": false,
+        "preserve_project_registry": true,
+        "required_source_refs": [
+          "eval:newer-conflicting-chat",
+          "eval:historical-report"
+        ]
+      }
+    },
+    {
+      "case_id": "risk-label-only",
+      "work_item": {
+        "source": {
+          "type": "reply_attempt",
+          "ref": "eval:risk-label-only",
+          "created_at": "2026-10-01T12:00:00Z"
+        },
+        "context": {
+          "source_conversation_kind": "group"
+        },
+        "summary": "示例交付项目：有风险。行动：汇总示例交付项目当前风险说明。"
+      },
+      "existing_context": {
+        "projects": [
+          {
+            "ref": "eval:project:delivery",
+            "title": "示例交付项目",
+            "registry_source": "project_weekly_report"
+          }
+        ],
+        "tasks": [],
+        "attention": []
+      },
+      "expected": {
+        "attention_projects": [],
+        "project_titles": [
+          "示例交付项目"
+        ],
+        "task_count": 1,
+        "minimum_evidence_sources": 1,
+        "reuse_attention": false,
+        "required_source_refs": []
+      }
+    },
+    {
+      "case_id": "routine-progress",
+      "work_item": {
+        "source": {
+          "type": "reply_attempt",
+          "ref": "eval:routine-progress",
+          "created_at": "2026-10-01T12:00:00Z"
+        },
+        "context": {
+          "source_conversation_kind": "group"
+        },
+        "summary": "示例交付项目交付按计划推进，客户已确认正常验收，回款和付款均按计划。明天是计划节点。\n行动：汇总示例交付项目本周交付进度。"
+      },
+      "existing_context": {
+        "projects": [
+          {
+            "ref": "eval:project:delivery",
+            "title": "示例交付项目",
+            "registry_source": "project_weekly_report"
+          }
+        ],
+        "tasks": [],
+        "attention": []
+      },
+      "expected": {
+        "attention_projects": [],
+        "project_titles": [
+          "示例交付项目"
+        ],
+        "task_count": 1,
+        "minimum_evidence_sources": 1,
+        "reuse_attention": false,
+        "required_source_refs": []
+      }
+    },
+    {
+      "case_id": "unconfirmed-project",
+      "work_item": {
+        "source": {
+          "type": "reply_attempt",
+          "ref": "eval:unconfirmed-project",
+          "created_at": "2026-10-01T12:00:00Z"
+        },
+        "context": {
+          "source_conversation_kind": "group"
+        },
+        "summary": "未登记项目甲的客户拒绝验收，回款可能延迟一个月。\n行动：核对未登记项目甲验收问题，形成事实说明。"
+      },
+      "existing_context": {
+        "projects": [],
+        "tasks": [],
+        "attention": []
+      },
+      "expected": {
+        "attention_projects": [],
+        "project_titles": [],
+        "task_count": 1,
+        "minimum_evidence_sources": 1,
+        "reuse_attention": false,
+        "required_source_refs": []
+      }
+    },
+    {
+      "case_id": "no-real-task",
+      "work_item": {
+        "source": {
+          "type": "reply_attempt",
+          "ref": "eval:no-real-task",
+          "created_at": "2026-10-01T12:00:00Z"
+        },
+        "context": {
+          "source_conversation_kind": "group"
+        },
+        "summary": "信息同步：示例交付项目客户满意度指标下降，具体原因和经营影响尚未核实。本消息无行动项、负责人或承诺。"
+      },
+      "existing_context": {
+        "projects": [
+          {
+            "ref": "eval:project:delivery",
+            "title": "示例交付项目",
+            "registry_source": "project_weekly_report"
+          }
+        ],
+        "tasks": [],
+        "attention": []
+      },
+      "expected": {
+        "attention_projects": [],
+        "project_titles": [
+          "示例交付项目"
+        ],
+        "task_count": 0,
+        "minimum_evidence_sources": 1,
+        "reuse_attention": false,
+        "required_source_refs": []
+      }
+    },
+    {
+      "case_id": "same-project-two-actions",
+      "work_item": {
+        "source": {
+          "type": "project_weekly_report",
+          "ref": "eval:same-project-two-actions",
+          "created_at": "2026-10-01T12:00:00Z"
+        },
+        "context": {
+          "source_conversation_kind": "group"
+        },
+        "summary": "{\"report\":{\"reporting_period\":\"2026-W39\"},\"markdown\":\"## 手头项目\\n| 项目名 | 负责内容 | 目标 | DDL | 状态 |\\n| --- | --- | --- | --- | --- |\\n| 示例交付项目 | 验收和付款协调 | 解决现金流风险 | 10-05 | 有风险 |\\n## 经营影响\\n示例交付项目客户拒绝验收，约100万元回款不能按计划实现，供应商本周到期付款需要协调。\\n## 下周工作重点\\n核对示例交付项目客户拒绝验收原因。\\n复核示例交付项目供应商延期付款安排。\"}"
+      },
+      "existing_context": {
+        "projects": [],
+        "tasks": [],
+        "attention": []
+      },
+      "expected": {
+        "attention_projects": [
+          "示例交付项目"
+        ],
+        "project_titles": [
+          "示例交付项目"
+        ],
+        "task_count": 2,
+        "minimum_evidence_sources": 1,
+        "reuse_attention": false,
+        "required_project_member_counts": {
+          "示例交付项目": 2
+        },
+        "required_source_refs": [
+          "eval:same-project-two-actions"
+        ]
+      }
+    }
+  ]
+}

@@ -13,7 +13,6 @@ from app.agent_contracts import (
     ConsumerOutcome,
     ConsumerProposal,
     ProposedAction,
-    RiskLevel,
 )
 from app.agent_result import ResultParseError, parse_typed_agent_result
 from app.agent_wire_contracts import (
@@ -154,47 +153,6 @@ def _explainable_needs_human_payload(
 
 
 @pytest.mark.parametrize("model", (ConsumerAgentResult, AuditAgentResult))
-def test_needs_human_requires_explainable_reason_and_basis(model):
-    payload = _explainable_needs_human_payload(model)
-    accepted = model.model_validate(payload)
-    assert accepted.needs_human_reason
-    assert accepted.decision_basis is not None
-
-    for field in ("needs_human_reason", "decision_basis"):
-        invalid = dict(payload)
-        invalid.pop(field)
-        with pytest.raises(ValidationError, match=field):
-            model.model_validate(invalid)
-
-
-@pytest.mark.parametrize("model", (ConsumerAgentResult, AuditAgentResult))
-def test_authorization_plan_is_bounded_to_one_explicit_external_action(model):
-    payload = _explainable_needs_human_payload(model, authorization_required=True)
-    accepted = model.model_validate(payload)
-    assert accepted.authorization_plan is not None
-    assert accepted.authorization_plan.primary_action.effect == "external"
-
-    generic = dict(payload)
-    generic["authorization_plan"] = {
-        **_authorization_plan(),
-        "summary": "Re-evaluate and execute the current item.",
-    }
-    with pytest.raises(ValidationError, match="summary"):
-        model.model_validate(generic)
-
-    no_effect = dict(payload)
-    no_effect["authorization_plan"] = {
-        **_authorization_plan(),
-        "primary_action": {
-            **_authorization_plan()["primary_action"],
-            "effect": "none",
-        },
-    }
-    with pytest.raises(ValidationError, match="external"):
-        model.model_validate(no_effect)
-
-
-@pytest.mark.parametrize("model", (ConsumerAgentResult, AuditAgentResult))
 def test_non_human_outcome_rejects_human_decision_fields(model):
     payload = (
         {
@@ -231,6 +189,68 @@ def test_proposed_action_requires_stable_action_identity():
         ProposedAction.model_validate(action)
 
 
+@pytest.mark.parametrize(
+    ("operation", "target"),
+    [
+        ("approve", {"process_instance_id": "P-101", "task_id": "801"}),
+        ("reject", {"process_instance_id": "P-101", "task_id": "801"}),
+        ("revert_task", {"process_instance_id": "P-101", "task_id": "801", "target_activity_id": "activity-1"}),
+        ("redirect_task", {"process_instance_id": "P-101", "task_id": "801", "to_actioner_id": "U-2"}),
+        ("comment", {"process_instance_id": "P-101"}),
+    ],
+)
+def test_registered_oa_action_target_identifiers_are_nonempty_strings(operation, target):
+    action = {
+        **_proposal()["actions"][0],
+        "capability": "dingtalk-oa",
+        "operation": operation,
+        "target": target,
+        "payload": {},
+    }
+    schema = ProposedAction.model_json_schema()
+    validator = Draft202012Validator(schema)
+    validator.validate(action)
+    ProposedAction.model_validate(action)
+    for field in target:
+        for wrong in (801, "", "  "):
+            invalid = {**action, "target": {**target, field: wrong}}
+            with pytest.raises(JsonSchemaValidationError):
+                validator.validate(invalid)
+            with pytest.raises(ValidationError, match=field):
+                ProposedAction.model_validate(invalid)
+        missing_target = dict(target)
+        missing_target.pop(field)
+        invalid = {**action, "target": missing_target}
+        with pytest.raises(JsonSchemaValidationError):
+            validator.validate(invalid)
+        with pytest.raises(ValidationError):
+            ProposedAction.model_validate(invalid)
+
+
+def test_consumer_wire_schema_rejects_numeric_oa_task_id_before_review():
+    proposal = _proposal()
+    proposal["actions"][0].update(
+        capability="dingtalk-oa", operation="approve",
+        target={"process_instance_id": "P-101", "task_id": "801"},
+        payload={"remark": "Receipt and budget verified."},
+    )
+    payload = _consumer_wire_payload(outcome="proposal", proposal=proposal)
+    validator = Draft202012Validator(ConsumerAgentWireResult.model_json_schema())
+    validator.validate(payload)
+    ConsumerAgentWireResult.model_validate(payload)
+    proposal["actions"][0]["target"]["task_id"] = 801
+    with pytest.raises(JsonSchemaValidationError):
+        validator.validate(payload)
+    with pytest.raises(ValidationError, match="task_id"):
+        ConsumerAgentWireResult.model_validate(payload)
+
+
+def test_non_oa_action_targets_keep_generic_json_identifier_types():
+    action = {**_proposal()["actions"][0], "target": {"task_id": 801}}
+    Draft202012Validator(ProposedAction.model_json_schema()).validate(action)
+    assert ProposedAction.model_validate(action).target["task_id"] == 801
+
+
 def test_document_create_requires_body_in_payload_not_description():
     action = {
         "description": "# Daily report\n" * 300,
@@ -246,38 +266,6 @@ def test_document_create_requires_body_in_payload_not_description():
     action["description"] = "Create the daily report"
     action["payload"]["content"] = "# Daily report\n" * 300
     assert ProposedAction.model_validate(action).payload["content"].startswith("# Daily")
-
-
-def test_needs_human_follows_decision_quality_classification_for_all_task_types():
-    consumer_payload = _explainable_needs_human_payload(ConsumerAgentResult)
-    accepted = ConsumerAgentResult.model_validate(consumer_payload)
-    assert accepted.risk is RiskLevel.HIGH
-    assert accepted.confidence == 0.49
-
-    low_coverage = ConsumerAgentResult.model_validate(
-        {
-            **consumer_payload,
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 0.1,
-        }
-    )
-    assert low_coverage.outcome is ConsumerOutcome.NEEDS_HUMAN
-
-    audit_payload = _explainable_needs_human_payload(AuditAgentResult)
-    audit = AuditAgentResult.model_validate(audit_payload)
-    assert audit.risk is RiskLevel.HIGH
-    assert audit.confidence == 0.49
-
-    audit_low_coverage = AuditAgentResult.model_validate(
-        {
-            **audit_payload,
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 0.1,
-        }
-    )
-    assert audit_low_coverage.outcome is AuditOutcome.NEEDS_HUMAN
 
 
 @pytest.mark.parametrize("model", (ConsumerAgentResult, AuditAgentResult))
@@ -303,35 +291,6 @@ def test_domain_result_requires_all_decision_quality_fields(model, field):
     payload.pop(field)
     with pytest.raises(ValidationError):
         model.model_validate(payload)
-
-
-def test_decision_quality_fields_are_readable_and_classify_needs_human():
-    payload = _explainable_needs_human_payload(ConsumerAgentResult)
-    result = ConsumerAgentResult.model_validate(payload)
-
-    assert result.rule_coverage == 1.0
-    assert result.information_completeness == 1.0
-
-
-@pytest.mark.parametrize(
-    ("risk", "confidence", "rule_coverage", "information_completeness"),
-    [
-        ("low", 1.0, 1.0, 0.1),
-        ("high", 1.0, 1.0, 1.0),
-    ],
-)
-def test_needs_human_rejects_non_needs_human_quality_classifications(
-    risk, confidence, rule_coverage, information_completeness
-):
-    payload = {
-        **_explainable_needs_human_payload(ConsumerAgentResult),
-        "risk": risk,
-        "confidence": confidence,
-        "rule_coverage": rule_coverage,
-        "information_completeness": information_completeness,
-    }
-    with pytest.raises(ValidationError, match="must match decision quality"):
-        ConsumerAgentResult.model_validate(payload)
 
 
 @pytest.mark.parametrize(
@@ -499,198 +458,6 @@ def _audit_payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
-@pytest.mark.parametrize(
-    ("model", "payload"),
-    (
-        (
-            ConsumerAgentWireResult,
-            _consumer_wire_payload(
-                outcome="proposal",
-                proposal=_proposal(),
-            ),
-        ),
-        (ConsumerAgentWireResult, _consumer_wire_payload(outcome="no_action")),
-        (
-            ConsumerAgentWireResult,
-            _consumer_wire_payload(
-                outcome="needs_human",
-                decision_options=_decision_options(),
-            ),
-        ),
-        (ConsumerAgentWireResult, _consumer_wire_payload(outcome="failed")),
-        (
-            AuditAgentWireResult,
-            _audit_wire_payload(
-                outcome="executed",
-                external_result={
-                    "operation_id": "op-1",
-                    "live_result_reference": {"receipt_id": "receipt-1"},
-                },
-            ),
-        ),
-        (
-            AuditAgentWireResult,
-            _audit_wire_payload(
-                outcome="revision_required",
-                feedback={
-                    "rule": "Use verified Skill receipts.",
-                    "observation": "A receipt is missing.",
-                    "requested_revision": "Read the Skill and replace the candidate.",
-                },
-            ),
-        ),
-        (
-            AuditAgentWireResult,
-            _audit_wire_payload(
-                outcome="needs_human",
-                decision_options=_decision_options(),
-            ),
-        ),
-        (
-            AuditAgentWireResult,
-            _audit_wire_payload(
-                outcome="dry_run",
-                error_code="dry_run_execution_suppressed",
-                error_retryable=False,
-            ),
-        ),
-        (AuditAgentWireResult, _audit_wire_payload(outcome="failed")),
-    ),
-)
-def test_generated_wire_schema_acceptance_always_converts(model, payload):
-    _validate_wire_schema(model, payload)
-    assert model.model_validate(payload).to_result() is not None
-
-
-@pytest.mark.parametrize(
-    "model",
-    (ConsumerAgentWireResult, AuditAgentWireResult),
-)
-def test_wire_schema_is_discriminated_and_contains_only_nested_fields(model):
-    schema = model.model_json_schema()
-    serialized = json.dumps(schema, ensure_ascii=False)
-
-    assert schema["discriminator"]["propertyName"] == "outcome"
-    assert schema["oneOf"]
-    assert "contentSchema" not in serialized
-    assert all(
-        field in serialized
-        for field in (
-            "risk",
-            "confidence",
-            "rule_coverage",
-            "information_completeness",
-        )
-    )
-    for legacy_field in (
-        "proposal_json",
-        "decision_options_json",
-        "feedback_json",
-        "external_result_json",
-        "reconciliation_json",
-    ):
-        assert legacy_field not in serialized
-
-
-@pytest.mark.parametrize(
-    ("model", "payload"),
-    (
-        (
-            ConsumerAgentWireResult,
-            _consumer_wire_payload(outcome="proposal", proposal=None),
-        ),
-        (
-            ConsumerAgentWireResult,
-            _consumer_wire_payload(
-                outcome="proposal",
-                proposal=_proposal(),
-                proposal_json=json.dumps(_proposal()),
-            ),
-        ),
-        (
-            ConsumerAgentWireResult,
-            _consumer_wire_payload(
-                outcome="proposal",
-                proposal=json.dumps(_proposal()),
-            ),
-        ),
-        (
-            ConsumerAgentWireResult,
-            _consumer_wire_payload(outcome="needs_human"),
-        ),
-        (
-            ConsumerAgentWireResult,
-            _consumer_wire_payload(
-                outcome="needs_human",
-                decision_options=[{"key": "A"}],
-            ),
-        ),
-        (
-            ConsumerAgentWireResult,
-            _consumer_wire_payload(outcome="no_action", proposal={}),
-        ),
-        (
-            AuditAgentWireResult,
-            _audit_wire_payload(
-                outcome="executed",
-                side_effect_state="none",
-                external_result={},
-            ),
-        ),
-        (
-            AuditAgentWireResult,
-            _audit_wire_payload(
-                outcome="executed",
-                side_effect_state="confirmed",
-                external_result=None,
-            ),
-        ),
-        (
-            AuditAgentWireResult,
-            _audit_wire_payload(
-                outcome="executed",
-                side_effect_state="confirmed",
-                external_result=json.dumps(
-                    {
-                        "operation_id": "op-1",
-                        "live_result_reference": {"id": "one"},
-                    }
-                ),
-            ),
-        ),
-        (
-            AuditAgentWireResult,
-            _audit_wire_payload(outcome="revision_required", feedback=None),
-        ),
-        (
-            AuditAgentWireResult,
-            _audit_wire_payload(outcome="unknown"),
-        ),
-        (
-            AuditAgentWireResult,
-            _audit_wire_payload(
-                outcome="failed",
-                side_effect_state="confirmed",
-            ),
-        ),
-        (
-            AuditAgentWireResult,
-            _audit_wire_payload(
-                outcome="needs_human", reconciliation=[{"action_index": 0}]
-            ),
-        ),
-    ),
-)
-def test_invalid_wire_combinations_fail_generated_schema_and_local_model(
-    model,
-    payload,
-):
-    with pytest.raises(JsonSchemaValidationError):
-        _validate_wire_schema(model, payload)
-    with pytest.raises(ValidationError):
-        model.model_validate(payload)
-
-
 def test_consumer_proposal_keeps_facts_and_judgment_separate():
     result = ConsumerAgentResult.model_validate(
         {
@@ -771,184 +538,6 @@ def test_proposed_action_requires_capability_identity():
 def test_consumer_contract_rejects_incomplete_or_mismatched_proposals(payload):
     with pytest.raises(ValidationError):
         ConsumerAgentResult.model_validate(payload)
-
-
-def test_needs_human_requires_actionable_options_and_wire_preserves_them():
-    options = [
-        {
-            "key": "A",
-            "label": "同意当前方案",
-            "instruction": "同意已核验的当前方案并发布。",
-            "consequence": "会执行经过审计的外部动作。",
-            "applies_to": "task_class",
-        },
-        {
-            "key": "B",
-            "label": "要求补充材料",
-            "instruction": "要求申请人补充缺失材料并发布。",
-            "consequence": "当前外部动作不会执行。",
-            "applies_to": "task_class",
-        },
-    ]
-    with pytest.raises(ValidationError, match="decision options"):
-        ConsumerAgentResult.model_validate(
-            {
-                "outcome": "needs_human",
-                "summary": "A management decision is required.",
-                "proposal": None,
-                "decision_options": [],
-                "risk": "high",
-                "confidence": 0.1,
-                "rule_coverage": 1.0,
-                "information_completeness": 1.0,
-                "error": _error(),
-            }
-        )
-
-    result = ConsumerAgentWireResult.model_validate(
-        {
-            "outcome": "needs_human",
-            "summary": "A management decision is required.",
-            "proposal": None,
-            "decision_options": options,
-            "risk": "high",
-            "confidence": 0.1,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-            "error_code": "",
-            "error_retryable": False,
-            "error_authorization_required": False,
-            "needs_human_reason": "A high-risk rule decision needs an explicit human choice.",
-            "decision_basis": _decision_basis(),
-            "durable_memories": [],
-        }
-    ).to_result()
-
-    assert result.decision_options[0].instruction == options[0]["instruction"]
-
-
-def test_needs_human_options_must_target_a_reusable_task_class_rule():
-    payload = _consumer_wire_payload(
-        outcome="needs_human",
-        decision_options=[
-            {
-                "key": "approve-current",
-                "label": "批准当前申请",
-                "instruction": "直接批准本次申请。",
-                "consequence": "当前申请进入已批准状态。",
-            },
-            {
-                "key": "reject-current",
-                "label": "拒绝当前申请",
-                "instruction": "直接拒绝本次申请。",
-                "consequence": "当前申请进入已拒绝状态。",
-            },
-        ],
-        needs_human_reason="缺少可复用规则。",
-        decision_basis=_decision_basis(),
-    )
-
-    with pytest.raises(ValidationError, match="applies_to"):
-        ConsumerAgentWireResult.model_validate(payload)
-
-
-def test_audit_needs_human_options_must_target_a_reusable_task_class_rule():
-    payload = _audit_wire_payload(
-        outcome="needs_human",
-        error_code="",
-        error_retryable=False,
-        decision_options=[
-            {
-                "key": "approve-current",
-                "label": "批准当前申请",
-                "instruction": "直接批准本次申请。",
-                "consequence": "当前申请进入已批准状态。",
-            },
-            {
-                "key": "reject-current",
-                "label": "拒绝当前申请",
-                "instruction": "直接拒绝本次申请。",
-                "consequence": "当前申请进入已拒绝状态。",
-            },
-        ],
-    )
-
-    with pytest.raises(ValidationError, match="applies_to"):
-        AuditAgentWireResult.model_validate(payload)
-
-
-def test_audit_needs_human_requires_actionable_options_and_wire_preserves_them():
-    options = _decision_options()
-    with pytest.raises(ValidationError, match="decision options"):
-        AuditAgentResult.model_validate(
-            _audit_payload(
-                outcome="needs_human",
-                feedback=None,
-            )
-        )
-
-    result = AuditAgentWireResult.model_validate(
-        _audit_wire_payload(
-            outcome="needs_human",
-            decision_options=options,
-            error_code="",
-            error_retryable=False,
-        )
-    ).to_result()
-
-    assert result.decision_options[0].instruction == options[0]["instruction"]
-
-
-def test_audit_dry_run_is_non_effectful_and_cannot_be_a_human_decision():
-    result = AuditAgentWireResult.model_validate(
-        _audit_wire_payload(
-            outcome="dry_run",
-            error_code="dry_run_execution_suppressed",
-            error_retryable=False,
-        )
-    ).to_result()
-
-    assert result.outcome is AuditOutcome.DRY_RUN
-    assert result.decision_options == ()
-
-    with pytest.raises(ValidationError, match="dry_run requires"):
-        AuditAgentResult.model_validate(
-            _audit_payload(
-                outcome="dry_run",
-                feedback=None,
-                error={
-                    "code": "wrong_code",
-                    "retryable": False,
-                    "authorization_required": False,
-                },
-            )
-        )
-
-
-def test_audit_revision_feedback_is_concrete_and_non_effectful():
-    result = AuditAgentResult.model_validate(_audit_payload())
-
-    assert result.outcome is AuditOutcome.FEEDBACK_PROVIDED
-    assert result.feedback is not None
-    assert result.external_result is None
-
-
-def test_audit_executed_requires_external_result():
-    result = AuditAgentResult.model_validate(
-        _audit_payload(
-            outcome="executed",
-            summary="Message sent and read back.",
-            feedback=None,
-            external_result={
-                "operation_id": "op-1",
-                "live_result_reference": {"message_id": "mid-1"},
-            },
-        )
-    )
-
-    assert result.outcome is AuditOutcome.EXECUTED
-    assert result.external_result is not None
-    assert result.external_result.operation_id == "op-1"
 
 
 def test_audit_result_does_not_accept_reconciliation_application_field():
@@ -1039,7 +628,7 @@ def test_contract_schemas_match_models_and_do_not_enumerate_business_actions():
         assert set(
             ("risk", "confidence", "rule_coverage", "information_completeness")
         ).issubset(schema["required"])
-        assert all(branch["type"] == "object" for branch in schema["anyOf"])
+        assert schema["oneOf"]
         serialized = json.dumps(schema, ensure_ascii=False)
         for business_action in (
             "send_dingtalk_reply",
@@ -1048,6 +637,49 @@ def test_contract_schemas_match_models_and_do_not_enumerate_business_actions():
             "edit_document",
         ):
             assert business_action not in serialized
+
+
+@pytest.mark.parametrize("outcome", ["proposal", "no_action", "failed"])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("needs_human_reason", "Ask Derek to decide."),
+        ("decision_basis", _decision_basis()),
+        ("requested_input", "Please supply the missing fact."),
+        ("decision_options", [{
+            "key": "stop", "label": "Stop", "instruction": "Stop this item.",
+            "consequence": "The item is skipped.", "plan": None,
+            "terminal_outcome": "skipped", "reason": "No action is appropriate.",
+        }]),
+    ],
+)
+def test_non_human_consumer_schemas_reject_human_decision_fields(outcome, field, value):
+    proposal = _proposal() if outcome == "proposal" else None
+    contract_payload = {
+        "outcome": outcome,
+        "summary": "The current outcome is complete.",
+        "proposal": proposal,
+        "decision_options": [],
+        "error": {**_error(), "stage": "", "source": "", "source_code": "", "session_continuable": False},
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+    }
+    wire_payload = _consumer_wire_payload(outcome=outcome, proposal=proposal)
+    for schema, payload in (
+        (ConsumerAgentResult.model_json_schema(), contract_payload),
+        (ConsumerAgentWireResult.model_json_schema(), wire_payload),
+    ):
+        validator = Draft202012Validator(schema)
+        validator.validate(payload)
+        validator.validate({**payload, "needs_human_reason": None, "decision_basis": None, "requested_input": None})
+        with pytest.raises(JsonSchemaValidationError):
+            validator.validate({**payload, field: value})
+    with pytest.raises(ValidationError):
+        ConsumerAgentResult.model_validate({**contract_payload, field: value})
+    with pytest.raises(ValidationError):
+        ConsumerAgentWireResult.model_validate({**wire_payload, field: value})
 
 
 @pytest.mark.parametrize(
@@ -1345,64 +977,6 @@ def test_consumer_wire_result_preserves_nested_proposal_fields():
     assert result.proposal.actions[0].target == {"conversation_reference": "cid-1"}
 
 
-def test_audit_wire_result_preserves_nested_result_fields():
-    result = AuditAgentWireResult.model_validate(
-        {
-            "outcome": "needs_human",
-            "summary": "A decision is required.",
-            "proposal_revision": 0,
-            "feedback": None,
-            "external_result": None,
-            "decision_options": _decision_options(),
-            "risk": "high",
-            "confidence": 0.1,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-            "error_code": "",
-            "error_retryable": False,
-            "error_authorization_required": False,
-            "needs_human_reason": "A high-risk rule decision needs an explicit human choice.",
-            "decision_basis": _decision_basis(),
-        }
-    ).to_result()
-
-    assert result.outcome is AuditOutcome.NEEDS_HUMAN
-    assert result.error.code == ""
-    assert result.decision_options[0].key == "A"
-
-
-@pytest.mark.parametrize(
-    "error_code",
-    (
-        "dependency_read_unavailable",
-        "xiaoqing_interview_mcp_not_injected",
-        "xiaoqing_interview_unavailable",
-    ),
-)
-def test_audit_wire_result_normalizes_transient_dependency_failures_as_retryable(
-    error_code: str,
-):
-    result = AuditAgentWireResult.model_validate(
-        {
-            "outcome": "failed",
-            "summary": "The live dependency could not be read.",
-            "proposal_revision": 0,
-            "feedback": None,
-            "external_result": None,
-            "decision_options": [],
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-            "error_code": error_code,
-            "error_retryable": False,
-            "error_authorization_required": False,
-        }
-    ).to_result()
-
-    assert result.error.retryable is True
-
-
 def test_consumer_wire_result_normalizes_dependency_read_failure_as_retryable():
     result = ConsumerAgentWireResult.model_validate(
         _consumer_wire_payload(
@@ -1413,62 +987,6 @@ def test_consumer_wire_result_normalizes_dependency_read_failure_as_retryable():
     ).to_result()
 
     assert result.error.retryable is True
-
-
-def test_the_service_decides_what_an_unknown_reported_failure_means():
-    result = AuditAgentWireResult.model_validate(
-        {
-            "outcome": "failed",
-            "summary": "The business request is invalid.",
-            "proposal_revision": 0,
-            "feedback": None,
-            "external_result": None,
-            "decision_options": [],
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-            "error_code": "invalid_business_request",
-            "error_retryable": False,
-            "error_authorization_required": True,
-        }
-    ).to_result()
-
-    # The turn's own flags are not read: a code the service does not know
-    # takes the bounded retry, and the turn's wording is kept for diagnosis.
-    assert result.error.code == "agent_reported_failure"
-    assert result.error.retryable is True
-    assert result.error.authorization_required is False
-    assert result.error.source_code == "invalid_business_request"
-
-
-def test_audit_wire_result_preserves_revision_feedback_fields():
-    result = AuditAgentWireResult.model_validate(
-        {
-            "outcome": "revision_required",
-            "summary": "The command needs confirmation.",
-            "proposal_revision": 0,
-            "feedback": {
-                "rule": "DWS writes require --yes.",
-                "observation": "The proposed argv omitted --yes.",
-                "requested_revision": "Add --yes without changing the action.",
-            },
-            "external_result": None,
-            "risk": "medium",
-            "confidence": 0.8,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-            "error_code": "dws_write_missing_yes",
-            "error_retryable": True,
-            "error_authorization_required": False,
-        }
-    ).to_result()
-
-    assert result.outcome is AuditOutcome.FEEDBACK_PROVIDED
-    assert result.feedback is not None
-    assert (
-        result.feedback.requested_revision == "Add --yes without changing the action."
-    )
 
 
 def test_dingtalk_message_actions_require_canonical_target_fields():
@@ -1586,74 +1104,133 @@ def test_a_reply_by_any_name_still_needs_the_message_it_replies_to() -> None:
         )
 
 
-def test_a_proposal_can_also_ask_derek_an_independent_question():
-    """Derek, 2026-09-23: act on the material gap, escalate the rule gap.
+def test_current_instance_option_requires_exactly_one_branch():
+    from app.agent_contracts import DecisionOption
 
-    384699 and 384514 each lost one half because a result could be a proposal
-    or needs_human but not both.
-    """
-    from app.agent_wire_contracts import ConsumerAgentWireResult
-
-    wire = _consumer_wire_payload(
-        outcome="proposal",
-        proposal=_proposal(),
-        decision_options=_decision_options(),
-        needs_human_reason="No written rule covers this signing authority.",
-        decision_basis=_decision_basis(),
-        rule_coverage=0.0,
-    )
-
-    result = ConsumerAgentWireResult.model_validate(wire).to_result()
-
-    assert result.escalates
-    assert result.proposal is not None
+    common = dict(key="go", label="Proceed", instruction="Send notice", consequence="Recipient gets notice")
+    assert DecisionOption(**common, plan=_proposal()).plan is not None
+    with pytest.raises(ValidationError):
+        DecisionOption(**common)
+    with pytest.raises(ValidationError):
+        DecisionOption(**common, plan=_proposal(), terminal_outcome="skipped", reason="Stop")
+    with pytest.raises(ValidationError):
+        DecisionOption(**common, terminal_outcome="skipped", reason="")
+    with pytest.raises(ValidationError):
+        DecisionOption(**common, applies_to="task_class", plan=_proposal())
 
 
-@pytest.mark.parametrize(
-    "missing", ("decision_options", "needs_human_reason", "decision_basis")
-)
-def test_an_escalating_proposal_needs_the_whole_question(missing):
+def test_live_consumer_wire_rejects_old_authorization_plan():
     payload = {
-        "outcome": "proposal",
-        "summary": "Comment for material and ask Derek.",
-        "proposal": _proposal(),
-        "decision_options": _decision_options(),
-        "needs_human_reason": "No written rule covers this signing authority.",
-        "decision_basis": _decision_basis(),
-        "risk": "low",
-        "confidence": 1.0,
-        "rule_coverage": 0.0,
-        "information_completeness": 1.0,
-        "error": _error(),
+        "outcome": "needs_human", "summary": "Need source fact", "proposal": None,
+        "decision_options": [], "requested_input": "Provide invoice number",
+        "needs_human_reason": "Only Derek has it", "decision_basis": _decision_basis(),
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0, "error_code": "",
+        "error_retryable": False, "error_authorization_required": False,
+        "durable_memories": [], "authorization_plan": _authorization_plan(),
     }
-    payload[missing] = [] if missing == "decision_options" else None
-
-    with pytest.raises(ValidationError, match="escalates"):
-        ConsumerAgentResult.model_validate(payload)
+    with pytest.raises(ValidationError, match="authorization_plan"):
+        ConsumerAgentWireResult.model_validate(payload)
 
 
-def test_an_escalating_proposal_is_a_stored_human_decision():
-    """The Attempt points at the Consumer run that asked the question."""
-    from app.decision_quality import parse_stored_needs_human_decision
-
-    escalating = {
-        "outcome": "proposal",
-        "summary": "Comment for material and ask Derek.",
-        "proposal": _proposal(),
-        "decision_options": _decision_options(),
-        "needs_human_reason": "No written rule covers this signing authority.",
+def test_open_ended_human_input_has_no_false_options_or_quality_gate():
+    payload = {
+        "outcome": "needs_human", "summary": "Need an unknown invoice number",
+        "proposal": None, "decision_options": [],
+        "requested_input": "What is the invoice number?",
+        "needs_human_reason": "Only Derek has the receipt",
         "decision_basis": _decision_basis(),
-        "risk": "low",
-        "confidence": 1.0,
-        "rule_coverage": 0.0,
-        "information_completeness": 1.0,
-        "error": _error(),
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0, "error": _error(),
     }
-    plain = {
-        key: value
-        for key, value in escalating.items()
-        if key not in {"needs_human_reason", "decision_basis"}
-    } | {"decision_options": []}
+    assert ConsumerAgentResult.model_validate(payload).requested_input
+    with pytest.raises(ValidationError):
+        ConsumerAgentResult.model_validate({**payload, "error": {**_error(), "code": "tool_failed"}})
+    with pytest.raises(ValidationError):
+        ConsumerAgentResult.model_validate({**payload, "proposal": _proposal()})
 
-    assert parse_stored_needs_human_decision(json.dumps(escalating)) is not None
-    assert parse_stored_needs_human_decision(json.dumps(plain)) is None
+
+def test_stage_requires_predecessor_and_immediate_plan_excludes_question():
+    base = {
+        "outcome": "proposal", "summary": "Notify", "proposal": _proposal(),
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0, "error": _error(),
+    }
+    assert ConsumerAgentResult.model_validate({**base, "continue_after_execution": True}).stage_index == 0
+    with pytest.raises(ValidationError):
+        ConsumerAgentResult.model_validate({**base, "stage_index": 1})
+    assert ConsumerAgentResult.model_validate({**base, "stage_index": 1, "predecessor_review_id": 3}).stage_index == 1
+    with pytest.raises(ValidationError):
+        ConsumerAgentResult.model_validate({**base, "decision_options": [] , "requested_input": "Choose"})
+
+
+def test_audit_review_only_and_system_execution_result():
+    from app.agent_contracts import SystemExecutionResult
+
+    base = {
+        "outcome": "approve", "summary": "Complete candidate is sound",
+        "proposal_revision": 0, "candidate_digest": "a" * 64,
+        "evidence_refs": ["message:1"], "feedback": None,
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0, "error": _error(),
+    }
+    assert AuditAgentResult.model_validate(base).outcome is AuditOutcome.APPROVE
+    with pytest.raises(ValidationError):
+        AuditAgentResult.model_validate({**base, "external_result": {"operation_id": "x", "live_result_reference": {}}})
+    with pytest.raises(ValidationError):
+        AuditAgentResult.model_validate({**base, "outcome": "return"})
+    with pytest.raises(ValidationError):
+        AuditAgentResult.model_validate({**base, "outcome": "executed"})
+    execution = SystemExecutionResult(outcome="executed", summary="Sent", external_result={"operation_id": "x", "live_result_reference": {}}, completed_action_keys=("send",))
+    assert execution.completed_action_keys == ("send",)
+
+
+@pytest.mark.parametrize("old_outcome", ["executed", "feedback_provided", "needs_human", "dry_run", "revision_required"])
+def test_live_audit_wire_rejects_old_execution_outcomes(old_outcome):
+    payload = {
+        "outcome": old_outcome, "summary": "Old result", "proposal_revision": 0,
+        "candidate_digest": "a" * 64, "feedback": None,
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0, "error_code": "",
+        "error_retryable": False, "error_authorization_required": False,
+    }
+    with pytest.raises(ValidationError):
+        AuditAgentWireResult.model_validate(payload)
+
+
+@pytest.mark.parametrize("outcome", ["return", "reject"])
+def test_review_feedback_required_on_return_and_reject(outcome):
+    payload = {
+        "outcome": outcome, "summary": "Revise candidate", "proposal_revision": 0,
+        "candidate_digest": "a" * 64, "evidence_refs": ["message:1"],
+        "feedback": {"rule": "Audience must match source", "observation": "Wrong recipient", "requested_revision": "Correct recipient"},
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0, "error_code": "",
+        "error_retryable": False, "error_authorization_required": False,
+    }
+    assert AuditAgentWireResult.model_validate(payload).to_result().outcome.value == outcome
+    with pytest.raises(ValidationError):
+        AuditAgentWireResult.model_validate({**payload, "feedback": None})
+
+
+def test_pinned_consumer_schema_rejects_unbound_human_question_and_option():
+    from app.agent_result import AgentError
+
+    schema = json.loads((SCHEMA_DIR / "consumer_agent_result.schema.json").read_text())
+    base = {
+        "outcome": "needs_human", "summary": "Need decision", "proposal": None,
+        "decision_options": [], "needs_human_reason": "Missing current fact",
+        "decision_basis": _decision_basis(), "risk": "low", "confidence": 1.0,
+        "rule_coverage": 1.0, "information_completeness": 1.0,
+        "error": AgentError.model_validate(_error()).model_dump(mode="json"),
+    }
+    with pytest.raises(JsonSchemaValidationError):
+        Draft202012Validator(schema).validate(base)
+    valid = {**base, "requested_input": "What is the invoice number?"}
+    Draft202012Validator(schema).validate(valid)
+    invalid_option = {**base, "decision_options": [{
+        "key": "stop", "label": "Stop", "instruction": "Stop now",
+        "consequence": "No action", "terminal_outcome": "skipped",
+    }]}
+    with pytest.raises(JsonSchemaValidationError):
+        Draft202012Validator(schema).validate(invalid_option)

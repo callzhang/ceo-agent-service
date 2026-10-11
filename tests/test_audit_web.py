@@ -63,6 +63,7 @@ from app.store import (
     AutoReplyStore,
 )
 from app.wechat.models import WechatMessage
+from tests.support.candidate_review import complete_synthetic_approval
 
 
 def test_attempt_detail_reply_text_falls_back_to_persisted_sent_reply():
@@ -212,18 +213,7 @@ def _complete_audit_run(
         operation_id=f"audit-consumer-result-{proposal_revision}",
         owner=owner,
     ).run
-    return store.complete_agent_run(
-        audit.id,
-        {
-            "outcome": "executed",
-            "summary": "The reviewed update was published.",
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-        },
-        owner=owner,
-    )
+    return complete_synthetic_approval(store, audit, owner=owner)
 
 
 def _finalize_consumer_result_attempt(
@@ -425,7 +415,7 @@ def test_attempt_detail_marks_malformed_consumer_result_unavailable(tmp_path: Pa
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
     with store._immediate_write_transaction() as db:
         db.execute(
-            "update agent_runs set final_result_json=? where id=?",
+            "update review_candidates set candidate_json=? where consumer_run_id=?",
             ('{"outcome":"proposal","raw_marker":"raw-malformed-marker"}', consumer.id),
         )
 
@@ -522,9 +512,13 @@ def test_attempt_detail_hides_nested_failed_consumer_error_values(tmp_path: Path
 
 def test_attempt_detail_keeps_old_consumer_result_while_current_generation_runs(
     tmp_path: Path,
+    monkeypatch,
 ):
+    from app.dws_client import DingTalkMessage, DwsClient
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = _consumer_result_task(store)
+    monkeypatch.setattr(DwsClient, "read_message_by_id",
+                        lambda *_: DingTalkMessage.model_validate_json(task.trigger_message_json))
     consumer = _complete_consumer_run(store, task)
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
 
@@ -648,7 +642,7 @@ def test_orchestrated_attempt_detail_links_consumer_and_execution_sessions(
         )
         store.complete_agent_run(
             consumer.id,
-            {"outcome": "proposal", "summary": f"candidate {revision}"},
+            {**_consumer_result_payload(), "summary": f"candidate {revision}"},
             owner=f"consumer-{revision}",
         )
         audit = store.claim_agent_run(
@@ -666,18 +660,7 @@ def test_orchestrated_attempt_detail_links_consumer_and_execution_sessions(
             f"audit-session-{revision}",
             owner=f"audit-{revision}",
         )
-        terminal_run = store.complete_agent_run(
-            audit.id,
-            {
-                "outcome": "executed",
-                "summary": f"audit {revision}",
-                "risk": "low",
-                "confidence": 1.0,
-                "rule_coverage": 1.0,
-                "information_completeness": 1.0,
-            },
-            owner=f"audit-{revision}",
-        )
+        terminal_run = complete_synthetic_approval(store, audit, owner=f"audit-{revision}")
         parent_id = terminal_run.id
 
     assert terminal_run is not None
@@ -870,6 +853,8 @@ def _seed_confirmed_approval_attempt(
         },
         owner=f"approval-consumer-{suffix}",
     )
+    candidate = store.adopted_candidate_for_consumer_run(consumer.id)
+    assert candidate is not None
     audit = store.claim_agent_run(
         task.id,
         task.execution_generation,
@@ -880,9 +865,7 @@ def _seed_confirmed_approval_attempt(
         operation_id=operation_id,
         owner=f"approval-audit-{suffix}",
     ).run
-    audit = store.complete_agent_run(
-        audit.id,
-        {
+    historical_result = {
             "outcome": "executed",
             "risk": "low",
             "confidence": 1.0,
@@ -903,9 +886,19 @@ def _seed_confirmed_approval_attempt(
                 "retryable": False,
                 "authorization_required": False,
             },
-        },
+        }
+    audit = store.complete_agent_run(
+        audit.id,
+        {"outcome": "approve", "candidate_digest": candidate["candidate_digest"]},
         owner=f"approval-audit-{suffix}",
     )
+    # Simulate a grandfathered, service-adopted historical Audit review. Its
+    # completed native wire body is separate from the business review row.
+    with store._connect() as db:
+        db.execute(
+            "update candidate_reviews set result_json=? where audit_run_id=?",
+            (json.dumps(historical_result), audit.id),
+        )
     return store.finalize_orchestrated_reply_task(
         task_id=task.id,
         expected_execution_generation=task.execution_generation,
@@ -981,6 +974,50 @@ def seed_meeting_attempt(store: AutoReplyStore) -> int:
             ensure_ascii=False,
         ),
     )
+
+
+def _seed_native_meeting_search(
+    store: AutoReplyStore, run_id: int, tmp_path: Path, monkeypatch,
+) -> Path:
+    from app import native_trajectory
+    from app.meeting_alignment_models import MeetingSource
+    from tests.test_meeting_alignment import summary_decision
+
+    source = MeetingSource.model_validate({
+        "meeting_id": "minutes-history-1",
+        "title": "项目评审会",
+        "status": "ended",
+        "started_at": "2026-07-14T09:00:00+08:00",
+        "ended_at": "2026-07-14T09:50:00+08:00",
+        "participants": [],
+        "attendee_evidence": "calendar",
+        "attendee_roster_complete": True,
+        "current_user_id": "derek",
+        "summary": "历史相似会议：上线范围、风险预算、故障面。",
+        "transcript": [],
+    })
+    native = tmp_path / "meeting-search.jsonl"
+    native.write_text("\n".join((
+        json.dumps({"type": "event_msg", "payload": {
+            "type": "user_message", "message": source.model_dump_json(),
+        }}, ensure_ascii=False),
+        json.dumps({"type": "response_item", "payload": {
+            "type": "message", "role": "assistant", "content": [{
+                "type": "output_text", "text": summary_decision().model_dump_json(),
+            }],
+        }}, ensure_ascii=False),
+    )) + "\n")
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *args, **kwargs: native)
+    with store._connect() as db:
+        db.execute(
+            "insert into agent_runtime_attempts "
+            "(workload_kind, workload_key, attempt_number, route_name, runtime_kind, "
+            "credential_mode, model, session_id, status, transcript_start, transcript_end) "
+            "values ('meeting', ?, 1, 'test', 'codex_cli', 'local_oauth', 'test', "
+            "'meeting-session-history-1', 'completed', 0, 2)",
+            (str(run_id),),
+        )
+    return native
 
 
 def test_format_local_time_converts_utc_sqlite_timestamp():
@@ -1992,7 +2029,19 @@ def test_render_attempt_list_shows_draft_follow_up_as_scheduled(tmp_path: Path):
     assert ">Processing</span>" not in html
 
 
-def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path):
+def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path, monkeypatch):
+    def read_native_events(session_id, **_bounds):
+        assert session_id == "meeting-session-history-1"
+        return [
+            {"tool": "exec_command", "call_id": "meeting-call-1",
+             "title": "Read meeting memory", "relevance": "确认会议相关历史判断",
+             "input": '{"cmd":"rg 上线范围 /Users/principal/Documents/memory"}',
+             "command": "rg 上线范围 /Users/principal/Documents/memory"},
+            {"tool": "tool_output", "call_id": "meeting-call-1",
+             "output": "memory.md:1:上线范围需要先确认风险预算"},
+        ]
+
+    monkeypatch.setattr(audit_web_module, "extract_codex_audit_events_from_session", read_native_events)
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     run_id = seed_meeting_attempt(store)
 
@@ -2022,10 +2071,11 @@ def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path):
     assert "Decision summary" not in detail.text
     assert "Message and delivery" not in detail.text
     assert "Tool uses" in detail.text
-    assert "Read meeting memory" in detail.text
-    assert "确认会议相关历史判断" in detail.text
-    assert "rg 上线范围 /Users/principal/Documents/memory" in detail.text
-    assert "memory.md:1:上线范围需要先确认风险预算" in detail.text
+    # This fixture has an adopted delivery and only a copied legacy tool list.
+    # The business result remains visible; copied process events cannot be shown.
+    assert "会后对齐：@Avery 请确认风险预算。" in detail.text
+    assert "原生工具过程不可用" in detail.text
+    assert "Read meeting memory" not in detail.text
     assert "Mention resolution" in detail.text
     assert "/codex/meeting-session-history-1" in detail.text
 
@@ -2089,9 +2139,10 @@ def test_meeting_attempt_detail_keeps_ready_run_sent_after_later_run(tmp_path: P
     assert '<div class="attempt-detail-value">failed</div>' not in response.text
 
 
-def test_history_search_shows_similar_codex_sessions(tmp_path: Path):
+def test_history_search_shows_similar_codex_sessions(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     run_id = seed_meeting_attempt(store)
+    native = _seed_native_meeting_search(store, run_id, tmp_path, monkeypatch)
     store.upsert_codex_session_search_index(
         session_id="meeting-session-history-1",
         source_type="meeting_alignment",
@@ -2101,6 +2152,13 @@ def test_history_search_shows_similar_codex_sessions(tmp_path: Path):
         fts_text="历史 相似 会议 上线 范围 风险 预算 故障 面",
         embedding=[1.0, 0.0],
     )
+    native_search = store.search_codex_sessions
+
+    def search_without_snapshot(**kwargs):
+        assert store._read_snapshot_connection.get() is None
+        return native_search(**kwargs)
+
+    monkeypatch.setattr(store, "search_codex_sessions", search_without_snapshot)
 
     html = render_attempt_list(
         store,
@@ -2114,8 +2172,12 @@ def test_history_search_shows_similar_codex_sessions(tmp_path: Path):
     assert "/codex/meeting-session-history-1" in html
     assert f"/meeting-attempts/{run_id}" in html
 
+    native.unlink()
+    unavailable = render_attempt_list(store, query="历史上线范围对齐")
+    assert "仅标题可检索；原生过程不可用。" in unavailable
 
-def test_history_object_dropdown_controls_results(tmp_path: Path):
+
+def test_history_object_dropdown_controls_results(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_reply_attempt(
         conversation_id="cid-history",
@@ -2165,6 +2227,7 @@ def test_history_object_dropdown_controls_results(tmp_path: Path):
         available_at="2026-07-15 09:00:00",
     )
     run_id = seed_meeting_attempt(store)
+    _seed_native_meeting_search(store, run_id, tmp_path, monkeypatch)
     store.upsert_codex_session_search_index(
         session_id="meeting-session-history-1",
         source_type="meeting_alignment",
@@ -3849,25 +3912,19 @@ def test_audit_app_serves_busy_page_before_slow_history_prewarm(monkeypatch, tmp
         release_render.set()
 
 
-def test_health_listener_does_not_wait_for_store_history_prewarm(monkeypatch, tmp_path):
+def test_audit_startup_does_not_prewarm_store_history(monkeypatch, tmp_path):
     started = threading.Event()
-    release = threading.Event()
-    finished = threading.Event()
 
     def slow_prewarm(self, *, source_tables):
+        del self, source_tables
         started.set()
-        release.wait(timeout=60)
-        finished.set()
+        raise AssertionError("History scans must be deferred until requested")
 
     monkeypatch.setattr(AutoReplyStore, "warm_history_page_cache", slow_prewarm)
-    try:
-        app = create_audit_app(tmp_path / "worker.sqlite3")
-        with TestClient(app) as client:
-            assert not finished.is_set()
-            assert client.get("/healthz").json()["ok"] is True
-            assert started.wait(timeout=1)
-    finally:
-        release.set()
+    app = create_audit_app(tmp_path / "worker.sqlite3")
+    with TestClient(app) as client:
+        assert client.get("/healthz").json()["ok"] is True
+        assert not started.is_set()
 
 
 def test_recent_html_cache_refreshes_after_ttl():
@@ -3948,6 +4005,32 @@ def test_worker_status_reads_component_changes_on_next_request(tmp_path):
         "agent-cron-scheduler", state="degraded", latest_error="after"
     )
     assert scheduler_error() == "after"
+
+
+def test_system_health_reports_native_delivery_coverage_without_changing_state(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    monkeypatch.setattr(
+        audit_web_module,
+        "scan_hourly_quality",
+        lambda _path: SimpleNamespace(
+            violations=(),
+            checked_at="2026-10-10T00:00:00+00:00",
+            native_delivery_coverage={"checked": 2, "unavailable": 3},
+        ),
+    )
+
+    health = audit_web_module._system_health_snapshot(
+        store,
+        {"ok": True},
+        meeting_memory_health={"delayed": 0, "ghost_runtime_attempts": 0},
+    )
+
+    assert health["state"] == "healthy"
+    assert health["violations"] == 0
+    assert health["native_delivery_coverage"] == {"checked": 2, "unavailable": 3}
+    assert "unavailable: 3" in health["detail"]
 
 
 def test_tutorial_check_route_records_real_step_status(tmp_path: Path):
@@ -6309,19 +6392,126 @@ def test_handle_prompt_variables_post_saves_variables_without_changing_template(
 def test_handle_user_prompt_post_saves_template(tmp_path: Path, monkeypatch):
     template_path = tmp_path / "user.md"
     monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(template_path))
-    body = (
-        "template=USER+%3Ccode%3A+"
-        "app.user_prompt_blocks%3Acurrent_message_block%28%29%3E"
-    ).encode()
+    body = b"template=USER+%7B%7Btask_context%7D%7D"
 
     status, headers, html = handle_user_prompt_post(body)
 
     assert status == 303
-    assert headers["Location"] == "/config?tab=user&saved=1"
+    assert headers["Location"] == "/settings?tab=prompts&prompt=user&view=template&saved=1"
     assert html == ""
-    assert template_path.read_text(encoding="utf-8") == (
-        "USER <code: app.user_prompt_blocks:current_message_block()>"
+    assert template_path.read_text(encoding="utf-8") == "USER {{task_context}}"
+
+
+def test_settings_prompts_get_exposes_legacy_user_template_for_repair(tmp_path: Path, monkeypatch):
+    developer = tmp_path / "developer.md"
+    user = tmp_path / "user.md"
+    profile = tmp_path / "profile.md"
+    developer.write_text("Current shared principles", encoding="utf-8")
+    legacy_user = (
+        "{{style_lines}}\n---\n{{current_message}}\n---\n{{sender_org}}\n---\n"
+        "{{known_people}}\n---\n{{context_messages}}\n---\n{{material_references}}\n"
+        "---\n{{linked_documents}}\n---\n{{image_download_status}}\n"
     )
+    user.write_text(legacy_user, encoding="utf-8")
+    profile.write_text("Saved profile", encoding="utf-8")
+    monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(developer))
+    monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(user))
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
+
+    with TestClient(create_audit_app(tmp_path / "worker.sqlite3")) as client:
+        response = client.get("/api/console/settings/prompts")
+        assert response.status_code == 200
+        item = response.json()["item"]
+        assert item["fields"]["user_template"] == legacy_user
+        assert item["preview"]["user"] == ""
+        assert "{{task_context}}" in item["preview_errors"]["user"]
+        assert item["preview"]["developer"] == "Current shared principles"
+        assert "Saved profile" in item["preview"]["profile"]
+        assert user.read_text(encoding="utf-8") == legacy_user
+
+        saved = client.post("/api/console/settings/prompts", json={"prompt": "user", "fields": {"template": "Task: {{task_context}}"}})
+        assert saved.status_code == 200
+        repaired = client.get("/api/console/settings/prompts").json()["item"]
+        assert repaired["fields"]["user_template"] == "Task: {{task_context}}"
+        assert repaired["preview_errors"] == {}
+        assert "Synthetic example" in repaired["preview"]["user"]
+
+
+def test_settings_prompts_get_keeps_valid_user_preview_when_developer_template_is_invalid(tmp_path: Path, monkeypatch):
+    developer = tmp_path / "developer.md"
+    user = tmp_path / "user.md"
+    developer.write_text("Broken <var: missing_principle>", encoding="utf-8")
+    user.write_text("Task: {{task_context}}", encoding="utf-8")
+    monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(developer))
+    monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(user))
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(tmp_path / "missing-profile.md"))
+
+    with TestClient(create_audit_app(tmp_path / "worker.sqlite3")) as client:
+        response = client.get("/api/console/settings/prompts")
+        assert response.status_code == 200
+        item = response.json()["item"]
+        assert item["fields"]["developer_template"] == "Broken <var: missing_principle>"
+        assert item["preview"]["developer"] == ""
+        assert "missing_principle" in item["preview_errors"]["developer"]
+        assert "Synthetic example" in item["preview"]["user"]
+        assert item["preview_errors"].get("user") is None
+        assert developer.read_text(encoding="utf-8") == "Broken <var: missing_principle>"
+        assert not (tmp_path / "missing-profile.md").exists()
+
+
+def test_settings_prompts_get_reports_missing_developer_code_module_without_hiding_saved_text(tmp_path: Path, monkeypatch):
+    developer = tmp_path / "developer.md"
+    user = tmp_path / "user.md"
+    profile = tmp_path / "profile.md"
+    saved_developer = "Instructions: <code: app.module_that_does_not_exist_for_prompt_review:render()>"
+    developer.write_text(saved_developer, encoding="utf-8")
+    user.write_text("Task: {{task_context}}", encoding="utf-8")
+    profile.write_text("Saved profile", encoding="utf-8")
+    monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(developer))
+    monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(user))
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
+
+    with TestClient(create_audit_app(tmp_path / "worker.sqlite3")) as client:
+        response = client.get("/api/console/settings/prompts")
+        assert response.status_code == 200
+        item = response.json()["item"]
+        assert item["fields"]["developer_template"] == saved_developer
+        assert item["preview"]["developer"] == ""
+        assert "module_that_does_not_exist_for_prompt_review" in item["preview_errors"]["developer"]
+        assert "Synthetic example" in item["preview"]["user"]
+        assert developer.read_text(encoding="utf-8") == saved_developer
+        assert user.read_text(encoding="utf-8") == "Task: {{task_context}}"
+        assert profile.read_text(encoding="utf-8") == "Saved profile"
+
+    from app.prompt_composition import load_prompt_configuration
+    with pytest.raises(ModuleNotFoundError, match="module_that_does_not_exist_for_prompt_review"):
+        load_prompt_configuration(create_missing=False)
+
+
+def test_settings_prompts_get_names_preview_exception_without_a_message(tmp_path: Path, monkeypatch):
+    def render_without_message(_template: str) -> str:
+        raise RuntimeError()
+
+    monkeypatch.setattr("app.developer_prompt.render_developer_prompt_template", render_without_message)
+    with TestClient(create_audit_app(tmp_path / "worker.sqlite3")) as client:
+        response = client.get("/api/console/settings/prompts")
+        assert response.status_code == 200
+        item = response.json()["item"]
+        assert item["preview"]["developer"] == ""
+        assert item["preview_errors"]["developer"] == "RuntimeError"
+        assert "Synthetic example" in item["preview"]["user"]
+
+
+def test_legacy_user_save_reports_invalid_complete_context_without_writing(tmp_path: Path, monkeypatch):
+    template_path = tmp_path / "user.md"
+    template_path.write_text("Existing {{task_context}}")
+    monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(template_path))
+
+    status, _headers, html = handle_user_prompt_post(b"template=missing+source+context")
+
+    assert status == 400
+    assert "task_context" in html
+    assert template_path.read_text() == "Existing {{task_context}}"
 
 
 def test_empty_attempt_list_shows_db_path(tmp_path: Path):
@@ -7229,13 +7419,66 @@ def test_history_failed_item_shows_reason_effect_and_actions_inline(tmp_path: Pa
     assert "外部副作用：</strong>外部动作是否完成由当前结果和业务系统状态决定" in html
     assert f'action="/attempts/{attempt_id}/rerun?return_to=/history"' in html
     assert ">重试当前任务</button>" in html
-    assert ">暂不处理</button>" in html
+    assert f'<a href="/attempts/{attempt_id}">暂不处理</a>' in html
     assert ">人工处理</a>" in html
     assert ">技术详情</a>" in html
     assert "你需要做什么：</strong>请选择一种处理方式" in html
     assert "重试会沿用同一任务，不会创建新的业务事项" in html
     assert '<span class="attempt-label">答</span>' not in html
     assert '<span class="attempt-label">结果</span>' not in html
+
+
+def test_failed_history_cards_batch_status_without_reading_native_process(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from app import native_trajectory
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    run_ids = []
+    for index, status in enumerate(("failed", "needs_human"), start=1):
+        store.enqueue_reply_task(
+            conversation_id=f"history-status-{index}",
+            conversation_title=f"History status {index}", single_chat=False,
+            trigger_message_id=f"message-{index}",
+            trigger_create_time="2026-10-10 00:00:00",
+            trigger_sender="Applicant", trigger_text="Review this request",
+        )
+        task = store.claim_reply_tasks(1)[0]
+        run = store.claim_agent_run(
+            task.id, task.execution_generation, role=AgentRole.CONSUMER,
+            proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+            operation_id="", owner=f"consumer-{index}",
+        ).run
+        store.fail_agent_run(run.id, {"code": "source_unavailable"}, owner=f"consumer-{index}")
+        attempt_id = store.record_reply_attempt(
+            conversation_id=task.conversation_id,
+            conversation_title=task.conversation_title,
+            trigger_message_id=task.trigger_message_id,
+            trigger_sender=task.trigger_sender,
+            trigger_text=task.trigger_text, action="agent_run",
+            sensitivity_kind="general", send_status=status,
+        )
+        with store._connect() as db:
+            db.execute("update reply_attempts set agent_run_id=? where id=?", (run.id, attempt_id))
+        run_ids.append(run.id)
+
+    for reader in ("hydrate_run_events", "read_native_result_json", "_native_records"):
+        monkeypatch.setattr(native_trajectory, reader, lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("History status must not read a native trajectory")
+        ))
+    bulk_calls = []
+    original_bulk = store.list_agent_run_summaries_for_terminal_runs
+
+    def batch_summaries(ids):
+        bulk_calls.append(ids)
+        return original_bulk(ids)
+
+    monkeypatch.setattr(store, "list_agent_run_summaries_for_terminal_runs", batch_summaries)
+    html = render_attempt_list(store, include_chart=False)
+
+    assert "History status 1" in html and "History status 2" in html
+    assert len(bulk_calls) == 1
+    assert set(bulk_calls[0]) == set(run_ids)
 
 
 def test_history_failed_attempts_do_not_hide_each_other(tmp_path: Path):
@@ -7266,7 +7509,7 @@ def test_history_failed_attempts_do_not_hide_each_other(tmp_path: Path):
     html = render_attempt_list(store, include_chart=False)
 
     assert html.count(">重试当前任务</button>") == 2
-    assert html.count(">暂不处理</button>") == 2
+    assert html.count(">暂不处理</a>") == 2
     assert f"#{old_id}" in html
     assert latest_id
     assert "接管，无需操作" not in html
@@ -7317,7 +7560,7 @@ def test_history_retrying_item_shows_persisted_plan_without_human_choices(
     assert ">技术详情</a>" in html
 
 
-def test_history_needs_human_item_shows_agent_choices_inline(tmp_path: Path):
+def test_history_needs_human_item_does_not_activate_unreviewed_legacy_choices(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
         conversation_id="cid-choice-history",
@@ -7424,22 +7667,22 @@ def test_history_needs_human_item_shows_agent_choices_inline(tmp_path: Path):
 
     html = render_attempt_list(store, include_chart=False)
 
-    assert "1. 同意当前方案" in html
-    assert "2. 要求补充材料" in html
-    assert f'action="/attempts/{attempt_id}/human-decision?return_to=/history"' in html
+    assert "1. 同意当前方案" not in html
+    assert "2. 要求补充材料" not in html
+    assert f'action="/attempts/{attempt_id}/human-decision?return_to=/history"' not in html
     with store._connect() as db:
         db.execute(
             "update reply_attempts set reviewed_at='2026-08-11 05:00:01' where id=?",
             (attempt_id,),
         )
     decisions = audit_web_module._human_decision_attention_rows(store)
-    assert [row["id"] for row in decisions] == [str(attempt_id)]
+    assert decisions == []
 
 
-def test_rule_decision_attention_uses_attempt_linked_run_not_unrelated_latest_run(
+def test_rule_decision_attention_excludes_superseded_unreviewed_attempt(
     tmp_path: Path,
 ):
-    """A later audit turn must not hide the current Attempt's rule decision."""
+    """A raw Consumer question cannot remain actionable after generation rotation."""
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = _consumer_result_task(store)
     consumer_claim = store.claim_agent_run(
@@ -7488,16 +7731,9 @@ def test_rule_decision_attention_uses_attempt_linked_run_not_unrelated_latest_ru
         operation_id="audit-later-turn",
         owner="audit-later-turn",
     )
-    store.complete_agent_run(
+    store.fail_agent_run(
         later_audit_claim.run.id,
-        {
-            "outcome": "executed",
-            "summary": "Audit completed a later turn.",
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-        },
+        {"code": "audit_unavailable", "detail": "The question remains unreviewed."},
         owner="audit-later-turn",
     )
     attempt_id = store.finalize_orchestrated_reply_task(
@@ -7537,7 +7773,7 @@ def test_rule_decision_attention_uses_attempt_linked_run_not_unrelated_latest_ru
 
     decisions = audit_web_module._human_decision_attention_rows(store)
 
-    assert [row["id"] for row in decisions] == [str(attempt_id)]
+    assert decisions == []
 
 
 def test_attempt_detail_uses_same_attention_reason_and_effect_as_history(
@@ -7753,12 +7989,14 @@ def test_reply_attempt_queue_snapshot_reads_latest_projection_once(tmp_path: Pat
     with store._connect() as db:
         db.set_trace_callback(queries.append)
         snapshot = _reply_attempt_queue_snapshot(db)
+        snapshot_queries = list(queries)
         expected_time = db.execute(
             "select max(updated_at) from reply_attempts"
         ).fetchone()[0]
     assert snapshot["counts"] == {"failed": 1}
     assert snapshot["latest_updated_at"] == expected_time
-    assert sum("row_number() over" in query.lower() for query in queries) == 1
+    assert len(snapshot_queries) == 1
+    assert "reply_attempts" in snapshot_queries[0].lower()
 
 
 def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(
@@ -9133,9 +9371,18 @@ def test_render_attempt_list_shows_missing_documents_info_icon_instead_of_warnin
     assert "data-tooltip=" in html
     assert "title=" not in html
     assert ".attempt-info::after" in html
+    assert audit_web_module.NO_AUDIT_CONTEXT_TOOLTIP in html
+    assert "rg 上下文" not in html
+    attempt = store.get_reply_attempt(1)
+    assert attempt is not None
+    info_html = audit_web_module._attempt_info_icon(
+        attempt.model_copy(
+            update={"audit_tool_events_json": '[{"tool":"exec_command","command":"rg 上下文"}]'}
+        )
+    )
     assert (
         "No audit documents were attached; this answer was generated without document evidence."
-        in html
+        in info_html
     )
 
 
@@ -9380,7 +9627,13 @@ def test_fastapi_app_records_feedback_and_redirects(tmp_path: Path):
     assert attempt.corrected_reply_text == "先看材料"
 
 
-def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: Path):
+def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: Path, monkeypatch):
+    def read_native_events(session_id, **_bounds):
+        assert session_id == "session-1"
+        return [{"tool": "exec_command", "command": "rg 岗位",
+                 "input": json.dumps({"cmd": "rg 岗位"}, ensure_ascii=False, indent=2)}]
+
+    monkeypatch.setattr(audit_web_module, "extract_codex_audit_events_from_session", read_native_events)
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
     store.record_sent_reply(
@@ -9434,14 +9687,20 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "查看岗位画像后建议先按A方案走" in html
     assert "Tool uses" in html
     assert '<details class="card collapsible-card">' in html
-    assert html.index("Tool uses") < html.index("面试/岗位画像.md")
-    assert "面试/岗位画像.md" in html
+    assert "原生工具过程不可用" in html
+    assert "面试/岗位画像.md" not in html
+    assert "rg 岗位" not in html
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    tool_html = audit_web_module._audit_tool_uses_card(attempt)
+    assert tool_html.index("Tool uses") < tool_html.index("面试/岗位画像.md")
+    assert "面试/岗位画像.md" in tool_html
     assert "Audit documents" not in html
     assert "Audit tool events" not in html
-    assert html.index("Tool uses") < html.index("rg 岗位")
-    assert "rg 岗位" in html
-    assert "audit-tool-args" in html
-    assert "\n  " in html
+    assert tool_html.index("Tool uses") < tool_html.index("rg 岗位")
+    assert "rg 岗位" in tool_html
+    assert "audit-tool-args" in tool_html
+    assert "\n  " in tool_html
     assert "先按A方案走" in html
     assert "Draft reply (raw Codex reply)" in html
     assert "permission" in html
@@ -9455,7 +9714,23 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "Final reply (send-ready text)" not in html
 
 
-def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: Path):
+def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: Path, monkeypatch):
+    session_reads = []
+
+    def read_native_events(session_id, **bounds):
+        session_reads.append((session_id, bounds))
+        return [
+            {"tool": "exec_command", "call_id": "call-1",
+             "title": "Search role profile", "relevance": "确认岗位画像是否提到项目经理",
+             "input": '{"cmd":"rg -n 岗位 /Users/principal/Documents/memory/面试"}',
+             "command": "rg -n 岗位 /Users/principal/Documents/memory/面试"},
+            {"tool": "tool_output", "call_id": "call-1",
+             "output": json.dumps({"result": json.dumps(
+                 {"ok": "success", "matches": ["岗位画像.md:1:项目经理"]}, ensure_ascii=False
+             )}, ensure_ascii=False)},
+        ]
+
+    monkeypatch.setattr(audit_web_module, "extract_codex_audit_events_from_session", read_native_events)
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
@@ -9511,7 +9786,17 @@ def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: P
         audit_summary="已查看工具输入输出。",
     )
 
-    status, html = render_attempt_detail(store, attempt_id)
+    status, page_html = render_attempt_detail(store, attempt_id)
+    assert status == 200
+    assert "原生工具过程不可用" in page_html
+    assert "Search role profile" not in page_html
+    assert "岗位画像.md:1:项目经理" not in page_html
+    assert "面试/岗位画像.md" not in page_html
+    assert session_reads == []
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    html = audit_web_module._audit_tool_uses_card(attempt)
+    assert session_reads == [("session-1", {"start_line": 0, "end_line": None})]
 
     assert status == 200
     assert "Tool uses" in html
@@ -9535,7 +9820,7 @@ def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: P
     assert "岗位画像.md:1:项目经理" in html
 
 
-def test_render_attempt_detail_unwraps_terminal_wrapped_mcp_json_output(tmp_path: Path):
+def test_render_attempt_detail_unwraps_terminal_wrapped_mcp_json_output(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     output = (
         "Wall time: 0.8105 seconds\n"
@@ -9555,6 +9840,15 @@ def test_render_attempt_detail_unwraps_terminal_wrapped_mcp_json_output(tmp_path
             ensure_ascii=False,
         )
     )
+    def read_native_events(session_id, **_bounds):
+        assert session_id == "memory-output-session"
+        return [
+            {"tool": "memory_write", "call_id": "call-memory",
+             "input": json.dumps({"data": "稳定业务口径", "type": "text"}, ensure_ascii=False)},
+            {"tool": "tool_output", "call_id": "call-memory", "output": output},
+        ]
+
+    monkeypatch.setattr(audit_web_module, "extract_codex_audit_events_from_session", read_native_events)
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
         conversation_title="MKT core",
@@ -9563,6 +9857,7 @@ def test_render_attempt_detail_unwraps_terminal_wrapped_mcp_json_output(tmp_path
         trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
+        codex_session_id="memory-output-session",
         audit_tool_events_json=json.dumps(
             [
                 {
@@ -9587,9 +9882,14 @@ def test_render_attempt_detail_unwraps_terminal_wrapped_mcp_json_output(tmp_path
         audit_summary="已写入 memory。",
     )
 
-    status, html = render_attempt_detail(store, attempt_id)
-
+    status, page_html = render_attempt_detail(store, attempt_id)
     assert status == 200
+    assert "原生工具过程不可用" in page_html
+    assert "processing_status" not in page_html
+    assert "稳定业务口径" not in page_html
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    html = audit_web_module._audit_tool_uses_card(attempt)
     assert "1 total · 1 calls · 0 documents" in html
     assert "mcp/json" in html
     assert '"result": "{' not in html
@@ -9623,9 +9923,14 @@ def test_render_attempt_detail_skips_empty_document_args(tmp_path: Path):
         audit_summary="已查看文档。",
     )
 
-    status, html = render_attempt_detail(store, attempt_id)
-
+    status, page_html = render_attempt_detail(store, attempt_id)
     assert status == 200
+    assert "原生工具过程不可用" in page_html
+    assert "03.3_StarBench产品说明" not in page_html
+    assert "https://alidocs.dingtalk.com/i/nodes/doc123" not in page_html
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    html = audit_web_module._audit_tool_uses_card(attempt)
     assert "1 total · 0 calls · 1 documents" in html
     assert "03.3_StarBench产品说明" in html
     assert "提供 StarBench 产品定位。" in html
@@ -9634,12 +9939,22 @@ def test_render_attempt_detail_skips_empty_document_args(tmp_path: Path):
     assert "audit-tool-args" not in tool_uses_html
 
 
-def test_render_attempt_detail_renders_dws_material_tool_events(tmp_path: Path):
+def test_render_attempt_detail_renders_dws_material_tool_events(tmp_path: Path, monkeypatch):
     command = (
         "dws doc read --node https://alidocs.dingtalk.com/i/nodes/doc123 "
         "--format json"
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    def read_native_events(session_id, **_bounds):
+        assert session_id == "dws-material-session"
+        return [
+            {"tool": "exec_command", "call_id": "call-dws-read",
+             "input": json.dumps({"cmd": command}, ensure_ascii=False), "command": command},
+            {"tool": "tool_output", "call_id": "call-dws-read",
+             "output": "OpenAI 合作建议补充版\n建议先补齐材料。"},
+        ]
+
+    monkeypatch.setattr(audit_web_module, "extract_codex_audit_events_from_session", read_native_events)
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
         conversation_title="技术部",
@@ -9648,6 +9963,7 @@ def test_render_attempt_detail_renders_dws_material_tool_events(tmp_path: Path):
         trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
+        codex_session_id="dws-material-session",
         audit_tool_events_json=json.dumps(
             [
                 {
@@ -9669,9 +9985,14 @@ def test_render_attempt_detail_renders_dws_material_tool_events(tmp_path: Path):
         audit_summary="已读取 DWS 材料。",
     )
 
-    status, html = render_attempt_detail(store, attempt_id)
-
+    status, page_html = render_attempt_detail(store, attempt_id)
     assert status == 200
+    assert "原生工具过程不可用" in page_html
+    assert command not in page_html
+    assert "OpenAI 合作建议补充版" not in page_html
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    html = audit_web_module._audit_tool_uses_card(attempt)
     assert "Tool uses" in html
     assert "exec_command" in html
     assert "args" in html
@@ -9759,9 +10080,15 @@ def test_render_attempt_detail_renders_dws_material_events_from_codex_session(
         audit_summary="已读取 DWS 材料。",
     )
 
-    status, html = render_attempt_detail(store, attempt_id)
-
+    status, page_html = render_attempt_detail(store, attempt_id)
     assert status == 200
+    assert "原生工具过程不可用" in page_html
+    assert command not in page_html
+    assert "OpenAI 合作建议补充版" not in page_html
+    assert 'href="/codex/session-1"' in page_html
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    html = audit_web_module._audit_tool_uses_card(attempt)
     assert "Tool uses" in html
     assert "exec_command" in html
     assert "args" in html
@@ -9769,6 +10096,20 @@ def test_render_attempt_detail_renders_dws_material_events_from_codex_session(
     assert command in html
     assert "output" in html
     assert "OpenAI 合作建议补充版" in html
+
+    bounded_attempt = attempt.model_copy(
+        update={"codex_transcript_start_line": 1, "codex_transcript_end_line": 2}
+    )
+    bounded_html = audit_web_module._audit_tool_uses_card(bounded_attempt)
+    assert command in bounded_html
+    assert "OpenAI 合作建议补充版" not in bounded_html
+    status, native_html = render_codex_session_detail(
+        attempt.codex_session_id, codex_home=codex_home, store=store
+    )
+    assert status == 200
+    assert str(session_path) in native_html
+    assert command in native_html
+    assert "OpenAI 合作建议补充版" in native_html
 
 
 def test_render_attempt_detail_shows_counterparty_feedback(tmp_path: Path):
@@ -10102,6 +10443,43 @@ def test_render_attempt_detail_shows_rerun_only_in_banner_actions(tmp_path: Path
     assert "rerun-card" not in html
 
 
+def test_render_attempt_detail_hides_rerun_for_provider_risk_refusal(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task)
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="audit-provider-risk-refusal",
+        owner="audit-provider-risk-refusal",
+    ).run
+    audit = store.fail_agent_run(
+        audit.id,
+        {"code": "agent_reported_failure", "source_code": "provider_risk_rejected"},
+        owner="audit-provider-risk-refusal",
+    )
+    attempt_id = _finalize_consumer_result_attempt(
+        store,
+        task,
+        audit,
+        task_status="failed",
+        send_status="failed",
+        send_error="agent_reported_failure",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert f'action="/attempts/{attempt_id}/rerun?return_to=/attempts/{attempt_id}"' not in html
+    assert '<button class="rerun" type="submit">重新处理</button>' not in html
+    assert "此入口不能重放历史候选" in html
+    assert "提交新候选并重新审核" in html
+
+
 def test_render_attempt_detail_returns_404_when_missing(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
@@ -10212,6 +10590,17 @@ def test_handle_feedback_post_creates_manual_event_without_spike_token(tmp_path:
 def test_handle_rerun_attempt_post_requeues_task_and_redirects(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
+    store.ensure_reply_task(
+        conversation_id="cid-1", conversation_title="技术部", single_chat=False,
+        trigger_message_id="msg-1", trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Xiaomin", trigger_text="@Alex Chen 这个怎么处理？",
+        trigger_message_json=DingTalkMessage(
+            open_conversation_id="cid-1", open_message_id="msg-1",
+            conversation_title="技术部", single_chat=False,
+            sender_name="Xiaomin", create_time="2026-05-13 18:00:00",
+            content="@Alex Chen 这个怎么处理？",
+        ).model_dump_json(),
+    )
 
     status, headers, html = handle_rerun_attempt_post(
         store,
@@ -10281,9 +10670,9 @@ def test_history_human_decision_rejects_failed_attempt_without_typed_decision(
 
     source = store.get_reply_attempt(source_id)
     unchanged_task = store.get_reply_task(task.id)
-    assert status == 409
+    assert status == 400
     assert headers == {}
-    assert "没有可追踪的结构化管理决策" in body
+    assert "人工决策请求字段无效" in body
     assert source is not None and source.send_status == "failed"
     assert unchanged_task is not None and unchanged_task.status == "failed"
 
@@ -10336,7 +10725,7 @@ def test_history_human_decision_rejects_unknown_external_effect(tmp_path: Path):
         return_to="/",
     )
 
-    assert status == 409
+    assert status == 400
     assert store.get_reply_attempt(source_id).send_status == "failed"
 
 
@@ -10529,7 +10918,7 @@ def test_scheduled_rerun_payload_is_valid_execution_context():
     assert not _is_valid_rerun_trigger_json("{}", channel="scheduled")
 
 
-def test_handle_rerun_attempt_post_replaces_invalid_legacy_task_json(
+def test_handle_rerun_attempt_post_rejects_unavailable_original_json(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -10547,14 +10936,51 @@ def test_handle_rerun_attempt_post_replaces_invalid_legacy_task_json(
 
     status, headers, html = handle_rerun_attempt_post(store, attempt_id)
 
-    assert status == 303
-    assert headers["Location"] == f"/attempts/{attempt_id}"
-    assert html == ""
+    assert status == 409
+    assert headers == {}
+    assert "Original execution payload is unavailable" in html
     task = store.get_reply_task_for_message("cid-1", "msg-1")
     assert task is not None
-    trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
-    assert trigger.open_message_id == "msg-1"
-    assert trigger.content == "@Alex Chen 这个怎么处理？"
+    assert task.status == "pending"
+    assert task.trigger_message_json == "{}"
+
+
+def test_compacted_original_never_becomes_a_rerun_trigger(tmp_path: Path, monkeypatch):
+    from app.audit_web import _is_valid_rerun_trigger_json
+    from app.dws_client import DwsClient
+
+    store = AutoReplyStore(tmp_path / "compacted-rerun.sqlite3")
+    trigger = DingTalkMessage(
+        open_conversation_id="cid-compact", open_message_id="msg-compact",
+        conversation_title="Group", single_chat=False, sender_name="Sender",
+        create_time="2026-10-10 10:00:00", content="Original message",
+    )
+    task = store.ensure_reply_task(
+        conversation_id="cid-compact", conversation_title="Group", single_chat=False,
+        trigger_message_id="msg-compact", trigger_create_time="2026-10-10 10:00:00",
+        trigger_sender="Sender", trigger_text="Original message",
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-compact", conversation_title="Group",
+        trigger_message_id="msg-compact", trigger_sender="Sender",
+        trigger_text="Original message", action="agent_run",
+        sensitivity_kind="normal", send_status="failed",
+    )
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+    store.complete_reply_task(task.id, expected_execution_generation=claimed.execution_generation)
+    compacted = store.get_reply_task(task.id)
+    assert compacted is not None and compacted.input_compacted
+    assert not _is_valid_rerun_trigger_json(compacted.trigger_message_json)
+    monkeypatch.setattr(DwsClient, "read_message_by_id", lambda *_: None)
+    status, headers, html = handle_rerun_attempt_post(store, attempt_id)
+    assert status == 409 and headers == {}
+    assert "Original message could not be verified" in html
+    with pytest.raises(ValueError, match="original reply task input is unavailable"):
+        handle_reviewed_message_reply(store, attempt_id=attempt_id,
+                                      reply_text="Revised", reviewer_feedback="Review")
+    assert store.get_reply_task(task.id).status == "done"
 
 
 def test_handle_recall_post_calls_dws_message_recall_and_records_success(
@@ -10689,6 +11115,12 @@ def test_handle_reviewed_message_reply_uses_immutable_attempt_binding(tmp_path: 
         trigger_create_time="2026-07-30 09:00:00",
         trigger_sender="Avery",
         trigger_text="重复正文",
+        trigger_message_json=DingTalkMessage(
+            open_conversation_id="cid-stable", open_message_id="msg-stable",
+            conversation_title="同名群", single_chat=False,
+            sender_name="Avery", create_time="2026-07-30 09:00:00",
+            content="重复正文",
+        ).model_dump_json(),
     )
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-stable",
@@ -10768,9 +11200,9 @@ def test_needs_human_decision_rejects_untraceable_projection(
 
     source = store.get_reply_attempt(attempt_id)
     task = store.get_reply_task_for_message("cid-1", "msg-1")
-    assert status == 409
+    assert status == 400
     assert headers == {}
-    assert "没有可追踪的结构化管理决策" in body
+    assert "人工决策请求字段无效" in body
     assert source is not None
     assert source.send_status == "needs_human"
     assert source.reviewer_feedback == ""
@@ -10796,7 +11228,7 @@ def test_needs_human_decision_rejects_untraceable_projection(
     assert "需要你选择" not in html
 
 
-def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
+def test_needs_human_detail_does_not_render_unreviewed_agent_choices(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-choice",
@@ -10885,14 +11317,7 @@ def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
 
     html = audit_web_module._needs_human_decision_card(attempt, [run])
 
-    # The page presents policy-gap choices by ordinal position; the wire key
-    # remains the hidden instruction value used by the form.
-    assert "1. 同意当前方案" in html
-    assert "2. 要求补充材料" in html
-    assert "会执行已审计的外部动作。" in html
-    assert 'name="instruction" value="同意已核验方案并发布。"' in html
-    assert "这是无法由服务自动消除的管理分歧" in html
-    assert "两个管理决策都会改变外部状态。" not in html
+    assert html == ""
 
 
 def test_oa_manual_rerun_hides_old_human_choices_on_attempt_page(tmp_path: Path):
@@ -11779,20 +12204,26 @@ def test_attention_keeps_old_scheduled_failure_in_history_after_later_success(
         channel="scheduled",
     )
     with store._connect() as db:
+        from app.scheduled_config_storage import intern_scheduled_config
+
+        snapshot_id = intern_scheduled_config(db, '{}')
         db.execute(
             "insert into scheduled_tasks (id, name, prompt, cron_expression, "
             "timezone, runtime_id, enabled) values "
             "(14, 'Daily report', 'p', '0 * * * *', 'UTC', '', 1)"
         )
+        from app.scheduled_config_storage import intern_scheduled_config
+
+        snapshot_id = intern_scheduled_config(db, "{}")
         for run_id, event_id, task_id in ((100, "event-old", old.id), (101, "event-new", new.id)):
             db.execute(
                 "insert into scheduled_task_runs "
                 "(id, event_id, scheduled_task_id, trigger_kind, scheduled_for, "
-                "first_scheduled_for, dispatch_status, snapshot_json, "
+                "first_scheduled_for, dispatch_status, snapshot_id, "
                 "execution_kind, execution_id) "
-                "values (?, ?, 14, 'manual', ?, ?, 'dispatched', '{}', "
+                "values (?, ?, 14, 'manual', ?, ?, 'dispatched', ?, "
                 "'reply_task', ?)",
-                (run_id, event_id, f"2026-09-28T{run_id-87:02d}:00:00Z", f"2026-09-28T{run_id-87:02d}:00:00Z", str(task_id)),
+                (run_id, event_id, f"2026-09-28T{run_id-87:02d}:00:00Z", f"2026-09-28T{run_id-87:02d}:00:00Z", snapshot_id, str(task_id)),
             )
         db.execute("update reply_tasks set status='failed', error='codex_result_missing' where id=?", (old.id,))
         db.execute("update reply_tasks set status='done' where id=?", (new.id,))
@@ -11851,3 +12282,41 @@ def test_service_component_catalog_lists_runtime_attempt_reclaim(tmp_path: Path)
         for component in audit_web_module._service_component_snapshots(store)
     ]
     assert "runtime-attempt-reclaim" in names
+
+
+@pytest.mark.parametrize('source_code', ['provider_risk_rejected', 'provider_rejected_risk'])
+def test_failed_reply_attention_uses_current_generation_agent_diagnostics(tmp_path, source_code):
+    from tests.test_reviewed_orchestration import setup
+    store, task, _ = setup(tmp_path)
+    run = store.claim_agent_run(task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None, operation_id='diagnostic', owner='test').run
+    store.fail_agent_run(run.id, {'code':'agent_reported_failure','source':'agent','source_code':source_code,
+        'reported_summary':'运行工具调用被拒绝；尚未取得外部执行回执。','retryable':False}, owner='test')
+    store.fail_reply_task(task.id, 'agent_reported_failure', expected_execution_generation=task.execution_generation)
+    before = store.get_reply_task(task.id)
+    rows = audit_web_module._queue_attention_rows(store)
+    [row] = [r for r in rows if r['category'] == 'Reply task']
+    assert row['error_code'] == source_code
+    assert 'agent' in row['error']
+    assert 'Agent 说明' in row['error']
+    assert '尚未取得外部执行回执' in row['error']
+    assert len([r for r in rows if r['category']=='Reply task']) == 1
+    assert store.get_reply_task(task.id) == before
+
+
+@pytest.mark.parametrize('old_generation,bad_json', [(True,False),(False,True)])
+def test_failed_reply_attention_does_not_use_stale_or_malformed_run(tmp_path, old_generation, bad_json):
+    from tests.test_reviewed_orchestration import setup
+    store, task, _ = setup(tmp_path)
+    run = store.claim_agent_run(task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None, operation_id='', owner='test').run
+    store.fail_agent_run(run.id, {'code':'agent_reported_failure','source':'agent','source_code':'foreign_diagnostic','retryable':False}, owner='test')
+    with store._connect() as db:
+        if old_generation:
+            db.execute("update agent_runs set execution_generation='old' where id=?", (run.id,))
+        if bad_json:
+            db.execute("update agent_runs set structured_error_json='invalid-json' where id=?", (run.id,))
+    store.fail_reply_task(task.id, 'task_fallback_error', expected_execution_generation=task.execution_generation)
+    [row] = [r for r in audit_web_module._queue_attention_rows(store) if r['category']=='Reply task']
+    assert row['error'] == 'task_fallback_error'
+    assert row.get('error_code', '') in ('','task_fallback_error')

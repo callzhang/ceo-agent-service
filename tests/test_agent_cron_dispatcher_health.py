@@ -6,6 +6,22 @@ import pytest
 from app import cli
 from app.cli import WorkerSettings
 from app.store import AutoReplyStore
+from app.dispatcher.service import ConsumerDispatcher
+
+
+def test_dispatcher_failed_tick_does_not_report_recovery():
+    dispatcher = ConsumerDispatcher.__new__(ConsumerDispatcher)
+    dispatcher.wake_event = threading.Event()
+    ticks = []
+    dispatcher.tick_observer = ticks.append
+
+    def fail_dispatch(*_args, **_kwargs):
+        raise RuntimeError("dispatch failed")
+
+    dispatcher.dispatch_available = fail_dispatch
+    with pytest.raises(RuntimeError, match="dispatch failed"):
+        dispatcher.run(stop_event=threading.Event())
+    assert ticks == []
 
 
 def test_dispatcher_start_clears_stale_health(monkeypatch, tmp_path):

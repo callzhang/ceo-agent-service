@@ -26,6 +26,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "fasttext>=0.9.3,<0.10",
   "httpx2>=2.9,<3",
   "playwright>=1.50,<2",
   "pytest>=8.3",

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "low",
+  "source_records": 100,
+  "criteria": "Valid preparation JSON; exact source-record count; every seeded intervention ID, owner and amount; no business action. Compare source request counts, model-facing truncation and payload preservation separately.",
+  "cases": [
+    {"id":"service-facts", "tool":"daily_report_facts", "critical_indices":[42,99], "amounts":[74000,45000], "owners":["Maya","Noah"]},
+    {"id":"group-window", "tool":"read_dingtalk_messages_in_window", "critical_indices":[42,99], "amounts":[32000,58000], "owners":["Avery","Alex"]}
+  ]
+}

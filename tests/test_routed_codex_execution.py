@@ -32,6 +32,7 @@ from app.friday_runtime_adapter import FridayExecutionResult, FridayRuntimeError
 from app.process_runner import ProcessRunResult
 from app.store import MAX_RUNTIME_RESULT_ENVELOPE_BYTES, AgentRole, AutoReplyStore
 from tests.runtime_route_env import claude_api_env, codex_api_env, set_env
+from tests.support.native_protocol import install_protocol_native_trajectories
 
 NOW = datetime(2026, 8, 20, 10, 0, tzinfo=UTC)
 CAPABILITIES = frozenset({"structured_output", "reviewed_read_tools"})
@@ -203,6 +204,37 @@ def config():
             **codex_api_env("configured-secret"),
         }
     )
+
+
+@pytest.fixture
+def native_result_executor(tmp_path, monkeypatch):
+    from app.codex_history import count_codex_session_lines
+
+    class Executor:
+        def __init__(self, session_id, text):
+            self.session_id = session_id
+            self.text = text
+            self.calls = 0
+
+        def count_session_lines(self, session_id):
+            return count_codex_session_lines(session_id, codex_home=tmp_path / "codex-home")
+
+        def __call__(self, command, **kwargs):
+            self.calls += 1
+            return ProcessRunResult(
+                0,
+                "\n".join(json.dumps(record) for record in [
+                    {"type": "thread.started", "thread_id": self.session_id},
+                    {"type": "item.completed", "item": {
+                        "type": "agent_message", "text": self.text,
+                    }},
+                    {"type": "turn.completed"},
+                ]),
+                "",
+            )
+
+    install_protocol_native_trajectories(tmp_path, monkeypatch, Executor)
+    return Executor
 
 
 def make_router(store, config, *, snapshots=None):
@@ -758,6 +790,66 @@ def test_result_validation_retry_can_resume_same_persisted_session_once(store, c
     attempts = store.list_runtime_operation_attempts("structured", key)
     assert [attempt.session_mode for attempt in attempts] == ["fresh", "resume"]
     assert [attempt.source_session_id for attempt in attempts] == ["", "session-171"]
+
+
+@pytest.mark.parametrize("bound_session", [None, "previous-session", "other-session"])
+@pytest.mark.parametrize("fail_primary", [False, True])
+def test_compact_input_is_bound_to_actual_resumed_session(store, config, bound_session, fail_primary):
+    key = seed_structured_parent(store, 183)
+    if bound_session:
+        store.upsert_conversation_runtime_session("task-scope", "codex_oauth", bound_session)
+    prompts = []
+
+    def executor(command, **kwargs):
+        prompts.append(kwargs["prompt"])
+        if fail_primary and len(prompts) == 1:
+            return ProcessRunResult(1, "", "provider unavailable")
+        session = command[-1] if command[-1] != "fresh" else "new-session"
+        return ProcessRunResult(0, "\n".join([
+            json.dumps({"type": "thread.started", "thread_id": session}),
+            json.dumps({"type": "result", "value": 7}),
+        ]), "")
+
+    routed = RoutedCodexExecution(
+        store=store, config=config, router=make_router(store, config),
+        adapter=FakeAdapter(), executor=executor, session_line_counter=lambda _: 2,
+    )
+    routed.execute(
+        workload_kind="structured", workload_key=key, conversation_id="task-scope",
+        prompt="FULL SOURCE AND REPAIR", continuation_prompt="COMPACT REPAIR",
+        continuation_session_id="previous-session",
+        command_factory=CodexCommandFactory.standard(developer_instructions="test"),
+        parser=lambda raw: json.loads(raw.splitlines()[-1])["value"],
+        result_codec=INT_CODEC, required_capabilities=CAPABILITIES,
+    )
+    expected = "COMPACT REPAIR" if bound_session == "previous-session" else "FULL SOURCE AND REPAIR"
+    assert prompts == ([expected, "FULL SOURCE AND REPAIR"] if fail_primary else [expected])
+
+
+def test_friday_prior_thread_binding_never_selects_compact_input(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "friday-correction.sqlite3")
+    run_id = seed_agent_run_parent(store, task_id=992)
+    config = _friday_config(monkeypatch, "friday_runtime")
+    store.upsert_conversation_runtime_session("task-scope", "friday_runtime", "friday_thread:previous")
+    friday = FakeFridayAdapter(result=FridayExecutionResult(
+        text="7", thread_id="new-thread", turn_id="turn-1",
+        operation_id="operation-1", artifact={"final_message": "7"},
+    ))
+    routed = RoutedCodexExecution(
+        store=store, config=config,
+        router=AgentRuntimeRouter(routes=config.routes, store=store,
+                                  snapshots=_friday_snapshots(config), now=lambda: NOW),
+        adapter=FakeAdapter(), friday_adapter=friday, now=lambda: NOW,
+    )
+    routed.execute(
+        workload_kind="agent_run", workload_key=str(run_id), conversation_id="task-scope",
+        prompt="FULL SOURCE AND REPAIR", continuation_prompt="COMPACT REPAIR",
+        continuation_session_id="friday_thread:previous",
+        command_factory=CodexCommandFactory.standard(developer_instructions="test"),
+        parser=_friday_int, result_codec=INT_CODEC,
+    )
+    assert "FULL SOURCE AND REPAIR" in friday.calls[0][0]
+    assert "COMPACT REPAIR" not in friday.calls[0][0]
 
 
 def test_shared_task_agent_scope_resumes_across_workload_keys(store, config):
@@ -1799,25 +1891,11 @@ def test_no_eligible_route_or_terminal_parent_never_starts_process(store, config
         )
 
 
-def test_completed_result_is_recovered_by_matching_codec_without_child(store, config):
+def test_completed_result_is_recovered_by_matching_codec_without_child(
+    store, config, native_result_executor
+):
     key = seed_structured_parent(store)
-    calls = 0
-
-    def executor(command, **kwargs):
-        nonlocal calls
-        calls += 1
-        return ProcessRunResult(
-            0,
-            "\n".join(
-                [
-                    json.dumps(
-                        {"type": "thread.started", "thread_id": "result-session"}
-                    ),
-                    '{"value":42}',
-                ]
-            ),
-            "",
-        )
+    executor = native_result_executor("result-session", '{"value":42}')
 
     routed = RoutedCodexExecution(
         store=store,
@@ -1825,7 +1903,7 @@ def test_completed_result_is_recovered_by_matching_codec_without_child(store, co
         router=make_router(store, config),
         adapter=FakeAdapter(),
         executor=executor,
-        session_line_counter=lambda _session: 2,
+        session_line_counter=executor.count_session_lines,
     )
     arguments = {
         "workload_kind": "structured",
@@ -1834,7 +1912,7 @@ def test_completed_result_is_recovered_by_matching_codec_without_child(store, co
         "command_factory": CodexCommandFactory.standard(
             developer_instructions="reviewed reads only"
         ),
-        "parser": lambda raw: json.loads(raw.splitlines()[-1])["value"],
+        "parser": lambda raw: json.loads(parse_agent_text_result(raw))["value"],
         "result_codec": INT_CODEC,
         "conversation_id": "cid-12",
         "required_capabilities": CAPABILITIES,
@@ -1846,11 +1924,12 @@ def test_completed_result_is_recovered_by_matching_codec_without_child(store, co
 
     assert first.value == second.value == 42
     assert first.attempt_id == second.attempt_id
-    assert calls == 1
+    assert executor.calls == 1
     attempt = store.get_agent_runtime_attempt(first.attempt_id)
     assert attempt is not None
     assert attempt.result_schema_id == "test.integer.v1"
-    assert "read" not in attempt.result_envelope_json
+    assert attempt.result_envelope_json == ""
+    assert (attempt.transcript_start, attempt.transcript_end) == (0, 3)
     assert (
         store.get_conversation_runtime_session("cid-12", "codex_oauth")
         == "result-session"
@@ -1864,17 +1943,14 @@ def test_completed_result_is_recovered_by_matching_codec_without_child(store, co
                 "result_codec": RoutedResultCodec.integer(schema_id="test.integer.v2"),
             }
         )
-    assert calls == 1
+    assert executor.calls == 1
 
 
-def test_completed_effectful_result_is_recovered_without_replay(store, config):
+def test_completed_effectful_result_is_recovered_without_replay(
+    store, config, native_result_executor
+):
     key = seed_structured_parent(store)
-    calls = 0
-
-    def executor(command, **kwargs):
-        nonlocal calls
-        calls += 1
-        return ProcessRunResult(0, "42", "")
+    executor = native_result_executor("effectful-session", "42")
 
     routed = RoutedCodexExecution(
         store=store,
@@ -1882,6 +1958,7 @@ def test_completed_effectful_result_is_recovered_without_replay(store, config):
         router=make_router(store, config),
         adapter=FakeAdapter(),
         executor=executor,
+        session_line_counter=executor.count_session_lines,
     )
     arguments = {
         "workload_kind": "structured",
@@ -1890,35 +1967,21 @@ def test_completed_effectful_result_is_recovered_without_replay(store, config):
         "command_factory": CodexCommandFactory.standard(
             developer_instructions="reviewed write"
         ),
-        "parser": lambda raw: int(raw),
+        "parser": lambda raw: int(parse_agent_text_result(raw)),
         "result_codec": INT_CODEC,
         "required_capabilities": CAPABILITIES,
     }
 
     assert routed.execute(**arguments).value == 42
     assert routed.execute(**arguments).value == 42
-    assert calls == 1
+    assert executor.calls == 1
 
 
-def test_agent_run_parent_routes_and_recovers_completed_result(store, config):
+def test_agent_run_parent_routes_and_recovers_completed_result(
+    store, config, native_result_executor
+):
     run_id = seed_agent_run_parent(store)
-    calls = 0
-
-    def executor(command, **kwargs):
-        nonlocal calls
-        calls += 1
-        return ProcessRunResult(
-            0,
-            "\n".join(
-                [
-                    json.dumps(
-                        {"type": "thread.started", "thread_id": "agent-session"}
-                    ),
-                    '{"decision":"no_reply"}',
-                ]
-            ),
-            "",
-        )
+    executor = native_result_executor("agent-session", '{"decision":"no_reply"}')
 
     routed = RoutedCodexExecution(
         store=store,
@@ -1926,7 +1989,7 @@ def test_agent_run_parent_routes_and_recovers_completed_result(store, config):
         router=make_router(store, config),
         adapter=FakeAdapter(),
         executor=executor,
-        session_line_counter=lambda _session: 2,
+        session_line_counter=executor.count_session_lines,
     )
     arguments = {
         "workload_kind": "agent_run",
@@ -1935,7 +1998,7 @@ def test_agent_run_parent_routes_and_recovers_completed_result(store, config):
         "command_factory": CodexCommandFactory.standard(
             developer_instructions="read-only decision"
         ),
-        "parser": lambda raw: raw.splitlines()[-1],
+        "parser": parse_agent_text_result,
         "result_codec": TEXT_CODEC,
         "required_capabilities": CAPABILITIES,
     }
@@ -1945,7 +2008,7 @@ def test_agent_run_parent_routes_and_recovers_completed_result(store, config):
 
     assert first.value == second.value == '{"decision":"no_reply"}'
     assert first.attempt_id == second.attempt_id
-    assert calls == 1
+    assert executor.calls == 1
     attempts = store.list_agent_runtime_attempts(run_id)
     assert len(attempts) == 1
     assert attempts[0].status == "completed"
@@ -1984,14 +2047,13 @@ def test_oversize_result_terminalizes_before_durable_completion(store, config):
     assert attempt.result_envelope_json == ""
 
 
-def test_oversize_persisted_result_is_rejected_without_child(store, config):
-    key = seed_structured_parent(store)
-    calls = 0
+def test_oversize_persisted_result_is_rejected_without_child(
+    store, config, native_result_executor
+):
+    from app.codex_history import find_codex_session_path
 
-    def executor(*_args, **_kwargs):
-        nonlocal calls
-        calls += 1
-        return ProcessRunResult(0, "ok", "")
+    key = seed_structured_parent(store)
+    executor = native_result_executor("persisted-oversize-session", "ok")
 
     routed = RoutedCodexExecution(
         store=store,
@@ -1999,7 +2061,7 @@ def test_oversize_persisted_result_is_rejected_without_child(store, config):
         router=make_router(store, config),
         adapter=FakeAdapter(),
         executor=executor,
-        session_id_parser=lambda _raw: "persisted-oversize-session",
+        session_line_counter=executor.count_session_lines,
     )
     arguments = {
         "workload_kind": "structured",
@@ -2008,26 +2070,22 @@ def test_oversize_persisted_result_is_rejected_without_child(store, config):
         "command_factory": CodexCommandFactory.standard(
             developer_instructions="reviewed reads only"
         ),
-        "parser": lambda raw: raw,
+        "parser": parse_agent_text_result,
         "result_codec": TEXT_CODEC,
         "required_capabilities": CAPABILITIES,
     }
     result = routed.execute(**arguments)
-    corrupt = json.dumps(
-        {"schema_id": TEXT_CODEC.schema_id, "value": "界" * 30_000},
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
+    path = find_codex_session_path(result.session_id)
+    assert path is not None
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    corrupt = "界" * 30_000
     assert len(corrupt.encode("utf-8")) > MAX_RUNTIME_RESULT_ENVELOPE_BYTES
-    with store._connect() as db:
-        db.execute(
-            "update agent_runtime_attempts set result_envelope_json=? where id=?",
-            (corrupt, result.attempt_id),
-        )
+    records[1]["payload"]["item"]["text"] = corrupt
+    path.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
 
     with pytest.raises(RoutedCodexExecutionError, match="runtime_result_invalid"):
         routed.execute(**arguments)
-    assert calls == 1
+    assert executor.calls == 1
 
 
 def test_live_silent_process_cannot_be_reclaimed_after_nominal_lease(store, config):

@@ -120,7 +120,7 @@ def classify_decision_quality(
 def classify_stored_needs_human_projection(
     result: object,
 ) -> StoredNeedsHumanProjection:
-    """Accept only a complete, typed rule decision as a human projection."""
+    """Recognize a complete Consumer question; approval is checked separately."""
 
     return (
         StoredNeedsHumanProjection.NEEDS_HUMAN
@@ -130,7 +130,7 @@ def classify_stored_needs_human_projection(
 
 
 def parse_stored_needs_human_decision(result: object):
-    """Return a validated terminal human decision, never a partial JSON shape.
+    """Return a typed Consumer question, never an Audit result or old option.
 
     Imports stay local because the typed result models use this module's quality
     classifier while they are being defined.
@@ -145,23 +145,11 @@ def parse_stored_needs_human_decision(result: object):
         return None
     from pydantic import ValidationError
 
-    from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
+    from app.agent_contracts import ConsumerAgentResult
 
-    if result.get("outcome") == "proposal":
-        # A proposal that also asked Derek an independent question. Its action
-        # was executed by Audit; the Attempt points at this run for the
-        # question (Derek, 2026-09-23).
-        try:
-            proposal = ConsumerAgentResult.model_validate(result)
-        except ValidationError:
-            return None
-        return proposal if proposal.escalates else None
     if result.get("outcome") != "needs_human":
         return None
-
-    for model in (ConsumerAgentResult, AuditAgentResult):
-        try:
-            return model.model_validate(result)
-        except ValidationError:
-            continue
-    return None
+    try:
+        return ConsumerAgentResult.model_validate(result)
+    except ValidationError:
+        return None

@@ -1,0 +1,47 @@
+{
+  "mode": "archived_model_source_equivalence",
+  "evaluated_ref": "1cedebf12a261905abb9e646a13cf22b86dac7e9",
+  "release_code_ref": "78d70a91f27c991cddcabbb63d88252ef786038f",
+  "identities": {
+    "1cedebf12a261905abb9e646a13cf22b86dac7e9": {
+      "head": null,
+      "dirty": null,
+      "source_fingerprint_sha256": "3e166a66397bf53f262fa6325e098410de068a1386414817f33fe132f460bc34",
+      "prompt_sha256": {
+        "consumer": "b190a658580449b03d3784f69fed79fc7df5f930fa6259da44de12100b9366d7",
+        "audit": "438fe826103b08645eb0ee8ce940c6b521a03a6ae9202e1f5a12b43a3728188b"
+      },
+      "wire_schema_sha256": {
+        "consumer": "8bfa8e4a09062adcc984b1cc83f433a8f236cc137c40c0d59522dd77108baa78",
+        "audit": "25ff0d7b8173ec668a43ed8e7b3feff9a5e90b2f794c8c740c2a5537808239ef"
+      },
+      "support_file_sha256": {
+        "scripts/eval_consumer_audit_business.py": "0ba74a25c991bb7098d580903bd2cf9241d15618f1bb22c19dd8bcf54a69a7b1",
+        "evals/consumer_audit_business/v3.json": "ef470ed2ada637f1caa287d811036f4deb518a8e6a173e0d3b2aade27498c039",
+        "app/wechat/codex_safety.py": "8f0862a13d0dc2e54269e57dd8d5e6fe6c96574b0c3ab701cb2663536731fd4b",
+        "app/defaults/audit_rules.md": "75d7bb0959f5dd61ea66a7588869ec0e8a26831d8f0d4146faa1d37f3d408c43"
+      }
+    },
+    "78d70a91f27c991cddcabbb63d88252ef786038f": {
+      "head": null,
+      "dirty": null,
+      "source_fingerprint_sha256": "3e166a66397bf53f262fa6325e098410de068a1386414817f33fe132f460bc34",
+      "prompt_sha256": {
+        "consumer": "b190a658580449b03d3784f69fed79fc7df5f930fa6259da44de12100b9366d7",
+        "audit": "438fe826103b08645eb0ee8ce940c6b521a03a6ae9202e1f5a12b43a3728188b"
+      },
+      "wire_schema_sha256": {
+        "consumer": "8bfa8e4a09062adcc984b1cc83f433a8f236cc137c40c0d59522dd77108baa78",
+        "audit": "25ff0d7b8173ec668a43ed8e7b3feff9a5e90b2f794c8c740c2a5537808239ef"
+      },
+      "support_file_sha256": {
+        "scripts/eval_consumer_audit_business.py": "0ba74a25c991bb7098d580903bd2cf9241d15618f1bb22c19dd8bcf54a69a7b1",
+        "evals/consumer_audit_business/v3.json": "ef470ed2ada637f1caa287d811036f4deb518a8e6a173e0d3b2aade27498c039",
+        "app/wechat/codex_safety.py": "8f0862a13d0dc2e54269e57dd8d5e6fe6c96574b0c3ab701cb2663536731fd4b",
+        "app/defaults/audit_rules.md": "75d7bb0959f5dd61ea66a7588869ec0e8a26831d8f0d4146faa1d37f3d408c43"
+      }
+    }
+  },
+  "equal": true,
+  "scope": "Source files, generated Consumer/Audit instructions, exact wire schemas, harness, frozen cases, native flags and Audit seed match. This performs no model turn and does not verify Status snapshot or publisher behavior."
+}

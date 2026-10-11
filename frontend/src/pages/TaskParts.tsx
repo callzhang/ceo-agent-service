@@ -2,9 +2,9 @@ import { EyeOff, Undo2 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { decideCandidateTask, type BusinessTaskSummary } from "../api/console";
+import { decideCandidateTask, type BusinessTaskSignal, type BusinessTaskSummary, type SourceCitation } from "../api/console";
 import { TaskTime } from "./TaskTime";
-import { commitmentText, labelOf, taskStatusLabels } from "./taskLabels";
+import { commitmentText, isCurrentSuggestion, labelOf, taskDateText, taskOriginLabel, taskOwnerText, taskStatusLabels } from "./taskLabels";
 
 export function TaskSkeleton() {
   return <div className="business-skeleton" role="status" aria-label="正在加载"><span /><span /><span /></div>;
@@ -22,13 +22,39 @@ export function DetailSection({ title, count, open = true, children }: { title: 
 export function LinkedTaskList({ tasks }: { tasks: BusinessTaskSummary[] }) {
   return <ul className="business-linked-list">{tasks.map((task) => {
     const facts = [
-      task.owner,
-      task.status !== "open" ? labelOf(taskStatusLabels, task.status) : "",
+      taskOwnerText(task),
+      labelOf(taskStatusLabels, task.status),
       commitmentText(task.status, task.commitment_status),
-      task.deadline_at ? `截止 ${task.deadline_at}` : "",
+      taskDateText(task),
+      ...task.anchor_labels.map((label) => `项目：${label}`),
     ].filter(Boolean);
-    return <li key={task.id}><Link to={task.detail_url}>{task.title}</Link><span>{facts.join(" · ")} · <TaskTime value={task.updated_at} /></span></li>;
+    return <li key={task.id}>
+      <div className="business-task-row-main"><Link to={task.detail_url}>{task.title}</Link><span className={`business-stage ${task.stage}`}>{task.stage === "formal" ? "正式任务" : "候选任务"}</span><span className="business-origin">{taskOriginLabel(task)}</span></div>
+      <div className="business-linked-facts">{facts.map((fact) => <span key={fact}>{fact}</span>)}<TaskTime value={task.updated_at} /></div>
+      {isCurrentSuggestion(task) && task.suggestion_reason && <p className="business-suggestion-reason">{task.suggestion_reason}</p>}
+    </li>;
   })}</ul>;
+}
+
+/** These are saved quotations, not a paraphrase or a new attribution. */
+export function CitationList({ citations, signals = [] }: { citations: SourceCitation[]; signals?: BusinessTaskSignal[] }) {
+  if (!citations.length) return null;
+  return <ul className="business-citations">{citations.map((citation, index) => {
+    const signal = signals.find((source) => source.id === citation.signal_id);
+    const link = signal ? signalSourceLink(signal.context_json) : "";
+    return <li key={`${citation.signal_id}-${citation.source_ref}-${index}`}>
+      <blockquote>{citation.source_excerpt}</blockquote>
+      <small>{link ? <a href={link} target="_blank" rel="noreferrer">来源：{citation.source_ref}</a> : <span>来源：{citation.source_ref}</span>}{signal?.source_time && <> · <time dateTime={signal.source_time}>{signal.source_time}</time></>}</small>
+    </li>;
+  })}</ul>;
+}
+
+export function signalSourceLink(contextJson: unknown): string {
+  if (typeof contextJson !== "string") return "";
+  try {
+    const context: unknown = JSON.parse(contextJson);
+    return context && typeof context === "object" && "source_link" in context && typeof context.source_link === "string" ? context.source_link : "";
+  } catch { return ""; }
 }
 
 /**

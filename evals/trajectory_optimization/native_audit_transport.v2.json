@@ -1,0 +1,8 @@
+{
+  "version": 2,
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "low",
+  "fixture_correction": "Use standard native home configuration, as production does. v1 combined --ignore-user-config with the role factory's inherited-server disabling overrides, creating disabled transport-less server tables and failing config parsing before any model/source work. No app shim or placeholder transport added.",
+  "mechanism": "Both commands built by current make_role_agent_command(role=audit), retaining all role read-only constraints, MCP allowlist and CodeModeOnly. Candidate adds nested code_mode.enabled/direct_only_tool_namespaces overrides only in the temporary command. All non-fixture servers remain disabled by the role factory.",
+  "criteria": "Exactly one anonymous source read and marker match, actual direct/exec transport, zero shell/file/business effect; verify effective excluded functions and read-only sandbox are unchanged. Not business Audit acceptance or production configuration adoption."
+}

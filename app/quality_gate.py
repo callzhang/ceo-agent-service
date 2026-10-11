@@ -17,10 +17,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from app.agent_cron.scheduler import SCHEDULED_CAPABILITY_UNAVAILABLE_KINDS
-from app.decision_quality import (
-    StoredNeedsHumanProjection,
-    classify_stored_needs_human_projection,
-)
+from app.config import forbidden_path_prefixes
 from app.leak_check import contains_credential, contains_local_runtime_leak
 from app.store import SERVICE_HEALTH_STATE_PREFIX
 
@@ -86,6 +83,7 @@ class QualityGateReport:
     missing_sources: tuple[str, ...]
     violations: tuple[QualityIssue, ...]
     attention: tuple[QualityIssue, ...]
+    native_delivery_coverage: dict[str, int] | None = None
 
     @property
     def ok(self) -> bool:
@@ -100,6 +98,7 @@ class QualityGateReport:
             "missing_sources": list(self.missing_sources),
             "violations": [asdict(item) for item in self.violations],
             "attention": [asdict(item) for item in self.attention],
+            "native_delivery_coverage": self.native_delivery_coverage,
         }
 
 
@@ -170,7 +169,7 @@ def scan_hourly_quality(
         _check_meetings(db, checked_now, violations, attention)
         _check_okr_reviews(db, checked_now, violations, attention)
         _check_external_delivery_queues(db, checked_now, violations, attention)
-        _check_delivery_records(db, violations)
+        native_delivery_coverage = _check_delivery_records(db, violations)
         _check_feedback(db, violations)
         _check_scan_health(db, violations, attention)
         _check_scheduler_health(db, checked_now, violations)
@@ -183,6 +182,7 @@ def scan_hourly_quality(
         missing_sources=(),
         violations=tuple(violations),
         attention=tuple(attention),
+        native_delivery_coverage=native_delivery_coverage,
     )
 
 
@@ -238,8 +238,11 @@ def write_hourly_quality_state(report: QualityGateReport, state_path: Path | str
     path = Path(state_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
+    state = report.to_dict()
+    # Native-source coverage is a live observation, not hourly persisted state.
+    state.pop("native_delivery_coverage", None)
     temporary.write_text(
-        json.dumps(report.to_dict(), ensure_ascii=False, indent=2) + "\n",
+        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     temporary.replace(path)
@@ -348,7 +351,9 @@ def _check_reply_attempts(
     # old blocked/dry-run row from masking a later sent, skipped, or failed row.
     latest = """
         with latest as (
-            select *, row_number() over (
+            select id, channel, conversation_id, trigger_message_id,
+                   action, send_status, updated_at, reviewed_at, resolved_at,
+                   agent_run_id, row_number() over (
                 partition by channel, conversation_id, trigger_message_id
                 order by datetime(updated_at) desc, id desc
             ) as ordinal
@@ -383,7 +388,8 @@ def _check_reply_attempts(
         db,
         """
             with oa_latest as (
-                select a.*, row_number() over (
+                select a.id, a.channel, a.conversation_id, a.trigger_message_id,
+                       a.oa_process_instance_id, a.send_status, row_number() over (
                     partition by case
                         when trim(coalesce(a.oa_process_instance_id, '')) != ''
                             then a.oa_process_instance_id
@@ -476,11 +482,19 @@ def _check_structured_needs_human(
     rows = db.execute(
         latest
         + """
-            select a.send_status, a.reviewed_at, a.agent_run_id,
-                   a.send_error, a.human_decision_options_json,
-                   r.final_result_json
+            select c.candidate_json as reviewed_candidate_json,
+                   choice.id as selection_id
             from latest a
-            left join agent_runs r on r.id=a.agent_run_id
+            left join candidate_reviews review on review.audit_run_id=a.agent_run_id
+              and review.decision='approve'
+            left join review_candidates c on c.id=review.candidate_id
+              and c.invalidated_at='' and c.candidate_digest=review.candidate_digest
+              and c.id=(select max(newest.id) from review_candidates newest
+                  where newest.task_id=c.task_id and newest.execution_generation=c.execution_generation)
+              and exists(select 1 from reply_tasks task where task.id=c.task_id
+                  and task.execution_generation=c.execution_generation
+                  and task.status='needs_human')
+            left join candidate_selections choice on choice.candidate_id=c.id
             where a.ordinal=1 and lower(a.send_status)='needs_human'
               and a.reviewed_at is null
               and trim(coalesce(a.resolved_at, ''))=''
@@ -507,10 +521,11 @@ def _check_structured_needs_human(
     actionable = 0
     invalid = 0
     for row in rows:
-        classification = classify_stored_needs_human_projection(
-            row["final_result_json"]
-        )
-        if classification is StoredNeedsHumanProjection.NEEDS_HUMAN:
+        try:
+            candidate = json.loads(row["reviewed_candidate_json"] or "")
+        except (TypeError, json.JSONDecodeError):
+            candidate = {}
+        if candidate.get("outcome") == "needs_human" and row["selection_id"] is None:
             actionable += 1
         else:
             invalid += 1
@@ -561,8 +576,13 @@ def _check_runtime_attempt_invariants(db: sqlite3.Connection, violations: list[Q
     for code, sql in checks.items():
         _add(violations, source="agent_runtime_attempts", code=code, count=_count(db, sql), severity="error", detail="runtime attempt invariant violated")
     leaks = 0
+    path_prefixes = forbidden_path_prefixes()
     for row in db.execute("select route_name, runtime_kind, credential_mode, model, session_id, failure_code, transcript_reference from agent_runtime_attempts"):
-        leaks += any(contains_credential(str(value or "")) or contains_local_runtime_leak(str(value or "")) for value in row)
+        leaks += any(
+            contains_credential(str(value or ""))
+            or contains_local_runtime_leak(str(value or ""), path_prefixes=path_prefixes)
+            for value in row
+        )
     _add(violations, source="agent_runtime_attempts", code="runtime_secret_leak", count=leaks, severity="error", detail="runtime attempt evidence contains sensitive material")
 
 
@@ -849,7 +869,7 @@ def _check_external_delivery_queues(
 def _check_delivery_records(
     db: sqlite3.Connection,
     violations: list[QualityIssue],
-) -> None:
+) -> dict[str, int]:
     """Report an executed send the sender never recorded.
 
     A delivery row is written once, by the turn that performed the send, from
@@ -859,38 +879,37 @@ def _check_delivery_records(
     reported here and left missing -- filling it in is how a failure to send
     becomes a record of sending.
     """
-    _add(violations, source="sent_replies", code="executed_without_record", count=_count(
-        db,
-        """
-        select count(*) from agent_runs audit
+    from app.native_trajectory import read_native_result_json
+    rows = db.execute("""select audit.* from agent_runs audit
         join reply_tasks task on task.id=audit.reply_task_id
         where audit.role='audit' and audit.status='completed'
           and task.channel='dingtalk'
-          and json_valid(audit.final_result_json)
-          and json_extract(audit.final_result_json, '$.outcome')='executed'
-          and trim(coalesce(json_extract(
-                audit.final_result_json,
-                '$.external_result.live_result_reference.open_task_id'
-              ), coalesce(json_extract(
-                audit.final_result_json,
-                '$.external_result.live_result_reference.openTaskId'
-              ), coalesce(json_extract(
-                audit.final_result_json,
-                '$.external_result.live_result_reference.sent_message_id'
-              ), coalesce(json_extract(
-                audit.final_result_json,
-                '$.external_result.live_result_reference.openMessageId'
-              ), '')))))<>''
           and audit.completed_at >= datetime('now', '-7 days')
-          and not exists (
-            select 1 from sent_reply_observers observer
-            where observer.agent_run_id=audit.id
-          )
-        """,
-    ), severity="error", detail=(
-        "an Audit turn reported a send with a provider receipt and no delivery "
-        "record was written; investigate the live write path, do not backfill"
-    ))
+          and not exists(select 1 from sent_reply_observers observer where observer.agent_run_id=audit.id)
+        """).fetchall()
+    missing = 0
+    unavailable = 0
+    for row in rows:
+        native_result = read_native_result_json(db, row)
+        if not native_result:
+            unavailable += 1
+            continue
+        payload = json.loads(native_result)
+        external = payload.get("external_result")
+        reference = external.get("live_result_reference") if isinstance(external, dict) else None
+        if not isinstance(reference, dict):
+            continue
+        receipt = next((reference[key]
+            for key in ("open_task_id", "openTaskId", "sent_message_id", "openMessageId")
+            if reference.get(key) is not None), "")
+        if payload.get("outcome") == "executed" and str(receipt).strip():
+            missing += 1
+    _add(violations, source="sent_replies", code="executed_without_record", count=missing,
+         severity="error", detail=(
+             "an Audit turn reported a send with a provider receipt and no delivery "
+             "record was written; investigate the live write path, do not backfill"
+         ))
+    return {"checked": len(rows) - unavailable, "unavailable": unavailable}
 
 
 def _check_feedback(

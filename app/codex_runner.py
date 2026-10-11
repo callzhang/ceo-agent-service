@@ -5,9 +5,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from app.config import codex_model, codex_model_reasoning_effort
-from app.dingtalk_models import CodexDecision
 from app.dws_client import dws_noninteractive_environment
-from app.prompt import ceo_agent_thread_prompt
 
 CODEX_DECISION_SCHEMA_PATH = (
     Path(__file__).resolve().parent / "schemas" / "codex_decision.schema.json"
@@ -62,16 +60,6 @@ def recover_native_codex_auth_failures(
     if not has_failures(channel=channel) or not auth_probe():
         return []
     return recover(channel=channel, reason="codex_auth_recovered")
-
-
-def codex_developer_instructions() -> str:
-    schema = json.dumps(
-        CodexDecision.model_json_schema(),
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    prompt = ceo_agent_thread_prompt().rstrip("\n")
-    return f"{prompt}\n\n## Pydantic Wire/Result Contract\n{schema}"
 
 
 def _config_string(key: str, value: object) -> str:
@@ -252,7 +240,7 @@ class CodexRunner:
             effective_developer_instructions = (
                 developer_instructions
                 if developer_instructions is not None
-                else codex_developer_instructions()
+                else ""
             )
         image_options: list[str] = []
         for image_path in image_paths or []:

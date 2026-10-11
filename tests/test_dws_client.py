@@ -6390,6 +6390,38 @@ def test_run_json_error_includes_sanitized_command_and_output_previews(monkeypat
     assert "secret-code" not in message
 
 
+def test_run_json_long_traceback_retains_root_cause(monkeypatch):
+    root_cause = "RuntimeError: okr_headless_session_expired: session requires login"
+    traceback = (
+        "Traceback (most recent call last):\n"
+        + '  File "source.py", line 1, in main\n' * 30
+        + root_cause
+    )
+
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        return SimpleNamespace(returncode=1, stdout="", stderr=traceback)
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+
+    with pytest.raises(DwsError) as exc_info:
+        DwsClient(transient_retry_attempts=0).run_json(["python", "source.py"])
+
+    message = str(exc_info.value)
+    assert "Traceback (most recent call last):" in message
+    assert root_cause in message
+    assert len(message.split("stderr=", 1)[1]) <= 403
+
+
+@pytest.mark.parametrize("limit", [1, 2, 3, 5, 400])
+def test_long_output_preview_is_bounded_and_preserves_last_character(limit):
+    value = "A" * 1000 + "Z"
+
+    preview = DwsClient._preview(value, limit=limit)
+
+    assert len(preview) <= limit + 3
+    assert preview.endswith("Z")
+
+
 def test_run_json_sanitizes_pat_authorization_error(monkeypatch):
     stderr = (
         '{"code":"PAT_HIGH_RISK_NO_PERMISSION","data":{'
@@ -6779,3 +6811,27 @@ def test_the_push_title_of_a_markdown_message_has_no_markdown_markers():
     title = command[command.index("--title") + 1]
     assert "**" not in title and "##" not in title and "- " not in title
     assert title.startswith("结论 先出方案")
+
+
+@pytest.mark.parametrize('stable_sender', ['principal', 'open-principal'])
+def test_parse_current_typed_message_ledger_preserves_exact_original_object(stable_sender):
+    from app.dws_client import DwsUserProfile
+    row = {'conversationId':'original-cid','messageId':'original-message',
+           'sender':'Principal','senderId':stable_sender,
+           'createTime':'2026-10-06 09:43:12','text':'Exact approved test body'}
+    payload = {'contractVersion':'im.message-list.v1','messages':[row],
+               'count':1,'complete':True,'hasMore':False,'failures':[]}
+    messages = DwsClient.parse_messages(payload, conversation_title='Self', single_chat=True)
+    assert len(messages) == 1
+    message = messages[0]
+    assert message.open_conversation_id == 'original-cid'
+    assert message.open_message_id == 'original-message'
+    assert message.content == row['text']
+    assert message.raw_payload == row
+    client = DwsClient()
+    client.get_current_user_id = lambda: 'principal'
+    client.search_user_profiles = lambda name: [DwsUserProfile(user_id='principal', name='Principal', open_dingtalk_id='open-principal')]
+    assert client.is_current_user_message(message)
+    unknown = message.model_copy(update={'raw_payload':dict(row, senderId='someone-else')})
+    with pytest.raises(DwsError, match='unique DingTalk sender'):
+        client.is_current_user_message(unknown)

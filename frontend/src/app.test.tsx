@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -104,7 +104,10 @@ beforeEach(() => {
   window.history.replaceState({}, "", "/");
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 function setCompactViewport(compact: boolean) {
   Object.defineProperty(window, "matchMedia", {
@@ -924,6 +927,7 @@ describe("App", () => {
     render(<App />);
 
     const input = await screen.findByLabelText("添加图片");
+    await waitFor(() => expect(input).toBeEnabled());
     fireEvent.change(input, { target: { files: [new File(["image"], "stats.png", { type: "image/png" })] } });
 
     await screen.findByText("已上传");
@@ -1159,7 +1163,6 @@ describe("App", () => {
   });
 
   it("coalesces a confirmation progress event into an authoritative timeline refresh", async () => {
-    const user = userEvent.setup();
     const sources: ProgressSource[] = [];
     class ProgressSource {
       onopen: ((event: Event) => void) | null = null;
@@ -1198,9 +1201,10 @@ describe("App", () => {
       })
       .mockReturnValueOnce(authoritative.promise);
     window.history.replaceState({}, "", `/?task=${first.id}`);
-    render(<App />);
+    await act(async () => { render(<App />); });
 
     expect(await screen.findByText("旧版待确认操作不会再执行")).toBeInTheDocument();
+    await waitFor(() => expect(sources).toHaveLength(1));
 
     sources[0].emit("status_changed", 2, waiting.id, {
       status: "queued",
@@ -1259,9 +1263,10 @@ describe("App", () => {
       return Promise.resolve(emptyTimeline(second));
     });
     window.history.replaceState({}, "", `/?task=${first.id}`);
-    render(<App />);
+    await act(async () => { render(<App />); });
 
     await screen.findByText("会切换的等待回合");
+    await waitFor(() => expect(sources).toHaveLength(1));
     sources[0].emit("status_changed", 1, waiting.id, { status: "queued", confirmation_id: "confirmation-stale" });
     fireEvent.click(screen.getByRole("button", { name: "打开任务 产品规划" }));
     await screen.findByText("开始新的对话");
@@ -1318,11 +1323,10 @@ describe("App", () => {
     render(<App />);
 
     await screen.findByRole("button", { name: "停止执行" });
-    expect(sources[0].url).toContain("/running-turn/events/stream?after=0");
+    await waitFor(() => expect(sources[0]?.url).toContain("/running-turn/events/stream?after=0"));
     await user.click(screen.getByRole("button", { name: "打开任务 产品规划" }));
     await screen.findByText("开始新的对话");
     expect(sources[0].closed).toBe(true);
-    vi.unstubAllGlobals();
   });
 
   it("keeps tool status scoped to its step and applies terminal SSE state to the task", async () => {
@@ -1360,6 +1364,7 @@ describe("App", () => {
     render(<App />);
 
     await screen.findByRole("button", { name: "停止执行" });
+    await waitFor(() => expect(sources).toHaveLength(1));
     sources[0].emit("tool_completed", 1, {
       tool_call_id: "tool-1",
       tool: "search",

@@ -91,8 +91,8 @@ confirmation. Consumer A must select only a reliable entry associated with the
 current subscription. Its initial proposal contains exactly `OPEN_ENTRY`, or one
 authenticated `POST_ONE_CLICK`; controls on an ordinary page are not guessed or
 precomputed. At each continuation, propose the exact ordered browser operations
-consisting of the durable prefix plus one new operation. Audit Agent B must
-review those exact operations before any external write; neither agent may
+consisting of the durable prefix plus one new operation. Audit must
+review those exact operations before the System Executor performs any external write; neither agent may
 replace them with an unreviewed navigation, form
 submission, or confirmation click.
 
@@ -100,12 +100,12 @@ When readback after an accepted operation finds another required control, stop
 before using it. The runtime persists the executed audited prefix, redacted
 observation, opaque control references, fixed control kinds and intents, and the
 unchanged exact-origin policy references, then returns a typed continuation.
-Consumer A may use only that continuation to propose one next operation. The
+Consumer may use only that continuation to propose one next operation. The
 next accepted effect must be a strict append-only extension of the persisted
 prefix with the same action, plan, classification, account, message, thread,
-entry, and network policy. Audit reviews that extension automatically under the
-normal feedback/revision lifecycle; no user confirmation is added. Execute only
-the newly accepted operation and never replay the prefix. Repeat this
+entry, and network policy. Audit reviews that extension under the
+normal feedback/revision lifecycle; no user confirmation is added. The System Executor performs only
+the newly approved operation and never replays the prefix. Repeat this
 `awaiting_audit` cycle until exact terminal evidence is read back.
 
 Treat RFC one-click as authenticated one-click only when typed provider evidence
@@ -171,27 +171,27 @@ lifecycle; do not invent another top-level task status.
 
 ## Authorization And Outcome
 
-Every reply requires explicit reply authorization.
+Evaluate a mail reply from the complete current context, requested work, intended recipient and applicable mail workflow; do not add a separate trusted-authorization requirement.
 
-- For a DingTalk or Lark review, the current request must explicitly authorize
-  replying. Review-only, summarize-only, or approval-only requests do not
-  authorize a mail reply. Authorization from an older message does not silently
-  carry into a materially different current request.
+- For a DingTalk or Lark request, decide whether a reply fits the full current
+  conversation and the requested outcome. An explicit review-only, draft-only,
+  summarize-only or do-not-send limitation must be respected. An older task's
+  scope does not automatically carry into a materially different request.
 - For `channel=email`, the current immutable ActionPlan is the authorization.
   The current deployment permits only its exact `unsubscribe` action to be
   proposed. `auto_reply` is disabled and cannot be proposed or sent.
   Classification confirmation, category text, an older plan, or prior
   conversation is not authorization for another mail action.
-- Consumer A proposes only the authorized action; it never sends or unsubscribes
-  directly. Audit Agent B reviews the proposal under the existing
-  feedback/revision lifecycle. Only Audit may execute an accepted action and
-  verify exact readback.
+- Consumer proposes only the authorized action; it never sends or unsubscribes
+  directly. Audit reviews the exact proposal under the existing
+  feedback/revision lifecycle. Only the System Executor may perform an approved
+  controlled action and verify exact readback.
 - If the complete current thread shows an equivalent reply already sent, use
   canonical `no_action` for the mail effect and report the verified state only
   when the current conversation needs it.
-- If review is complete but reply authorization is absent, provide only the
-  requested review or draft through an authorized channel; do not execute or
-  propose a mail send.
+- If the current context calls only for a review or draft, provide that result.
+  If it supports a reply within the configured mail workflow, prepare its exact
+  recipient and body for Audit; do not ask for an extra authorization label.
 
 The agent performs the business judgment. The service supplies references and
 exact commands without interpreting mail or linked content. For `channel=email`,

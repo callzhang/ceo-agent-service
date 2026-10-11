@@ -163,6 +163,7 @@ class _FrozenBusinessModel(BaseModel):
 
 class BusinessTaskSignal(_FrozenBusinessModel):
     id: int
+    source_document_id: int
     source_type: Nonblank
     source_ref: Nonblank
     source_time: str = ""
@@ -181,6 +182,8 @@ class BusinessTask(_FrozenBusinessModel):
     id: int
     title: Nonblank
     description: str = ""
+    origin: Literal["source", "agent_suggestion"] = "source"
+    suggestion_json: JsonObject = "{}"
     stage: BusinessTaskStage
     status: BusinessTaskStatus = BusinessTaskStatus.OPEN
     formal_basis: FormalTaskBasis | None = None
@@ -198,6 +201,8 @@ class BusinessTask(_FrozenBusinessModel):
 
     @model_validator(mode="after")
     def validate_state(self) -> BusinessTask:
+        if self.origin == "agent_suggestion":
+            TaskSuggestion.model_validate_json(self.suggestion_json)
         if self.stage is BusinessTaskStage.FORMAL and self.formal_basis is None:
             raise ValueError("formal task requires formal_basis")
         if self.stage is BusinessTaskStage.CANDIDATE and self.formal_basis is not None:
@@ -305,12 +310,101 @@ class BusinessTaskAnchorLink(_FrozenBusinessModel):
     created_at: str
 
 
+class SourceCitation(_FrozenBusinessModel):
+    signal_id: ReferenceId | None = None
+    source_ref: Nonblank
+    source_excerpt: Nonblank
+
+
+class ProjectCrmCustomerCandidate(_FrozenBusinessModel):
+    customer_id: Nonblank
+    name: Nonblank
+    alias: str = ""
+    registered_name: str = ""
+    matched_fields: list[Literal["name", "field_customer_alias__c", "UDSText1__c"]]
+
+
 class BusinessProject(_FrozenBusinessModel):
     id: int
     canonical_anchor_id: ReferenceId
     anchor_type: Literal["project"] = "project"
     title: Nonblank
     registry_source: Nonblank
+    created_at: str
+    context: ProjectContext | None = Field(default=None, exclude=True)
+    crm_customer_id: str = ""
+    crm_customer_name: str = ""
+    crm_customer_lookup_status: Literal[
+        "not_requested", "matched", "ambiguous", "needs_confirmation",
+        "no_match", "unavailable", "conflict"
+    ] = "not_requested"
+    crm_customer_candidates: list[ProjectCrmCustomerCandidate] = Field(default_factory=list)
+    crm_customer_label: str = ""
+    crm_customer_evidence: SourceCitation | None = None
+
+    @model_validator(mode="after")
+    def validate_crm_customer_identity(self) -> BusinessProject:
+        if self.crm_customer_id and not self.crm_customer_name:
+            raise ValueError("linked CRM customer requires a display-name snapshot")
+        if self.crm_customer_lookup_status == "matched" and not self.crm_customer_id:
+            raise ValueError("matched CRM customer status requires a linked customer ID")
+        return self
+
+
+class ProjectResponsibility(_FrozenBusinessModel):
+    person_user_id: str = ""
+    person_name: Nonblank
+    responsibility: Nonblank
+    evidence: list[SourceCitation] = Field(min_length=1)
+
+
+class ProjectFact(_FrozenBusinessModel):
+    key: Nonblank
+    text: Nonblank
+    evidence: list[SourceCitation] = Field(min_length=1)
+    date_type: str = ""
+    date_value: str = ""
+
+    @model_validator(mode="after")
+    def validate_date_pair(self) -> ProjectFact:
+        if bool(self.date_type) != bool(self.date_value):
+            raise ValueError("project fact date type and value must both be present or empty")
+        return self
+
+
+class ProjectContext(_FrozenBusinessModel):
+    goal: str
+    scope: str
+    overall_owner: ProjectResponsibility | None
+    responsibilities: list[ProjectResponsibility]
+    facts: list[ProjectFact]
+
+
+class TaskSuggestion(_FrozenBusinessModel):
+    reason: Nonblank
+    suggested_owner_user_id: str = ""
+    suggested_owner_name: str = ""
+    responsibility_evidence: list[SourceCitation] = Field(default_factory=list)
+    basis_evidence: list[SourceCitation] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_named_person_evidence(self) -> TaskSuggestion:
+        if (self.suggested_owner_user_id or self.suggested_owner_name) and not self.responsibility_evidence:
+            raise ValueError("suggested person requires responsibility evidence")
+        return self
+
+
+class BusinessProjectContextRevision(_FrozenBusinessModel):
+    id: int
+    project_id: ReferenceId
+    context: ProjectContext
+    evidence_signal_ids: tuple[ReferenceId, ...]
+    created_at: str
+
+
+class BusinessProjectEvidence(_FrozenBusinessModel):
+    project_id: ReferenceId
+    signal_id: ReferenceId
     created_at: str
 
 
@@ -348,6 +442,7 @@ class BusinessAttentionItem(_FrozenBusinessModel):
     ceo_action: Nonblank
     anchor_id: ReferenceId
     evidence_signal_id: ReferenceId
+    assessment_json: str = "{}"
     resolution_signal_id: ReferenceId | None = None
     resolved_at: str = ""
     created_at: str

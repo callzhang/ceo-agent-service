@@ -982,7 +982,7 @@ def test_fresh_session_retry_follows_the_route_kind_not_its_name(
     assert decision.reason == "fresh_session_retry"
 
 
-def test_a_local_login_route_does_not_get_the_api_fresh_retry(store, running_attempt):
+def test_a_local_login_route_gets_the_bounded_cli_fresh_retry(store, running_attempt):
     store.fail_agent_runtime_attempt(
         running_attempt.id, "authentication", "codex_login_required", True
     )
@@ -1009,9 +1009,9 @@ def test_a_local_login_route_does_not_get_the_api_fresh_retry(store, running_att
         failure=session_incompatible_failure(),
     )
 
-    # The name alone used to grant the retry; a login route never had it.
-    assert decision.fresh_session is False
-    assert decision.reason != "fresh_session_retry"
+    # CLI session recovery applies to OAuth routes too, independent of name.
+    assert decision.fresh_session is True
+    assert decision.reason == "fresh_session_retry"
 
 
 def test_resumed_claude_session_incompatibility_gets_one_fresh_retry(

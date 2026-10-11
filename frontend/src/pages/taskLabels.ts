@@ -1,17 +1,17 @@
-import type { AttentionCategory } from "../api/console";
+import type { AttentionCategory, BusinessTaskSummary } from "../api/console";
 
 export const taskStatusLabels: Record<string, string> = { open: "待处理", waiting: "等待中", done: "已完成", cancelled: "已取消", merged: "已合并" };
 
 export const commitmentLabels: Record<string, string> = { none: "承诺待明确", assigned_unaccepted: "已指派，未接受", accepted: "已接受", disputed: "存在争议", completed: "已完成", cancelled: "已取消" };
 
-export const sourceTypeLabels: Record<string, string> = { ai_minutes: "AI 听记", meeting: "会议", dingtalk: "钉钉消息", dingtalk_todo: "钉钉待办" };
+export const sourceTypeLabels: Record<string, string> = { ai_minutes: "AI 听记", meeting: "会议", dingtalk: "钉钉消息", dingtalk_todo: "钉钉待办", memory: "记忆线索", session: "会话线索" };
 
 export const evidenceRoleLabels: Record<string, string> = {
   discovery: "发现", commitment: "承诺", assignment: "指派", acceptance: "接受", completion: "完成", correction: "更正", merge_identity: "合并依据", relevance: "业务相关性", resolution: "收口",
 };
 
 export const dateTypeLabels: Record<string, string> = {
-  assigned_at: "指派时间", requested_deadline_at: "对方要求的截止", external_deadline_at: "外部截止", committed_deadline_at: "承诺的截止", estimated_deadline_at: "预估截止", next_check_at: "下次检查",
+  assigned_at: "指派时间", requested_deadline_at: "要求完成日期", external_deadline_at: "外部截止日期", committed_deadline_at: "承诺完成日期", estimated_deadline_at: "预计完成日期", next_check_at: "下次检查时间", report_period: "报告周期", project_window: "项目窗口", event_time: "事件时间",
 };
 
 export const taskEventLabels: Record<string, string> = {
@@ -28,6 +28,23 @@ export const categoryOrder: AttentionCategory[] = ["decision", "push", "watch", 
 
 export function labelOf(labels: Record<string, string>, value: string) {
   return labels[value] || value;
+}
+
+export function taskOriginLabel(task: Pick<BusinessTaskSummary, "origin" | "stage">) {
+  return task.origin === "agent_suggestion" ? task.stage === "formal" ? "源于 Agent 建议" : "Agent 建议" : task.stage === "candidate" ? "来源线索" : "来源任务";
+}
+
+export function isCurrentSuggestion(task: Pick<BusinessTaskSummary, "origin" | "stage">) {
+  return task.origin === "agent_suggestion" && task.stage === "candidate";
+}
+
+export function taskOwnerText(task: Pick<BusinessTaskSummary, "origin" | "stage" | "owner" | "suggested_owner">) {
+  return isCurrentSuggestion(task) ? `建议负责人：${task.suggested_owner || "待明确"}` : `负责人：${task.owner || "待明确"}`;
+}
+
+/** A saved date without a proven type must not be relabelled as a commitment. */
+export function taskDateText(task: Pick<BusinessTaskSummary, "deadline_type" | "deadline_at">) {
+  return task.deadline_type && task.deadline_at ? `${labelOf(dateTypeLabels, task.deadline_type)}：${task.deadline_at}` : "";
 }
 
 /** Status and commitment can both end in "已完成"/"已取消"; say it once. */

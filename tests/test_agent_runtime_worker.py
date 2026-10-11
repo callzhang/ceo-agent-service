@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 import app.agent_skill_usage as agent_skill_usage
 from app.agent_context import AgentTaskContext
-from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
+from app.agent_contracts import AuditAgentResult, ConsumerAgentResult, SystemExecutionResult
 from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
 from app.agent_result import AgentError
 from app.agent_runtime_config import load_runtime_config
@@ -25,10 +25,12 @@ from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.dws_client import DwsClient
 from app.native_cli_metadata import describe_native_command
 from app.store import AgentRole, AutoReplyStore
+from app.system_executor import SystemExecutor
 from app.process_runner import ProcessRunResult
 from app.runtime_environment import central_python
 from app.worker import ORCHESTRATION_ATTEMPT_STATUS, DingTalkAutoReplyWorker
 from tests.support.image_bytes import TINY_PNG
+from tests.support.native_protocol import install_protocol_native_trajectories
 
 from app.business_skills import bundled_business_skills_root
 
@@ -36,6 +38,21 @@ SKILLS_ROOT = bundled_business_skills_root()
 
 
 NOW = datetime(2026, 7, 29, 9, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def _protocol_native_trajectories(tmp_path, monkeypatch):
+    install_protocol_native_trajectories(tmp_path, monkeypatch, ProtocolCodexExecutor)
+
+
+@pytest.fixture(autouse=True)
+def _protocol_memory_transport(monkeypatch: pytest.MonkeyPatch):
+    # Protocol turns advertise the configured memory read transport. The
+    # production URL is intentionally absent from the test environment.
+    monkeypatch.setenv("MEMORY_CONNECTOR_URL", "https://memory.example.test/mcp")
+    monkeypatch.setenv("CONNECTOR_API_KEY", "synthetic-test-key")
+    monkeypatch.setenv("MEMORY_CONNECTOR_AUTH_TYPE", "synthetic-test-auth")
+    monkeypatch.setenv("MEMORY_CONNECTOR_CONTENT_TYPE", "application/json")
 
 
 class ScriptOutcome(StrEnum):
@@ -56,7 +73,8 @@ def test_worker_orchestration_status_mapping_is_exact():
     assert ORCHESTRATION_ATTEMPT_STATUS == {
         "executed": ("completed", "done"),
         "no_action": ("skipped", "done"),
-        "needs_human": ("needs_human", "done"),
+        "needs_human": ("needs_human", "needs_human"),
+        "skipped": ("skipped", "skipped"),
         "dry_run": ("dry_run", "done"),
         "failed_retryable": ("failed", "pending"),
         "failed_terminal": ("failed", "failed"),
@@ -85,7 +103,7 @@ def test_oa_management_handoff_returns_to_retryable_skill_workflow(tmp_path: Pat
     worker.consume_once(max_tasks=1)
 
     task = worker.store.get_reply_task(task_id)
-    assert task is not None and task.status == "done"
+    assert task is not None and task.status == "needs_human"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == "needs_human"
@@ -96,6 +114,9 @@ class NoActionOrchestrator:
     def __init__(self, store: AutoReplyStore) -> None:
         self.store = store
         self.calls: list[tuple[object, AgentTaskContext]] = []
+
+    def persisted_terminal_result(self, task) -> OrchestrationResult | None:
+        return None
 
     def process(self, task, context, *, refresh_context) -> OrchestrationResult:
         self.calls.append((task, context))
@@ -147,6 +168,9 @@ class PoisonedSessionFailureOrchestrator:
         self.role = role
         self.run_id = 0
         self.observed_resume_sessions: list[str] = []
+
+    def persisted_terminal_result(self, task) -> OrchestrationResult | None:
+        return None
 
     def process(self, task, context, *, refresh_context) -> OrchestrationResult:
         del context, refresh_context
@@ -511,7 +535,7 @@ class ScriptedTaskOrchestrator:
         self.read_only_values: list[bool] = []
         self.owner = "scripted-agent"
 
-    def process(self, task, context, *, refresh_context) -> OrchestrationResult:
+    def persisted_terminal_result(self, task) -> OrchestrationResult | None:
         persisted = self.store.list_agent_runs_for_task_generation(
             task.id,
             task.execution_generation,
@@ -520,7 +544,7 @@ class ScriptedTaskOrchestrator:
             final_run = persisted[-1]
             if final_run.status == "completed" and final_run.role is AgentRole.AUDIT:
                 audit_result = AuditAgentResult.model_validate_json(
-                    final_run.final_result_json
+                    final_run.adopted_result_json
                 )
                 return OrchestrationResult(
                     status="executed",
@@ -533,7 +557,7 @@ class ScriptedTaskOrchestrator:
                 )
             if final_run.status == "completed" and final_run.role is AgentRole.CONSUMER:
                 consumer_result = ConsumerAgentResult.model_validate_json(
-                    final_run.final_result_json
+                    final_run.adopted_result_json
                 )
                 return OrchestrationResult(
                     status=(
@@ -548,6 +572,12 @@ class ScriptedTaskOrchestrator:
                     feedback_cycles=final_run.proposal_revision,
                     consumer_result=consumer_result,
                 )
+        return None
+
+    def process(self, task, context, *, refresh_context) -> OrchestrationResult:
+        terminal = self.persisted_terminal_result(task)
+        if terminal is not None:
+            return terminal
         self.calls.append((task.id, task.execution_generation, context))
         self.read_only_values.append(True)
         script = self.scripts.pop(0)
@@ -614,25 +644,9 @@ class ScriptedTaskOrchestrator:
                 "outcome": consumer_outcome,
                 "summary": direct_result.summary,
                 "proposal": proposal,
-                "decision_options": (
-                    [
-                        {
-                            "key": "A",
-                            "label": "采用保守处理",
-                            "instruction": "采用已核验的保守处理并发布。",
-                            "consequence": "不会扩大当前外部影响。",
-                            "applies_to": "task_class",
-                        },
-                        {
-                            "key": "B",
-                            "label": "采用推进处理",
-                            "instruction": "按已核验事实推进处理并发布。",
-                            "consequence": "会执行对应的已审计动作。",
-                            "applies_to": "task_class",
-                        },
-                    ]
-                    if consumer_outcome == "needs_human"
-                    else []
+                "decision_options": [],
+                "requested_input": (
+                    direct_result.summary if consumer_outcome == "needs_human" else None
                 ),
                 "error": {
                     "code": (
@@ -695,6 +709,32 @@ class ScriptedTaskOrchestrator:
             owner=self.owner,
             now=NOW,
         )
+        if consumer_outcome == "needs_human":
+            candidate = self.store.persist_review_candidate(task, consumer_run, consumer_result)
+            operation_id = f"agent-task:{task.id}:{task.execution_generation}:proposal:0"
+            audit_claim = self.store.claim_agent_run(
+                task.id, task.execution_generation, role=AgentRole.AUDIT,
+                proposal_revision=0, turn_attempt=0,
+                parent_agent_run_id=consumer_run.id, operation_id=operation_id,
+                owner=self.owner, lease_seconds=1800, now=NOW,
+            )
+            assert audit_claim.claimed
+            audit_result = _audit_protocol_result(
+                "approve", 0, direct_result.summary, operation_id=operation_id,
+                candidate_digest=candidate["candidate_digest"],
+            )
+            audit_run = self.store.complete_agent_run(
+                audit_claim.run.id, audit_result.model_dump(mode="json"),
+                owner=self.owner, now=NOW,
+            )
+            review = self.store.record_candidate_review(candidate["id"], audit_run.id, audit_result)
+            return OrchestrationResult(
+                status="needs_human", final_run_id=audit_run.id,
+                final_role=AgentRole.AUDIT, summary=direct_result.summary,
+                error=consumer_result.error, feedback_cycles=0,
+                consumer_result=consumer_result, audit_result=audit_result,
+                candidate_id=candidate["id"], review_id=review["id"],
+            )
         if consumer_outcome != "proposal":
             return OrchestrationResult(
                 status=(
@@ -708,6 +748,7 @@ class ScriptedTaskOrchestrator:
                 consumer_result=consumer_result,
             )
 
+        candidate = self.store.persist_review_candidate(task, consumer_run, consumer_result)
         operation_id = f"agent-task:{task.id}:{task.execution_generation}:proposal:0"
         audit_claim = self.store.claim_agent_run(
             task.id,
@@ -747,18 +788,15 @@ class ScriptedTaskOrchestrator:
             }
         audit_result = AuditAgentResult.model_validate(
             {
-                "outcome": "executed",
+                "outcome": "approve",
                 "risk": "low",
                 "confidence": 1.0,
                 "rule_coverage": 1.0,
                 "information_completeness": 1.0,
                 "summary": direct_result.summary,
                 "proposal_revision": 0,
+                "candidate_digest": candidate["candidate_digest"],
                 "feedback": None,
-                "external_result": {
-                    "operation_id": operation_id,
-                    "live_result_reference": live_reference,
-                },
                 "error": {
                     "code": direct_result.error.code,
                     "retryable": direct_result.error.retryable,
@@ -781,12 +819,49 @@ class ScriptedTaskOrchestrator:
             error=audit_result.error,
             feedback_cycles=0,
             audit_result=audit_result,
+            execution_result=SystemExecutionResult.model_validate({
+                "outcome": "executed", "summary": direct_result.summary,
+                "external_result": {
+                    "operation_id": operation_id,
+                    "live_result_reference": live_reference,
+                },
+            }),
         )
 
 
 def _prompt_json_section(prompt: str, heading: str):
     start = prompt.index(heading) + len(heading)
     value, _end = json.JSONDecoder().raw_decode(prompt[start:].lstrip())
+    if heading == "Candidate revision\n":
+        return {**value["candidate"], **{
+            key: value[key]
+            for key in ("operation_id", "proposal_revision", "candidate_digest")
+        }}
+    if "Candidate revision\n" in prompt:
+        start = prompt.index("Candidate revision\n") + len("Candidate revision\n")
+        candidate, _end = json.JSONDecoder().raw_decode(prompt[start:].lstrip())
+        sources = {}
+
+        def index_sources(node, path):
+            sources[path] = node
+            if isinstance(node, dict):
+                for key, child in node.items():
+                    index_sources(child, f"{path}.{key}")
+            elif isinstance(node, list):
+                for index, child in enumerate(node):
+                    index_sources(child, f"{path}[{index}]")
+
+        def resolve_sources(node):
+            if isinstance(node, dict):
+                if set(node) == {"source_ref"}:
+                    return sources[node["source_ref"]]
+                return {key: resolve_sources(child) for key, child in node.items()}
+            if isinstance(node, list):
+                return [resolve_sources(child) for child in node]
+            return node
+
+        index_sources(candidate, "Candidate revision")
+        return resolve_sources(value)
     return value
 
 
@@ -804,6 +879,10 @@ def _agent_result_event(result) -> dict[str, object]:
             "decision_options": [
                 option.model_dump(mode="json") for option in result.decision_options
             ],
+            "requested_input": result.requested_input,
+            "stage_index": result.stage_index,
+            "predecessor_review_id": result.predecessor_review_id,
+            "continue_after_execution": result.continue_after_execution,
             "risk": result.risk.value,
             "confidence": result.confidence,
             "rule_coverage": result.rule_coverage,
@@ -821,19 +900,13 @@ def _agent_result_event(result) -> dict[str, object]:
             "outcome": result.outcome.value,
             "summary": result.summary,
             "proposal_revision": result.proposal_revision,
+            "candidate_digest": result.candidate_digest,
+            "evidence_refs": list(result.evidence_refs),
             "feedback": (
                 result.feedback.model_dump(mode="json")
                 if result.feedback is not None
                 else None
             ),
-            "external_result": (
-                result.external_result.model_dump(mode="json")
-                if result.external_result is not None
-                else None
-            ),
-            "decision_options": [
-                option.model_dump(mode="json") for option in result.decision_options
-            ],
             "risk": result.risk.value,
             "confidence": result.confidence,
             "rule_coverage": result.rule_coverage,
@@ -870,26 +943,8 @@ def _consumer_protocol_result(
             "outcome": outcome,
             "summary": summary,
             "proposal": proposal,
-            "decision_options": (
-                [
-                    {
-                        "key": "A",
-                        "label": "采用保守处理",
-                        "instruction": "采用已核验的保守处理并发布。",
-                        "consequence": "不会扩大当前外部影响。",
-                        "applies_to": "task_class",
-                    },
-                    {
-                        "key": "B",
-                        "label": "采用推进处理",
-                        "instruction": "按已核验事实推进处理并发布。",
-                        "consequence": "会执行对应的已审计动作。",
-                        "applies_to": "task_class",
-                    },
-                ]
-                if outcome == "needs_human"
-                else []
-            ),
+            "decision_options": [],
+            "requested_input": summary if outcome == "needs_human" else None,
             "error": {
                 "code": "" if outcome == "needs_human" else code,
                 "retryable": retryable,
@@ -897,9 +952,6 @@ def _consumer_protocol_result(
             },
             "risk": "high" if outcome == "needs_human" else "low",
             "confidence": 0.1 if outcome == "needs_human" else 1.0,
-            # A needs_human outcome must classify as NEEDS_HUMAN, which the
-            # high-risk/low-confidence gate gives. Information completeness
-            # below 0.5 would classify it ASK_BACK instead.
             "rule_coverage": 1.0,
             "information_completeness": 1.0,
             "needs_human_reason": summary if outcome == "needs_human" else None,
@@ -932,68 +984,37 @@ def _audit_protocol_result(
     code: str = "",
     retryable: bool = False,
     authorization_required: bool = False,
+    candidate_digest: str = "a" * 64,
 ) -> AuditAgentResult:
-    executed = outcome == "executed"
-    decision_options = (
-        [
-            {
-                "key": "A",
-                "label": "Proceed after review",
-                "instruction": "Proceed with the verified candidate after review.",
-                "consequence": "Audit may execute the reviewed external action.",
-                "applies_to": "task_class",
-            },
-            {
-                "key": "B",
-                "label": "Stop safely",
-                "instruction": "Stop without executing another external action.",
-                "consequence": "No new external action will run.",
-                "applies_to": "task_class",
-            },
-        ]
-        if outcome == "needs_human"
-        else []
-    )
+    del operation_id, live_reference
+    review_outcome = {
+        "executed": "approve",
+        "needs_human": "approve",
+        "feedback_provided": "return",
+    }.get(outcome, outcome)
+    if outcome == "executed":
+        summary = "Candidate reviewed; SystemExecutor owns dispatch and verification."
     return AuditAgentResult.model_validate(
         {
-            "outcome": outcome,
+            "outcome": review_outcome,
             "summary": summary,
             "proposal_revision": revision,
-            "feedback": None,
-            "external_result": (
-                {
-                    "operation_id": operation_id,
-                    "live_result_reference": live_reference or {},
-                }
-                if executed
-                else None
+            "candidate_digest": candidate_digest,
+            "evidence_refs": [],
+            "feedback": (
+                {"rule": "test rule", "observation": summary,
+                 "requested_revision": "Revise the current candidate."}
+                if review_outcome in {"return", "reject"} else None
             ),
-            "decision_options": decision_options,
             "error": {
-                "code": "" if outcome == "needs_human" else code,
+                "code": code if review_outcome == "failed" else "",
                 "retryable": retryable,
                 "authorization_required": authorization_required,
             },
-            "risk": "high" if outcome == "needs_human" else "low",
-            "confidence": 0.1 if outcome == "needs_human" else 1.0,
+            "risk": "low",
+            "confidence": 1.0,
             "rule_coverage": 1.0,
             "information_completeness": 1.0,
-            "needs_human_reason": summary if outcome == "needs_human" else None,
-            "decision_basis": (
-                {
-                    "verified_facts": [{"assertion": summary, "references": ["test"]}],
-                    "rule_evidence": [
-                        {"assertion": "test rule", "references": ["test"]}
-                    ],
-                    "quality_explanation": "test basis",
-                    "no_external_action_evidence": [
-                        {"assertion": "none", "references": ["test"]}
-                    ],
-                    "conclusion": summary,
-                }
-                if outcome == "needs_human"
-                else None
-            ),
         }
     )
 
@@ -1114,8 +1135,52 @@ class ProtocolCodexExecutor:
         self,
         prompt: str,
     ) -> list[dict[str, object]]:
-        records = self.records(prompt)
-        if "Candidate revision\n" in prompt:
+        audit_turn = "Candidate revision\n" in prompt
+        candidate = _prompt_json_section(prompt, "Candidate revision\n") if audit_turn else None
+        if candidate is not None and candidate["outcome"] == "no_action":
+            records = [_agent_result_event(_audit_protocol_result(
+                "approve", int(candidate["proposal_revision"]),
+                "Reviewed the no-action candidate and its current evidence.",
+                operation_id=str(candidate["operation_id"]),
+                candidate_digest=str(candidate["candidate_digest"]),
+            ))]
+        else:
+            records = self.records(prompt)
+        if audit_turn:
+            assert candidate is not None
+            # Legacy behavioral fixtures model a proposed write and its
+            # readback. Audit can only review the material it read; the
+            # SystemExecutor test instance below is dry-run, so those
+            # simulated effect and readback events must never be recorded as
+            # Audit activity or mistaken for an external receipt.
+            read_only_records: list[dict[str, object]] = []
+            after_simulated_write = False
+            for record in records:
+                item = record.get("item")
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "mcp_tool_call" and item.get("tool") == "execute_reviewed_write":
+                    after_simulated_write = True
+                    continue
+                if after_simulated_write and item.get("type") == "mcp_tool_call":
+                    continue
+                read_only_records.append(record)
+            records = read_only_records
+            for index, record in enumerate(records):
+                item = record.get("item")
+                if not isinstance(item, dict) or item.get("type") != "agent_message":
+                    continue
+                try:
+                    payload = json.loads(str(item.get("text") or ""))
+                except json.JSONDecodeError:
+                    continue
+                if payload.get("outcome") in {"proposal", "no_action", "needs_human"}:
+                    records[index] = _agent_result_event(_audit_protocol_result(
+                        "approve", int(candidate["proposal_revision"]),
+                        "Reviewed the unchanged Consumer candidate.",
+                        operation_id=str(candidate["operation_id"]),
+                        candidate_digest=str(candidate["candidate_digest"]),
+                    ))
             marker = "Verified Skills read by Consumer A\n"
             if marker not in prompt:
                 return records
@@ -1349,6 +1414,7 @@ class CalendarClarificationProtocolExecutor(ProtocolCodexExecutor):
                         int(candidate["proposal_revision"]),
                         "The exact clarification was sent and verified.",
                         operation_id=str(candidate["operation_id"]),
+                        candidate_digest=str(candidate["candidate_digest"]),
                         live_reference={
                             "event_id": "event-1",
                             "conversation_id": "cid-1",
@@ -1583,6 +1649,7 @@ class ProvidedSkillReceiptProtocolExecutor(SkillReceiptProtocolExecutor):
                         int(candidate["proposal_revision"]),
                         "The supplied-set protocol candidate was verified.",
                         operation_id=str(candidate["operation_id"]),
+                        candidate_digest=str(candidate["candidate_digest"]),
                         live_reference={"message_id": "provided-1"},
                     )
                 ),
@@ -1715,6 +1782,7 @@ class MessageClarificationSkillExecutor(SkillReceiptProtocolExecutor):
                         int(candidate["proposal_revision"]),
                         "The exact clarification was verified in the source group.",
                         operation_id=str(candidate["operation_id"]),
+                        candidate_digest=str(candidate["candidate_digest"]),
                         live_reference={"message_id": "question-1"},
                     )
                 ),
@@ -1852,6 +1920,7 @@ class DocumentReadSkillExecutor(SkillReceiptProtocolExecutor):
                         int(candidate["proposal_revision"]),
                         "The current document was reread and the review was verified.",
                         operation_id=str(candidate["operation_id"]),
+                        candidate_digest=str(candidate["candidate_digest"]),
                         live_reference={
                             "message_id": "review-1",
                             "document_version": 7,
@@ -2056,6 +2125,7 @@ class Task4BehaviorProtocolExecutor(ConsumerAuditLifecycleExecutor):
                     int(candidate["proposal_revision"]),
                     f"Verified {self.scenario.name} behavior by external readback.",
                     operation_id=str(candidate["operation_id"]),
+                        candidate_digest=str(candidate["candidate_digest"]),
                     live_reference={
                         "scenario": self.scenario.name,
                         "message_id": f"receipt-{self.scenario.name}",
@@ -2262,56 +2332,16 @@ class OaProtocolExecutor(ProtocolCodexExecutor):
                 else:
                     candidate = _prompt_json_section(prompt, "Candidate revision\n")
                     candidate_action = candidate["proposal"]["actions"][0]
-                    candidate_argv = candidate_action["payload"]["argv"]
-                    write_command = shlex.join(candidate_argv)
-                    output = self.native_executor(write_command)
-                    records.extend(
-                        (
-                            _reviewed_cli_event(
-                                "item.started",
-                                "oa-write",
-                                write_command,
-                                effectful=True,
-                            ),
-                            _reviewed_cli_event(
-                                "item.completed",
-                                "oa-write",
-                                write_command,
-                                output=output,
-                                effectful=True,
-                            ),
-                        )
-                    )
-                    verify_command = next(
-                        command
-                        for command in oa_material["read_commands"]
-                        if command.startswith("dws oa approval tasks ")
-                    )
-                    verify_output = self.native_executor(verify_command)
-                    records.extend(
-                        (
-                            _reviewed_cli_event(
-                                "item.started", "oa-verify", verify_command
-                            ),
-                            _reviewed_cli_event(
-                                "item.completed",
-                                "oa-verify",
-                                verify_command,
-                                output=verify_output,
-                            ),
-                        )
-                    )
+                    assert candidate_action["target"] == {
+                        "process_instance_id": process_id,
+                        "task_id": task_id,
+                    }
                     result = _audit_protocol_result(
-                        "executed",
+                        "approve",
                         int(candidate["proposal_revision"]),
-                        "Live OA task was reviewed and verified.",
+                        "Live OA task identity was reviewed.",
                         operation_id=str(candidate["operation_id"]),
-                        live_reference={
-                            "process_instance_id": process_id,
-                            "task_id": task_id,
-                            "action": "approve",
-                            "result": json.loads(output),
-                        },
+                        candidate_digest=str(candidate["candidate_digest"]),
                     )
         records.append(_agent_result_event(result))
         return records
@@ -2397,6 +2427,7 @@ class FailedWriteProtocolExecutor(ProtocolCodexExecutor):
                     int(candidate["proposal_revision"]),
                     "The native write returned a nonzero exit code.",
                     operation_id=str(candidate["operation_id"]),
+                        candidate_digest=str(candidate["candidate_digest"]),
                     retryable=True,
                     code="native_write_failed",
                 )
@@ -2458,6 +2489,7 @@ class ContextRefreshingProtocolExecutor(ProtocolCodexExecutor):
                     int(candidate["proposal_revision"]),
                     "The refreshed context requires human review.",
                     operation_id=str(candidate["operation_id"]),
+                        candidate_digest=str(candidate["candidate_digest"]),
                     code="newer_context_requires_review",
                 )
             )
@@ -2533,6 +2565,7 @@ class AuthorizationRecoveryProtocolExecutor(ProtocolCodexExecutor):
                         int(candidate["proposal_revision"]),
                         "Authorization must be restored.",
                         operation_id=str(candidate["operation_id"]),
+                        candidate_digest=str(candidate["candidate_digest"]),
                         code="authorization_required",
                         retryable=True,
                         authorization_required=True,
@@ -2567,6 +2600,7 @@ class AuthorizationRecoveryProtocolExecutor(ProtocolCodexExecutor):
                     int(candidate["proposal_revision"]),
                     "Execution succeeded after authorization recovery.",
                     operation_id=str(candidate["operation_id"]),
+                        candidate_digest=str(candidate["candidate_digest"]),
                 )
             ),
         ]
@@ -2584,6 +2618,7 @@ class RetryExhaustionProtocolExecutor(AuthorizationRecoveryProtocolExecutor):
                     int(candidate["proposal_revision"]),
                     "The audit dependency remains unavailable.",
                     operation_id=str(candidate["operation_id"]),
+                        candidate_digest=str(candidate["candidate_digest"]),
                     code="audit_dependency_unavailable",
                     retryable=True,
                 )
@@ -2684,7 +2719,7 @@ def test_queued_task_uses_orchestrator_without_alternate_runtime(tmp_path: Path)
     assert attempt is not None and attempt.send_status == "skipped"
 
 
-def test_worker_passes_dry_run_to_real_audit_runner(tmp_path: Path):
+def test_worker_passes_dry_run_to_system_executor(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "runtime.sqlite3")
     worker = DingTalkAutoReplyWorker(
         store=store,
@@ -2698,7 +2733,8 @@ def test_worker_passes_dry_run_to_real_audit_runner(tmp_path: Path):
     orchestrator = worker._agent_orchestrator()
 
     assert isinstance(orchestrator.audit, AuditAgentRunner)
-    assert orchestrator.audit.dry_run is True
+    assert isinstance(orchestrator.audit, AuditAgentRunner)
+    assert orchestrator.system_executor.dry_run is True
 
 
 def test_stale_worker_recovers_completed_consumer_turn_without_legacy_parsing(
@@ -2719,13 +2755,33 @@ def test_stale_worker_recovers_completed_consumer_turn_without_legacy_parsing(
         operation_id="",
         owner="completed-consumer",
     )
-    store.complete_agent_run(
+    consumer_run = store.complete_agent_run(
         claim.run.id,
         _consumer_protocol_result("no_action", "Nothing remains.").model_dump(
             mode="json"
         ),
         owner="completed-consumer",
     )
+    candidate = store.persist_review_candidate(
+        task, consumer_run,
+        _consumer_protocol_result("no_action", "Nothing remains."),
+    )
+    audit_claim = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0,
+        parent_agent_run_id=consumer_run.id,
+        operation_id=f"agent-task:{task.id}:{task.execution_generation}:proposal:0",
+        owner="completed-audit",
+    )
+    review = _audit_protocol_result(
+        "approve", 0, "No action remains.",
+        operation_id=audit_claim.run.operation_id,
+        candidate_digest=candidate["candidate_digest"],
+    )
+    audit_run = store.complete_agent_run(
+        audit_claim.run.id, review.model_dump(mode="json"), owner="completed-audit",
+    )
+    store.record_candidate_review(candidate["id"], audit_run.id, review)
     with store._connect() as db:
         db.execute(
             "update reply_tasks set locked_at=datetime('now', '-31 minutes') where id=?",
@@ -2785,6 +2841,7 @@ def _worker_with_protocol_executor(
     executor: ProtocolCodexExecutor,
     *,
     max_task_attempts: int = 3,
+    system_dry_run: bool = True,
 ) -> tuple[DingTalkAutoReplyWorker, ContextOnlyDws]:
     _install_protocol_skill(tmp_path, executor)
     store = AutoReplyStore(tmp_path / "runtime.sqlite3")
@@ -2803,6 +2860,7 @@ def _worker_with_protocol_executor(
                 capabilities=frozenset(
                     {
                         "structured_output",
+                        "role_bound_agent_tools",
                         "local_schema_validation",
                         "reviewed_read_tools",
                         "task_context",
@@ -2826,6 +2884,7 @@ def _worker_with_protocol_executor(
     )
     orchestrator = AgentOrchestrator(
         store=store,
+        system_executor=SystemExecutor(store, dry_run=system_dry_run),
         consumer=ConsumerAgentRunner(
             store=store,
             workspace=tmp_path,
@@ -2887,6 +2946,7 @@ def test_worker_refreshes_conversation_after_consumer_before_audit(tmp_path: Pat
     _install_protocol_skill(tmp_path, executor)
     orchestrator = AgentOrchestrator(
         store=store,
+        system_executor=SystemExecutor(store, dry_run=True),
         consumer=ConsumerAgentRunner(
             store=store,
             workspace=tmp_path,
@@ -2914,8 +2974,8 @@ def test_worker_refreshes_conversation_after_consumer_before_audit(tmp_path: Pat
     assert worker.consume_once(max_tasks=1) == 1
 
     assert "The target changed after the request." in executor.audit_prompt
-    assert dws.recent_reads == 2
-    assert dws.unread_reads == 2
+    assert dws.recent_reads == 4
+    assert dws.unread_reads == 4
 
 
 def test_oa_pending_scan_refresh_reuses_synthetic_trigger_without_chat_lookup(
@@ -2939,6 +2999,7 @@ def test_oa_pending_scan_refresh_reuses_synthetic_trigger_without_chat_lookup(
         codex=object(),
         agent_orchestrator=AgentOrchestrator(
             store=store,
+            system_executor=SystemExecutor(store, dry_run=True),
             consumer=ConsumerAgentRunner(
                 store=store,
                 workspace=tmp_path,
@@ -3006,24 +3067,29 @@ def test_worker_defers_without_audit_when_context_refresh_fails(tmp_path: Path):
     assert executor.audit_prompt == ""
 
 
-def test_worker_corrects_provider_authorization_flag_in_same_task_turn(tmp_path: Path):
+def test_worker_preserves_terminal_authorization_denial_on_later_task_turn(tmp_path: Path):
     trigger = _message("Send the approved message.")
     executor = AuthorizationRecoveryProtocolExecutor()
     worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
     task_id = _enqueue(worker.store, trigger)
 
-    assert worker.consume_once(max_tasks=1) == 1
+    assert worker.consume_once(max_tasks=1) == 0
+    deferred = worker.store.get_reply_task(task_id)
+    assert deferred is not None and deferred.status == "failed"
+    assert deferred.error == "authorization_required"
+    assert executor.audit_attempts == 1
+    assert worker.consume_once(max_tasks=1) == 0
 
     completed = worker.store.get_reply_task(task_id)
-    assert completed is not None and completed.status == "done"
-    assert executor.audit_attempts == 2
+    assert completed is not None and completed.status == "failed"
+    assert executor.audit_attempts == 1
     runs = worker.store.list_agent_runs_for_task_generation(task_id, "g1")
     audit_runs = [run for run in runs if run.role is AgentRole.AUDIT]
-    assert len(audit_runs) == 2
-    assert [run.status for run in audit_runs] == ["failed", "completed"]
+    assert len(audit_runs) == 1
+    assert [run.status for run in audit_runs] == ["failed"]
 
 
-def test_provider_authorization_correction_does_not_consume_task_attempt(
+def test_authorization_recovery_respects_task_attempt_limit(
     tmp_path: Path,
 ):
     trigger = _message("Send the approved message.")
@@ -3036,13 +3102,14 @@ def test_provider_authorization_correction_does_not_consume_task_attempt(
     )
     task_id = _enqueue(worker.store, trigger)
 
-    assert worker.consume_once(max_tasks=1) == 1
+    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.consume_once(max_tasks=1) == 0
 
     completed = worker.store.get_reply_task(task_id)
     assert completed is not None
-    assert completed.status == "done"
+    assert completed.status == "failed"
     assert completed.attempts == 1
-    assert executor.audit_attempts == 2
+    assert executor.audit_attempts == 1
 
 
 def test_worker_stops_retryable_orchestration_at_attempt_limit(tmp_path: Path):
@@ -3342,7 +3409,7 @@ def test_dry_run_invokes_audit_orchestrator_in_read_only_mode(tmp_path: Path):
                     code="permission_missing",
                 )
             ),
-            "done",
+            "needs_human",
             "needs_human",
         ),
         (
@@ -3553,7 +3620,7 @@ def test_diagnosis_only_for_requested_execution_waits_for_human_by_agent_result(
 
     worker.consume_once(max_tasks=1)
 
-    assert worker.store.get_reply_task(task_id).status == "done"
+    assert worker.store.get_reply_task(task_id).status == "needs_human"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == "needs_human"
@@ -3775,15 +3842,15 @@ def test_manual_rerun_carries_prior_audit_rejection_into_context(tmp_path: Path,
     )
     rejected = AuditAgentResult.model_validate(
         {
-            "outcome": "feedback_provided",
+            "outcome": "return",
             "summary": "候选包含未经授权的责任变更",
             "proposal_revision": 0,
+            "candidate_digest": "a" * 64,
             "feedback": {
                 "rule": "不得新增管理指令",
                 "observation": "候选免除了对方的工作责任",
                 "requested_revision": "删除该责任变更后再审",
             },
-            "external_result": None,
             "error": {"code": "", "retryable": False, "authorization_required": False},
             "risk": "medium",
             "confidence": 1.0,
@@ -3795,10 +3862,15 @@ def test_manual_rerun_carries_prior_audit_rejection_into_context(tmp_path: Path,
         worker.store,
         "list_agent_runs_for_task_generation",
         lambda task_id, generation: [SimpleNamespace(
+            id=41,
             role=AgentRole.AUDIT,
             status="completed",
-            final_result_json=rejected.model_dump_json(),
         )],
+    )
+    monkeypatch.setattr(
+        worker.store,
+        "get_candidate_review_for_audit_run",
+        lambda run_id: {"result_json": rejected.model_dump_json()} if run_id == 41 else None,
     )
 
     context = worker._build_agent_task_context(
@@ -3881,6 +3953,63 @@ def test_stale_processing_resumes_same_generation_and_session(tmp_path: Path):
     assert runner.resume_session_ids == ["session-stale"]
     assert [generation for _task, generation, _context in runner.calls] == ["g1"]
     assert worker.store.get_reply_task(task_id).status == "done"
+
+
+@pytest.mark.parametrize("persisted_retryable,expected", [(False, "failed"), (True, "pending"), (None, "pending")])
+@pytest.mark.parametrize("clean_session", [False, True])
+@pytest.mark.parametrize("caller_retryable", [False, True])
+@pytest.mark.parametrize("at_limit", [False, True])
+def test_failure_recording_honors_persisted_nonretryable_run(tmp_path, persisted_retryable, expected, clean_session, caller_retryable, at_limit):
+    trigger = _message("read source")
+    worker, runner, _dws = _worker(tmp_path, [trigger], [], max_task_attempts=1 if at_limit else 3)
+    task_id = _enqueue(worker.store, trigger)
+    task = worker.store.claim_reply_task(task_id)
+    assert task is not None
+    before = worker._agent_run_snapshot(task)
+    claim = _claim_consumer_run(worker.store, task.id, task.execution_generation, owner="failure-test")
+    error = {"code": "runtime_result_source_invalid"}
+    if persisted_retryable is not None:
+        error["retryable"] = persisted_retryable
+    worker.store.fail_agent_run(claim.run.id, error, owner="failure-test")
+    if not caller_retryable or (at_limit and not clean_session):
+        expected = "failed"
+    status, attempt_id = worker._record_agent_runtime_failure_attempt(
+        task, "runtime_result_source_invalid", retryable=caller_retryable,
+        prior_run_snapshot=before, allow_clean_session_retry=clean_session,
+    )
+    assert status == expected
+    assert worker.store.get_reply_task(task.id).status == expected
+    attempt = worker.store.get_reply_attempt(attempt_id)
+    assert attempt.send_status == "failed"
+    assert attempt.agent_run_id == claim.run.id
+    assert worker.store.get_agent_run(claim.run.id).structured_error_json == json.dumps(error, ensure_ascii=False, separators=(",", ":"))
+    assert runner.calls == []
+
+
+def test_worker_exception_path_does_not_requeue_nonretryable_source_failure(tmp_path, monkeypatch):
+    trigger = _message("read source")
+    worker, runner, _dws = _worker(tmp_path, [trigger], [])
+    task_id = _enqueue(worker.store, trigger)
+    failed_ids = []
+
+    def fail_source(task, context, *, refresh_context):
+        claim = _claim_consumer_run(worker.store, task.id, task.execution_generation, owner="source-failure")
+        worker.store.fail_agent_run(
+            claim.run.id, {"code": "runtime_result_source_invalid", "retryable": False, "source": "service"},
+            owner="source-failure",
+        )
+        failed_ids.append(claim.run.id)
+        raise RuntimeError("runtime_result_source_invalid")
+
+    monkeypatch.setattr(runner, "process", fail_source)
+    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.store.get_reply_task(task_id).status == "failed"
+    attempts = worker.store.list_reply_attempts()
+    assert len(attempts) == 1
+    assert attempts[0].agent_run_id == failed_ids[0]
+    assert attempts[0].send_status == "failed"
+    assert worker.consume_once(max_tasks=1) == 0
+    assert len(failed_ids) == 1
 
 
 def test_stale_retryable_failed_run_resumes_same_generation_and_session(
@@ -4211,7 +4340,7 @@ def test_calendar_missing_attendance_value_is_a_verified_clarification_proposal(
 
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "completed"
+    assert attempt.send_status == "dry_run"
     assert attempt.send_status != "needs_human"
     assert executor.consumer_loaded_skills == [
         "ceo-calendar-invite",
@@ -4323,7 +4452,7 @@ def _assert_task4_receipts_and_consumer_read_only(
 
 def _task4_consumer_result(worker) -> dict[str, object]:
     consumer = _task4_agent_runs(worker)[0]
-    return json.loads(consumer.final_result_json)
+    return json.loads(consumer.adopted_result_json)
 
 
 def _task4_completed_operations(run) -> list[str]:
@@ -4376,7 +4505,7 @@ def test_direct_clarification_uses_native_business_and_operation_skill_receipts(
     assert worker.consume_once(max_tasks=1) == 1
 
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert attempt is not None and attempt.send_status == "completed"
+    assert attempt is not None and attempt.send_status == "dry_run"
     assert attempt.send_status != "needs_human"
     expected_names = list(skill_paths)
     assert executor.consumer_loaded_skills == expected_names
@@ -4451,7 +4580,7 @@ def test_document_read_uses_exact_commands_and_native_skill_receipts(
     assert worker.consume_once(max_tasks=1) == 1
 
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert attempt is not None and attempt.send_status == "completed"
+    assert attempt is not None and attempt.send_status == "dry_run"
     expected_names = list(skill_paths)
     assert executor.consumer_loaded_skills == expected_names
     assert executor.audit_loaded_skills == expected_names
@@ -4530,7 +4659,7 @@ def test_message_triage_no_action_scenarios_have_receipts_and_no_effects(
     runs = _assert_task4_receipts_and_consumer_read_only(
         worker,
         skill_paths,
-        expected_roles=(AgentRole.CONSUMER,),
+        expected_roles=(AgentRole.CONSUMER, AgentRole.AUDIT),
     )
     assert _task4_completed_operations(runs[0]) == ["chat message list"]
     assert executor.write_operations == []
@@ -4570,7 +4699,11 @@ def test_acknowledgment_proposes_reaction_only_when_useful(
     assert action["operation"] == "chat message reaction add"
     assert action["payload"]["argv"][-3:-1] == ["--emoji", "👍"]
     runs = _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
-    assert "chat message reaction add" in _task4_completed_operations(runs[1])
+    assert "chat message reaction add" not in _task4_completed_operations(runs[1])
+    assert all(
+        event.get("item", {}).get("tool") != "execute_reviewed_write"
+        for event in runs[1].tool_events
+    )
     assert executor.write_operations == ["chat message reaction add"]
     assert executor.external_readbacks == [
         "dws chat message reaction list --message-id msg-1"
@@ -4784,7 +4917,7 @@ def test_refresh_keeps_available_image_when_later_resolution_is_unavailable(
 
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "completed"
+    assert attempt.send_status == "dry_run"
     assert len(executor.image_inspections) == 2
     assert executor.write_operations == ["chat message send"]
     assert executor.external_readbacks == ["dws chat message list --group cid-1 --time 2026-07-29"]
@@ -4835,7 +4968,7 @@ def test_invalid_image_is_unavailable_to_agent_without_network_fetch(
     assert worker.consume_once(max_tasks=1) == 1
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "completed"
+    assert attempt.send_status == "dry_run"
     assert executor.commands
 
 
@@ -4922,7 +5055,7 @@ def test_required_dws_image_without_local_path_is_never_fetched(
     assert worker.consume_once(max_tasks=1) == 1
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "completed"
+    assert attempt.send_status == "dry_run"
     assert executor.commands
     errors = worker.store.list_errors()
     assert len(errors) == 1
@@ -5010,9 +5143,11 @@ def test_url_image_reference_is_not_a_required_attachment(
     assert attempt.send_status == "skipped"
     assert attempt.send_error == ""
     runs = _task4_agent_runs(worker)
-    assert len(runs) == 1
+    assert len(runs) == 2
     assert runs[0].role is AgentRole.CONSUMER
     assert runs[0].status == "completed"
+    assert runs[1].role is AgentRole.AUDIT
+    assert runs[1].status == "completed"
     assert executor.image_inspections == []
 
 
@@ -5214,13 +5349,14 @@ class MeetingReceiptLifecycleExecutor(ConsumerAuditLifecycleExecutor):
                     int(candidate["proposal_revision"]),
                     "Representative meeting action was read back.",
                     operation_id=str(candidate["operation_id"]),
+                        candidate_digest=str(candidate["candidate_digest"]),
                     live_reference={"message_id": "meeting-action-1"},
                 )
             ),
         ]
 
 
-def test_meeting_protocol_hands_exact_consumer_skill_receipts_to_audit_before_effect(
+def test_meeting_protocol_hands_exact_consumer_skill_receipts_to_read_only_audit(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -5235,10 +5371,12 @@ def test_meeting_protocol_hands_exact_consumer_skill_receipts_to_audit_before_ef
     runs = _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
     assert executor.consumer_loaded_skills == list(skill_paths)
     assert executor.audit_loaded_skills == list(skill_paths)
-    assert _task4_completed_operations(runs[1])[-2:] == [
-        "chat message send",
-        "chat message list",
-    ]
+    assert "chat message send" not in _task4_completed_operations(runs[1])
+    assert "chat message list" not in _task4_completed_operations(runs[1])
+    assert all(
+        event.get("item", {}).get("tool") != "execute_reviewed_write"
+        for event in runs[1].tool_events
+    )
 
 
 class AuthorizedMailReplyProtocolExecutor(ConsumerAuditLifecycleExecutor):
@@ -5373,62 +5511,20 @@ class AuthorizedMailReplyProtocolExecutor(ConsumerAuditLifecycleExecutor):
 
     def _audit_execution_records(self, prompt: str) -> list[dict[str, object]]:
         candidate = _prompt_json_section(prompt, "Candidate revision\n")
-        action = candidate["proposal"]["actions"][0]
-        write_command = shlex.join(action["payload"]["argv"])
-        verify_command = (
-            "dws mail message verify --email principal@example.test "
-            f"--internet-message-id {self.verify_internet_message_id} --format json"
-        )
-        self.write_commands.append(write_command)
-        self.verify_commands.append(verify_command)
         return [
-            _reviewed_cli_event(
-                "item.started", "audit-mail-reply", write_command, effectful=True
-            ),
-            _reviewed_cli_event(
-                "item.completed",
-                "audit-mail-reply",
-                write_command,
-                output=json.dumps(
-                    {
-                        "messageId": "reply-1",
-                        "internetMessageId": self.internet_message_id,
-                    }
-                ),
-                effectful=True,
-            ),
-            _reviewed_cli_event(
-                "item.started", "audit-mail-verify", verify_command
-            ),
-            _reviewed_cli_event(
-                "item.completed",
-                "audit-mail-verify",
-                verify_command,
-                output=json.dumps(
-                    {
-                        "internetMessageId": self.verify_internet_message_id,
-                        "sendStatus": "success",
-                    }
-                ),
-            ),
             _agent_result_event(
                 _audit_protocol_result(
-                    "executed",
+                    "approve",
                     int(candidate["proposal_revision"]),
-                    "The reply internetMessageId was verified as sent.",
+                    "Reviewed the proposed reply and its source material.",
                     operation_id=str(candidate["operation_id"]),
-                    live_reference={
-                        "mailbox": self.mailbox,
-                        "message_id": "reply-1",
-                        "internetMessageId": self.internet_message_id,
-                        "sendStatus": "success",
-                    },
+                    candidate_digest=str(candidate["candidate_digest"]),
                 )
             ),
         ]
 
 
-def test_authorized_mail_reply_protocol_executes_and_verifies_internet_message_id(
+def test_mail_reply_proposal_is_rejected_without_a_typed_system_handler(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -5437,13 +5533,16 @@ def test_authorized_mail_reply_protocol_executes_and_verifies_internet_message_i
         "Reply to the complete Contract approval mail after reviewing its linked material."
     )
     executor = AuthorizedMailReplyProtocolExecutor(skill_paths)
-    worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
+    worker, _dws = _worker_with_protocol_executor(
+        tmp_path, [trigger], executor, max_task_attempts=1,
+        system_dry_run=False,
+    )
     _enqueue(worker.store, trigger)
 
-    assert worker.consume_once(max_tasks=1) == 1
+    assert worker.consume_once(max_tasks=1) == 0
 
     runs = _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
-    consumer_result = json.loads(runs[0].final_result_json)
+    consumer_result = json.loads(runs[0].adopted_result_json)
     action = consumer_result["proposal"]["actions"][0]
     assert action["operation"] == "mail message reply"
     assert action["payload"]["argv"] == DwsClient().build_mail_reply_command(
@@ -5461,33 +5560,19 @@ def test_authorized_mail_reply_protocol_executes_and_verifies_internet_message_i
         "doc read",
     ]
     assert _task4_completed_operations(runs[0]) == expected_reads
-    assert _task4_completed_operations(runs[1]) == [
-        *expected_reads,
-        "mail message reply",
-        "mail message verify",
-    ]
+    assert _task4_completed_operations(runs[1]) == expected_reads
     assert executor.read_commands == [command for command, _output in executor.evidence] * 2
-    assert len(executor.write_commands) == 1
-    assert executor.verify_commands == [
-        "dws mail message verify --email principal@example.test "
-        "--internet-message-id internet-1 --format json"
-    ]
-    assert len(executor.write_commands) == 1
-    assert executor.write_commands[0] == shlex.join(
-        DwsClient().build_mail_reply_command(
-            mailbox=executor.mailbox,
-            message_id=executor.original_message_id,
-            subject=executor.reply_subject,
-            content=executor.reply_content,
-        )
-    )
-    audit_result = json.loads(runs[1].final_result_json)
-    reference = audit_result["external_result"]["live_result_reference"]
-    assert reference["internetMessageId"] == executor.internet_message_id
-    assert reference["sendStatus"] == "success"
+    assert executor.write_commands == []
+    assert executor.verify_commands == []
+    audit_result = json.loads(runs[1].adopted_result_json)
+    assert audit_result["outcome"] == "approve"
+    assert "external_result" not in audit_result
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None and attempt.send_status == "failed"
+    assert attempt.send_error == "unsupported_reviewed_action"
 
 
-def test_mail_reply_verify_with_different_write_receipt_id_is_not_confirmed(
+def test_mail_reply_review_cannot_claim_a_mismatched_provider_receipt(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -5497,24 +5582,27 @@ def test_mail_reply_verify_with_different_write_receipt_id_is_not_confirmed(
         skill_paths,
         verify_internet_message_id="internet-2",
     )
-    worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
+    worker, _dws = _worker_with_protocol_executor(
+        tmp_path, [trigger], executor, max_task_attempts=1,
+        system_dry_run=False,
+    )
     _enqueue(worker.store, trigger)
 
-    assert worker.consume_once(max_tasks=1) == 1
+    assert worker.consume_once(max_tasks=1) == 0
 
     runs = _task4_agent_runs(worker)
     assert [run.role for run in runs] == [AgentRole.CONSUMER, AgentRole.AUDIT]
     assert runs[1].status == "completed"
     task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
-    assert task is not None and task.status == "done"
-    assert executor.verify_commands == [
-        "dws mail message verify --email principal@example.test "
-        "--internet-message-id internet-2 --format json"
-    ]
+    assert task is not None and task.status == "failed"
+    assert executor.verify_commands == []
+    assert executor.write_commands == []
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None and attempt.send_error == "unsupported_reviewed_action"
 
 
 @pytest.mark.parametrize(
-    ("oa_state", "raw_payload", "live_output", "attempt_status", "effectful"),
+    ("oa_state", "raw_payload", "live_output", "attempt_status", "approved_task_id"),
     [
         (
             "complete_form",
@@ -5524,8 +5612,8 @@ def test_mail_reply_verify_with_different_write_receipt_id_is_not_confirmed(
                     {"task_id": "task-1", "status": "running", "current_user": True}
                 ]
             },
-            "completed",
-            True,
+            "dry_run",
+            "task-1",
         ),
         (
             "instance_id_only",
@@ -5535,8 +5623,8 @@ def test_mail_reply_verify_with_different_write_receipt_id_is_not_confirmed(
                     {"task_id": "task-live", "status": "running", "current_user": True}
                 ]
             },
-            "completed",
-            True,
+            "dry_run",
+            "task-live",
         ),
         (
             "ambiguous_candidates",
@@ -5548,7 +5636,7 @@ def test_mail_reply_verify_with_different_write_receipt_id_is_not_confirmed(
                 ]
             },
             "needs_human",
-            False,
+            None,
         ),
         (
             "task_completed",
@@ -5559,7 +5647,7 @@ def test_mail_reply_verify_with_different_write_receipt_id_is_not_confirmed(
                 ]
             },
             "skipped",
-            False,
+            None,
         ),
         (
             "task_not_current_user",
@@ -5569,18 +5657,18 @@ def test_mail_reply_verify_with_different_write_receipt_id_is_not_confirmed(
                     {"task_id": "task-1", "status": "running", "current_user": False}
                 ]
             },
-            "completed",
-            True,
+            "dry_run",
+            "task-1",
         ),
     ],
 )
-def test_oa_runtime_agent_executes_live_read_commands_and_decides_from_output(
+def test_oa_runtime_agent_reads_live_tasks_and_reviews_selected_identity(
     tmp_path: Path,
     oa_state: str,
     raw_payload: dict[str, object],
     live_output: dict[str, object],
     attempt_status: str,
-    effectful: bool,
+    approved_task_id: str | None,
 ):
     trigger = _message(
         "请审核这个审批",
@@ -5616,12 +5704,13 @@ def test_oa_runtime_agent_executes_live_read_commands_and_decides_from_output(
     task_id = task.id
     run = _get_audit_run(worker.store, task_id, "g1")
     assert run is not None
-    assert bool(native_executor.write_calls) is effectful
+    assert native_executor.write_calls == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == attempt_status
-    if oa_state == "instance_id_only":
-        assert "task-live" in native_executor.write_calls[0]
+    if approved_task_id is not None:
+        candidate = json.loads(_task4_agent_runs(worker)[0].adopted_result_json)
+        assert candidate["proposal"]["actions"][0]["target"]["task_id"] == approved_task_id
 
 
 def test_service_waits_when_agent_cannot_form_requested_execution_proposal(
@@ -5641,10 +5730,10 @@ def test_service_waits_when_agent_cannot_form_requested_execution_proposal(
     )
     task_id = _enqueue(worker.store, trigger)
 
-    assert worker.consume_once(max_tasks=1) == 1
+    assert worker.consume_once(max_tasks=1) == 0
 
     task = worker.store.get_reply_task(task_id)
-    assert task is not None and task.status == "done"
+    assert task is not None and task.status == "needs_human"
     run = _get_audit_run(worker.store, task_id, "g1")
     assert run is not None
     assert run.status == "completed"
@@ -5652,7 +5741,7 @@ def test_service_waits_when_agent_cannot_form_requested_execution_proposal(
     assert attempt is not None
     assert attempt.send_status == "needs_human"
     assert attempt.send_error == "needs_human"
-    assert len(native_executor.calls) == 1
+    assert len(native_executor.calls) == 2
     assert native_executor.write_calls == []
     assert dws.forbidden_material_reads == []
 

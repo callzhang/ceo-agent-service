@@ -92,6 +92,27 @@ def test_scheduled_loader_widens_only_the_history_embedding_deadline(
     assert captured["embedding_remote_timeout_seconds"] == 120.0
 
 
+def test_runtime_email_discovery_uses_schema_only_store_validation(
+    tmp_path, monkeypatch
+):
+    from app.email_store import EmailStore
+
+    validations = []
+
+    def track_email_store(path, **kwargs):
+        validations.append(kwargs.get("validate_rows", True))
+        return EmailStore(path, **kwargs)
+
+    monkeypatch.setattr("app.email_scheduled_command.EmailStore", track_email_store)
+
+    build_email_discovery_dependencies(
+        SimpleNamespace(db_path=tmp_path / "runtime-email.sqlite3"),
+        source_factory=lambda _account: pytest.fail("source must not be opened"),
+    )
+
+    assert validations == [False]
+
+
 def test_email_scheduled_command_reports_dependency_construction_failure() -> None:
     def fail(_settings):
         raise RuntimeError("discovery bootstrap unavailable")

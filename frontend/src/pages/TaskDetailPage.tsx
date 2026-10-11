@@ -5,9 +5,9 @@ import { Link } from "react-router-dom";
 import { getBusinessTaskDetail, getLegacyProjectDetail, sendBusinessTaskFollowUp, type BusinessTaskDetail, type TaskDetail } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
-import { CandidateAction, DetailSection, TaskSkeleton } from "./TaskParts";
+import { CandidateAction, CitationList, DetailSection, signalSourceLink, TaskSkeleton } from "./TaskParts";
 import { formatTaskTime } from "./TaskTime";
-import { attentionEventLabels, commitmentLabels, dateTypeLabels, evidenceRoleLabels, labelOf, relationTypeLabels, sourceTypeLabels, taskEventLabels, taskStatusLabels } from "./taskLabels";
+import { attentionEventLabels, commitmentLabels, dateTypeLabels, evidenceRoleLabels, isCurrentSuggestion, labelOf, relationTypeLabels, sourceTypeLabels, taskEventLabels, taskOriginLabel, taskStatusLabels } from "./taskLabels";
 
 function parseJson(value: unknown): unknown {
   if (typeof value !== "string") return undefined;
@@ -23,28 +23,33 @@ const legacyStatusLabels: Record<string, string> = { active: "进行中", paused
 const eventLabels = { ...taskEventLabels, ...attentionEventLabels };
 
 /** One evidence-style row: a readable line, and the raw record folded away when the source stored JSON. */
-function SourceRecordRows({ rows }: { rows: Array<Record<string, unknown>> }) {
+export function SourceRecordRows({ rows }: { rows: Array<Record<string, unknown>> }) {
   return <ol className="business-source-list">{rows.map((row, index) => {
     const signal = row.signal && typeof row.signal === "object" ? row.signal as Record<string, unknown> : null;
     const rawText = [signal?.evidence_text, row.evidence_text].find(nonEmpty);
     const raw = parseJson(rawText);
-    const context = parseJson(signal?.context_json) as Record<string, unknown> | undefined;
+    const contextJson = signal?.context_json ?? row.context_json;
+    const context = parseJson(contextJson) as Record<string, unknown> | undefined;
     const readable = [raw === undefined ? rawText : undefined, row.raw_phrase, row.title, row.summary].find(nonEmpty);
     const eventLabel = typeof row.event_type === "string" ? eventLabels[row.event_type] : undefined;
     const sourceType = String(signal?.source_type ?? row.source_type ?? "");
     const primary = eventLabel
       ?? readable
       ?? [context?.work_item_title, row.reason, row.event_type, sourceTypeLabels[sourceType], sourceType].find(nonEmpty);
-    const time = [signal?.source_time, row.value_at, row.created_at].find(nonEmpty);
+    const time = [signal?.source_time, row.source_time, row.value_at, row.created_at].find(nonEmpty);
+    const sourceRef = [signal?.source_ref, row.source_ref].find(nonEmpty);
+    const sourceLink = signalSourceLink(contextJson);
     const secondary = [
       typeof row.role === "string" ? labelOf(evidenceRoleLabels, row.role) : undefined,
       typeof row.date_type === "string" ? labelOf(dateTypeLabels, row.date_type) : undefined,
       typeof row.relation_type === "string" ? labelOf(relationTypeLabels, row.relation_type) : undefined,
       eventLabel ? row.reason : undefined,
       labelOf(sourceTypeLabels, sourceType),
+      sourceRef,
       time ? formatTaskTime(time) : undefined,
     ].filter((value) => nonEmpty(value) && value !== primary);
-    return <li key={String(row.id ?? index)}><span>{typeof primary === "string" ? primary : "记录"}</span>{secondary.length > 0 && <small>{secondary.join(" · ")}</small>}
+    return <li key={String(row.id ?? index)}><span className="business-source-text">{typeof primary === "string" ? primary : "记录"}</span>{secondary.length > 0 && <small>{secondary.join(" · ")}</small>}
+      {sourceLink && <a href={sourceLink} target="_blank" rel="noreferrer">打开来源</a>}
       {raw !== undefined && <details className="business-source-raw"><summary>查看原始记录</summary><pre>{JSON.stringify(raw, null, 2)}</pre></details>}</li>;
   })}</ol>;
 }
@@ -119,13 +124,20 @@ export function TaskDetailPage({ taskId }: { taskId: string }) {
   if (state === "loading") return <ConsolePageLayout title="任务详情" breadcrumb={[...trail, { label: "任务详情" }]}><TaskSkeleton /></ConsolePageLayout>;
   if (state === "error" || !detail) return <ConsolePageLayout title="任务详情" breadcrumb={[...trail, { label: "任务详情" }]}><div className="page-state page-state-error" role="alert">{error || "任务不存在"}</div></ConsolePageLayout>;
   const task = detail.summary;
+  const suggestion = detail.suggestion;
   const missing = detail.missing_evidence || [];
   return <ConsolePageLayout title={task.title} breadcrumb={[...trail, { label: "任务详情" }]} actions={<SnapshotBadge timestamp={snapshot} />}>
     <div className="task-domain-page business-detail-page">
-      <section className="console-card business-detail-section"><div className="business-detail-badges"><span className={`business-stage ${task.stage}`}>{task.stage === "candidate" ? "候选任务" : "正式任务"}</span><span>{labelOf(taskStatusLabels, task.status)}</span>{labelOf(commitmentLabels, task.commitment_status) !== labelOf(taskStatusLabels, task.status) && <span>{labelOf(commitmentLabels, task.commitment_status)}</span>}<span className="business-detail-badge-actions"><CandidateAction task={task} showLabel onDone={() => setReloadKey((key) => key + 1)} /></span></div>
+      <section className="console-card business-detail-section"><div className="business-detail-badges"><span className={`business-stage ${task.stage}`}>{task.stage === "candidate" ? "候选任务" : "正式任务"}</span><span className="business-origin">{taskOriginLabel(task)}</span><span>{labelOf(taskStatusLabels, task.status)}</span>{labelOf(commitmentLabels, task.commitment_status) !== labelOf(taskStatusLabels, task.status) && <span>{labelOf(commitmentLabels, task.commitment_status)}</span>}<span className="business-detail-badge-actions"><CandidateAction task={task} showLabel onDone={() => setReloadKey((key) => key + 1)} /></span></div>
         {detail.description && <p className="business-detail-description">{detail.description}</p>}
-        <dl className="business-detail-facts"><div><dt>负责人</dt><dd>{task.owner || "未指定"}</dd></div><div><dt>截止日期</dt><dd>{task.deadline_at || "未明确"}</dd></div><div><dt>业务主线</dt><dd>{task.anchor_labels.join(" · ") || "尚未确认"}</dd></div>{missing.length > 0 && <div><dt>{task.stage === "candidate" ? "转为正式任务还需" : "还缺依据"}</dt><dd>{missing.join("；")}</dd></div>}</dl>
+        <dl className="business-detail-facts"><div><dt>负责人</dt><dd>{task.owner || "待明确"}</dd></div><div><dt>{task.deadline_type && task.deadline_at ? labelOf(dateTypeLabels, task.deadline_type) : "任务日期"}</dt><dd>{task.deadline_type && task.deadline_at ? task.deadline_at : "待明确"}</dd></div><div><dt>业务主线</dt><dd>{task.anchor_labels.join(" · ") || "尚未确认"}</dd></div>{missing.length > 0 && <div><dt>{task.stage === "candidate" ? "转为正式任务还需" : "还缺依据"}</dt><dd>{missing.join("；")}</dd></div>}</dl>
       </section>
+      {suggestion && <DetailSection title={isCurrentSuggestion(task) ? "建议说明" : "历史建议依据"}>
+        <p className="business-section-note">{isCurrentSuggestion(task) ? "建议尚未指派，不表示负责人已接受或承诺。" : "本任务已转为正式任务，保留最初建议的来源依据；当前负责人、承诺与日期以任务记录为准。"}</p>
+        <dl className="business-detail-facts"><div><dt>{isCurrentSuggestion(task) ? "建议负责人" : "最初建议负责人"}</dt><dd>{suggestion.suggested_owner_name || "待明确"}</dd></div><div><dt>建议原因</dt><dd>{suggestion.reason}</dd></div></dl>
+        <h3>职责依据</h3>{suggestion.responsibility_evidence.length ? <CitationList citations={suggestion.responsibility_evidence} /> : <p className="business-empty-line">职责待明确。</p>}
+        <h3>建议依据</h3><CitationList citations={suggestion.basis_evidence} />
+      </DetailSection>}
       <FollowUpSection taskId={taskId} rows={detail.follow_ups || []} onChanged={() => setReloadKey((key) => key + 1)} />
       <SourceRecordList title="来源证据" rows={detail.evidence || []} />
       {!!detail.official_projects?.length && <DetailSection title="正式项目" count={detail.official_projects.length}><ul className="business-linked-list">{detail.official_projects.map((project) => <li key={project.id}><Link to={project.detail_url}>{project.title}</Link></li>)}</ul></DetailSection>}

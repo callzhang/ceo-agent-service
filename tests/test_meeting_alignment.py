@@ -5,12 +5,14 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ConfigDict, create_model
 
 import app.meeting_alignment as meeting_alignment
 from app.agent_cron.commands import (
     SERVICE_COMMAND_OPTIONS,
     ServiceCommandConsumerContext,
     ServiceCommandRegistry,
+    ServiceCommandSkillMaterial,
 )
 from app.agent_runtime_contracts import RuntimeFailureClass
 from app.agent_runtime_router import RoutedCodexExecutionError
@@ -34,6 +36,27 @@ from app.store import AutoReplyStore
 from app.skill_features import FeatureRegistry
 
 NOW = datetime.fromisoformat("2026-07-14T10:10:00+08:00")
+
+
+@pytest.mark.parametrize("status", ["pending", "processing", "retry", "ready_to_send"])
+def test_discovery_failure_preserves_active_meeting_source(tmp_path, status):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    original_source = json.dumps({"calendar_evidence": {"event_id": "event-1"}})
+    original_participants = '[{"user_id":"owner-1","name":"Owner"}]'
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1", title="Meeting", source_json=original_source,
+        participants_json=original_participants, ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status=status,
+    )
+    meeting_alignment._store_meeting_discovery_terminal_job(
+        store, meeting_id="minutes-1", title="Meeting", list_item={}, info={},
+        status="skipped", error='{"kind":"meeting_roster","message":"DNS failed"}',
+        now=NOW,
+    )
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == status
+    assert job.source_json == original_source
+    assert job.participants_json == original_participants
 
 
 def test_producer_does_not_create_new_job_when_feature_disabled(tmp_path):
@@ -168,6 +191,271 @@ def test_internal_delivery_pass_never_claims_pending_analysis_jobs(
 
     assert result == {job.id}
     assert delivered == [job.id]
+
+
+def test_delivery_terminal_write_failure_releases_claim_without_resending(
+    tmp_path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+    original = store.get_meeting_alignment_job(job_id)
+    store.update_meeting_alignment_job(
+        job_id, status="ready_to_send", calendar_summary_status="not_started"
+    )
+    update = store.update_meeting_alignment_job
+
+    def fail_terminal_write(job_id, **values):
+        if values.get("status") == "sent":
+            raise sqlite3.OperationalError("database is locked")
+        return update(job_id, **values)
+
+    monkeypatch.setattr(store, "update_meeting_alignment_job", fail_terminal_write)
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        deliver_ready_meeting_alignment_jobs(store, dws, now=NOW, limit=1)
+
+    interrupted = store.get_meeting_alignment_job(job_id)
+    assert interrupted.status == "ready_to_send"
+    assert interrupted.locked_at is None
+    assert interrupted.send_result_json == original.send_result_json
+    assert len(dws.send_calls) == 1
+
+    monkeypatch.setattr(store, "update_meeting_alignment_job", update)
+    assert deliver_ready_meeting_alignment_jobs(
+        store, dws, now=NOW + timedelta(minutes=1), limit=1
+    ) == {job_id}
+    assert store.get_meeting_alignment_job(job_id).status == "sent"
+    assert len(dws.send_calls) == 1
+    assert runner.calls == 1
+
+
+def test_delivery_exception_releases_unprocessed_batch_claims(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    ids = [
+        store.upsert_meeting_alignment_job(
+            meeting_id=f"minutes-{index}", title="Meeting", source_json="{}",
+            participants_json="[]", ended_at=NOW.isoformat(),
+            eligible_at=NOW.isoformat(), status="ready_to_send",
+        )
+        for index in range(2)
+    ]
+
+    def interrupt(*_args, **_kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(meeting_alignment, "_deliver_meeting_job", interrupt)
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        deliver_ready_meeting_alignment_jobs(store, object(), now=NOW, limit=2)
+
+    assert [store.get_meeting_alignment_job(i).locked_at for i in ids] == [None, None]
+    assert [j.id for j in store.claim_ready_to_send_meeting_alignment_jobs(
+        limit=2, now=NOW.isoformat()
+    )] == ids
+
+
+def test_delivery_cleanup_cannot_release_a_successor_claim(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="ready_to_send",
+    )
+
+    def successor_claim(*_args, **_kwargs):
+        with sqlite3.connect(store.path) as db:
+            db.execute(
+                "update meeting_alignment_jobs set locked_at=? where id=?",
+                ("2099-01-01 00:00:00", job_id),
+            )
+
+    monkeypatch.setattr(meeting_alignment, "_deliver_meeting_job", successor_claim)
+    deliver_ready_meeting_alignment_jobs(store, object(), now=NOW, limit=1)
+    assert store.get_meeting_alignment_job(job_id).locked_at == "2099-01-01 00:00:00"
+
+
+def test_delivery_cleanup_cannot_release_same_timestamp_successor(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="ready_to_send",
+    )
+    first = store.claim_ready_to_send_meeting_alignment_job(job_id, now=NOW.isoformat())
+    store.reset_ready_to_send_meeting_alignment_jobs()
+    second = store.claim_ready_to_send_meeting_alignment_job(job_id, now=NOW.isoformat())
+    with sqlite3.connect(store.path) as db:
+        db.execute("update meeting_alignment_jobs set locked_at=? where id=?",
+                   (first.locked_at, job_id))
+    store.release_ready_to_send_meeting_alignment_claims([first])
+    remaining = store.get_meeting_alignment_job(job_id)
+    assert remaining.locked_at == first.locked_at
+    with sqlite3.connect(store.path) as db:
+        assert db.execute(
+            "select claim_token from meeting_alignment_delivery_claims where job_id=?",
+            (job_id,),
+        ).fetchone()[0] == second.delivery_claim_token
+    assert first.delivery_claim_token != second.delivery_claim_token
+    store.release_ready_to_send_meeting_alignment_claims([second])
+    assert store.get_meeting_alignment_job(job_id).locked_at is None
+
+
+def test_delivery_and_cleanup_failure_preserve_both_errors(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="ready_to_send",
+    )
+
+    def delivery_failure(*_args, **_kwargs):
+        raise ValueError("original delivery failure")
+
+    def cleanup_failure(*_args, **_kwargs):
+        raise sqlite3.OperationalError("claim cleanup database is locked")
+
+    monkeypatch.setattr(meeting_alignment, "_deliver_meeting_job", delivery_failure)
+    monkeypatch.setattr(store, "release_ready_to_send_meeting_alignment_claims", cleanup_failure)
+    with pytest.raises(ExceptionGroup) as raised:
+        deliver_ready_meeting_alignment_jobs(store, object(), now=NOW, limit=1)
+    assert "original delivery failure" in str(raised.value)
+    assert "claim cleanup database is locked" in str(raised.value)
+    assert [type(e) for e in raised.value.exceptions] == [ValueError, sqlite3.OperationalError]
+
+
+def test_successful_delivery_cleanup_failure_propagates(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    def cleanup_failure(*_args, **_kwargs):
+        raise sqlite3.OperationalError("claim cleanup database is locked")
+
+    monkeypatch.setattr(store, "release_ready_to_send_meeting_alignment_claims", cleanup_failure)
+    with pytest.raises(sqlite3.OperationalError, match="claim cleanup database is locked"):
+        deliver_ready_meeting_alignment_jobs(store, object(), now=NOW, limit=1)
+
+
+def test_delivery_claim_token_migration_preserves_existing_receipt(tmp_path):
+    path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(path)
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="ready_to_send",
+    )
+    store.update_meeting_alignment_job(job_id, send_result_json='{"status":"sent"}')
+    with sqlite3.connect(path) as db:
+        db.execute("drop table meeting_alignment_delivery_claims")
+    legacy_path = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(path) as source, sqlite3.connect(legacy_path) as target:
+        source.backup(target)
+    migrated = AutoReplyStore(legacy_path)
+    job = migrated.get_meeting_alignment_job(job_id)
+    assert job.send_result_json == '{"status":"sent"}'
+    assert job.delivery_claim_token == ""
+    claimed = migrated.claim_ready_to_send_meeting_alignment_job(job_id, now=NOW.isoformat())
+    assert claimed.delivery_claim_token
+    assert claimed.send_result_json == job.send_result_json
+    migrated.release_ready_to_send_meeting_alignment_claims([claimed])
+    assert migrated.get_meeting_alignment_job(job_id).locked_at is None
+
+
+def test_delivery_claim_migration_keeps_old_strict_job_model_readable(tmp_path):
+    from app.meeting_alignment_models import MeetingAlignmentJob
+
+    old_model = create_model(
+        "PreClaimTokenMeetingAlignmentJob", __config__=ConfigDict(extra="forbid"),
+        **{name: (field.annotation, field.default) for name, field in
+           MeetingAlignmentJob.model_fields.items() if name != "delivery_claim_token"},
+    )
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="ready_to_send",
+    )
+    claim = store.claim_ready_to_send_meeting_alignment_job(job_id, now=NOW.isoformat())
+    with sqlite3.connect(store.path) as db:
+        db.row_factory = sqlite3.Row
+        row = dict(db.execute("select * from meeting_alignment_jobs where id=?", (job_id,)).fetchone())
+    assert old_model.model_validate(row).id == job_id
+    store.release_ready_to_send_meeting_alignment_claims([claim])
+
+
+@pytest.mark.parametrize("entry", ["single", "batch_first", "batch_second"])
+def test_delivery_claim_insert_failure_rolls_back_job_lock(tmp_path, entry):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    ids = [store.upsert_meeting_alignment_job(
+        meeting_id=f"minutes-{index}", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="ready_to_send",
+    ) for index in range(2)]
+    failure_id = ids[1] if entry == "batch_second" else ids[0]
+    with sqlite3.connect(store.path) as db:
+        db.execute(f"""create trigger reject_claim before insert
+                      on meeting_alignment_delivery_claims when new.job_id={failure_id} begin
+                      select raise(abort, 'claim insert failed'); end""")
+    with pytest.raises(sqlite3.IntegrityError, match="claim insert failed"):
+        if entry != "single":
+            store.claim_ready_to_send_meeting_alignment_jobs(limit=2, now=NOW.isoformat())
+        else:
+            store.claim_ready_to_send_meeting_alignment_job(ids[0], now=NOW.isoformat())
+    assert [store.get_meeting_alignment_job(job_id).locked_at for job_id in ids] == [None, None]
+    with sqlite3.connect(store.path) as db:
+        assert db.execute("select count(*) from meeting_alignment_delivery_claims").fetchone()[0] == 0
+
+
+def test_delivery_claim_delete_failure_rolls_back_release(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="ready_to_send",
+    )
+    claim = store.claim_ready_to_send_meeting_alignment_job(job_id, now=NOW.isoformat())
+    with sqlite3.connect(store.path) as db:
+        db.execute("""create trigger reject_release before delete
+                      on meeting_alignment_delivery_claims begin
+                      select raise(abort, 'claim delete failed'); end""")
+    with pytest.raises(sqlite3.IntegrityError, match="claim delete failed"):
+        store.release_ready_to_send_meeting_alignment_claims([claim])
+    assert store.get_meeting_alignment_job(job_id).locked_at == claim.locked_at
+    with sqlite3.connect(store.path) as db:
+        assert db.execute(
+            "select claim_token from meeting_alignment_delivery_claims where job_id=?",
+            (job_id,),
+        ).fetchone()[0] == claim.delivery_claim_token
+
+
+def test_startup_reset_removes_interrupted_and_terminal_delivery_claims(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    ids = [store.upsert_meeting_alignment_job(
+        meeting_id=f"minutes-{index}", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="ready_to_send",
+    ) for index in range(2)]
+    store.claim_ready_to_send_meeting_alignment_jobs(limit=2, now=NOW.isoformat())
+    store.update_meeting_alignment_job(ids[1], status="sent", send_result_json='{"status":"sent"}')
+    terminal = store.get_meeting_alignment_job(ids[1])
+    assert [job.id for job in store.reset_ready_to_send_meeting_alignment_jobs()] == [ids[0]]
+    assert store.get_meeting_alignment_job(ids[0]).locked_at is None
+    assert store.get_meeting_alignment_job(ids[1]) == terminal
+    with sqlite3.connect(store.path) as db:
+        assert db.execute("select count(*) from meeting_alignment_delivery_claims").fetchone()[0] == 0
+
+
+def test_delivery_cleanup_leaves_terminal_rows_unchanged(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="ready_to_send",
+    )
+    claim = store.claim_ready_to_send_meeting_alignment_job(job_id, now=NOW.isoformat())
+    store.update_meeting_alignment_job(job_id, status="sent", send_result_json='{"status":"sent"}')
+    before = store.get_meeting_alignment_job(job_id)
+    store.release_ready_to_send_meeting_alignment_claims([claim])
+    assert store.get_meeting_alignment_job(job_id) == before
 
 
 def test_disabled_feature_does_not_queue_new_meeting_replay(tmp_path):
@@ -864,7 +1152,8 @@ def test_producer_keeps_recording_exactly_five_minutes(tmp_path):
     assert dws.calendar_calls == [""]
 
 
-def test_replay_requeues_recent_failed_unsent_meeting_and_refreshes_source(tmp_path):
+@pytest.mark.parametrize("provider_status", ["ended", 2, 4])
+def test_replay_requeues_recent_failed_unsent_meeting_and_refreshes_source(tmp_path, provider_status):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     short = ended_meeting(
         meeting_id="minutes-short",
@@ -872,6 +1161,7 @@ def test_replay_requeues_recent_failed_unsent_meeting_and_refreshes_source(tmp_p
         end="2026-07-14T09:04:59+08:00",
     )
     eligible = ended_meeting(meeting_id="minutes-replay")
+    eligible["status"] = provider_status
 
     class ReplayDws(FakeDws):
         def list_minutes_page(
@@ -1045,7 +1335,56 @@ def test_consumer_delivers_summary_when_there_is_no_disagreement(tmp_path):
     assert run.codex_session_id == "meeting-session-1"
     assert run.codex_transcript_start_line == 4
     assert run.codex_transcript_end_line == 19
-    assert json.loads(run.audit_tool_events_json)[0]["tool"] == "dws"
+    assert run.audit_tool_events_json == "[]"
+    assert run.native_available is False
+    with store._connect() as db:
+        row = db.execute(
+            "select decision_json, audit_summary, audit_tool_events_json "
+            "from meeting_alignment_runs where id=?", (run.id,)
+        ).fetchone()
+    assert tuple(row) == ("{}", "", "[]")
+    assert store.get_meeting_alignment_job(job_id).decision_json != "{}"
+
+
+def test_tool_free_meeting_planner_preserves_all_frozen_skill_requirements(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    context = ServiceCommandConsumerContext(
+        scheduled_task_id=3,
+        scheduled_task_run_id=5,
+        prompt="使用 $ceo-meeting-work 处理真实会议。",
+        skill_names=("ceo-meeting-work", "dingtalk-minutes", "dingtalk-calendar"),
+        skill_protocol="SHORT CATALOG MUST NOT SUBSTITUTE",
+        skill_materials=(
+            ServiceCommandSkillMaterial(
+                name="ceo-meeting-work", content="FROZEN MEETING SKILL BODY"
+            ),
+            ServiceCommandSkillMaterial(
+                name="dingtalk-minutes", content="FROZEN MINUTES SKILL BODY"
+            ),
+            ServiceCommandSkillMaterial(
+                name="dingtalk-calendar", content="FROZEN CALENDAR SKILL BODY"
+            ),
+        ),
+    )
+    implementations = {
+        option.name: lambda: "unused" for option in SERVICE_COMMAND_OPTIONS
+    }
+    implementations["scan-meetings-once"] = lambda: str(
+        produce_meeting_alignment_jobs(store, dws, now=NOW)
+    )
+    ServiceCommandRegistry(implementations).run(
+        "scan-meetings-once", consumer_context=context
+    )
+    runner = FakeMeetingRunner(summary_decision())
+
+    assert consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1) == 1
+
+    [prompt] = runner.prompts
+    assert "FROZEN MEETING SKILL BODY" in prompt
+    assert "FROZEN MINUTES SKILL BODY" in prompt
+    assert "FROZEN CALENDAR SKILL BODY" in prompt
+    assert "SHORT CATALOG MUST NOT SUBSTITUTE" not in prompt
 
 
 def test_consumer_injects_similar_codex_sessions_into_meeting_prompt(tmp_path):
@@ -1075,7 +1414,7 @@ def test_consumer_injects_similar_codex_sessions_into_meeting_prompt(tmp_path):
     [prompt] = runner.prompts
     assert "相似历史 Codex sessions" in prompt
     assert "session-risk-budget" in prompt
-    assert "历史相似会议：上线范围和风险预算" in prompt
+    assert "历史相似会议：上线范围和风险预算" not in prompt
 
 
 def test_consumer_indexes_completed_meeting_codex_session(tmp_path):
@@ -1109,10 +1448,15 @@ def test_consumer_indexes_completed_meeting_codex_session(tmp_path):
         limit=1,
     )
     assert [result.session_id for result in results] == ["meeting-session-1"]
-    assert "上线范围" in results[0].summary_text
-    assert "最多接受多大故障面" in results[0].summary_text
+    assert results[0].summary_text == ""
     assert results[0].source_type == "meeting_alignment"
     assert results[0].source_id == "1"
+    with store._connect() as db:
+        row = db.execute(
+            "select summary_text, fts_text, embedding_json from codex_session_search_index "
+            "where session_id='meeting-session-1'"
+        ).fetchone()
+    assert tuple(row) == ("", "", "")
 
 
 def test_consumer_retries_invalid_model_decision(tmp_path):
@@ -1943,6 +2287,85 @@ def test_meeting_group_discovery_failure_does_not_become_direct_fallback(tmp_pat
     assert dws.send_calls == []
 
 
+@pytest.mark.parametrize("prior_attempts", [0, 411])
+def test_confidential_group_read_denial_reaches_agent_without_fallback(tmp_path, prior_attempts):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    dws.search_conversations = lambda query: [DingTalkConversation(
+        open_conversation_id="cid-first", title="上线项目群",
+        single_chat=False, unread_point=0,
+    )] if query == "上线" else []
+
+    def fail_read(conversation, limit=50):
+        raise DwsError(
+            f"group={conversation.open_conversation_id} read refused",
+            code="1001",
+            business_message="该群为保密群，无法获取消息记录",
+            server_key="chat",
+        )
+
+    dws.read_recent_messages = fail_read
+    job_id = seed_consumer_job(store, dws)
+    with store._connect() as db:
+        db.execute("update meeting_alignment_jobs set attempts=? where id=?", (prior_attempts, job_id))
+    class UnresolvedAudienceRunner(FakeMeetingRunner):
+        def decide(self, *, prompt, run_id=None):
+            self.calls += 1
+            self.prompts.append(prompt)
+            raise ValueError("Audience unresolved; no effects selected")
+
+    runner = UnresolvedAudienceRunner(consumer_send_decision())
+
+    assert consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1) == 1
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "failed"
+    assert json.loads(job.error)["kind"] == "meeting_agent"
+    assert runner.prompts, job.error
+    assert '"history_read_status":"denied"' in runner.prompts[0]
+    assert '"history_read_code":"1001"' in runner.prompts[0]
+    assert "该群为保密群，无法获取消息记录" in runner.prompts[0]
+    assert "live full relevant discussion" in runner.prompts[0]
+    assert job.locked_at is None
+    assert runner.calls == 1
+    assert dws.send_calls == []
+    assert consume_meeting_alignment_jobs(store, dws, runner, now=NOW + timedelta(hours=1), limit=1) == 0
+
+
+@pytest.mark.parametrize("roster_complete", [True, False])
+def test_denied_candidate_serializes_actual_roster_not_meeting_audience(roster_complete):
+    source = MeetingSource.model_validate({
+        "meeting_id": "unresolved", "title": "上线项目", "status": "ended",
+        "started_at": "2026-07-14T09:00:00+08:00",
+        "ended_at": "2026-07-14T10:00:00+08:00",
+        "participants": [
+            {"name": "A", "user_id": "a", "open_dingtalk_id": "open-a"},
+            {"name": "B", "user_id": "b", "open_dingtalk_id": "open-b"},
+        ],
+        "attendee_evidence": "calendar", "attendee_roster_complete": roster_complete,
+        "current_user_id": "a", "summary": "上线项目进展", "transcript": [],
+    })
+    dws = ConsumerDws()
+    dws.search_conversations = lambda query: [DingTalkConversation(
+        open_conversation_id="cid-first", title="上线项目群", single_chat=False, unread_point=0,
+    )]
+    dws.list_group_member_open_dingtalk_ids = lambda group: {"open-a", "open-b", "open-other"}
+    def deny(conversation, limit):
+        raise DwsError("read refused", code="1001", business_message="该群为保密群，无法获取消息记录")
+    dws.read_recent_messages = deny
+    store = SimpleNamespace(recurring_meeting_group_targets=lambda title: [("cid-first", "上线项目群", 2)])
+    [candidate] = meeting_alignment._search_meeting_group_candidates(dws, source, store)
+    assert candidate["title"] == "上线项目群"
+    assert candidate["member_count"] == 3
+    assert candidate["member_open_dingtalk_ids"] == ["open-a", "open-b", "open-other"]
+    assert candidate["member_roster_complete"] is True
+    assert candidate["history_read_status"] == "denied"
+    assert candidate["history_read_code"] == "1001"
+    assert candidate["history_read_reason"] == "该群为保密群，无法获取消息记录"
+    assert "topic_discussion_evidence" not in candidate
+    assert candidate.get("verified_recurring_group") is not True
+
+
 def test_calendar_summary_retry_does_not_resend_meeting_message(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
@@ -2065,16 +2488,11 @@ def test_transcript_meeting_without_calendar_event_marks_calendar_note_skipped(
     source["calendar_evidence"].update(
         source="transcript", event_id="transcript:minutes-1"
     )
-    store.upsert_meeting_alignment_job(
-        meeting_id=job.meeting_id,
-        title=job.title,
+    store.update_meeting_alignment_job(
+        job_id,
         source_json=json.dumps(source, ensure_ascii=False),
-        participants_json=job.participants_json,
-        ended_at=job.ended_at,
-        eligible_at=job.eligible_at,
-        status="pending",
+        status="ready_to_send",
     )
-    store.update_meeting_alignment_job(job_id, status="ready_to_send")
 
     assert consume_meeting_alignment_jobs(
         store, dws, runner, now=NOW + timedelta(minutes=1), limit=1
@@ -2298,7 +2716,7 @@ def test_source_read_failure_never_degrades_to_creator_direct(tmp_path):
     assert dws.send_calls == []
 
 
-def test_missing_calendar_organizer_identity_becomes_needs_human_without_send(
+def test_unavailable_planned_group_fails_without_organizer_fallback(
     tmp_path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -2321,20 +2739,22 @@ def test_missing_calendar_organizer_identity_becomes_needs_human_without_send(
     )
 
     job = store.get_meeting_alignment_job(job_id)
-    assert job.status == "needs_human"
+    assert job.status == "failed"
     assert json.loads(job.error) == {
-        "kind": "meeting_identity",
-        "message": "meeting organizer identity is unresolved",
+        "kind": "meeting_target",
+        "message": "planned group is unavailable; audience must be reviewed, not redirected",
     }
     assert json.loads(job.decision_json)["action"] == "send"
     assert json.loads(job.decision_json)["target"]["kind"] == "group"
     [run] = store.list_meeting_alignment_runs(job_id)
     assert run.status == "ready_to_send"
-    assert json.loads(run.decision_json)["action"] == "send"
+    assert run.decision_json == "{}"
+    assert run.native_available is False
+    assert run.native_reason == "native_source_unavailable"
     assert dws.send_calls == []
 
 
-def test_calendar_organizer_identity_is_resolved_before_agent_decision(tmp_path):
+def test_same_verified_private_audience_receives_one_combined_message(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
     event = dws.calendar_pages[""]["events"][0]
@@ -2396,7 +2816,9 @@ def test_calendar_organizer_identity_is_resolved_before_agent_decision(tmp_path)
     assert job.status == "sent", job.error
     assert runner.calls == 1
     assert '"user_id": "u-mina"' in runner.prompts[0]
-    assert [call.get("user_id") for call in dws.send_calls] == ["u-mina", "u-mina"]
+    assert [call.get("user_id") for call in dws.send_calls] == ["u-mina"]
+    assert decision.final_message in dws.send_calls[0]["text"]
+    assert decision.sensitive_private_message.message in dws.send_calls[0]["text"]
 
 
 def test_consumer_quarantines_corrupt_persisted_send_evidence(tmp_path):
@@ -2905,13 +3327,13 @@ def test_producer_never_reenters_terminal_job(tmp_path):
 
 
 def rejected_direct_decision() -> MeetingAlignmentDecision:
-    """A business send addressed to a participant who is not the organizer."""
+    """A business send addressed to an identity absent from the source."""
     payload = summary_decision().model_dump(mode="json")
     payload["target"] = {
         "kind": "direct",
         "conversation_id": "",
-        "direct_user_id": "u-b",
-        "title": "B",
+        "direct_user_id": "u-unverified",
+        "title": "Unverified",
         "candidates": [],
     }
     return MeetingAlignmentDecision.model_validate(payload)
@@ -2930,6 +3352,6 @@ def test_a_rejected_target_is_kept_with_the_failure(tmp_path):
     assert job.status == "failed"
     assert json.loads(job.error)["kind"] == "meeting_target"
     assert job.target_kind == "direct"
-    assert job.target_id == "u-b"
-    assert job.target_title == "B"
-    assert json.loads(job.decision_json)["target"]["title"] == "B"
+    assert job.target_id == "u-unverified"
+    assert job.target_title == "Unverified"
+    assert json.loads(job.decision_json)["target"]["title"] == "Unverified"

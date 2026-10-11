@@ -26,9 +26,11 @@ from app.agent_effects import (
     _is_signed_url,
 )
 from app.agent_result import ResultParseError
+from app.reviewed_sources import ReviewedSourceReadError
 from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
 from app.agent_runtime_contracts import (
     CredentialMode,
+    ROLE_BOUND_AGENT_TOOLS,
     RuntimeFailureClass,
     RuntimeKind,
     RuntimeRoute,
@@ -64,11 +66,12 @@ from app.codex_history import (
     extract_codex_assistant_messages_from_session,
 )
 from app.codex_runner import _codex_home
+from app.native_trajectory import count_claude_session_lines, read_native_result_stream
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter, FridayRuntimeError
 from app.agent_runtime_router import _runtime_failure_from_friday_error
 from app.config import feedback_spike_vercel_base_url
-from app.feedback_spike import sanitize_configured_feedback_links
+from app.feedback_spike import sanitize_configured_feedback_links, sanitize_source_feedback_links
 from app.runtime_fallback import plan_runtime_fallback
 from app.leak_check import (
     contains_credential,
@@ -176,6 +179,44 @@ class _DecodedRuntimeDomainResult:
     result: ConsumerAgentResult | AuditAgentResult
 
 
+def recover_completed_runtime_domain_result(
+    attempt: AgentRuntimeAttempt, run: AgentRun, *, schema_id: str,
+    friday_adapter: FridayRuntimeAdapter | None = None,
+) -> ConsumerAgentResult | AuditAgentResult:
+    """Revalidate a completed turn using its runtime-owned transcript."""
+    from app.agent_wire_contracts import (
+        parse_audit_agent_wire_result, parse_consumer_agent_wire_result,
+    )
+
+    if attempt.result_schema_id != schema_id:
+        raise ValueError("completed runtime result schema mismatch")
+    if attempt.runtime_kind == RuntimeKind.FRIDAY_RUNTIME.value:
+        if friday_adapter is None:
+            raise ValueError("completed Friday artifact reader unavailable")
+        text = friday_adapter.read_final_artifact(attempt.session_id.removeprefix("friday_thread:"))
+        raw = json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": text}})
+    else:
+        raw = read_native_result_stream(
+            attempt.runtime_kind, attempt.session_id,
+            attempt.transcript_start, attempt.transcript_end,
+        )
+    if not raw:
+        raise ValueError("completed runtime native result unavailable")
+    parser = (
+        parse_consumer_agent_wire_result
+        if run.role is AgentRole.CONSUMER else parse_audit_agent_wire_result
+    )
+    parsed = parser(raw)
+    if attempt.runtime_kind != RuntimeKind.CLAUDE_CLI.value:
+        return parsed
+    envelope = _encode_runtime_domain_result(
+        schema_id=schema_id, role=run.role, result=parsed,
+    )
+    return _decode_runtime_domain_result(
+        envelope, schema_id=schema_id, role=run.role,
+    ).result
+
+
 def _bounded_runtime_result_text(value: str, *, field: str, limit: int) -> str:
     if not isinstance(value, str) or not value or len(value) > limit:
         raise ValueError(f"runtime_result_envelope_{field}_invalid")
@@ -198,78 +239,9 @@ def _project_runtime_domain_result(
         field="summary",
         limit=_RUNTIME_RESULT_SUMMARY_MAX_CHARS,
     )
-    if isinstance(result, ConsumerAgentResult):
-        # Consumer proposals are already strict typed business values. Project
-        # fields explicitly so future model additions cannot silently enter the
-        # durable recovery envelope.
-        proposal = None
-        if result.proposal is not None:
-            proposal = {
-                "objective": result.proposal.objective,
-                "actions": [
-                    {
-                        "description": action.description,
-                        "action_identity": action.action_identity,
-                        "capability": action.capability,
-                        "operation": action.operation,
-                        "target": action.target,
-                        "payload": action.payload,
-                    }
-                    for action in result.proposal.actions
-                ],
-                "sourced_facts": [
-                    {
-                        "assertion": fact.assertion,
-                        "references": list(fact.references),
-                    }
-                    for fact in result.proposal.sourced_facts
-                ],
-                "authored_judgment": result.proposal.authored_judgment,
-            }
-        return {
-            "outcome": result.outcome.value,
-            "summary": summary,
-            "risk": result.risk.value,
-            "confidence": result.confidence,
-            "rule_coverage": result.rule_coverage,
-            "information_completeness": result.information_completeness,
-            "proposal": proposal,
-            "decision_options": [
-                option.model_dump(mode="json") for option in result.decision_options
-            ],
-            "error": result.error.model_dump(mode="json"),
-        }
-    external_result = None
-    if result.external_result is not None:
-        external_result = {
-            "operation_id": _bounded_runtime_result_text(
-                result.external_result.operation_id,
-                field="operation_id",
-                limit=512,
-            ),
-            "live_result_reference": _project_runtime_external_reference(
-                result.external_result.live_result_reference
-            ),
-        }
-    return {
-        "outcome": result.outcome.value,
-        "summary": summary,
-        "risk": result.risk.value,
-        "confidence": result.confidence,
-        "rule_coverage": result.rule_coverage,
-        "information_completeness": result.information_completeness,
-        "proposal_revision": result.proposal_revision,
-        "feedback": (
-            result.feedback.model_dump(mode="json")
-            if result.feedback is not None
-            else None
-        ),
-        "external_result": external_result,
-        "decision_options": [
-            option.model_dump(mode="json") for option in result.decision_options
-        ],
-        "error": result.error.model_dump(mode="json"),
-    }
+    projected = result.model_dump(mode="json")
+    projected["summary"] = summary
+    return projected
 
 
 def _reject_runtime_document_fields(value: object) -> None:
@@ -556,7 +528,7 @@ def repeated_result_failure_requires_fresh_session(
     role: AgentRole,
     proposal_revision: int,
 ) -> bool:
-    """Break a session loop after it repeats the same unusable result twice."""
+    """Honor a noncontinuable result or break a repeated unusable-result loop."""
 
     failed_runs = sorted(
         (
@@ -564,18 +536,31 @@ def repeated_result_failure_requires_fresh_session(
             for run in store.list_agent_runs_for_task_generation(
                 task.id,
                 task.execution_generation,
+                load_events=False,
             )
             if run.role is role
             and run.proposal_revision == proposal_revision
-            and run.status == "failed"
-            and run.codex_session_id
+            and run.status in {"failed", "completed"}
         ),
         key=lambda run: (run.turn_attempt, run.id),
     )
+    if not failed_runs:
+        return False
+    latest = failed_runs[-1]
+    if latest.status != "failed":
+        return False
+    try:
+        latest_error = json.loads(latest.structured_error_json or "{}")
+    except json.JSONDecodeError:
+        return False
+    if isinstance(latest_error, dict) and latest_error.get("session_continuable") is False:
+        return True
     if len(failed_runs) < 2:
         return False
     previous, latest = failed_runs[-2:]
-    if previous.codex_session_id != latest.codex_session_id:
+    if previous.status != "failed":
+        return False
+    if not previous.codex_session_id or previous.codex_session_id != latest.codex_session_id:
         return False
 
     fingerprints: list[tuple[str, str]] = []
@@ -620,6 +605,7 @@ def result_correction_prompt(
         for run in store.list_agent_runs_for_task_generation(
             task.id,
             task.execution_generation,
+            load_events=False,
         )
         if run.role is role
         and run.proposal_revision == proposal_revision
@@ -771,12 +757,15 @@ class AgentTurnProcess(Generic[ResultT]):
         conversation_contract_hash: str = "",
         force_new_session: bool = False,
         skill_names: tuple[str, ...] = (),
+        invocation_facts: dict[str, object] | None = None,
     ) -> AgentTurnRunResult[ResultT]:
+        required_capabilities = required_capabilities | {ROLE_BOUND_AGENT_TOOLS}
         line_count = 0
         saw_json = False
         primary_turn_started = False
         primary_turn_closed = False
         observed_session_id = ""
+        fresh_route_sessions: dict[str, str | None] = {}
         active_attempt: AgentRuntimeAttempt | None = None
         active_route: RuntimeRoute | None = None
         session_transcript_end = 0
@@ -816,13 +805,19 @@ class AgentTurnProcess(Generic[ResultT]):
             new_session = trusted_claude_session_id or _session_id(payload)
             if new_session:
                 observed_session_id = new_session
+                if active_route is not None and (
+                    force_new_session or active_route.name in fresh_route_sessions
+                ):
+                    fresh_route_sessions[active_route.name] = new_session
                 is_claude = (
                     active_route is not None
                     and active_route.runtime_kind is RuntimeKind.CLAUDE_CLI
                 )
-                if active_attempt is not None and not is_claude:
+                if active_attempt is not None:
                     active_attempt = self.store.set_agent_runtime_attempt_session(
-                        active_attempt.id, new_session
+                        active_attempt.id, new_session,
+                        f"claude_session:{new_session}" if is_claude else f"codex_session:{new_session}",
+                        transcript_start=attempt_transcript_start,
                     )
                 if active_route is not None and active_route.name == "codex_oauth":
                     self.store.set_agent_run_session(
@@ -958,6 +953,17 @@ class AgentTurnProcess(Generic[ResultT]):
         ).hexdigest()
 
         try:
+            persisted_run = self.store.get_agent_run(run.id)
+            if persisted_run is not None and persisted_run.status == "completed" and run.role is AgentRole.CONSUMER:
+                adopted = self.store.adopted_candidate_for_consumer_run(run.id)
+                if adopted is None:
+                    raise CompletedRuntimeResultBlockedError("completed_consumer_candidate_unavailable")
+                result = cast(ResultT, ConsumerAgentResult.model_validate_json(adopted["candidate_json"]))
+                return AgentTurnRunResult(
+                    run_id=run.id, result=result,
+                    transcript_start_line=persisted_run.transcript_start_line,
+                    transcript_end_line=persisted_run.transcript_end_line,
+                )
             runtime_attempts = self.store.list_agent_runtime_attempts(run.id)
             completed_attempt = next(
                 (
@@ -965,63 +971,34 @@ class AgentTurnProcess(Generic[ResultT]):
                     for attempt in reversed(runtime_attempts)
                     if attempt.status == "completed"
                     and attempt.result_schema_id == runtime_result_schema_id
-                    and attempt.result_envelope_json
                 ),
                 None,
             )
-            if (
-                completed_attempt is None
-                and run.role is AgentRole.CONSUMER
-                and run.status == "completed"
-                and any(
-                    attempt.status == "completed"
-                    and attempt.result_envelope_json
-                    and attempt.runtime_kind == RuntimeKind.CLAUDE_CLI.value
-                    for attempt in runtime_attempts
-                )
-            ):
-                raise CompletedRuntimeResultBlockedError(
-                    "completed_runtime_result_contract_mismatch"
-                )
             if completed_attempt is not None:
                 route = next(
                     (
                         candidate
                         for candidate in self.runtime_config.routes
                         if candidate.name == completed_attempt.route_name
-                        and candidate.runtime_kind is RuntimeKind.CLAUDE_CLI
+                        and candidate.runtime_kind.value == completed_attempt.runtime_kind
                     ),
                     None,
                 )
                 if route is None:
                     raise RuntimeError("completed runtime result route mismatch")
                 try:
-                    decoded = _decode_runtime_domain_result(
-                        completed_attempt.result_envelope_json,
-                        schema_id=runtime_result_schema_id,
-                        role=run.role,
-                        referenced_agent_run_id=run.id,
-                        referenced_result_json=run.final_result_json,
-                    )
-                    result = cast(ResultT, decoded.result)
+                    result = cast(ResultT, recover_completed_runtime_domain_result(
+                        completed_attempt, run, schema_id=runtime_result_schema_id,
+                        friday_adapter=self.friday_adapter,
+                    ))
                 except ValueError as exc:
                     raise CompletedRuntimeResultBlockedError(
                         "completed_runtime_result_invalid"
                     ) from exc
-                if prepare_result is not None:
-                    result = prepare_result(result)
-                    _validate_runtime_reference_domain_result(
-                        cast(ConsumerAgentResult | AuditAgentResult, result),
-                        allow_configured_feedback_links=True,
-                    )
-                else:
-                    if _contains_sensitive_value(result.model_dump(mode="json")):
-                        raise ValueError("agent_result_contains_sensitive_value")
-                    if (
-                        run.role is AgentRole.CONSUMER
-                        and result.outcome is not ConsumerOutcome.FAILED
-                    ):
-                        _validate_runtime_reference_domain_result(result)
+                if run.role is AgentRole.CONSUMER:
+                    raise CompletedRuntimeResultBlockedError("completed_consumer_candidate_unavailable")
+                if _contains_sensitive_value(result.model_dump(mode="json")):
+                    raise ValueError("agent_result_contains_sensitive_value")
                 active_attempt = completed_attempt
                 observed_session_id = completed_attempt.session_id
                 pending_claude_session_id = completed_attempt.session_id
@@ -1122,6 +1099,8 @@ class AgentTurnProcess(Generic[ResultT]):
                         route_session_id, codex_home=_codex_home()
                     )
                     if route_session_id and route_uses_codex_history
+                    else count_claude_session_lines(route_session_id)
+                    if route_session_id and route.runtime_kind is RuntimeKind.CLAUDE_CLI
                     else 0
                 )
                 attempt_is_preclaimed = False
@@ -1132,6 +1111,19 @@ class AgentTurnProcess(Generic[ResultT]):
                         session_id=route_session_id,
                         max_turns=CLAUDE_MAX_TURNS_PER_INVOCATION,
                         reasoning_effort=self.reasoning_effort or None,
+                        policy=(
+                            ClaudeCommandPolicy.consumer(
+                                task_id=self.task.id,
+                                db_path=str(self.store.path),
+                                execution_generation=run.execution_generation,
+                            )
+                            if run.role is AgentRole.CONSUMER
+                            else ClaudeCommandPolicy.audit(
+                                task_id=self.task.id,
+                                db_path=str(self.store.path),
+                                execution_generation=run.execution_generation,
+                            )
+                        ),
                     )
                     claude_normalizer = claude_adapter.new_event_normalizer(
                         expected_session_id=route_session_id,
@@ -1168,6 +1160,34 @@ class AgentTurnProcess(Generic[ResultT]):
                     command_env = self.codex_adapter.build_env(route)
                 if command_env is not None:
                     command_env.update(self.execution_mode_environment)
+                from app.runtime_prompt_context import render_runtime_context, runtime_prompt_snapshot
+                from app.prompt_composition import append_runtime_context
+
+                rendered_at = datetime.now().astimezone().isoformat()
+                context_facts = {**(invocation_facts or {}), "proposal_revision": run.proposal_revision}
+                runtime_context = render_runtime_context(
+                    role=run.role.value, route=route, command=command, task=self.task,
+                    current_time=rendered_at, invocation_facts=context_facts,
+                )
+                submitted_developer_instructions = append_runtime_context(developer_instructions, runtime_context)
+                if route.runtime_kind is RuntimeKind.CODEX_CLI:
+                    command = [
+                        "developer_instructions=" + json.dumps(submitted_developer_instructions)
+                        if value.startswith("developer_instructions=") else value
+                        for value in command
+                    ]
+                executor_prompt = (
+                    _claude_input_contract(prompt=prompt, developer_instructions=submitted_developer_instructions)
+                    if route.runtime_kind is RuntimeKind.CLAUDE_CLI else prompt
+                )
+                snapshot = runtime_prompt_snapshot(
+                    role=run.role.value, route=route, runtime_attempt_id=active_attempt.id,
+                    task=self.task, developer_instructions=submitted_developer_instructions,
+                    task_prompt=prompt, runtime_context=runtime_context, current_time=rendered_at,
+                    invocation_facts=context_facts,
+                )
+                snapshot["proposal_revision"] = run.proposal_revision
+                self.store.append_agent_run_event(run.id, snapshot, owner=self.owner)
                 try:
                     if route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME:
                         friday_result = self.friday_adapter.execute(
@@ -1208,6 +1228,8 @@ class AgentTurnProcess(Generic[ResultT]):
                             idle_timeout_seconds=IDLE_TIMEOUT_SECONDS,
                             on_stdout_line=persist_line,
                         )
+                        self.store.append_agent_run_event(run.id, {"type": "runtime.prompt.invoked",
+                            "runtime_attempt_id": active_attempt.id}, owner=self.owner)
                 except FridayRuntimeError as exc:
                     friday_failure = _runtime_failure_from_friday_error(exc)
                     if exc.thread_id:
@@ -1280,14 +1302,14 @@ class AgentTurnProcess(Generic[ResultT]):
                     attempt_transcript_start + (line_count - attempt_line_start),
                     attempt_transcript_start,
                 )
+                if failed_session_id and route.runtime_kind is RuntimeKind.CLAUDE_CLI:
+                    attempt_transcript_reference = f"claude_session:{failed_session_id}"
+                    failed_transcript_end = count_claude_session_lines(failed_session_id)
                 if failed_session_id and route_uses_codex_history:
                     try:
-                        failed_transcript_end = max(
-                            failed_transcript_end,
-                            stabilize_and_replay_session(
-                                failed_session_id,
-                                session_start=attempt_transcript_start,
-                            ),
+                        failed_transcript_end = stabilize_and_replay_session(
+                            failed_session_id,
+                            session_start=attempt_transcript_start,
                         )
                     except Exception:
                         pass
@@ -1342,16 +1364,23 @@ class AgentTurnProcess(Generic[ResultT]):
                     raise AssertionError("unreachable process failure")
                 previous_route_name = route.name
                 route = decision.route
-                if decision.fresh_session:
+                if (
+                    decision.fresh_session
+                    and failed_attempt.session_mode == RuntimeAttemptSessionMode.RESUME
+                    and failed_attempt.failure_class == RuntimeFailureClass.SESSION.value
+                ):
                     self._clear_incompatible_route_session_for_fresh_retry(
                         run=run,
                         route=route,
                         failed_attempt=failed_attempt,
                     )
-                route_session_id = (
-                    None
-                    if decision.fresh_session
-                    else self._session_for_route(
+                if decision.fresh_session:
+                    fresh_route_sessions[route.name] = None
+                    route_session_id = None
+                elif force_new_session or route.name in fresh_route_sessions:
+                    route_session_id = fresh_route_sessions.get(route.name)
+                else:
+                    route_session_id = self._session_for_route(
                         route,
                         role=run.role,
                         requested_session_id=_fallback_requested_session_id(
@@ -1363,7 +1392,6 @@ class AgentTurnProcess(Generic[ResultT]):
                         ),
                         conversation_contract_hash=conversation_contract_hash,
                     )
-                )
                 successor = self._claim_and_start_attempt(
                     run,
                     route,
@@ -1390,7 +1418,7 @@ class AgentTurnProcess(Generic[ResultT]):
             if prepare_result is None and _contains_sensitive_value(
                 result.model_dump(mode="json")
             ):
-                raise ValueError("agent_result_contains_sensitive_value")
+                raise ResultParseError("agent_result_contains_sensitive_value")
             if (
                 route.runtime_kind is RuntimeKind.CLAUDE_CLI
                 and run.role is AgentRole.CONSUMER
@@ -1403,33 +1431,17 @@ class AgentTurnProcess(Generic[ResultT]):
                     cast(ConsumerAgentResult | AuditAgentResult, result),
                     allow_configured_feedback_links=True,
                 )
-            persisted_attempt = (
-                self.store.get_agent_runtime_attempt(active_attempt.id)
-                if active_attempt is not None
-                else None
-            )
-            if (
-                persisted_attempt is not None
-                and persisted_attempt.status == "running"
-                and route.runtime_kind
-                in {
-                    RuntimeKind.CODEX_CLI,
-                    RuntimeKind.FRIDAY_RUNTIME,
-                }
-            ):
-                self.store.complete_agent_runtime_attempt(
-                    persisted_attempt.id,
-                    observed_session_id,
-                    attempt_transcript_reference,
-                    attempt_transcript_start,
-                    max(
-                        attempt_transcript_start + (line_count - attempt_line_start),
-                        session_transcript_end,
-                    ),
-                )
         except _RecoveredCompletedRuntimeResult:
             pass
         except CompletedRuntimeResultBlockedError:
+            raise
+        except RuntimeResultValidationError as exc:
+            self._fail_runtime_attempt_unclassified(active_attempt, exc)
+            self._fail_running(
+                run, exc.code, detail=_runtime_failure_detail(exc.__cause__ or exc),
+                stage="result", source="service", source_code=exc.code,
+                retryable=False,
+            )
             raise
         except RuntimeRouteUnavailableError as exc:
             self._fail_running(
@@ -1482,6 +1494,22 @@ class AgentTurnProcess(Generic[ResultT]):
                 session_continuable=True,
             )
             raise
+        except ReviewedSourceReadError as exc:
+            if active_attempt is not None:
+                pending_attempt = self.store.get_agent_runtime_attempt(active_attempt.id)
+                if pending_attempt is not None and pending_attempt.status in {"starting", "running"}:
+                    self.store.fail_agent_runtime_attempt(
+                        pending_attempt.id,
+                        RuntimeFailureClass.AUTHENTICATION.value if exc.error.authorization_required
+                        else RuntimeFailureClass.PROCESS.value,
+                        exc.error.source_code, exc.error.retryable,
+                    )
+            self.store.fail_agent_run(
+                run.id,
+                {**exc.error.model_dump(mode="json"), "detail": _runtime_failure_detail(exc)},
+                owner=self.owner,
+            )
+            raise
         except Exception as exc:
             self._fail_runtime_attempt_unclassified(active_attempt, exc)
             provider_recovery = _agent_process_error_code(exc)
@@ -1508,94 +1536,68 @@ class AgentTurnProcess(Generic[ResultT]):
         assert persisted is not None
         if run.role is AgentRole.AUDIT:
             result = self._bind_audit_result(run, result)
-        claude_business_failure = outcome in {
-            ConsumerOutcome.FAILED,
-            AuditOutcome.FAILED,
-        }
-        if (
-            route.runtime_kind is RuntimeKind.CLAUDE_CLI
-            and not recovered_completed_attempt
-            and claude_business_failure
-        ):
-            if active_attempt is None:
-                raise AgentRuntimeAttemptStartConflictError(
-                    "Claude runtime attempt is missing at business failure"
-                )
-            self.store.fail_agent_runtime_attempt(
-                active_attempt.id,
-                RuntimeFailureClass.RESULT.value,
-                "runtime_business_result_failed",
-                False,
-            )
-        elif (
-            route.runtime_kind is RuntimeKind.CLAUDE_CLI
-            and not recovered_completed_attempt
-        ):
-            if not pending_claude_session_id:
-                raise RuntimeError("claude_session_evidence_missing")
-            persisted_attempt = (
-                self.store.get_agent_runtime_attempt(active_attempt.id)
-                if active_attempt is not None
-                else None
-            )
-            if persisted_attempt is None or persisted_attempt.status != "running":
-                raise AgentRuntimeAttemptStartConflictError(
-                    "Claude runtime attempt is not running at result commit"
-                )
-            domain_result = cast(
-                ConsumerAgentResult | AuditAgentResult, result
-            ).model_dump(mode="json")
-            durable_consumer_result = (
-                run.role is AgentRole.CONSUMER and outcome is not ConsumerOutcome.FAILED
-            )
-            self.store.complete_agent_runtime_attempt(
-                persisted_attempt.id,
-                pending_claude_session_id,
-                "",
-                attempt_transcript_start,
-                attempt_transcript_start + (line_count - attempt_line_start),
-                owner=self.owner,
-                result_schema_id=runtime_result_schema_id,
-                result_envelope_json=_encode_runtime_domain_result(
-                    schema_id=runtime_result_schema_id,
-                    role=run.role,
-                    result=cast(ConsumerAgentResult | AuditAgentResult, result),
-                    result_reference_run_id=(
-                        run.id if durable_consumer_result else None
-                    ),
-                ),
-                conversation_id=(
-                    self.task.conversation_id if run.role is AgentRole.CONSUMER else ""
-                ),
-                route_name=route.name,
-                conversation_contract_hash=conversation_contract_hash,
-                agent_run_final_result=(
-                    domain_result if durable_consumer_result else None
-                ),
-                agent_run_transcript_end=(
-                    transcript_end if durable_consumer_result else None
-                ),
-            )
-        if outcome in {ConsumerOutcome.FAILED, AuditOutcome.FAILED}:
-            # The turn produced a valid typed result whose outcome happens to
-            # be `failed`; `result.summary` is the Agent's own account of why
-            # (a required field), but only `result.error` used to be kept --
-            # an `agent_reported_failure` with an unrecognized `source_code`
-            # (e.g. attempt 14752's invented `provider_rejected_risk`) was
-            # otherwise undiagnosable once the transcript itself is gone.
-            # Carried as an extra key on the error payload, not by widening
-            # `final_result_json` for a failed run: several readers (send
-            # evidence, deciding-score projection, needs_human parsing) treat
-            # that field's emptiness on a failed run as a meaningful signal.
+        business_failure = outcome in {ConsumerOutcome.FAILED, AuditOutcome.FAILED}
+        error_payload = None
+        if business_failure:
+            # Keep the prepared failure in existing service error state. The
+            # native result may still describe success before preparation.
             error_payload = getattr(result, "error").model_dump(mode="json")
             error_payload["reported_summary"] = result.summary
+        if not recovered_completed_attempt:
+            if active_attempt is None:
+                raise AgentRuntimeAttemptStartConflictError("runtime attempt is missing at result commit")
+            if business_failure:
+                self.store.fail_agent_runtime_attempt(
+                    active_attempt.id, RuntimeFailureClass.RESULT.value,
+                    "runtime_business_result_failed", False,
+                    owner=self.owner,
+                    agent_run_error=error_payload,
+                    agent_run_transcript_end=transcript_end,
+                    session_id=observed_session_id,
+                    transcript_reference=(
+                        f"claude_session:{pending_claude_session_id}"
+                        if route.runtime_kind is RuntimeKind.CLAUDE_CLI else attempt_transcript_reference
+                    ),
+                    transcript_start=attempt_transcript_start,
+                    transcript_end=(
+                        count_claude_session_lines(pending_claude_session_id)
+                        if route.runtime_kind is RuntimeKind.CLAUDE_CLI
+                        else session_transcript_end
+                    ),
+                )
+            else:
+                is_claude = route.runtime_kind is RuntimeKind.CLAUDE_CLI
+                if is_claude and not pending_claude_session_id:
+                    raise RuntimeError("claude_session_evidence_missing")
+                native_session = pending_claude_session_id if is_claude else observed_session_id
+                native_end = count_claude_session_lines(native_session) if is_claude else session_transcript_end
+                native_reference = f"claude_session:{native_session}" if is_claude else attempt_transcript_reference
+                durable_consumer_result = run.role is AgentRole.CONSUMER
+                self.store.complete_agent_runtime_attempt(
+                    active_attempt.id, native_session, native_reference,
+                    attempt_transcript_start, native_end,
+                    owner=self.owner,
+                    result_schema_id=runtime_result_schema_id,
+                    result_envelope_json=_encode_runtime_domain_result(
+                        schema_id=runtime_result_schema_id, role=run.role,
+                        result=cast(ConsumerAgentResult | AuditAgentResult, result),
+                        result_reference_run_id=run.id if durable_consumer_result else None,
+                    ) if is_claude or durable_consumer_result else json.dumps({"schema_id": runtime_result_schema_id}),
+                    conversation_id=self.task.conversation_id if durable_consumer_result else "",
+                    route_name=route.name,
+                    conversation_contract_hash=conversation_contract_hash,
+                    agent_run_final_result=result.model_dump(mode="json") if durable_consumer_result else None,
+                    agent_run_transcript_end=transcript_end if durable_consumer_result else None,
+                )
+        if business_failure and recovered_completed_attempt:
+            assert error_payload is not None
             self.store.fail_agent_run(
                 run.id,
                 error_payload,
                 owner=self.owner,
                 transcript_end_line=transcript_end,
             )
-        else:
+        elif not business_failure:
             self.store.complete_agent_run(
                 run.id,
                 result.model_dump(mode="json"),
@@ -1719,13 +1721,26 @@ class AgentTurnProcess(Generic[ResultT]):
         persisted = self.store.get_agent_runtime_attempt(attempt.id)
         if persisted is None or persisted.status not in {"starting", "running"}:
             return
+        transcript_end = persisted.transcript_end
+        if persisted.session_id:
+            if persisted.runtime_kind == RuntimeKind.CODEX_CLI.value:
+                transcript_end = count_codex_session_lines(persisted.session_id, codex_home=_codex_home())
+            elif persisted.runtime_kind == RuntimeKind.CLAUDE_CLI.value:
+                transcript_end = count_claude_session_lines(persisted.session_id)
+        native_bounds = {"transcript_start": persisted.transcript_start,
+                         "transcript_end": max(persisted.transcript_start, transcript_end)}
+        if isinstance(exc, RuntimeResultValidationError):
+            self.store.fail_agent_runtime_attempt(
+                attempt.id, RuntimeFailureClass.RESULT.value, exc.code, False, **native_bounds,
+            )
+            return
         if isinstance(exc, ResultParseError):
             failure_code = _agent_process_error_code(exc)
             self.store.fail_agent_runtime_attempt(
                 attempt.id,
                 RuntimeFailureClass.RESULT.value,
                 failure_code,
-                False,
+                False, **native_bounds,
             )
             return
         if isinstance(exc, RoutedCodexExecutionError):
@@ -1737,14 +1752,14 @@ class AgentTurnProcess(Generic[ResultT]):
                     else RuntimeFailureClass.PROCESS.value
                 ),
                 exc.failure_code or exc.code,
-                exc.retryable_external_dependency,
+                exc.retryable_external_dependency, **native_bounds,
             )
             return
         self.store.fail_agent_runtime_attempt(
             attempt.id,
             RuntimeFailureClass.UNCLASSIFIED.value,
             "runtime_unclassified",
-            False,
+            False, **native_bounds,
         )
 
     def _bind_audit_result(
@@ -1808,6 +1823,7 @@ class AgentTurnProcess(Generic[ResultT]):
         source: str = "",
         source_code: str = "",
         session_continuable: bool = False,
+        retryable: bool | None = None,
     ) -> None:
         persisted = self.store.get_agent_run(run.id)
         if persisted is not None and persisted.status == "running":
@@ -1816,7 +1832,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 run.id,
                 {
                     "code": code,
-                    "retryable": not terminal_auth_failure,
+                    "retryable": not terminal_auth_failure if retryable is None else retryable,
                     "authorization_required": False,
                     **({"detail": detail} if detail else {}),
                     **({"stage": stage} if stage else {}),
@@ -1979,19 +1995,21 @@ _RUNTIME_REFERENCE_TEXT_LIMITS = {
 }
 
 
-def _validate_runtime_reference_text_bounds(value: object, *, depth: int = 0) -> None:
+def _validate_runtime_reference_text_bounds(
+    value: object, *, depth: int = 0, authored: bool = True,
+) -> None:
     if depth > 12:
         raise ValueError("runtime_result_reference_depth_invalid")
     if isinstance(value, dict):
         for key, item in value.items():
             normalized = _normalized_key(str(key))
             limit = _RUNTIME_REFERENCE_TEXT_LIMITS.get(normalized)
-            if limit is not None and isinstance(item, str) and len(item) > limit:
+            if authored and limit is not None and isinstance(item, str) and len(item) > limit:
                 raise ValueError("runtime_result_reference_text_too_large")
-            _validate_runtime_reference_text_bounds(item, depth=depth + 1)
+            _validate_runtime_reference_text_bounds(item, depth=depth + 1, authored=authored)
     elif isinstance(value, list | tuple):
         for item in value:
-            _validate_runtime_reference_text_bounds(item, depth=depth + 1)
+            _validate_runtime_reference_text_bounds(item, depth=depth + 1, authored=authored)
 
 
 def _validate_runtime_reference_domain_result(
@@ -2001,21 +2019,58 @@ def _validate_runtime_reference_domain_result(
 ) -> None:
     domain_result = _project_runtime_domain_result(result)
     if allow_configured_feedback_links:
-        domain_result = cast(
-            dict[str, object],
-            sanitize_configured_feedback_links(
-                domain_result,
-                vercel_base_url=feedback_spike_vercel_base_url(),
-            ),
-        )
+        # Sources are service-captured provider reads, not current outgoing
+        # text. Inspect every field without imposing outbound paragraph layout
+        # on historical rendering or serialized provider containers.
+        for binding in domain_result.get("source_bindings", []):
+            try:
+                binding["value"] = sanitize_source_feedback_links(
+                    binding["value"], vercel_base_url=feedback_spike_vercel_base_url(),
+                )
+            except ValueError as exc:
+                raise RuntimeResultValidationError("runtime_result_source_invalid") from exc
+        try:
+            domain_result = cast(
+                dict[str, object],
+                sanitize_configured_feedback_links(
+                    domain_result,
+                    vercel_base_url=feedback_spike_vercel_base_url(),
+                ),
+            )
+        except ValueError as exc:
+            # This validates the authored result, so use the same bounded
+            # correction path as its wire/parser failures. A bare ValueError
+            # escapes orchestration after failure persistence and requeues
+            # the task before the existing retry ceiling can be reached.
+            raise ResultParseError(str(exc)) from exc
     _redact_local_runtime_values(domain_result)
     # Local paths can be accidentally echoed while describing source material.
     # Redact the serialized domain fields before enforcing the result boundary.
-    _validate_runtime_reference_text_bounds(domain_result)
-    sensitive_projection = domain_result
-    if _contains_sensitive_value(sensitive_projection):
+    # Provider snapshots can contain full cards/documents under keys also used
+    # by authored judgments. Keep their depth/codec/security limits, not the
+    # Agent's short-field limits, without changing the persisted source value.
+    authored_result = dict(domain_result)
+    source_bindings = authored_result.pop("source_bindings", [])
+    _validate_runtime_reference_text_bounds(authored_result)
+    for binding in source_bindings:
+        metadata = {key: value for key, value in binding.items() if key != "value"}
+        _validate_runtime_reference_text_bounds(
+            metadata, depth=2,
+        )
+        _validate_runtime_reference_text_bounds(binding["value"], depth=3, authored=False)
+        if _contains_sensitive_value(binding["value"]):
+            raise RuntimeResultValidationError("runtime_result_source_invalid") from ValueError(
+                "agent_result_contains_sensitive_value"
+            )
+        if _contains_sensitive_value(metadata):
+            raise ValueError("agent_result_contains_sensitive_value")
+        if _contains_local_runtime_value(metadata) or _contains_local_runtime_value(binding["value"]):
+            raise RuntimeResultValidationError("runtime_result_contains_local_runtime_leak")
+    # Each source already has its own bounds; the envelope must not charge
+    # those values again for list/binding wrappers and JSON-decoding depth.
+    if _contains_sensitive_value(authored_result):
         raise ValueError("agent_result_contains_sensitive_value")
-    if _contains_local_runtime_value(domain_result):
+    if _contains_local_runtime_value(authored_result):
         raise RuntimeResultValidationError("runtime_result_contains_local_runtime_leak")
     encoded = json.dumps(
         domain_result,

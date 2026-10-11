@@ -10,14 +10,27 @@ import fcntl
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Error as PlaywrightError, sync_playwright
+
+SERVICE_ROOT = Path(__file__).resolve().parents[1]
+if str(SERVICE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SERVICE_ROOT))
+
+from app.leak_check import redact_credentials, redact_credentials_in_value  # noqa: E402 - direct script entry
 
 
-SCRIPT_DIR = Path.home() / ".agents" / "skills" / "dingtang-okr-review" / "scripts"
+SCRIPT_DIR = Path(
+    os.environ.get("CEO_SKILLS_ROOT", "").strip()
+    or Path.home() / ".agents" / "skills"
+).expanduser() / "dingtang-okr-review" / "scripts"
 LOCAL_SSO_CONFIRM_SCRIPT = Path(__file__).with_name("dingtalk_local_sso_confirm.py")
 HEADLESS_REFRESH_SECONDS = 40
 HEADLESS_LOCK_TIMEOUT_SECONDS = 130
@@ -119,18 +132,24 @@ def _submit_local_dingtalk_account(page) -> None:
     direct_login.click(timeout=LOCAL_SSO_TIMEOUT_MS)
 
     page.wait_for_timeout(LOCAL_SSO_DIALOG_DELAY_MS)
-    if _is_dingtalk_login_url(getattr(page, "url", "")):
+    corp = page.locator(LOCAL_SSO_CORP_ITEM).filter(
+        has_text=LOCAL_SSO_CORP_NAME
+    ).first
+    # The organization chooser shares the login URL but needs no native prompt.
+    if _is_dingtalk_login_url(getattr(page, "url", "")) and not corp.is_visible():
         _confirm_local_dingtalk_login()
 
     try:
-        corp = page.locator(LOCAL_SSO_CORP_ITEM).filter(
-            has_text=LOCAL_SSO_CORP_NAME
-        ).first
         corp.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
         corp.click(timeout=LOCAL_SSO_TIMEOUT_MS)
     except Exception:
         # A single-organization account navigates directly to Dingteam.
-        pass
+        redirected = urlsplit(getattr(page, "url", ""))
+        entry = urlsplit(browser.ENTRY_URL)
+        if (redirected.scheme, redirected.netloc, redirected.path) != (
+            entry.scheme, entry.netloc, entry.path
+        ):
+            raise
 
 
 def _attempt_local_dingtalk_sso(page) -> bool:
@@ -188,7 +207,7 @@ def _service_browser(playwright):
 @contextmanager
 def _headless_browser_lock():
     """Serialize Chrome startup across the service's OKR workers."""
-    with open("/private/tmp/ceo-okr-headless.lock", "a", encoding="utf-8") as lock:
+    with (Path(tempfile.gettempdir()) / "ceo-okr-headless.lock").open("a", encoding="utf-8") as lock:
         deadline = time.monotonic() + HEADLESS_LOCK_TIMEOUT_SECONDS
         while True:
             try:
@@ -214,9 +233,7 @@ def _capture_stable_headless_headers() -> dict[str, str]:
                 def on_request(request):
                     if "/data/okr/" not in request.url or captured:
                         return
-                    for key, value in request.headers.items():
-                        if key.lower() in browser.AUTH_HEADER_KEYS:
-                            captured[browser._canonical(key)] = value
+                    browser._capture_candidate_headers(captured, request.headers)
 
                 context.on("request", on_request)
                 page = context.new_page()
@@ -311,10 +328,92 @@ def _run_bounded_source(command: list[str]) -> str:
 
 
 def _fetch_user_okr(*, user_id: str, period_label: str) -> int:
-    headers = _get_headless_headers()
-    result = browser.direct.fetch_with_headers(user_id, period_label, headers)
+    try:
+        headers = _get_headless_headers()
+    except (RuntimeError, TimeoutError, PlaywrightError) as error:
+        print(json.dumps(_source_failure(
+            error, user_id=user_id, period_label=period_label, scope="shared",
+            code="okr_authentication_readiness_failed",
+        ), ensure_ascii=False), flush=True)
+        return 0
+    try:
+        result = browser.direct.fetch_with_headers(user_id, period_label, headers)
+    except browser.direct.MissingOkrPeriod as absence:
+        if absence.user_id != user_id or absence.period_label != period_label:
+            raise ValueError("personal-period absence identity does not match request")
+        result = {
+            "source": {
+                "system": "Dingteam personal-period API",
+                "capturedAt": datetime.now(UTC).isoformat(),
+            },
+            "userId": absence.user_id,
+            "periodLabel": absence.period_label,
+            "availability": {
+                "status": "goals_not_established",
+                "providerCode": 0,
+                "periodsComplete": True,
+            },
+            "periods": [{"name": period["name"], "okrId": period["okrId"]} for period in absence.periods],
+        }
+    except (RuntimeError, ValueError, TimeoutError, URLError) as error:
+        cause = error if isinstance(error, HTTPError) else error.__cause__
+        if isinstance(cause, HTTPError):
+            scope = "shared" if cause.code == 401 else "member"
+            code = f"okr_source_http_{cause.code}"
+        elif isinstance(error, (TimeoutError, URLError)) or isinstance(cause, (TimeoutError, URLError)):
+            scope, code = "member", "okr_source_transport_failed"
+        elif isinstance(error, ValueError):
+            scope, code = "member", "okr_source_invalid_response"
+        else:
+            scope, code = "shared", "okr_source_unclassified_failure"
+        result = _source_failure(
+            error, user_id=user_id, period_label=period_label, scope=scope, code=code,
+        )
     print(json.dumps(result, ensure_ascii=False), flush=True)
     return 0
+
+
+def _source_failure(error: Exception, *, user_id: str, period_label: str, scope: str, code: str) -> dict:
+    return {
+        "userId": user_id,
+        "periodLabel": period_label,
+        "failure": {
+            "scope": scope,
+            "code": code,
+            "detail": f"{type(error).__name__}: {_safe_source_error_detail(str(error))[:300]}",
+        },
+    }
+
+
+def _safe_source_error_detail(text: str) -> str:
+    """Preserve diagnostic context without transporting structured credentials."""
+    decoder = json.JSONDecoder()
+    parts: list[str] = []
+    index = 0
+    while index < len(text):
+        if text[index] not in "{[":
+            parts.append(text[index])
+            index += 1
+            continue
+        try:
+            value, end = decoder.raw_decode(text, index)
+        except json.JSONDecodeError:
+            parts.append("[unparseable structured diagnostic omitted]")
+            break
+        safe = redact_credentials_in_value(_sanitize_embedded_diagnostics(value))
+        parts.append(json.dumps(safe, ensure_ascii=False))
+        index = end
+    return redact_credentials("".join(parts), credential_context=True)
+
+
+def _sanitize_embedded_diagnostics(value):
+    if isinstance(value, dict):
+        return {key: _sanitize_embedded_diagnostics(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_embedded_diagnostics(item) for item in value]
+    if isinstance(value, str):
+        return _safe_source_error_detail(value)
+    return value
 
 
 def main() -> int:

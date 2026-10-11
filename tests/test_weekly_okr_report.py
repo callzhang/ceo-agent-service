@@ -1,6 +1,6 @@
 import json
 import threading
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -405,7 +405,12 @@ class FakeSource:
     def fetch_user_okr(self, *, user_id, period_label):
         self.calls.append((user_id, period_label))
         return {
-            "source": {"system": "叮当OKR Dingteam Web"},
+            "source": {"system": "叮当OKR Dingteam Web (direct API)", "capturedAt": "2026-07-30T04:00:00Z", "objectiveListReceipt": {"providerCode": 0, "complete": True, "count": 1}},
+            "userId": user_id,
+            "periodLabel": period_label,
+            "period": {"name": period_label, "okrId": "period-1"},
+            "periods": [{"name": period_label, "okrId": "period-1"}],
+            "objectiveList": [{"id": "objective-1"}],
             "processed": {
                 "objectives": [{"ownerName": user_id, "title": "O1"}],
                 "okrRows": [
@@ -427,10 +432,12 @@ class FakeSource:
 
 
 class FakeAgent:
+    period_label = "2026 Q3"
+
     def analyze(self, *, source_path, managers, period_label, week_start, week_end):
         payload = source_path.read_text(encoding="utf-8")
         assert "processed" in payload
-        assert period_label == "2026 Q3"
+        assert period_label == self.period_label
         assert week_start <= week_end
         return WeeklyOkrAnalysis(
             executive_summary="本周两个管理目标均有实质推进。",
@@ -478,6 +485,14 @@ class FakeAgent:
             source_coverage=["实时叮当 OKR", "钉钉文档"],
             warnings=[],
         )
+
+
+def _empty_live_payload(user_id, period_label):
+    payload = FakeSource().fetch_user_okr(user_id=user_id, period_label=period_label)
+    payload["objectiveList"] = []
+    payload["source"]["objectiveListReceipt"]["count"] = 0
+    payload["processed"] = {"objectives": [], "okrRows": []}
+    return payload
 
 
 def managers():
@@ -592,6 +607,69 @@ def test_a_report_with_one_isolated_manager_does_not_publish(tmp_path):
 
     assert gateway.published == []
     assert "weekly_okr_report:last_success_date" not in store.state
+
+
+@pytest.mark.parametrize("message", [
+    "opaque source failure",
+    "Dingteam OKR period not found: 2026 Q3",
+    "source diagnostic " + "x" * 300,
+])
+def test_source_failure_collects_later_members_and_persists_failure(tmp_path, message):
+    from app.okr_review import OkrLiveSourceError
+
+    class BrokenSource(FakeSource):
+        def fetch_user_okr(self, *, user_id, period_label):
+            if user_id == "u1":
+                self.calls.append((user_id, period_label))
+                raise OkrLiveSourceError(scope="member", code="member_read_failed", detail=message, user_id=user_id, period_label=period_label)
+            return super().fetch_user_okr(user_id=user_id, period_label=period_label)
+
+    source = BrokenSource()
+    gateway = FakeGateway(managers())
+    result = run_weekly_okr_report(
+            store=FakeStore(), gateway=gateway, source=source, agent=FakeAgent(),
+            workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+            force=True, deliver=True, period_label="2026 Q3",
+        )
+    assert result.status == "sent"
+    assert [user_id for user_id, _ in source.calls] == ["u1", "u2"]
+    raw = json.loads(next(tmp_path.rglob("live_okr.json")).read_text())
+    assert raw["managers"][0]["sourceOutcome"]["kind"] == "source_failed"
+    assert raw["managers"][0]["sourceOutcome"]["scope"] == "member"
+    assert "liveOkr" not in raw["managers"][0]
+    assert raw["managers"][1]["sourceOutcome"]["kind"] == "collected"
+    assert len(gateway.published) == 3
+    appendix = next(content for name, content, _ in gateway.published if name.endswith("评分附录｜甲"))
+    assert "source_failed" in appendix
+    assert message not in appendix
+    assert f"OkrLiveSourceError: member_read_failed: {message}" in raw["managers"][0]["sourceOutcome"]["diagnostic"]
+    assert "goals_missing" not in appendix
+    assert "#### 逐 KR 评分" not in appendix
+    assert "已形成最终分：1 人；暂不形成：1 人" in gateway.published[-1][1]
+
+
+def test_validated_empty_source_keeps_every_member_appendix(tmp_path):
+    class EmptySource(FakeSource):
+        def fetch_user_okr(self, *, user_id, period_label):
+            if user_id == "u1":
+                return _empty_live_payload(user_id, period_label)
+            return super().fetch_user_okr(user_id=user_id, period_label=period_label)
+
+    gateway = FakeGateway(managers())
+    result = run_weekly_okr_report(
+        store=FakeStore(), gateway=gateway, source=EmptySource(), agent=FakeAgent(),
+        workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+        force=True, deliver=True, period_label="2026 Q3",
+    )
+    assert result.manager_count == 2
+    appendix = next(content for name, content, _ in gateway.published if name.endswith("评分附录｜甲"))
+    assert "goals_missing" in appendix
+    assert "u1" in appendix
+    assert "周期已建立" in appendix
+    assert "完整实时目标列表为空" in appendix
+    assert "个人周期尚未建立" not in appendix
+    assert "#### 逐 KR 评分" not in appendix
+    assert len(gateway.published) == 3
 
 
 def test_report_orchestration_returns_typed_wait_result_for_in_progress(tmp_path):
@@ -1064,7 +1142,7 @@ def test_manager_final_score_uses_business_leadership_and_culture_formula(tmp_pa
     source = FakeSource()
     payloads = [
         {
-            "manager": {"name": manager.name},
+            "manager": {"name": manager.name, "userId": manager.user_id},
             "liveOkr": source.fetch_user_okr(user_id=manager.user_id, period_label="2026 Q3"),
         }
         for manager in roster
@@ -1072,11 +1150,11 @@ def test_manager_final_score_uses_business_leadership_and_culture_formula(tmp_pa
 
     cards = _manager_scorecards(analysis, payloads)
 
-    assert cards["甲"].business_score == 80.0
-    assert cards["甲"].leadership_score == 70.0
-    assert cards["甲"].culture_score == 80.0
-    assert cards["甲"].culture_coefficient == 1.05
-    assert cards["甲"].final_score == 80.9
+    assert cards["u1"].business_score == 80.0
+    assert cards["u1"].leadership_score == 70.0
+    assert cards["u1"].culture_score == 80.0
+    assert cards["u1"].culture_coefficient == 1.05
+    assert cards["u1"].final_score == 80.9
 
 
 def test_codex_agent_analyzes_each_manager_in_a_bounded_source_file(tmp_path):
@@ -1946,10 +2024,10 @@ def test_the_output_schema_pins_the_exact_kr_row_count(tmp_path: Path) -> None:
         assert culture_rows["minItems"] == culture_rows["maxItems"] == 3
 
 
-def test_a_member_the_model_cannot_score_withholds_the_report(
+def test_a_member_the_model_cannot_score_has_a_typed_gap(
     tmp_path: Path,
 ) -> None:
-    """A weekly report cannot publish while any roster member is missing."""
+    """Terminal result failure preserves the member without fabricated scores."""
     roster = (
         ManagerIdentity("甲", "总监", "u1", "o1"),
         ManagerIdentity("乙", "经理", "u2", "o2"),
@@ -1959,11 +2037,11 @@ def test_a_member_the_model_cannot_score_withholds_the_report(
     def executor(_command, prompt, _env):
         name = _manager_name_from_prompt(prompt)
         if name == "乙":
-            raise RuntimeError("runtime_result_validation_failed")
+            from app.agent_runtime_router import RoutedResultValidationError
+            raise RoutedResultValidationError("invalid member result")
         return json.dumps(_weekly_payload_for(name), ensure_ascii=False)
 
-    with pytest.raises(RuntimeError, match="did not cover every roster member"):
-        CodexWeeklyOkrAgent(
+    analysis = CodexWeeklyOkrAgent(
             workspace=tmp_path,
             store=AutoReplyStore(tmp_path / "weekly-partial.sqlite3"),
             routed_execution=CallbackRouted(executor),
@@ -1974,19 +2052,31 @@ def test_a_member_the_model_cannot_score_withholds_the_report(
             week_start=datetime(2026, 7, 27).date(),
             week_end=datetime(2026, 7, 30).date(),
         )
+    assert [review.name for review in analysis.manager_reviews] == ["甲"]
+    assert [(gap.user_id, gap.stage, gap.kind) for gap in analysis.member_gaps] == [
+        ("u2", "analysis", "analysis_failed")
+    ]
+    text = weekly_okr_report_module.render_weekly_okr_report(
+        title="test", period_label="2026 Q3", analysis=analysis,
+        managers=list(roster), manager_payloads=json.loads(source_path.read_text())["managers"],
+    )
+    assert "### 乙｜经理" in text
+    assert "共 2 人" in text
+    assert "analysis_failed" in text
+    assert "u2" in text
 
 
-def test_the_report_still_fails_when_no_member_could_be_scored(
+def test_all_terminal_member_failures_have_unscored_sections(
     tmp_path: Path,
 ) -> None:
     roster = (ManagerIdentity("甲", "总监", "u1", "o1"),)
     source_path = _write_live_source(tmp_path, roster)
 
     def executor(_command, _prompt, _env):
-        raise RuntimeError("runtime_result_validation_failed")
+        from app.agent_runtime_router import RoutedResultValidationError
+        raise RoutedResultValidationError("invalid member result")
 
-    with pytest.raises(RuntimeError, match="did not cover every roster member"):
-        CodexWeeklyOkrAgent(
+    analysis = CodexWeeklyOkrAgent(
             workspace=tmp_path,
             store=AutoReplyStore(tmp_path / "weekly-none.sqlite3"),
             routed_execution=CallbackRouted(executor),
@@ -1997,3 +2087,742 @@ def test_the_report_still_fails_when_no_member_could_be_scored(
             week_start=datetime(2026, 7, 27).date(),
             week_end=datetime(2026, 7, 30).date(),
         )
+    assert analysis.manager_reviews == []
+    assert len(analysis.member_gaps) == 1
+
+
+def test_model_output_cannot_declare_member_gaps():
+    payload = _weekly_payload_for("甲")
+    payload["member_gaps"] = [{"user_id": "u2", "kind": "goals_missing"}]
+    with pytest.raises(ValueError):
+        WeeklyOkrAnalysis.model_validate(payload)
+
+
+@pytest.mark.parametrize("user_ids", [("u1", "u1"), ("", "u2")])
+def test_collection_rejects_duplicate_or_missing_roster_ids(tmp_path, user_ids):
+    roster = [ManagerIdentity(name, "经理", user_id, name) for name, user_id in zip(["甲", "乙"], user_ids)]
+    source = FakeSource()
+    with pytest.raises(ValueError, match="user IDs"):
+        run_weekly_okr_report(
+            store=FakeStore(), gateway=FakeGateway(roster), source=source, agent=FakeAgent(),
+            workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+            force=True, deliver=True, period_label="2026 Q3",
+        )
+    assert source.calls == []
+
+
+@pytest.mark.parametrize("failure_class", ["authentication", "capability", "unclassified"])
+def test_shared_analysis_failure_is_not_a_member_gap(tmp_path, failure_class):
+    from app.agent_runtime_contracts import RuntimeFailureClass
+    from app.agent_runtime_router import RoutedCodexExecutionError
+    roster = managers()
+    source_path = _write_live_source(tmp_path, roster)
+
+    def executor(_command, _prompt, _env):
+        raise RoutedCodexExecutionError("shared failure", failure_class=RuntimeFailureClass(failure_class))
+
+    with pytest.raises(RoutedCodexExecutionError, match="shared failure"):
+        CodexWeeklyOkrAgent(
+            workspace=tmp_path, store=AutoReplyStore(tmp_path / "shared.sqlite3"),
+            routed_execution=CallbackRouted(executor),
+        ).analyze(
+            source_path=source_path, managers=roster, period_label="2026 Q3",
+            week_start=date(2026, 7, 1), week_end=date(2026, 7, 30),
+        )
+
+
+def test_terminal_analysis_gap_publishes_full_roster_without_scores(tmp_path):
+    from app.agent_runtime_contracts import RuntimeFailureClass
+    from app.agent_runtime_router import RoutedCodexExecutionError
+    gateway = FakeGateway(managers())
+
+    def executor(_command, prompt, _env):
+        name = _manager_name_from_prompt(prompt)
+        if name == "甲":
+            raise RoutedCodexExecutionError("terminal result", failure_class=RuntimeFailureClass.RESULT)
+        return json.dumps(_weekly_payload_for(name), ensure_ascii=False)
+
+    result = run_weekly_okr_report(
+        store=FakeStore(), gateway=gateway, source=FakeSource(),
+        agent=CodexWeeklyOkrAgent(
+            workspace=tmp_path, store=AutoReplyStore(tmp_path / "isolated.sqlite3"),
+            routed_execution=CallbackRouted(executor),
+        ),
+        workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+        force=True, deliver=True, period_label="2026 Q3",
+    )
+    assert result.status == "sent"
+    assert len(gateway.published) == 3
+    appendix = next(content for name, content, _ in gateway.published if name.endswith("评分附录｜甲"))
+    assert "analysis_failed" in appendix
+    assert "#### 逐 KR 评分" not in appendix
+    report = gateway.published[-1][1]
+    assert "共 2 人" in report
+    assert "已形成最终分：1 人；暂不形成：1 人" in report
+
+
+def test_malformed_source_is_not_goals_missing(tmp_path):
+    class MalformedSource(FakeSource):
+        def fetch_user_okr(self, **kwargs):
+            payload = super().fetch_user_okr(**kwargs)
+            payload["processed"].pop("okrRows")
+            return payload
+
+    gateway = FakeGateway(managers())
+    result = run_weekly_okr_report(
+            store=FakeStore(), gateway=gateway, source=MalformedSource(), agent=FakeAgent(),
+            workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+            force=True, deliver=True, period_label="2026 Q3",
+        )
+    assert result.status == "sent"
+    raw = json.loads(next(tmp_path.rglob("live_okr.json")).read_text())
+    assert raw["managers"][0]["sourceOutcome"]["kind"] == "source_failed"
+    assert len(raw["managers"]) == 2
+    assert raw["managers"][0]["sourceOutcome"]["scope"] == "member"
+    assert raw["managers"][0]["sourceOutcome"]["validationPhase"] == "member_data"
+    assert len(gateway.published) == 3
+    assert "已形成最终分：0 人；暂不形成：2 人" in gateway.published[-1][1]
+
+
+def test_all_empty_sources_publish_unscored_sections_without_model(tmp_path):
+    class EmptySource:
+        def fetch_user_okr(self, *, user_id, period_label):
+            return _empty_live_payload(user_id, period_label)
+
+    class NoAnalysis:
+        def analyze(self, **_kwargs):
+            raise AssertionError("Empty authoritative sources need no invented analysis")
+
+    gateway = FakeGateway(managers())
+    result = run_weekly_okr_report(
+        store=FakeStore(), gateway=gateway, source=EmptySource(), agent=NoAnalysis(),
+        workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+        force=True, deliver=True, period_label="2026 Q3",
+    )
+    assert result.status == "sent"
+    assert len(gateway.published) == 3
+    assert "已形成最终分：0 人；暂不形成：2 人" in gateway.published[-1][1]
+
+
+@pytest.mark.parametrize("user_ids", [("u1", "u1"), ("", "u2")])
+def test_analysis_rejects_duplicate_or_missing_source_ids(tmp_path, user_ids):
+    source_path = _write_live_source(tmp_path, managers())
+    raw = json.loads(source_path.read_text())
+    for item, user_id in zip(raw["managers"], user_ids):
+        item["manager"]["userId"] = user_id
+    source_path.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="user IDs"):
+        CodexWeeklyOkrAgent(
+            workspace=tmp_path, store=AutoReplyStore(tmp_path / "invalid-source.sqlite3"),
+            routed_execution=CallbackRouted(lambda *_args: pytest.fail("must not analyze")),
+        ).analyze(
+            source_path=source_path, managers=managers(), period_label="2026 Q3",
+            week_start=date(2026, 7, 1), week_end=date(2026, 7, 30),
+        )
+
+
+@pytest.mark.parametrize("message", ["opaque auth failure", "Dingteam OKR period not found: 2026 Q3"])
+def test_all_source_failures_do_not_publish_or_send(tmp_path, message):
+    class OutageSource:
+        def fetch_user_okr(self, **_kwargs):
+            raise RuntimeError(message)
+
+    gateway = FakeGateway(managers())
+    with pytest.raises(RuntimeError, match="source collection failed"):
+        run_weekly_okr_report(
+            store=FakeStore(), gateway=gateway, source=OutageSource(), agent=FakeAgent(),
+            workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+            force=True, deliver=True, period_label="2026 Q3",
+        )
+    raw = json.loads(next(tmp_path.rglob("live_okr.json")).read_text())
+    assert [item["sourceOutcome"]["kind"] for item in raw["managers"]] == ["source_failed", "source_failed"]
+    assert gateway.published == gateway.sent == []
+
+
+@pytest.mark.parametrize("broken_field", ["userId", "periodLabel", "source", "period", "periods", "objectiveList"])
+def test_empty_source_without_authority_receipt_is_source_failed(tmp_path, broken_field):
+    class IncompleteSource(FakeSource):
+        def fetch_user_okr(self, *, user_id, period_label):
+            if user_id == "u1":
+                payload = _empty_live_payload(user_id, period_label)
+                payload.pop(broken_field)
+                return payload
+            return super().fetch_user_okr(user_id=user_id, period_label=period_label)
+
+    gateway = FakeGateway(managers())
+    with pytest.raises(RuntimeError, match="source collection failed"):
+        run_weekly_okr_report(
+            store=FakeStore(), gateway=gateway, source=IncompleteSource(), agent=FakeAgent(),
+            workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+            force=True, deliver=True, period_label="2026 Q3",
+        )
+    raw = json.loads(next(tmp_path.rglob("live_okr.json")).read_text())
+    assert raw["managers"][0]["sourceOutcome"]["kind"] == "source_failed"
+    assert raw["managers"][0]["sourceOutcome"]["scope"] == "shared"
+    assert raw["managers"][0]["sourceOutcome"]["validationPhase"] == "receipt"
+    assert gateway.published == gateway.sent == []
+
+
+def test_unexpected_collection_typeerror_propagates(tmp_path):
+    class BuggySource(FakeSource):
+        def fetch_user_okr(self, *, user_id, period_label):
+            if user_id == "u1":
+                raise TypeError("source programming bug")
+            return super().fetch_user_okr(user_id=user_id, period_label=period_label)
+
+    gateway = FakeGateway(managers())
+    with pytest.raises(TypeError, match="source programming bug"):
+        run_weekly_okr_report(
+            store=FakeStore(), gateway=gateway, source=BuggySource(), agent=FakeAgent(),
+            workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+            force=True, deliver=True, period_label="2026 Q3",
+        )
+    assert gateway.published == gateway.sent == []
+
+
+@pytest.mark.parametrize("corruption", ["wrong_user", "wrong_period", "wrong_selected_period", "raw_objectives", "no_capture"])
+def test_inconsistent_empty_receipt_cannot_establish_goals_missing(tmp_path, corruption):
+    class InconsistentSource(FakeSource):
+        def fetch_user_okr(self, *, user_id, period_label):
+            if user_id != "u1":
+                return super().fetch_user_okr(user_id=user_id, period_label=period_label)
+            payload = _empty_live_payload(user_id, period_label)
+            if corruption == "wrong_user":
+                payload["userId"] = "someone_else"
+            elif corruption == "wrong_period":
+                payload["periodLabel"] = "2026 Q2"
+            elif corruption == "wrong_selected_period":
+                payload["period"]["name"] = "2026 Q2"
+                payload["periods"] = [payload["period"]]
+            elif corruption == "raw_objectives":
+                payload["objectiveList"] = [{"id": "still-present"}]
+                payload["source"]["objectiveListReceipt"]["count"] = 1
+            else:
+                payload["source"].pop("capturedAt")
+            return payload
+
+    gateway = FakeGateway(managers())
+    def run():
+        return run_weekly_okr_report(
+            store=FakeStore(), gateway=gateway, source=InconsistentSource(), agent=FakeAgent(),
+            workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+            force=True, deliver=True, period_label="2026 Q3",
+        )
+
+    if corruption == "raw_objectives":
+        assert run().status == "sent"
+        appendix = next(content for name, content, _ in gateway.published if name.endswith("评分附录｜甲"))
+        assert "source_failed" in appendix
+        assert "goals_missing" not in appendix
+    else:
+        with pytest.raises(RuntimeError, match="source collection failed"):
+            run()
+        assert gateway.published == gateway.sent == []
+    raw = json.loads(next(tmp_path.rglob("live_okr.json")).read_text())
+    expected_scope = "member" if corruption == "raw_objectives" else "shared"
+    assert raw["managers"][0]["sourceOutcome"]["scope"] == expected_scope
+
+
+def test_all_unverified_empty_payloads_are_overall_source_failure(tmp_path):
+    class UnverifiedSource:
+        def fetch_user_okr(self, **_kwargs):
+            return {"processed": {"objectives": [], "okrRows": []}}
+
+    gateway = FakeGateway(managers())
+    with pytest.raises(RuntimeError, match="source collection failed"):
+        run_weekly_okr_report(
+            store=FakeStore(), gateway=gateway, source=UnverifiedSource(), agent=FakeAgent(),
+            workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+            force=True, deliver=True, period_label="2026 Q3",
+        )
+    raw = json.loads(next(tmp_path.rglob("live_okr.json")).read_text())
+    assert [item["sourceOutcome"]["kind"] for item in raw["managers"]] == ["source_failed", "source_failed"]
+    assert gateway.published == gateway.sent == []
+
+
+def _missing_period_envelope(user_id, period_label):
+    return {
+        "source": {"system": "Dingteam personal-period API", "capturedAt": "2026-10-07T04:00:00Z"},
+        "userId": user_id,
+        "periodLabel": period_label,
+        "availability": {"status": "goals_not_established", "providerCode": 0, "periodsComplete": True},
+        "periods": [{"name": "2026 Q3", "okrId": "q3"}],
+    }
+
+
+@pytest.mark.parametrize("all_absent", [False, True])
+def test_verified_missing_q4_periods_publish_full_roster(tmp_path, all_absent):
+    class PeriodSource(FakeSource):
+        def fetch_user_okr(self, *, user_id, period_label):
+            if user_id == "u1" or all_absent:
+                return _missing_period_envelope(user_id, period_label)
+            return super().fetch_user_okr(user_id=user_id, period_label=period_label)
+
+    class Q4Agent(FakeAgent):
+        period_label = "2026 Q4"
+
+        def analyze(self, **kwargs):
+            assert kwargs["period_label"] == "2026 Q4"
+            assert [manager.user_id for manager in kwargs["managers"]] == ["u2"]
+            assert kwargs["week_start"] == date(2026, 10, 1)
+            return super().analyze(**kwargs)
+
+    gateway = FakeGateway(managers())
+    result = run_weekly_okr_report(
+        store=FakeStore(), gateway=gateway, source=PeriodSource(), agent=Q4Agent(),
+        workspace=tmp_path, now=datetime(2026, 10, 7, 12, tzinfo=SHANGHAI),
+        force=True, deliver=True, period_label="2026 Q4",
+    )
+    assert result.status == "sent"
+    assert result.period_label == "2026 Q4"
+    assert len(gateway.published) == 3
+    raw = json.loads(next(tmp_path.rglob("live_okr.json")).read_text())
+    assert raw["managers"][0]["sourceOutcome"]["kind"] == "goals_missing"
+    assert "liveOkr" not in raw["managers"][0]
+    assert raw["managers"][0]["availabilityReceipt"] == _missing_period_envelope("u1", "2026 Q4")
+    appendix = next(content for name, content, _ in gateway.published if name.endswith("评分附录｜甲"))
+    assert "goals_missing" in appendix
+    assert "2026 Q4" in appendix
+    assert "个人周期尚未建立" in appendix
+    assert "#### 逐 KR 评分" not in appendix
+    assert "2026-10-01" in gateway.published[-1][0]
+    expected_scored = 0 if all_absent else 1
+    assert f"已形成最终分：{expected_scored} 人；暂不形成：{2 - expected_scored} 人" in gateway.published[-1][1]
+
+
+@pytest.mark.parametrize("corruption", [
+    "user", "requested_period", "provider_code", "boolean_code", "incomplete",
+    "source", "timestamp", "status", "has_more", "current_period_alias",
+    "missing_period_id", "zero_period_id", "not_a_period_list", "fabricated_processed",
+])
+def test_unverified_period_absence_envelopes_are_source_failed(tmp_path, corruption):
+    class BrokenReceiptSource:
+        def fetch_user_okr(self, *, user_id, period_label):
+            payload = _missing_period_envelope(user_id, period_label)
+            if corruption == "user":
+                payload["userId"] = "other-user"
+            elif corruption == "requested_period":
+                payload["periodLabel"] = "2026 Q3"
+            elif corruption == "provider_code":
+                payload["availability"]["providerCode"] = 401
+            elif corruption == "boolean_code":
+                payload["availability"]["providerCode"] = False
+            elif corruption == "incomplete":
+                payload["availability"]["periodsComplete"] = False
+            elif corruption == "source":
+                payload["source"]["system"] = "unverified adapter"
+            elif corruption == "timestamp":
+                payload["source"]["capturedAt"] = "2026-10-07"
+            elif corruption == "status":
+                payload["availability"]["status"] = "authentication_failed"
+            elif corruption == "has_more":
+                payload["availability"]["hasMore"] = True
+            elif corruption == "current_period_alias":
+                payload["periods"] = [{"name": "2026年第四季度", "okrId": "q4"}]
+            elif corruption == "missing_period_id":
+                payload["periods"] = [{"name": "2026 Q3"}]
+            elif corruption == "zero_period_id":
+                payload["periods"] = [{"name": "2026 Q3", "okrId": 0}]
+            elif corruption == "not_a_period_list":
+                payload["periods"] = {"list": []}
+            else:
+                payload["processed"] = {"objectives": [], "okrRows": []}
+            return payload
+
+    gateway = FakeGateway(managers())
+    with pytest.raises(RuntimeError, match="source collection failed"):
+        run_weekly_okr_report(
+            store=FakeStore(), gateway=gateway, source=BrokenReceiptSource(), agent=FakeAgent(),
+            workspace=tmp_path, now=datetime(2026, 10, 7, 12, tzinfo=SHANGHAI),
+            force=True, deliver=True, period_label="2026 Q4",
+        )
+    raw = json.loads(next(tmp_path.rglob("live_okr.json")).read_text())
+    assert all(item["sourceOutcome"]["kind"] == "source_failed" for item in raw["managers"])
+    assert gateway.published == gateway.sent == []
+
+
+@pytest.mark.parametrize("invalid_id", ["", "duplicate"])
+def test_invalid_source_kr_ids_are_collection_gaps(tmp_path, invalid_id):
+    class InvalidKrSource(FakeSource):
+        def fetch_user_okr(self, *, user_id, period_label):
+            payload = super().fetch_user_okr(user_id=user_id, period_label=period_label)
+            if user_id == "u1":
+                rows = payload["processed"]["okrRows"]
+                if invalid_id == "":
+                    rows[0]["krId"] = ""
+                else:
+                    rows.append(dict(rows[0]))
+            return payload
+
+    class LaterOnlyAgent(FakeAgent):
+        def analyze(self, **kwargs):
+            assert [member.user_id for member in kwargs["managers"]] == ["u2"]
+            return super().analyze(**kwargs)
+
+    gateway = FakeGateway(managers())
+    result = run_weekly_okr_report(
+        store=FakeStore(), gateway=gateway, source=InvalidKrSource(), agent=LaterOnlyAgent(),
+        workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+        force=True, deliver=True, period_label="2026 Q3",
+    )
+    assert result.status == "sent"
+    raw = json.loads(next(tmp_path.rglob("live_okr.json")).read_text())
+    assert raw["managers"][0]["sourceOutcome"]["kind"] == "source_failed"
+    appendix = next(content for name, content, _ in gateway.published if name.endswith("评分附录｜甲"))
+    assert "source_failed" in appendix
+    assert "#### 逐 KR 评分" not in appendix
+
+
+def test_valid_chinese_period_alias_is_not_a_collection_failure(tmp_path):
+    class AliasSource(FakeSource):
+        def fetch_user_okr(self, *, user_id, period_label):
+            payload = super().fetch_user_okr(user_id=user_id, period_label=period_label)
+            payload["period"]["name"] = "2026年第三季度"
+            payload["periods"] = [payload["period"]]
+            return payload
+
+    gateway = FakeGateway(managers())
+    result = run_weekly_okr_report(
+        store=FakeStore(), gateway=gateway, source=AliasSource(), agent=FakeAgent(),
+        workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+        force=True, deliver=True, period_label="2026 Q3",
+    )
+    assert result.status == "sent"
+
+
+def test_unrelated_source_cannot_establish_empty_goals(tmp_path):
+    class UnrelatedSource:
+        def fetch_user_okr(self, *, user_id, period_label):
+            payload = _empty_live_payload(user_id, period_label)
+            payload["source"]["system"] = "unrelated provider"
+            return payload
+
+    gateway = FakeGateway(managers())
+    with pytest.raises(RuntimeError, match="source collection failed"):
+        run_weekly_okr_report(
+            store=FakeStore(), gateway=gateway, source=UnrelatedSource(), agent=FakeAgent(),
+            workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+            force=True, deliver=True, period_label="2026 Q3",
+        )
+    assert gateway.published == gateway.sent == []
+
+
+def test_same_named_members_keep_distinct_scored_appendices(tmp_path):
+    roster = [ManagerIdentity("同名", "经理", "u1", "o1"), ManagerIdentity("同名", "经理", "u2", "o2")]
+    gateway = FakeGateway(roster)
+    class DistinctProgressSource(FakeSource):
+        def fetch_user_okr(self, *, user_id, period_label):
+            payload = super().fetch_user_okr(user_id=user_id, period_label=period_label)
+            payload["processed"]["okrRows"][0]["krProgress"] = 20 if user_id == "u1" else 75
+            return payload
+
+    def score_each_identity(_command, prompt, _env):
+        source_line = next(line for line in prompt.splitlines() if line.startswith("- 实时叮当 OKR 聚合文件："))
+        filtered = json.loads(Path(source_line.split("：", 1)[1]).read_text(encoding="utf-8"))
+        uid = filtered["managers"][0]["manager"]["userId"]
+        payload = _weekly_payload_for("同名")
+        score = 40 if uid == "u1" else 90
+        payload["manager_reviews"][0]["kr_reviews"][0]["score"] = score
+        payload["manager_reviews"][0]["kr_reviews"][0]["base_score"] = score
+        return json.dumps(payload, ensure_ascii=False)
+
+    routed = CallbackRouted(score_each_identity)
+    agent = CodexWeeklyOkrAgent(
+        workspace=tmp_path, store=AutoReplyStore(tmp_path / "same-name.sqlite3"),
+        routed_execution=routed,
+    )
+    result = run_weekly_okr_report(
+        store=FakeStore(), gateway=gateway, source=DistinctProgressSource(), agent=agent,
+        workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+        force=True, deliver=True, period_label="2026 Q3",
+    )
+    assert result.status == "sent"
+    assert len(gateway.published) == 3
+    appendix_names = [name for name, _, _ in gateway.published if "评分附录" in name]
+    assert len(set(appendix_names)) == 2
+    for uid in ["u1", "u2"]:
+        name, content, _ = next(item for item in gateway.published if "评分附录" in item[0] and uid in item[0])
+        assert "同名" in name
+        assert f"成员 ID：{uid}" in content
+        assert "#### 逐 KR 评分" in content
+        expected_score = "40.0" if uid == "u1" else "90.0"
+        assert f"业务 OKR {expected_score}" in content
+        progress = "20%" if uid == "u1" else "75%"
+        assert f"当前 KR 平均进度 {progress}" in content
+    assert "已形成最终分：2 人" in gateway.published[-1][1]
+    raw_path = next(tmp_path.rglob("live_okr.json"))
+    recovered = agent.analyze(
+        source_path=raw_path, managers=roster, period_label="2026 Q3",
+        week_start=date(2026, 7, 1), week_end=date(2026, 7, 30),
+    )
+    assert [review.user_id for review in recovered.manager_reviews] == ["u1", "u2"]
+    assert len(routed.calls) == 2
+
+
+@pytest.mark.parametrize("scope", ["shared", "unknown_runtime", "unknown_value", "unknown_os"])
+def test_shared_or_unknown_source_failure_after_success_blocks_publication(tmp_path, scope):
+    from app.okr_review import OkrLiveSourceError
+
+    class SharedFailureSource(FakeSource):
+        def fetch_user_okr(self, *, user_id, period_label):
+            if user_id == "u2":
+                if scope == "shared":
+                    raise OkrLiveSourceError(scope="shared", code="prerequisite_unavailable", detail="opaque prerequisite failure", user_id=user_id, period_label=period_label)
+                error_type = {"unknown_runtime": RuntimeError, "unknown_value": ValueError, "unknown_os": OSError}[scope]
+                raise error_type("unclassified source failure")
+            return super().fetch_user_okr(user_id=user_id, period_label=period_label)
+
+    store = FakeStore()
+    gateway = FakeGateway(managers())
+    with pytest.raises(RuntimeError, match="source collection failed"):
+        run_weekly_okr_report(
+            store=store, gateway=gateway, source=SharedFailureSource(), agent=FakeAgent(),
+            workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+            force=True, deliver=True, period_label="2026 Q3",
+        )
+    raw = json.loads(next(tmp_path.rglob("live_okr.json")).read_text())
+    assert raw["managers"][0]["sourceOutcome"]["kind"] == "collected"
+    assert raw["managers"][1]["sourceOutcome"]["kind"] == "source_failed"
+    assert raw["managers"][1]["sourceOutcome"]["scope"] == "shared"
+    assert gateway.published == gateway.sent == []
+    assert "weekly_okr_report:last_success_date" not in store.state
+
+
+def test_same_named_scored_and_missing_members_have_distinct_sections(tmp_path):
+    roster = [ManagerIdentity("同名", "经理", "u1", "o1"), ManagerIdentity("同名", "经理", "u2", "o2")]
+
+    class MixedSource(FakeSource):
+        def fetch_user_okr(self, *, user_id, period_label):
+            if user_id == "u1":
+                return _missing_period_envelope(user_id, period_label)
+            return super().fetch_user_okr(user_id=user_id, period_label=period_label)
+
+    gateway = FakeGateway(roster)
+    result = run_weekly_okr_report(
+        store=FakeStore(), gateway=gateway, source=MixedSource(),
+        agent=CodexWeeklyOkrAgent(
+            workspace=tmp_path, store=AutoReplyStore(tmp_path / "mixed-name.sqlite3"),
+            routed_execution=CallbackRouted(lambda *_args: json.dumps(_weekly_payload_for("同名"), ensure_ascii=False)),
+        ),
+        workspace=tmp_path, now=datetime(2026, 10, 7, 12, tzinfo=SHANGHAI),
+        force=True, deliver=True, period_label="2026 Q4",
+    )
+    assert result.status == "sent"
+    first = next(content for name, content, _ in gateway.published if "评分附录" in name and "u1" in name)
+    second = next(content for name, content, _ in gateway.published if "评分附录" in name and "u2" in name)
+    assert "goals_missing" in first and "#### 逐 KR 评分" not in first
+    assert "goals_missing" not in second and "#### 逐 KR 评分" in second
+
+
+def test_model_cannot_supply_review_owner_id():
+    payload = _weekly_payload_for("甲")
+    payload["manager_reviews"][0]["user_id"] = "u2"
+    with pytest.raises(ValueError):
+        WeeklyOkrAnalysis.model_validate(payload)
+
+
+def test_all_identity_bound_member_403_failures_publish_unscored_roster(tmp_path):
+    from app.okr_review import OkrLiveSourceError
+
+    class MemberForbiddenSource:
+        def fetch_user_okr(self, *, user_id, period_label):
+            raise OkrLiveSourceError(scope="member", code="403", detail="member access denied", user_id=user_id, period_label=period_label)
+
+    class NoAnalysis:
+        def analyze(self, **_kwargs):
+            raise AssertionError("member source gaps cannot be scored")
+
+    gateway = FakeGateway(managers())
+    result = run_weekly_okr_report(
+        store=FakeStore(), gateway=gateway, source=MemberForbiddenSource(), agent=NoAnalysis(),
+        workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+        force=True, deliver=True, period_label="2026 Q3",
+    )
+    assert result.status == "sent"
+    assert len(gateway.published) == 3
+    raw = json.loads(next(tmp_path.rglob("live_okr.json")).read_text())
+    assert all(item["sourceOutcome"]["kind"] == "source_failed" and item["sourceOutcome"]["scope"] == "member" for item in raw["managers"])
+    for name, content, _ in gateway.published[:-1]:
+        assert "评分附录" in name
+        assert "source_failed" in content
+        assert "403" in content
+        assert "member access denied" not in content
+        assert "goals_missing" not in content
+        assert "#### 逐 KR 评分" not in content
+    assert "已形成最终分：0 人；暂不形成：2 人" in gateway.published[-1][1]
+
+
+def test_gap_score_table_cells_match_header_and_status_column(tmp_path):
+    class EmptyFirstSource(FakeSource):
+        def fetch_user_okr(self, *, user_id, period_label):
+            if user_id == "u1":
+                return _empty_live_payload(user_id, period_label)
+            return super().fetch_user_okr(user_id=user_id, period_label=period_label)
+
+    gateway = FakeGateway(managers())
+    run_weekly_okr_report(
+        store=FakeStore(), gateway=gateway, source=EmptyFirstSource(), agent=FakeAgent(),
+        workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+        force=True, deliver=True, period_label="2026 Q3",
+    )
+    section = gateway.published[-1][1].split("### 分项评分表", 1)[1].split("## ", 1)[0]
+    rows = [[cell.strip() for cell in line.strip().strip("|").split("|")] for line in section.splitlines() if line.startswith("|")]
+    header, _separator, *data = rows
+    assert len(header) == 8
+    assert all(len(row) == len(header) for row in data)
+    gap_row = next(row for row in data if row[0] == "甲")
+    assert gap_row[header.index("状态")] == "goals_missing"
+
+
+def test_all_shared_auth_401_source_failures_still_block_publication(tmp_path):
+    from app.okr_review import OkrLiveSourceError
+
+    class SharedAuthSource:
+        def fetch_user_okr(self, *, user_id, period_label):
+            raise OkrLiveSourceError(scope="shared", code="401", detail="shared auth unavailable", user_id=user_id, period_label=period_label)
+
+    gateway = FakeGateway(managers())
+    with pytest.raises(RuntimeError, match="source collection failed"):
+        run_weekly_okr_report(
+            store=FakeStore(), gateway=gateway, source=SharedAuthSource(), agent=FakeAgent(),
+            workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+            force=True, deliver=True, period_label="2026 Q3",
+        )
+    assert gateway.published == gateway.sent == []
+
+
+@pytest.mark.parametrize("proof", [None, {"providerCode": 401, "complete": True, "count": 0}, {"providerCode": False, "complete": True, "count": 0}, {"providerCode": 0, "complete": False, "count": 0}, {"providerCode": 0, "complete": True, "count": 1}, {"providerCode": 0, "complete": True, "count": False}])
+def test_empty_live_objectives_require_complete_provider_receipt(tmp_path, proof):
+    class UnprovenSource(FakeSource):
+        def fetch_user_okr(self, *, user_id, period_label):
+            if user_id != "u1":
+                return super().fetch_user_okr(user_id=user_id, period_label=period_label)
+            payload = _empty_live_payload(user_id, period_label)
+            if proof is not None:
+                payload["source"]["objectiveListReceipt"] = proof
+            else:
+                payload["source"].pop("objectiveListReceipt", None)
+            return payload
+
+    gateway = FakeGateway(managers())
+    with pytest.raises(RuntimeError, match="source collection failed"):
+        run_weekly_okr_report(
+            store=FakeStore(), gateway=gateway, source=UnprovenSource(), agent=FakeAgent(),
+            workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+            force=True, deliver=True, period_label="2026 Q3",
+        )
+    raw = json.loads(next(tmp_path.rglob("live_okr.json")).read_text())
+    assert raw["managers"][0]["sourceOutcome"]["kind"] == "source_failed"
+    assert raw["managers"][0]["sourceOutcome"]["scope"] == "shared"
+    assert raw["managers"][0]["sourceOutcome"]["validationPhase"] == "receipt"
+    assert gateway.published == gateway.sent == []
+
+
+def test_absence_receipt_metrics_are_private_not_public_report(tmp_path):
+    receipt = _missing_period_envelope("u1", "2026 Q4")
+    receipt["periods"][0].update({"grade": "PRIVATE_HISTORICAL_GRADE", "progress": "PRIVATE_HISTORICAL_PROGRESS", "okrId": "PRIVATE_PERIOD_ID"})
+
+    class PrivateReceiptSource(FakeSource):
+        def fetch_user_okr(self, *, user_id, period_label):
+            if user_id == "u1":
+                return receipt
+            return super().fetch_user_okr(user_id=user_id, period_label=period_label)
+
+    class Q4Agent(FakeAgent):
+        period_label = "2026 Q4"
+
+    gateway = FakeGateway(managers())
+    run_weekly_okr_report(
+        store=FakeStore(), gateway=gateway, source=PrivateReceiptSource(), agent=Q4Agent(),
+        workspace=tmp_path, now=datetime(2026, 10, 7, 12, tzinfo=SHANGHAI),
+        force=True, deliver=True, period_label="2026 Q4",
+    )
+    public = "\n".join(content for _, content, _ in gateway.published) + "\n".join(gateway.sent)
+    for marker in ["PRIVATE_HISTORICAL_GRADE", "PRIVATE_HISTORICAL_PROGRESS", "PRIVATE_PERIOD_ID", "periodsComplete", "providerCode", "2026 Q3"]:
+        assert marker not in public
+    raw = json.loads(next(tmp_path.rglob("live_okr.json")).read_text())
+    assert raw["managers"][0]["availabilityReceipt"] == receipt
+
+
+def test_source_failure_diagnostic_paths_and_tokens_stay_private(tmp_path):
+    from app.okr_review import OkrLiveSourceError
+    private_detail = "/private/originals/PRIVATE_SOURCE.txt token=PRIVATE_AUTH_TOKEN\nPRIVATE_PROVIDER_BODY"
+
+    class PrivateFailureSource(FakeSource):
+        def fetch_user_okr(self, *, user_id, period_label):
+            if user_id == "u1":
+                raise OkrLiveSourceError(scope="member", code="403", detail=private_detail, user_id=user_id, period_label=period_label)
+            return super().fetch_user_okr(user_id=user_id, period_label=period_label)
+
+    gateway = FakeGateway(managers())
+    run_weekly_okr_report(
+        store=FakeStore(), gateway=gateway, source=PrivateFailureSource(), agent=FakeAgent(),
+        workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+        force=True, deliver=True, period_label="2026 Q3",
+    )
+    public = "\n".join(content for _, content, _ in gateway.published) + "\n".join(gateway.sent)
+    assert "403" in public
+    for marker in ["PRIVATE_SOURCE", "PRIVATE_AUTH_TOKEN", "PRIVATE_PROVIDER_BODY"]:
+        assert marker not in public
+    raw = json.loads(next(tmp_path.rglob("live_okr.json")).read_text())
+    assert private_detail in raw["managers"][0]["sourceOutcome"]["diagnostic"]
+
+
+def test_terminal_analysis_diagnostics_are_not_public_evidence(tmp_path):
+    from app.agent_runtime_router import RoutedResultValidationError
+    private_detail = "/private/analysis/PRIVATE_ARTIFACT token=PRIVATE_ANALYSIS_TOKEN"
+    roster = managers()
+    source_path = _write_live_source(tmp_path, roster)
+
+    def executor(_command, prompt, _env):
+        name = _manager_name_from_prompt(prompt)
+        if name == "甲":
+            raise RoutedResultValidationError(private_detail)
+        return json.dumps(_weekly_payload_for(name), ensure_ascii=False)
+
+    analysis = CodexWeeklyOkrAgent(
+        workspace=tmp_path, store=AutoReplyStore(tmp_path / "private-analysis.sqlite3"),
+        routed_execution=CallbackRouted(executor),
+    ).analyze(
+        source_path=source_path, managers=roster, period_label="2026 Q3",
+        week_start=date(2026, 7, 1), week_end=date(2026, 7, 30),
+    )
+    assert analysis.member_gaps[0].diagnostic == private_detail
+    public = weekly_okr_report_module.render_weekly_okr_report(
+        title="report", period_label="2026 Q3", analysis=analysis,
+        managers=roster, manager_payloads=json.loads(source_path.read_text())["managers"],
+    )
+    assert "analysis_failed" in public
+    assert "PRIVATE_ARTIFACT" not in public
+    assert "PRIVATE_ANALYSIS_TOKEN" not in public
+
+
+@pytest.mark.parametrize("corruption", ["identity", "source_authority", "objective_proof", "absence_identity"])
+def test_untrusted_contract_after_valid_source_blocks_independent_of_count(tmp_path, corruption):
+    class InvalidContractSource(FakeSource):
+        def fetch_user_okr(self, *, user_id, period_label):
+            payload = super().fetch_user_okr(user_id=user_id, period_label=period_label)
+            if user_id == "u2":
+                if corruption == "identity":
+                    payload["userId"] = "wrong-user"
+                elif corruption == "source_authority":
+                    payload["source"]["system"] = "untrusted provider"
+                elif corruption == "objective_proof":
+                    payload["source"]["objectiveListReceipt"]["complete"] = False
+                else:
+                    payload = _missing_period_envelope("wrong-user", period_label)
+            return payload
+
+    gateway = FakeGateway(managers())
+    store = FakeStore()
+    with pytest.raises(RuntimeError, match="source collection failed"):
+        run_weekly_okr_report(
+            store=store, gateway=gateway, source=InvalidContractSource(), agent=FakeAgent(),
+            workspace=tmp_path, now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+            force=True, deliver=True, period_label="2026 Q3",
+        )
+    raw = json.loads(next(tmp_path.rglob("live_okr.json")).read_text())
+    assert raw["managers"][0]["sourceOutcome"]["kind"] == "collected"
+    assert raw["managers"][1]["sourceOutcome"]["scope"] == "shared"
+    assert gateway.published == gateway.sent == []
+    assert "weekly_okr_report:last_success_date" not in store.state

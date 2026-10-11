@@ -1,0 +1,357 @@
+{
+  "version": "task-scoped-prompts-fixed-v1",
+  "frozen_at": "2026-10-08",
+  "baseline_commit": "a2173cd9eb60269866904e6170999a0577c53373",
+  "candidate_branch": "codex/task-scoped-prompts",
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "medium",
+  "output_schema": false,
+  "maximum_parallel_calls": 2,
+  "controls": {
+    "same_between_arms": [
+      "case facts",
+      "tool catalog and tool results",
+      "frozen final Skill bodies",
+      "saved prompt configuration snapshot",
+      "model and reasoning effort",
+      "scoring criteria",
+      "fixed runtime clock"
+    ],
+    "changed_between_arms": [
+      "repository instruction assembly at the frozen baseline commit versus the stable candidate snapshot"
+    ],
+    "forbidden": [
+      "expected answer text in model prompts",
+      "production database writes",
+      "live business actions",
+      "native output schema PR31",
+      "credential proxies",
+      "temporary Codex configuration homes"
+    ]
+  },
+  "fixed_runtime_time": "2026-10-08T10:00:00-07:00",
+  "tools": [
+    "read_task_skill",
+    "read_skill",
+    "read_system_action_contract",
+    "read_dingtalk_calendar_event",
+    "list_dingtalk_calendar_events",
+    "read_dingtalk_messages",
+    "read_dingtalk_document"
+  ],
+  "cases": [
+    {
+      "id": "calendar-cross-midnight",
+      "role": "consumer",
+      "domain": "calendar",
+      "skill_name": "ceo-calendar-invite",
+      "task": "Review the live invitation cal-cross-midnight and the relevant local schedule, then return the complete typed Consumer result for the action, if any.",
+      "trigger": {
+        "channel": "scheduled",
+        "conversation_id": "eval-calendar-conversation",
+        "conversation_title": "Synthetic calendar review",
+        "message_id": "trigger-calendar-cross-midnight",
+        "sender": "Synthetic calendar source",
+        "text": "A new invitation requires review. Exact event id: cal-cross-midnight.",
+        "create_time": "2026-10-08T09:55:00-07:00",
+        "raw_payload": {
+          "event_id": "cal-cross-midnight",
+          "principal_timezone": "America/Los_Angeles",
+          "invitation_timezone": "Asia/Shanghai",
+          "participant_timezones": [
+            {
+              "participant_id": "principal",
+              "timezone": "America/Los_Angeles",
+              "source_ref": "synthetic-principal-profile",
+              "applies_on": "2026-10-09"
+            }
+          ]
+        }
+      },
+      "phases": {
+        "cold": {
+          "calendar_events": [
+            {
+              "event_id": "cal-cross-midnight",
+              "title": "Customer launch decision",
+              "start_time": "2026-10-10T13:30:00+08:00",
+              "end_time": "2026-10-10T14:30:00+08:00",
+              "timezone": "Asia/Shanghai",
+              "organizer": {"user_id": "organizer-cross", "verified": true},
+              "principal_response_status": "needsAction",
+              "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+            },
+            {
+              "event_id": "cal-block-after",
+              "title": "Blocked",
+              "start_time": "2026-10-10T00:00:00-07:00",
+              "end_time": "2026-10-10T00:30:00-07:00",
+              "timezone": "America/Los_Angeles",
+              "organizer": {"user_id": "principal", "verified": true},
+              "principal_response_status": "accepted",
+              "description": "Personal blocked time."
+            }
+          ]
+        },
+        "resume": {
+          "calendar_events": [
+            {
+              "event_id": "cal-cross-midnight",
+              "title": "Customer launch decision",
+              "start_time": "2026-10-10T13:30:00+08:00",
+              "end_time": "2026-10-10T14:30:00+08:00",
+              "timezone": "Asia/Shanghai",
+              "organizer": {"user_id": "organizer-cross", "verified": true},
+              "principal_response_status": "accepted",
+              "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+            },
+            {
+              "event_id": "cal-block-after",
+              "title": "Blocked",
+              "start_time": "2026-10-10T00:00:00-07:00",
+              "end_time": "2026-10-10T00:30:00-07:00",
+              "timezone": "America/Los_Angeles",
+              "organizer": {"user_id": "principal", "verified": true},
+              "principal_response_status": "accepted",
+              "description": "Personal blocked time."
+            }
+          ]
+        }
+      },
+      "criteria": {
+        "required_tool_calls": ["read_task_skill", "read_dingtalk_calendar_event", "list_dingtalk_calendar_events"],
+        "cold": [
+          "treat 2026-10-10 13:30 Asia/Shanghai as 2026-10-09 22:30 America/Los_Angeles with UTC-07:00",
+          "recognize that the invitation ends at 23:30 and the Blocked event begins at 00:00, so there is no overlap",
+          "propose exactly one accepted response for cal-cross-midnight and no response change for cal-block-after"
+        ],
+        "resume": [
+          "reread live state in the same native session",
+          "recognize that cal-cross-midnight is already accepted",
+          "return no_action with no duplicate calendar response while preserving the attendance-value meaning"
+        ]
+      }
+    },
+    {
+      "id": "calendar-real-overlap",
+      "role": "consumer",
+      "domain": "calendar",
+      "skill_name": "ceo-calendar-invite",
+      "task": "Review the live invitation cal-real-overlap and the relevant local schedule, then return the complete typed Consumer result for the action, if any.",
+      "trigger": {
+        "channel": "scheduled",
+        "conversation_id": "eval-calendar-overlap-conversation",
+        "conversation_title": "Synthetic calendar review",
+        "message_id": "trigger-calendar-real-overlap",
+        "sender": "Synthetic calendar source",
+        "text": "A new invitation requires review. Exact event id: cal-real-overlap.",
+        "create_time": "2026-10-08T09:56:00-07:00",
+        "raw_payload": {
+          "event_id": "cal-real-overlap",
+          "principal_timezone": "America/Los_Angeles",
+          "invitation_timezone": "Asia/Shanghai",
+          "participant_timezones": [
+            {
+              "participant_id": "principal",
+              "timezone": "America/Los_Angeles",
+              "source_ref": "synthetic-principal-profile",
+              "applies_on": "2026-10-09"
+            }
+          ]
+        }
+      },
+      "phases": {
+        "cold": {
+          "calendar_events": [
+            {
+              "event_id": "cal-real-overlap",
+              "title": "Customer launch decision",
+              "start_time": "2026-10-10T13:30:00+08:00",
+              "end_time": "2026-10-10T14:30:00+08:00",
+              "timezone": "Asia/Shanghai",
+              "organizer": {"user_id": "organizer-overlap", "verified": true},
+              "principal_response_status": "needsAction",
+              "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+            },
+            {
+              "event_id": "cal-block-overlap",
+              "title": "Blocked",
+              "start_time": "2026-10-09T23:00:00-07:00",
+              "end_time": "2026-10-10T00:30:00-07:00",
+              "timezone": "America/Los_Angeles",
+              "organizer": {"user_id": "principal", "verified": true},
+              "principal_response_status": "accepted",
+              "description": "Personal blocked time."
+            }
+          ]
+        }
+      },
+      "criteria": {
+        "required_tool_calls": ["read_task_skill", "read_dingtalk_calendar_event", "list_dingtalk_calendar_events"],
+        "cold": [
+          "use the correct 2026-10-09 22:30-23:30 America/Los_Angeles interval",
+          "recognize the 23:00-23:30 overlap with the active Blocked event",
+          "do not accept cal-real-overlap",
+          "propose a declined response for cal-real-overlap; any organizer notification must target organizer-overlap"
+        ]
+      }
+    },
+    {
+      "id": "mail-already-handled",
+      "role": "consumer",
+      "domain": "mail",
+      "skill_name": "ceo-mail-review",
+      "task": "Review the complete mail thread in eval-mail-conversation and return the complete typed Consumer result for any remaining action.",
+      "trigger": {
+        "channel": "dingtalk",
+        "conversation_id": "eval-mail-conversation",
+        "conversation_title": "Synthetic mail review",
+        "message_id": "trigger-mail-review",
+        "sender": "Synthetic mail card",
+        "text": "Mail card: Renewal confirmation. Open the complete thread before deciding.",
+        "create_time": "2026-10-08T09:57:00-07:00",
+        "raw_payload": {"mail_thread_id": "mail-thread-1", "preview_truncated": true}
+      },
+      "phases": {
+        "cold": {
+          "messages": [
+            {
+              "message_id": "mail-original",
+              "sender": "Synthetic vendor",
+              "create_time": "2026-10-08T08:00:00-07:00",
+              "text": "Renewal was approved and recorded under receipt renew-77. This is a confirmation only; no reply is requested."
+            },
+            {
+              "message_id": "mail-principal-sent",
+              "sender": "Principal",
+              "create_time": "2026-10-08T07:30:00-07:00",
+              "text": "Approved subject to the recorded legal terms."
+            }
+          ]
+        }
+      },
+      "criteria": {
+        "required_tool_calls": ["read_task_skill", "read_dingtalk_messages"],
+        "cold": [
+          "use the complete thread rather than the truncated card",
+          "recognize the renewal is already approved and the provider confirmation requests no reply",
+          "return no_action with no duplicate chat or mail action"
+        ]
+      }
+    },
+    {
+      "id": "document-material-conflicts",
+      "role": "consumer",
+      "domain": "document",
+      "skill_name": "ceo-document-review",
+      "task": "Review document doc-review-1 for material factual consistency and prepare the complete typed Consumer result for replying to the source request.",
+      "trigger": {
+        "channel": "dingtalk",
+        "conversation_id": "eval-document-conversation",
+        "conversation_title": "Synthetic document review",
+        "message_id": "trigger-document-review",
+        "sender": "Synthetic document owner",
+        "text": "Please review doc-review-1 before approval and reply with the material issues.",
+        "create_time": "2026-10-08T09:58:00-07:00",
+        "raw_payload": {"document_id": "doc-review-1"}
+      },
+      "phases": {
+        "cold": {
+          "document": {
+            "document_id": "doc-review-1",
+            "revision": "rev-7",
+            "title": "Synthetic rollout proposal",
+            "content": "Executive summary: Phase 1 covers 120 stores and launches on October 15.\nRollout table: Phase 1 covers 80 stores and launches on October 22.\nBudget summary: total requested budget is USD 500,000.\nBudget lines: platform USD 300,000; operations USD 200,000; contingency USD 120,000."
+          }
+        }
+      },
+      "criteria": {
+        "required_tool_calls": ["read_task_skill", "read_dingtalk_document"],
+        "cold": [
+          "identify the 120 versus 80 store conflict",
+          "identify the October 15 versus October 22 launch conflict",
+          "identify that USD 300,000 + 200,000 + 120,000 equals USD 620,000 rather than the stated USD 500,000",
+          "propose one source-conversation reply bound to eval-document-conversation and trigger-document-review that asks for reconciliation before approval",
+          "do not claim the document is approved or edit the document"
+        ]
+      }
+    },
+    {
+      "id": "work-tracking-existing-remediation",
+      "role": "consumer",
+      "domain": "work_tracking",
+      "skill_name": "ceo-work-tracking",
+      "task": "Review document doc-project-1 and return the complete typed Consumer result for replying with the project risk and next action, if any.",
+      "trigger": {
+        "channel": "dingtalk",
+        "conversation_id": "eval-project-conversation",
+        "conversation_title": "Synthetic project update",
+        "message_id": "trigger-project-review",
+        "sender": "Synthetic project source",
+        "text": "Please review doc-project-1 and reply with whether the project needs attention and the next action.",
+        "create_time": "2026-10-08T09:59:00-07:00",
+        "raw_payload": {"document_id": "doc-project-1", "project_anchor_id": "project-orion"}
+      },
+      "phases": {
+        "cold": {
+          "document": {
+            "document_id": "doc-project-1",
+            "revision": "rev-3",
+            "title": "Project Orion status",
+            "content": "Project Orion customer cutover is scheduled for October 20. The authentication callback blocker remains unresolved and now threatens that cutover. Program Lead owns rollout coordination. Existing Task task-auth-1 already requires the Integration Owner to verify the callback configuration and report the result by October 12; it is open and directly addresses this blocker. No source states that task-auth-1 is complete."
+          }
+        }
+      },
+      "criteria": {
+        "required_tool_calls": ["read_task_skill", "read_dingtalk_document"],
+        "cold": [
+          "identify a material unresolved authentication blocker threatening the October 20 cutover",
+          "use existing Task task-auth-1 as the next action rather than inventing or claiming a duplicate Task",
+          "do not claim task-auth-1 is complete",
+          "propose one source-conversation reply bound to eval-project-conversation and trigger-project-review with the risk and existing next action"
+        ]
+      }
+    },
+    {
+      "id": "audit-document-feedback",
+      "role": "audit",
+      "domain": "document",
+      "skill_name": "ceo-document-review",
+      "task": "Review the complete candidate against the live synthetic document and return the complete typed Audit result.",
+      "trigger": {
+        "channel": "dingtalk",
+        "conversation_id": "eval-audit-document-conversation",
+        "conversation_title": "Synthetic Audit review",
+        "message_id": "trigger-audit-document-review",
+        "sender": "Synthetic document owner",
+        "text": "Please review doc-audit-1 before approval.",
+        "create_time": "2026-10-08T10:00:00-07:00",
+        "raw_payload": {"document_id": "doc-audit-1"}
+      },
+      "phases": {
+        "cold": {
+          "document": {
+            "document_id": "doc-audit-1",
+            "revision": "rev-11",
+            "title": "Synthetic capacity proposal",
+            "content": "Executive summary: capacity is 120 units and launch is October 15.\nImplementation table: capacity is 80 units and launch is October 22.\nApproval status: not approved; factual conflicts must be reconciled first."
+          },
+          "candidate": {
+            "summary": "The document is internally consistent and ready for approval.",
+            "reply_body": "No material issues found. The proposal is ready for approval."
+          }
+        }
+      },
+      "criteria": {
+        "required_tool_calls": ["read_task_skill", "read_dingtalk_document"],
+        "cold": [
+          "preserve the exact proposal_revision and candidate_digest",
+          "return outcome return with non-null Audit feedback",
+          "state that the candidate missed the 120 versus 80 capacity conflict and October 15 versus October 22 date conflict",
+          "request a replacement candidate grounded in the live document",
+          "do not execute or approve any action"
+        ]
+      }
+    }
+  ]
+}

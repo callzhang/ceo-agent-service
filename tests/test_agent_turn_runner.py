@@ -18,6 +18,65 @@ from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore, RuntimeRoutePausedError
 
 
+@pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
+@pytest.mark.parametrize("session_id", ["failed-session", ""])
+def test_explicit_noncontinuable_failure_requires_fresh_session(role, session_id):
+    run = SimpleNamespace(
+        role=role, proposal_revision=2, status="failed", codex_session_id=session_id,
+        turn_attempt=1, id=17,
+        structured_error_json=json.dumps({
+            "code": "dependency_read_unavailable", "retryable": True,
+            "session_continuable": False,
+        }),
+    )
+    def status_runs(*_args, **kwargs):
+        assert kwargs["load_events"] is False
+        return [run]
+    store = SimpleNamespace(list_agent_runs_for_task_generation=status_runs)
+    task = SimpleNamespace(id=9, execution_generation="current")
+    assert agent_turn_runner.repeated_result_failure_requires_fresh_session(
+        store, task, role=role, proposal_revision=2,
+    )
+
+
+@pytest.mark.parametrize("continuable", [True, None, "false"])
+def test_fresh_session_requires_explicit_false_not_missing_or_coerced_flag(continuable):
+    run = SimpleNamespace(
+        role=AgentRole.CONSUMER, proposal_revision=0, status="failed",
+        codex_session_id="existing-session", turn_attempt=1, id=1,
+        structured_error_json=json.dumps({"session_continuable": continuable}),
+    )
+    def status_runs(*_args, **kwargs):
+        assert kwargs["load_events"] is False
+        return [run]
+    store = SimpleNamespace(list_agent_runs_for_task_generation=status_runs)
+    task = SimpleNamespace(id=9, execution_generation="current")
+    assert not agent_turn_runner.repeated_result_failure_requires_fresh_session(
+        store, task, role=AgentRole.CONSUMER, proposal_revision=0,
+    )
+
+
+@pytest.mark.parametrize("session_id", ["valid", ""])
+def test_later_completed_session_covers_older_noncontinuable_failure(session_id):
+    earlier = SimpleNamespace(
+        role=AgentRole.CONSUMER, proposal_revision=0, status="failed",
+        codex_session_id="old", turn_attempt=1, id=1,
+        structured_error_json='{"session_continuable":false}',
+    )
+    later = SimpleNamespace(
+        role=AgentRole.CONSUMER, proposal_revision=0, status="completed",
+        codex_session_id=session_id, turn_attempt=2, id=2, structured_error_json="",
+    )
+    def status_runs(*_args, **kwargs):
+        assert kwargs["load_events"] is False
+        return [earlier, later]
+    store = SimpleNamespace(list_agent_runs_for_task_generation=status_runs)
+    task = SimpleNamespace(id=9, execution_generation="current")
+    assert not agent_turn_runner.repeated_result_failure_requires_fresh_session(
+        store, task, role=AgentRole.CONSUMER, proposal_revision=0,
+    )
+
+
 def test_result_parse_failure_preserves_runtime_attempt_code():
     from app.agent_result import ResultParseError
 
@@ -25,10 +84,13 @@ def test_result_parse_failure_preserves_runtime_attempt_code():
 
     class Store:
         def get_agent_runtime_attempt(self, attempt_id):
-            return SimpleNamespace(id=attempt_id, status="running")
+            return SimpleNamespace(
+                id=attempt_id, status="running", session_id="",
+                transcript_start=0, transcript_end=0,
+            )
 
-        def fail_agent_runtime_attempt(self, *args):
-            calls.append(args)
+        def fail_agent_runtime_attempt(self, *args, **kwargs):
+            calls.append((args, kwargs))
 
     runner = object.__new__(AgentTurnProcess)
     runner.store = Store()
@@ -37,7 +99,8 @@ def test_result_parse_failure_preserves_runtime_attempt_code():
         ResultParseError("no valid typed result JSON found in Codex JSONL"),
     )
 
-    assert calls == [(17, "result", "codex_result_missing", False)]
+    assert calls == [((17, "result", "codex_result_missing", False),
+                      {"transcript_start": 0, "transcript_end": 0})]
 
 
 def test_routed_runtime_failure_preserves_router_failure_code():
@@ -47,10 +110,13 @@ def test_routed_runtime_failure_preserves_router_failure_code():
 
     class Store:
         def get_agent_runtime_attempt(self, attempt_id):
-            return SimpleNamespace(id=attempt_id, status="running")
+            return SimpleNamespace(
+                id=attempt_id, status="running", session_id="",
+                transcript_start=0, transcript_end=0,
+            )
 
-        def fail_agent_runtime_attempt(self, *args):
-            calls.append(args)
+        def fail_agent_runtime_attempt(self, *args, **kwargs):
+            calls.append((args, kwargs))
 
     runner = object.__new__(AgentTurnProcess)
     runner.store = Store()
@@ -63,7 +129,8 @@ def test_routed_runtime_failure_preserves_router_failure_code():
         ),
     )
 
-    assert calls == [(18, "process", "runtime_executor_failed", False)]
+    assert calls == [((18, "process", "runtime_executor_failed", False),
+                      {"transcript_start": 0, "transcript_end": 0})]
 
 
 def test_same_route_capacity_retry_resumes_observed_audit_session():
@@ -167,16 +234,15 @@ def test_successor_claim_route_pause_stays_retryable():
 def _audit_result(proposal_revision: int) -> AuditAgentResult:
     return AuditAgentResult.model_validate(
         {
-            "outcome": "feedback_provided",
+            "outcome": "return",
             "summary": "缺少冲突处理动作",
             "proposal_revision": proposal_revision,
+            "candidate_digest": "a" * 64,
             "feedback": {
                 "rule": "Rule 15 (calendar_conflicts)",
                 "observation": "两个会议在 14:00-14:30 重叠",
                 "requested_revision": "拒绝 HR 例会并通知发起人",
             },
-            "external_result": None,
-            "decision_options": [],
             "error": {
                 "code": "",
                 "retryable": False,

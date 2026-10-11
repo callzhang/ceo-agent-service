@@ -2,7 +2,7 @@ import json
 
 from app.store import AutoReplyStore
 from app.task_models import WorkItem
-from app.task_semantic_models import BusinessTaskStage
+from app.task_semantic_models import AttentionStatus, BusinessTaskStage
 from app.task_retrieval import (
     load_project_task_detail,
     render_candidate_prompt,
@@ -23,6 +23,129 @@ def _work_item(summary: str) -> WorkItem:
     })
 
 
+def test_project_context_without_task_is_retrieved_from_its_own_sources(tmp_path):
+    from app.project_context_service import ProjectContextService
+    from app.task_business_resolution import BusinessResolutionService
+    from app.task_semantic_models import ProjectContext
+
+    store = AutoReplyStore(tmp_path / "zero-task-project.sqlite3")
+    resolver = BusinessResolutionService(store)
+    anchor = resolver.register_anchor(anchor_type="project", anchor_ref="project:p", title="甲一期交付")
+    project = resolver.register_official_project(anchor_id=anchor, registry_source="meeting:roles")
+    signal = store.create_business_task_signal(source_type="meeting", source_ref="meeting:roles", evidence_text="张三总负责交付和验收；王五负责商务和回款。付款日期未确定。", dedupe_key="roles")
+    proof = {"signal_id": signal, "source_ref": "meeting:roles", "source_excerpt": "张三总负责交付和验收"}
+    current = ProjectContext(goal="完成一期交付", scope="一期", overall_owner={"person_name": "张三", "responsibility": "交付和验收", "evidence": [proof]}, responsibilities=[], facts=[{"key": "payment", "text": "付款日期未确定", "evidence": [{**proof, "source_excerpt": "付款日期未确定"}]}])
+    with store.business_task_transaction() as db:
+        ProjectContextService(store).apply(project_id=project, context=current, signal_ids=(signal,), db=db)
+    # Context rather than title matches; another project must not displace it.
+    noise_anchor = resolver.register_anchor(anchor_type="project", anchor_ref="project:noise", title="无关事项")
+    resolver.register_official_project(anchor_id=noise_anchor, registry_source="meeting:noise")
+    item = _work_item("付款日期未确定")
+    context = retrieve_task_semantic_context(store, item, limit_per_kind=1)
+    assert context.task_candidates == context.formal_tasks == ()
+    assert [p.id for p in context.official_projects] == [project]
+    assert context.project_contexts[0].context == current
+    assert context.project_contexts[0].project_id == project
+    assert [p.signal_id for p in context.project_evidence] == [signal]
+    assert [s.id for s in context.evidence_signals] == [signal]
+    payload = json.loads(render_task_semantic_context(context, work_item=item))
+    assert payload["project_contexts"][0]["context"]["overall_owner"]["person_name"] == "张三"
+    assert "summary" not in payload["current_work_item"]
+    assert len(payload["source_documents"]) == 2
+    assert store.list_business_tasks() == ()
+
+
+def test_project_context_prioritizes_related_task_without_shared_words(tmp_path):
+    from app.task_business_resolution import BusinessResolutionService
+
+    store = AutoReplyStore(tmp_path / "project-tasks.sqlite3")
+    resolver = BusinessResolutionService(store)
+    anchor = resolver.register_anchor(anchor_type="project", anchor_ref="p:one", title="甲一期交付")
+    resolver.register_official_project(anchor_id=anchor, registry_source="meeting:p")
+    task = store.create_business_task(title="完全不同措辞", stage="candidate")
+    signal = store.create_business_task_signal(source_type="meeting", source_ref="meeting:p", evidence_text="项目对应具体事项", dedupe_key="link")
+    resolver.confirm_anchor_match(task_id=task, anchor_id=anchor, evidence_signal_id=signal)
+    store.create_business_task(title="甲一期交付 无关联资料", stage="candidate")
+    context = retrieve_task_semantic_context(store, _work_item("甲一期交付"), limit_per_kind=1)
+    assert [row.id for row in context.task_candidates] == [task]
+
+
+def test_shared_source_same_source_formal_tasks_are_not_lost_to_rank_limit(tmp_path):
+    store = AutoReplyStore(tmp_path / "same-source-formal.sqlite3")
+    own = []
+    for i in range(4):
+        id = store.create_business_task(title=f"不同的交付事项{i}", stage="formal", formal_basis="explicit_assignment", owner_name="张三", owner_evidence_json=json.dumps({"source_ref": "meeting:own#old", "excerpt": "张三负责全部事项"}, ensure_ascii=False))
+        signal = store.create_business_task_signal(source_type="ai_minutes", source_ref="meeting:own#old", evidence_text="张三负责全部事项", dedupe_key=f"own:{i}")
+        store.link_business_task_evidence(task_id=id, signal_id=signal, evidence_role="assignment")
+        own.append(id)
+    item = WorkItem.model_validate({"source": {"type": "ai_minutes", "ref": "meeting:own#new"}, "summary": "完全变了的措辞", "context": {"source_conversation_kind": "minutes"}})
+    _sourced_formal_task(store, title="完全变了的措辞", suffix="unrelated")
+    context = retrieve_task_semantic_context(store, item, limit_per_kind=1)
+    assert {task.id for task in context.formal_tasks} == set(own)
+    payload = json.loads(render_task_semantic_context(context, work_item=item))
+    assert len(payload["source_signals"]) == 4
+    assert len(payload["source_documents"]) == 2
+
+
+def test_shared_source_owner_quote_in_decoded_json_remains_formal(tmp_path):
+    store = AutoReplyStore(tmp_path / "decoded-owner.sqlite3")
+    quote = "张三负责\n全部交付"
+    body = json.dumps({"summary": quote, "padding": "甲" * 5000}, ensure_ascii=True)
+    task = store.create_business_task(title="全部交付", stage="formal", formal_basis="explicit_assignment", owner_name="张三", owner_evidence_json=json.dumps({"source_ref": "m:json", "excerpt": quote}, ensure_ascii=False))
+    signal = store.create_business_task_signal(source_type="ai_minutes", source_ref="m:json", evidence_text=body, dedupe_key="json:owner")
+    store.link_business_task_evidence(task_id=task, signal_id=signal, evidence_role="assignment")
+    context = retrieve_task_semantic_context(store, _work_item("全部交付"), limit_per_kind=1)
+    assert [row.id for row in context.formal_tasks] == [task]
+    assert context.unverified_formal_tasks == ()
+    payload = json.loads(render_task_semantic_context(context))
+    assert payload["source_documents"][0]["decoded_excerpts"][0]["text"] == quote
+
+
+def test_shared_source_prompt_does_not_duplicate_current_work_item_body(tmp_path):
+    from app.task_agent import build_task_agent_prompt
+
+    store = AutoReplyStore(tmp_path / "source-prompt.sqlite3")
+    item = _work_item("唯一的本次正文 alpha-BODY-7749")
+    context = retrieve_task_semantic_context(store, item)
+    rendered = render_task_semantic_context(context, work_item=item)
+    prompt = build_task_agent_prompt(item, rendered)
+    assert prompt.count(item.summary) == 1
+    assert json.loads(rendered)["current_work_item"]["source"]["ref"] == item.source.ref
+    assert item.summary == "唯一的本次正文 alpha-BODY-7749"
+
+
+def test_project_context_uses_bounded_recent_proof_but_keeps_old_role_citation(tmp_path):
+    from app.project_context_service import ProjectContextService
+    from app.task_business_resolution import BusinessResolutionService
+    from app.task_semantic_models import ProjectContext
+
+    store = AutoReplyStore(tmp_path / "bounded-project.sqlite3")
+    resolver = BusinessResolutionService(store)
+    projects = []
+    first = store.create_business_task_signal(source_type="ai_minutes", source_ref="shared#old", evidence_text="一期张三负责总交付；二期李四负责总交付。", dedupe_key="shared")
+    for i in range(2):
+        anchor = resolver.register_anchor(anchor_type="project", anchor_ref=f"project:{i}", title=f"{i}期交付")
+        project = resolver.register_official_project(anchor_id=anchor, registry_source="shared#old")
+        projects.append(project)
+        quote = "张三负责总交付" if i == 0 else "李四负责总交付"
+        context = ProjectContext(goal="完成交付", scope="一期" if i == 0 else "二期", overall_owner={"person_name": "张三" if i == 0 else "李四", "responsibility": "总交付", "evidence": [{"signal_id": first, "source_ref": "shared#old", "source_excerpt": quote}]}, responsibilities=[], facts=[])
+        with store.business_task_transaction() as db:
+            ProjectContextService(store).apply(project_id=project, context=context, signal_ids=(first,), db=db)
+            for j in range(5):
+                id = store.create_business_task_signal_in_transaction(source_type="message", source_ref=f"p:{i}:{j}", evidence_text=f"交付进展{i}-{j}", dedupe_key=f"p:{i}:{j}", _db=db)
+                ProjectContextService(store).apply(project_id=project, context=None, signal_ids=(id,), db=db)
+    item = WorkItem.model_validate({"source": {"type": "ai_minutes", "ref": "shared#new"}, "summary": "完全不匹配措辞", "context": {"source_conversation_kind": "minutes"}})
+    context = retrieve_task_semantic_context(store, item, limit_per_kind=1)
+    assert {p.id for p in context.official_projects} == set(projects)
+    assert len(context.project_contexts) == 2
+    for project in projects:
+        proof = [p.signal_id for p in context.project_evidence if p.project_id == project]
+        assert first in proof and len(proof) == 2
+    assert len(context.evidence_signals) == 3
+    payload = json.loads(render_task_semantic_context(context, work_item=item))
+    assert len(payload["source_documents"]) == 4
+
+
 def _sourced_formal_task(store: AutoReplyStore, *, title: str, suffix: str) -> int:
     source_ref = f"message:owner:{suffix}"
     excerpt = f"王明负责{title}"
@@ -37,6 +160,114 @@ def _sourced_formal_task(store: AutoReplyStore, *, title: str, suffix: str) -> i
     )
     store.link_business_task_evidence(task_id=task_id, signal_id=signal_id, evidence_role="assignment")
     return task_id
+
+
+def test_semantic_context_returns_only_bounded_active_attention_for_selected_projects(tmp_path):
+    from app.task_business_resolution import BusinessResolutionService
+
+    store = AutoReplyStore(tmp_path / "attention-context.sqlite3")
+    resolver = BusinessResolutionService(store)
+    anchors = [resolver.register_anchor(anchor_type="project", anchor_ref=f"project:{i}",
+        title=title) for i, title in enumerate(("报价", "无关"))]
+    for anchor in anchors:
+        resolver.register_official_project(anchor_id=anchor, registry_source="report:registry")
+    signal = store.create_business_task_signal(source_type="message", source_ref="message:risk",
+        evidence_text="交付受阻", dedupe_key="message:risk")
+    assessment = json.dumps({"inference": "影响交付", "evidence": [
+        {"signal_id": signal, "source_ref": "message:risk", "source_excerpt": "交付受阻"}]}, ensure_ascii=False)
+    ids = []
+    with store._connect() as db:
+        # Store ordering is updated_at/id ascending: excluded rows must precede
+        # valid rows so either missing predicate breaks the limit=1 selection.
+        for i, anchor in enumerate((anchors[1], anchors[0], anchors[0], anchors[0])):
+            ids.append(store.create_business_attention_item_in_transaction(stable_key=f"test:{i}",
+                category="watch", title="交付风险", business_area="交付", why_attention="影响交付",
+                current_state="交付受阻", ceo_action="无需你处理；等待交付恢复", anchor_id=anchor,
+                evidence_signal_id=signal, assessment_json=assessment, now=f"2026-10-02T00:00:0{i}Z", _db=db))
+        inactive = store.get_business_attention_item_in_transaction(item_id=ids[1], _db=db)
+        store.update_business_attention_item_in_transaction(item=inactive.model_copy(update={
+            "status": AttentionStatus.RESOLVED, "resolution_signal_id": signal, "resolved_at": "2026-10-02T01:00:00Z"}), _db=db)
+    context = retrieve_task_semantic_context(store, _work_item("报价"), limit_per_kind=1)
+    assert len(context.attention_items) == 1
+    card = context.attention_items[0]
+    assert card.id == ids[2]
+    assert card.anchor_id == anchors[0]
+    payload = json.loads(render_task_semantic_context(context))
+    assert payload["current_project_attention"] == [{"id": card.id, "anchor_id": anchors[0],
+        "task_ids": [],
+        "why_attention": "影响交付", "current_state": "交付受阻", "assessment_json": assessment,
+        "updated_at": card.updated_at}]
+    # Zero-Task Attention still brings its own original proof, not just its assessment.
+    assert [source["id"] for source in payload["source_signals"]] == [signal]
+    assert payload["source_documents"][0]["visible_ranges"][0]["text"] == "交付受阻"
+
+
+def test_semantic_context_renders_saved_attention_members_not_project_peers(tmp_path):
+    from app.task_business_resolution import BusinessResolutionService
+
+    store = AutoReplyStore(tmp_path / "attention-members.sqlite3")
+    resolver = BusinessResolutionService(store)
+    anchor_id = resolver.register_anchor(
+        anchor_type="project", anchor_ref="project:报价", title="报价",
+    )
+    resolver.register_official_project(anchor_id=anchor_id, registry_source="report:registry")
+    member_id = _sourced_formal_task(store, title="报价任务甲", suffix="member")
+    peer_id = _sourced_formal_task(store, title="报价任务乙", suffix="peer")
+    member_signal_id = 0
+    for task_id, suffix in ((member_id, "member"), (peer_id, "peer")):
+        signal_id = store.create_business_task_signal(
+            source_type="message", source_ref=f"message:link:{suffix}",
+            evidence_text=f"报价任务{suffix}属于报价项目", dedupe_key=f"message:link:{suffix}",
+        )
+        resolver.confirm_anchor_match(
+            task_id=task_id, anchor_id=anchor_id, evidence_signal_id=signal_id,
+        )
+        if task_id == member_id:
+            member_signal_id = signal_id
+    with store.business_task_transaction() as db:
+        assessment_json = json.dumps({"evidence": [{
+            "signal_id": member_signal_id, "source_ref": "message:link:member",
+            "source_excerpt": "报价任务member属于报价项目",
+        }]}, ensure_ascii=False)
+        card_id = store.create_business_attention_item_in_transaction(
+            stable_key=f"project:{anchor_id}", category="watch", title="报价风险",
+            business_area="报价", why_attention="交付受阻", current_state="等待恢复",
+            ceo_action="观察", anchor_id=anchor_id, evidence_signal_id=member_signal_id,
+            assessment_json=assessment_json,
+            now="2026-10-02T00:00:00Z", _db=db,
+        )
+        store.replace_business_attention_tasks_in_transaction(
+            attention_item_id=card_id, task_ids=(member_id,), _db=db,
+        )
+    members_before = store.list_business_attention_tasks(card_id)
+    card_before = store.get_business_attention_item(card_id)
+
+    context = retrieve_task_semantic_context(store, _work_item("报价任务甲与报价任务乙"))
+    payload = json.loads(render_task_semantic_context(context))
+
+    assert {row.task_id for row in context.task_anchor_links} >= {member_id, peer_id}
+    assert payload["current_project_attention"][0]["task_ids"] == [member_id]
+    assert peer_id not in payload["current_project_attention"][0]["task_ids"]
+    assert store.list_business_attention_tasks(card_id) == members_before
+    assert store.get_business_attention_item(card_id) == card_before
+
+
+def test_semantic_context_has_no_attention_without_official_project_anchor(tmp_path):
+    from app.task_business_resolution import BusinessResolutionService
+
+    store = AutoReplyStore(tmp_path / "attention-no-anchor.sqlite3")
+    anchor = BusinessResolutionService(store).register_anchor(
+        anchor_type="project", anchor_ref="unregistered:quote", title="报价")
+    signal = store.create_business_task_signal(source_type="message", source_ref="message:no-project",
+        evidence_text="报价风险", dedupe_key="message:no-project")
+    with store._connect() as db:
+        store.create_business_attention_item_in_transaction(stable_key="unregistered:attention",
+            category="watch", title="报价风险", business_area="交付", why_attention="风险影响交付",
+            current_state="报价风险", ceo_action="等待恢复", anchor_id=anchor,
+            evidence_signal_id=signal, now="2026-10-02T00:00:00Z", _db=db)
+    context = retrieve_task_semantic_context(store, _work_item("报价"))
+    assert context.attention_items == ()
+    assert json.loads(render_task_semantic_context(context))["current_project_attention"] == []
 
 
 def test_semantic_context_keeps_legacy_ownerless_formal_searchable_but_unverified(tmp_path):
@@ -81,9 +312,13 @@ def test_render_semantic_context_bounds_repeated_source_signal_evidence(tmp_path
     payload = json.loads(render_task_semantic_context(context))
     rendered_signal = payload["source_signals"][0]
 
-    assert len(rendered_signal["evidence_text"]) <= 4096
-    assert rendered_signal["evidence_text"].startswith("开头证据")
-    assert rendered_signal["evidence_text"].endswith("结尾证据")
+    document = next(doc for doc in payload["source_documents"] if doc["document_id"] == rendered_signal["document_id"])
+    ranges = document["visible_ranges"]
+    assert "evidence_text" not in rendered_signal
+    assert sum(len(span["text"]) for span in ranges) <= 2048
+    assert ranges[0]["text"].startswith("开头证据")
+    assert ranges[-1]["text"].endswith("结尾证据")
+    assert document["full_length"] == len(long_evidence) and document["truncated"]
     assert rendered_signal["source_ref"] == "meeting:long#todos-sha256=one"
 
 

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "baseline_commit": "266b8c99",
+  "candidate_commit": "84300f77",
+  "case_source": "evals/task_scoped_prompts/v1.json",
+  "cases": ["calendar-cross-midnight", "calendar-real-overlap", "mail-already-handled", "document-material-conflicts", "work-tracking-existing-remediation", "audit-document-feedback"],
+  "continuation": "calendar-cross-midnight, same native session after source becomes accepted",
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "medium",
+  "output_schema": false,
+  "maximum_parallel_calls": 2,
+  "timeout_seconds": 180,
+  "controls": "Same frozen configuration, actual current role tool schemas with every callback stubbed, Skill files, facts, fixed clock and criteria. Only instruction assembly changes. Consumer ordinary shell sandbox stays native; no live provider actions are exposed.",
+  "audit_candidate": "Build a complete canonical Consumer candidate from the frozen incorrect document conclusion, correct reply content field and exact task-context source binding. Compute digest normally. This variant tests factual Audit correction, not the older payload.body defect.",
+  "acceptance": "Canonical result, required source reads, zero unexpected MCP callbacks, independent complete-output business review; calendar continuation must read current accepted state and avoid duplicate response. Exit/JSON validity alone is insufficient."
+}

@@ -30,6 +30,10 @@ type MeetingDetail = {
   generated_reply: { title: string; text: string };
   audit_summary: string;
   tool_uses: MeetingToolUse[];
+  tool_events_available: boolean;
+  tool_events_reason: string;
+  native_available: boolean;
+  native_reason: string;
   runtime: Record<string, unknown>;
   actions: { agent_url: string; dingtalk_url?: string };
 };
@@ -116,8 +120,8 @@ function MeetingToolUseCard({ use, index }: { use: MeetingToolUse; index: number
   </article>;
 }
 
-function MeetingToolUses({ uses }: { uses: MeetingToolUse[] }) {
-  return <details className="console-card meeting-tool-card"><summary><strong>Tool uses</strong><span>{uses.length} 条调用记录</span></summary><div className="meeting-tool-list">{uses.length ? uses.map((use, index) => <MeetingToolUseCard use={use} index={index + 1} key={`${use.call_id || use.tool || "tool"}-${index}`} />) : <p className="console-card-muted">没有工具调用记录。</p>}</div></details>;
+function MeetingToolUses({ uses, available }: { uses: MeetingToolUse[]; available: boolean }) {
+  return <details className="console-card meeting-tool-card"><summary><strong>Tool uses</strong><span>{available ? `${uses.length} 条调用记录` : "原生过程不可用"}</span></summary><div className="meeting-tool-list">{!available ? <p className="console-card-muted">原生工具过程不可用，无法确认调用次数。</p> : uses.length ? uses.map((use, index) => <MeetingToolUseCard use={use} index={index + 1} key={`${use.call_id || use.tool || "tool"}-${index}`} />) : <p className="console-card-muted">没有工具调用记录。</p>}</div></details>;
 }
 
 export function MeetingAttemptPage({ endpoint }: { endpoint: string }) {
@@ -154,10 +158,10 @@ export function MeetingAttemptPage({ endpoint }: { endpoint: string }) {
         </div>
       </section>
       <section className="console-card meeting-metadata-card"><div className="meeting-metadata-grid">{payload.metadata.map((field) => <div className="meeting-metadata-item" key={field.label}><span>{field.label}</span><strong>{field.value || "未记录"}</strong></div>)}</div></section>
-      <section className="console-card meeting-review-card"><div className="meeting-reply-meta"><StatusBadge value={payload.status} /></div><MeetingSection title={payload.trigger.title} value={payload.trigger.text} /><MeetingSection title={payload.audit_explanation.title} value={payload.audit_explanation.text} /><MeetingSection title={payload.generated_reply.title} value={payload.generated_reply.text} /></section>
-      <section className="console-card meeting-summary-card"><h2>Audit summary</h2><SummaryText value={payload.audit_summary} lines={4} /></section>
-      <MeetingToolUses uses={payload.tool_uses} />
-      <details className="console-card meeting-runtime-card"><summary><strong>Runtime details</strong><span>{payload.tool_uses.length} 条工具记录</span></summary><pre className="technical-details">{JSON.stringify(payload.runtime, null, 2)}</pre></details>
+      <section className="console-card meeting-review-card"><div className="meeting-reply-meta"><StatusBadge value={payload.status} /></div><MeetingSection title={payload.trigger.title} value={payload.trigger.text} /><MeetingSection title={payload.audit_explanation.title} value={payload.native_available ? payload.audit_explanation.text : "原生 Agent 过程不可用，无法查看审计说明。"} /><MeetingSection title={payload.generated_reply.title} value={payload.generated_reply.text} /></section>
+      <section className="console-card meeting-summary-card"><h2>Audit summary</h2><SummaryText value={payload.native_available ? payload.audit_summary : "原生 Agent 过程不可用，无法查看审计摘要。"} lines={4} /></section>
+      <MeetingToolUses uses={payload.tool_uses} available={payload.tool_events_available} />
+      <details className="console-card meeting-runtime-card"><summary><strong>Runtime details</strong><span>{payload.tool_events_available ? `${payload.tool_uses.length} 条工具记录` : "原生过程不可用"}</span></summary><pre className="technical-details">{JSON.stringify(payload.runtime, null, 2)}</pre></details>
     </>}
   </ConsolePageLayout>;
 }

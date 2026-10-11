@@ -1,5 +1,264 @@
 # Current Runtime Mechanism
 
+Manual rerun of a compacted DingTalk message reads the exact original message ID
+through the native `+messages-mget` contract, without reactions, threads or
+resource downloads. Complete message results and matching conversation/message
+identities are required before a new generation is queued. Display fields never
+substitute for message content. Historical provider risk refusal is checked
+before this read and remains non-replayable. The enqueue transaction also checks
+the captured execution generation, current attempt retirement, and structured
+refusals of the current generation; a stale source read cannot rotate a newly
+refused generation. Raw source rows are validated before message normalization,
+so malformed entries cannot be silently dropped to manufacture a unique match.
+Other channel payload requirements
+and the Consumer/Audit/System execution lifecycle are unchanged.
+
+An instance supplement that rotates execution generation requires the original
+schema-valid execution payload. Missing source material rejects the request
+without persisting a supplement, invalidating the candidate, or changing its
+generation; the supplement and rerun remain one transaction.
+
+The isolated Task replay tool accepts `--source-payload` for a retired work
+input. It verifies the exact original UTF-8 hash, byte length and source identity
+before taking a lease or changing input status, then uses that same verified
+source for execution and evidence readback. Missing or changed material is
+rejected without changing the input. Frozen multi-version cases advance only
+after the preceding turn completes and compare-and-swap its prior source hash;
+this is a database-copy evaluation operation, not a production semantic import.
+
+Reply consumption reads the current generation's persisted orchestration terminal
+result before parsing its trigger input. A completed generation can therefore
+finish idempotently after its historical input has been compacted. This read uses
+the existing candidate, Audit, and System receipt state machine and dispatches
+no action. Nonterminal generations still require complete validated context and
+the ordinary source reread before any new Agent turn or controlled execution.
+Settled-input assertions use exact original UTF-8 hashes and byte counts plus
+stable task/input lineage; a revised pending input must still retain its body.
+
+Attention selects failed email classification task IDs from the existing compact
+status index before reading task payloads. Physical row IDs preserve nullable
+legacy task identities. Case-insensitive failure matching and
+the displayed source fields remain unchanged. This avoids scanning completed
+classification input payloads; it does not introduce a cache or schema change.
+
+Native DingTalk message resources are reviewed as stable conversation/message/
+resource identities plus verified byte length and SHA-256. The provider reader
+downloads by those identities in a task-owned temporary directory, requires
+the native message-verification receipt and exact returned identities, and
+checks file containment and length before hashing. Downloads are removed when
+the read ends. Source capture and pre-execution reread use the same reader;
+changed resource bytes or message/resource facts invalidate the candidate.
+Only the native resource schema's URL, expiry and download instruction are
+transport capabilities, not candidate facts. Unknown resource fields and missing
+identity/verification fail explicitly. Original raw messages remain unchanged;
+provider-rendered or serialized text is not a native resource envelope and
+remains unchanged under the existing source security validation.
+signed URLs elsewhere, including authored results, retain the existing rejection.
+This changes source representation, not action permissions or historic replay.
+
+Runtime result security validation budgets authored fields, captured-source
+metadata and each captured-source value separately. Candidate/list/binding
+wrappers are not charged again against a source's JSON-decoding depth budget.
+Every field is still inspected by the same credential, signed-URL and local
+runtime predicates; each source retains its depth bound, callback validation
+and original contents. The total serialized result byte limit still applies
+to the complete envelope. This does not exempt business secrets or transport
+capabilities, change source identity/digest checks, or permit an external action.
+
+The Task Attention inspector reads decision fields only from the completed
+runtime attempt's exact native session and range. It closes the read-only
+SQLite connection after loading references, before reading transcript files,
+then uses a separate read-only connection to select Project context from saved
+projection identities. Missing, invalid or out-of-range native decisions are
+reported as unavailable, not reconstructed from retired `decision_json` bodies
+or interpreted as a successful empty decision. Projection receipts remain
+visible independently; the inspector never initializes or migrates storage.
+
+Terminal unsubscribe reconciliation probes classification identity and plan
+version before loading payloads. Only a missing receipt plus an existing
+done/skipped/needs_human task triggers full hydration; failed tasks stay excluded.
+Hydration rechecks the current plan version and processed status, so concurrent
+plan replacement cannot attach new payloads to the old action identity. This
+read-only optimization does not create or infer provider receipts.
+
+Reply quality checks rank attempts using only identity, ordering, status and
+review fields, not complete input or reply payloads. OA completion receipts and
+reviewed human-decision candidates are still checked through their original
+queries. Deduplication and recovery semantics are unchanged; narrower projection
+does not establish that all SQLite lock contention or endpoint latency is fixed.
+
+Runtime EmailStore initialization validates account configuration even when
+historical durable-row validation is disabled. Invalid account JSON makes email
+storage unavailable through the existing initialization boundary; unrelated
+audit routes remain available. This scans account configuration, not historical
+messages, actions or training observations.
+Both lightweight and full validation require at least one nonblank string scan
+folder per account, using the same account configuration check.
+
+Email training snapshot reads validate the external payload against the frozen
+SQLite parent's identity, versions, seed, observation time and digest. A valid
+external file does not excuse a tampered parent record. These comparisons run
+only for the requested snapshot and do not restore historical startup scans.
+Publishing a subsequent snapshot propagates failures while reading the previous
+snapshot; a corrupt parent cannot be treated as missing label history or advance
+watermarks. The failed publication leaves the previous snapshot unchanged.
+Folder and selected snapshots have separate cumulative label baselines. Reads,
+training pins and idle cleanup therefore use the latest complete snapshot of
+each type, not a single global latest file. Older snapshots of the same type
+remain unavailable unless pinned by an active training run. Already removed
+payloads are not reconstructed or silently treated as empty history.
+
+Cron scheduler and dispatcher incidents close only after the same component
+completes a successful tick. Recovery retains incidents from the tick's entire
+start second or later, because stored incident timestamps have second precision,
+and incidents from other components. Startup health alone is
+not recovery evidence. With no eligible incident, resolution does not acquire
+the SQLite writer lock; the write transaction rechecks the same conditions.
+
+A resumed runtime attempt initializes an empty transcript range at its observed
+start offset. Setting the session advances an unset end to that offset without
+discarding any later captured end. Thus a result-validation failure can retain
+its original error before a transcript end is captured, instead of failing its
+own persistence with an invalid range. An empty range is not transcript content
+or execution evidence. Explicit invalid completion ranges are still rejected.
+
+Email classification polling checks for due pending work or an expired running
+lease before acquiring the SQLite writer lock. Ineligible polls are read-only.
+The eligibility read grants no ownership: expired-lease recovery and the full
+claim query still run under BEGIN IMMEDIATE, preserving generation and owner
+checks if another worker claims the candidate between the read and the lock.
+
+An orchestration failure before the first Agent run has `final_run_id=0`.
+The Reply worker handles both retryable and terminal failures through its
+generation-checked no-run transition. Terminal failures retain their original
+error and summary in the failed Attempt without retrying or creating an Agent
+run. A missing nonzero final run ID remains an integrity error, not a pre-run
+failure.
+
+When the Reply worker records an exception after a newly failed AgentRun,
+an explicit JSON boolean `retryable=false` in that run's error denies task
+requeue, including clean-session retry. Caller denial also remains binding.
+Only the current task/generation and a run changed since the pre-processing
+snapshot participate; historical unchanged failures cannot supply this flag.
+Missing flags retain the caller policy and existing attempt budget. The
+original failed run and failed Attempt remain evidence, not `needs_human` or
+a successful business result. Existing authorization/provider wait paths are
+unchanged.
+
+Retry session selection honors an explicit JSON boolean
+`session_continuable=false` on the latest failed run for the current generation,
+role and revision. A new run does not inherit that session, and Consumer/Audit
+start a fresh runtime rather than restoring it through conversation routing.
+Missing flags and string values are not treated as false. A later completed
+session covers an older failure. Existing candidate digest, revision, source,
+approval and external-receipt checks remain unchanged; fresh transport is not
+permission to replay an external action. Old run/session history is preserved.
+This decision uses the latest terminal run even when its legacy
+`codex_session_id` is empty: API/Claude sessions may exist only in route/runtime
+records. The runner computes fresh selection before claiming, and the same
+decision initializes the new run without an inherited session. This also keeps
+Audit's repeated-result fresh retry consistent with immutable run binding.
+Fresh selection remains effective across capacity retries and route changes.
+Within that run, a route may resume only a session actually observed in its
+current native events; before a new session event it stays fresh. Another
+explicit fresh decision invalidates that route's earlier in-run session.
+Normal continuation outside a fresh retry keeps its existing selection rules.
+
+`CEO_DATABASE_BACKUP_PAUSED=1` pauses automatic daily database backups before
+opening databases, creating directories, or pruning snapshots. Unset the flag
+to resume the existing daily workflow. Set it in the service process environment
+and use the formal restart/deployment path; it does not interrupt an in-flight
+copy. Explicit deployment backups remain governed by the deployment safety gate.
+Migration regression fixtures record their actual legacy schema version before
+reopening and assert the complete path to the current version. Quiet-deployment
+regressions distinguish a running meeting turn from an unclaimed historical
+processing row; neither a stale timestamp nor a status alone proves live work.
+
+The database-backup worker checks once per hour. It keeps one integrity-checked
+daily backup in `backups/`; after confirming that copy is complete, it prunes
+root-level `auto-reply.sqlite3.pre-*` recovery snapshots and their SQLite
+sidecars once they are older than 24 hours. A failed or interrupted daily copy
+does not authorize that cleanup.
+
+The repository updater does not write deployment progress to the shared
+SQLite database while waiting for the live service to become quiet. It records
+the next phase only after the service is quiet and stopped, using a narrow
+connection that does not initialize the application schema. That write
+acquires `BEGIN IMMEDIATE` and retries transient `SQLITE_BUSY`/`SQLITE_LOCKED`
+up to three times with the connection's existing 30-second busy timeout.
+
+Reply queue polling first reads the current channel's due pending tasks without
+acquiring a write transaction. An empty channel, future-only queue, or another
+channel's work returns immediately even while a different writer is active.
+When the preview finds work, the original write transaction rechecks and claims
+the current rows atomically. The preview is not a reservation or queue cache;
+work arriving after an empty preview remains pending for the next poll. This
+removes idle Reply polling as a SQLite lock contender; it does not establish
+that all other long transactions or API latency causes have been eliminated.
+
+Slow SQLite context diagnostics separately report body execution, transaction
+finish (commit or rollback), and connection close time. Body time can include
+waiting to acquire a transaction, so it is not automatically write-lock hold
+time. Logs keep call sites and elapsed durations, not SQL parameters or business
+payloads. Transaction behavior and existing error propagation are unchanged.
+
+Worker status summarizes the current `reply_attempts` projection using only
+identity, status, timestamp, and error columns. It does not load full attempt
+payloads such as captured inputs or reply bodies to calculate queue counts.
+It groups trigger identities and seeks each trigger's latest attempt through
+`idx_reply_attempts_current_trigger`; it does not rank every retry row in a
+window function for each status request.
+
+Runtime-attempt detail reads filter by `agent_run_id` and order by
+`attempt_number`; the partial `idx_agent_runtime_attempts_run` index serves that
+lookup for run-bound attempts. Attempt details batch this indexed lookup across
+all runs on the page, avoiding one SQLite connection and query per run.
+Generalized attempts without an `agent_run_id` remain outside this index and
+keep their existing workload-key indexes.
+
+Audit web startup does not prewarm the History list or its 24-hour, 7-day and
+30-day charts. Those views scan large operation-history projections and run
+queries on demand when requested, so every service restart does not launch
+multi-minute reads against the same SQLite database used by workers.
+
+The required `idx_errors_unresolved` partial index contains only incidents whose
+`coalesce(resolved_at, '')` is empty. Attention retains the same recovery,
+supersession, ordering and current-state predicates, but does not scan resolved
+incident payloads. Resolving an incident removes its index entry without deleting
+history; a new unresolved incident is visible immediately. Installation follows
+the existing schema-version/manifest startup migration after the quiet-deploy
+backup, not request-time index creation or business-state repair.
+
+Scheduled incident recovery locates the original run through its indexed event
+ID or integer primary key, retaining the exact canonical conversation-ID check
+after parsing. Malformed/noncanonical IDs cannot claim a recovery, and a later
+success must still belong to the same scheduled task with a done/skipped Reply
+execution. Unrelated run history is not scanned to discover the original run.
+Email-action Attention first selects failed rows by internal rowid from the
+compact status index before loading classification payloads; projected business
+action IDs, including legacy NULL values, are unchanged. An explicit join order keeps
+SQLite from starting with all processed classifications. Current ActionPlan,
+case-insensitive status, retry-window, ordering and limit rules are unchanged.
+
+Direct Email action polling uses the same current-plan, sibling, retry-time,
+account and dependency selection for a read-only probe and the subsequent
+write transaction. A negative probe does not acquire the writer lock. A
+positive probe is not a reservation: BEGIN IMMEDIATE must recompute eligibility
+before the unchanged conditional update. New work arriving after a negative
+probe waits for the next poll; no queue result is cached. Each pass starts from
+the indexed pending/failed statuses, then reads sibling actions through the
+`(classification_id, action_plan_id)` index; it does not scan every action while
+holding the SQLite writer lock. Candidate order and the existing action,
+dependency and retry rules are unchanged.
+
+Reply-task scheduled recovery uses the required partial expression index
+`idx_scheduled_task_runs_reply_execution`, keyed by the existing integer-cast
+execution link for `execution_kind='reply_task'`. It avoids scanning unrelated
+scheduled history while preserving the original CAST behavior, including legacy
+noncanonical link text. No channel or canonical-text restriction is added to
+that pre-existing recovery rule. Installation uses schema version/manifest
+migration after a verified quiet-deploy backup.
+
 本文档是 CEO Agent Service 当前运行机制与已批准生命周期政策的总览入口。除明确标注为
 “已批准的生命周期政策”的段落外，正文描述当前代码事实；政策段落是后续实现约束，不表示
 对应代码已经切换、部署或在生产启用。`docs/superpowers/` 下被新设计取代的历史 spec/plan
@@ -7,21 +266,136 @@
 
 ## 运行角色
 
-每个需要 Agent 处理的任务都经过两个职责不同的角色：
+两角色都可通过 `read_dingtalk_group_members` 读取精确群 ID 的 DWS 真人/机器人
+成员桶和原生有界自动分页结果；调用方检查 complete、hasMore、buckets 和 failures。
+`read_dingtalk_user_profiles` 按已验证的组织 userId 批量读取原始资料，不进行姓名搜索
+或身份补全，并保留原始组织字段和空资料；title 必须由真实返回证据确认。群 openDingtalkId
+不能直接传为组织 userId；姓名搜索只发现候选，须按稳定 open ID 关联后才能读企业资料。
+工具在 Consumer/Audit 的实际目录及原生 CLI enabled_tools 中一致注册为只读，Audit
+仍没有写能力。本修复仅补齐读取能力，不新增成员变化门禁或来源绑定策略。
+
+微信 Reader Skill 的 `status`、`read-recent` 和 `produce-once` 都必须显式接收调用方提供的
+绝对服务数据库路径，并原样传给受控 IPC CLI。缺少 `--db` 时在启动 IPC 前拒绝执行，
+不能从工作树的 `data/` 推断生产账号就绪状态。该路径修正不改变 Sender、目标选择、
+外部回检、发送授权或历史投递状态。
+
+运行时发送工具拒绝 `provider_risk_rejected` 时，服务保留该错误代码并停止自动重试，
+不将其降级为通用可重试失败或改成 `needs_human`。恢复必须先取得知情授权或形成实质更安全的
+候选，再按原业务身份经过正式审核、外部回检及投递流程；不得换工具绕过拒绝。
+历史 Attempt 的“重新处理”入口也会识别 AgentRun 中的 `code` 或 `source_code` 拒绝，
+页面不提供原候选重放，直接 POST 返回冲突且不入队。详情明确说明限制；普通技术性失败仍保留
+原来的重试入口。新的实质不同候选或有明确范围的授权必须作为新的正式处理提交，不能复用这条
+历史按钮代替。
+
+失败 Reply task 的 Attention 保留当前执行代最新 run 的原始诊断：优先 `source_code`，
+否则 `code`，并展示来源及「Agent 说明」`reported_summary`。因此已保存的
+`provider_risk_rejected` 不会只剩通用 `agent_reported_failure`；这些诊断不是外部效果证明。
+旧代或无法解析的诊断不替换任务错误；读取不修改状态或恢复边界。
+
+同一诊断生产器用于 Status API 时，后端 `AttentionRow` 与前端 Status 解码器均声明
+可选的字符串或 `null` 字段 `error_code`；无原始诊断的行不必提供它。未知字段与错误类型
+仍严格拒绝。真实任务/run 生成的 Attention 行必须能经过 `/api/console/status` 与前端
+解码，不能只验证生产器自身而让新增诊断导致 HTTP 500 或页面拒绝正常响应。
+人工决策行使用同一基础字段合同并要求字符串 `detail_label` / `detail`，不是普通
+Attention 行；前端保留其独立说明。提供 `human_decision_rows` 时必须是数组，不能把
+错误的对象、字符串或 `null` 当成“无人工决策”。
+
+Status 的每次请求从一份新的只读 SQLite 快照读取队列、Attention 和人工决策，
+同一请求各区块及 summary 复用这些结果，不再逐区块重复扫描或混用不同快照。
+下一次请求重新读取，不缓存业务队列状态。连接器、微信 IPC 及系统健康探测仍使用
+各自已有的短期后台缓存，不阻塞业务队列读取；此优化不修改失败或人工决策的判定。
+
+Attention 的失败 Reply task 先在已有 `(status, id)` 覆盖索引上筛选 ID，再按主键读取
+正文和诊断，避免逐行读取大型任务表正文。大小写兼容、当前业务对象、后续成功覆盖和
+外部失败排除条件保持不变；不新增业务缓存或数据库迁移。
+其他 Attention 来源及队列的最新失败原因也先通过已有状态索引筛选行 ID，再读取
+必要字段。失败大小写、非空错误过滤、更新时刻及 ID 排序和下一快照立即反映恢复保持不变。
+
+定时任务的后续恢复检查先匹配当前失败 Reply task 或错误所绑定的旧 run，再查询同一
+scheduled_task_id 的更晚 run。使用嵌套 EXISTS 避免查询器从大量无关成功 run 反向连接，
+导致每个成功 run 重复扫描历史。覆盖条件仍是更晚 run 已 dispatched 且对应 Reply task
+为 done/skipped；不同任务、较早成功、后续失败或 service_command 均不能覆盖。
+SQLite VM 操作预算回归限制无关成功历史带来的查询工作量，语义回归同时保留原失败和错误
+物理记录；不新增索引、迁移、队列缓存或恢复写入。该修复针对查询计算成本，不将慢连接
+上下文计时等同于持写锁时长，也不证明所有 SQLITE_BUSY 原因已消除。
+
+Workbench 领取轮询先只读检查是否存在 queued 或租约已过期的 running turn。两者都没有时
+立即返回，不执行 BEGIN IMMEDIATE 与其他服务写入争锁；非过期 running 不需要恢复。
+只读连接结束后，有工作时重新开启原写事务并重查、恢复过期 turn、按原条件与 CAS 领取。
+检查后新提交的任务保留 queued，下一次轮询领取，不缓存空队列或抢先修改租约；终态、
+审批确认、归档、恢复及停止策略不变。
+
+运行记录质检的路径规则在每次扫描开始时解析一次，随后逐行、逐字段检查同一份规则。
+下一次扫描重新读取配置，不缓存质检结果或遗漏历史记录。凭据检查与固定临时运行路径
+检查保持不变；显式空路径配置不会重新加载默认值，仍检查固定临时路径。该修复减少
+逐字段重复解析环境与主目录的计算成本，不代表所有数据库 I/O 或锁等待均已消除。
+
+日报的 task-bound `consumer_document_write` 回执除报告文档和正文读回外，还原样返回
+已从目标知识库完整目录解析出的 `folder` 元数据。Consumer 使用其中 provider 实际提供的
+`url` / `docUrl` 完成日报文件夹链接要求；服务不由 node ID 拼接 URL，也不为返回该元数据
+新增写操作。provider 未提供链接时仍保留缺失事实。周报回执、审核和消息投递边界不变。
+
+所有系统业务审核项必须对应实际系统任务及其当前业务实例；工具或接口存在不构成审核需求。没有对应系统任务就不设置该业务的系统审核项。当前对应关系见 [系统任务与审核范围](audit-task-scope.md)。小青面试与提交由 Derek 在个人对话中处理，不属于本次后台系统审核范围。扫描、下载和登录命令沿用既有技术结果验证，不因这条范围规则新增 Audit 回合。
+
+Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，系统执行已持久化且审核通过的完整结构化动作。Consumer 保留报告、文档准备能力，不自行执行提交审核的受控动作；没有新增 update_daily_report 动作。Email 退订保持独立的系统直接流程。
+
+Consumer 的普通工具工作不因写入而自动进入系统动作审核。任务绑定的本地文件由
+`consumer_artifact_write` 写入 `CEO_WORKSPACE/consumer-artifacts/<task_id>/<execution_generation>`，
+Consumer 与 Audit 可用 `read_task_artifact`、`list_task_artifacts` 读取该代次材料；Audit 没有写工具。
+原 `consumer_document_write` 继续只处理绑定的日报/周报文档。工具返回的实际内容读回及 SHA
+证明普通材料写入，不是已审核消息或 OA 动作的 System 回执。原生 V8 可调用具名工具和计算，
+Codex Consumer 可在绑定工作区进行原生代码执行；Audit 只读。实际不可用的工具应如实报告，不能伪造执行。
+系统注册且需要审核的动作仍只由 SystemExecutor 执行。Consumer 的结果解析只验证严格 wire，
+不再对整份文字扫描“已发送”等完成短语；历史事实和本轮工作由完整来源及真实回执支撑，
+摘要不会生成 candidate execution、外部动作回执或 sent_replies。此规则不改变已有运行时风险拒绝、
+授权缺失或历史拒绝不可重放的处理。
+
+候选分为动作计划和当前实例的人工问题。人工问题包含来源上下文、具体原因、证据、互斥可行选项及后果；可执行选项各自绑定完整动作计划，停止选项写明 skipped 和原因。只有 Derek 能补充的开放事实使用 requested_input，不制造假选择。不能混合立即执行的动作与尚未选择的条件分支。
+
+通用消息受众契约由 Consumer/Audit 共用的固定审核规则注入，已保存或空的自定义规则均不会
+省略该契约。候选应依据相关群讨论、完整当前成员、稳定身份及当前 title/职责判断实际内容
+的披露范围；职位只是证据，不是自动授权，私聊也不自动安全。同一受众适合全部内容时保持
+单条消息；确需不同受众时沿用既有多动作候选，各自保存准确正文、目标与 action identity。
+拆分后的私聊只能发给已核实的对应人员，不能发给 principal 自己或其已验证别名、默认抄送
+自己或把自己作为未知对应人员的兜底；另行明确要求给 principal 的报告不受此拆分约束影响。
+每个动作独立核对既有回执并恢复未完成结果；拆分不得绕过历史运行时风险拒绝。这是准备和
+审核规则，不是新增发送器，不以 prompt 注入成功替代原生业务验收或生产回执。
+
+Consumer 的业务结果与 wire JSON Schema 和解析器一致：`proposal`、`no_action`、`failed` 的 `decision_options` 为空，`requested_input`、`needs_human_reason`、`decision_basis` 不得有值；这些字段只属于 `needs_human`。普通方案的事实证据写在 `proposal.sourced_facts`，无需动作的依据写在 `summary`，不借用人工问题字段。
 
 Consumer 的未审核外部效果检测只把写入操作的 provider 回执视作副作用；
 群消息列表中的 `conversationMessagesList[*].messages[*].openMessageId` 是历史消息身份，
-不能据此判定 Consumer 发送了消息或阻止后续安全恢复。
+不能据此判定 Consumer 发送了消息或阻止后续安全恢复。检测只读取 provider 的
+`data` / `result` / `provider_result` 结果封装中的回执，MCP `content[*].text` 与
+`structuredContent` 先按传输封装解码；正式发送工具的 `provider_result.result.openTaskId`
+同样保留为执行证据，不递归
+业务正文、历史消息样本或其重新组织后的预览。拒绝结果不作为已接受的效果，真实
+发送结果继续保留回执的出现顺序并去重。这是诊断证据边界，不改变审核、发送授权或恢复规则。
 
-1. 执行 Agent 读取上下文和证据，形成候选结果或任务结果。
-2. 审核 Agent 独立检查执行结果，决定通过、反馈修改或升级人工处理。
 
-执行 Agent 不确认自己的结果已经完成。审核 Agent 也不替执行 Agent 重写业务内容；如果业务含义、对象、证据或输出需要变化，审核 Agent 必须给出具体反馈，由执行 Agent 生成修正版。
+Audit 返回 approve、return、reject，必须绑定 candidate_digest 和 proposal_revision；failed 只表示技术失败。Audit 不修改正文、选项，不返回执行回执，也不自行创作另一个人工问题。return 允许保留正文并补足证据；reject 要求实质改变被驳回内容，不能只改描述、元数据。首次提交最多三次内容重提，耗尽为 failed，技术失败不占内容预算。
+
+人工问题也先经过 Audit。Audit 检查：是否确需 Derek、规则/代码/Skill/记忆/会话/读取是否可自行解决、是否应向来源人索取材料、是否把技术失败伪装成决策、上下文和理由是否充分、选项是否可行且确有差异、每个执行分支是否完整并仅限当前实例。只有当前版本 approve 后才进入 needs_human 和通知，审核通过不等于业务 done。
+
+选择接口提交 candidate_id、review_id 和 option_key，服务读取持久化分支。首次选择独立记录并将原 execution_generation 唤醒；相同选择幂等，冲突选择拒绝。有效分支直接由系统执行，不重新启动 Consumer/Audit。补充文字保留为新输入，使旧候选失效并进入新完整候选和审核；历史选择、问题和回执保留。选择事件不等于执行完成。不再提供 applies_to=task_class、可复用规则、Skill 更新复选框或此决策处理器的 Skill 写入副作用。
+
+旧长期规则问题仅通过显式单项命令 `python -m app.rule_question_retirement --attempt-id <id> --authority <confirmed-contract>` 退役，默认只读预览；应用另加 `--apply --verified-backup <path>`。资格限定为当前业务对象、当前执行代、最新 Attempt 所绑定的已完成 Consumer、done 任务、完整无技术错误的 task_class 问题，且该任务没有新候选；不批量排除旧结果。应用只原子写入 resolved_at、resolution 与包含原结果 SHA256/任务/运行/执行代/契约依据的退役回执，保留原 send_status、模型结果、任务状态和外部回执。详情、History 和队列将该已退役问题显示为 skipped 并解释依据，重试 POST 拒绝。它不是人工选择、Audit 通过或业务完成；未退役和当前无效问题继续由原质量检查报错。预览及应用均不初始化或迁移数据库。
+
+多动作按声明顺序执行，前置结果验证后才执行依赖动作。每个阶段是一份新完整候选和审核，stage_index、predecessor_review_id 绑定前一已完成阶段的回执；阶段上限独立于每阶段三次内容修订预算。
 
 主页面 `/` 只是同一 Service Runtime 的一个输入和展示入口。页面 turn 使用 `workbench`
 workload 进入 `RoutedCodexExecution`，共用模型路由、会话、runtime attempt、失败切换和 CLI
 原生 `auto_review`；页面不启动自己的 Codex runtime，也不定义独立审批策略。
 旧版确认记录只读，不能从页面或 API 恢复执行。
+
+主页面事件订阅回归先用 React `act` 完成时间线及其副作用，再等待真实 EventSource
+订阅建立后注入事件；页面文字出现不代表订阅已经建立。合并刷新和切换任务取消刷新
+的断言保留，不靠延长超时或跳过断言处理测试竞态。
+
+Workbench 下载的路径替换回归以打开时的文件身份和实际成功关闭事件验证描述符生命周期，
+不在请求结束后用数字描述符是否可 `fstat` 判断泄漏；数字描述符可能已被并发线程复用。
+测试只替换 API 模块的 OS 访问代理，不修改共享 `os` 模块；遗漏流关闭的负向回归必须失败，
+且仍须验证路径被替换为符号链接后只返回原文件，不返回链接目标的内容。
 
 模型路由的名字：只有 `codex_oauth`、`claude_oauth`、`friday_runtime` 三条内置路由名字固定；其余
 路由（含名为 `codex_api`、`claude_api` 的）都是添加的线路，由 `CEO_RUNTIME_<名字>_*` 描述、可改名，
@@ -46,17 +420,7 @@ pending -> processing -> done
   `proposal_revision` 计数器上。
 - `done`：逻辑完成且结果已持久化。
 - `skipped`：判定为不可执行或不必执行，主动收口，不再重试。
-- `needs_human`：只能是有可追溯 Agent run 的完整结构化规则/Skill 缺口：
-  `information_completeness>=0.5`，且 `(risk=high 且 confidence<0.5)` 或
-  `rule_coverage<0.5`，并附 2--4 个互斥、可执行选项。技术读取、provider、receipt、
-  Audit、路由、schema 或重试失败一律使用 `failed`；已完成的外部动作也不改变这条分类。
-  重跑前由 `external_action_key` 和 provider 回读机械去重，而不是把“可能已执行”伪造成
-  Derek 的规则选择。
-- 每个 `needs_human` 结果还必须包含面向用户的 `needs_human_reason` 和可追溯的
-  `decision_basis`：已核验事实、适用规则、质量分值解释、未执行证据和结论。高风险外部
-  动作需要单一、与当前 OA 实例/任务匹配的 `authorization_plan`，写明动作、影响、不会执行
-  的动作以及执行后的读回。Attempt 详情只根据当前 Attempt 指向的有效终态 run 展示这份说明；
-  旧 run 或不完整结果不能把 `done` 投影成当前人工待办。
+- `needs_human`：当前完整 Consumer 人工问题已通过 Audit，只等待本次选择或 requested_input。历史问题和未经审核的 Consumer 输出不能作为当前人工待办。完整选项各自包含精确计划；质量分值是证据指标，不是制造人工问题的机械阈值。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败；必须保留失败原因和阶段。
 
 ### 失败与人工决策通知
@@ -92,6 +456,23 @@ Codex CLI 报告同一 session 有其他 active writer 时，运行时将其视�
 旧版本已落为 `failed` 的会议发送，只有在原决策、原群目标完整且本地无发送回执，
 并独立确认群内未收到该摘要后，才可受限恢复至 `ready_to_send`；恢复保留原正文和投递键。
 
+### 发布期间单实例调度暂缓
+
+`python -m app.reply_task_deferral --db <absolute-db> --task-id <id>` 默认只读预览，
+不初始化或迁移 Store。2026-10-05 的明确操作授权仅覆盖原 386130/386131，不能扩展到历史
+风险拒绝或其他业务任务。显式 `--apply` 必须携带预览的业务对象、执行代、输入版本、最新失败
+Consumer run ID/指纹、独立验证备份、原因、请求 ID 和 60–86400 秒的有界时长。
+模块在 `BEGIN IMMEDIATE` 中再次核对所有身份、原生运行、租约、Dispatcher 活跃所有者、
+候选及可归属的真实/未知效果（含本触发的发送记录）。仍有活跃所有者就拒绝，不能强制抢占。
+仅在无这些阻断时把原任务留为 pending、设置未来 available_at，并同事务保存独立调度回执；
+输入、代次、尝试数、错误、Agent 历史和外部回执保留。预览中的已暂停任务明确显示 already_paused。
+
+正式部署后，`--resume --receipt-id <id> --request-id <id>` 再次锁内核对该回执的原身份、
+失败指纹与精确延迟，确认没有新工作或效果后恢复原 available_at；它不创建新任务或代次，
+也不是业务成功。相同请求幂等，不同请求或中间变化明确拒绝。CLI 每次只做一个原子操作；
+发布方的有界等待只轮询只读资格，每次应用仍独立复验。现有不透明出站键只有通过任务的候选、
+动作、运行、工具和发送事实才能归属，不能用不相关的全局出站记录阻断一个实例。
+
 ## 功能机制开关与任务生产
 
 邮件分类使用独立的 `email_agent_classification_tasks` 持久化队列。每封邮件是一次经共享
@@ -115,6 +496,12 @@ Email worker 的汇总健康状态代替任务状态。
 `pending`、`running` 或重试任务。消费者领取和继续处理已有任务时不再重新判断该开关，保证
 切换不会中断正在进行的生命周期。缺少或校验失败的关联 Skill 会让该功能标记为配置不完整，
 并阻止它继续创建新任务；其他功能不受影响。
+
+Skill 发现描述必须对应其正文的调用角色：`ceo-work-tracking` 是 Task Agent 的
+Project/Task 结构化读取器，不回复来源；Consumer 的项目文档审阅及来源回复使用
+`ceo-document-review`，一般消息判断使用 `ceo-message-triage`。这不改变现有
+任务分类、工具权限或 Skill 正文。仓库 CI 资产与实际加载的安装资产分别验证，
+不能从 CI 文件更新推断生产已经加载新描述。
 
 ## Runtime-managed Skill 修订与启动配置
 
@@ -140,199 +527,245 @@ Consumer 在一次 invocation 开始时获得这一不可变 snapshot，之后�
 runtime config 加载。关闭功能不会取消、删除或改写已存在的 `pending`、`running` 或重试任务。
 缺少或校验失败的关联 Skill 会让该功能标记为配置不完整，并阻止它继续创建新任务；其他功能不受影响。
 
-每个 Consumer 和 Audit 的结构化结果必须统一携带四个字段：`risk`（`low`/`medium`/`high`）、
-`confidence`、`rule_coverage`、`information_completeness`，后三者均为闭区间 `[0, 1]`。
-路由严格按以下顺序执行：`information_completeness < 0.5` 时形成普通 proposal 或一个具体
-问题的 ask-back，沿现有 Audit/send 链路处理，不新增 ask-back 持久化 outcome；否则，
-`(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5` 才进入 `needs_human`，并提供 2--4 个
-互斥、可执行的规则/Skill 选项；每项必须包含唯一稳定的 `key`、显示用 `label`、可执行的
-`instruction`、`consequence`/影响，以及 `applies_to=task_class`。选项只能选择以后如何处理
-这一类任务的规则，不能让 Derek 直接批准、拒绝或执行当前实例；缺少该字段或违反范围的结果
-按无效人工决策收口为 `failed`。其余由适用 Skill 自主完成。ask-back 不计入 needs_human。
-读到 Skill 不等于它覆盖本案：Skill 自己写明本案所依赖的分支（门槛、例外边界、谁有权决定）未定义时，
-`rule_coverage` 低于 1.0；以缺规则、缺门槛或缺授权为理由的 `needs_human` 配 `rule_coverage=1.0` 属于自相矛盾。
-反馈可同时选择 one-time 与 Skill update；二者复用同一业务对象和同一 attempt，在 provider 仍可访问的
-同一 session 中生成新 revision，不新建 session。技术、provider、读取、路由、schema、Audit 或 retry failure
-永远是 `failed`；领域 `authorization_required` 也不泛化为 `needs_human`。只有精确通用码、
-匹配当前动作的授权计划和统一质量门槛全部成立，才可形成结构化人工规则决策。
-provider 返回 `confirmation_required` 也属于运行时失败边界：它表示外部动作尚未执行，
-不是需要 Derek 决定的业务规则缺口。必须保留具体错误并落为 `failed`，不能生成“确认执行/停止”
-这类泛化的人工作业按钮；修复旧投影时同时清空这类选项。
-同理，持久化的 `needs_human` 结果若声称 `error_retryable` 为真，或
-`error_authorization_required` 为真但缺少精确通用码、授权计划或统一门槛，不能作为规则决策
-展示；启动修复将其收口为 `failed` 并保留该结果给 History 排查。
+每个 Consumer 和 Audit 结果都严格携带 risk、confidence、rule_coverage、information_completeness；后三项在 [0, 1] 内。分值描述本案证据，不按固定阈值决定路由。材料可向申请人获得时先提交完整材料请求计划；技术、认证、路由和解析失败保持 failed。真实的当前实例管理选择由 Consumer 提出，只有精确候选的 Audit approve 才进入 needs_human。停止选项明确 skipped 和原因，开放事实用 requested_input。
 
-新 wire 结果的四字段均为必填并严格校验。旧 `final_result_json` hydration 仅可受控补齐
-`rule_coverage=1.0`、`information_completeness=1.0`，保留旧的 `risk`/`confidence`；原始历史
-run 和 audit 不改写。Quality gate 与 Attention 只按 current latest projection 的结构化结果计数：
-字段缺失、非法值或 outer outcome mismatch 均 fail-closed 为 invalid violation；reviewed、历史、
-pending recovery 排除，ask-back 不计 `needs_human`。
+新 wire 严格解析新合同；历史结果只在独立只读历史模型中解释，不补齐后重新执行，不改写原始 run。当前人工决策必须绑定原对象、execution_generation、持久化 candidate/review 和未被替代的当前版本；旧的无绑定选项仍可阅读但不能执行。人工决策和错误分别展示；审核批准不是投递完成。
 
-`needs_human` 是 Agent run 的业务决策终态；对应的 `reply_task` 可以已经是
-`done`，但在 Derek 提交决策前仍属于当前待处理项。这类带结构化依据和可执行选项的
-决策在独立的人工决策列表展示，不计入只显示错误的 Attention。无结构化依据或
-`information_completeness<0.5` 的结果是技术失败，保留在 History 和 Attention。
-人工决策列表以当前 `reply_attempt.agent_run_id` 关联的已完成 run 为准，并同时校验
-任务代次和当前 Business Object；不能再用一个按 turn 顺序挑出的“最新 run”覆盖该关联。
-这样，较晚的 Audit turn 不会把当前 Attempt 指向的 Consumer 规则决策从 Attention 投影中隐藏。
-重跑前写入的 `reviewed_at` 只记录上一轮授权反馈；若本轮最新结果再次是未解决的
-`needs_human`，仍须展示为新的人工决策，直到状态变为已选择或显式解决。
-
-等 Derek 决定的事项出现在他先看的地方（Derek 2026-09-25）：Agent 首页左栏顶部「需要你决定 · N」列出History 中全部 `needs_human`，每条以事项名称为标题（OA 扫描取「待处理审批：」后的审批名，钉钉 DING 催办取「提醒您审批…」的审批名并注明催办人，评论提及取审批单名），次行是一句原因，点击打开该 attempt。首页原有的「处理反馈 · N」只计消息反馈，与待决事项无关。点击通知时，服务先在已打开的 Chrome/Safari 控制台标签页里切到该 attempt 并把窗口提到前面（AppleScript，按控制台 origin 匹配），只有没有已打开的控制台标签页时才新开页面（Derek 2026-09-25）。首次由服务进程控制浏览器时 macOS 会请求一次自动化权限。
+等 Derek 决定的事项出现在他先看的地方（Derek 2026-09-25）：Agent 首页左栏顶部「需要你决定 · N」列出当前 generation 中已经审核通过、未选择且绑定有效的 `needs_human`；旧无绑定问题仅在 History 只读展示，每条以事项名称为标题（OA 扫描取「待处理审批：」后的审批名，钉钉 DING 催办取「提醒您审批…」的审批名并注明催办人，评论提及取审批单名），次行是一句原因，点击打开该 attempt。首页原有的「处理反馈 · N」只计消息反馈，与待决事项无关。点击通知时，服务先在已打开的 Chrome/Safari 控制台标签页里切到该 attempt 并把窗口提到前面（AppleScript，按控制台 origin 匹配），只有没有已打开的控制台标签页时才新开页面（Derek 2026-09-25）。首次由服务进程控制浏览器时 macOS 会请求一次自动化权限。
 
 ## 审核反馈闭环
 
-Audit 的结果修正轮不会撤销先前 provider 已接受的外部动作。执行证据校验读取当前轮与
-同一任务代次、同一 Consumer parent、同一 proposal revision、同一非空 operation_id 的
-先前终态 Audit 轮的持久化工具事件。不同候选、operation、代次以及后续轮次的回执不得
-借用；纯读取和模型自报仍不证明写入。这样首轮完成外部写入但返回无效 JSON 时，后续
-只修正结果的轮次可以验证原回执，不会因当前轮没有再次写入而误报失败或诱发重复发送。
+Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，系统执行已持久化且审核通过的完整结构化动作。Consumer 保留报告、文档准备能力，不自行执行提交审核的受控动作；没有新增 update_daily_report 动作。Email 退订保持独立的系统直接流程。
 
-已耗尽结果修正轮的 `codex_result_invalid` 可通过
-`reconcile_failed_audit_with_verified_delivery(task_id, run_id)` 正式恢复：先验证原候选全部
-外部动作的执行证据，再核对同代次、同 parent/revision/operation 的服务发送回执为 `sent`，
-且回执 action key 精确匹配原候选。事务补齐总动作台账并以最新 run 和代次守卫收口任务；
-历史失败 run 保留，不重新执行外部动作。微信成功投递的历史对账也覆盖同一任务较早代次的
-明确 pre-action failure；可能已执行的失败不自动覆盖。
+候选分为动作计划和当前实例的人工问题。人工问题包含来源上下文、具体原因、证据、互斥可行选项及后果；可执行选项各自绑定完整动作计划，停止选项写明 skipped 和原因。只有 Derek 能补充的开放事实使用 requested_input，不制造假选择。不能混合立即执行的动作与尚未选择的条件分支。
 
-```text
-执行 Agent 生成 run R0
-  -> 审核 Agent 审核 R0
-      -> 通过：审核 Agent 执行/发布 R0，provider 返回成功结果后进入 done/sent
-      -> 需要修改：写入反馈 F0，R0 保留为历史 run
-          -> 执行 Agent 收到 F0，生成修正版 R1
-              -> 审核 Agent 审核 R1
-                  -> 通过：发布 R1
-                  -> 再需修改：进入下一反馈周期
-                  -> 超过内容反馈上限：failed
-```
+Audit 返回 approve、return、reject，必须绑定 candidate_digest 和 proposal_revision；failed 只表示技术失败。Audit 不修改正文、选项，不返回执行回执，也不自行创作另一个人工问题。return 允许保留正文并补足证据；reject 要求实质改变被驳回内容，不能只改描述、元数据。首次提交最多三次内容重提，耗尽为 failed，技术失败不占内容预算。
 
-反馈必须包含规则、观察结果和修改要求。审核 Agent 不能直接改写执行 Agent 的业务正文；服务只保存 run、revision、反馈、session 和 provider 结果标识之间的关系。同一任务最多允许三个内容反馈周期；基础设施失败不消耗内容反馈周期。内容反馈耗尽是自动闭环失败，终态为 `failed`。只有 Consumer 或 Audit 自身返回的完整、可追溯结构化结果满足 `(risk=high 且 confidence<0.5)` 或 `rule_coverage<0.5`，并同时提供 2--4 个规则/Skill 选项时，任务才进入 `needs_human`。
+人工问题也先经过 Audit。Audit 检查：是否确需 Derek、规则/代码/Skill/记忆/会话/读取是否可自行解决、是否应向来源人索取材料、是否把技术失败伪装成决策、上下文和理由是否充分、选项是否可行且确有差异、每个执行分支是否完整并仅限当前实例。只有当前版本 approve 后才进入 needs_human 和通知，审核通过不等于业务 done。
 
-Consumer 与 Audit 之间自然流逝的时间不是候选事实冲突。当前执行时间只用于判断动作是否过期或上下文是否变旧；Audit 不得要求候选复述精确执行时间，也不得仅因自己的执行时间晚于 Consumer 而拒绝其他方面可执行的候选。
+选择接口提交 candidate_id、review_id 和 option_key，服务读取持久化分支。首次选择独立记录并将原 execution_generation 唤醒；相同选择幂等，冲突选择拒绝。有效分支直接由系统执行，不重新启动 Consumer/Audit。补充文字保留为新输入，使旧候选失效并进入新完整候选和审核；历史选择、问题和回执保留。选择事件不等于执行完成。不再提供 applies_to=task_class、可复用规则、Skill 更新复选框或此决策处理器的 Skill 写入副作用。
+
+多动作按声明顺序执行，前置结果验证后才执行依赖动作。每个阶段是一份新完整候选和审核，stage_index、predecessor_review_id 绑定前一已完成阶段的回执；阶段上限独立于每阶段三次内容修订预算。
 
 钉钉引用回复由服务使用 DWS `chat +messages-reply` 投递；该入口核验原消息、发送者与会话一致性，且适用于已确认的单聊会话。投递仍沿原业务对象的幂等键和回执核验，不因引用回复失败自动改发普通消息。
 
 会议总结的业务群候选由正文中的业务词与标题共同检索，排除听记摘要里的时间标签、图片链接等元数据。平台中立的共享群发现服务先按标题/摘要与群名筛选，再用完整日历名册的参会人覆盖率缩小候选；唯一或少量通过这两层筛选的群才读取近期消息并交给决策 Agent 做完整业务承接核验。当前运行时只有 DingTalk/DWS 适配器，Lark 和 Slack 需要各自 Provider 的认证、读取和外部读回验证后才能启用。发现服务不选择最终目标，也不把 Provider 故障降级成“找不到群”。没有标题命中时仍保留候选做实时名册检查，不能按搜索接口的原始返回顺序截断候选。排序优先考虑群名是否对应摘要主题，再参考讨论片段；词项交集只是检索线索，Agent 必须核对实际讨论、行动负责人和受众。参会人覆盖率只证明受众交集，不证明业务归属，不能单独强制选群。历史投递仍需本次实时成员覆盖达到门槛，且须与当前议题一致；此前已发送的总结不会因路由修复自动重发。
 
-对于源单聊的澄清动作，Consumer 必须在 action target 中提供已经通过实时读取确认的参与者 `open_dingtalk_id`。若该参与者字段以 `verified_participant_open_dingtalk_id` 表示，Audit 将其作为同一稳定接收人身份执行单聊发送；不会把 `conversation_id` 当作群聊目标。
+候选群消息读取明确返回 DWS `code=1001`、业务原因「该群为保密群，无法获取消息记录」，且 `retryable_external_dependency=false` 时，适配器保留原始拒绝，不包装成瞬时错误。会议任务记录 `meeting_group_discovery` 失败并释放执行锁，不继续自动重试；权限或可读取的可信来源恢复后才走正式恢复。该拒绝既不是空消息结果，也不允许跳过该群而改投其他群或组织者。未知读取错误以及 provider 明确标记可重试的故障仍沿原有重试路径处理。
+
+对于源单聊的澄清动作，Consumer 必须在 action target 中提供已经通过实时读取确认的参与者 `open_dingtalk_id`。若该参与者字段以 `verified_participant_open_dingtalk_id` 表示，System Executor 使用候选中已确认的同一稳定接收人身份执行单聊发送；不会把 `conversation_id` 当作群聊目标。
 若单聊候选同时带有原会话的 `conversation_id` 和收件人的 `open_dingtalk_id`，发送入口在核对会话与原任务一致后只保留收件人目标，不把会话 ID 当作第二个互斥目标。DWS 的单聊写入口实际要求 `receiverUid`（userId），因此服务会用原始触发消息中与该 open ID 精确匹配的姓名和 open ID 解析 userId，再只把 userId 传给 DWS；解析不到唯一 userId 时在 provider 写入前失败，不猜姓名、不直接把 open ID 当作 receiverUid。群聊或不匹配会话不作此转换。
 
 当 Audit 因临时授权映射或运行配置失败后被重新调度时，恢复会创建下一次 Audit turn；已失败的 turn 保持历史记录，不能被重复领取。
 
 每个队列任务的 `Original trigger` 是该任务唯一的权威输入，由
 `trigger_message_id` 标识。近期会话消息、材料和实时读取结果只能补充事实，不能把
-Consumer 的任务改成另一个消息、日程或审批事项。Audit 返回 `feedback_provided` 后，服务
+Consumer 的任务改成另一个消息、日程或审批事项。Audit 返回 `return` 或 `reject` 后，服务
 必须把规则、观察结果和修改要求传给下一版 Consumer proposal，再创建对应的 Audit run；
 Audit 只反馈修改要求，不直接替换 Consumer 的业务正文。
+### Task Agent 的项目、任务与判断（已发布；业务验收部分完成）
 
-Task Agent 按 Task-first 合约处理普通 work-summary：一个来源可返回 0..N 个 `task_decisions`。
-每个保留决策都必须引用 WorkItem 的准确 `source_ref`，并提供确实出现在来源摘要中的原文
-`source_excerpt`；检索到的 Task、Project 候选及 memory 只能提供背景，不能替代来源证据或授权。
-`skip` 表示没有应保留的 Task，不再以 Project 是否存在作为判断条件。
-正式 Project 注册表和当前 Task 状态优先读取最近一次确认的正式周报，尤其是
-项目管理部或管理层周报中明确列出的项目、负责人、目标、DDL、状态和下周任务；
-保留周报文档引用及统计周期。会议纪要、逐字稿或已确认会议行动项是尚未进入
-周报的新决策或变更的次级权威来源。聊天或消息只能补充上下文、负责人、状态或
-链接，不能单独创建正式 Project，也不能自行覆盖周报明确字段。明确决定启动、批准
-或立项的会议行动项可以创建带会议证据的正式 Project；普通项目提及只形成项目线索。
-来源冲突时先取
-最新明确周报字段，再取最新确认的会议决策，并保留精确来源引用。
-周报中的命名项目/工作流若有明确的负责人、目标/里程碑、状态、交付物或下一步，
-Task Agent 在相关 Task 决策上提交带周报权威类型的 `project_proposal`；孤立任务、
-部门或话题不能直接注册 Project。多位个人负责人可以用名单表示。通常其
-`owner_evidence.excerpt` 必须包含每个人名和当前报告的来源引用；如果负责人关系来自已绑定的
-权威 memory 或 session 上下文，则可使用 `linked_source_ref`、稳定的 `episode_id`/`thread_id`
-和包含明确负责人-行动关系的 `memory_excerpt`；校验忽略
-钉钉 `@` 标记和常见名单分隔符，不把多人整串当作一个名字。
-部门/团队标签（例如“项目管理部”“算法团队”）即使被模型误放进
-`project_proposal` 也不会注册为正式 Project；它们仍可作为 Task 的上下文或候选聚类。
-所有 `date_evidence.source_excerpt` 都必须是当前 Work Item 文本中逐字连续的子串，
-包括原始空格与标点，无法逐字引用时省略日期证据。周报“本周工作重点”“下周工作重点”、
-“团队管理和分工”“周度待办追踪”“行动项”章节是 Task 来源，不是 Project 注册表；
-只有单独的项目清单/项目组合、里程碑/路线图条目或明确会议立项才可注册正式 Project。
-项目/管理周报中有明确项目列的“手头项目/项目清单/项目组合”行先由 Task Agent 建立
-cluster，再依据登记表来源直接注册正式 Project，并把 cluster 中的 Task 关联到 Project；
-同一标题复用同一 anchor。普通项目提及、客户/部门标签和孤立 Task 只形成
-`business_project_candidates`，不会直接注册正式 Project。控制台确认只从 cluster 的已有
-Task evidence 选择来源信号，不凭空制造证据；事务会同时把 cluster 中的 Task 关联到 Project，
-重复确认保持幂等，不能把已确认 candidate 改绑到另一个 Project。
-正式 Project 的列表和详情从已关联 Task 的最新权威周报 signal 生成只读摘要：负责人/负责内容、目标、DDL 或统计周期、当前状态、报告标题/周期、原文摘录、来源链接，以及进行中/已完成 Task 数量；没有可解析的周报字段时保留现有登记来源和关联 Task 数，不用普通聊天或孤立 Task 推断字段。
-更新既有 Task 时，Task Agent 可依据本轮来源证据修改标题或描述；变更、新来源信号的证据链接及 before/after Task 事件在同一事务提交。纯标题/描述变更记录 `details_changed`，与状态、负责人或相关性等字段合并变更时记录 `fields_changed`；只把证据链接到 Task 而没有任何实际字段变化仍是无效更新。
+2026-10-04 获批设计的代码经 PR #16/#17 发布；2026-10-06 22:34 PDT 读回生产为
+`f4a889df`，包含项目 Memory 写入规则及当前来源项目引文的 bounded repair 修复。
+生产 input `27465` / run `10690`
+保存了 4 份 ProjectContext 和 2 张零 Task 成员的业务关注卡片。input `27497` /
+run `10691` 的项目引文不连续，被领域校验拒绝并回滚，原失败保留；其后的
+run `10692` 虽 completed，但只判断会议主题，具体项目覆盖不通过。后续副本对照
+仍有引文纠正耗尽和旧关注卡原证据声明错误，详见验证记录；不把修复发布当成业务通过。
+历史项目覆盖及近期多来源结果尚未全部达到设计预期。
+当前预期/实际、发布与未完成验收见 `docs/task-project-centered-validation.md`，
+不能把健康检查、非零关注或已发布代码单独当成全部业务效果证明。
 
-Task Agent 使用统一的 `TaskAgentDecision` 结果协议，返回 0..N 个新建/更新 Task 决定。完成由新证据驱动
-（Derek 2026-09-25：「不需要定期检查未完成任务，只需要定期扫描新信息并更新相应的 task」）：新完成的
-钉钉待办由扫描直接关闭对应 Task（见下文「后台周期性工作」），消息、会议等新信息照常作为 Work Item 进入
-Task Agent。单独的 Task completion Agent（`app/task_completion_agent.py`）已删除，服务不再产生
-`todo_completion_evidence_candidate`、`todo_completion_check`、`follow_up_completion_check` 三类 Work Item；
-队列里残留的这类输入在交给 Task Agent 之前被标为 `skipped`，原因
-`completion checks retired (Derek 2026-09-25: 完成由新证据驱动)`。三个枚举值保留，只为读取历史记录。
-`TaskAgentDecision` 里的 `todo_changes`、`follow_up_changes`、`search_trace` 字段仍在 schema 中，但当前没有
-服务端路径应用它们。Task Agent prompt 明确要求只读发现，不得通过 CLI/API/MCP 工具创建、更新、删除、
-发送或完成外部记录；这是 prompt-only 的 best-effort 指引，不是运行时权限边界。外部 TODO 完成只走现有
-outbox 同步，避免双写。
+#### 来源、项目与任务
 
-这描述当前功能分支的代码契约，不证明变更已部署。Task 6 仍不得单独部署，整体切换仍需发布验收。
-Task-first 输出不承载 Project 写操作或直接创建新外部 TODO；合格 Task 的钉钉镜像由 Task 7
-服务端 outbox 完成。缺少可信 producer 提供的 `external_task_id` 时不得猜测外部对象。
+所有会议、管理/部门/项目周报、聊天、邮件均可作为事实来源；周报不是唯一来源或风险判断前提。
+正式 Project 须有真实目标和范围，不把部门、客户标签、主题、孤立小任务或相似性 cluster 当成项目。
+确认的报告项目登记表行、明确会议立项可以登记正式 Project；聊天/邮件补充既有项目事实，
+不单独建立正式项目身份。保留不同时间、来源的冲突与引用，不静默以某类来源覆盖较新事实。
 
-Task Agent 的共享会话不会改变 Task、TODO 或 follow-up 的服务端应用边界；适用操作仍由当前
-Work Item 明确绑定，并在对应服务事务中校验和应用。
+独立 `ProjectDecision.registration` 引用当前权威定义，含 exact title、authority 与非空 source_excerpt；
+不是 Task 的嵌套字段，也不需要 Task 或 cluster 作为登记载体。报告核验实际类型、完整原文登记行
+中的项目列与提案标题；登记摘录只定位原文，不移动列。Task/行动章节不是项目登记表。
+registration.source_excerpt 必须是当前不可变来源中定义该项目的连续原文；一份报告列出多个项目时，分别记录各项目的判断与证据，不能用一个项目的判断覆盖其他行。每个 project_decisions[i] 必须有且只有一个对应 project_assessment。项目标题与 Task 行动分处原文不同位置时，project_link_evidence 引用一段从项目标题到行动的连续原文，保留中间内容，不拼接不连续片段。
+会议核验实际 AI Minutes 或可信 minutes 会话和当前原文引文；立项含义由 Agent 判断，不加关键词规则。项目标题只包含实体名称，不把同句中的状态或动作并入标题；例“甲客户一期交付项目正式启动”的标题是“甲客户一期交付项目”，启动状态可作为事实。
+先采用当前权威来源的精确定义再选对象：只有唯一活动、已登记且精确同标题的 Project 才复用
+规范 anchor 和原 registry provenance；多活动同名对象为身份冲突，无对象才用现有来源登记方法。
+旧相似名称、简称或标题前缀不能替代新的正式定义；已退休的来源项目不由本轮重新激活。
 
-定时的 TODO/follow-up 完成检查和 follow-up 投递失败后的 Agent 修复都已删除（Derek 2026-09-25），Task 只随新信息更新，不再有任何来源产生 `follow_up_completion_check`。Task 提取使用稳定的 `task-agent:work-tracking:v1` 会话范围；每个
-Work Item 仍有独立的 workload key、Task Agent run 与 runtime attempt。路由器按 runtime route 保存
-session，同一 route 上的后续输入续接既有 session。`process-work-items` 在恢复队列和领取输入之前
-取得共享 SQLite session lock，运行期间每 60 秒续租；竞争中的进程返回 0 项且不领取、不增加尝试次数。
-执行前与领域事务提交前均检查 lease；失锁后本轮不提交领域更改，并按 work-summary 临时错误策略重试。
-服务内的 dispatcher 以单 worker 运行 `work_summary` 队列（与会议队列相同，见 `SINGLE_SESSION_ADAPTERS`），同一时刻只有一个 Task Agent turn 续接共享 session；2026-09-24 Task-first 上线后该队列曾用两个 worker，第二个 turn 总是撞上 `already has an active writer`，约 70 秒重试后判失败，25 个 Work Item 因此失败。
-旧 `task:<run_id>` 会话记录不会迁移或覆盖。Task Agent prompt 将此前会话内容限定为背景，决定须依据当轮
-Work Item、当前存储/检索状态和新来源证据。Codex CLI 自己管理上下文自动压缩；其他 route 使用其自身
-会话能力，压缩后的会话仍不能替代 Work Item、数据库或来源证据。
-检索上下文中的历史 source signal 保留来源、时间、作者和上下文，但对可能包含完整会议
-JSON 的 `evidence_text` 使用有界的首尾摘录；原始证据仍在数据库中，避免重复信号把单次
-Agent 输入推过 provider 的输入契约。
-若 CLI 明确报告 compaction 自身因模型 context window 超限而失败，当前 run 会清除此 route 的共享
-session 指针并在同一路由的新 session 重试一次；若 fresh session 仍超限，则转入既有 runtime route
-fallback，不循环创建 session。普通会话冲突或其他错误不会清除共享 session。
+Project 可选关联 Fxiaoke CRM AccountObj，持久化稳定 `_id` 与 CRM 显示名称，不修改 Project 标题；内部 Project 可以不关联客户。Task 不保存重复客户字段，只有关联到已确认 Project 的 Task 才在读取时继承其客户名称，独立 Task 保持无客户。Task Agent prompt/Skill 引导写入当前证据支持的持久项目风险和重要进度/状态更新，保留原始来源引用与来源时间，区分来源事实和有证据的风险推断；不写单条 Task/TODO、日常或临时信息、无依据猜测、秘密、原始转录及重复更新。不增加工具白名单、通用只读模式或 CLI/MCP 写入拦截。
 
-正式指派不等于负责人接受：有授权来源、明确交付物和明确负责人的指派可成为
-`assigned_unaccepted` Task；只有负责人本人明确接受并且来源上下文带有可信、精确的
-`reply_to_source_ref`，且决策明确引用该 Task 已链接的指派证据，才可转为已接受承诺。模型不能
-制造回复链接或仅凭“收到”、相似文本、TODO 存在推断接受。缺少可信链接时保留未接受状态并记录
-跳过原因。负责人身份 ID 只能来自可信来源映射或与来源发言人匹配的稳定身份，不由模型单独指定。
+CRM 查询使用 `sharecrm data record query-by-name` 对 AccountObj 做只读名称解析，不写 CRM。Agent 提供的 `crm_customer_evidence` 必须同时、完全一致地出现在 Project `evidence` 中。该解析器不能证明候选精确或穷尽；Task Agent 和 Project 页面返回的每个候选（包括单条候选）都保持未关联，只有用户明确确认后才建立本地关联。Resolver `NO_MATCH` 与 CLI/认证/查询不可用分开记录。查询失败或后续冲突不会清除已确认关联。客户汇总按 CRM `_id` 分组，只包含已确认关联的 Project；未关联项目仍在常规项目视图。
 
-日期按语义类型保存，不使用含糊的通用 deadline：`assigned_at`（指派日期）、
-`requested_deadline_at`（请求方要求日期）、`external_deadline_at`（外部期限）、
-`committed_deadline_at`（负责人接受的承诺期限）、`estimated_deadline_at`（估算日期）及
-`next_check_at`（下次检查日期）。Task 6 只记录来源明确给出的 next-check 日期，不自动创建检查 cadence，也不把请求/外部期限改写成检查日期。每条日期都要有明确日期值、对应来源引用、原文摘录和行为人；只有
-接受承诺能建立 `committed_deadline_at`。标准化日期必须与原文中精确、可解析的日期短语一致；不能从只写日期的来源扩展出具体时分。周级或其他不可解析表达只保留在已链接的原始来源信号中，不产生 typed date fact，也不猜时间戳。`assigned_at` 只从明确正式指派来源的可信创建时间元数据派生，不是模型提供的日期。估算的行为人沿用作出估算的可信来源发言人；Agent 仅是抽取者。只有 `next_check_at` 由 Task Agent 署名，且必须是来源中明确给出的检查日期；它不自动创建 cadence。其他日期要求可识别的来源行为人，不能伪装或猜测身份。当前 AI Minutes producer 尚无可信的发言人到身份映射，因此不能把纪要中被转述的多方日期归给主持人或模型指定的人；该类日期暂不入 Task，需由 producer 提供映射后另行接通。
+`ProjectContext` 独立于 Task 保存完整快照：goal、scope、最多一名 overall_owner 或 null、
+其他人的不同职责 responsibilities，以及各自的事实 facts。每条职责/事实有实际原始 Signal/ref/
+连续逐字引文；总负责与负责结果不能从 Task owner 猜出。未改变的职责沿用历史原文证据。
+context=null 只补 Project↔Signal 关系；明确提供空分工快照才清空当前分工，旧版本仍可读。
+当前 Project 读取最新 context revision，不双存可失配的 current JSON；相同结构快照不追加版本。
+Agent 得到新事实时仍须返回完整的当前 ProjectContext 快照，带回先前有效职责、事实和出处；
+不能因本轮只讨论一项新风险，就把未变化资料从快照中丢掉。
+仅描述“某人负责某业务领域”的职责陈述只进入 ProjectContext，不单独生成 Task/candidate；
+Task 需要来源明确的、可独立完成的交付物或行动，或由已证实重大风险引出的独立建议下一步。
+正常项目序列中的例行里程碑和下一步即使写成行动句，也只记为 Project fact，不生成 Task/candidate。
+总体负责人归属冲突时 overall_owner 留空，竞争主张与未确认移交记为有出处的事实，不能把候选总负责人改写成不同职责；ProjectContext 的事实必须明确写“总体负责人存在冲突，仍待确认”，不能只写“未形成一致确认/仍需核实”；独立负责人的真实交付职责仍保留。
+会议明确某人总负责 Project 时，该人进入唯一 overall_owner 而不是一般职责；已有真实 Task 已直接处理同一风险时，用该 Task 支撑项目判断，不另建重复的监测/评估建议。
+“X负责Y”仅描述职责，即使 Y 是独立业务领域，也不自动生成 Task；需要来源明确的独立行动/交付要求或真实行动项记录。
+保留 existing_attention_id 时，assessment 必须引用当前 `current_project_attention.assessment_json.evidence` 中至少一条完全相同的原始证据三元组（signal_id、source_ref、source_excerpt）；新证据只能补充，不能替代卡片原始证明。
+区别职责与行动时，“李四负责核实客户付款排期并反馈”是具体可执行 Task；“王五负责商务对账”若仅描述职能范围则是 ProjectContext。项目级风险的显示型建议可基于已保存职责，也可由唯一 overall_owner 承接跨职能协调，但不构成正式指派。
 
-一个 work-summary 输入中的全部 Task 变更、来源信号、日期、关系/聚类/锚点/Project 候选提案及
-输入/run 结果在单个数据库事务中提交或回滚。CEO Attention 是派生投影，只在提交后先应用有效提案，再对所有受影响 Task（合并时包括来源和目标两侧）重算成员资格；完成、取消或变为不相关的 Task 会退出当前成员。Task Agent 的类型化完成和外部 TODO 完成也在各自领域事务提交后重算对应 Attention 成员，完成 Task 退出而未完成的兄弟 Task 保留；这不自动把 Attention 标为已解决。投影失败
-不回滚已完成的 Task 事实，也不把已完成 run/input 改成失败。Task 6 不再把 `work_projects`、
-`work_todos` 或 `work_updates` 当作 Task 事实写入；Task 7 的钉钉 TODO 镜像使用独立的
-`business_task_dingtalk_links` 和 `business_task_todo_sync_outbox`，并不把旧 Project/TODO 当作 Task 主键。
-此处描述的是代码分支，不代表已经部署；Task 6 不单独部署或重启服务。
+`business_source_documents` 保存不可变原文，Signal 通过真实 source_document_id 外键引用。
+只有来源类型/ref/时间、会话、作者 ID/姓名/类型和正文八项完全相同才共享正文；Signal ID、
+dedupe_key、上下文、Task 证据角色与历史仍独立。同 ref 的 memory/session 引文不冒充 observed 原文。
+旧库在既有重建事务逐行读回身份、正文、计数和外键后删除旧正文物理列，失败回滚。
+公开 BusinessTaskSignal.evidence_text 仍由 JOIN 返回原文；Task/event/run JSON 不重写。
+当前业务 schema 是 `2026-10-04.4`，不等于生产已迁移。
 
-目前通用 work-item 生产者尚未提供所有授权和 owner identity 映射元数据；在来源元数据缺失时，
-不能据此把显式提到负责人的讨论升级成正式授权指派。对应的生产者接线必须作为单独集成范围处理，
-不能由 Task Agent 猜测或合成。
+Task 保留真实独立交付物和行动的身份。来源明确行动记 origin=source；缺真实负责人/授权等时
+仍可为候选，不因为项目有总负责就伪造 Task 指派。新增任务必须非空标题；已有 ID 的更新可不填标题，
+仅 update_fields 修改提供的标题/描述，promotion、acceptance、merge 保留持久化标题。
+来源有明确的 authorized assignment、self commitment、external TODO 或具体有个人负责的
+meeting action 才按既有 FormalityEvidence 正式化。AI Minutes 区分 owner_kind/owner_relation，
+团队、仅发言或通用发言人占位不是个人负责人。owner ID 来自可信来源身份，不由 Agent 补造。
 
-Attention 的 `material_trigger` 是 Agent 对来源证据的语义分类，不是独立机器证明。每项提案必须附带当前来源摘录中的精确 trigger quote、分类理由和明确 CEO action；投影还要求业务锚点已确认、Task 相关且来源信号已链接。系统把 trigger 类型和摘录写入 Attention 原因/事件沿革。系统不靠关键词推断重大性；若未来需要独立机器级判定，应另行定义 canonical trigger facts 或人工确认机制。
+按项目事实和有出处的职责推导下一步，用同一 Task 表的 origin=agent_suggestion 与 suggestion_json。
+suggested_owner 不写实际 owner；建议记录为 open candidate、commitment=none、无 formal_basis/
+真实 owner/deadline，不产生 TODO、通知或 follow-up。最新消息不必再次点名建议人，历史职责和
+事实均须有原文证明；Agent 理由或上轮建议不是人类安排。之后真实指派沿用同一 ID promotion，
+保留建议发现历史，真实接受后不因 origin 阻止原有 TODO 资格。真实 source Task 不被重新标为建议。
+后续更新必须携带已检索 Task ID，不从可共享/被合并复制的证据关系猜唯一任务。
+仅改建议理由时省略 title/description 保留原值；确实变更才记事件。
+发现尚未解决且需要推进的重大项目风险时，即使原文未直接指派某人，也可依据该项目已保存且有出处的
+职责提出带 Project 关联、建议负责人和下一步的显示型 Task 建议；当重大影响与已保存职责直接相关时，
+即使当前消息没有写出下一步，也应推导一条具体建议。仅当现有 Task 处理同一未解决风险时才抑制重复建议；
+已完成或无关的项目 Task 不算该风险已被处理。这不构成正式派活。普通进展、已解决事项、单独的模糊线索
+不因“可能有帮助”而生成建议。
+项目风险也可在没有 Task 时独立生成需关注；若没有已保存职责能支持具体下一步与建议负责人，不补造监测任务、负责人或期限。保留已有 Attention 卡时只沿用实际已保存的 Task 成员；若原成员为空，不因新建的同风险候选 Task 扩大成员集合。候选 Task 仍可单独关联 Project。
 
-OA 审批中，申请人的补充只可完善其可核验的事实或材料，不能生成、替代或关闭规则、例外、
-授权与动作映射。材料缺口和规则缺口同时存在时，Consumer 在原审批向申请人评论可补材料，
-并独立保留 `needs_human` 处理政策缺口；申请人后续回复只能触发重新读取 OA，不能使
-`rule_coverage` 变成 100%。
+正式指派是 assigned_unaccepted，不等于本人已接受。接受仍需唯一既有 Task、本人身份、
+精确已链接指派 Signal、同会话与可信 reply_to_source_ref；收到、TODO 存在或服务消息不证明承诺。
+但未接受本身不自动构成项目风险：若当前证据显示工作正常推进、没有实质影响或负责人归属争议，应保留 assigned_unaccepted，不单独生成 Attention。
+任务继续推进、收到材料或更新项目背景均不等于本人接受；commitment_status 只有来源明确记录接受、争议、完成或取消时才更新。
+日期明确区分系统创建、assigned_at、requested/external/committed/estimated_deadline_at、
+next_check_at。来源日期需完整可解析当前短语及可信 actor，不能给原文补时分或用报告名作 actor；
+AI Minutes 暂无可信 speaker→identity 映射，不把多方日期归给主持人。assigned_at 来自可信指派时间；
+committed_deadline_at 需实际接受/承诺；next_check_at 只记录明确检查日期，不创造 cadence。
+项目登记 DDL 不转成 Task DDL。一般 Task 的历史 memory/session 引文可完善候选，但不能代替
+正式化、接受、合并或类型化日期所需的当前授权/身份；项目/职责/建议/关注证明只用已观察原文。
 
-两件事放在同一个结果里：`outcome: proposal` 携带可执行的评论或退回，同时填
-`needs_human_reason`、`decision_basis` 和 2--4 个 `decision_options` 描述政策缺口
-（`ConsumerAgentResult.escalates`）。三者必须齐全；不能带 `authorization_plan` 或错误码。
-Audit 按常规审阅并执行 proposal，执行后返回 `executed`，不把候选的问题改写成自己的 `needs_human`
-（384699 的 21117 这样做后分值被判不符，重试把 rule_coverage 从 0.7 压到 0.4 才通过）；Audit
-`executed` 后编排结果为 `needs_human`，选项取自 Consumer 的升级，消息投影照常按 Audit
-的执行记录写入。与“外部动作已完成→needs_human”同一终态：动作已做，剩下的问题归 Derek。
-Derek 2026-09-23 定；此前结果只能二选一，384699 丢了评论，384514 没要材料。
+#### 一个 Agent 的当前输出与应用
+
+TaskAgentDecision 必须明确返回三项无默认列表：
+`project_decisions`、`task_decisions`、`project_assessments`，各为 0..N。
+项目资料/判断可以有零 Task，空 Task 不等于无业务结果；没有相关项目/线索的空 assessment
+仍需非空 update_summary。当前 parser 不接受 TaskDecision 中的旧 project_proposal、
+project_link_proposal、attention_proposal。历史运行只保存原生执行引用，原始决定按该次准确范围读取；
+原生来源缺失或旧格式无法解析时，过程详情明确不可用，不从数据库副本恢复或重新执行。
+已应用的业务投影回执仍由服务保存。
+Codex CLI 路径通过 `--output-schema` 使用 `app/schemas/task_agent_decision.schema.json`，
+该文件由 `TaskAgentDecision.model_json_schema()` 生成并由测试校验一致；strict schema
+要求每个对象显式返回全部属性，省略值用其契约允许的 `null` 表示。服务仍运行本地 Pydantic
+语义校验，失败时最多在同一 session 修正一次；结构化输出不取代业务校验。
+
+ProjectSelector 使用既有 anchor_id 或零基 project_decision_index 二选一；后者指向顶层
+Project 决定，不是 Task 列表。Task 用 project 与 project_link_evidence 明确归属，复用真正已有
+confirmed link；新关联依据当前或历史实际原文证明，不按词面相似性确认。
+所有 link 引文都保存为 Task 和 Project 的证据关系，canonical link 保留首条证明。
+关联本身没有 Task 字段变化时也可应用，使用其实际证明 Signal/anchor 写回执；不虚构 details_changed、
+重排 follow-up 或发 TODO。普通仅重述 Task 且没有新关联证明的 update 仍 skipped。
+来源明确的报告登记与 Task 显式 project_decision_index/cluster_id 可确认已有项目候选及原分组；
+已确认关联的首条证明不覆写，新来源追加为补充证据。新确认或重新有效的成员传给成员-only
+recompute，不把同项目但不支持该卡片的 Task 自动加入关注，也不重判风险。
+Task 关系用已有 related_task_id 和相对当前实际 Task 的 direction，应用后派生两端；
+相似交付只 proposed relation/cluster，不直接身份 merge，原始身份合并证明语义不变。
+
+每个 assessment 针对一个实际 Project 或身份待明确的线索。one Project/精确标题 一轮一项；
+覆盖所有已输出项目决定、Task Project selector 及当前引用 Task 的 confirmed 正式项目。
+支持 Task 决定用 decision_indexes，已有 Task 用 task_ids；两者可空，不伪造支持成员。若 Task 决定更新的正是本次评估中的同一具体工作（包括正常进展的 not_needed 评估），应将该决定列为支撑；已有 Task 也只有直接支撑评估时才列入。仅关联到同一 Project 不够，完成或无关 Task 不是成员。
+未登记线索保留原名与原文，outcome=insufficient_evidence，不借标题猜 ID。
+真实正常进展可 not_needed，没有风险或没有 Task 本身不等于证据不足。
+needs_attention 需实际已核验卡片或 assessment 自己的 attention_proposal；负面结果不生成或关闭卡片。
+提案没有重复 anchor/task selector，由所属判断解析 actual Project/支持成员；不在每条 Task 复制。
+
+当前 null-ID 引文精确匹配 immutable Work Item ref/原文；历史严格正 Signal ID 精确匹配保存的
+ref/逐字引文且为 observed 原始来源，JSON 引文可在一个解码叶子内，不跨字段拼接。
+historical_comparison 同时用当前与历史原始证明；当前对旧报告的转述不是旧报告，首次当前事实判断
+仍允许。缺原文只说明不确定，不用 session/Memory 充当原始事实。
+在同一领域事务写入前验证这些 selector、实际对象和引用，再按 Project 登记/资料→真实 Task
+生命周期或 record_suggestion→项目判断顺序应用。无效来源或身份冲突回滚本轮，不猜未来 ID。
+支持 Task 必须实际属于所评 Project，或本轮同一支持决定用真实证据确认；不能只因 ID 存在算成员。
+
+existing_attention_id 是该同 Project 活动旧卡原始证明的声明，不是 upsert 目标。
+它须核验真实原始 Signal/ref/quote，并在 assessment 原样引用该卡至少一条保存的证明；
+支持 Task 只取卡片实际成员，不把项目同伴当成员。真实旧证明可与当前 attention_proposal 并存。
+有当前提案时回执优先报告其实际 applied/rejected/error，已验证旧卡 ID 不把失败伪装 existing；
+只复用旧卡时才 existing。新风险按 Project stable key 更新，需关注不等于需介入，watch 可无需 CEO 动作。
+
+#### 回执、检索及尚未完成的关注集成
+
+Project 决定回执保存实际 project_decision_index→project_id/anchor/revision_id/signal_ids；
+Task 决定保存实际 decision_index→Task/Signal/anchor。skip、失败接受和无操作决定不伪造映射。
+项目-only、建议-only 输入仍可 completed/done；当前线索判断也保存真实来源，不依赖 Task 载体。
+逐 assessment 回执区分 recorded/applied/existing/rejected/error，引用只附实际来源 ID/时间/link；
+原生决定中的 outcome/reason 不被应用回执改写；服务只保存实际应用的 projection 回执，
+不保存第二份原始决定。领域事务先写 pending 回执，卡片消费者及
+最终回执在提交后；错误可观察但不把已完成 run 改失败，不增恢复 loop 或读路径自愈。
+proposal_count 按 assessment 自己的提案计，applied_count 按成功卡 ID 去重，
+project_link_count 为实际确认/复用的不同 Task↔Project 关系数；registry_row_count 只统计原始报告登记行。
+最终回执保存失败保留 pending 与日志；未记录 run 的直接 apply 不创建假 run。
+
+Attention domain 要求正式活动 Project 与 business_project_evidence 中已存在的原始 Signal 关系，
+不要求至少一个 Task，也不借 Task evidence 作为 Project 证明。可选成员必须是真实、相关、未合并的
+Task 且已确认关联同 Project；当前显示成员仍只取 open/waiting。零 Task positive assessment 只有
+实际 upsert 并读回卡片后才为 applied，重复来源不产生重复卡或事件。
+显式 resolve 要求同 Project 的原始解决证据，不依赖 Task 当前/历史成员；not_needed、Task 完成或
+成员清空不自动 resolve。recompute_for_tasks 保留且仅更新既有卡片成员、时间和成员事件，不重新
+判断风险、不创建卡片、不修改 category/current_state 或 active/resolved。人类 TODO 完成后直接
+调用这个成员更新，不再调用旧 Agent 卡片适配或要求虚假 receipt。
+Schema .4 的一次性迁移仅把旧 active 卡片所属 Project 已确认有效 Task 关联中的原始 Signal
+建成 Project evidence，排除 memory/session provenance，不改历史对象或引用，不重新激活 retired
+Project；原有关系即使 anchor 后来退休也仅作历史证明保留。独立 marker 与证据插入同事务提交；
+已有证据保留，多角色 Signal 去重，失败整体回滚，后续初始化/读取不继续补写。
+只读 inspector 输出当前 Project 决定、真实回执映射及由这些实际身份查得的最新 context/revision；
+历史缺字段仍缺失，不补为 not_needed，不推测 ID，不改源库或历史 run。
+多来源回归已经通过；v2 native 对照、W39 副本迁移/回放和生产迁移尚未全部完成。评测读回独立判断的提案，
+要求每项提案有对应真实卡片与实际 applied 回执；缺回执或仅写 completed 不判成功。
+当前 negative assessment 也要有对应保存的回执，历史缺字段不自动升级。既有会议表外键问题另行处理，
+不通过忽略外键或修改 frozen baseline 隐藏。这里没有新审批、工具白名单或风险关键词逻辑。
+
+检索先读取正式 Project 当前资料/证据，再相关 Tasks；同来源旧身份强制保留，预算先给它们。
+零 Task 项目仍可读 context、当前职责/事实证明与有界近期来源，context revision limit=1，
+证据有界并固定保留引用 ID。current_project_attention 保留真实卡成员和原 assessment 原文。
+source_documents 提供精确版本的共享正文一次，source_signals 保留所有 ID/元数据并指向正文；
+当前 WorkItem 正文也只出现一次，immutable 输入不改。历史长文在 2048 字符预算内保留首尾及关键
+引文，visible_ranges/full_length/truncated 和引用超预算明确显示，JSON 解码引用有实际 leaf 路径/偏移。
+source_metrics 是正文字符观测，不是总 prompt token 保证；检索排名不证明身份、分工或业务重大性。
+
+Task Agent 共享 task-agent:work-tracking:v1 逻辑 session，各 route 保留各自原生 session，
+native CLI 自行 compact；每个 WorkItem 仍独立 workload/run。process-work-items 领取前持有 SQLite
+共享会话锁，运行时续租并在提交前核验；失锁本轮不提交，普通既有重试策略不变。
+旧 task:<run_id> session 历史保留。prompt 只用新加载的 CI Skill revision 4，旧 scheduled
+skill_protocol 不注入；scheduled prompt 仅保留专项业务范围，旧 payload/history 不改。
+全局 Skill 尚未发布。只读工具行为由 prompt 引导，不是技术上禁用 CLI/MCP 写入的权限边界。
+
+完成只由新信息驱动。独立 completion Agent、周期性任务完成检查已删除，旧三类 completion-check
+输入到 Agent 前 skipped，枚举仅保历史；todo_changes/follow_up_changes/search_trace 没有当前应用路径。
+人类 DingTalk TODO 完成扫描只关闭对应 Task；外部 TODO 镜像/完成仍走现有 outbox，
+不由本 Task Agent 直接操作外部记录。隐藏 maintenance/recovery 业务 loop 不恢复。
+
+Attention 只读详情读取实际保存的 assessment_json 与准确引用 Signals，不重检索或补造历史 {}；
+页面现有“来源事实/Agent 判断”、watch“关注点”与 decision/push“你的动作”保留。
+项目列表直接读保存的 ProjectContext，展示唯一总负责人、整体负责事项、事实近况和实际活动卡片
+的关注原因。删除从关联 Task 周报重新推导项目的读路径；未知仍待明确，不借 Task owner。
+详情按整体情况、总负责及分工、关注原因、来源任务、Agent 建议、来源与修订展示；来源任务
+包含 Project 已确认关联的来源候选，实际安排以任务阶段和承诺为准，执行计数不是项目经营结论。
+当前建议仅指 origin=agent_suggestion 且 stage=candidate；同 ID 人类晋升后进入真实任务，
+显示实际 owner/date，原 origin 和 suggestion 仅作为历史依据，不再计入建议。
+Task 日期标签只采用与实际日期匹配的 typed date evidence；未知类型不猜请求或承诺截止。
+Project 资料更新时间取实际保存的 Project/context revision/evidence 时间，不借 Task 时间或报告周期。
+Project 来源首批最近 20 条加当前引用原 Signal，修订最近 20 条，并返回真实 total/has_more；
+页面明确未展示全部历史，没有假的加载更多。零 Task 关注保留来源与判断，显示暂无关联任务。
+API、TypeScript、mock、页面同步；合成浅/暗/窄屏验证不等于 native 或生产业务验收。
+
+
 
 ## Business Object、Task、Agent Run 与 Reply Attempt
 
@@ -349,6 +782,8 @@ reply_task 1 ──< agent_runs
 business_object 1 ── 1 current reply_attempt
 ```
 
+`reply_task_inputs` 的输入身份、版本和来源摘要保留；准确正文只供未结算的执行和恢复使用。符合既有终态结算条件后，当前任务、其输入版本及 Attempt 的输入正文改为来源引用与准确摘要，业务结果与执行回执不变。原生过程和准确原文缺失时明确不可用，不由其他结果拼造历史输入。
+
 OA 的稳定身份是 `process_instance_id + task_id`。同一 OA 从 webhook、pending scan、
 用户人工反馈进入时追加 input 并复用同一 task、同一兼容 Consumer session，在当前 run
 结束后提高 generation 并重新排队同一 task。服务修复运行时、路由或本地执行环境时，虽仍
@@ -363,8 +798,8 @@ OA 通知不等于 OA 执行任务。来自 `OA审批` 的系统通知只写入
 原生回复所需的消息 JSON，但不创建 `reply_task`、`agent_run` 或独立审批 Session。定时
 `scan-oa-approvals` 读取实时待办后，如果当前用户恰好只有一个 `RUNNING` 节点，就把没有
 `task_id` 的催办事件认领到该节点；没有节点或有多个候选节点时不猜测，继续等待下一次扫描。
-实际审批仍只由定时扫描创建的 OA `reply_task` 执行。Audit 有 provider 回执并完成 OA
-动作后，服务使用 `oa-reminder-result:{event_id}:{attempt_id}` 的稳定投递键，对原催办消息
+实际审批仍只由定时扫描创建的 OA `reply_task` 执行。System Executor 保存并回读 OA
+动作成功回执后，服务使用 `oa-reminder-result:{event_id}:{attempt_id}` 的稳定投递键，对原催办消息
 做一次原生引用回复；发送失败会释放事件等待重试，已发送事件不会重复回复。这样通知页、
 系统通知和聊天催办都能作为同一个 OA 案例的观察输入，而不会重复启动审批。
 
@@ -377,28 +812,21 @@ DingTalk 日程卡片改期可能原地覆盖卡片内容而不产生新消息 I
 评论通知只有 `process_instance_id` 时，运行时从事件正文提取该身份；若该实例只有一个已知
 节点，则归并到该节点。存在多个节点而事件没有 `task_id` 时不得猜测。
 
-`reply_attempt` 的 `agent_run_id` 指向当前投影对应的最新或终态 run；完整执行历史
+`reply_attempt` 的 `agent_run_id` 指向当前投影对应的最新或终态 run；执行历史状态
 通过 run 的 task、generation 和关联事件查询。Attempt 页面可以切换多个 Consumer
-或 Audit run，但不能编辑或覆盖旧 run。原始失败、session、runtime attempt、tool
-event 和 provider 结果仍然作为 append-only 事实保留。
+或 Audit run，但不能编辑或覆盖旧 run。失败状态、session、runtime attempt 和采用的 provider 回执继续保留；原始失败与 tool event 从原生记录按需读取，来源缺失时明确不可用。
+Attempt 详情的每条 runtime 记录分别提供 `status`（运行时调用状态）和 `run_status`
+（所属 Agent run 的业务运行状态），页面分别标注两者。模型调用返回 `completed` 不代表
+业务审核通过、外部动作成功或业务 run 完成；业务 run 仍可能是 `failed` 或 `running`。
+此处只投影已有状态，不改写历史记录、Audit 决策或恢复资格。
+Session 可用性测试同样按真实 `AgentRun` 提供业务 `status`；缺失 transcript
+只影响 `session_available`，不改变业务运行状态或运行时调用状态。
 Workers 的当前 attempt 队列统计会排除 `agent_run_id` 指向旧 execution generation
 的记录，即使同一业务对象更新了 trigger message；旧 attempt 仍可在历史详情中查看。
 
-对进入 Consumer/Audit 的 task，当前状态由 task 当前 `execution_generation` 中最后一个
-Agent run 决定：最后一个 run 失败则当前投影为 `failed`；只有该 generation 有明确完成的
-终态 run，task 才能投影为 `done`、`skipped` 或 `needs_human`。`reply_task.status` 只表示
-队列是否仍待领取或已被收口，不能单独把失败 run 改写成成功。外部 provider receipt 仍用于
-防止重放，但它不能覆盖 Agent run 的失败；服务必须创建新的 generation 并完成新的 run 才能
-修正当前投影。真实处于 `pending` 或 `processing` 的 task 则分别显示为等待或执行中。
-History 的当前筛选也遵循此投影：同一 generation 的更新 run 已在执行时，旧 attempt
-字段中的失败仅保留在 run 详情，不继续计入当前 `failed` 筛选。
-当失败 Audit 已持有同一稳定动作身份的 receipt 时，服务自动先持久化失败 run，再通过正式
-重试入口开启新的 generation。新一轮 Audit 只读取 receipt，不重新执行外部动作；它成功后才
-把 current projection 收口为 `done` 或 `skipped`。
+对进入 Consumer/Audit 的 task，当前投影结合当前 execution_generation 的候选、审核、人工选择、System execution 和真实回执。模型 run 完成或 Audit approve 不等于动作成功。System 已开始的精确动作在同一 candidate/review/generation/selection 下恢复；确认成功的持久化回执可完成执行投影，不要求为取得回执重新运行模型。无法确认的外部结果保持 uncertain，不取得再次发送资格。自动技术重试在同一 generation/revision 追加 turn；明确的人工 rerun 或来源补充通过正式入口创建新 generation；旧 run、attempt、session、runtime event 和回执保留为历史事实。真实 pending/processing 仍显示等待/执行中，旧 generation 的失败不覆盖当前进展。
 
-`needs_human` 收到明确人工指令后，必须创建新的 reviewed revision 并重新进入统一
-Consumer/Audit 流程；原 `needs_human` attempt 继续作为历史事实保留。没有明确指令时
-不得自动猜测决策，已经送达或完成的 attempt 也不得由该入口重新打开。
+`needs_human` 的有效绑定选项直接选择已审核精确方案，由 System Executor 执行；停止选项按原方案写入 skipped 和原因。requested_input 或新增事实进入 Consumer/Audit 生成并审核新 revision，不能改写已经批准的方案。旧无绑定选项不可执行，未收到选择时不猜测决定。
 
 如果 Derek 已直接在钉钉完成 OA，定时 OA 扫描会读取该 process instance 的实时状态。
 实例已进入明确终态时，服务不重放审批动作，而是把当前 `needs_human` attempt 收口为
@@ -460,12 +888,12 @@ OA 判断以当前节点的实际表单为边界：不存在于当前表单的�
 Prompt 另写入负责人的个人规则（只存在该定时任务的数据库记录里，代码默认值不含）。背景参考文档不由审批 Agent 读取，代码与默认 Prompt 都不引用它们。Consumer 按 live `processCode` 与表单事实
 分类，交叉事项组合适用类别；财务规则卡仅约束登记的财务模板，且只提供判断标准，动作按通用决策表。适用业务 Skill 必须覆盖
 当前事项的规则条件、例外、权限和动作映射，适用 Skill 完整覆盖时才允许 `rule_coverage=1.0`；其他情况
-低于 1.0，规则缺口 `needs_human`，不得自动批准/拒绝。申请人可补材料但不能关闭并存的政策升级。
+低于 1.0 描述证据缺口；当前实例问题必须有完整 Consumer 候选与 Audit approve 才能进入 `needs_human`，不得按分值自动批准、拒绝或升级。申请人可补材料但不能关闭并存的政策升级。
 六份 Stardust Skill 都只存在于运行时目录，没有仓库副本，按 `RUNTIME_ONLY_VERSIONED_SKILL_NAMES`
 版本化，**不得带 `metadata.managed_by` 标记**——操作 Skill 目录会拒绝带标记的文件，定时任务
 也就不能选择它们。Derek 的个人规则仅写在 OA 定时任务 Prompt，不得推广为公司规则。
 
-### 没有 runtime schema 的 DWS 写操作
+### 历史 DWS schema 闸口说明
 
 `oa approval revert-task` 和 `revert-activities` 在 DWS 的 runtime schema 里不存在
 （上游 issue #1406），同族的 `reject`、`redirect-task` 正常。命令功能完好，但两道闸口都依赖
@@ -478,118 +906,39 @@ schema 判断写操作，因此各自失效过一次：
   `REDIRECT_PROCESS` 且待办减少，任务仍被判 `provider_receipt_missing`。修法是让证据闸
   使用同一份登记表兜底（`ef6f4de4`）。
 
-**新登记一个没有 schema 的写操作时，两处都要能认出它**，否则服务会允许一个动作、然后拒绝相信它发生过。
+以上为旧 Agent 命令执行路径的历史问题。当前受控动作注册使用 typed System action handler，绑定精确 operation/target/payload，并由对应 provider 回执和读回来确认；不能依靠旧的命令证据分类器或成功 envelope 推断当前动作完成。
 
 ## 外部动作幂等与依赖
 
-每个 ProposedAction 必须包含稳定的 `action_identity`。服务使用
-`business_object_key + action_identity + operation + target` 生成
-`external_action_key`：
+系统执行器使用现有 provider client、ServiceMessageSender、external_action_key 和成功回执库。消息加载审核后的精确正文、目标及服务预先准备的后缀；不要求运行中的 Audit，也不向 Agent 暴露发送工具。OA 使用精确实例、节点、动作和参数，保存并回读节点结果。已完成动作不因后续通知失败而重跑。
 
-- provider 成功结果按该键原子保存一次；
-- feedback revision 或新 agent run 再遇到该键时直接复用，不调用 provider；
-- 一个 proposal 内只有所有较小 action index 都成功后，下一个动作才可 dispatch；
-- 审批动作失败时，后续“审批成功”通知因此不会发送；
-- 消息成功统一写入一条 `sent_replies`，其他 run 只追加 observer 关联。
+原生群消息和直接用户消息在 provider 接受、但本地回执尚未保存的中断后，恢复读取原精确目标，并比对持久化审核正文、本人发送者、未撤回、dispatch 时间下界及唯一消息身份，匹配后补存回执而不重派。新 action attempt 在调用 provider 前原子保存 UTC 毫秒 dispatch 时间；旧无时区秒时间不能作为精确归属边界，保持 uncertain。provider 只返回秒时间时，同秒不足以证明在 dispatch 后的消息也保持 uncertain；没有向下取整时间来扩大匹配。空页或多匹配不是无效果证明。文档评论和 OA 评论恢复读取原 node/process instance 并保存只读诊断；尚无已验证的 author/time/body/stable-ID 联合归属契约时，保留 uncertain，不凭相似正文补记成功或再次发送。
 
-钉钉消息 proposal 的 target 只接受服务 wire 字段：群聊 `conversation_id`，引用回复
-`conversation_id + message_id`，单聊使用稳定接收人 ID。Provider 的字段名只保留在 provider
-结果中。成功结果必须带 `action_identity` 和稳定 provider 消息 ID；运行时以该身份关联唯一 action，
-原子写入 provider 结果、消息投影和 observer。
+candidate_executions 保存租约，candidate_action_attempts 在 provider 调用之前保存 dispatch 边界；已验证回执复用。进程中断或超时没有回执不能证明未发生效果：先读取原外部对象。确认成功继续，确认没有效果才可重试同一计划，无法消除的歧义保存 uncertain/failed，不伪造完成或人工问题。技术恢复不重新审核不变业务方案；业务事实改变则使候选失效，重新形成并审核方案。没有通用 shell 或 Agent 执行兜底；未支持的动作明确失败。
 
-投递方式由 `dingtalk_chat_delivery(operation)` 一处判定：operation 名里含 `reply` 即引用回复，
-含 `group` 即群发，其余按单聊。契约校验、正文准备和 Audit 执行都只问这一个函数。Consumer 对同一
-动作有二十多种写法（`reply`、`messages-reply`、`reply_to_message`……），任务 384694 用
-`reply_to_message` 提了一条群内回复，执行端只认三种写法，Audit 连续六次被拒为
-`dingtalk_message_action_unsupported`。引用回复仍然只能回到本任务自己的会话和触发消息。
+历史 code 或 source_code 为 provider_risk_rejected 的同一业务对象不能通过换工具、渠道或执行代自动重放。保留拒绝来源和原始历史记录。native 引用回复仍使用原目标消息和准备正文的正向回读；空的有限消息列表不证明未发送。
 
-typed result 里的这些字段命名一次外发，但不构成它发生过的证据：它们由做出该声称的同一轮写出，
-其中 `delivery_key` 和 `external_action_key` 本就是服务在 prompt 里交给它的，回显不证明任何事。
-证据是 provider 接受副作用时返回的回执（`openTaskId` / `openMessageId`），它只会出现在运行时
-记录的调用流 `agent_run_events` 里，由服务而非模型写入。
+当前 Attempt 的结构化运行结果 `code` 或 `source_code` 为 `provider_risk_rejected` 时，历史“重新处理”入口不可用，直接提交该入口也返回冲突且不入队；API、React 和原生 HTML 优先展示该原因。确需新的候选或执行范围时，应通过明确的本次任务和完整候选提交处理，不能用旧入口重放历史候选。对于后端允许重新处理的其他失败，`rerun_label` / `rerun_confirmation` 仍由同一业务对象的结构化历史提供；跨执行代的历史拒绝可使措辞显示“重新评估候选”，普通技术失败保留“重新处理”。只认确切的顶层结构化错误，不匹配正文、嵌套文字或其他对象；System 的既有历史拒绝限制和原始记录继续保留。
+原生运行时的完整调用流保存在 Codex/Claude session 中。服务从当前进程的调用事件或原生 session
+的精确调用范围读取它；`agent_run_events` 不再持久化调用事件或精简元数据，
+参数、命令、工具输出和从原生记录提取的结果均按需读取。中断运行按原生 `task_started` / `task_complete`
+边界恢复证据，既有投递核对和恢复契约保持不变。
 
-因此，当被接受的 proposal 里存在一个携带外发正文的 `dingtalk-chat` 动作时，Audit 的 `executed`
-要求本轮调用流里至少有一个 provider 回执；没有则该 result 无效，模型在下一轮收到纠正，而不是
-让任务带着没有依据的成功收口。消息投影同样以该回执为前提。这项检查覆盖钉钉消息任务和定时任务
-（`DINGTALK_MESSAGE_CHANNELS`，Derek 2026-09-24）：定时任务的审核轮同样挂 `DingTalkSendEvidenceDriver`，
-日报给 Derek 的单聊、写入的钉钉文档都要有回执。
+Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 consumer-artifacts 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
 
-审核轮执行已持久化的钉钉文档创建动作时，将 Consumer 候选中的正文原样写入该轮工作目录下的临时文件，并向执行器提供相对路径和 SHA-256。文档工具从该文件读取正文，不要求模型在工具参数中重写长文；审核轮结束即清理临时文件。只有文档创建与读回、消息发送的实际回执齐备，日报才可完成。
-Consumer 的文档候选必须将完整正文放在 `payload.content`，`description` 仅作不超过 2048 字符的动作摘要；放错字段的结果不会被当作已审核的文档正文。
-文档创建动作缺少非空 `payload.content` 时在结构化结果校验阶段拒绝，保持同一任务重试生成候选，而不交给 Audit 尝试空文档写入。
+Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`，并将任务绑定的 `mcp__agent_cli` 设为 `direct_only_tool_namespaces`。任务工具直接向模型声明；已验证的成功读取使用具名直接调用，但 Agent 仍可能尝试 CodeMode 并在调用错误后恢复，声明方式不保证没有额外步骤。其他工具继续使用 CodeMode；既有角色工具选择、functions 排除、沙箱、会话和路线不变。超长直接调用结果仍可能被原生运行时截断，不能以完整原始回执替代模型实际可见内容的验证。
 
-回执只回答“副作用是否发生”。至于 typed result 用哪个 ID 标记它，允许来自读回会话——真实发送后
-用 `+chat-messages` 认出自己那条消息是正常做法，要求上报 ID 必须等于回执会拦下已送达的消息，
-而重试等于再发一次。
+补充人工问题验收使用 `evals/consumer_audit_human_review/v1.json` 和 `python -m scripts.eval_consumer_audit_human_review`：冻结两个有效问题与六个语义错误问题，分别调用 baseline/candidate 的真实原生 Audit、完整角色指令和 wire schema，核对候选摘要、修订及审核结果并保存原文。输入是刻意构造且结构合法的候选，不证明 Consumer 实际产生了这些问题；结论仍需独立原文复核，不替代真实发送或生产验收。原十五项业务比较保持不变。 v1 的开放输入正例被独立复核发现含不存在的收件人/双选项说明；原版本与运行结果保留，v2 只修正该正例的质量说明和缺失信息程度，其他七项不变。运行 v2 时显式选择其 manifest，不能将 v1 结果重标为 v2。
 
-日程响应、审批、表情等动作的 provider 身份不是这个回执形状，它们维持既有约定，直到各自有可核验
-的回执为止。
+需关注中的新审核问题显示为“本次事项选择”，说明需要选择本次事项的处理方案，判断依据保留已审核候选的具体人工原因。旧 `task_class` 问题的历史状态与选项保留，但不出现在当前可执行选择中；隐藏旧选项不表示已重新审核或业务完成。
 
-Agent 生成的钉钉候选正文在进入 Audit 前按 `execution_generation + proposal_revision` 持久化：
-同一 revision 的重试复用同一准备正文，反馈产生的下一 revision 则持久化修正后的正文，不能被
-第一版正文覆盖。这个准备键不替代跨 revision 稳定的 `external_action_key`；已有 provider 成功
-结果时仍直接复用，不得重复发送。
+正式 Consumer/Audit 契约发布使用 `python -m app.deploy --publish-consumer-system-contracts`，在服务空闲且停止、数据库备份已完成后，先校验并将恢复快照交给 updater，再开始替换九个契约文件、六个 managed Skill 修订和受影响任务的完整引用。发布中途失败也由 updater 持有该快照恢复；恢复失败时保留回执及原文件副本，记录 `needs_manual`，不回滚 Git 后启动可能与外部文件或引用不一致的旧服务。恢复成功后才启动旧版本；健康通过后仍核对 active 配置、全部启用绑定与新 worker 的加载回执/PID、九文件 SHA 和完整任务引用，最后标记 verified。代码上线、资产发布和实际业务结果分别验收。
 
-### 送达只在发送当场记录一次（`721b7f58`）
-
-**执行发送的那一轮，在当场写下这条送达，内容是 provider 的真实返回。写不成就是没发成——
-不补、不猜、不重建。** 服务里不再有任何重建路径：`_repair_completed_message_delivery_projections`、
-它的候选查询、结果再水合，以及 `provider_effect_reconcile` 模块都已删除。
-
-删除的理由是这些重建本身制造了故障：它挂在生产从不调用的 `consume_once` 上，从未在服务里运行过；
-候选 SQL 漏了 `dws chat +dm` 只返回的 `open_task_id`，真实送达永远选不中；它把模型自述的
-`delivery_status: "sent"` 当成送达，写出过七行「History 显示发过、实际没发」的幻影。
-而它存在的唯一理由，是实时写入长期不工作——`_audit_terminal` 构造的结果不带 `consumer_result`，
-投影第一道门就返回 None，直到 `de176316` 才修好。
-
-由此产生一个**有意保留的缺口**：实时写入失败就永久没有记录，没有兜底。唯一会告诉我们实时路径坏了的，
-是 quality gate 的 `executed_without_record`——它报告「报了 executed、有 provider 回执、却没有送达记录」，
-**只报告，不自动补写**。看到它报警要去查实时写入路径，不要把记录补回去：用重建填补一次本该失败的发送，
-正是那七行幻影的成因。
-
-非 Agent 发送（如 OKR 周报）由发送它的那条命令自己记录，同一原则；微信有自己的 `wechat_deliveries`。
-`sent_replies` 里 2026-09 之前的记录早于运行模型，只读保留，不迁移也不改写。
-
-这里只管理稳定身份、动作顺序和 provider 成功事实。应用层不检查 Agent 使用了哪些工具，也不建立
-read-only、unknown 或 reconciliation 状态机：回执核验是对已记录调用流的一次读取，不是新的状态机，
-它只回答“这一轮是否拿到过 provider 回执”，不评判 Agent 选择了什么路径去拿。
-
-## 两道效果检查的共同盲区：自带回执的领域
-
-服务有两道检查判断"外部动作到底发生了没有"，它们从两个方向问同一件事：
-
-- `claims_external_action_without_tools`（`app/agent_effect_claim.py`）问"这一轮到底
-  调过 provider 没有"：结果自称已执行、整代次却零工具调用，就打回纠正。
-- `DingTalkSendEvidenceDriver`（`app/dingtalk_send_evidence.py`）问"效果有没有落到
-  提案指定的对象上"：`executed` 必须有 provider 回执或被原生 CLI 元数据判定为写入的调用。
-
-**两道检查在同一种情况下都是瞎的**：某个领域自己驱动客户端、自己记回执，服务看不到
-工具事件。已知两例：
-
-- **邮件退订**由受审浏览器驱动执行并写自己的回执，所以审核轮如实报告"已执行"时，
-  整代次没有任何工具事件。第一道检查因此误报，把整条端到端流程打挂（`aa252e9d` →
-  `fddac656` 按渠道收窄，排除 email）。
-- **第三方 MCP 服务**（如面试系统）不在原生 CLI 的 schema 里，第二道检查无法区分读写，
-  因此对它们不做判定；能人工整理的目录记在 `data/config/mcp-tool-effects.json`。
-
-**新增渠道或领域时**：只要它自带客户端和回执，两道检查都要同时加豁免，而且**任何一道
-都不会自己发现遗漏**——表现是正当动作被判为"没发生"，然后走纠正轮、耗尽轮次或整条流程失败。
-
-### 第三种盲区：解析器读不懂那条命令
-
-判定「是否写入」要先把 shell 命令解析成 argv，而 `native_command_argv` 对**任何含 shell 操作符的命令
-一律拒绝解析**（这在决定「能不能执行」时是对的，不要放松它）。模型很爱在命令后面加 `2>&1` 或
-`| head`，于是真实执行过的写入被读成「什么都没有」：一次 OA 批准（run 19444，钉钉已记录
-`REDIRECT_PROCESS`）和一次日程接受（task 383208）都因此被判成从未发生，其中一条还据此对同事说了
-不实的话。
-
-证据侧因此只取管道第一段并丢掉文件描述符重定向（`dws … 2>&1 | head` 里真正执行的是 `dws …`），
-命令替换 `$(...)` 仍然拒绝——那时文本已经不能说明执行了什么。
-
-**下判断前先确认解析器读得懂那条命令**：结论「没执行」和结论「解析不了」是两回事，把后者当成前者，
-就会把真实发生过的不可逆动作记成没发生。
+正式关闭的微信投递若在关闭原因中记录 `superseded_by_principal_reply:<source-message-id>`，表示本人后续回复已覆盖旧候选。仅在匹配当前任务、执行代和会话的投递上，详情状态保留 `skipped`，不被任务的 `done` 覆盖；页面说明已由本人回复、旧候选未发送且无需重试，不显示旧投递重试动作。手动重试的同一写事务读取该正式来源引用并拒绝重新入队，原投递、Attempt、执行代与回执不变。该判定读取分号分隔的精确关闭字段及非空来源引用，不匹配回复正文或一般文字。其他普通过期投递的现有手动重试合同保持。
 
 ## 用户反馈处理轮次
+
+Consumer/Audit 的通用应用结果合同只在 Developer 注入一次，不在每轮 Task context 复制。Audit 的重复 Role Boundary 合并到“应用结果合同”段；Task 中显式自定义 Audit Rules、完整候选与 digest、当前事实、阶段和反馈继续保留。会话绑定、角色政策和 wire schema 保持不变，Settings 的当前预览沿用同一装配函数，历史视图继续读取原始已保存输入。
 
 用户反馈处理有自己的当前投影：
 
@@ -615,6 +964,10 @@ code 与 Skill/config 条件。`needs_human` 不接受 resolution receipt，项�
 条件不满足时，整个批次保持 `processing`，不部分结案。关联、证据和结果必须通过 Feedback API
 持久化并回读一致。
 
+Feedback API 的 Git 回归使用独立临时仓库初始化 `main`，并将测试 API 与回执指向同一仓库。
+PR 的 detached checkout 或缺少本地 `main` 不应改变测试结果；测试不得修改开发/生产检出的
+分支，也不得用 `HEAD` 代替 main 祖先证明。真实的缺失提交、未合入 main 的提交仍必须拒绝结案。
+
 Feedback API 是现有本地后端边界内的操作接口，供 Workbench 和仓库 Agent 共用；它不对
 公网暴露，也不增加 feedback 专用鉴权或第二套 Agent 流程。
 
@@ -632,6 +985,11 @@ Email 的分类确认不是 Agent 运行，也不会创建通用 `reply_task`。
 不创建 CEO Agent task，也不创建 Consumer/Audit run。`trash` 只能执行可恢复的 move-to-Trash；
 永久删除、IMAP `EXPUNGE`
 和清空 Trash 不存在可调用路径。
+
+Provider observation scan 在一个 SQLite 写事务内发布消息状态、authoritative folder 缺失项对账和
+folder generation 时间。generation 按账号和文件夹单独记录，分类状态读取仍投影该文件夹最近一次
+扫描时间；消息内容未变时不更新消息行及其索引。扫描成员先放入连接级临时表，再按
+`(account_id, provider_folder_id)` 索引对账，避免大批动态 `NOT IN` 参数并缩短共享数据库写锁持有时间。
 
 IMAP 移动模式是账号级显式配置：默认 `imap_move_mode=move` 并要求服务端支持 `UID MOVE`；
 只有 provider 官方协议把 `UID COPY` 定义为移动时才配置 `copy_as_move`。运行时不按 hostname
@@ -683,6 +1041,9 @@ image/content material，只包含文件名、MIME、字节大小、数量和 in
 或 image path。任何组件都不得下载、打开、OCR、解析、总结或推断附件正文。持久 trigger payload 不包含凭证、附件内容、本地路径、
 完整私密 URL 或 query token。
 
+模型 ActionPlan 的退订任务修复扫描只读取候选分类身份，确认缺任务后才加载完整分类行；
+每次修复后的复核按分类 ID 定点查询，避免每修复一个任务就再次扫描所有历史分类。
+
 退订不做结构化审核。Email worker 直接执行兼容调用语义 `unsubscribe_email(task_id)`：一次调用完成整件事——
 打开 ActionPlan 已授权的 entry，按页面当场呈现的控件操作，直到第一个终态页面，然后返回
 outcome 和脱敏后的页面原文。它只接受 task id 这一个调用方无法伪造的参数，其余全部从 durable 状态
@@ -725,7 +1086,7 @@ consumer、训练三个组件都至少成功完成一轮后才发布 `ready`。
 业务类别移动完成后在变更后的 locator 上执行 flag/read 动作，以服务器应答为结果；用户在 provider 中再次移动
 邮件时，下一份 snapshot 立即以该文件夹作为训练标签。旧的 staged/manual 历史评测入口仍用于候选
 验证；生产历史整理由上述定时模型窗口自动、小批量、可恢复地推进，不会一次性读取整个邮箱。
-`junk` 先由代码发现标准退订候选；只有 unsubscribe 进入 Consumer/Audit
+`junk` 先由代码发现标准退订候选；unsubscribe 使用独立的系统直接
 网页流程，最终再移动到系统 Trash。连接邮箱 OTP 仅允许站点、收件人、挑战上下文和时间窗全部
 匹配的临时读取；普通 CAPTCHA 在隔离 profile 中有限尝试，不能完成的密码/MFA/CAPTCHA 保存不含
 秘密的有界 continuation 并交给用户，恢复时不重放已经审计的 operation prefix。
@@ -835,7 +1196,7 @@ URL 查询参数。外部反馈页可以收集评分，但不能通过链接、�
   成功结果是避免重放所需的最小持久化事实。
 - 已成功的消息发送或 provider 回执不会因为 attempt 后来失败而失效。下一轮上下文直接读取这些
   append-only 执行事实，不能把解析失败、服务重启或 current projection 失败理解成“尚未发送”。
-- Audit 返回 `executed` 后任务即可进入 `done`；外部结果的读取与判断由 Agent 按业务 Skill 完成。
+- Audit approve 后只允许系统执行；全部动作有验证回执后任务才进入 done。
 
 如果任务确定无需执行，应进入 `done`，并在 trace 写入 `agent_output/no_action`；如果结果需要修改，写入 `audit_feedback` 并保持 `running`；如果处理失败，应进入 `failed`。
 
@@ -843,14 +1204,13 @@ URL 查询参数。外部反馈页可以收集评分，但不能通过链接、�
 查询读取稳定背景；当前身份和业务事实仍需依赖相应来源/实时读取，memory 不能作为任务存在、指派授权、
 负责人 ID 或接受承诺的证明。
 
-邮件退订任务把不可变 ActionPlan 派生出的首步 `ProposedAction` 作为任务绑定契约直接提供给 Consumer。该动作固定使用 `email_browser/unsubscribe`、精确目标字段和 `operations` payload；内部 `classification_id` 不进入外部工具参数，避免 64 位标识经 JSON 数值链路发生精度变化。
-审计 `proposal_revision` 只表示反馈修订轮次，退订 `operations` 的长度只表示浏览器步骤；两者独立计数。首步动作经过审计反馈后仍可在更高 revision 执行，不能被误判为缺少后续浏览器步骤。
-旧版本若在浏览器预检查阶段失败并错误留下 `uncertain/effect_uncertain` claim，可通过显式恢复命令释放，但必须精确绑定失败 Audit，且确认没有浏览器步骤、完成记录、续跑记录或多个 effect；释放后仍需单独发起正式任务重试。
-当前退订执行只投影明确成功或失败。浏览器动作返回失败且没有持久化步骤、完成记录或续跑记录时，释放本轮 claim 并交给统一重试；不得先写入不可重试的中间状态再让下一次 Audit 撞上 claim 冲突。
+邮件退订由独立系统服务执行，不进入 Consumer/Audit。其原有 ActionPlan、浏览器步骤、回执和退避保留，历史 Audit 退订 run 只作历史事实，不是新的执行路径。
 退订浏览器仅把固定的内部失败类别投影到错误码；已识别的导航超时和页面状态缺失必须与兜底 `email_unsubscribe_browser_failed` 区分，错误码、步骤日志和页面原文里不得写入 URL 或凭证。结果的 `error_detail` 记下失败是什么：已识别的 `UnsubscribeBrowserError` 写固定枚举 `category=<名称>`（没有专属错误码的类别共用兜底码 `email_unsubscribe_browser_failed`，这里是唯一说明具体类别的地方，2026-09-25 有 6 次失败只剩这个兜底码）；未预期异常（兜底）会留下异常类名和截断到 240 字符的消息：URL、cookie/token/session 一类字段和 32 位以上的长串都先替换掉，再写入回执 evidence、这次尝试的 `audit_summary` 和任务的错误文本（`<码>: <类名: 消息>`，重试判断只看第一个冒号前的码）。此前该兜底只留下码，任务 384835（2026-09-25）两次失败因此查不出原因。外部原因造成的退订失败（第三方页面拒绝表单或一键请求、页面操作失败或超时、导航目标无效、控件不可用，清单在 `app/external_failures.py`，靠任务错误文本里的 `category=` 判断，不加字段）保持 `failed`，History 照常列出，但不进 Attention（Derek 2026-09-25）：这些是我们改不了的，同一页面重跑结果不变。
 
 `email_unsubscribe_browser_timeout`、`email_unsubscribe_browser_session_unavailable`、兜底码 `email_unsubscribe_browser_failed` 这三个瞬时失败会先退避重试；用完固定次数后写终态 `failed` 错误文本时，只有兜底码把 `task_error` 里已经带的 `: category=<名称>`（或未预期异常的类名与消息）一并写入，其余两个专属码保持裸码——`app/external_failures.py` 只登记了这个精确格式。此前用完次数一律只写裸码，2026-09-25 那 6 次失败因此从未真正匹配过外部原因清单：它们的错误文本是裸的 `email_unsubscribe_browser_failed`，本该在 Attention 之外却一直在里面（Derek 2026-09-28 指出后修复）。控制台看到的失败原因同样有这道口子：一个还没读到任何页面、因而没有回执的退订任务（浏览器在读页面前就报错），观测时间线过去只给状态不给原因，2026-09-28 起把任务自己的错误文本一并投影进 `kind=unsubscribe` 的记录（`list_email_classification_observability` 和 `list_unsubscribe_states` 的 `error` 字段），控制台把已知的码译成人话，未知的码原样显示而不是不显示。钉钉 OKR 登录失效（`okr_headless_session_expired…`、`okr_authorization_required…`）同样是外部原因：只有人能重新登录，也保持 `failed`、不进 Attention；只有标准错误码 `authorization_required` 才能承载「需要人工」的授权决定，OKR 自己的错误码不行，所以它记为失败而不是人工决定。唯一例外是 `email_unsubscribe_receipts.entry_url`：该列按 Derek 的明确要求保存这次实际打开的完整私密 URL（含 query 与 token），用于人工复现同一个退订入口。写入前校验它的 sha256 等于 `entry_reference` 的摘要，因此不能与生命周期认定的身份漂移；它不经过 `assert_no_credentials`，因为被保存的正是那类 token。打开该 URL 会真实执行退订，任何能读这张表或这个页面的人都能替当事人退订。该列只在本次变更之后产生的 receipt 上有值，历史行为空且无法补全。退订浏览器不再对页面发出的网络请求做 origin 白名单、跳转或资源家族限制。
-同一 generation、同一 proposal revision 内，Consumer 或 Audit 每个 worker pass 最多跑 2 次 turn（`MAX_ROLE_ATTEMPTS_PER_PROCESS`）；仍是可重试的通用失败时该 pass 以 `failed_retryable` 结束，并给出 `retry_after_seconds`（共享指数退避：60 秒、120 秒、240 秒……封顶 15 分钟，`external_retry.retry_delay_seconds`）。编排层按持久化的 run 计数该角色在这个 revision 上**连续**失败的 turn 数，满 `MAX_CONSECUTIVE_FAILED_TURNS`（6 = 3 个 pass × 2）后，下一次 pass 耗尽时结果是 `failed_terminal`：错误码不变（例如 `agent_reported_failure`），Agent 原文 `source_code` 保留在错误诊断和结果摘要里，任务结束为 `failed`，不再重新入队。计数遇到 `completed` run 或等待类错误（授权、`runtime_*`、`codex_provider_*`）即中断。这条上限对所有调用方生效：DingTalk worker 的 3 次 attempts 恰好对应同一数字；定时执行与 Email 任务延期时会归还 attempts，此前没有任何计数，2026-09-26 定时周报任务 385880 因 Audit 反复报告 `proposal_already_executed`（`agent_reported_failure`）在同一 generation 里被重跑 310 次，每 12 秒一次。如果 Audit 的内容反馈轮次耗尽且最后一次 Audit 保留了具体修改意见，编排结果进入 `needs_human`，提供“按审计意见修订”或“停止不执行”两个明确选择，避免把可继续处理的审计修订误投影为 opaque failed。
+同一 generation、同一 proposal revision 内，Consumer 或 Audit 每个 worker pass 最多跑 2 次 turn（`MAX_ROLE_ATTEMPTS_PER_PROCESS`）；仍是可重试的通用失败时该 pass 以 `failed_retryable` 结束，并给出 `retry_after_seconds`（共享指数退避：60 秒、120 秒、240 秒……封顶 15 分钟，`external_retry.retry_delay_seconds`）。编排层按持久化的 run 计数该角色在这个 revision 上**连续**失败的 turn 数，满 `MAX_CONSECUTIVE_FAILED_TURNS`（6 = 3 个 pass × 2）后，在下一次 provider 调用之前结果就是 `failed_terminal`：错误码不变（例如 `agent_reported_failure`），Agent 原文 `source_code` 保留在错误诊断和结果摘要里，任务结束为 `failed`，不再重新入队。计数只在该角色同修订出现 `completed` run 时中断；实际失败的容量、连接和运行时 turn 都计入六次上限。尚未实际执行的活动租约等待不产生失败 turn；授权缺失沿用不可重试终态。这条上限对所有调用方生效：DingTalk worker 的 3 次 attempts 恰好对应同一数字；定时执行与 Email 任务延期时会归还 attempts，此前没有任何计数，2026-09-26 定时周报任务 385880 因 Audit 反复报告 `proposal_already_executed`（`agent_reported_failure`）在同一 generation 里被重跑 310 次，每 12 秒一次。内容反馈预算耗尽时进入 failed 并保留具体修改意见，不创建人工问题或停止选项。
+
+`dependency_read_unavailable` 与服务侧 `agent_context_refresh_failed` 是连续失败上限的外部依赖等待例外：必需 DWS/MCP/外部来源读取因依赖故障未完成时，当前 worker pass 停下，DingTalk 任务退避重排并归还 attempt，下一 pass 重新执行来源读取；这两类错误不计入连续六次失败。成功读取但无匹配数据、证据缺失/歧义或规则未定义仍走正常证据/业务规则判断，不得伪报成依赖故障。
 
 ## 周期性工作的归属
 
@@ -882,6 +1242,10 @@ Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制�
 - 仍为常驻循环的只有 `meeting-delivery`：它只投递已审核通过的会议结论，10 秒一轮就是它的意义；
   以及备份、cron 调度/派发、探针等不产生业务判断的基础设施。
 
+Agent Cron Scheduler 在保存触发记录时遇到 SQLite `BUSY`/`LOCKED`，且存储层有限重试仍未取得写锁，
+会保留尚未保存的触发点，等待 1 秒后重试。该冲突不会生成失败运行记录或使 Service worker 退出；
+触发记录仍由原有原子校验与去重事务创建。
+
 任务卡死的回收由服务启动恢复、Consumer 的 stale-age 检查和 Dispatcher 的过期租约处理共同负责；
 不再依赖一个隐藏的业务级维护循环。`recover_stale_runtime_attempts`/`recover_expired_terminal_task_runtime_attempts`
 此前只在服务启动时跑一次：一个在进程运行期间才过期的租约（owner 进程已死、route 卡住）会
@@ -892,6 +1256,19 @@ Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制�
 几个小时都在「service did not become idle」上空跑）。修复是把这两个恢复函数也挂到一个新的
 常驻组件 `runtime-attempt-reclaim` 上，每 5 分钟跑一次，和 `database-backup`、探针一样是
 命名、受心跳监控的基础设施循环，不是隐藏循环。
+
+部署静默检查对 `meeting_alignment_jobs.status='processing'` 和 `reply_tasks.status='processing'`
+核验 owner：会议任务须有有效的 meeting dispatcher 租约或 `meeting_alignment_runs` 的 `running`
+记录；回复任务须有有效的 reply dispatcher 租约或 `agent_runs` 的 `starting`/`running` 记录。
+失去 owner 证据的 processing 行由服务启动时既有恢复逻辑重新排队，不会无限卡住部署；
+`ready_to_send` 且仍锁定的会议投递仍计为在途工作。每次静默计数结束都会关闭只读 SQLite
+连接，避免长时间轮询累积文件描述符。
+
+启动恢复 `reconcile_done_reply_tasks_with_failed_current_run` 会校正当前执行代最新 run 为
+`failed`、但 task 投影误为 `done` 的回复任务，并保留成功外部动作和已收口错误的排除条件。
+它在事务内用 `external_action_results(business_object_key, external_action_key)`、
+`sent_replies(external_action_key)` 与 `errors(conversation_id, message_id, kind)` 索引做反查，
+避免逐条扫描回执和错误表延长写锁。
 
 ## 进程、租约和恢复
 
@@ -919,6 +1296,7 @@ Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制�
 - WeChat reader 由独立 launchd job 自动保持运行；worker 连续三次 IPC 超时后主动 kickstart 该 job，处理“进程仍在但 IPC 已卡住”的情况。worker 只恢复 reader 进程，不启动 WeChat 主应用，也不重放消息。
 - OKR 无头来源启动使用进程锁；并发调用者取得锁后必须再次读取共享缓存，复用前一个调用刚刷新的认证信息，不能重复启动浏览器或把正常刷新误报为锁超时。锁等待上限覆盖一次完整刷新周期；认证刷新通过 `app.service_browser.launch_service_chrome` 使用每日 Chrome cookie 副本启动真 Chrome，来源命令只负责在上层超时时终止自己的 worker 进程，不再启动或清理独立的 bundled Chromium 子进程。
 - OKR 无头来源在请求业务 API 前校验新捕获认证的有效期。专用浏览器会话过期时返回明确的 `okr_headless_session_expired` 服务错误，不得继续请求并把认证失败误报为周期不存在。
+- 个人季度不存在由共享 source 的 `MissingOkrPeriod` 类型表示：只有 provider 整数 code 0、完整且结构有效的个人季度列表及有效季度身份才能产生该结果。headless wrapper 输出绑定请求 userId/periodLabel 的 `availability.status=goals_not_established`、UTC 采集时间、providerCode 0、periodsComplete true 和真实季度列表，不伪造 `processed` 空数组。认证准备、HTTP 401 和未分类共同来源失败保持 shared 技术失败；可明确归属单次成员读取的 HTTP 或格式失败使用 member 范围。错误按结构化 scope/code/detail 回到 source adapter 并抛出 `OkrLiveSourceError`，不靠错误文字猜缺目标或只用失败人数判断共享认证。依赖 wrapper 部署前必须核验本机共享 SDK 类型与打包 source 合同一致；保留共享目录无关改动。
 - 完整的周 OKR 流程（实时读取、全部管理者分析、文档发布、群消息发送）使用独立的全局 run lease。领取在 SQLite `BEGIN IMMEDIATE` 事务内完成，运行期间周期续租，结束后按 owner 释放；并发调度或人工恢复只能有一个进入流程，其他调用返回 `analysis_in_progress`。`last_attempt_at` 仅用于失败重试退避，不能作为长任务仍在运行的判断。进程异常退出后不再续租，租约到期即可由下一次调度恢复。
 - 过期的单人周 OKR 分析如果已经被同一管理者更晚周期的成功分析覆盖，启动恢复将旧作业置为 `completed`，记录 `superseded_by_later_completed_week` 并清除租约。它不再显示为当前 `running`；若相同自然键缺少缓存，正式分析流程仍会重新领取。
 - 周 OKR 分析任务每次获得新的租约时使用新的 runtime 执行代次。单次执行中的结果格式修正保持有界；已终态的旧代次不得阻断同一分析任务在后续租约中的重新执行。
@@ -932,14 +1310,15 @@ Agent Cron 保存任务定义及其结构化 Skill refs、首选 Runtime route/m
 手动运行只追加一次 manual trigger，不改变 `next_run_at`。若上一轮关联 execution 尚未终态，
 本轮以 `skipped` 和稳定原因结束，不等待后补。
 
-`scheduled_task_runs` 必须保存非空 `snapshot_json`；测试夹具也使用
+`scheduled_task_runs.snapshot_id` 必须引用 `scheduled_task_config_versions` 中的非空 `snapshot_json`。
+完全相同的冻结配置只存一份；修改任务会产生新的配置版本，已排队的运行仍引用原版本。测试夹具使用
 `ScheduledTaskSnapshot.from_task(task).to_json()` 生成冻结定义，不省略快照。
 同一任务的不同运行使用不同 `scheduled_for`，遵守任务 ID 与调度时间的唯一约束；
 验证 execution 映射时也不得通过放宽这些生产约束来构造夹具。
 
 一次正常到期分为两个可恢复阶段：`scheduled` adapter 领取 `scheduled_task_runs.pending`，在一个
 事务中创建或复用唯一 `reply_tasks.channel=scheduled` 输入、保存 execution link，并把 trigger
-标记 `dispatched`；`scheduled_execution` adapter 再领取该 execution source，按派发时冻结的
+标记 `dispatched`；`scheduled_execution` adapter 再领取该未结算 execution source，按派发时冻结的
 prompt、Skill protocol、首选 route、model、thinking 和 workdir 启动 Agent；首选线路失败时按统一
 fallback 换到其余配置线路（Derek 2026-09-24，此前定时任务固定单线路、从不 fallback）。managed Skill
 使用精确 revision；执行前若首选及其余线路都不可用、该 revision 或工作目录已经不可用，execution 以
@@ -971,6 +1350,20 @@ Consumer 或 Audit，也不产生 reply task、agent run 或 reply_attempt。
 Reader 会把 WeChat 共享文章的标题、摘要和 URL 解码为文本，因此链接消息进入与普通文本相同的回复队列；图片目前只保留消息类型元数据，未提供媒体文件或视觉输入时不会被当作可读文本触发。
 通过 History 发起的 WeChat 手动 rerun 会在决策提示中明确标记为 Derek 的主动重跑；消息时效和后续上下文仍会提供给 Agent，但不能单独把该 rerun 强制收口为 `no_reply`。
 
+独立微信 Consumer 的 `CodexDecision` 不是统一 Audit 候选。完成时仅对持久任务
+通道为 `wechat`、包含有效 `action` 且不含 `outcome` 的旧契约免于候选采纳；
+代次、角色和运行终态仍需匹配。该路径不生成审核批准或 System 回执，原结果仍
+只存原生轨迹。新版 proposal 及其他通道
+继续执行完整候选校验，独立微信既有交付检查和外部动作拒绝不变。
+
+AgentRun 的终态重复完成先在写事务外读取准确原生引用。独立微信原生
+`AgentEnvelope` 按 Runner 同一解析及依赖失败规则转换为 `CodexDecision`，
+不能直接比较两个不同契约。`BEGIN IMMEDIATE` 内再次核对运行、任务代次、
+角色、状态、session、转写边界和被选中的 completed runtime attempt；引用变化
+或来源缺失不能被视为成功重放。候选及审核记录仍按既有事务校验。返回对象的
+原生轨迹加载发生在写事务释放后，不用 SQL 正文副本代替原生证据。这只是
+终态收尾路径的锁暴露修复，不代表全部生产延迟或 SQLite 竞争已经根治。
+
 同一 Dispatcher 还通过独立 adapter 领取普通 reply、meeting、work summary、OKR review、
 DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。adapter 只读写各自既有事实来源，并统一 claim generation、lease、唤醒、
 公平性和容量；Consumer 保持领域边界。主动唤醒之外的有界等待只用于跨进程写入和异常恢复，不是
@@ -994,6 +1387,17 @@ History 也显示定时触发（Derek 2026-09-25，类型「定时命令」/「�
 被跳过的触发，以及结果不交给 Agent 的服务命令（听记同步、听记权限申请、OKR 周报）的每次成功运行；把结果交给
 Agent 的生产命令成功时不进 History，它们排入的每一项各自是一条 History。邮件 provider 动作同样进 History
 （类型「邮件动作」），失败口径与 Attention 相同。
+
+微信 History 的任务完成与消息投递分别投影：同一任务、会话和当前执行代的最新投递为
+`failed` 或 `send_unknown` 时，失败 Attempt 继续在列表筛选、详情、状态计数和图表中显示
+`failed`，不能被候选任务的 `done` 掩盖。旧代、其他会话和已有后续成功投递的失败不覆盖
+当前状态；旧 pending Attempt 对应已完成任务仍显示 `done`。这些读取不改写历史记录或投递
+状态，也不派发重试。
+该投递优先规则只覆盖物理 `send_status=failed` 的 Attempt；非失败历史行继续按原任务投影，
+列表、详情、队列计数和图表不得各用不同的覆盖条件。
+最新投递按 `(reply_task_id, execution_generation, id)` 非唯一覆盖索引关联，避免对每条失败
+Attempt 重扫全部微信投递历史。结构哨兵要求该索引存在，初始化在旧投递表重建后补齐；
+只补索引，不改写回执、失败或发送状态。生产升级先完成并验证 SQLite 备份。
 听记权限扫描在打开后台后显式查询最近 30 天至次日的历史记录；后台默认只筛当天，
 空表不能直接归因为账号缺少管理权限。申请按持久化的 `requested_ids` 去重，
 只有听记页面读回已申请状态才计为成功。
@@ -1001,13 +1405,18 @@ Agent 的生产命令成功时不进 History，它们排入的每一项各自是
 归为外部依赖故障而不计入待工程修复的 Attention；浏览器/会话自身错误仍计入 Attention。
 ## Chrome 登录态副本（系统服务）
 
+OKR 服务包装器与共享来源复用同一有效请求头收集器：首次请求头缺少令牌或令牌已过期时继续等待后续有效请求，不能用第一条不完整请求锁定整个刷新轮次。只有满足有效期与提前刷新窗口的令牌才进入缓存，实际 API 读取前仍校验有效期；不输出令牌或认证头。
+
+OKR 本机 SSO 在点击当前账号后先检查指定组织是否已可见；组织选择页仍使用 `login.dingtalk.com`，不能仅凭该域名就认定需要原生确认弹窗。指定组织已可见时直接选择原组织；尚未可见才进入既有原生叮当 OKR 确认路径。组织选择失败时，只有 URL 的协议、域名和路径与配置的 OKR 入口一致，才允许单组织流程省略选择；空白页、其他域名或同域其他页面不能被记为已跳转成功。此区分不改变账号、组织、权限或无头实时来源要求。
+
 需要登录的无头浏览器任务（退订链接、听记权限申请、Dingteam OKR）不各自重新登录：服务每天 `06:00`（`Asia/Shanghai`）运行“同步 Chrome 登录态”（`sync-chrome-cookies`，定时任务，`chrome-cookie-copy-daily-v1`），用 SQLite 备份接口把 `~/Library/Application Support/Google/Chrome/Default/Cookies` 复制到服务数据库旁的 `chrome-cookies/Default/Cookies`，再按明文 `host_key` 删掉 `CEO_CHROME_COOKIE_DENY_DOMAINS`（逗号分隔的域名，含子域名）里的银行、券商和支付类域名，其余全部保留供各任务复用；这份名单为空时命令拒绝执行。整个过程不解密任何 cookie，也不碰钥匙串。
 
 所有任务只通过 `app/service_browser.py` 的 `launch_service_chrome` 启动浏览器：真 Chrome、始终无头、指向调用方自己的资料目录；启动前把最新的副本放进该目录的 `Default/Cookies`，并去掉 Playwright 默认的 `--use-mock-keychain`（否则 Chrome 解不开复制来的 cookie）。这样由真 Chrome 自己读“Chrome Safe Storage”钥匙串项，不会弹授权。副本是快照，会话过期后等下一次同步；不连接你正在用的 Chrome（Chrome 136 起默认资料目录不允许远程调试）。
 
-另有一个每天 `19:30`（`Asia/Shanghai`）运行的“申请读不到的钉钉 AI 听记”服务命令：读取听记管理后台，逐条在听记页面提交访问申请，并以页面读回状态计数；对方批准后，`20:00` 的归档任务会读取内容。该后台由服务的共享无头 Chrome 打开（`app/service_browser.launch_service_chrome`），带的是每天复制的 Derek 本人 Chrome 登录态；这份副本能把他认到「选择你管理的组织」那一步，再由代码选中「北京星尘纪元智能科技有限公司」（`MINUTES_CONSOLE_ORG`）进入控制台。每次启动都会用当天的副本覆盖 profile，控制台自己的 `access_token` 不会留到下一次，所以这里没有自己保存的会话，也没有过期和续期一说；副本里没有钉钉登录态时命令直接失败，补救办法是在 Chrome 里重新登录钉钉并等当天的 `sync-chrome-cookies` 跑过，而不是在这里扫码。申请命令结果摘要同样持久化在 scheduled run，并显示在定时任务运行记录中，包括本次发现、已申请、已可读、申请人未解析和失败数量。OKR 周报同样是服务命令：它唯一的动作就是执行一条确定性命令，而那条命令的实时 OKR 读取会跑到五十分钟以上，任何 Agent 超时都装不下，被杀之后命令还会脱离运行记录继续跑。因此发现与同步类种子任务都不是 Agent 形式，Cron 在所有模型路由都不可用时仍然照常工作。只有两个报告是 Agent 种子任务，走标准 Consumer → Audit 生命周期：每周六 `12:00`（`America/Los_Angeles`）的“准备 CEO 管理周报”（`ceo-weekly-report`），和每天 `21:00` 的“发送 CEO 每日总结”（`ceo-daily-report`）。每日总结的必需输入全部来自服务自己的记录：Agent 先运行只读命令 `python -m app.cli daily-report-facts --scheduled-run <触发记录 id>`（`app/daily_report_facts.py`）。报告窗口由服务算：终点是本次触发的 `scheduled_for`，起点是同一任务报告日期更早、且真正发出了报告（执行任务 `done` 且最后一次处理结果为 `completed`；无需处理或线路不可用被跳过的也是 `done`，不算）的最近一次运行的触发时刻（断掉的日子并入下一份，同日重跑沿用原起点），从未成功过则回看 24 小时；报告日期是终点的北京日期。命令取得窗口内结束的会议及其已发会后跟进、当天有活动的 Task-first 业务 Task 及其当天事件、全部未解决的业务需关注项（`business_attention_items`）、当天在邮箱里被标为重要的邮件（已执行的 `flag_important` 动作；Agent 只摘有管理含义的，其余计数）、当天处理过的事项（不含 skipped，只计数），以及 Attention 口径下等 Derek 处理的事项；截止日期不从 `deadline_at` 自行推算（见 `docs/task-semantic-storage.md`）；再扫描窗口内群消息、按需补读听记，写成七段报告，发布到知识库“🎯  目标与执行”/“CEO 每日总结”下的同日文档（同日重跑覆盖同一篇）并读回，最后以 Derek 本人身份单聊发给「磊哥」（不用机器人）：要点、需介入条数、当天文档标题和「CEO 每日总结」文件夹链接（正文在执行轮就由服务定稿，那时文档还不存在，所以放文件夹链接）。这条消息走服务的已审核消息通道：执行轮提 `dingtalk-chat` 单聊动作（`target.user_id` 为 Derek 的 userId），服务加签名并记投递台账，审核轮只能用 `send_approved_dingtalk_message` 发送。该通道接受的任务频道为 `DINGTALK_MESSAGE_CHANNELS`（钉钉消息与定时任务，Derek 2026-09-24）；此前只接受钉钉消息任务，定时任务没有合规的发送方式（运行 84467 因此改用命令行发送并被判不合规）。某个来源读不到只写进报告的覆盖说明，不向 Derek 追问材料。该命令登记在 `app/native_cli_metadata.py` 的服务只读命令中。周报的必需输入同样来自服务：Agent 先运行只读命令 `python -m app.cli weekly-report-materials --scheduled-run <触发记录 id>`（`app/weekly_report_materials.py`，同样登记为服务只读命令）。目标周一是运行时刻（按北京日期）之后的第一个周一（周六跑就是后天的周会，绝不是已开完的那次），窗口为其前一个周一 00:00 到目标周一 00:00（北京），截止取运行时刻与窗口终点的较早者。命令在知识库“🎯  目标与执行”/“1. 管理层周会”下找“{年} 年：管理层周会”（是一篇文档，每周的周会文档是它的子页面；名字比较忽略空白），按标题 `{年}年{月}日管理层周会`（月日不补零）找目标与上期文档，找不到只报 `exists: false` 不猜，同名多篇、列表不完整都直接报错；会议清单来自会议队列（`meeting_alignment_jobs`）里窗口内结束的会议，附参与人、会后跟进和听记链接，归档转写文件在才给路径。周报**只写进目标周会文档的三处**：“二、CEO本周判断”、“三、公司级重点指标”表，以及往“一、重点问题及待办跟踪”表追加本周新问题的新行（已有行、各业务线小节、主题讨论、周报链接都归会议参与人，不动）；目标文档不存在时先照上期文档建；完整七段版留作运行目录里的草稿。业务线还没提交的报告写进覆盖说明，不阻塞发布。周报任务经保存版本 → revision 守卫的一次覆盖写入 → 全文读回核对发布，授权来自 Derek 2026-09-24 对该定时任务的批准。Lark 没有
+另有一个每天 `19:30`（`Asia/Shanghai`）运行的“申请读不到的钉钉 AI 听记”服务命令：读取听记管理后台，逐条在听记页面提交访问申请，并以页面读回状态计数；对方批准后，`20:00` 的归档任务会读取内容。该后台由服务的共享无头 Chrome 打开（`app/service_browser.launch_service_chrome`），带的是每天复制的 Derek 本人 Chrome 登录态；这份副本能把他认到「选择你管理的组织」那一步，再由代码选中「北京星尘纪元智能科技有限公司」（`MINUTES_CONSOLE_ORG`）进入控制台。每次启动都会用当天的副本覆盖 profile，控制台自己的 `access_token` 不会留到下一次，所以这里没有自己保存的会话，也没有过期和续期一说；副本里没有钉钉登录态时命令直接失败，补救办法是在 Chrome 里重新登录钉钉并等当天的 `sync-chrome-cookies` 跑过，而不是在这里扫码。申请命令结果摘要同样持久化在 scheduled run，并显示在定时任务运行记录中，包括本次发现、已申请、已可读、申请人未解析和失败数量。OKR 周报同样是服务命令：它唯一的动作就是执行一条确定性命令，而那条命令的实时 OKR 读取会跑到五十分钟以上，任何 Agent 超时都装不下，被杀之后命令还会脱离运行记录继续跑。因此发现与同步类种子任务都不是 Agent 形式，Cron 在所有模型路由都不可用时仍然照常工作。只有两个报告是 Agent 种子任务，走标准 Consumer → Audit 生命周期：每周六 `12:00`（`America/Los_Angeles`）的“准备 CEO 管理周报”（`ceo-weekly-report`），和每天 `21:00` 的“发送 CEO 每日总结”（`ceo-daily-report`）。每日总结的必需输入全部来自服务自己的记录：Agent 先运行只读命令 `python -m app.cli daily-report-facts --scheduled-run <触发记录 id>`（`app/daily_report_facts.py`）。报告窗口由服务算：终点是本次触发的 `scheduled_for`，起点是同一任务报告日期更早、且真正发出了报告（执行任务 `done` 且最后一次处理结果为 `completed`；无需处理或线路不可用被跳过的也是 `done`，不算）的最近一次运行的触发时刻（断掉的日子并入下一份，同日重跑沿用原起点），从未成功过则回看 24 小时；报告日期是终点的北京日期。命令取得窗口内结束的会议及其已发会后跟进、当天有活动的 Task-first 业务 Task 及其当天事件、全部未解决的业务需关注项（`business_attention_items`）、当天在邮箱里被标为重要的邮件（已执行的 `flag_important` 动作；Agent 只摘有管理含义的，其余计数）、当天处理过的事项（不含 skipped，只计数），以及 Attention 口径下等 Derek 处理的事项；截止日期不从 `deadline_at` 自行推算（见 `docs/task-semantic-storage.md`）；再扫描窗口内群消息、按需补读听记，写成七段报告，发布到知识库“🎯  目标与执行”/“CEO 每日总结”下的同日文档（同日重跑覆盖同一篇）并读回，最后以 Derek 本人身份单聊发给「磊哥」（不用机器人）：要点、需介入条数、当天文档标题和「CEO 每日总结」文件夹链接（正文在执行轮就由服务定稿，那时文档还不存在，所以放文件夹链接）。这条消息走服务的已审核消息通道：执行轮提 `dingtalk-chat` 单聊动作（`target.user_id` 为 Derek 的 userId），服务加签名并记投递台账，Audit 只读审核，审核通过后由 System Executor 使用原生 sender 执行精确持久化动作。该通道接受的任务频道为 `DINGTALK_MESSAGE_CHANNELS`（钉钉消息与定时任务，Derek 2026-09-24）；此前只接受钉钉消息任务，定时任务没有合规的发送方式（运行 84467 因此改用命令行发送并被判不合规）。某个来源读不到只写进报告的覆盖说明，不向 Derek 追问材料。该命令登记在 `app/native_cli_metadata.py` 的服务只读命令中。周报的必需输入同样来自服务：Agent 先运行只读命令 `python -m app.cli weekly-report-materials --scheduled-run <触发记录 id>`（`app/weekly_report_materials.py`，同样登记为服务只读命令）。目标周一是运行时刻（按北京日期）之后的第一个周一（周六跑就是后天的周会，绝不是已开完的那次），窗口为其前一个周一 00:00 到目标周一 00:00（北京），截止取运行时刻与窗口终点的较早者。命令在知识库“🎯  目标与执行”/“1. 管理层周会”下找“{年} 年：管理层周会”（是一篇文档，每周的周会文档是它的子页面；名字比较忽略空白），按标题 `{年}年{月}日管理层周会`（月日不补零）找目标与上期文档，找不到只报 `exists: false` 不猜，同名多篇、列表不完整都直接报错；会议清单来自会议队列（`meeting_alignment_jobs`）里窗口内结束的会议，附参与人、会后跟进和听记链接，归档转写文件在才给路径。周报**只写进目标周会文档的三处**：“二、CEO本周判断”、“三、公司级重点指标”表，以及往“一、重点问题及待办跟踪”表追加本周新问题的新行（已有行、各业务线小节、主题讨论、周报链接都归会议参与人，不动）；目标文档不存在时先照上期文档建；完整七段版留作运行目录里的草稿。业务线还没提交的报告写进覆盖说明，不阻塞发布。周报任务经保存版本 → revision 守卫的一次覆盖写入 → 全文读回核对发布，授权来自 Derek 2026-09-24 对该定时任务的批准。Lark 没有
 访问申请页需等待申请按钮实际可用；按钮仍禁用时保留为申请人未解析，下一轮继续尝试。页面仅显示加载壳或其他非权限内容时不能当作已可读，只有听记读取 API 能确认可读。
 默认 seed。
+周报校验与渲染工具的参数结构由 `app/weekly_report_contracts.py` 声明。原生工具 schema 展示 manifest 的对象结构、company_metrics 的对象数组及报告其他容器；SDK 在调用前返回格式错误的字段路径。保留额外字段和原始值，不补默认内容、不转换错误容器，也不将结构规范全量加入 prompt。缺失业务章节及发布要求继续由原有安装 Skill 校验。
 内部投递、发送状态确认、错误恢复仍是内部机制，不外化为 Cron；催办不自动发送，只由 Derek 点按钮发送。
 
 Task Agent 的正常 liveness 由结构化 provider stdout 事件驱动：执行器在完整事件行被消费后续租
@@ -1050,9 +1459,14 @@ Agent 返回的错误只是它观察到的现象，含义由服务决定（`app/
 或授权。编排层依赖的服务码（`runtime_*`、`codex_provider_*`、租约与恢复类）只能由服务写入，
 Agent 写入时一律按 `agent_reported_failure` 处理。
 
+服务反馈回调的结果格式校验失败属于结果解析失败：保留原始 `feedback_callback_pair_invalid` 在 `detail`，通过 `ResultParseError` 进入现有 `codex_result_invalid` 纠错流程；每次处理最多两个回合，同一修订连续六次失败后终止为 `failed`。校验不能抛出普通 `ValueError` 绕过编排后由调度器无限重新领取。该异常转换不改变反馈链接配对规则、历史来源校验、审核职责或调度器所有权。
+
 **原则：任何更底层观察到的错误码或原文，被归并成更通用的服务码时都不能丢失，必须原样带到 Agent 报错记录里，供事后排查。** 通用化是给重试/授权决策用的分类，不是删除诊断信息的许可。已落实的例子：`agent_reported_failure` 保留 Agent 原文在 `source_code`；Agent 报告的 typed 失败结果保留其必填的 `summary` 在 `reported_summary`（2026-09-28，见下段）；Codex 进程失败保留 stderr 与 JSONL 里的 `error`/`message`/`detail`/`reason` 字段在 `detail`（`_process_failure_detail`，裁剪到 1000 字符、脱敏凭证）；路由执行错误沿 `__cause__` 链找具体解析/校验异常的 `reason`（`_runtime_failure_detail`）；退订浏览器错误保留异常类名和截断消息（见上文退订段落）。新增一处错误归并时必须同样保留来源，不能只留下分类码。
 
 任务 Agent 的 `memory_recall_used` 是 Agent 给出的上下文记录，不是服务的工具调用验收条件。
+Task Agent 的 Memory 写入边界由提示词约束：可调用 `memory_connector.memory_write` 保存
+当前证据支持的持久、重要项目风险与进度/状态更新，注明项目与原始来源，并以来源时间作为
+`created_at`，使用 `type="text"`；没有持久项目变化则不写。此行为由 prompt 引导，不是工具层权限隔离。
 
 Task Agent 不直接调用外部 TODO 写入；Task 7 的创建/完成 intent 在 Task 语义事务中排入
 `business_task_todo_sync_outbox`，由 dispatcher 按 `business_task_id` 执行。创建仅限正式、开放、
@@ -1078,20 +1492,38 @@ Task 7 的新 follow-up 只从链接来源信号的精确群/单聊目标与明�
 
 Derek 2026-09-25 定的规则。Task Agent 用同一个长期 session 是为了不丢上下文，所以**不禁止它用之前的证据**，也不禁止它通过 `memory_recall` 顺着 provenance 找到原始来源；但每条来源都要能回溯到出处。
 
+Console 的来源读接口分两步保持正文唯一：
+`GET /api/console/tasks/projects/{project_id}/evidence?page=N&page_size=M` 只分页返回该 Project
+保存的 `BusinessProjectEvidence` 引用，沿用 Store 的“最新窗口优先、窗口内既有顺序”，并返回
+total/has_more/next_cursor；`GET /api/console/tasks/signals/{signal_id}` 再按精确 ID 返回完整保存的
+`BusinessTaskSignal` 和不可变 source document 原文。长 JSON/原始正文不使用详情页的 2048 字符
+投影，也不经过 display normalization。未知 Project/Signal 返回 404，已存在但无证据的 Project
+返回空列表 200；读取在同一个 `read_snapshot` 中完成，不更新 Task、Project、Signal 或证据关系。
+Project 详情仍只展示原有 20 条有界来源并保留 context 引文 pinned 语义。
+
 **每个决定引用什么**
 
 | 字段 | 含义 |
 | --- | --- |
 | `evidence_origin` | `current`（当前 Work Item，默认）、`session`（此前 session 里读到的）、`memory`（Memory provenance 指向的原始来源） |
 | `source_ref` | 来源引用；`session` / `memory` 时是**原始来源**的引用 |
-| `source_excerpt` | 取自原文的一句话；普通任务引文可以摘取，日期证据的 `source_excerpt` 必须逐字连续匹配 |
+| `source_excerpt` | prompt、Skill 和字段说明要求原文中连续的逐字摘录，保留标点、空格和换行；普通 Task 的原有校验仍不检查来源子串，日期证据及 Project assessment / Attention 引文仍按各自既有原文规则校验 |
 | `source_link` | 来源有链接就必须给 |
 | `source_description` | 没有链接时用文字描述在哪里，例如钉钉消息写“群 + 发送人”；`source_group` 加 `source_person` 也算 |
 
 - 对 `session` / `memory`，链接和描述至少要有一个，否则模型校验拒绝。对 `current`，缺的定位由服务补：URL 引用、听记摘要里的页面链接、或会话加发送人；都没有时记录里仍有 `source_ref`。
-- 引文不再校验是不是原文子串。仍然要求：引文非空；负责人的名字必须出现在负责人引文里；日期证据仍要求是来源子串。
+- 普通 Task 引文的原有校验仍不检查是不是原文子串，逐字摘录是 Agent 指令，不是新加入的验证器。仍然要求：引文非空；负责人的名字必须出现在负责人引文里；日期证据仍要求是来源子串。Project assessment / Attention 的原文核验按前述独立契约执行。
 - `session` / `memory` 只能用于完善已有 Task（`update_fields`）或记录候选。创建正式 Task、晋升、确认接受、身份合并仍要当前 Work Item 的授权与身份元数据；日期证据仍要当前来源和明确说话人。
 - 引用的旧证据单独存成一条来源信号：`source_type` 为 `session_provenance` 或 `memory_provenance`，引文作证据文本，链接和描述放 `context_json`（`source_link`、`source_description`），群和人放会话标题与作者名，`cited_while_processing` 记录当时在处理哪个 Work Item。服务无法重读原文，所以这条记录标明的是“引用而非当下观察”。
+
+### 展示型任务建议的领域存储
+
+`RecordTaskSuggestion` 在既有业务 Task 表保存来源支持的建议，本分支 Task Agent 已接入 `TaskDecision.suggestion`，页面按当前 candidate 建议与真实晋升 Task 区分。新建议固定为 open candidate、commitment=none、无 formal_basis，实际 owner 和 deadline 为空；建议人选、理由、职责与事实的真实 Signal 引用仅在 `suggestion_json`。职责证明可以来自先前项目/人员分工，不要求最新风险原文点名，但不能把 Agent 理由当原始来源。建议命令只使用同一领域事务的 Task/Signal/evidence/event/Project link，既有建议 ID 的相同资料不追加事件，实际变化追加 details_changed；无 ID 的原来源重放保留最初任务身份，包括之后已由人类晋升的情况。建议更新省略标题或描述时保留原值，不把默认空字符串当成清空。
+
+无 ID 的重放身份来自原创建或其他已有事件的命令结果，不来自所有 evidence link。后来来源只补证据且资料未变时，不制造变更事件，应用及重放都保留明确 task_id，由 Agent 对已检索事项判断关联。一条来源可支持多个 Task，合并也会复制证据关系，不能据此自动选定唯一任务或合并。
+
+人类明确指派用既有 promotion 在同一 ID 晋升，保留 origin=agent_suggestion 和建议依据，实际 owner 才来自人类指派证明；真实接受、承诺日期与 TODO 资格仍按原生命周期。展示建议不产生 acceptance、follow-up、通知或 TODO outbox；不会因为历史 origin 永久拦住已由人类接受的正式任务。旧任务只增 source/空建议默认列，阶段、承诺、负责人及历史 JSON 不变。
+这里复用已有“原始观察／未观察的引用”区分：项目证据、上下文引文及建议的发现/职责/事实来源不接受 `memory_provenance` 或 `session_provenance` 作为原文。并非限制工具权限，也不按正文关键词分类；原有一般候选 Task 使用 memory/session 完善信息的语义不变。
 
 **批处理里的容错**：同一场会议的多个条目在一次提交里应用，一条不成立不应拖垮其余。
 
@@ -1144,7 +1576,7 @@ Derek 2026-09-25。候选只是没确认的猜测，所以可以在控制台“�
   缓存过期时只启动 headless 浏览器刷新，不打开可见窗口，也不把“禁止可见浏览器”
   误解为“禁止刷新”。
 - `weekly_okr`：定时生成管理者 OKR 进度周报。评分范围是当前 OKR 周期起始日至报告日（例如 Q3 至今），本周窗口只用于标记新增进展和风险。全流程先领取并持续续租全局 run lease，避免超过重试间隔的长任务被重复启动；每位管理者的模型分析调用直接使用服务统一配置的应急总上限（生产为 2 小时）和 idle watchdog（生产为 5 分钟）；只要持续产生有效结构化进展事件，模型可以在应急上限内继续运行。超时只失败该管理者的分析任务并释放其租约，主流程不会无限等待；管理者分析的父租约覆盖完整模型调用、一次结构化校验重试及运行时恢复余量，避免维护扫尾在分析仍运行时提前回收并造成终态冲突；结构化输出同时固定每个管理者恰好 3 个文化价值观维度，模型复述 KR 标题且省略可用 ID 时，在行数准确且标题非空的前提下按实时源顺序绑定，仍校验重复、缺行和全名单覆盖；分析、报告发布和群摘要获得 provider 成功结果后，推进周报成功日期。每位 OKR 名单成员都必须保留一条评分区块；系统没有本周进展时按无新增进展和证据缺口评分，不得因为分析输出缺行而发布部分人员版本。
-- 普通消息、审批、会议、邮件、任务跟踪和 WeChat 任务都遵循同一生命周期与反馈规则，只在领域输入、provider 能力和稳定结果字段上不同。
+- 实际使用 AgentOrchestrator 的业务候选遵循新的 Consumer → 只读 Audit → System 执行契约。微信 task3 仍由 dispatcher 调用 WechatReplyConsumer / WechatDecisionRunner，持久化 delivery 后由独立 Sender 循环处理，没有独立 Audit 回合；本次未将它迁移到 candidate/review/SystemExecutor。其 audit_summary 是既有决策字段，不是独立审核回执。扫描、下载、登录等服务命令沿用技术结果验证，系统任务对应表不为这些路径新增 Audit 回合。
 
 ## 文档索引
 
@@ -1173,12 +1605,47 @@ and command must match the trigger snapshot; mismatches remain errors. This
 closes the result-persisted/source-pending crash window without replaying effects.
 
 Production deployment is serialized at both the repository and service
-boundaries. The deployer first waits for the persisted work leases to drain,
-then bootstraps no new claims by stopping the launchd service before taking a
+boundaries. The deployer first waits for the persisted work leases to drain.
+This includes valid dispatcher leases before an Agent runtime exists, meeting
+preparation, and already-claimed meeting deliveries. Expired or terminal claims
+and unclaimed ready-to-send work do not count as active execution.
+It then bootstraps no new claims by stopping the launchd service before taking a
 database backup or changing the production checkout. It starts the service
 again with launchd `bootstrap` after verification, then performs the normal
 health and queue readback. This prevents the deployment process and worker
 process from writing the same SQLite database concurrently.
+
+An operator may explicitly run `python -m app.deploy --skip-quiet-wait` when
+immediate deployment is required. This bypasses only the in-flight-work wait;
+the repository lock, normal service stop before database backup and checkout
+changes, verification, restart, health check, and rollback behavior still
+apply. Work interrupted by that stop is handled by the existing startup
+recovery and claim logic.
+The same flag on `python -m app.deploy --restart` skips only the quiet wait
+before a settings-only service restart.
+If fast-forward fails before a replacement revision is installed, the updater
+starts the original service again and checks its health. A settings-only
+restart also bootstraps the configured launchd job if it was already unloaded.
+
+The repository mutex covers the protected-source unlock window as well as
+checkout, build, verification, restart and relock; settings-only restart uses
+the same mutex. If an interrupted fast-forward leaves only unstaged docs whose
+bytes exactly match the fetched target commit, formal deployment stops the
+service and takes its backup before restoring those docs to the current HEAD;
+the ordinary fast-forward then installs the target. Staged edits, other paths,
+or any content mismatch remain a hard local-change refusal.
+
+The Email worker, Audit web, scheduled Email discovery, and scheduled report
+readers lazily create one shared EmailStore and check schema shape during
+runtime initialization. Every EmailStore schema
+initialization and the AutoReplyStore schema initializer acquire the same
+per-database cross-process file lock before inspecting or changing schema.
+They do not scan every historical email row while the service is starting or
+serving scheduled Email and report work; production measurements showed those
+scans taking 11–21 seconds per construction. Explicit and offline EmailStore
+callers retain full durable-row validation by default, after releasing the
+schema lock. Email detail reads still use fresh connections and do not cache
+record contents.
 
 ### Public information and native reply recovery
 
@@ -1257,10 +1724,22 @@ rewriting a completed reply task to pending. A successful receipt, missing
 receipt, or failed terminal parent does not authorize this runtime operation;
 the action plan and browser effect authorization remain unchanged.
 
-Audit History list and chart prewarming runs in a daemon background thread
-after lifecycle recovery starts. These read-only scans populate the existing
-caches but do not gate the HTTP listener or launchd startup health checks.
-Health readiness is not evidence that History prewarming or business actions
+Status queue statistics rank compact Attempt IDs by trigger before reading
+the current Attempt state and failure detail, keeping historical error bodies
+out of the latest-row window.
+
+Audit web startup does not scan and cache History lists or charts. History
+pages are computed when requested. The list counts and sorts compact source
+keys, then hydrates only the requested page in the same read snapshot; it does
+not materialize every historical display body to compute the total. Attempt detail loads tool events in one
+batched read for the historical generation shown on the page. If the task has
+since moved to a newer execution generation, its runs are read without event
+payloads because only their status is needed for the current projection. The
+historical run rows and native transcript references are captured in SQLite
+first; native files are read and parsed only after that connection closes. The
+History chart projects lifecycle status only for reply
+attempts in the requested time window, avoiding a full-history status scan.
+Health readiness is not evidence that History requests or business actions
 have completed; their APIs and provider receipts must still be read back.
 
 DingTalk meeting group searches explicitly request 100 candidates per page,
@@ -1274,6 +1753,9 @@ Worker status reads its local SQLite queue, Email health and component facts
 on every request. These facts are not served from the last background payload:
 after a worker writes its state, the next status request must reflect it.
 External connector authentication probes retain their independent cache.
+The Email unsubscribe task view uses a partial `reply_tasks` index over only
+audited unsubscribe tasks, so repeated Worker status reads do not rescan each
+task's full trigger JSON to compute its counts and latest update.
 
 Typed result parsing preserves malformed or unclosed JSON as a result-stage
 invalid-result failure, including its syntax cause. It is not classified as a
@@ -1292,6 +1774,42 @@ erase this delivery evidence. Pending or ambiguous verification produces no
 successful History projection. This records one message's actual effect, not
 completion of the whole proposal: the task and external-action completion
 ledger still require the existing Audit lifecycle and evidence checks.
+# External Command Failure Evidence
+
+External command failure previews retain both the beginning and the end of
+long output within the existing 400-character content budget. Python traceback
+frames must not displace the final exception code and cause. Structured provider
+errors still expose only the existing approved error fields; command argument
+redaction, retry policy and action authorization are unchanged. This improves
+future failure evidence and does not rewrite already-truncated historical runs.
+
+### Sensitive Result Classification
+
+The post-process sensitive-result guard raises the same result-parse exception
+as other invalid typed output. Rejection is recorded as `codex_result_invalid`
+at the result stage, allowing the existing Audit result-correction prompt and
+bounded attempt handling to operate. It is not a CLI execution outage. The
+credential predicate and rejection itself remain unchanged; no unsafe result
+is accepted and no content-feedback cycle is consumed by a parse failure.
+
+### Daily Report Source Identity
+
+Daily report `handled_today` facts retain their original conversation ID,
+trigger message ID, creation timestamp and Agent run ID alongside the display
+title and summary. Reports from previous scheduled runs can share those display
+fields; their completed status is evidence for that historical source only,
+not the current report's publication or notification. The collector remains
+read-only and does not infer or modify delivery state.
+
+### DingTalk Message Text
+
+The current DingTalk `im.message-list.v1` ledger permits a null `text` value.
+The message adapter projects that absence as an empty string, preserving the
+original message ID, conversation, sender and complete raw payload. It neither
+discards the message nor invents text or a delivery receipt. Nonstring values
+other than null still fail model validation. Meeting group discovery can read
+the remaining discussion evidence without treating absent text as evidence.
+
 # Email SQLite Contention Diagnostics
 
 EmailStore and AutoReplyStore report connection contexts lasting at least one second, including
@@ -1302,6 +1820,25 @@ content. Correlate the caller with the operating system's WAL-lock owner and
 the affected run before changing transaction boundaries.
 Shared Store diagnostics retain up to eight caller frames so a context-manager
 wrapper cannot hide the business method that opened the connection.
+
+Explicit and offline EmailStore callers perform full durable-row validation
+for email-message metadata, provider locators, recipients, references,
+attachment metadata, classifier-task identity and redaction, classification
+lineage and ActionPlan snapshots. The validator projects only the fields
+required for those checks; it does not load full cached message bodies or
+classifier inputs into memory. Runtime Email worker, Audit web, scheduled Email
+discovery and daily-report readers validate schema and account configuration
+without rescanning all durable rows.
+
+The Web process shares one successfully schema-initialized EmailStore between
+registered email routes, Console detail routes and the email learning service.
+Email route registration retains its existing initialization error boundary:
+an invalid schema or account configuration does not prevent unrelated Console
+routes from starting and is not treated as healthy email state. The Attempt DTO
+builder queries this initialized store only for
+an existing email-channel Attempt's classification and unsubscribe context.
+Every request reads current records through fresh database connections; detail
+results are not cached and requests do not repeat the full durable-state scan.
 
 Direct provider-action claims hold BEGIN IMMEDIATE only over classifications
 with pending or failed actions, rather than materializing every processed
@@ -1316,3 +1853,344 @@ inventory: only `email_unsubscribe_consumer_direct_v1`. An inventoried object
 replaced by an `email_unsubscribe_audited_v2` task must remain untouched, even
 when its task ID, generation, and pending status otherwise match. The mutation
 checks the lifecycle again under its write transaction.
+# Task Evidence Repair And Retired Anchors
+
+Meeting claims order attempts by the later of `eligible_at` and `available_at`,
+with the job ID as the tie-breaker. A due retry is not ordered by the meeting's
+original date: otherwise an old external dependency failure can repeatedly
+occupy the single meeting consumer and starve pending meetings. The dispatcher
+keyset scan and legacy claim path use the same ordering; eligibility, lease
+ownership, and external delivery guards are unchanged.
+
+Meeting delivery batches release still-ready claims on both normal completion
+and exceptional exit. Each acquisition persists a fresh token in the separate
+`meeting_alignment_delivery_claims` table, in the same transaction as the job
+lock. The token is returned only with the claimed job, not stored in the job
+row. Release compares job ID, original lock timestamp and nonempty token, so
+even a same-second successor cannot be unlocked by a stale batch. The job row
+shape stays unchanged for strict parsing during code rollback. Startup recovery
+releases interrupted locks and clears abandoned ownership records before fresh
+acquisition. Cleanup never changes receipts,
+retry deadlines, attempt counts or terminal status. If delivery and release both
+fail, a grouped exception records both causes instead of hiding the first.
+Persisted `sent` receipts remain authoritative: recovery resumes only calendar
+terminalization, not analysis or chat sending. Transcript-only meetings retain
+the existing explicit calendar-skip receipt because no original event exists.
+
+Meeting discovery may refresh a waiting recording, but once a job is queued,
+claimed, retrying, ready for delivery or terminal, discovery cannot replace its
+persisted source snapshot or participant evidence. Recovery refreshes failed
+unsent jobs through the explicit replay lifecycle. A failed roster lookup during
+rediscovery must not remove `calendar_evidence` from an already queued job.
+Recent-meeting replay uses the same ended-recording metadata contract as
+discovery, without requiring the provider status to equal the literal `ended`.
+
+Scheduled service incident reconciliation uses the numeric scheduled-task ID to
+seek the indexed run history, then verifies the exact conversation identity,
+successful command kind and later dispatch time. It must not scan all dispatched
+runs once per unresolved error while holding a SQLite writer transaction.
+
+Task Agent validates formal creation and candidate promotion owner citations
+before entering its atomic domain transaction. A repairable evidence error is
+returned with the rejected candidate and original context, for at most two
+correction rounds. Task also supplies a compact correction bound to the native
+session that produced the previous candidate. The runtime selects it only when
+the actual route resumes that exact session; cold starts and other sessions
+receive the complete source, semantic context and correction. Existing route
+selection and format-correction policies are unchanged. Friday creates a new
+thread on every invocation, so it always receives full repair context even when
+a prior thread reference is stored. No domain changes are
+committed before validation succeeds. Exhaustion retains a real failed run and
+uses the existing work-summary retry policy; it never guesses an owner or
+changes a technical failure into `needs_human`. Memory-backed ownership still
+requires linked source provenance and an `episode_id`.
+
+Current Work Item Project citations, including nested context and assessment
+evidence, use the same exact source identity and contiguous-quote validator
+before domain writes and again during atomic apply. Invalid current citations
+enter the existing bounded correction rounds with the rejected candidate.
+One rejection reports all distinct invalid current citation entries, retaining
+each validator reason, source_ref and exact rejected excerpt; repeated entries
+are reported once. This does not rewrite or normalize quotes, and the same
+two-round budget applies to the entire decision, not separately per citation;
+exhaustion remains failed without partial Project or signal writes. Historical
+signal citations retain their existing provenance checks. The same read-only
+stored Project/assessment validator also runs through a short connection before
+domain apply, within these existing correction rounds. Its ValueError reports
+the original evidence/identity/membership error to the model; this includes an
+existing Attention declaration that omits the card's stored original proof.
+Atomic apply runs the unchanged validator again. Database operational errors
+and errors raised during atomic apply are not converted to model correction.
+No new validation rule, correction budget or recovery loop is introduced.
+
+Date source, actor and exact-precision validation uses the same pure validator
+before the domain transaction and during apply. Evidence errors enter the same
+bounded correction loop; unidentified source actors or invented dates remain
+invalid. Each semantic correction has a deterministic runtime operation key
+`<task_agent_run_id>:decision_repair.<round>`; the initial turn keeps its run ID.
+The router reuses a completed receipt only within that operation, so a changed
+correction prompt actually executes a new turn in the shared Task session.
+Corrections retain the original active Task run as their parent, not a Project;
+input reset, orphan recovery and expired-terminal recovery close their no-effect
+runtime attempts just as they close the initial turn. Existing memory and
+deadline backfill parent identities are unchanged.
+
+Both Cron-dispatched Work Summary consumption and the manual
+`process-work-items` command use the same renewable Task session lease. A
+claimed item whose session is busy is returned to the retry queue before any
+Agent turn starts. Completion, exceptions and repair rounds remain inside that
+lease; serial workers inside one dispatcher do not substitute for cross-process
+session ownership.
+
+An inactive `task-agent-project` anchor is a retained retirement decision.
+Weekly-report registry rows and Agent Project proposals must not reactivate it
+implicitly. The source-backed Task is saved independently, without a Project
+link to that retired anchor, and the run records why the Project was not applied.
+The general anchor registration conflict checks remain unchanged.
+
+### 已审核来源、执行进度与失败展示
+
+服务捕获的 source_bindings.value 是原始来源数据，不是 Agent 自己写的短引用字段。
+日历卡片等来源可能把完整 JSON 放在 reference 中，不套用候选 reference 的
+512 字符上限；来源仍接受严格反馈链接、凭据、嵌套深度与整个结果编码大小检查。
+绑定元数据与候选字段仍执行原短字段限制。检查仅使用投影副本，不截断或修改
+原来源、candidate digest 或派发前同对象回读比较。
+
+Consumer 完成候选准备时，把原 trigger、消息/材料和计划涉及的 OA 原表单或文档源事实保存为 source_bindings，参与 candidate digest。System Executor 在每个尚未核验动作派发之前重新读取相同原对象，包括首次执行、同次后续动作和恢复部分执行。OA 已完成动作造成的 task 状态/操作记录变化由具名处理器核验，不作为原表单变化；真实表单、文档或上下文变化使该 review 失效，保留已核验动作回执和原人工回答，在同阶段形成新的完整候选并重审。来源读取失败属于可重试技术失败，不执行旧分支。
+
+来源快照中的反馈链接在检查副本中按 Markdown 链接和真实 JSON 容器读取；不要求其他参与者使用本人的外发签名、标签或段落格式。仍严格核对当前配置 host/path/query、生成 token、上下链接同一身份与唯一完整配对，额外未配对 URL 或凭据仍拒绝。只移除已核验 URL 的检查副本，不把来源链接当授权或外部动作回执。当前待发送正文仍要求原始严格格式；原 source_bindings、候选 digest、持久化结果与发送前来源回读比较不变，其他来源字段继续接受原有敏感值、深度和大小检查。确定性的来源结果验证失败记录 runtime_result_source_invalid、stage=result、source=service、retryable=false、session_continuable=false；不归为 CLI/provider 失败并反复恢复同一会话。
+
+Attempt 详情的 system_execution 按 candidate、review、selection 绑定显示当前及历史阶段、声明顺序、未开始动作、失败/不确定状态和 provider 回执。只有 canonical action ledger 中核验成功的动作计为 verified；Audit approve 和用户选择都不能显示为已经执行。
+
+失败 Reply task 的 Attention 诊断只读取本对象本 generation 的当前 run，显示原 source_code（无则 code）与明确标为“Agent 说明”的 reported_summary；缺少或坏 JSON 时保留 task error，不将 Agent 自述当作已证实的 provider 拒绝。History、Attempt 详情和 Reply attempts queue 对微信分别读取本对象当前 generation 最新 delivery：failed/send_unknown 不能被只表示候选完成的 task done 遮蔽。旧 generation 或其他对象的 delivery 不影响当前结果；这些展示不更新任务、投递或授权状态。
+
+独立 Email 退订仍使用原有 direct executor、浏览器步骤和回执。无运行时调用者的旧 Agent continuation driver 已删除；Agent finalizer 不再从历史 Audit 声明触发退订、切换渠道或伪造执行成功。默认 developer prompt 和 OA 规则种子统一为新角色合同；既有自定义规则、managed Skill 配置与 runtime-only Skill 必须在安静的正式发布窗口中逐项发布并记录版本，部署代码本身不会覆盖它们。
+
+原生 OA detail 明确 success=false 时，来源读取边界保留 errcode/errorCode 及 errmsg/errorMessage，按提供方错误记录原 server/code/认证属性；不把 native 失败 envelope 当成空表单或通用 Codex 错误。Consumer 失败 run 保留原始脱敏说明，System 执行技术失败保留来源和原码，不派发或制造业务人工问题。
+
+Consumer/Audit stage clarification (2026-10-04): `continue_after_execution` means the next stage can run immediately from the verified result. A material-request comment or return ends its request stage with the flag false; only a later source update establishes material arrival and permits a fresh complete candidate. The request receipt cannot replace the material. Audit runner and the frozen model harness share `audit_developer_instructions`, including registered action contracts and exact provider-identity evidence; a project/request ID is not an OA process identifier, and a decision notification does not perform a payment.
+
+角色 MCP 启动参数携带原领取 run 的 execution_generation，启动时与当前任务校验；旧回合不能在 generation 更换后绑定到新一代工件，运行中的既有读写仍逐次检查当前 generation。
+
+真实、未解除的 provider-risk refusal 必须保留 failed 与原始错误码，不能因不重试改为 no_action 完成；Audit 对错误完成候选退回修正。历史同一动作拒绝不允许换键或渠道重放。保留既有历史拒绝与恢复限制，不用关键词推断效果。
+
+### 显式维护部署（2026-10-05）
+
+Derek 明确授权解除生产循环对部署的阻塞。`python -m app.deploy --maintenance-task <id>`
+可重复声明本次允许中断的任务；普通部署仍等待空闲。维护入口在同一发布锁内核实所有在途
+工作，只有指定且无候选、动作意图、回执或工具/未知事件的 Consumer 准备运行允许中断；
+摘要、会议、邮件动作和其他调度领取仍会阻止维护。先冻结已核实的 Dispatcher owner 及其后代至进程树稳定，阻止新领取和子进程产生；通过现有 launchd 停止入口停止整个服务并终止存活的已冻结后代，
+确认已记录的运行进程及其子进程退出，再核对业务对象、执行代、输入版本和效果。
+这是受控中断，不是优雅排空。先创建完整且 integrity_check 验证的维护备份，随后调用既有
+服务中断恢复方法，原任务回到 pending、保留业务身份和历史，保存 maintenance 回执；
+正常空闲检查、部署备份、主线快进、构建、验证、启动和健康检查继续执行。确认进程树全灭、尚未应用代码或契约时的准备失败才启动
+原服务；冻结、终止失败或 needs_manual 保持停止。生产源码仍在 finally 重新锁定。不修改业务成功状态、不手工抢租约、不重放风险拒绝。
+
+### 调度异常的重试上限（2026-10-05）
+
+Derek 要求 retry 有上限。ReplyQueueAdapter 的 handler 异常计入既有任务 attempts，
+不再退款或立即重新领取；前两次按共享指数退避延后 60/120 秒，第三次原任务记为 failed，
+保留原错误、业务对象、执行代和运行历史。ScheduledExecutionQueueAdapter 继承同一规则。
+普通主动 release 仍是未执行业务的调度释放，不消费异常预算。Consumer/Audit 的已持久化
+技术失败独立受每角色、同执行代、同修订连续六次上限约束，调用前检查，拒绝第七次调用；
+底层 code/source_code 保留，预算耗尽不伪造 needs_human 或业务完成。
+
+### 原生消息 ledger 读回（2026-10-05）
+
+`chat +chat-messages` 的当前 `im.message-list.v1` 返回顶层 messages，记录字段为
+conversationId/messageId/text/createTime/sender/senderId。DwsClient 按该原生契约解码，
+保留原消息及会话身份和 raw_payload；原生 atomic 查询的 result.messages 继续按其自身
+provider 字段解码。通用 senderId 只与真实通讯录 profile 的 user_id/open_dingtalk_id
+匹配，不猜身份类型、不因展示名相同就认定为本人。恢复读取使用相同解码，仍保留既有
+准确目标/正文/时间/作者及歧义处理；解析修复不重新发送、修改候选或产生新的执行回执。
+
+
+### System 与未创建角色运行的实际失败上限（2026-10-05）
+
+定时任务在 Consumer/Audit 已完成后的 System 实际失败使用三次持久化任务 attempts，
+前两次至少延后 60/120 秒，第三次 failed；重新入队不退回计数。候选、审核、动作键和
+已核验回执保持不变，效果 uncertain 仍保留 uncertain 并只回读核验，不重发。
+execution_claim_unavailable 是未取得执行领取的等待，至少延后 60 秒，不消费失败预算。
+定时任务的来源刷新失败，以及 Worker 尚未创建角色运行的普通技术失败也保留 attempts，第三次写入 failed 历史，
+保留原错误和 summary。既有授权、活跃运行及 provider 恢复等待沿用原等待机制；
+真正开始后产生的角色技术失败仍计入上述六次持久化角色预算。
+
+## Runtime Context 与 Settings 渲染输入
+
+后台 Consumer/Audit 在实际 route 和角色工具配置确定后追加动态 Runtime Context；fallback
+使用新 route 的模型、thinking、native cwd 和声明目录重新生成。目录来自最终 CLI allowlist 与
+role server 描述，仅证明本轮声明的入口，不证明连接/认证/读取成功。资料根目录与任务工件目录
+分开显示；Claude 的命令继承进程 cwd，Codex 优先显示明确 `--cd`，未知续会话目录如实标注。
+任务、执行代、stage/revision 和后台 scheduled_consumer 绑定来自原任务与真实 invocation，
+不按消息 channel、人员或关键词推断。稳定取证原则加入角色指令及契约 hash，动态时间不参与
+会话兼容 hash。普通 Consumer 工作、Audit 只读及 SystemExecutor 受控动作边界保持不变。
+
+日历任务先核实相关参与者时区与来源，按会议日期处理夏令时、跨日和不存在/重复的当地时间；
+已知工作时段、占用和偏好用于选候选。对方时区未知时保留待确认，先交付本人侧带明确时区的
+暂定窗口，不称双方均合适；已知时区也不证明对方空闲。结构化来源字段可投影到环境说明，
+文本事实由 Agent 按原材料理解，不把机器时区或钉钉时间戳解析规则当成参与者时区。
+
+每次 invocation 在现有事件流保存 `runtime.prompt`（准备输入）及适配器正常返回后的
+`runtime.prompt.invoked`（适配器调用记录）。前者可能出现在启动失败前，后者也不代表模型已
+接收或任务成功；两者不是工具进展、外部动作或 provider receipt。记录完整服务 developer/task
+输入、实际 route、run attempt、执行代、修订与来源上下文，并复用已有凭据脱敏。
+
+Settings 的 Prompts/运行输入 使用 `/api/console/settings/prompt-preview` 查看上述输入。
+当前预览标注「所选路线的配置预览」，使用当前角色规则和已保存的完整任务输入；无完整上下文
+的绑定任务显示不可用，不通过只保留原触发的重建冒充完整。历史预览只读既有事件，标明准备/
+调用状态、run/attempt/generation/revision/stage/时间；旧 run 缺输入时不重跑、不写回、不补造。
+页面范围限定为服务提交输入，CLI 自建系统/schema/history 不伪造为可见内容。预览不改变配置、
+队列或动作事实，不读取外部日历和业务资料；历史指定的 role/task/route 不匹配时明确返回 422。
+
+历史输入可按 `runtime_attempt_id` 选择同一 run 的每次路线尝试，逐次显示 prepared/invoked，
+后来的准备失败不会隐藏早先已调用的输入。当前预览重新渲染当前默认 Skill 目录，仅复用明确
+标记的 task override；任务正文仍标记保存来源。时区事实只投影 participant_id/timezone/
+source_ref/applies_on 的字符串字段，其他来源字段不进入环境段；快照复用结构化凭据脱敏。
+
+Prompts 的 Developer/User/Profile 各自保留 Template 与 Rendered preview 的一一对应；预览只渲染
+同一份已保存模板，未保存草稿不进入预览。保存成功后重新读取服务器模板及渲染结果，避免继续
+显示旧预览。后台 Consumer/Audit 的多段完整输入放在独立只读「运行输入」页签（prompt=runtime），
+不再占用 Developer/User 模板的 Rendered preview；该页没有 Template 或保存操作。
+
+Prompts 内容标题随当前查看方式显示「模板」或「渲染结果」，与所选 Developer/User/Profile 页签对应；完整运行输入仍位于独立只读「运行输入」页签。
+
+Developer Prompt 只承载适用于所有任务的角色、能力、证据、系统动作、完整 Pydantic 输出契约及共同工作原则；工作人格仍注入 Consumer 与 Audit，Audit Rules 只进入 Audit。OA、日历、消息受众、OKR、招聘和文档等专项流程由当前任务选择的 Skill 承载，不再作为全任务 Developer 规则重复注入。User Prompt 是 Consumer 的完整任务模板，必须包含恰好一个 `{{task_context}}`，仅支持普通文本和这个插槽。任务来源、定时要求、stage、反馈、既有回执及 continuation 先由服务组装成完整上下文，再填入插槽；不将旧消息块模板叠加到后台任务。Workbench、独立 WeChat、纯服务命令及 Email 退订保留各自入口和显式指令。
+
+Consumer 和 Audit 每轮 Task 输入均传入当前任务已保存的专项指令，来源为「已保存任务配置」，现有运行输入快照记录该段来源和长度。Audit 不只从候选转述推断任务规则。`task_specific_instructions` 复用 Consumer 已有的精确 Skill 附录分离逻辑；只分离已知的完整末尾附录，不截断正文或按业务关键词改写。生成发现提示不重复预载，自定义 Skill 约定仍在 Skill 段保留。没有专项指令的任务不添加空段；审核权限、规则优先级、反馈和 session 行为不变。
+
+服务组装的 Consumer/Audit Developer Prompt 不再读取或复制本机 `~/.agents/AGENT.md` 开发规则，也不注入缺失文件的占位段或旧的重读提示。业务角色、能力、输出契约和后台 Memory bootstrap 说明仍由原有代码提供；本机原生 CLI 的指令加载与开发 Agent 的 AGENTS.md 文件不在此变更范围。
+
+后台 Consumer/Audit 使用原生 skills.config 禁用专项 Skill 的自动正文注入，避免原生加载、Developer inline 与工具读取三份重复。原生 project_doc_max_bytes=0 只关闭项目目录 AGENTS.md；全局 ~/.codex/AGENTS.md 仍由 CLI 加载，服务不修改原生 home 或全局规则文件。此设置仅适用于后台角色命令。
+
+System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；agent_cli.read_system_action_contract(capability, operation) 返回完整规范，包含原有角色、identity、payload、target、回执和完成条件。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。原生 output-schema 保持关闭：实际探测显示现有 RootModel 顶层 $ref 被拒绝，等价展开后 Consumer 的 oneOf 与 Audit 可选字段仍不满足原生 strict schema 限制；未通过弱化业务契约来适配。
+
+Worker 上下文回归分别验证当前业务事实、执行阶段和会话恢复，不要求把 Developer 的角色合同复制进用户上下文。Consumer 的真实命令捕获回归另行检查 Developer 中仍包含提案／审核／系统执行边界，且用户输入不重复该角色合同；精简上下文不代表移除安全合同。
+
+Task Agent 的当前 Skill 合同回归核对所选根目录的准确文件与完整内容，不固定旧版本号。定时输入仍验证未采用历史冻结正文、保留运行身份且未修改原输入，当前 Project／Task 输出边界断言继续保留。
+
+OA 评论出现未知效果后，System 只读原实例的正式 detail；摘要 records 只含操作结果，不能证明评论正文。恢复要求持久动作键、uncertain 状态及准确带时区的首次动作时间，并匹配 detail 中唯一的 ADD_REMARK、当前本人 ID、完整获批正文和动作开始后的毫秒时间。旧评论、其他作者、歧义或缺失证据继续保留 uncertain，绝不重新评论。回执保存原实例、原生操作类型／作者／时间与正文摘要，不编造 commentId、不复制整份审批详情；该读回不授权新的审批决定。
+
+
+运行输入的分段来源由同一装配函数提供：每段记录 name、source、placement（Developer/Task）及脱敏正文 characters，不重复保存分段全文，长度不含段间分隔符。runtime.prompt 保存本轮分段回执；Settings 当前公共预览使用当前角色装配，任务绑定预览明确区分当前 Developer 与保存任务来源，旧任务正文完整保留，必要的当前 Skill 提示作为独立来源段展示。历史预览只读已保存回执，缺少分段来源时标记未记录，不从当前配置猜测。日历时区解释流程位于 ceo-calendar-invite Skill，Runtime Context 仅保留显式参与者时区事实。
+
+未精简任务的当前配置预览从原任务结构化输入识别冻结 Skill，使用任务内读取入口并标明冻结/当前目录来源；冻结材料不需要在当前安装目录存在。已结算回复输入的冻结正文精简后明确不可用。历史模式只展示可读取的原生 runtime.prompt 中已保存 Task 正文，不追加任何新入口，也不由当前 Skill 或精简来源记录重建正文。
+
+一次角色 invocation 只读取一次 Developer/User/Profile 正文，供组装、静态指纹与重试共用；Audit 不读取无关 User 模板。实际路线和工具命令确定后，再追加 Runtime Context。静态配置 SHA 写入现有 runtime.prompt invocation facts，仅作来源回执；Consumer 继续按 `conversation_id + route` 复用原 session，配置或 contract hash 变化不创建新会话，Audit 的独立 session 不与 Consumer 合并。
+
+默认 User 的 Rendered preview 使用明确标记的合成完整任务，不读取业务材料；Developer/Profile 渲染同一份已保存正文。完整运行输入仍在独立只读页签，当前配置 Developer 与所选已保存历史 Task 的来源分别标注，历史模式不重新渲染。读取设置/预览不创建或覆盖配置文件。已存在模板不在读取时自动升级；部署使用 `python -m app.deploy --publish-prompt-templates`，仅在既有停止/备份窗口根据 `ci/prompt-template-release.json` 的精确旧/新 SHA 发布默认 Developer/User。本次默认 Developer 发布只接受上一版精确默认 SHA（3ccd6261291b6610aa95a4764d4fd81b7c232011f8ca7dbc52b18639703fb457），移除全局日历专项段；原规则逐字保留在实际 authored calendar Skill，User 默认和工作人格不变。自定义模板须明确迁移，不能覆盖；文件备份、发布与回退沿用 RepositoryUpdater 的 publication 协议。该发布不修改工作人格。
+
+仓库受跟踪的 `data/prompts/developer_prompt.md` 是通用 Developer 模板，继续保留 Git 版本管理，
+与已批准的 `app/defaults/developer_prompt.md` 保持逐字节一致。发布后的生产文件与回执一致
+不等于工作树已干净；源码同步不放宽部署器的本地修改检查，也不允许手工重置生产模板。
+
+Prompts 设置读取先返回 Developer/User 的已保存原文；某份模板验证或渲染失败时，仅该份渲染预览为空并返回明确的 `preview_errors`，编辑器仍显示原文供修正。保存仍需通过现有验证，后台角色调用仍严格验证，不自动迁移或覆盖旧模板。
+
+精简只移除重复或已由任务 Skill 承载的流程说明，不改变角色边界、身份与证据规则、完整效果判断、业务结果模型或 Pydantic 校验。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。未结算的定时服务命令在 `scheduled_consumer.skill_materials` 冻结完整 managed revision 或 operation snapshot；未结算的通用 Scheduled Agent 在 `scheduled_agent_execution.v1` 顶层保存有序 `skill_names`、`skill_materials` 及其来源，原始 trigger 投影只保留结构化 Skill 身份事实，不再次复制正文。冷启动和续接都从同一未结算持久输入恢复；已结算输入改为来源摘要，冻结正文读取明确不可用。每一轮 Consumer 与 Audit Task 只列当前选中 Skill 的名称、极简用途和按需读取入口。保存输入声明该名称为冻结 Skill 时使用 `agent_cli.read_task_skill(name)`；材料重复、损坏或缺失由精确读取报告技术错误，不得改读当前磁盘版本。没有冻结声明的已选 Skill 使用目录中的实际授权绝对路径调用 `agent_cli.read_skill(path=...)`；Skill 正文引用的其他已安装 Skill 通过 `agent_cli.read_skill(name=...)` 精确读取，不把依赖目录预装进 Task。旧任务的显式 inline Task 约定仍在每轮保留。正文不复制进新 prompt，也不根据任务文字猜测来源。未选择 Skill 时 Task 只给 `agent_cli.read_skill()` 发现入口；该调用按需返回授权目录内的 name、用途和路径元数据，不返回正文，Agent 再按精确 name 或 path 读取。目录查询和 name 解析沿用相同授权根，越界符号链接不会进入元数据，重名明确报错。目录 frontmatter 只提取顶层 name/description，嵌套产品 metadata 不会隐藏可用 Skill。无论有无选中 Skill，显式自定义 Task 约定都继续在每轮 Task 保留；服务生成的发现文字由结构化来源标记识别，不重复注入。新运行事实记录实际入口来源与本轮 `skill_names`；未注入的旧全量目录不再作为 `skill_protocol` 保存。Email 分类、Meeting Alignment 与独立 WeChat 没有任务内读取工具，仍直接使用完整冻结正文。会议来源预装配不能代替冻结 Skill 中的业务要求；在具备按需读取能力并验证规则完整性前，不把这些正文替换为名称提示。Runtime Context 缩短工具说明，保留原有准确 server.tool 名称和其他环境事实。无业务调用的旧 build_turn_prompt、ceo_agent_thread_prompt 及 CodexRunner 的隐含业务 Developer 默认入口已退休；底层 native 指令保留模式及真实调用者显式指令不变。
+
+Developer 保存先以现有渲染器验证，未知变量或不可渲染内容返回具体错误且不覆盖已保存正文；该检查属于配置格式合同。
+
+默认共同工作原则要求先识别原请求要向谁交付什么、按本轮声明入口取证、交付可核实部分并说明剩余协调责任。日历时区与候选日期偏移规则位于 `ceo-calendar-invite` Skill，只在适用任务按需读取；共同 Developer 不再全量携带该专项流程。两者都不改变已有角色、审核或执行合同。
+
+配置回执同时记录 Developer 模板原文和渲染后共同原则正文的 SHA；相同模板引用的变量/文件/代码展开改变时，静态契约指纹也改变。静态指纹仍不是 session 身份；历史记录缺正文 SHA 时只显示未记录，不以当前值补造。
+
+默认共同原则保留原有的部分交付与必要追问要求。审核角色、决定类型与生命周期保持原契约。
+
+### 业务审核按完整上下文判断（2026-10-06）
+
+Consumer/Audit 根据完整任务和对话上下文、本人职责、实际事实、接收对象、工作目的和动作后果判断候选是否合理。业务上下文不划分为可信或不可信，不另设“可信授权”或逐条消息许可声明。财务主题或群名本身不构成拒绝理由；不合适的候选必须指出具体事实缺口、受众不匹配、无依据承诺或与明确只出草稿／不发送要求的冲突。上下文不改变已配置能力，也不证明外部动作完成。邮件与微信 Skill 使用同一原则；Email 子系统现有 unsubscribe ActionPlan 和禁用 auto_reply 的范围保持原样。
+
+Consumer 完整候选、Audit 精确审核、System 执行持久化计划及真实回执的绑定保持原样。实际 CLI／provider 认证、权限和拒绝错误仍按原诊断保留；本次规则修改不重放历史拒绝动作。固定规则在已保存自定义审核模板前注入，并通过正式部署发布邮件、微信 Skill 和默认审核规则。
+
+### Attempt 无动作终态展示（2026-10-07）
+
+任务的 done 表示处理周期已经结束，不能覆盖最新有效运行所绑定 Attempt 的 skipped：经审核无需动作的 Attempt 继续显示 skipped 和无需操作。判定使用现有执行代与最新有效运行身份，并按存储契约先比较 revision，再比较 Consumer/Audit 角色、该角色的重试次数和运行 ID；旧执行代或旧 revision 的 skipped 不覆盖后续任务结果。其他 done 详情也属于终态，保留既有微信待发送／重试操作对操作按钮的影响。该展示修正不修改任务、Attempt、Consumer/Audit 结果或外部执行回执，页面读取不产生业务动作。
+
+## DingTalk 临时处理表情
+
+普通钉钉聊天消息被服务接入处理队列后，原消息上添加服务账号的文字表情「处理中」。
+日历邀请、合成 service_task 和 dry-run 不添加。成功回复的 provider 回执写入 sent_replies 后，
+立即移除这个临时表情；无需回复、失败、转人工以及待处理任务换成新消息时也移除。
+待处理和执行中的重试保留表情。表情的添加、移除失败不改变业务任务或回复结果。
+
+ProcessingReaction 在现有 service_state 保存文字表情模板与每条源消息的添加/移除意图；
+正常生产和消费 pass 根据现有 reply_tasks 与 sent_replies 清理已结束的源消息，
+重启后继续未确认的表情操作。只操作本功能记录的源消息与服务账号的「处理中」表情。
+该进度展示不改变 Consumer/Audit 生命周期、发送授权或现有业务效果检查。
+
+## Meeting Audience Recovery
+
+独立会议路径复用共享消息受众合同。候选级保密历史拒绝保留为明确未知证据，继续读取其他
+候选；不当作空讨论、无群或发送许可。群成员完整性和真实群人数独立于会议参会人数。
+Agent 依据实际讨论、完整当前名册、稳定身份、当前职责和内容披露范围决定群或明确私聊。
+仅有转写参会人而无完整日历名册时，群发现先按原发送可用性和标题规则预选，再读取保留群的完整成员；无标题匹配时仍保留原候选范围。完整日历名册仍先检查参会覆盖再筛标题，不能让不符合覆盖的同名群遮蔽合格群。该读取顺序优化不降低所选群的身份、完整名册和讨论证据要求，不缓存受众，也不赋予发送许可。
+业务私聊只接受来源中唯一的稳定参会人身份或日历证明的组织者；拒绝本人和已核验别名。
+个人私聊仍要求完整日历两人名册。正文同一私聊受众合并发送，不凭 HR 职务扩大披露范围。
+计划群不可发送时保留失败，不能自动改投组织者或本人。
+恢复前精确核对主消息及敏感消息已准备正文与本次披露范围，不仅检查相同受众分支。
+旧 HR 合并正文若含仅适合另一受众的敏感部分，在任何发送之前明确失败；不覆盖正文或伪造送达。
+会议准备在现有 `service_state` 的 `meeting_delivery_target:v1` 命名空间原子绑定规范化目标与
+原动作正文，发送及复用回执前再次校验目标。不同目标不借用原回执；旧 prepared 缺少目标绑定
+时不从新决策推断或回填，明确保留未核实失败。无需新增表、列或历史数据 apply。
+Provider 明确返回 `success=false` 的主消息或敏感消息记录真实失败，不继续发送后续部分，
+不把缺失的送达回执升级为 `sent`。
+
+`rerun_meeting_alignment_jobs` 是原身份重新分析入口，不是送达重试。事务内要求未保存任何
+部分效果、未准备主消息或敏感消息、无已有回执、无锁/活跃 dispatcher 或投递归属，且无活跃
+会议/运行时回合。已准备或已部分发送必须沿原回执恢复，不能清空重做候选。历史运行不改写。
+这些身份和归属检查不证明模型所写业务理由真实，也不代表会议已迁入通用 Consumer/Audit 引擎。
+
+### 历史反馈链接的来源读取（2026-10-07）
+
+Consumer 捕获的历史消息以反馈 token 和 attempt ID 识别上下评分链接是否属于同一对。旧链接中的触发/回复预览各自仍接受敏感值检查，但文字差异不使当前任务失败；Markdown 来源解析保留 URL 原文，以便只在结果检查副本中移除经过检查的链接。两个链接仍分别验证配置的 host/path、query 字段和评分。当前待发送正文保持完整 query 的严格配对，来源原文、候选 digest 和执行前来源比较不受影响。
+
+## Storage retention (2026-10-09)
+
+训练数据正文和观察明细放在数据库旁的 `*-training-data` 目录，SQLite 只保留快照摘要与训练/评估元数据。运行时按快照类型保留最新完整基线，与各类型标签水位累计一致；已启动训练的 run pin 暂时保留其选定数据，结束后清理同类型旧快照。历史摘要不能恢复已经清理的数据，读取明确报告不可用。迁移先写出并校验每种独立数据类型的最新完整快照，再移除旧正文表；运行时不从摘要重建已删除的基线。既有迁移遗漏的当前基线仅从身份、水位及摘要完全匹配的已验证原始备份显式恢复，并读回校验，不恢复历史版本集合。
+
+完整 Agent trajectory 的唯一数据源是 Codex/Claude 原生 session 或 Friday operation。服务仅持久化服务任务状态及定位原生运行所需的引用和准确范围；调用正文、精简事件、原始最终结果、runtime result envelope、审查调用正文及派生搜索正文不再保存第二份。当前调用流和解析结果仅在内存中使用，历史详情按需读取原生记录。迁移清除历史数据库副本，原生文件缺失的过程详情明确不可用，不回退到数据库副本。服务自己提交的业务状态、待执行输入和外部动作账本继续作为服务数据保存。
+
+工作汇总输入进入 `done` 或 `skipped` 时，在同一业务投影事务中删除排队正文，只保留来源身份、来源时间、原始正文摘要与字节数、明确的精简标记及既有状态和运行引用。同一来源再次入队不会修改执行中或终态记录，迟到的失败或重试不能重新打开已精简终态；`pending`、`processing`、`failed` 输入保留准确正文供续跑。显式维护命令负责历史终态正文清理，初始化不执行该批处理。History 只显示来源元数据，历史语义导入需要原始证据时明确报告正文不可用。已采纳的业务证据、结果与执行回执不受正文清理影响。
+
+回复任务在既有终态结算条件满足后，将当前输入、输入版本和对应 Attempt 的输入文字改为来源摘要及引用；每份被移除的原文都保留准确 SHA-256 与字节数，Attempt 只绑定内容确实匹配的输入版本。实际完成入口 `finalize_orchestrated_reply_task` 在业务 Attempt、记忆事件和发送回执写入后检查精简；仍有调度租约时延后，在 `ReplyQueueAdapter.complete` 释放租约的同一事务再次检查该任务。其他完成／跳过、回执和人工结算路径也只检查它们刚结算的任务。失败、待人工、更新的输入版本、活动 Agent／调度租约和未结束的微信投递保持完整输入；`done` 最新运行失败且没有既有结算依据时不精简。邮件动作、计划版本、邮箱／消息／线程身份、脱敏退订入口与认证引用继续用于既有回执校验；定时运行与配置引用、冻结 Skill 的版本或路径及摘要留在小型来源记录里。原有不可变输入校验的批量入口以摘要比较，普通消息仍按身份去重；准确的新输入清除精简标记并继续既有代际流程。精简标记不能作为可执行输入；历史重跑和冻结 Skill 缺少准确原文时报告不可用，不从其他副本或当前材料拼造原文。历史批量清理由显式维护执行，状态、业务结果、审查决定与执行回执保持不变。
+
+独立 Meeting、Task、OKR 运行的原始决定及审查正文也只从原生执行范围按需读取。Meeting 已采用的 job 决定、Task 已应用的 projection 回执和 OKR 已采用的业务事项继续保存。会议搜索索引只保存 session/source/title 引用，完整会议来源与决定从该次原生输入/输出读取，正文和向量在有界内存缓存中计算，按原生文件及来源变化失效；既有 0.55 cosine + 0.30 BM25 评分保持不变。原生来源缺失时只有服务标题可检索，正文不可用。
+
+服务采用的冻结业务计划保存在既有 review_candidates 中，包含服务准备的投递标识和捕获的来源事实；该计划与 Consumer 完成状态在同一事务内提交，恢复、审查和执行都使用同一已采用计划。既有 candidate_reviews 保存已采用的审查决定和修订反馈，并与 Audit 完成状态一并提交。服务准备阶段产生的失败在同一事务内记录 runtime attempt 与 Agent run 的失败状态，不把原生输出中的成功提案当成已采用计划。任务恢复不重新运行已完成的 Agent 或重新捕获历史来源。上述业务状态不作为 Agent 原始输出或过程详情的替代来源。最终任务记忆从已采用的 Consumer 计划读取，并按任务和执行代际去重；原生过程不可用不影响该项服务输入。运行流只在 RAM 中保留，事件发布使用既有 SQLite 写事务排序，终态成功提交后释放正文缓存，事务回滚保留实际观察到的运行流。运维延后与维护检查按原有条件读取准确范围内的原生证据；记录不可用不能证明没有工具活动，已证实尚未创建原生会话的失败仍按原条件处理。
+
+业务 History、Attempt 指标和审批结果从服务已采用的 Consumer 计划、Audit 决定及既有 verified 外部动作回执投影，原生原始输出仅用于过程详情。审批回执按实际结构化操作、任务/执行代际及审批实例/已知任务标识匹配，冲突仍显示未知；不改变执行或审查规则。状态列表和恢复状态判断只读取服务状态及采用结果，不加载原生正文。工具开始记录保留实际输入，完成记录提供结果；同一原生 item 配对时，完成记录的空参数不会覆盖开始时的输入。
+
+过程详情独立说明原生最终结果和工具过程的可用性；Friday 最终 Artifact 可读不表示工具过程也可读。可读的 Claude 记录没有受支持查看器时不提供错误的 Codex 链接。历史列表保留已采用的会议最终消息和目标，业务历史列表只读取服务采用的消息、标题与状态；原生搜索和单次运行过程详情在数据库快照关闭后按需读取。质量报告的信息性原生证据覆盖数量仅在当前内存报告/页面中展示，不写入小时状态文件，也不改变质量状态与违规规则。
+
+Workbench 的实时文字和工具正文仅在运行时 RAM 中使用；SQLite 事件行只保存服务回放 ID、顺序和最小原生定位。工具开始与完成通过原生完成顺序定位，并按原生 item ID 配对输入与结果；只有完成记录时直接读取该条原生记录。历史文字以原生完成消息聚合回放。任务结束或进入等待确认后，在事务提交后释放正文缓存；失败与停止运行也按准确范围读取已有原生信息。最终文字不保存副本，详情按需读取 Codex/Claude 原生记录或 Friday Artifact；远端 Artifact 的读取在 SQLite 事务外进行。原生记录缺失时明确显示过程不可用，保留实际任务状态和服务附件记录。运行提供者的原始错误正文也不另存；服务保留失败状态、错误码和服务生成的公共原因，历史错误正文清除后由错误码生成展示原因。
+
+定时配置正文存于 `scheduled_task_config_versions`，触发记录以 `snapshot_id` 引用不可变版本。数据库迁移保留运行 ID、状态和已排队输入。
+
+模型目录在无训练进程活动时清理，保留当前模型、上一个可运行版本和最新待评估候选；其他旧制品及遗留临时文件删除。业务状态、最终结果、执行回执与小型评估记录保留。数据库删除旧正文后需要执行存储维护并压缩页才能释放文件空间。
+
+描述优化提案保持产生它时的快照身份与引用证据不变。若提案尚未评估而源快照已被最新数据替代，提案一次性转为 `unavailable`，原因 `description_proposal_source_unavailable`；不反复启动失败的评估，也不把旧证据套到新数据上。下一次基于最新数据的训练可产生新的提案。
+
+Status API 的 SystemHealth 使用严格类型的 native_delivery_coverage（checked、unavailable）展示原生轨迹可用性；该字段仅实时计算，不写入质量快照，也不改变质量违规判断。
+
+Codex 原生工具只有开始、没有对应完成记录时，历史详情保留准确范围内的
+`item.started` 和实际输入，并按原生顺序展示；不生成结果、退出码或成功回执。
+匹配到完成记录时仍只采用对应完成投影，空参数不覆盖开始输入，旧 MCP end
+格式的完成结果也不会被开始投影覆盖。这是过程可见性，不证明外部动作发生，
+不改变运行终态、审批或重试资格。
+
+服务捕获的 source_bindings 含凭据或未通过签名链接安全边界时，按
+`runtime_result_source_invalid` 记录为 service/result 的不可重试失败，
+不归为 Codex 执行失败，也不切换提供者来重复处理同一不安全来源。
+模型自行生成的敏感值仍由原有结果边界拒绝；不删除来源字段、放宽凭据
+检查或把该失败改成 needs_human。此分类修复不表示原业务已经恢复。
+
+Task 验收读回在 SQLite 快照内取得准确的原生引用，关闭快照后读取该范围
+内运行时实际选择的最后一个 schema 合法候选。验收保留所选候选的原始
+字段，不用模型默认值补齐缺失证据，不回退到已移除的 SQL 决定正文。
+原生决定缺失或全部候选无效时明确验收失败；业务投影仍以既有 SQLite
+应用回执核对。本修复不授权生产语义导入，也不代替真实业务样本验收。
+
+已完成的邮件分类任务不长期保存分类输入正文：`email_agent_classification_tasks.status=done` 在既有租约／代际校验的完成事务内，将 `input_json` 改为明确标记的来源记录，保留原始 JSON 摘要和字节数、去除 `scheduled_consumer` 后的不可变输入摘要、稳定邮件身份、provider locator、配置版本及脱敏退订候选引用。定时配置与 Skill 只保留运行／版本／摘要引用；模型输入、邮件正文和冻结 Skill 正文不再复制。重复发现以既有不可变输入语义核对摘要，不补回正文；内容变化仍按既有错误处理。pending／running／failed 保留完整输入以便恢复，分类结果、任务状态和执行回执保持原样。历史精简由显式维护命令执行，不在初始化时扫描。`email_classifications.model_text` 仍是训练／人工标注使用的准确特征文本，与邮件原文不同，本阶段保留。
+
+存储 schema 升级迁移业务对象映射时，只插入新键、删除已不存在的键或更新变化的任务绑定；绑定未变的 `business_object_tasks` 原行及创建／更新时间保持不变，最新任务与 OA 别名选择规则不变。
+
+精简后的邮件来源记录同时保留业务分类 `category` 和候选来源 `action_parameters.candidate_source`，确保已完成 Attempt 详情的业务显示不变；其他参数正文不复制。日历卡片修订仍只比较呈现正文（精简后使用原文摘要），定时扫描运行 ID 的变化不会重新打开已完成任务。

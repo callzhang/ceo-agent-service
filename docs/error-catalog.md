@@ -48,6 +48,8 @@ projection。对具有 `business_object_key` 的任务，当前状态由 `busine
 | `codex_stream_invalid` | 流式事件无法解析为合法执行事件 | 可重试 |
 | `agent_result_failed` | Agent 返回正式 `failed` 结果 | 按服务对该错误码的政策决定 |
 | `agent_reported_failure` | Agent 报告了服务不认识的失败码；原文保存在 `source_code` | 有上限的普通重试，耗尽后失败 |
+| `dependency_read_unavailable` | 必需来源读取因 DWS/MCP/外部依赖本身不可用而未完成 | 持久队列退避重试，不消耗任务重试额度；不当作业务结论 |
+| `agent_context_refresh_failed` | 服务在 Consumer/Audit turn 间刷新当前外部上下文失败 | 外部依赖等待，退避重试并归还任务额度 |
 | `agent_feedback_missing` | 修订流程缺少必要反馈 | 终止当前轮并记录失败 |
 | `consumer_retry_deferred` | Consumer 尚未达到下一次重试时间 | 调度等待 |
 | `consumer_retry_exhausted` | Consumer 已达到重试上限 | 终态失败 |

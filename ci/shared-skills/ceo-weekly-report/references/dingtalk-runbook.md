@@ -1,5 +1,12 @@
 # DingTalk Runbook
 
+For a scheduled service Consumer turn, use the task-bound `agent_cli` read,
+validate, render and document operations named in `SKILL.md`. The shell commands
+below describe the manual CLI workflow and must not be attempted from a
+role-bound Consumer or Audit turn. Audit reads the current proposal and live
+evidence only; the System Executor owns controlled message, OA and calendar
+actions. Consumer retains this report's document publication operation.
+
 ## Preconditions
 
 Use one authenticated `dws` profile for all reads, identity resolution, and

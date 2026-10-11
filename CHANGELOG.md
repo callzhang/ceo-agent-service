@@ -9,6 +9,362 @@
 
 ## Unreleased
 
+- Bind native DingTalk attachments to verified stable message/resource identities
+  and content digests instead of persisting expiring download capabilities in
+  reviewed candidates. Preserve source-change, credential and action guards.
+
+- 2026-10-10: Stop double-counting candidate packaging against a captured
+  source's JSON-decoding depth during sensitive/local-runtime validation.
+  Check authored data, source metadata and source values separately with the
+  existing predicates and limits; retain callback checks and full codec size
+  limits, without redacting or dropping source evidence.
+
+- 2026-10-10: Observe submitted runtime prompts through real append callbacks
+  in test RAM, not terminal archives. Worker fixtures read exact synthetic
+  native tool windows while persisted audit events remain empty. Quality
+  fixtures explicitly distinguish unavailable native coverage from violations;
+  SQLite timing stubs retain the connection's write-count contract.
+
+- 2026-10-10: Check adopted candidate/review data in orchestration, scheduled
+  and no-action fixtures without restoring raw SQL results. Technical Consumer
+  failures retain failed runs; unbound historical questions remain non-actionable
+  with no selection or execution records after reopening.
+
+- 2026-10-10: Align audit-page fixtures with candidate-bound approvals and
+  native-only process visibility. Keep legacy-body non-exposure, unavailable
+  result, malformed candidate, tool formatting and native range assertions.
+
+- 2026-10-10: Give Task semantic-repair fixtures native records with exact
+  original and correction ranges. Reopening reuses the matching result without
+  another provider invocation; an invalid reference remains a failed readback.
+
+- 2026-10-10: Repair the Task Attention inspector to read validated native
+  decisions instead of retired SQLite result bodies. Explicitly close read-only
+  query connections before native IO; unavailable evidence remains unavailable
+  while original projection receipts and Project context stay inspectable.
+
+- 2026-10-10: Bind routed-result recovery fixtures to exact isolated native
+  session ranges. Keep codec mismatch, UTF-8 size limits and effectful
+  no-replay assertions; oversized-result faults now target the native source
+  instead of the retired SQLite result envelope.
+
+- 2026-10-10: Update Project replay readback fixtures to isolated native Task
+  records and schema-valid assessments with their actual source input. Preserve
+  missing evidence, missing projection receipt and incomplete storage failures;
+  the legacy storage comparison remains read-only.
+
+- 2026-10-10: Give audited email Web projection fixtures complete validated
+  proposals and candidate-bound approvals, sharing the existing synthetic
+  review helper without changing its checks. Retain privacy, entry-access,
+  receipt, search-count and multi-round lineage rejection assertions.
+
+- 2026-10-10: Give obsolete-rule retirement fixtures explicit isolated native
+  sources, including the CLI child process. Preserve original native bytes and
+  canonical receipt hashes, require preview to leave schema and data unchanged,
+  and inject invalid-question faults into the actual native result.
+
+- 2026-10-10: Give Consumer executor fixtures isolated native records while
+  preserving malformed stdout and missing-session failures. Check prompt
+  assembly through actual submission callbacks, not an invented terminal
+  archive, and bind revision fixtures to valid candidate-specific Audit returns.
+
+- 2026-10-10: Keep unmatched native Codex tool starts in chronological history
+  as started attempts, without manufacturing completion or results. Preserve
+  matched completion inputs, including legacy MCP end records.
+
+- 2026-10-10: Verify persisted Consumer source bindings against the adopted
+  candidate while requiring the retired raw AgentRun SQL body to stay empty.
+  Preserve exact historical feedback, complete calendar material and source
+  change/digest assertions; this does not establish native trace availability.
+
+- 2026-10-10: Bind audited email-unsubscribe fixtures to contract-valid reviews
+  of the actual adopted candidate. Keep technical browser failures as failed
+  runs, inject parent-result faults into authoritative candidate records, and
+  retain continuation, identity, recovery and receipt-rejection assertions.
+  Synthetic unit approvals are not external execution receipts.
+
+- 2026-10-10: Honor an explicit nonretryable error on the newly failed AgentRun
+  when the Reply worker records a runtime exception. Neither caller retry nor
+  clean-session retry can override that denial; keep existing retry limits,
+  wait policies, failure evidence and generation-checked finalization.
+
+- 2026-10-10: Verify terminal AgentRun replay with native evidence outside the
+  SQLite writer transaction. Recheck run, task and exact runtime reference
+  before accepting replay, derive independent WeChat decisions using the
+  runner's envelope and dependency finalization, and hydrate returned runs
+  after releasing the writer lock. Missing or changed evidence cannot authorize
+  a conflicting terminal rewrite.
+
+- 2026-10-10: Keep valid independent WeChat decisions out of reviewed-candidate
+  adoption. Preserve generation and role checks, reject malformed or mixed
+  contracts, and do not create an Audit approval or restore SQL result bodies.
+
+- 2026-10-10: Capture isolated native Task decisions in evaluation unit fixtures
+  instead of restoring removed SQL bodies. Keep semantic rejection, rollback,
+  projection and adoption assertions; synthetic records are not business eval
+  or external execution receipts.
+
+- 2026-10-10: Read Task evaluation decisions from exact native references rather
+  than removed SQL bodies. Share runtime candidate selection while retaining
+  original fields, and fail explicitly when no native decision is available.
+
+- 2026-10-10: Give deterministic calendar and Workbench end-to-end fixtures
+  isolated native records and lifecycle references. Retain message, tool,
+  streaming, stop and read-only historical-confirmation assertions.
+
+- 2026-10-10: Read runtime-worker business assertions from adopted candidates
+  and reviews, and give the scripted protocol executor isolated native session
+  records so terminal tool-evidence assertions exercise the native reader.
+
+- 2026-10-10: Bind scripted runtime-worker Audit fixtures to the adopted
+  candidate digest instead of a fabricated digest, retaining the production
+  candidate/review consistency check and the original execution assertions.
+
+- 2026-10-10: Attribute credential-bearing captured source rejection to service
+  source validation, rather than provider execution failure. Keep the security
+  rejection and source evidence; do not retry another provider for this failure.
+
+- 2026-10-10: Remove unused Audit test result assignments that blocked lint
+  before the shared full suite; preserve runner calls and existing assertions.
+
+- 2026-10-10: Avoid hydrating historical email payloads in terminal unsubscribe
+  probes; load full classifications only for missing-receipt terminal tasks and
+  retain current-plan guards and failed-task exclusion.
+
+- 2026-10-10: Verify worker attempt snapshots execute one projection query
+  without requiring the superseded window-ranking SQL implementation.
+
+- 2026-10-10: Narrow quality-gate Reply/OA window projections to required fields,
+  avoiding repeated sorting of business payloads while retaining receipt,
+  current-trigger and reviewed human-decision checks.
+
+- 2026-10-10: Align training payload reads, pins and idle cleanup with the
+  existing per-type label baseline. Alternating folder/selected publication
+  retains each latest baseline while removing superseded same-type data.
+
+- 2026-10-10: Reuse complete account scan-folder validation in lightweight
+  initialization and propagate previous snapshot corruption during publication.
+  Add invalid folder and publication rollback regressions; corrupted label
+  history cannot advance watermarks.
+
+- 2026-10-10: Validate Email account configuration on lightweight runtime
+  initialization so corrupt account JSON cannot escape the email-unavailable
+  boundary, without restoring full historical validation scans.
+
+- 2026-10-10: Verify external Email training payloads against frozen persisted
+  snapshot metadata on readback, rejecting parent timestamp/version tampering
+  while preserving per-snapshot reads and normal round trips.
+
+- 2026-10-10: Resolve earlier same-component Cron incidents after a successful
+  scheduler or dispatcher tick. Later incidents remain unresolved, and empty
+  recovery checks do not acquire a SQLite writer transaction.
+
+- 2026-10-10: Initialize resumed runtime transcript ranges at their start
+  offset, so failure persistence retains the original runtime error rather
+  than raising a secondary invalid-range error. Completion range validation
+  remains unchanged.
+
+- 2026-10-09: Avoid SQLite writer admission for empty, settled, delayed and
+  live-leased Email classification polls. Due work and expired leases still
+  recover and claim exclusively under BEGIN IMMEDIATE; a concurrent claim is
+  rechecked rather than trusted from the preliminary read.
+
+- 2026-10-09: Preserve terminal failures before an Agent run starts. The Reply
+  worker records the original failure without inventing a run or retrying a
+  non-retryable result; missing nonzero final run IDs remain integrity errors.
+
+- 2026-10-08: Probe direct Email action eligibility without a SQLite writer
+  lock. Empty, settled, account-excluded and retry-blocked polls remain reads;
+  actual claims recompute all plan and dependency checks under BEGIN IMMEDIATE.
+  Held-writer and intervening-claim regressions preserve exclusive delivery.
+
+- 2026-10-08: Index the existing integer-cast scheduled Reply execution link
+  so current failed Reply recovery does not scan unrelated scheduled history.
+  The partial expression index preserves existing conversion and recovery
+  semantics; VM-budget and legacy-link regressions cover the remaining scan.
+
+- 2026-10-08: Locate scheduled incident source runs by indexed event ID or
+  canonical primary key, preserving exact identity and later same-task terminal
+  recovery checks. Select failed Email action rows before classification payload
+  joins. Both repair measured Attention read amplification without queue caches
+  or business-state changes, with query-plan and instruction-budget regressions.
+
+- 2026-10-08: Add the manifest-required partial unresolved-errors index through
+  the normal schema migration. Attention keeps all current recovery predicates
+  and historical incidents while avoiding resolved-error payload scans. Query
+  plan and SQLite VM-budget regressions cover large settled history.
+
+- 2026-10-08: Reply queue polling no longer acquires a SQLite write lock when
+  the requested channel has no due work. A read-only preview is followed by the
+  original transactional recheck and claim, preserving concurrent ownership,
+  due-time semantics and future arrivals without caching queue state.
+- 2026-10-08: Split slow SQLite context timing into body, commit/rollback and
+  close phases for both stores, without logging SQL parameters or changing
+  transaction/error behavior. Aggregate elapsed time is not lock-hold evidence.
+
+- 2026-10-08: Meeting history denials remain typed candidate evidence rather
+  than aborting all audience discovery. Preserve actual full roster IDs/counts;
+  denied discussion remains unknown and does not authorize another recipient.
+  The independent meeting planner now reuses the shared message-audience
+  contract. Stable non-principal source recipients, same-audience merging and
+  no automatic group-to-organizer switching are checked before delivery.
+  Formal analysis reruns reject partial/prepared effects and active ownership
+  transactionally, preserving original meeting identity and historical runs.
+  This does not migrate the meeting engine or bypass provider risk refusals.
+  Legacy partial split deliveries keep their immutable primary body and
+  sensitive action identity; recipient equality alone never proves completion.
+  Both persisted bodies are verified before any effect, including rejecting
+  an old HR-merged primary that discloses another recipient's sensitive text.
+  Meeting preparation atomically binds each canonical recipient using existing
+  service state, and dispatch verifies it again before reusing any receipt.
+  Legacy preparations without recipient proof remain blocked, never backfilled
+  from a new decision; this introduces no schema migration or history replay.
+  Full roster evidence is scope-validated and deduplicated before counting.
+  The meeting Skill and current documentation no longer suggest self fallback.
+
+- 2026-10-07: Runtime history quality checks resolve the forbidden path
+  configuration once per scan rather than once per field. Every row and
+  credential/path check remains covered; each new scan rereads configuration.
+  Regressions bound configuration resolution and preserve empty-prefix,
+  fixed runtime-path and changed-configuration detection. No result cache,
+  schema migration or relaxed security policy.
+
+- 2026-10-07: Workbench idle claim polls no longer acquire a SQLite writer
+  lock when no queued or expired running turn exists. A closed read preflight
+  avoids contention with unrelated writers, while real work retains the
+  original transactional expiry recovery, eligibility checks and CAS claim.
+  Regressions cover a competing writer, live leases, concurrent enqueue and
+  expired recovery; no queue cache or lease/retry policy changes.
+
+- 2026-10-07: Anchor Attention's scheduled recovery checks to the exact stale
+  run before searching later successful replies. Nested EXISTS prevents
+  unrelated dispatched successes from repeatedly scanning scheduled history.
+  VM-budget regressions cover both failed tasks and errors; same-schedule,
+  later-run, dispatched and done/skipped requirements remain unchanged. No
+  cache, schema migration, failure suppression or recovery policy change.
+
+- 2026-10-07: Skill prompt regressions now verify the complete current
+  Consumer and Audit instruction bodies on their respective roles, rather
+  than relying on the obsolete combined paragraph from the common template.
+  Existing Skill policy assertions remain; runtime code and rules are unchanged.
+
+- 2026-10-07: Synchronize the Git-tracked common Developer prompt with the
+  already approved Chinese default and pin byte-for-byte equality in release
+  regression tests. Retain template tracking, publication receipts and the
+  existing deployment dirty-tree check; no prompt or audit policy changes.
+
+- 2026-10-07: Invalid current Work Item Project citations now enter the existing
+  bounded Task Agent correction loop before atomic apply. The same source and
+  contiguous-quote checks still run during apply, including nested context and
+  assessment evidence; exhausted corrections remain failed without partial
+  domain writes. Historical citation checks and the retry budget are unchanged.
+
+- 2026-10-06: Rejected sensitive Audit output is recorded as an invalid result,
+  not a CLI execution outage. The existing result-correction and bounded retry
+  path now receives this failure; the sensitive-value rejection is unchanged.
+
+- 2026-10-06: Daily report history facts retain each attempt's conversation
+  and trigger IDs, creation time and Agent run ID. Identically titled reports
+  from different scheduled runs no longer lose their original source identity
+  in the fact payload. Windows, statuses, counts and Audit rules are unchanged.
+
+- 2026-10-06: DingTalk's current message ledger can return null text for a
+  message with no rendered body. Its text projection now stays empty while
+  retaining the original message identity and raw payload, so one textless
+  message no longer prevents reading an entire meeting candidate group.
+  Nontext values remain invalid; recipient and delivery rules are unchanged.
+
+- 2026-10-06: Daily report document receipts now include the exact folder
+  metadata already resolved from the provider. This preserves the folder URL
+  needed by the notification without synthesizing links, adding writes, or
+  changing Audit, delivery, or weekly-report receipts.
+
+- 2026-10-06: Queue failure diagnostics and the other Attention sources also
+  select failed row IDs before loading payloads. Latest nonblank errors,
+  case-insensitive matching, ordering, limits and fresh recovery visibility
+  retain their existing semantics without new indexes or migrations.
+
+- 2026-10-06: Attention selects failed Reply task IDs through the existing
+  covering status index before reading message payloads. Case-insensitive
+  status matching, recovery/current-object exclusions and fresh read-only
+  snapshots are unchanged; no schema migration or business-state cache.
+
+- 2026-10-06: Captured participant feedback links are checked by their exact
+  configured URL and pair data rather than the principal's outgoing signature
+  and labels. Markdown/JSON source parsing leaves canonical snapshots intact;
+  foreign hosts, malformed tokens, mismatched pairs, extra URLs/parameters and
+  other credentials remain rejected. Outbound rendering stays strict.
+
+- 2026-10-06: Captured provider sources no longer inherit Agent-authored
+  short-field limits. Full calendar cards remain unchanged in source bindings
+  and candidate digests; credential, callback, nesting and total codec limits
+  remain enforced, as do authored reference bounds.
+
+- 2026-10-05: Consumer result inspection now distinguishes captured historical
+  feedback rendering and serialized provider containers from current outgoing
+  text. Original source snapshots remain bound to the candidate and reread;
+  the existing strict callback and credential checks remain active. Invalid
+  captured callbacks are recorded as nonretryable service result failures
+  instead of repeatable CLI process failures.
+
+- 2026-10-05: Obsolete task-class questions now have an explicit single-attempt
+  retirement command with read-only preview and retained provenance. Original
+  results and statuses remain historical; retired questions consistently show
+  skipped in detail, History and queues and cannot be rerun. Current malformed
+  questions still fail the unchanged quality gate.
+
+- 2026-10-05: Interrupted meeting delivery releases its own unfinished batch
+  claims without changing persisted send receipts. A durable UUID claim token
+  prevents same-second successor claims from being released by an old owner.
+  Delivery and cleanup failures are both retained in the recorded exception;
+  confirmed sends resume only their unfinished calendar stage.
+  Ownership is persisted in a separate claim table, preserving the strict job
+  row shape required by the previous release during code rollback.
+
+- 2026-10-05: A runtime `provider_risk_rejected` refusal can no longer be
+  replayed from a failed Attempt's manual rerun button or POST endpoint. The
+  detail page explains that the original candidate is blocked; normal failed
+  attempts keep their existing rerun behavior.
+
+- 2026-10-04: An absent organization chooser is accepted only after redirecting
+  to the configured OKR application's origin and path, not any non-login URL.
+  Regression coverage includes blank and unrelated pages, real JWT parsing and
+  expiry boundaries, and valid headers arriving during the refresh wait loop.
+
+- 2026-10-04: The OKR service wrapper reuses the shared source's validated
+  request-header collector. An early expired or incomplete request no longer
+  prevents a later valid SSO token from being captured. Expired credentials
+  are still rejected before the live API read, without printing tokens.
+
+- 2026-10-04: OKR local SSO selects an already-visible target organization
+  without requiring a nonexistent native confirmation dialog. An organization
+  selection failure on the login page remains a failure; only a completed
+  redirect may omit that selection. The same account, organization and
+  headless source boundaries remain unchanged.
+
+- 2026-10-04: WeChat Reader Skill operations require and forward an explicit
+  service database path. Status and bounded reads can no longer silently inspect
+  a checkout-local database. Missing database arguments fail before IPC starts;
+  Sender behavior, delivery authorization and historical outcomes are unchanged.
+
+- 2026-10-04: Attempt processing steps distinguish the Agent run's business
+  status from its runtime call status. A returned model call no longer displays
+  a failed Audit run as a completed business step. Both original statuses are
+  preserved; Audit decisions and recovery eligibility remain unchanged.
+  Session-unavailable tests also provide the real AgentRun status contract and
+  verify that unavailable transcripts do not alter either execution status.
+
+- 2026-10-04: History detail initializes EmailStore only for an existing email
+  Attempt. Non-email and missing records no longer trigger full email-history
+  validation. Email context and unsubscribe receipts remain fresh per request,
+  and persistence validation failures still propagate.
+
+- 2026-10-04: Status reuses the worker payload's fresh read-only SQLite
+  snapshot for queue totals, Attention and human decisions. It no longer
+  scans each section twice or mixes snapshots within one response; subsequent
+  requests still read current state, and existing failure/recovery rules stay
+  unchanged.
+
 - 2026-10-02: Meeting group discovery requests the supported 100-item DWS
   search pages so large participant queries finish within the pagination budget.
   Incomplete provider results still block recipient selection.
@@ -2100,3 +2456,23 @@
   decisions with applicant notification, and read-only recovery when an external side effect is unknown.
 
 - Clarify reconciled invalid `needs_human` projections as technical failures in Attention, so malformed historical decision payloads cannot be mistaken for live human authorization requests.
+# Unreleased
+
+- Count live dispatcher leases, meeting preparation and claimed meeting delivery
+  in the deployment quiet gate, including before an Agent runtime is created.
+
+- Avoid reading title-discarded group rosters for transcript-only meeting
+  audiences. Preserve sendability-first selection, authoritative attendee
+  coverage ordering, and full evidence checks on every retained candidate.
+
+- Isolate weekly OKR member collection and terminal result-validation gaps with
+  system-owned UID binding and full-roster unscored sections. Shared or untrusted
+  source failures still block publication. Require verified period/objective-list
+  source receipts; never manufacture zero scores or reuse another quarter. Keep
+  raw diagnostics private and preserve scoring, cache, leases and delivery keys.
+
+- Add a shared Consumer/Audit message-audience contract for discussion and member
+  responsibility evidence, audience-specific multi-action plans and no split-message
+  self-delivery. Saved custom rules retain the fixed contract. Historical risk guards
+  and System receipt/recovery semantics remain unchanged. Native audience evaluation
+  is a separate release gate; this entry does not imply installation or delivery.

@@ -21,6 +21,22 @@ class _MemoryPostfixStore:
     def __init__(self):
         self.messages = {}
         self.receipts = {}
+        self.targets = {}
+
+    def prepare_meeting_alignment_message(self, *, delivery_key, target_kind, target_id, body, original_text, **kwargs):
+        key = ("dingtalk", delivery_key)
+        target = (target_kind, target_id.strip())
+        if key in self.targets and self.targets[key] != target:
+            raise ValueError("meeting prepared target binding conflicts")
+        if key in self.messages and key not in self.targets:
+            raise ValueError("meeting prepared target is unverified")
+        prepared = self.prepare_outbound_postfix("dingtalk", delivery_key, body, original_text, **kwargs)
+        self.targets[key] = target
+        return prepared
+
+    def verify_meeting_alignment_target(self, delivery_key, *, target_kind, target_id):
+        if self.targets.get(("dingtalk", delivery_key)) != (target_kind, target_id.strip()):
+            raise ValueError("meeting prepared target binding conflicts")
 
     def prepare_outbound_postfix(self, channel, delivery_key, body, original_text, **_):
         key = (channel, delivery_key)
@@ -274,8 +290,13 @@ def test_group_delivery_uses_first_candidate_and_real_mentions(tmp_path):
     assert result.message_text == dws.sent[0]["text"]
 
     changed = send_decision().model_copy(update={"final_message": "改写后的内容"})
+    with pytest.raises(MeetingDeliveryError, match="prepared meeting body"):
+        deliver_meeting_alignment(
+            changed, meeting_source(), dws, message_sender=sender,
+            delivery_key="meeting-alignment:minutes-1:job-1",
+        )
     replay = deliver_meeting_alignment(
-        changed,
+        send_decision(),
         meeting_source(),
         dws,
         message_sender=sender,
@@ -364,7 +385,48 @@ def test_mixed_recruiting_summary_sends_sanitized_group_message_and_private_hr_n
     assert len(dws.sent) == 2
 
 
-def test_business_summary_to_hr_merges_sensitive_content_into_one_message(tmp_path):
+@pytest.mark.parametrize("primary_receipt", [False, True])
+@pytest.mark.parametrize("feedback_base_url", ["", "https://feedback.example"])
+def test_same_audience_recovery_preserves_bound_split(tmp_path, primary_receipt, feedback_base_url):
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "meeting.sqlite3")
+    sender = ServiceMessageSender(store=store, dingtalk=dws)
+    payload = send_decision(target="direct", mention_names=[]).model_dump()
+    payload["audience_scope"] = "business"
+    payload["sensitive_private_message"] = {
+        "target": payload["target"],
+        "message": "Private personnel assessment.",
+        "reason": "A owns this personnel decision.",
+        "recipient_evidence": ["Verified current responsibility for this issue"],
+    }
+    decision = MeetingAlignmentDecision.model_validate(payload)
+    source = meeting_source()
+    key = "meeting-alignment:legacy-split"
+    ordinary = meeting_alignment_delivery.meeting_followup_message(decision, source)
+    prepared = sender.prepare_meeting_alignment(target_kind="user", target_id="u-a", delivery_key=key, body=ordinary,
+                              feedback_base_url=feedback_base_url)
+    if primary_receipt:
+        sender.send_dingtalk_prepared(prepared, conversation_id=None, user_id="u-a")
+    original_body = prepared.final_body
+
+    result = deliver_meeting_alignment(
+        decision, source, dws, message_sender=sender, delivery_key=key
+    )
+    replay = deliver_meeting_alignment(
+        decision, source, dws, message_sender=sender, delivery_key=key
+    )
+
+    assert result.sensitive_private_merged is False
+    assert result.sensitive_private_delivery is not None
+    assert result.message_text == original_body
+    assert len(dws.sent) == 2
+    assert payload["sensitive_private_message"]["message"] not in dws.sent[0]["text"]
+    assert payload["sensitive_private_message"]["message"] in dws.sent[1]["text"]
+    assert replay.sensitive_private_delivery == result.sensitive_private_delivery
+
+
+@pytest.mark.parametrize("feedback_base_url", ["", "https://feedback.example"])
+def test_business_summary_to_hr_merges_sensitive_content_into_one_message(tmp_path, feedback_base_url):
     dws = FakeDws()
     dws.hr_user_ids.add("u-a")
     sender = ServiceMessageSender(
@@ -383,8 +445,8 @@ def test_business_summary_to_hr_merges_sensitive_content_into_one_message(tmp_pa
         "target": {
             "kind": "direct",
             "conversation_id": "",
-            "direct_user_id": "u-derek",
-            "title": "Derek",
+            "direct_user_id": "u-a",
+            "title": "A",
             "candidates": [],
         },
         "message": "人员评价：候选人的管理成熟度仍需进一步验证。",
@@ -392,13 +454,21 @@ def test_business_summary_to_hr_merges_sensitive_content_into_one_message(tmp_pa
         "recipient_evidence": ["A 是本次会议中负责招聘事项的 HR"],
     }
     decision = MeetingAlignmentDecision.model_validate(payload)
+    source = meeting_source()
+    key = "meeting-alignment:recruiting:hr-primary"
+    merged = meeting_alignment_delivery.meeting_followup_message(
+        decision, source,
+        final_message=f"{decision.final_message}\n\n{decision.sensitive_private_message.message}",
+    )
+    sender.prepare_meeting_alignment(target_kind="user", target_id="u-a", delivery_key=key, body=merged,
+                   feedback_base_url=feedback_base_url)
 
     result = deliver_meeting_alignment(
         decision,
-        meeting_source(),
+        source,
         dws,
         message_sender=sender,
-        delivery_key="meeting-alignment:recruiting:hr-primary",
+        delivery_key=key,
     )
 
     assert result.sensitive_private_delivery is None
@@ -408,6 +478,151 @@ def test_business_summary_to_hr_merges_sensitive_content_into_one_message(tmp_pa
     assert dws.sent[0]["user_id"] == "u-a"
     assert payload["final_message"] in dws.sent[0]["text"]
     assert "管理成熟度" in dws.sent[0]["text"]
+    replay = deliver_meeting_alignment(decision, source, dws, message_sender=sender, delivery_key=key)
+    assert replay.sensitive_private_merged is True
+    assert len(dws.sent) == 1
+
+
+def test_conflicting_prepared_same_audience_body_fails_before_any_effect(tmp_path):
+    dws = FakeDws()
+    sender = ServiceMessageSender(store=AutoReplyStore(tmp_path / "meeting.sqlite3"), dingtalk=dws)
+    payload = send_decision(target="direct", mention_names=[]).model_dump()
+    payload["audience_scope"] = "business"
+    payload["sensitive_private_message"] = {
+        "target": payload["target"], "message": "Sensitive assessment.",
+        "reason": "Verified business need", "recipient_evidence": ["Current owner"],
+    }
+    decision = MeetingAlignmentDecision.model_validate(payload)
+    sender.prepare_meeting_alignment(target_kind="user", target_id="u-a", delivery_key="conflict", body="Different immutable body")
+    with pytest.raises(MeetingDeliveryError, match="prepared meeting body"):
+        deliver_meeting_alignment(decision, meeting_source(), dws, message_sender=sender, delivery_key="conflict")
+    assert dws.sent == []
+
+
+@pytest.mark.parametrize("bad_action", ["primary", "sensitive"])
+def test_different_audience_recovery_rejects_old_disclosure_before_any_effect(tmp_path, bad_action):
+    dws = FakeDws()
+    sender = ServiceMessageSender(store=AutoReplyStore(tmp_path / "meeting.sqlite3"), dingtalk=dws)
+    payload = send_decision(target="direct", mention_names=[]).model_dump()
+    payload["audience_scope"] = "business"
+    payload["sensitive_private_message"] = {
+        "target": {"kind": "direct", "direct_user_id": "u-b", "title": "B", "conversation_id": "", "candidates": []},
+        "message": "RESTRICTED_TO_B", "reason": "Only B owns this issue",
+        "recipient_evidence": ["Verified responsibility and disclosure scope"],
+    }
+    decision = MeetingAlignmentDecision.model_validate(payload)
+    source = meeting_source()
+    key = "old-hr-merge"
+    if bad_action == "primary":
+        body = meeting_alignment_delivery.meeting_followup_message(
+            decision, source, final_message=f"{decision.final_message}\n\nRESTRICTED_TO_B"
+        )
+        sender.prepare_meeting_alignment(target_kind="user", target_id="u-a", delivery_key=key, body=body)
+    else:
+        sender.prepare_meeting_alignment(target_kind="user", target_id="u-b", delivery_key=f"{key}:sensitive", body="Unexpected private content")
+    with pytest.raises(MeetingDeliveryError, match="prepared meeting body"):
+        deliver_meeting_alignment(decision, source, dws, message_sender=sender, delivery_key=key)
+    assert dws.sent == []
+
+
+@pytest.mark.parametrize("slot", ["primary", "sensitive"])
+def test_recovery_never_borrows_receipt_for_a_different_target(tmp_path, slot):
+    dws = FakeDws()
+    sender = ServiceMessageSender(store=AutoReplyStore(tmp_path / "meeting.sqlite3"), dingtalk=dws)
+    payload = send_decision(target="direct", mention_names=[]).model_dump()
+    payload["audience_scope"] = "business"
+    payload["sensitive_private_message"] = {
+        "target": {"kind": "direct", "direct_user_id": "u-b", "title": "B", "conversation_id": "", "candidates": []},
+        "message": "Private section", "reason": "Verified owner",
+        "recipient_evidence": ["Verified current scope"],
+    }
+    first = MeetingAlignmentDecision.model_validate(payload)
+    deliver_meeting_alignment(first, meeting_source(), dws, message_sender=sender, delivery_key="target-binding")
+    if slot == "primary":
+        payload["target"] = payload["sensitive_private_message"]["target"]
+    else:
+        payload["sensitive_private_message"]["target"] = payload["target"]
+    changed = MeetingAlignmentDecision.model_validate(payload)
+    with pytest.raises(MeetingDeliveryError, match="target"):
+        deliver_meeting_alignment(changed, meeting_source(), dws, message_sender=sender, delivery_key="target-binding")
+    assert len(dws.sent) == 2
+
+
+def test_legacy_prepared_target_is_not_backfilled_from_a_new_decision(tmp_path):
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "meeting.sqlite3")
+    sender = ServiceMessageSender(store=store, dingtalk=dws)
+    decision = send_decision(target="direct", mention_names=[]).model_copy(update={"audience_scope": "business"})
+    body = meeting_alignment_delivery.meeting_followup_message(decision, meeting_source())
+    prepared = sender.prepare(channel="dingtalk", delivery_key="legacy", body=body)
+    with pytest.raises(MeetingDeliveryError, match="target is unverified"):
+        deliver_meeting_alignment(decision, meeting_source(), dws, message_sender=sender, delivery_key="legacy")
+    assert store.get_outbound_postfix("dingtalk", "legacy") == prepared
+    assert store.get_service_state("meeting_delivery_target:v1:dingtalk:legacy") is None
+    assert dws.sent == []
+
+
+def test_target_binding_and_preparation_rollback_together(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "meeting.sqlite3")
+    original = store._prepare_outbound_postfix_in_transaction
+    def fail_after_preparing(db, **kwargs):
+        original(db, **kwargs)
+        raise RuntimeError("Interrupted preparation")
+    monkeypatch.setattr(store, "_prepare_outbound_postfix_in_transaction", fail_after_preparing)
+    with pytest.raises(RuntimeError, match="Interrupted"):
+        store.prepare_meeting_alignment_message(delivery_key="atomic", body="Body", original_text="",
+                                                target_kind="user", target_id="u-a")
+    assert store.get_outbound_postfix("dingtalk", "atomic") is None
+    assert store.get_service_state("meeting_delivery_target:v1:dingtalk:atomic") is None
+
+
+def test_concurrent_preparation_cannot_replace_another_recipient(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    import json
+    from threading import Barrier
+
+    store = AutoReplyStore(tmp_path / "meeting.sqlite3")
+    barrier = Barrier(2)
+    def prepare(target_id):
+        barrier.wait()
+        try:
+            store.prepare_meeting_alignment_message(
+                delivery_key="race", body="Same body", original_text="",
+                target_kind="user", target_id=target_id,
+            )
+            return target_id
+        except ValueError:
+            return None
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(prepare, ["u-a", "u-b"]))
+    winners = [value for value in results if value is not None]
+    assert len(winners) == 1
+    assert json.loads(store.get_service_state("meeting_delivery_target:v1:dingtalk:race")) == {"kind": "user", "id": winners[0]}
+
+
+@pytest.mark.parametrize("refused_call", [1, 2])
+def test_provider_refusal_is_not_reported_as_meeting_sent(tmp_path, refused_call):
+    dws = FakeDws()
+    original_send = dws.send_message
+    def send(*args, **kwargs):
+        result = original_send(*args, **kwargs)
+        return {"success": False} if len(dws.sent) == refused_call else result
+    dws.send_message = send
+    store = AutoReplyStore(tmp_path / "meeting.sqlite3")
+    sender = ServiceMessageSender(store=store, dingtalk=dws)
+    payload = send_decision(target="direct", mention_names=[]).model_dump()
+    payload["audience_scope"] = "business"
+    payload["sensitive_private_message"] = {
+        "target": {"kind": "direct", "direct_user_id": "u-b", "title": "B", "conversation_id": "", "candidates": []},
+        "message": "Private section", "reason": "Verified owner",
+        "recipient_evidence": ["Verified current scope"],
+    }
+    with pytest.raises(MeetingDeliveryError, match="provider rejected"):
+        deliver_meeting_alignment(MeetingAlignmentDecision.model_validate(payload), meeting_source(), dws,
+                                 message_sender=sender, delivery_key="refused")
+    assert len(dws.sent) == refused_call
+    refused_key = "refused" if refused_call == 1 else "refused:sensitive"
+    assert store.get_outbound_postfix_receipt("dingtalk", refused_key) is None
 
 
 def test_private_retry_reuses_successful_group_delivery(tmp_path):
@@ -528,20 +743,142 @@ def test_multi_person_direct_delivery_is_rejected_without_sending():
         )
 
 
-def test_business_direct_delivery_rejects_non_organizer_without_sending():
+@pytest.mark.parametrize("private", [False, True])
+def test_delivery_rejects_principal_before_any_send(private):
+    payload = send_decision(mention_names=[]).model_dump()
+    target = {
+        "kind": "direct", "conversation_id": "", "direct_user_id": "u-derek",
+        "title": "Derek", "candidates": [],
+    }
+    if private:
+        payload["sensitive_private_message"] = {
+            "target": target, "message": "Sensitive content", "reason": "Separate audience",
+            "recipient_evidence": ["Current responsibility evidence"],
+        }
+    else:
+        payload["target"] = target
+    source = meeting_source().model_copy(update={"creator": meeting_source().participants[0]})
+    dws = FakeDws()
+    with pytest.raises(MeetingDeliveryError, match="principal"):
+        deliver_meeting_alignment(MeetingAlignmentDecision.model_validate(payload), source, dws)
+    assert dws.sent == []
+    assert dws.search_queries == []
+
+
+@pytest.mark.parametrize("state", ["unsendable", "incomplete"])
+def test_planned_group_unavailable_never_changes_audience(state):
+    dws = FakeDws()
+    dws.conversation_info["singleChat"] = True if state == "unsendable" else None
+    with pytest.raises(MeetingDeliveryError, match="planned group"):
+        deliver_meeting_alignment(send_decision(mention_names=[]), meeting_source(), dws)
+    assert dws.sent == []
+    assert dws.search_queries == []
+
+
+def test_hr_primary_does_not_absorb_a_different_private_recipient():
+    payload = send_decision(target="direct", mention_names=[]).model_dump()
+    payload["audience_scope"] = "business"
+    payload["sensitive_private_message"] = {
+        "target": {
+            "kind": "direct", "conversation_id": "", "direct_user_id": "u-b",
+            "title": "B", "candidates": [],
+        },
+        "message": "Restricted to B", "reason": "Different verified audience",
+        "recipient_evidence": ["B current role and content authorization"],
+    }
+    dws = FakeDws()
+    dws.hr_user_ids.add("u-a")
+    result = deliver_meeting_alignment(MeetingAlignmentDecision.model_validate(payload), meeting_source(), dws)
+    assert result.sensitive_private_merged is False
+    assert [message["user_id"] for message in dws.sent] == ["u-a", "u-b"]
+    assert "Restricted to B" not in dws.sent[0]["text"]
+
+
+def test_planning_source_does_not_turn_organizer_name_into_delivery_identity():
+    source = meeting_source()
+    organizer = source.creator.model_copy(update={"user_id": "", "open_dingtalk_id": ""})
+    source = source.model_copy(update={"creator": organizer})
+    dws = FakeDws()
+    dws.profiles["A"] = [DwsUserProfile(user_id="guessed-from-name", name="A")]
+    result = meeting_alignment_delivery.resolve_meeting_creator_identity(source, dws)
+    assert result.creator.user_id == ""
+    assert dws.search_queries == []
+
+
+def test_planning_source_resolves_organizer_only_from_exact_source_open_id():
+    source = meeting_source()
+    source = source.model_copy(update={"creator": source.creator.model_copy(update={"user_id": ""})})
+    dws = FakeDws()
+    result = meeting_alignment_delivery.resolve_meeting_creator_identity(source, dws)
+    assert result.creator.user_id == "u-a"
+    assert dws.search_queries == []
+
+
+@pytest.mark.parametrize("alias", [False, True])
+def test_personal_identity_resolution_cannot_send_to_principal(alias):
+    source = meeting_source(one_to_one=True, unresolved_other=True)
+    payload = send_decision(target="direct", mention_names=[]).model_dump()
+    payload["target"]["direct_user_id"] = ""
+    dws = FakeDws()
+    dws.profiles["A"] = [
+        DwsUserProfile(
+            user_id="alias-user" if alias else "u-derek", name="A",
+            open_dingtalk_id="open-derek" if alias else "",
+        )
+    ]
+    with pytest.raises(MeetingDeliveryError, match="principal"):
+        deliver_meeting_alignment(MeetingAlignmentDecision.model_validate(payload), source, dws)
+    assert dws.sent == []
+
+
+@pytest.mark.parametrize("private", [False, True])
+@pytest.mark.parametrize("problem", ["duplicate", "alias", "title", "unknown_principal", "missing_evidence"])
+def test_delivery_identity_and_evidence_gates_run_before_any_send(private, problem):
+    payload = send_decision(mention_names=[]).model_dump()
+    target = {
+        "kind": "direct", "conversation_id": "", "direct_user_id": "u-a",
+        "title": "A", "candidates": [],
+    }
+    if private:
+        payload["sensitive_private_message"] = {
+            "target": target, "message": "Restricted", "reason": "Different audience",
+            "recipient_evidence": ["Current role and content evidence"],
+        }
+    else:
+        payload["target"] = target
+    source = meeting_source()
+    if problem == "duplicate":
+        source = source.model_copy(update={"participants": [*source.participants, source.participants[1]]})
+    elif problem == "alias":
+        source = source.model_copy(update={"participants": [source.participants[0], source.participants[1].model_copy(update={"open_dingtalk_id": "open-derek"}), source.participants[2]]})
+    elif problem == "title":
+        target["title"] = "B"
+    elif problem == "unknown_principal":
+        source = source.model_copy(update={"current_user_id": ""})
+    elif not private:
+        payload["audit_summary"] = "   "
+    decision = MeetingAlignmentDecision.model_validate(payload)
+    if problem == "missing_evidence" and private:
+        decision = decision.model_copy(update={"sensitive_private_message": decision.sensitive_private_message.model_copy(update={"recipient_evidence": []})})
+    dws = FakeDws()
+    with pytest.raises(MeetingDeliveryError):
+        deliver_meeting_alignment(decision, source, dws)
+    assert dws.sent == []
+    assert dws.search_queries == []
+
+
+def test_business_direct_delivery_accepts_exact_verified_non_organizer():
     payload = send_decision(target="direct", mention_names=[]).model_dump()
     payload["audience_scope"] = "business"
     payload["target"].update(direct_user_id="u-b", title="B")
     dws = FakeDws()
 
-    with pytest.raises(MeetingDeliveryError, match="meeting organizer"):
-        deliver_meeting_alignment(
-            MeetingAlignmentDecision.model_validate(payload),
-            meeting_source(),
-            dws,
-        )
-
-    assert dws.sent == []
+    result = deliver_meeting_alignment(
+        MeetingAlignmentDecision.model_validate(payload), meeting_source(), dws,
+    )
+    assert result.target_id == "u-b"
+    assert dws.sent[0]["user_id"] == "u-b"
+    assert dws.search_queries == []
 
 
 def test_business_direct_delivery_sends_to_stable_meeting_organizer():
@@ -565,7 +902,7 @@ def test_business_direct_delivery_sends_to_stable_meeting_organizer():
     assert dws.search_queries == []
 
 
-def test_business_direct_delivery_resolves_empty_organizer_id_by_exact_profile():
+def test_business_direct_delivery_rejects_empty_id_without_profile_search():
     payload = send_decision(target="direct", mention_names=[]).model_dump()
     payload["audience_scope"] = "business"
     payload["target"]["direct_user_id"] = ""
@@ -576,18 +913,13 @@ def test_business_direct_delivery_resolves_empty_organizer_id_by_exact_profile()
     source_payload = meeting_source().model_dump(mode="json")
     source_payload["creator"].update(user_id="", open_dingtalk_id="")
 
-    result = deliver_meeting_alignment(
-        MeetingAlignmentDecision.model_validate(payload),
-        MeetingSource.model_validate(source_payload),
-        dws,
-    )
-
-    assert result.status == "sent"
-    assert result.target_kind == "direct"
-    assert result.target_id == "u-a"
-    assert result.target_title == "A"
-    assert dws.sent[0]["user_id"] == "u-a"
-    assert dws.search_queries == ["A"]
+    with pytest.raises(MeetingDeliveryError, match="explicit stable user_id"):
+        deliver_meeting_alignment(
+            MeetingAlignmentDecision.model_validate(payload),
+            MeetingSource.model_validate(source_payload), dws,
+        )
+    assert dws.sent == []
+    assert dws.search_queries == []
 
 
 def test_personal_direct_delivery_rejects_incomplete_transcript_roster():
@@ -609,56 +941,36 @@ def test_personal_direct_delivery_rejects_incomplete_transcript_roster():
     assert dws.sent == []
 
 
-def test_unsendable_group_sends_to_stable_meeting_organizer_once():
+def test_unsendable_group_fails_closed_on_repeated_attempts():
     dws = FakeDws()
     dws.conversation_info["singleChat"] = True
     sender = ServiceMessageSender(store=_MemoryPostfixStore(), dingtalk=dws)
 
-    result = deliver_meeting_alignment(
-        send_decision(mention_names=[]),
-        meeting_source(),
-        dws,
-        message_sender=sender,
-        delivery_key="meeting-alignment:minutes-1:job-1",
-    )
-    replay = deliver_meeting_alignment(
-        send_decision(mention_names=[]),
-        meeting_source(),
-        dws,
-        message_sender=sender,
-        delivery_key="meeting-alignment:minutes-1:job-1",
-    )
-
-    assert result.status == "sent"
-    assert result.target_kind == "direct"
-    assert result.target_id == "u-a"
-    assert result.target_title == "A"
-    assert replay.send_result == result.send_result
-    assert len(dws.sent) == 1
-    assert dws.sent[0]["conversation_id"] is None
-    assert dws.sent[0]["user_id"] == "u-a"
+    for _ in range(2):
+        with pytest.raises(MeetingDeliveryError, match="planned group"):
+            deliver_meeting_alignment(
+                send_decision(mention_names=[]), meeting_source(), dws,
+                message_sender=sender, delivery_key="meeting-alignment:minutes-1:job-1",
+            )
+    assert dws.sent == []
     assert dws.search_queries == []
 
 
-def test_unsendable_group_uses_organizer_open_id_without_name_lookup():
+def test_unsendable_group_does_not_use_organizer_open_id():
     dws = FakeDws()
     dws.conversation_info["singleChat"] = True
     source_payload = meeting_source().model_dump(mode="json")
     source_payload["creator"]["user_id"] = ""
 
-    result = deliver_meeting_alignment(
-        send_decision(mention_names=[]),
-        MeetingSource.model_validate(source_payload),
-        dws,
-    )
-
-    assert result.target_kind == "direct"
-    assert result.target_id == "open-a"
-    assert dws.sent[0]["open_dingtalk_id"] == "open-a"
+    with pytest.raises(MeetingDeliveryError, match="planned group"):
+        deliver_meeting_alignment(
+            send_decision(mention_names=[]), MeetingSource.model_validate(source_payload), dws,
+        )
+    assert dws.sent == []
     assert dws.search_queries == []
 
 
-def test_unsendable_group_resolves_calendar_organizer_by_exact_profile():
+def test_unsendable_group_does_not_search_calendar_organizer():
     dws = FakeDws()
     dws.conversation_info["singleChat"] = True
     dws.profiles["A"] = [
@@ -667,17 +979,12 @@ def test_unsendable_group_resolves_calendar_organizer_by_exact_profile():
     source_payload = meeting_source().model_dump(mode="json")
     source_payload["creator"].update(user_id="", open_dingtalk_id="")
 
-    result = deliver_meeting_alignment(
-        send_decision(mention_names=[]),
-        MeetingSource.model_validate(source_payload),
-        dws,
-    )
-
-    assert result.status == "sent"
-    assert result.target_kind == "direct"
-    assert result.target_id == "u-a"
-    assert dws.sent[0]["user_id"] == "u-a"
-    assert dws.search_queries == ["A"]
+    with pytest.raises(MeetingDeliveryError, match="planned group"):
+        deliver_meeting_alignment(
+            send_decision(mention_names=[]), MeetingSource.model_validate(source_payload), dws,
+        )
+    assert dws.sent == []
+    assert dws.search_queries == []
 
 
 def test_unresolved_decision_can_reach_agent_selected_business_group():

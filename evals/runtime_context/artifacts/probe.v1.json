@@ -1,0 +1,441 @@
+{
+  "version": "runtime-context.v1",
+  "manifest_sha256": "85e23ef65842d39928a54e4d5564e7dc1b1d9f1ae07fc5422aec09d3dbb7eed9",
+  "harness_sha256": "b0b1b05d29b3a7eef1168c3da9c414b1c6c41d443f5bcb83cc8f09658d336cb5",
+  "fixture_server_sha256": "ed4766380f7a1e714c236ea65ae2ae9b93922aa0112e05f09125219e59e53c45",
+  "baseline_ref": "0636969cafe866017af91ea4a3d7781d26f8d0c8",
+  "candidate_source_sha256": "18dfa5b5102223ca795a7bf1554f3466d7209145945b9bb8316a4e3f1e7a3a47",
+  "settings": {
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "medium",
+    "timeout_seconds": 300,
+    "max_concurrency": 2,
+    "fixed_time": "2026-10-22T15:00:00+00:00"
+  },
+  "instruction_hashes": {
+    "candidate-windows-unknown-zone:baseline": "7b1e14db230f5140180af856ef9fa46947ed59387c913449672c66f2c181906c",
+    "candidate-windows-unknown-zone:candidate": "0ebce27d67b085af993079a0e2dc48656d0d1efe58af322bad1049e047652b7c"
+  },
+  "results": [
+    {
+      "case_id": "candidate-windows-unknown-zone",
+      "repetition": 1,
+      "arm": "baseline",
+      "instructions_sha256": "7b1e14db230f5140180af856ef9fa46947ed59387c913449672c66f2c181906c",
+      "final": {
+        "summary": "已根据负责人下周洛杉矶日历空档拟定两个会议候选时段，待协调者与阿岚确认。",
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "low",
+        "confidence": 0.95,
+        "rule_coverage": 0.9,
+        "information_completeness": 0.75,
+        "durable_memories": [],
+        "outcome": "proposal",
+        "proposal": {
+          "objective": "在模拟项目群中回复两个具体会议候选时段供协调者与阿岚确认",
+          "actions": [
+            {
+              "description": "回复触发消息，提供负责人日历中的两个候选会议时段",
+              "action_identity": "synthetic-group-17:synthetic-message-101:meeting-slots-2026-10-27-28",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "synthetic-group-17",
+                "message_id": "synthetic-message-101"
+              },
+              "payload": {
+                "content": "我下周在洛杉矶，以下按 America/Los_Angeles 时区提供两个候选时段：\n\n1. 10月27日（周二）10:00–11:00\n2. 10月28日（周三）10:00–11:00\n\n以上是我这边日历的空档，请再和阿岚确认，确认后我配合安排。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "负责人说明下周在洛杉矶，日历应按 America/Los_Angeles 时区查看。",
+              "references": [
+                "synthetic-message-102"
+              ]
+            },
+            {
+              "assertion": "负责人日历显示2026年10月27日09:00–10:00和11:00–12:00已占用，因此10:00–11:00为空档。",
+              "references": [
+                "synthetic-event-1",
+                "synthetic-event-2"
+              ]
+            },
+            {
+              "assertion": "负责人日历显示2026年10月28日09:00–10:00和11:00–12:00已占用，因此10:00–11:00为空档。",
+              "references": [
+                "synthetic-event-3",
+                "synthetic-event-4"
+              ]
+            },
+            {
+              "assertion": "协调者要求提供负责人和阿岚的两个具体候选时段，并表示将继续协调安排。",
+              "references": [
+                "synthetic-message-101"
+              ]
+            }
+          ],
+          "authored_judgment": "仅确认负责人日历中的可用时段，不推断阿岚已空闲；回复中明确要求协调者再与阿岚确认。"
+        },
+        "decision_options": [],
+        "requested_input": null,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false
+      },
+      "error": "",
+      "exit_code": 0,
+      "tool_item_types": [
+        "mcp_tool_call",
+        "mcp_tool_call",
+        "mcp_tool_call",
+        "mcp_tool_call",
+        "mcp_tool_call",
+        "mcp_tool_call",
+        "mcp_tool_call",
+        "mcp_tool_call"
+      ],
+      "calls": [
+        {
+          "arguments": {
+            "path": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/runtime-context-baseline-m3_821ox/.agents/skills/dingtalk-chat/SKILL.md"
+          },
+          "isError": true,
+          "result": {
+            "code": "skill_path_unavailable",
+            "path": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/runtime-context-baseline-m3_821ox/.agents/skills/dingtalk-chat/SKILL.md"
+          },
+          "tool": "read_skill"
+        },
+        {
+          "arguments": {
+            "path": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/runtime-context-baseline-m3_821ox/.agents/skills/ceo-message-triage/SKILL.md"
+          },
+          "isError": true,
+          "result": {
+            "code": "skill_path_unavailable",
+            "path": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/runtime-context-baseline-m3_821ox/.agents/skills/ceo-message-triage/SKILL.md"
+          },
+          "tool": "read_skill"
+        },
+        {
+          "arguments": {
+            "path": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/runtime-context-baseline-m3_821ox/.agents/skills/dingtalk-calendar/SKILL.md"
+          },
+          "isError": true,
+          "result": {
+            "code": "skill_path_unavailable",
+            "path": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/runtime-context-baseline-m3_821ox/.agents/skills/dingtalk-calendar/SKILL.md"
+          },
+          "tool": "read_skill"
+        },
+        {
+          "arguments": {
+            "path": "/Users/derek/.agents/skills/dingtalk-chat/SKILL.md"
+          },
+          "isError": true,
+          "result": {
+            "code": "skill_path_unavailable",
+            "path": "/Users/derek/.agents/skills/dingtalk-chat/SKILL.md"
+          },
+          "tool": "read_skill"
+        },
+        {
+          "arguments": {
+            "path": "/Users/derek/.agents/skills/ceo-message-triage/SKILL.md"
+          },
+          "isError": true,
+          "result": {
+            "code": "skill_path_unavailable",
+            "path": "/Users/derek/.agents/skills/ceo-message-triage/SKILL.md"
+          },
+          "tool": "read_skill"
+        },
+        {
+          "arguments": {
+            "path": "/Users/derek/.agents/skills/dingtalk-calendar/SKILL.md"
+          },
+          "isError": true,
+          "result": {
+            "code": "skill_path_unavailable",
+            "path": "/Users/derek/.agents/skills/dingtalk-calendar/SKILL.md"
+          },
+          "tool": "read_skill"
+        },
+        {
+          "arguments": {
+            "end": "2026-11-02T00:00:00+08:00",
+            "start": "2026-10-26T00:00:00+08:00"
+          },
+          "isError": false,
+          "result": {
+            "events": [
+              {
+                "end_time": "2026-10-27T10:00:00-07:00",
+                "event_id": "synthetic-event-1",
+                "start_time": "2026-10-27T09:00:00-07:00",
+                "title": "已占用"
+              },
+              {
+                "end_time": "2026-10-27T12:00:00-07:00",
+                "event_id": "synthetic-event-2",
+                "start_time": "2026-10-27T11:00:00-07:00",
+                "title": "已占用"
+              },
+              {
+                "end_time": "2026-10-28T10:00:00-07:00",
+                "event_id": "synthetic-event-3",
+                "start_time": "2026-10-28T09:00:00-07:00",
+                "title": "已占用"
+              },
+              {
+                "end_time": "2026-10-28T12:00:00-07:00",
+                "event_id": "synthetic-event-4",
+                "start_time": "2026-10-28T11:00:00-07:00",
+                "title": "已占用"
+              }
+            ]
+          },
+          "tool": "list_dingtalk_calendar_events"
+        },
+        {
+          "arguments": {
+            "conversation_id": "synthetic-group-17",
+            "limit": 50,
+            "single_chat": false,
+            "title": "模拟项目群"
+          },
+          "isError": false,
+          "result": {
+            "messages": [
+              {
+                "content": "下周请给我您和阿岚可以开会的两个具体候选时段，我再去协调安排。",
+                "conversation_title": "模拟项目群",
+                "create_time": "2026-10-22T14:30:00+00:00",
+                "open_conversation_id": "synthetic-group-17",
+                "open_message_id": "synthetic-message-101",
+                "sender_name": "协调者",
+                "single_chat": false
+              },
+              {
+                "content": "我下周在洛杉矶，按 America/Los_Angeles 时区看日历。",
+                "conversation_title": "模拟项目群",
+                "create_time": "2026-10-22T14:35:00+00:00",
+                "open_conversation_id": "synthetic-group-17",
+                "open_message_id": "synthetic-message-102",
+                "sender_name": "负责人",
+                "single_chat": false
+              }
+            ]
+          },
+          "tool": "read_dingtalk_messages"
+        }
+      ]
+    },
+    {
+      "case_id": "candidate-windows-unknown-zone",
+      "repetition": 1,
+      "arm": "candidate",
+      "instructions_sha256": "0ebce27d67b085af993079a0e2dc48656d0d1efe58af322bad1049e047652b7c",
+      "final": {
+        "summary": "已核实负责人下周洛杉矶时间日历，拟回复群消息提供两个未见占用的候选时段，并明确阿岚的时区和日程仍需协调确认。",
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "low",
+        "confidence": 0.9,
+        "rule_coverage": 0.8,
+        "information_completeness": 0.75,
+        "durable_memories": [],
+        "outcome": "proposal",
+        "proposal": {
+          "objective": "在模拟项目群中回复协调者，提供下周两个具体会议候选时段。",
+          "actions": [
+            {
+              "description": "回复原群消息，提供两个负责人侧可用的会议候选时段。",
+              "action_identity": "reply-synthetic-group-17-message-101-next-week-meeting-slots-v1",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "synthetic-group-17",
+                "message_id": "synthetic-message-101"
+              },
+              "payload": {
+                "content": "下周我这边按 America/Los_Angeles 时区先提供两个候选：\n\n1. 10月26日（周一）10:00–11:00\n2. 10月29日（周四）10:00–11:00\n\n以上时段目前在我的日历中未见占用。阿岚的时区和日程我这边尚未核实，请先帮忙确认她是否合适，确认后再安排。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "协调者在模拟项目群请求下周提供负责人和阿岚可以开会的两个具体候选时段。",
+              "references": [
+                "synthetic-message-101"
+              ]
+            },
+            {
+              "assertion": "负责人已在群内确认下周按 America/Los_Angeles 时区查看日历。",
+              "references": [
+                "synthetic-message-102"
+              ]
+            },
+            {
+              "assertion": "负责人日历在2026年10月26日至11月1日范围内，10月27日09:00–10:00、11:00–12:00及10月28日09:00–10:00、11:00–12:00（America/Los_Angeles）有占用；所提10月26日10:00–11:00和10月29日10:00–11:00未见占用。",
+              "references": [
+                "synthetic-event-1",
+                "synthetic-event-2",
+                "synthetic-event-3",
+                "synthetic-event-4"
+              ]
+            },
+            {
+              "assertion": "本轮没有阿岚的日历或已确认时区来源，因此候选时段只能证明负责人侧未见冲突，不能证明双方均已可出席。",
+              "references": [
+                "synthetic-message-101",
+                "synthetic-message-102"
+              ]
+            }
+          ],
+          "authored_judgment": "提供两个负责人侧明确未见占用的时段，并将阿岚适配性明确留给协调者确认；不把单方日历空档表述为双方已确认可出席。"
+        },
+        "decision_options": [],
+        "requested_input": null,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false
+      },
+      "error": "",
+      "exit_code": 0,
+      "tool_item_types": [
+        "mcp_tool_call",
+        "mcp_tool_call",
+        "mcp_tool_call",
+        "mcp_tool_call",
+        "mcp_tool_call",
+        "mcp_tool_call"
+      ],
+      "calls": [
+        {
+          "arguments": {
+            "path": "/Users/derek/.agents/skills/dingtalk-chat/SKILL.md"
+          },
+          "isError": true,
+          "result": {
+            "code": "skill_path_unavailable",
+            "path": "/Users/derek/.agents/skills/dingtalk-chat/SKILL.md"
+          },
+          "tool": "read_skill"
+        },
+        {
+          "arguments": {
+            "path": "/Users/derek/.agents/skills/dingtalk-calendar/SKILL.md"
+          },
+          "isError": true,
+          "result": {
+            "code": "skill_path_unavailable",
+            "path": "/Users/derek/.agents/skills/dingtalk-calendar/SKILL.md"
+          },
+          "tool": "read_skill"
+        },
+        {
+          "arguments": {
+            "path": "r1/dingtalk-calendar/SKILL.md"
+          },
+          "isError": true,
+          "result": {
+            "code": "skill_path_unavailable",
+            "path": "r1/dingtalk-calendar/SKILL.md"
+          },
+          "tool": "read_skill"
+        },
+        {
+          "arguments": {
+            "path": "r1/dingtalk-chat/SKILL.md"
+          },
+          "isError": true,
+          "result": {
+            "code": "skill_path_unavailable",
+            "path": "r1/dingtalk-chat/SKILL.md"
+          },
+          "tool": "read_skill"
+        },
+        {
+          "arguments": {
+            "conversation_id": "synthetic-group-17",
+            "limit": 50,
+            "single_chat": false,
+            "title": "模拟项目群"
+          },
+          "isError": false,
+          "result": {
+            "messages": [
+              {
+                "content": "下周请给我您和阿岚可以开会的两个具体候选时段，我再去协调安排。",
+                "conversation_title": "模拟项目群",
+                "create_time": "2026-10-22T14:30:00+00:00",
+                "open_conversation_id": "synthetic-group-17",
+                "open_message_id": "synthetic-message-101",
+                "sender_name": "协调者",
+                "single_chat": false
+              },
+              {
+                "content": "我下周在洛杉矶，按 America/Los_Angeles 时区看日历。",
+                "conversation_title": "模拟项目群",
+                "create_time": "2026-10-22T14:35:00+00:00",
+                "open_conversation_id": "synthetic-group-17",
+                "open_message_id": "synthetic-message-102",
+                "sender_name": "负责人",
+                "single_chat": false
+              }
+            ]
+          },
+          "tool": "read_dingtalk_messages"
+        },
+        {
+          "arguments": {
+            "end": "2026-11-02T00:00:00Z",
+            "start": "2026-10-26T00:00:00Z"
+          },
+          "isError": false,
+          "result": {
+            "events": [
+              {
+                "end_time": "2026-10-27T10:00:00-07:00",
+                "event_id": "synthetic-event-1",
+                "start_time": "2026-10-27T09:00:00-07:00",
+                "title": "已占用"
+              },
+              {
+                "end_time": "2026-10-27T12:00:00-07:00",
+                "event_id": "synthetic-event-2",
+                "start_time": "2026-10-27T11:00:00-07:00",
+                "title": "已占用"
+              },
+              {
+                "end_time": "2026-10-28T10:00:00-07:00",
+                "event_id": "synthetic-event-3",
+                "start_time": "2026-10-28T09:00:00-07:00",
+                "title": "已占用"
+              },
+              {
+                "end_time": "2026-10-28T12:00:00-07:00",
+                "event_id": "synthetic-event-4",
+                "start_time": "2026-10-28T11:00:00-07:00",
+                "title": "已占用"
+              }
+            ]
+          },
+          "tool": "list_dingtalk_calendar_events"
+        }
+      ]
+    }
+  ]
+}

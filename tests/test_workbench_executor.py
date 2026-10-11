@@ -283,7 +283,7 @@ def test_run_once_persists_stream_session_and_one_terminal_event(tmp_path: Path)
 
     persisted = store.get_turn(turn.id)
     assert persisted.status is TurnStatus.COMPLETED
-    assert persisted.final_text == "done"
+    assert "不可用" in persisted.final_text
     assert store.get_task(task.id).provider_session_ref == "session-1"
     events = store.events_after(turn.id)
     assert [(event.sequence, event.event_type) for event in events] == [
@@ -444,7 +444,7 @@ def test_unknown_runtime_and_malformed_event_fail_safely(tmp_path: Path):
     executor2.close()
 
 
-def test_white_box_runtime_result_and_tool_payload_are_persisted_exactly(
+def test_white_box_runtime_result_and_tool_payload_require_native_source(
     tmp_path: Path,
 ):
     store = _store(tmp_path)
@@ -476,15 +476,53 @@ def test_white_box_runtime_result_and_tool_payload_are_persisted_exactly(
 
     persisted = store.get_turn(turn.id)
     assert persisted.status is TurnStatus.COMPLETED
-    assert persisted.final_text == "Bearer local-workbench-value"
+    assert "不可用" in persisted.final_text
     assert store.get_task(task.id).provider_session_ref == "session-safe"
     [tool_event] = [
         event
         for event in store.events_after(turn.id)
         if event.event_type == "tool_completed"
     ]
-    assert tool_event.payload["command"] == "/usr/bin/printf api_token=local-value"
-    assert tool_event.payload["output"] == "api_token=local-value"
+    assert "不可用" in tool_event.payload["summary"]
+    with store._connect() as db:
+        event_row = db.execute(
+            "select payload_json from workbench_events where id=?", (tool_event.id,)
+        ).fetchone()
+        final_row = db.execute(
+            "select final_text from workbench_turns where id=?", (turn.id,)
+        ).fetchone()
+    assert "api_token=local-value" not in event_row["payload_json"]
+    assert final_row["final_text"] == ""
+    executor.close()
+
+
+def test_failed_runtime_keeps_service_code_without_copying_native_diagnostic(tmp_path: Path):
+    store = _store(tmp_path)
+    _, turn = _queued(store)
+    runtime = FakeRuntime(
+        events=[],
+        result=RuntimeResult(
+            status="failed",
+            error_code="provider_process_failed",
+            error_detail="native stderr PRIVATE_TOKEN",
+        ),
+    )
+    executor = WorkbenchExecutor(store, RuntimeRegistry([runtime]), workspace=tmp_path)
+    executor.run_once(max_turns=1)
+    persisted = store.get_turn(turn.id)
+    assert persisted.status is TurnStatus.FAILED
+    assert persisted.error_code == "provider_process_failed"
+    assert persisted.error_detail
+    assert "PRIVATE_TOKEN" not in persisted.error_detail
+    with store._connect() as db:
+        row = db.execute(
+            "select error_code,error_detail from workbench_turns where id=?", (turn.id,)
+        ).fetchone()
+    assert row["error_code"] == "provider_process_failed"
+    assert "PRIVATE_TOKEN" not in row["error_detail"]
+    with store._connect() as db:
+        db.execute("update workbench_turns set error_detail='' where id=?", (turn.id,))
+    assert store.get_turn(turn.id).error_detail
     executor.close()
 
 
@@ -1064,7 +1102,7 @@ def test_cancel_never_runs_and_conflicting_decision_rejects(tmp_path: Path):
     executor.close()
 
 
-def test_runtime_failure_detail_is_persisted_without_workbench_rewriting(
+def test_runtime_failure_keeps_code_and_public_detail_without_native_copy(
     tmp_path: Path,
 ):
     store = _store(tmp_path)
@@ -1083,7 +1121,9 @@ def test_runtime_failure_detail_is_persisted_without_workbench_rewriting(
     persisted = store.get_turn(turn.id)
     assert persisted.status is TurnStatus.FAILED
     assert persisted.error_code == "provider_output_limit"
-    assert persisted.error_detail == "provider output exceeded the safe limit"
+    assert persisted.error_detail == (
+        "Codex provider output exceeded the 16 MiB Workbench safety limit."
+    )
     executor.close()
 
 

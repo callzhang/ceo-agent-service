@@ -121,6 +121,21 @@ def _append_copied_training_observation(
         )
 
 
+def _insert_legacy_snapshot_observations(db, snapshot, record_digests):
+    for row, digest in zip(snapshot.observations, record_digests, strict=True):
+        values = row.to_dict()
+        values["important"] = int(values["important"])
+        values["selected_for_training"] = int(values["selected_for_training"])
+        values["ordered_record_digest"] = digest
+        columns = ", ".join(values)
+        placeholders = ", ".join("?" for _ in values)
+        db.execute(
+            f"insert into email_training_snapshot_observations ({columns}) "
+            f"values ({placeholders})",
+            tuple(values.values()),
+        )
+
+
 def _legacy_unsigned_record_digest(row) -> str:
     return deterministic_payload_digest(
         {
@@ -236,6 +251,13 @@ def test_v23_snapshot_migration_freezes_and_preserves_existing_observations(
             "trg_email_training_observations_require_unfrozen_snapshot",
         ):
             db.execute(f"drop trigger {trigger}")
+        _insert_legacy_snapshot_observations(
+            db, snapshot, snapshot.manifest["ordered_record_digests"]
+        )
+        db.execute(
+            "update email_training_snapshots set manifest_json=? where snapshot_id=?",
+            (json.dumps(snapshot.manifest), snapshot.snapshot_id),
+        )
         db.execute("alter table email_training_snapshots drop column frozen")
         _rewind_email_schema(db, version=23)
 
@@ -274,6 +296,7 @@ def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path)
             "trg_email_training_observations_require_unfrozen_snapshot",
         ):
             db.execute(f"drop trigger {trigger}")
+        _insert_legacy_snapshot_observations(db, snapshot, legacy_record_digests)
         db.execute(
             "update email_training_snapshots set manifest_json=?, snapshot_digest=?",
             (
@@ -315,7 +338,7 @@ def test_v23_snapshot_migration_preserves_legacy_signed_manifest(tmp_path: Path)
     ] == list(range(23, email_store_module.EMAIL_SCHEMA_VERSION + 1))
 
 
-def test_v24_snapshot_readback_preserves_unsigned_time_legacy_manifest(
+def test_snapshot_readback_requires_external_data_for_db_digest(
     tmp_path: Path,
 ):
     store = EmailStore(tmp_path / "training-snapshot-v24-legacy-manifest.sqlite3")
@@ -351,11 +374,8 @@ def test_v24_snapshot_readback_preserves_unsigned_time_legacy_manifest(
             ],
         )
 
-    restored = store.get_training_snapshot(snapshot.snapshot_id)
-
-    assert restored is not None
-    assert restored["snapshot_digest"] == legacy_digest
-    assert restored["manifest"] == legacy_manifest
+    with pytest.raises(RuntimeError, match="unavailable"):
+        store.get_training_snapshot(snapshot.snapshot_id)
 
 
 def test_store_round_trips_frozen_training_snapshot(tmp_path: Path):
@@ -396,6 +416,50 @@ def test_store_persists_agent_label_selected_training_snapshot(tmp_path: Path):
     assert stored["observations"][0]["source"] == "agent_auto_label"
 
 
+def test_alternating_snapshot_types_retain_each_publication_baseline(tmp_path):
+    from app.email_training_data import TrainingSnapshotUnavailable, data_path
+
+    store = EmailStore(tmp_path / "alternating-snapshots.sqlite3")
+    first = _frozen_training_snapshot("folder-first")
+    store.persist_training_snapshot(first)
+    selected = build_selected_training_snapshot(
+        [
+            {
+                "source": "agent_auto_label",
+                "account_id": "account-a",
+                "stable_message_identity": f"account-a:agent-label:{index}",
+                "provider_thread_id": f"thread-agent-{index}",
+                "category_key": "work",
+                "normalized_model_input": json.dumps({"body": f"Mail {index}"}),
+            }
+            for index in range(8)
+        ],
+        snapshot_id="selected",
+        description_version="selected-training-input-v1",
+        observed_at=datetime(2026, 9, 7, 19, tzinfo=timezone.utc),
+        seed=17,
+    )
+    store.persist_training_snapshot(selected)
+    store.pin_training_snapshot("folder-run", first.snapshot_id)
+    store.prune_training_snapshot_data(training_active=False)
+    assert data_path(store.path, first.snapshot_digest).is_file()
+    second = build_folder_training_snapshot(
+        [_frozen_training_observation(body="Changed body, unchanged labels")],
+        snapshot_id="folder-second",
+        description_version="description-v3",
+        observed_at=datetime(2026, 9, 7, 20, tzinfo=timezone.utc),
+        seed=17,
+    )
+    stored = store.persist_training_snapshot(second)
+    assert stored["folder_label_watermark"] == 1
+    assert stored["important_label_watermark"] == 1
+    store.prune_training_snapshot_data(training_active=False)
+    assert store.get_training_snapshot(selected.snapshot_id) is not None
+    assert not data_path(store.path, first.snapshot_digest).exists()
+    with pytest.raises(TrainingSnapshotUnavailable, match="historical"):
+        store.get_training_snapshot(first.snapshot_id)
+
+
 def test_identical_training_snapshot_persistence_is_idempotent(tmp_path: Path):
     store = EmailStore(tmp_path / "training-snapshot-idempotent.sqlite3")
     snapshot = _frozen_training_snapshot()
@@ -413,7 +477,7 @@ def test_identical_training_snapshot_persistence_is_idempotent(tmp_path: Path):
             db.execute(
                 "select count(*) from email_training_snapshot_observations"
             ).fetchone()[0]
-            == 1
+            == 0
         )
 
 
@@ -506,12 +570,8 @@ def test_later_snapshot_does_not_mutate_earlier_observation(tmp_path: Path):
     store.persist_training_snapshot(first)
     store.persist_training_snapshot(moved)
 
-    assert (
-        store.get_training_snapshot("snapshot-before-move")["observations"][0][
-            "category_key"
-        ]
-        == "work"
-    )
+    with pytest.raises(RuntimeError, match="unavailable"):
+        store.get_training_snapshot("snapshot-before-move")
     assert (
         store.get_training_snapshot("snapshot-after-move")["observations"][0][
             "category_key"
@@ -532,8 +592,6 @@ def test_later_snapshot_does_not_mutate_earlier_observation(tmp_path: Path):
     "statement",
     (
         "update email_training_snapshots set seed=99",
-        "update email_training_snapshot_observations set source='targeted'",
-        "delete from email_training_snapshot_observations",
     ),
 )
 def test_database_rejects_frozen_snapshot_mutation(tmp_path: Path, statement: str):
@@ -549,33 +607,86 @@ def test_database_rejects_frozen_snapshot_mutation(tmp_path: Path, statement: st
 
 def test_database_rejects_observation_append_after_snapshot_freeze(tmp_path: Path):
     store = EmailStore(tmp_path / "training-snapshot-append.sqlite3")
-    store.persist_training_snapshot(_frozen_training_snapshot())
+    snapshot = _frozen_training_snapshot()
+    store.persist_training_snapshot(snapshot)
 
     with pytest.raises(sqlite3.IntegrityError, match="frozen"):
-        _append_copied_training_observation(
-            store.path,
-            stable_message_identity="account-a:message-id:<appended@example.test>",
-        )
+        with sqlite3.connect(store.path) as db:
+            _insert_legacy_snapshot_observations(
+                db, snapshot, [snapshot.observations[0].ordered_record_digest]
+            )
 
 
 def test_readback_rejects_persisted_observation_not_covered_by_manifest(
     tmp_path: Path,
 ):
+    from app.email_training_data import TrainingSnapshotUnavailable, data_path
+
     store = EmailStore(tmp_path / "training-snapshot-corrupt.sqlite3")
     snapshot = _frozen_training_snapshot()
     store.persist_training_snapshot(snapshot)
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            "drop trigger if exists "
-            "trg_email_training_observations_require_unfrozen_snapshot"
-        )
-    _append_copied_training_observation(
-        store.path,
-        stable_message_identity="account-a:message-id:<corrupt@example.test>",
-    )
+    path = data_path(store.path, snapshot.snapshot_digest)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    copied = dict(payload["observations"][0])
+    copied["stable_message_identity"] = "account-a:message-id:<corrupt@example.test>"
+    payload["observations"].append(copied)
+    path.write_text(json.dumps(payload), encoding="utf-8")
 
+    with pytest.raises(TrainingSnapshotUnavailable, match="training snapshot.*corrupt"):
+        store.get_training_snapshot(snapshot.snapshot_id)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("snapshot_version", "tampered-version"),
+        ("description_version", "tampered-description"),
+        ("input_schema_version", "tampered-schema"),
+        ("seed", 99),
+        ("frozen", 0),
+    ],
+)
+def test_external_snapshot_readback_rejects_parent_identity_tampering(tmp_path, field, value):
+    store = EmailStore(tmp_path / "snapshot-identity.sqlite3")
+    snapshot = _frozen_training_snapshot()
+    store.persist_training_snapshot(snapshot)
+    with sqlite3.connect(store.path) as db:
+        db.execute("drop trigger trg_email_training_snapshots_immutable_update")
+        db.execute(
+            f"update email_training_snapshots set {field}=? where snapshot_id=?",
+            (value, snapshot.snapshot_id),
+        )
     with pytest.raises(EmailPersistenceCorruption, match="training snapshot"):
         store.get_training_snapshot(snapshot.snapshot_id)
+
+
+@pytest.mark.parametrize("folders", [[], [None], [" "], [7]])
+def test_lightweight_initialization_rejects_invalid_scan_folder_names(tmp_path, folders):
+    path = tmp_path / "invalid-account-folders.sqlite3"
+    EmailStore(path)
+    _insert_account_with_scan_folders_json(path, json.dumps(folders))
+    with pytest.raises(EmailPersistenceCorruption, match="scan_folders_json"):
+        EmailStore(path, validate_rows=False)
+
+
+def test_snapshot_publication_rejects_corrupt_previous_identity(tmp_path):
+    store = EmailStore(tmp_path / "snapshot-publication-identity.sqlite3")
+    first = _frozen_training_snapshot("first")
+    store.persist_training_snapshot(first)
+    with sqlite3.connect(store.path) as db:
+        db.execute("drop trigger trg_email_training_snapshots_immutable_update")
+        db.execute("update email_training_snapshots set seed=99 where snapshot_id=?", (first.snapshot_id,))
+    second = build_folder_training_snapshot(
+        [_frozen_training_observation(body="Changed body, unchanged labels")],
+        snapshot_id="second",
+        description_version="description-v3",
+        observed_at=datetime(2026, 9, 7, 19, 0, tzinfo=timezone.utc),
+        seed=17,
+    )
+    with pytest.raises(EmailPersistenceCorruption, match="training snapshot"):
+        store.persist_training_snapshot(second)
+    with sqlite3.connect(store.path) as db:
+        assert db.execute("select count(*) from email_training_snapshots").fetchone()[0] == 1
 
 
 def test_readback_rejects_coordinated_parent_and_child_timestamp_tampering(
@@ -2048,6 +2159,62 @@ def _replace_email_actions(
             );
             """
         )
+
+
+def test_terminal_unsubscribe_probe_does_not_hydrate_classification_payloads(tmp_path):
+    from contextlib import contextmanager
+
+    store = EmailStore(tmp_path / "unsubscribe-terminal-probe.sqlite3")
+    original_connect = store._connect
+
+    @contextmanager
+    def guarded_connect():
+        with original_connect() as db:
+            def authorize(action, table, column, database, source):
+                if action == sqlite3.SQLITE_READ and table == "email_classifications":
+                    if column in {"subject", "preview", "model_text", "agent_result_json"}:
+                        return sqlite3.SQLITE_DENY
+                return sqlite3.SQLITE_OK
+            db.set_authorizer(authorize)
+            yield db
+
+    store._connect = guarded_connect
+    assert store.list_terminal_unsubscribe_tasks_missing_receipts() == []
+
+
+@pytest.mark.parametrize("status", ["done", "skipped", "needs_human", "failed"])
+def test_terminal_unsubscribe_probe_hydrates_only_valid_terminal_tasks(tmp_path, status):
+    database = tmp_path / "unsubscribe-terminal-hydration.sqlite3"
+    store = EmailStore(database)
+    task_store = AutoReplyStore(database)
+    authorization = _unsubscribe_authorization(store)
+    from app.email_task_adapter import email_conversation_id
+
+    task = task_store.ensure_reply_task(
+        channel="email",
+        conversation_id=email_conversation_id(
+            authorization["account_id"], authorization["thread_identity"]
+        ),
+        conversation_title="Email unsubscribe",
+        single_chat=False,
+        trigger_message_id=authorization["action_identity"],
+        trigger_create_time="2026-09-26T21:57:14+00:00",
+        trigger_sender="sender@example.com",
+        trigger_text="Unsubscribe projection test",
+        execution_generation="test-generation",
+    )
+    with sqlite3.connect(database) as db:
+        db.execute("update reply_tasks set status=? where id=?", (status, task.id))
+    rows = store.list_terminal_unsubscribe_tasks_missing_receipts()
+    if status == "failed":
+        assert rows == []
+        return
+    assert len(rows) == 1
+    assert rows[0]["stable_message_identity"] == authorization["stable_message_identity"]
+    assert rows[0]["action_plan"]["classification_id"] == authorization["classification_id"]
+    assert rows[0]["unsubscribe_action_identity"] == authorization["action_identity"]
+    assert rows[0]["unsubscribe_task"]["id"] == task.id
+    assert rows[0]["unsubscribe_task"]["status"] == status
 
 
 def _insert_account_with_scan_folders_json(database: Path, value: object) -> None:
@@ -3580,6 +3747,26 @@ def test_prototype_migration_recognizes_quoted_mixed_case_existing_columns(
         assert columns.count(column) == 1
 
 
+def test_runtime_initialization_validates_accounts_without_historical_scan(tmp_path, monkeypatch):
+    path = tmp_path / "runtime-init.sqlite3"
+    EmailStore(path)
+
+    def unexpected_historical_scan(*_args):
+        raise AssertionError("runtime initialization scanned historical rows")
+
+    monkeypatch.setattr(EmailStore, "_validate_durable_state", unexpected_historical_scan)
+    calls = []
+    original = EmailStore._validate_account_configuration
+
+    def validate_accounts(self, db):
+        calls.append(self.path)
+        original(self, db)
+
+    monkeypatch.setattr(EmailStore, "_validate_account_configuration", validate_accounts)
+    EmailStore(path, validate_rows=False)
+    assert calls == [path]
+
+
 def test_email_store_migration_is_idempotent(tmp_path: Path):
     database = tmp_path / "idempotent.sqlite3"
     store = EmailStore(database)
@@ -3598,8 +3785,22 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_email_schema_version_is_43() -> None:
-    assert email_store_module.EMAIL_SCHEMA_VERSION == 43
+def test_email_schema_version_46_persists_external_training_payload(tmp_path: Path) -> None:
+    from app.email_training_data import read_snapshot
+
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 46
+    store = EmailStore(tmp_path / "schema-46.sqlite3")
+    snapshot = _frozen_training_snapshot()
+    store.persist_training_snapshot(snapshot)
+    assert read_snapshot(store.path, snapshot.snapshot_digest).to_dict() == snapshot.to_dict()
+    with sqlite3.connect(store.path) as db:
+        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == 46
+        assert db.execute("select count(*) from email_training_snapshot_observations").fetchone()[0] == 0
+        summary = json.loads(db.execute(
+            "select manifest_json from email_training_snapshots where snapshot_id=?",
+            (snapshot.snapshot_id,),
+        ).fetchone()[0])
+        assert summary["sample_count"] == len(snapshot.observations)
 
 
 def _downgrade_task10_schema(database: Path, *, version: int) -> None:
@@ -4248,16 +4449,11 @@ def test_durable_validation_boundary_normalizes_missing_row_field(
         store,
         _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
     )
-    gc.collect()
-    with sqlite3.connect(database) as db:
-        db.execute("drop trigger trg_email_reply_dispatch_blocks_thread_update")
-        db.execute("drop trigger trg_email_unsubscribe_blocks_message_update")
-        db.execute("alter table email_messages drop column thread_identity")
-    monkeypatch.setattr(
-        EmailStore,
-        "_validate_schema_shape",
-        staticmethod(lambda _db: None),
-    )
+    def read_missing_field(_self, db):
+        row = db.execute("select stable_message_identity from email_messages").fetchone()
+        row["thread_identity"]
+
+    monkeypatch.setattr(EmailStore, "_validate_durable_rows", read_missing_field)
 
     with pytest.raises(EmailPersistenceCorruption, match="missing a required field"):
         EmailStore(database)
@@ -6550,6 +6746,67 @@ def test_direct_action_claim_does_not_materialize_settled_history(tmp_path: Path
     monkeypatch.setattr(store, "_connect", instrumented)
     assert store.claim_next_direct_action(claimed_at="2026-10-03T09:40:00+00:00") is None
     assert fetch_sizes == [0]
+
+
+@pytest.mark.parametrize("queue", ["empty", "settled", "other_account", "blocked"])
+def test_idle_direct_action_poll_does_not_wait_for_writer(tmp_path, monkeypatch, queue):
+    database = tmp_path / "idle-direct-action.sqlite3"
+    store = EmailStore(database)
+    if queue != "empty":
+        _persist_scan(
+            store, _classification(status=EmailClassificationStatus.PROCESSED)
+        )
+        with store._connect() as db:
+            if queue == "settled":
+                db.execute("update email_actions set status='done'")
+            elif queue == "blocked":
+                db.execute(
+                    "update email_actions set status='failed', next_attempt_at=?",
+                    ("2026-09-01T12:00:00+00:00",),
+                )
+    open_connection = store._open_connection
+
+    def no_wait_connection():
+        db = open_connection()
+        db.execute("pragma busy_timeout=0")
+        return db
+
+    monkeypatch.setattr(store, "_open_connection", no_wait_connection)
+    writer = sqlite3.connect(database, timeout=0)
+    try:
+        writer.execute("begin immediate")
+        assert (
+            store.claim_next_direct_action(
+                claimed_at="2026-08-30T12:00:00+00:00",
+                account_ids=("unrelated",) if queue == "other_account" else None,
+            )
+            is None
+        )
+    finally:
+        writer.rollback()
+        writer.close()
+
+
+def test_direct_action_probe_is_not_a_reservation(tmp_path, monkeypatch):
+    database = tmp_path / "probe-is-not-reservation.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(store, _classification(status=EmailClassificationStatus.PROCESSED))
+    other = EmailStore(database)
+    select = store._next_direct_action_row
+    probes = []
+
+    def claim_between_probe_and_transaction(db, claimed_at, account_ids):
+        row = select(db, claimed_at, account_ids)
+        probes.append(db.in_transaction)
+        if len(probes) == 1:
+            assert other.claim_next_direct_action(claimed_at=claimed_at) is not None
+        return row
+
+    monkeypatch.setattr(store, "_next_direct_action_row", claim_between_probe_and_transaction)
+    assert store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00") is None
+    assert probes == [False, True]
+    rows = _fetchall(database, "select status from email_actions")
+    assert [row["status"] for row in rows] == ["processing"]
 
 
 def test_claim_direct_action_uses_current_immutable_plan_and_stable_locator(
@@ -10331,7 +10588,7 @@ def test_slow_connection_names_caller_without_logging_body_data(
     import app.email_store as module
 
     store = EmailStore(tmp_path / "slow-context.sqlite3")
-    ticks = iter((0.0, 5.0))
+    ticks = iter((0.0, 3.0, 4.0, 5.0))
     monkeypatch.setattr(module, "monotonic", lambda: next(ticks), raising=False)
     private_payload = "private-mail-content"
     with store._connect() as db:
@@ -10679,7 +10936,8 @@ def test_v42_and_v43_give_existing_mailboxes_default_dual_windows(tmp_path: Path
             alter table email_accounts drop column agent_lookback_days;
             alter table email_accounts drop column model_lookback_days;
             alter table email_accounts drop column scan_read_state;
-            update email_schema_migrations set version=41 where version=43;
+            delete from email_schema_migrations;
+            insert into email_schema_migrations values (41, 'legacy-fixture');
             """
         )
 
@@ -10694,7 +10952,7 @@ def test_v42_and_v43_give_existing_mailboxes_default_dual_windows(tmp_path: Path
     with sqlite3.connect(database) as db:
         assert db.execute(
             "select max(version) from email_schema_migrations"
-        ).fetchone() == (43,)
+        ).fetchone() == (email_store_module.EMAIL_SCHEMA_VERSION,)
 
 
 def test_v43_preserves_agent_window_and_adds_one_year_model_window(tmp_path: Path):
@@ -10716,9 +10974,8 @@ def test_v43_preserves_agent_window_and_adds_one_year_model_window(tmp_path: Pat
         if "model_lookback_days" in columns:
             db.execute("alter table email_accounts drop column model_lookback_days")
         db.execute("update email_accounts set scan_lookback_days=90")
-        db.execute(
-            "update email_schema_migrations set version=42 where version=43"
-        )
+        db.execute("delete from email_schema_migrations")
+        db.execute("insert into email_schema_migrations values (42, 'legacy-fixture')")
 
     reopened = EmailStore(database)
 
@@ -10729,7 +10986,7 @@ def test_v43_preserves_agent_window_and_adds_one_year_model_window(tmp_path: Pat
     with sqlite3.connect(database) as db:
         assert db.execute(
             "select max(version) from email_schema_migrations"
-        ).fetchone() == (43,)
+        ).fetchone() == (email_store_module.EMAIL_SCHEMA_VERSION,)
 
 
 def test_a_training_label_correction_never_moves_or_trashes_the_message(

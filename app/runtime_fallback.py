@@ -166,5 +166,12 @@ def plan_runtime_fallback(
         route=decision.route,
         fresh_session=decision.fresh_session,
         reason=decision.reason,
-        pause_route=failure.route_pause_required,
+        pause_route=(
+            failure.route_pause_required
+            and not (
+                decision.fresh_session
+                and decision.route is not None
+                and decision.route.name == route.name
+            )
+        ),
     )

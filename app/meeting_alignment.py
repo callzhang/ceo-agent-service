@@ -515,10 +515,6 @@ def queue_recent_meeting_alignment_replay(
             result["outcome"] = "short_recording"
             results.append(result)
             continue
-        if metadata.status and metadata.status != "ended":
-            results.append(result)
-            continue
-
         existing = store.get_meeting_alignment_job_by_meeting_id(meeting_id)
         if existing is not None:
             result["job_id"] = existing.id
@@ -682,15 +678,28 @@ def deliver_ready_meeting_alignment_jobs(
     jobs = store.claim_ready_to_send_meeting_alignment_jobs(
         limit=limit, now=now.isoformat()
     )
-    for job in jobs:
-        _deliver_meeting_job(
-            store,
-            dws,
-            job,
-            now=now,
-            retry_delay=retry_delay,
-            max_attempts=max_attempts,
-        )
+    try:
+        for job in jobs:
+            _deliver_meeting_job(
+                store,
+                dws,
+                job,
+                now=now,
+                retry_delay=retry_delay,
+                max_attempts=max_attempts,
+            )
+    except BaseException as delivery_error:
+        try:
+            store.release_ready_to_send_meeting_alignment_claims(jobs)
+        except BaseException as cleanup_error:
+            raise BaseExceptionGroup(
+                f"Delivery failed: {delivery_error}; claim cleanup failed: {cleanup_error}",
+                [delivery_error, cleanup_error],
+            ) from None
+        raise
+    else:
+        # Saved effects remain authoritative when an interrupted stage resumes.
+        store.release_ready_to_send_meeting_alignment_claims(jobs)
     return {job.id for job in jobs}
 
 
@@ -754,6 +763,7 @@ def _search_similar_meeting_sessions(
     return store.search_codex_sessions(
         fts_query=_meeting_fts_query(query_text),
         query_embedding=query_embedding,
+        embedding_client=embedding_client,
         limit=3,
     )
 
@@ -1064,12 +1074,26 @@ def _search_meeting_group_candidates(
             "title": item.group.display_name,
             "summary_title_overlap": int(evidence.title_score or 0),
             "search_query": source.title,
+            "member_count": len(evidence.members) if evidence.members is not None else None,
+            "member_open_dingtalk_ids": sorted({member.external_user_id for member in evidence.members}) if evidence.members is not None else None,
+            "member_roster_complete": evidence.members is not None,
+            "history_read_status": "denied" if evidence.history_read_denial else "read" if provider.capabilities.message_history else "unavailable",
+            "audience_verification_required": (
+                "Before selecting effects, verify live full relevant discussion, full group roster, "
+                "and stable recipient identities and titles. Candidate excerpts and prior deliveries "
+                "do not verify the audience. Denied history is unresolved access evidence, not empty "
+                "discussion, no-group evidence, or permission to send; never use a self fallback."
+            ),
         }
+        if evidence.history_read_denial is not None:
+            candidate.update(
+                history_read_code=evidence.history_read_denial.code,
+                history_read_reason=evidence.history_read_denial.reason,
+            )
         coverage = evidence.participant_coverage
         if coverage is not None:
             candidate.update(
                 attendee_overlap=coverage.matched or 0,
-                member_count=coverage.total or 0,
                 participant_coverage=f"{coverage.matched}/{coverage.total}",
             )
         discussion = evidence.discussion
@@ -1083,7 +1107,7 @@ def _search_meeting_group_candidates(
                 }
                 for excerpt in discussion.excerpts
             ]
-        if item.group.external_group_id in recurring_by_id:
+        if evidence.history_read_denial is None and item.group.external_group_id in recurring_by_id:
             _group_title, sent_count = recurring_by_id[item.group.external_group_id]
             candidate.update(verified_recurring_group=True, prior_sent_count=sent_count)
         candidates.append(candidate)
@@ -1113,22 +1137,11 @@ def _index_meeting_codex_session(
     session_id = str(getattr(runner, "last_session_id", "") or "").strip()
     if not session_id:
         return
-    summary_text = _meeting_session_index_text(source, decision)
-    embedding = None
-    if embedding_client is not None:
-        try:
-            vectors = embedding_client([summary_text])
-            embedding = vectors[0] if vectors else None
-        except Exception:
-            embedding = None
     store.upsert_codex_session_search_index(
         session_id=session_id,
         source_type="meeting_alignment",
         source_id=str(source_id),
         title=source.title,
-        summary_text=summary_text,
-        fts_text=_meeting_fts_text(summary_text),
-        embedding=embedding,
     )
 
 
@@ -1276,7 +1289,7 @@ def _analyze_meeting_job(
                 scheduled_consumer.prompt if scheduled_consumer is not None else ""
             ),
             skill_protocol=(
-                scheduled_consumer.skill_protocol
+                scheduled_consumer.materialized_skill_protocol()
                 if scheduled_consumer is not None
                 else ""
             ),

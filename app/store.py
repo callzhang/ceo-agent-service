@@ -1,5 +1,4 @@
 import errno
-import fcntl
 import hashlib
 import json
 import re
@@ -7,6 +6,7 @@ import sqlite3
 import sys
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from types import MappingProxyType
 from contextlib import contextmanager, suppress
@@ -27,6 +27,13 @@ from app.agent_runtime_contracts import (
     RuntimeFailureClass,
     RuntimeKind,
 )
+from app.reviewed_candidate_store import (
+    REVIEWED_CANDIDATE_DDL,
+    REVIEWED_CANDIDATE_INDEXES,
+    REVIEWED_CANDIDATE_TABLES,
+    ReviewedCandidateStoreMixin,
+)
+from app.sqlite_schema_lock import schema_initialize_lock
 from app.agent_cron.models import (
     ScheduledTask,
     ScheduledTaskRun,
@@ -73,11 +80,6 @@ from app.feedback_processing import (
     validate_resolution_receipt,
 )
 from app.config import feedback_spike_vercel_base_url
-from app.decision_quality import (
-    StoredNeedsHumanProjection,
-    classify_stored_needs_human_projection,
-    parse_stored_needs_human_decision,
-)
 from app.feedback_spike import (
     extract_configured_feedback_link_context,
     message_body_without_feedback_callbacks,
@@ -109,6 +111,7 @@ from app.outbound_postfix import (
 from app.task_models import (
     DingTalkTodoLinkStatus,
     FollowUpDraft,
+    TaskAttentionProjectionReceipt,
     TodoEvidenceCandidate,
     TodoEvidenceCandidateStatus,
     WorkProject,
@@ -125,6 +128,10 @@ from app.task_semantic_models import (
     BusinessEvidenceRole,
     BusinessProject,
     BusinessProjectCandidate,
+    BusinessProjectContextRevision,
+    BusinessProjectEvidence,
+    ProjectCrmCustomerCandidate,
+    SourceCitation,
     BusinessRelationStatus,
     BusinessRelationType,
     BusinessRelevance,
@@ -148,7 +155,9 @@ from app.task_semantic_models import (
     BusinessWorkClusterTask,
     CommitmentStatus,
     FormalTaskBasis,
+    ProjectContext,
 )
+from app.task_source_documents import source_document_key, source_is_observed
 from app.wechat.models import WechatReplyScope
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
@@ -222,7 +231,7 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-09-25.1"
+STORE_SCHEMA_VERSION = "2026-10-10.2"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -255,6 +264,8 @@ create index if not exists idx_task_memory_write_events_lease
 """
 
 STORE_SCHEMA_REQUIRED_TABLES = (
+    *REVIEWED_CANDIDATE_TABLES,
+    "meeting_alignment_delivery_claims",
     "task_memory_write_events",
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -289,6 +300,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "scheduled_tasks",
     "scheduled_task_skill_refs",
     "scheduled_task_runs",
+    "scheduled_task_config_versions",
     "dispatcher_claim_leases",
     "runtime_skill_configs",
     "runtime_skill_bindings",
@@ -299,6 +311,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "outbound_postfixes",
     "outbound_postfix_receipts",
     "native_reply_dispatches",
+    "business_source_documents",
     "business_task_signals",
     "business_tasks",
     "business_task_dingtalk_links",
@@ -314,6 +327,8 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "business_anchors",
     "business_task_anchor_links",
     "business_projects",
+    "business_project_context_revisions",
+    "business_project_evidence",
     "business_project_candidates",
     "business_attention_items",
     "business_attention_tasks",
@@ -322,6 +337,8 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "business_legacy_links",
 )
 STORE_SCHEMA_REQUIRED_INDEXES = (
+    *REVIEWED_CANDIDATE_INDEXES,
+    "idx_errors_unresolved",
     "idx_feedback_processing_items_status",
     "idx_feedback_processing_items_batch",
     "idx_feedback_processing_rounds_feedback",
@@ -334,14 +351,19 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_oa_notification_events_claim",
     "idx_runtime_attempt_active_route",
     "idx_runtime_attempt_active_lease",
+    "idx_agent_runtime_attempts_run",
     "idx_task_agent_runs_active_input",
     "idx_agent_run_state_events_run",
     "idx_agent_effect_intents_run",
     "idx_agent_effect_intents_operation",
     "idx_sent_replies_external_action",
+    "idx_sent_replies_external_action_lookup",
+    "idx_external_action_results_business_object",
+    "idx_errors_reply_task_settlement",
     "idx_meeting_alignment_runs_active_job",
     "idx_weekly_okr_analysis_jobs_identity",
     "idx_wechat_memory_import_jobs_status",
+    "idx_wechat_deliveries_task_generation",
     "idx_workbench_events_turn_id_id",
     "idx_workbench_artifacts_turn_created_id",
     "idx_workbench_turns_task_created_id",
@@ -365,6 +387,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_scheduled_task_runs_dispatch",
     "idx_scheduled_task_runs_claim",
     "idx_scheduled_task_runs_latest",
+    "idx_scheduled_task_runs_reply_execution",
     "idx_dispatcher_claim_leases_expiry",
     "idx_runtime_skill_bindings_config_order",
     "idx_runtime_skill_load_receipts_config",
@@ -373,6 +396,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_feedback_iteration_decisions_batch",
     "idx_feedback_iteration_decision_items_feedback_round",
     "idx_business_task_signals_source",
+    "idx_business_signal_document",
     "idx_business_tasks_updated_id",
     "idx_business_tasks_list",
     "idx_business_tasks_relevance",
@@ -389,6 +413,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_business_work_cluster_tasks_task",
     "idx_business_task_anchor_links_task",
     "idx_business_project_candidates_cluster",
+    "idx_business_project_context_revisions_project",
     "idx_business_attention_items_list",
     "idx_business_attention_tasks_task",
     "idx_business_attention_proposal_tasks_task",
@@ -401,11 +426,18 @@ STORE_SCHEMA_REMOVED_TABLES = (
 )
 STORE_SCHEMA_REMOVED_COLUMNS = {
     "agent_runs": ("tool_events_json",),
+    "business_task_signals": ("evidence_text",),
 }
 STORE_SCHEMA_REQUIRED_COLUMNS = {
+    "work_summary_inputs": (
+        "id", "source_type", "source_ref", "payload_json", "source_created_at",
+        "body_sha256", "body_bytes", "body_compacted", "status",
+    ),
+    "business_source_documents": ("id", "identity_key", "body", "created_at"),
+    "meeting_alignment_delivery_claims": ("job_id", "claim_token"),
     "business_task_signals": (
         "id", "source_type", "source_ref", "source_time", "conversation_id",
-        "conversation_title", "author_user_id", "author_name", "evidence_text",
+        "conversation_title", "author_user_id", "author_name", "source_document_id",
         "context_json", "dedupe_key", "created_at", "author_kind",
     ),
     "business_tasks": (
@@ -413,6 +445,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "commitment_status", "owner_user_id", "owner_name", "owner_evidence_json",
         "deadline_at", "business_relevance", "missing_evidence_json",
         "merged_into_task_id", "created_at", "updated_at", "last_activity_at",
+        "origin", "suggestion_json",
     ),
     "business_task_dingtalk_links": (
         "id", "business_task_id", "dingtalk_task_id", "executor_user_id",
@@ -465,8 +498,14 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     ),
     "business_projects": (
         "id", "canonical_anchor_id", "anchor_type", "title", "registry_source",
-        "created_at",
+        "created_at", "crm_customer_id", "crm_customer_name",
+        "crm_customer_lookup_status", "crm_customer_candidates_json",
+        "crm_customer_label", "crm_customer_evidence_json",
     ),
+    "business_project_context_revisions": (
+        "id", "project_id", "context_json", "evidence_json", "created_at",
+    ),
+    "business_project_evidence": ("project_id", "signal_id", "created_at"),
     "business_project_candidates": (
         "id", "cluster_id", "title", "reason", "status", "confirmed_project_id",
         "confirmation_signal_id", "created_at",
@@ -474,7 +513,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     "business_attention_items": (
         "id", "stable_key", "category", "status", "title", "business_area",
         "why_attention", "current_state", "ceo_action", "anchor_id",
-        "evidence_signal_id", "resolution_signal_id", "resolved_at",
+        "evidence_signal_id", "assessment_json", "resolution_signal_id", "resolved_at",
         "created_at", "updated_at",
     ),
     "business_attention_tasks": ("attention_item_id", "task_id", "created_at"),
@@ -505,7 +544,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     ),
     "scheduled_task_runs": (
         "event_id",
-        "snapshot_json",
+        "snapshot_id",
         "execution_kind",
         "execution_id",
         "lease_owner",
@@ -530,12 +569,16 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "feedback_scope",
         "skill_update_requested",
         "skill_update_receipts_json",
+        "trigger_text_provenance_json",
     ),
     "reply_tasks": (
         "business_object_key",
         "input_version",
         "claimed_input_version",
+        "input_provenance_json",
+        "input_compacted",
     ),
+    "reply_task_inputs": ("input_provenance_json", "input_compacted"),
     "agent_effect_intents": ("external_action_key",),
     "sent_replies": ("agent_run_id", "external_action_key"),
     "agent_runtime_attempts": (
@@ -550,7 +593,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "result_envelope_json",
     ),
     "conversation_runtime_sessions": ("contract_hash",),
-    "task_agent_runs": ("status", "error", "finished_at", "updated_at"),
+    "task_agent_runs": ("status", "error", "finished_at", "updated_at", "projection_json"),
     "meeting_alignment_jobs": (
         "calendar_summary_status",
         "calendar_summary_result_json",
@@ -595,6 +638,9 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     ),
 }
 STORE_SCHEMA_REQUIRED_TRIGGERS = (
+    "trg_business_source_documents_immutable_update",
+    "trg_business_source_documents_immutable_delete",
+    "trg_business_source_documents_immutable_replace",
     "trg_business_task_signals_immutable_update",
     "trg_business_task_signals_immutable_delete",
     "trg_business_task_signals_immutable_replace",
@@ -849,6 +895,77 @@ def _business_nonblank_sql(column: str) -> str:
     return f"trim({column}, {whitespace}) <> ''"
 
 
+BUSINESS_SOURCE_DOCUMENT_SCHEMA = (
+    f"""create table if not exists business_source_documents (
+        id integer primary key autoincrement,
+        identity_key text not null unique,
+        body text not null check({_business_nonblank_sql("body")}),
+        created_at text not null default current_timestamp
+    )""",
+    """create trigger if not exists trg_business_source_documents_immutable_update
+    before update on business_source_documents begin
+        select raise(abort, 'business source documents are immutable');
+    end""",
+    """create trigger if not exists trg_business_source_documents_immutable_delete
+    before delete on business_source_documents begin
+        select raise(abort, 'business source documents are immutable');
+    end""",
+    """create trigger if not exists trg_business_source_documents_immutable_replace
+    before insert on business_source_documents
+    when exists (
+        select 1 from business_source_documents
+        where id=new.id or identity_key=new.identity_key
+    ) begin
+        select raise(abort, 'business source documents are immutable: UNIQUE id or identity_key');
+    end""",
+)
+
+
+def _business_task_signal_table_sql(table: str) -> str:
+    # Both names are internal schema constants (live table and migration copy).
+    return f"""create table if not exists {table} (
+        id integer primary key autoincrement,
+        source_type text not null check({_business_nonblank_sql("source_type")}),
+        source_ref text not null check({_business_nonblank_sql("source_ref")}),
+        source_time text not null default '',
+        conversation_id text not null default '',
+        conversation_title text not null default '',
+        author_user_id text not null default '',
+        author_name text not null default '',
+        source_document_id integer not null,
+        context_json text not null default '{{}}'
+            check(json_valid(context_json) and json_type(context_json) = 'object'),
+        dedupe_key text not null unique check({_business_nonblank_sql("dedupe_key")}),
+        created_at text not null default current_timestamp,
+        author_kind text not null default 'unknown'
+            check(author_kind in ('human', 'system', 'agent', 'unknown')),
+        foreign key(source_document_id) references business_source_documents(id)
+    )"""
+
+
+BUSINESS_TASK_SIGNAL_INDEXES_AND_TRIGGERS = (
+    """create index if not exists idx_business_task_signals_source
+        on business_task_signals(source_type, source_ref, source_time, id)""",
+    """create index if not exists idx_business_signal_document
+        on business_task_signals(source_document_id)""",
+    """create trigger if not exists trg_business_task_signals_immutable_update
+    before update on business_task_signals begin
+        select raise(abort, 'business task signals are immutable');
+    end""",
+    """create trigger if not exists trg_business_task_signals_immutable_delete
+    before delete on business_task_signals begin
+        select raise(abort, 'business task signals are immutable');
+    end""",
+    """create trigger if not exists trg_business_task_signals_immutable_replace
+    before insert on business_task_signals
+    when exists (
+        select 1 from business_task_signals where id=new.id or dedupe_key=new.dedupe_key
+    ) begin
+        select raise(abort, 'business task signals are immutable: UNIQUE id or dedupe_key');
+    end""",
+)
+
+
 def _meeting_alignment_job_span(
     job: "MeetingAlignmentJob",
 ) -> tuple[datetime | None, datetime | None]:
@@ -1023,6 +1140,7 @@ class ReplyAttempt(BaseModel):
     trigger_message_id: str
     trigger_sender: str
     trigger_text: str
+    trigger_text_provenance_json: str = "{}"
     action: str
     sensitivity_kind: str
     agent_run_id: int | None = None
@@ -1062,6 +1180,8 @@ class ReplyAttempt(BaseModel):
     reviewed_at: str | None = None
     reviewer_feedback: str = ""
     corrected_reply_text: str = ""
+    resolved_at: str = ""
+    resolution: str = ""
     feedback_scope: str = "one_time"
     skill_update_requested: bool = False
     skill_update_receipts_json: str = "[]"
@@ -1303,6 +1423,8 @@ class CodexSessionSearchResult(BaseModel):
     bm25_score: float | None = None
     score: float = 0.0
     updated_at: str = ""
+    native_available: bool = False
+    native_reason: str = "native_source_unavailable"
 
 
 class ReplyTask(BaseModel):
@@ -1326,6 +1448,8 @@ class ReplyTask(BaseModel):
     business_object_key: str = ""
     input_version: int = 1
     claimed_input_version: int = 0
+    input_provenance_json: str = "{}"
+    input_compacted: bool = False
     status: str
     attempts: int
     locked_at: str | None = None
@@ -1359,6 +1483,10 @@ class ReplyTaskSpec(BaseModel):
 
 class ReplyTaskIdentityConflict(RuntimeError):
     """A queue identity already exists with different immutable input."""
+
+
+class ManualRerunConflict(ValueError):
+    """The source request no longer names an eligible execution generation."""
 
 
 class EmailReplyTaskAuthorizationConflict(RuntimeError):
@@ -1414,6 +1542,7 @@ class AgentRun(BaseModel):
     transcript_start_line: int = 0
     transcript_end_line: int = 0
     final_result_json: str = ""
+    adopted_result_json: str = ""
     structured_error_json: str = ""
     tool_events: list[dict[str, object]] = Field(default_factory=list)
     lease_owner: str = ""
@@ -1503,6 +1632,10 @@ class AgentRunLeaseLostError(RuntimeError):
     pass
 
 
+class _AgentRunTerminalSnapshotRequired(RuntimeError):
+    pass
+
+
 def _persisted_agent_effect_state(events: list[dict[str, object]]) -> str:
     pending: dict[str, int] = {}
     event_closures: set[str] = set()
@@ -1579,22 +1712,10 @@ def _persisted_agent_receipt_ids(value: object) -> set[str]:
     return receipt_ids
 
 
-def _agent_event_columns(event: dict[str, object]) -> tuple[str, str, str, str]:
-    event_type = str(event.get("type") or "")
-    item = event.get("item")
-    if not isinstance(item, dict):
-        return event_type, "", "", ""
-    call_id_value = item.get("call_id") or item.get("id")
-    call_id = call_id_value.strip() if isinstance(call_id_value, str) else ""
-    metadata = item.get("metadata")
-    effect_kind = ""
-    if isinstance(metadata, dict):
-        candidate = metadata.get("effect")
-        if candidate in {"read_only", "effectful", "unreviewed"}:
-            effect_kind = str(candidate)
-    receipt_ids = _persisted_agent_receipt_ids(event)
-    receipt_operation_id = next(iter(receipt_ids), "")
-    return event_type, call_id, effect_kind, receipt_operation_id
+def _audit_event_metadata_json(events_json: str) -> str:
+    # Tool detail remains in the runtime-owned transcript. Callers still use
+    # their in-process event list for the current turn's checks.
+    return "[]"
 
 
 def _agent_effect_identity(event: dict[str, object]) -> dict[str, object] | None:
@@ -1662,22 +1783,6 @@ class CodexSessionLock:
         return False
 
 
-def _embedding_from_json(text: str) -> list[float]:
-    if not text.strip():
-        return []
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(payload, list):
-        return []
-    values: list[float] = []
-    for item in payload:
-        if isinstance(item, (int, float)):
-            values.append(float(item))
-    return values
-
-
 def _embedding_score(
     query_embedding: list[float] | None,
     stored_embedding: list[float],
@@ -1693,6 +1798,28 @@ def _embedding_score(
     if not left_norm or not right_norm:
         return 0.0
     return dot / (left_norm * right_norm)
+
+
+_MEETING_SEARCH_CACHE_LOCK = threading.Lock()
+_MEETING_SEARCH_CORPUS_CACHE: OrderedDict[tuple, tuple[str, str]] = OrderedDict()
+_MEETING_SEARCH_VECTOR_CACHE: OrderedDict[tuple, list[float]] = OrderedDict()
+_MEETING_SEARCH_CACHE_LIMIT = 256
+
+
+def _meeting_search_cache_get(cache: OrderedDict, key: tuple):
+    with _MEETING_SEARCH_CACHE_LOCK:
+        value = cache.get(key)
+        if value is not None:
+            cache.move_to_end(key)
+        return value
+
+
+def _meeting_search_cache_put(cache: OrderedDict, key: tuple, value: object) -> None:
+    with _MEETING_SEARCH_CACHE_LOCK:
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > _MEETING_SEARCH_CACHE_LIMIT:
+            cache.popitem(last=False)
 
 
 def _utc_store_time(now: str | datetime | None = None) -> tuple[datetime, str]:
@@ -1759,7 +1886,7 @@ def _meeting_memory_settlement_time(now: datetime | None) -> str:
     return value.isoformat()
 
 
-class AutoReplyStore:
+class AutoReplyStore(ReviewedCandidateStoreMixin):
     def __init__(
         self,
         path: Path,
@@ -2089,14 +2216,9 @@ class AutoReplyStore:
 
     @contextmanager
     def _schema_initialize_lock(self) -> Iterator[None]:
-        """Serialize schema work across the worker and audit-web processes."""
-        lock_path = self.path.with_name(f".{self.path.name}.initialize.lock")
-        with lock_path.open("a+", encoding="utf-8") as lock_file:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        """Serialize schema work across processes sharing this database."""
+        with schema_initialize_lock(self.path):
+            yield
 
     @contextmanager
     def managed_skill_baseline_initialization_lock(self) -> Iterator[None]:
@@ -2323,7 +2445,7 @@ class AutoReplyStore:
         return (
             db.execute(
                 """
-                select 1 from scheduled_task_runs
+                select 1 from scheduled_task_config_versions
                 where json_valid(snapshot_json)
                   and json_type(snapshot_json) = 'object'
                   and (
@@ -2470,22 +2592,39 @@ class AutoReplyStore:
             return
         connection = self._open_connection()
         started_at = time.monotonic()
+        body_finished_at = started_at
         try:
-            with connection:
-                yield connection
+            try:
+                terminal_event_runs = []
+                with connection:
+                    try:
+                        yield connection
+                    finally:
+                        body_finished_at = time.monotonic()
+                    if connection.total_changes:
+                        from app.native_trajectory import terminal_cached_run_ids
+                        terminal_event_runs = terminal_cached_run_ids(connection, str(self.path.resolve()))
+                if terminal_event_runs:
+                    from app.native_trajectory import forget_live_events
+                    forget_live_events(str(self.path.resolve()), terminal_event_runs)
+            finally:
+                close_started_at = time.monotonic()
+                connection.close()
+                closed_at = time.monotonic()
+                elapsed = closed_at - started_at
+                if elapsed >= 1.0:
+                    print(
+                        f"slow sqlite context elapsed_seconds={elapsed:.3f} "
+                        f"body_seconds={body_finished_at - started_at:.3f} "
+                        f"finish_seconds={close_started_at - body_finished_at:.3f} "
+                        f"close_seconds={closed_at - close_started_at:.3f} "
+                        f"callers={_sqlite_caller_chain(sys._getframe(2))}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
         except sqlite3.Error as error:
             _name_sqlite_extended_error(self.path, error)
             raise
-        finally:
-            connection.close()
-            elapsed = time.monotonic() - started_at
-            if elapsed >= 1.0:
-                print(
-                    f"slow sqlite context elapsed_seconds={elapsed:.3f} "
-                    f"callers={_sqlite_caller_chain(sys._getframe(2))}",
-                    file=sys.stderr,
-                    flush=True,
-                )
 
     @contextmanager
     def _optional_connection(
@@ -2576,6 +2715,7 @@ class AutoReplyStore:
 
     def _initialize(self) -> None:
         with self._connect() as db:
+            self._migrate_business_task_source_documents(db)
             db.executescript(
                 """
                 create table if not exists conversations (
@@ -2696,6 +2836,11 @@ class AutoReplyStore:
                     on scheduled_task_runs(dispatch_status, scheduled_for, id);
                 create index if not exists idx_scheduled_task_runs_latest
                     on scheduled_task_runs(scheduled_task_id, id desc);
+                create index if not exists idx_scheduled_task_runs_reply_execution
+                    on scheduled_task_runs(
+                        cast(execution_id as integer), scheduled_task_id, id
+                    )
+                    where execution_kind='reply_task';
                 create table if not exists dispatcher_claim_leases (
                     adapter_name text not null,
                     source_id text not null,
@@ -2964,6 +3109,7 @@ class AutoReplyStore:
                     trigger_message_id text not null,
                     trigger_sender text not null,
                     trigger_text text not null,
+                    trigger_text_provenance_json text not null default '{}',
                     action text not null,
                     sensitivity_kind text not null,
                     agent_run_id integer,
@@ -3070,6 +3216,8 @@ class AutoReplyStore:
                     business_object_key text not null default '',
                     input_version integer not null default 1,
                     claimed_input_version integer not null default 0,
+                    input_provenance_json text not null default '{}',
+                    input_compacted integer not null default 0,
                     status text not null default 'pending',
                     attempts integer not null default 0,
                     locked_at text,
@@ -3102,6 +3250,8 @@ class AutoReplyStore:
                     oa_url text not null default '',
                     business_object_key text not null,
                     input_revision_key text not null default '',
+                    input_provenance_json text not null default '{}',
+                    input_compacted integer not null default 0,
                     created_at text not null default current_timestamp,
                     unique(
                         channel, conversation_id, trigger_message_id,
@@ -3131,9 +3281,8 @@ class AutoReplyStore:
                     transcript_end_line integer not null default 0,
                     final_result_json text not null default '',
                     structured_error_json text not null default '',
-                    -- A run's trajectory lives in agent_run_events, one row per
-                    -- event, which is what AgentRun.tool_events is read from.
-                    -- There is deliberately no second copy of it here.
+                    -- Full trajectories stay in the runtime's native session.
+                    -- Agent events live only in native transcripts; legacy rows are cleared by maintenance.
                     lease_owner text not null default '',
                     lease_expires_at text not null default '',
                     started_at text not null default '',
@@ -3420,6 +3569,11 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_meeting_alignment_jobs_claim
                     on meeting_alignment_jobs(status, available_at, eligible_at, id);
+                create table if not exists meeting_alignment_delivery_claims (
+                    job_id integer primary key,
+                    claim_token text not null,
+                    foreign key(job_id) references meeting_alignment_jobs(id) on delete cascade
+                );
                 create table if not exists meeting_alignment_runs (
                     id integer primary key autoincrement,
                     job_id integer not null,
@@ -3571,49 +3725,17 @@ class AutoReplyStore:
                 );
                 """
                 f"""
-                create table if not exists business_task_signals (
-                    id integer primary key autoincrement,
-                    source_type text not null check({_business_nonblank_sql("source_type")}),
-                    source_ref text not null check({_business_nonblank_sql("source_ref")}),
-                    source_time text not null default '',
-                    conversation_id text not null default '',
-                    conversation_title text not null default '',
-                    author_user_id text not null default '',
-                    author_name text not null default '',
-                    evidence_text text not null check({_business_nonblank_sql("evidence_text")}),
-                    context_json text not null default '{{}}'
-                        check(json_valid(context_json) and json_type(context_json) = 'object'),
-                    dedupe_key text not null unique check({_business_nonblank_sql("dedupe_key")}),
-                    created_at text not null default current_timestamp,
-                    author_kind text not null default 'unknown'
-                        check(author_kind in ('human', 'system', 'agent', 'unknown'))
-                );
-                create index if not exists idx_business_task_signals_source
-                    on business_task_signals(source_type, source_ref, source_time, id);
-                create trigger if not exists trg_business_task_signals_immutable_update
-                before update on business_task_signals
-                begin
-                    select raise(abort, 'business task signals are immutable');
-                end;
-                create trigger if not exists trg_business_task_signals_immutable_delete
-                before delete on business_task_signals
-                begin
-                    select raise(abort, 'business task signals are immutable');
-                end;
-                create trigger if not exists trg_business_task_signals_immutable_replace
-                before insert on business_task_signals
-                when exists (
-                    select 1 from business_task_signals
-                    where id = new.id or dedupe_key = new.dedupe_key
-                )
-                begin
-                    select raise(abort, 'business task signals are immutable: UNIQUE id or dedupe_key');
-                end;
+                {';'.join(BUSINESS_SOURCE_DOCUMENT_SCHEMA)};
+                {_business_task_signal_table_sql("business_task_signals")};
+                {';'.join(BUSINESS_TASK_SIGNAL_INDEXES_AND_TRIGGERS)};
                 create table if not exists business_tasks (
                     id integer primary key autoincrement,
                     title text not null check({_business_nonblank_sql("title")}),
                     description text not null default '',
                     stage text not null check(stage in ('candidate', 'formal')),
+                    origin text not null default 'source' check(origin in ('source', 'agent_suggestion')),
+                    suggestion_json text not null default '{{}}'
+                        check(json_valid(suggestion_json) and json_type(suggestion_json) = 'object'),
                     status text not null default 'open' check(status in (
                         'open', 'waiting', 'done', 'cancelled', 'merged'
                     )),
@@ -3866,9 +3988,41 @@ class AutoReplyStore:
                     title text not null check({_business_nonblank_sql("title")}),
                     registry_source text not null
                         check({_business_nonblank_sql("registry_source")}),
+                    crm_customer_id text not null default '',
+                    crm_customer_name text not null default '',
+                    crm_customer_lookup_status text not null default 'not_requested'
+                        check(crm_customer_lookup_status in (
+                            'not_requested', 'matched', 'ambiguous', 'needs_confirmation',
+                            'no_match', 'unavailable', 'conflict'
+                        )),
+                    crm_customer_candidates_json text not null default '[]'
+                        check(json_valid(crm_customer_candidates_json)
+                            and json_type(crm_customer_candidates_json) = 'array'),
+                    crm_customer_label text not null default '',
+                    crm_customer_evidence_json text not null default '{{}}'
+                        check(json_valid(crm_customer_evidence_json)
+                            and json_type(crm_customer_evidence_json) = 'object'),
                     created_at text not null default current_timestamp,
                     foreign key(canonical_anchor_id, anchor_type)
                         references business_anchors(id, anchor_type)
+                );
+                create table if not exists business_project_context_revisions (
+                    id integer primary key autoincrement,
+                    project_id integer not null,
+                    context_json text not null,
+                    evidence_json text not null,
+                    created_at text not null default current_timestamp,
+                    foreign key(project_id) references business_projects(id)
+                );
+                create index if not exists idx_business_project_context_revisions_project
+                    on business_project_context_revisions(project_id, id desc);
+                create table if not exists business_project_evidence (
+                    project_id integer not null,
+                    signal_id integer not null,
+                    created_at text not null default current_timestamp,
+                    primary key(project_id, signal_id),
+                    foreign key(project_id) references business_projects(id),
+                    foreign key(signal_id) references business_task_signals(id)
                 );
                 create table if not exists business_project_candidates (
                     id integer primary key autoincrement,
@@ -3900,6 +4054,7 @@ class AutoReplyStore:
                     ceo_action text not null check({_business_nonblank_sql("ceo_action")}),
                     anchor_id integer not null,
                     evidence_signal_id integer not null,
+                    assessment_json text not null default '{{}}',
                     resolution_signal_id integer,
                     resolved_at text not null default '',
                     created_at text not null default current_timestamp,
@@ -4143,6 +4298,10 @@ class AutoReplyStore:
                     source_type text not null,
                     source_ref text not null,
                     payload_json text not null,
+                    source_created_at text not null default '',
+                    body_sha256 text not null default '',
+                    body_bytes integer not null default 0,
+                    body_compacted integer not null default 0,
                     status text not null default 'pending',
                     attempts integer not null default 0,
                     error text not null default '',
@@ -4158,6 +4317,7 @@ class AutoReplyStore:
                     summary_input_id integer not null,
                     codex_session_id text not null default '',
                     decision_json text not null default '{}',
+                    projection_json text not null default '{}',
                     audit_summary text not null default '',
                     memory_recall_used integer not null default 0,
                     status text not null default 'completed'
@@ -4364,6 +4524,14 @@ class AutoReplyStore:
                 );
                 """
             )
+            attention_columns = {
+                row["name"] for row in db.execute("pragma table_info(business_attention_items)")
+            }
+            if "assessment_json" not in attention_columns:
+                db.execute(
+                    "alter table business_attention_items add column "
+                    "assessment_json text not null default '{}'"
+                )
             signal_columns = {
                 row["name"] for row in db.execute("pragma table_info(business_task_signals)")
             }
@@ -4372,6 +4540,35 @@ class AutoReplyStore:
                     "alter table business_task_signals add column author_kind text not null "
                     "default 'unknown' check(author_kind in ('human', 'system', 'agent', 'unknown'))"
                 )
+            project_columns = {
+                row["name"] for row in db.execute("pragma table_info(business_projects)")
+            }
+            project_customer_columns = (
+                ("crm_customer_id", "text not null default ''"),
+                ("crm_customer_name", "text not null default ''"),
+                (
+                    "crm_customer_lookup_status",
+                    "text not null default 'not_requested' check(crm_customer_lookup_status in "
+                    "('not_requested', 'matched', 'ambiguous', 'needs_confirmation', "
+                    "'no_match', 'unavailable', 'conflict'))",
+                ),
+                (
+                    "crm_customer_candidates_json",
+                    "text not null default '[]' check(json_valid(crm_customer_candidates_json) "
+                    "and json_type(crm_customer_candidates_json) = 'array')",
+                ),
+                ("crm_customer_label", "text not null default ''"),
+                (
+                    "crm_customer_evidence_json",
+                    "text not null default '{}' check(json_valid(crm_customer_evidence_json) "
+                    "and json_type(crm_customer_evidence_json) = 'object')",
+                ),
+            )
+            for column, definition in project_customer_columns:
+                if column not in project_columns:
+                    db.execute(
+                        f"alter table business_projects add column {column} {definition}"
+                    )
             stranded_event_table = db.execute(
                 "select 1 from sqlite_master where type='table' "
                 "and name='business_task_events_before_date_evidence'"
@@ -4544,6 +4741,10 @@ class AutoReplyStore:
                     "create index idx_wechat_deliveries_status "
                     "on wechat_deliveries(status, id)"
                 )
+            db.execute(
+                "create index if not exists idx_wechat_deliveries_task_generation "
+                "on wechat_deliveries(reply_task_id, execution_generation, id)"
+            )
             # The guard-replacement helpers below deliberately open their own
             # BEGIN IMMEDIATE transactions. Finish any legacy table/column DDL
             # first; SQLite does not support nested write transactions.
@@ -4893,12 +5094,28 @@ class AutoReplyStore:
                 )
             self._migrate_reply_task_channel_identity(db)
             self._migrate_reply_task_business_objects(db)
+            db.executescript(REVIEWED_CANDIDATE_DDL)
             self._migrate_reply_task_input_revisions(db)
+            self._migrate_reply_input_provenance(db)
             self._migrate_oa_notification_events(db)
             db.execute(
                 """
                 create index if not exists idx_reply_tasks_channel_status_id
                     on reply_tasks(channel, status, id)
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_reply_tasks_email_unsubscribe_status
+                    on reply_tasks(updated_at desc, id desc, status)
+                    where channel='email'
+                      and json_valid(trigger_message_json)
+                      and json_extract(trigger_message_json, '$.schema')=
+                          'email_agent_action.v1'
+                      and json_extract(trigger_message_json, '$.lifecycle_version')=
+                          'email_unsubscribe_audited_v2'
+                      and json_extract(trigger_message_json, '$.action_type')=
+                          'unsubscribe'
                 """
             )
             sent_reply_columns = {
@@ -4928,6 +5145,16 @@ class AutoReplyStore:
                 "idx_sent_replies_external_action "
                 "on sent_replies(external_action_key) "
                 "where external_action_key<>''"
+            )
+            db.execute(
+                "create index if not exists "
+                "idx_sent_replies_external_action_lookup "
+                "on sent_replies(external_action_key)"
+            )
+            db.execute(
+                "create index if not exists "
+                "idx_external_action_results_business_object "
+                "on external_action_results(business_object_key, external_action_key)"
             )
             feedback_event_columns = {
                 row["name"]
@@ -5149,6 +5376,10 @@ class AutoReplyStore:
             }
             for column, definition in (
                 ("available_at", "text not null default ''"),
+                ("source_created_at", "text not null default ''"),
+                ("body_sha256", "text not null default ''"),
+                ("body_bytes", "integer not null default 0"),
+                ("body_compacted", "integer not null default 0"),
             ):
                 if column not in work_summary_input_columns:
                     db.execute(
@@ -5170,6 +5401,15 @@ class AutoReplyStore:
                         f"alter table dispatcher_claim_leases "
                         f"add column {column} {definition}"
                     )
+            business_task_columns = {
+                row["name"] for row in db.execute("pragma table_info(business_tasks)").fetchall()
+            }
+            for column, definition in (
+                ("origin", "text not null default 'source' check(origin in ('source','agent_suggestion'))"),
+                ("suggestion_json", "text not null default '{}' check(json_valid(suggestion_json) and json_type(suggestion_json)='object')"),
+            ):
+                if column not in business_task_columns:
+                    db.execute(f"alter table business_tasks add column {column} {definition}")
             work_todo_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(work_todos)").fetchall()
@@ -5313,6 +5553,19 @@ class AutoReplyStore:
             )
             db.execute(
                 """
+                create index if not exists idx_errors_unresolved
+                    on errors(conversation_id, kind, message_id, id)
+                    where coalesce(resolved_at, '')=''
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_errors_reply_task_settlement
+                    on errors(conversation_id, message_id, kind)
+                """
+            )
+            db.execute(
+                """
                 create index if not exists idx_reply_attempts_current_trigger
                     on reply_attempts(
                         channel, conversation_id, trigger_message_id,
@@ -5409,6 +5662,7 @@ class AutoReplyStore:
             }
             for column, definition in (
                 ("status", "text not null default 'completed'"),
+                ("projection_json", "text not null default '{}'"),
                 ("error", "text not null default ''"),
                 ("finished_at", "text not null default ''"),
                 ("updated_at", "text not null default ''"),
@@ -5635,41 +5889,8 @@ class AutoReplyStore:
                 "update scheduled_tasks set description=coalesce(nullif(trim(prompt), ''), name) "
                 "where trim(description)=''"
             )
-            for snapshot_row in db.execute(
-                "select id, snapshot_json from scheduled_task_runs"
-            ).fetchall():
-                try:
-                    snapshot_payload = json.loads(str(snapshot_row["snapshot_json"]))
-                except (TypeError, json.JSONDecodeError):
-                    # Leave corrupt rows untouched: backfilling defaults into
-                    # unparseable data would invent a snapshot.  The currency
-                    # check skips them for the same reason, so startup neither
-                    # crashes here nor loops asking for this migration.
-                    continue
-                if not isinstance(snapshot_payload, dict):
-                    continue
-                missing_snapshot_fields = {
-                    "description": str(snapshot_payload.get("name") or ""),
-                    "required_runtime_capabilities": [],
-                    "command": "",
-                }
-                if any(
-                    field not in snapshot_payload for field in missing_snapshot_fields
-                ):
-                    for field, default in missing_snapshot_fields.items():
-                        snapshot_payload.setdefault(field, default)
-                    db.execute(
-                        "update scheduled_task_runs set snapshot_json=? where id=?",
-                        (
-                            json.dumps(
-                                snapshot_payload,
-                                ensure_ascii=False,
-                                sort_keys=True,
-                                separators=(",", ":"),
-                            ),
-                            int(snapshot_row["id"]),
-                        ),
-                    )
+            from app.scheduled_config_storage import migrate_scheduled_configs
+            migrate_scheduled_configs(db)
             error_columns = {
                 row["name"] for row in db.execute("pragma table_info(errors)").fetchall()
             }
@@ -5774,6 +5995,70 @@ class AutoReplyStore:
                     "update wechat_deliveries set reply_text=? where id=?",
                     (prepared.final_body, delivery["id"]),
                 )
+            self._migrate_project_attention_evidence(db)
+
+    @staticmethod
+    def _migrate_project_attention_evidence(db: sqlite3.Connection) -> None:
+        """Carry proven original sources to Project evidence once, without changing history."""
+        marker = "business_project_attention_evidence_migrated"
+        if db.execute("select 1 from service_state where key=?", (marker,)).fetchone() is not None:
+            return
+        rows = db.execute(
+            "select distinct project.id as project_id, signal.id as signal_id, signal.source_type "
+            "from business_attention_items card "
+            "join business_projects project on project.canonical_anchor_id=card.anchor_id "
+            "join business_task_anchor_links link on link.anchor_id=card.anchor_id "
+            "join business_task_evidence evidence on evidence.task_id=link.task_id "
+            "join business_task_signals signal on signal.id=evidence.signal_id "
+            "where card.status='active' and link.status='confirmed' and link.active=1"
+        ).fetchall()
+        for row in rows:
+            if source_is_observed(row["source_type"]):
+                db.execute(
+                    "insert into business_project_evidence(project_id, signal_id) values (?, ?) "
+                    "on conflict(project_id, signal_id) do nothing",
+                    (row["project_id"], row["signal_id"]),
+                )
+        db.execute("insert into service_state(key, value) values (?, '1')", (marker,))
+
+    def prepare_meeting_alignment_message(
+        self, *, delivery_key: str, body: str, original_text: str,
+        target_kind: str, target_id: str, feedback_base_url: str | None = None,
+    ) -> PreparedOutboundMessage:
+        """Atomically bind one meeting preparation to its immutable recipient."""
+        _, key = normalize_outbound_postfix_inputs(
+            channel="dingtalk", delivery_key=delivery_key, body=body
+        )
+        if target_kind not in {"group", "user", "open_user"} or not target_id.strip():
+            raise ValueError("meeting delivery target is invalid")
+        state_key = f"meeting_delivery_target:v1:dingtalk:{key}"
+        target_json = json.dumps(
+            {"kind": target_kind, "id": target_id.strip()}, sort_keys=True
+        )
+        with self._immediate_write_transaction() as db:
+            target = db.execute("select value from service_state where key=?", (state_key,)).fetchone()
+            prepared = db.execute(
+                "select 1 from outbound_postfixes where channel='dingtalk' and delivery_key=?", (key,)
+            ).fetchone()
+            if target is not None:
+                if str(target["value"]) != target_json or prepared is None:
+                    raise ValueError("meeting prepared target binding conflicts")
+            elif prepared is not None:
+                # Legacy receipts do not establish their recipient by body equality.
+                raise ValueError("meeting prepared target is unverified")
+            message = self._prepare_outbound_postfix_in_transaction(
+                db, channel="dingtalk", delivery_key=key, body=body,
+                original_text=original_text, feedback_base_url=feedback_base_url,
+            )
+            if target is None:
+                db.execute("insert into service_state(key,value) values (?,?)", (state_key, target_json))
+            return message
+
+    def verify_meeting_alignment_target(self, delivery_key: str, *, target_kind: str, target_id: str) -> None:
+        expected = json.dumps({"kind": target_kind, "id": target_id.strip()}, sort_keys=True)
+        bound = self.get_service_state(f"meeting_delivery_target:v1:dingtalk:{delivery_key.strip()}")
+        if bound != expected:
+            raise ValueError("meeting prepared target binding conflicts")
 
     def prepare_outbound_postfix(
         self,
@@ -6598,6 +6883,36 @@ class AutoReplyStore:
         return BusinessTaskEvent.model_validate(dict(row))
 
     @staticmethod
+    def _business_project_context_revision_from_row(
+        row: sqlite3.Row,
+    ) -> BusinessProjectContextRevision:
+        values = dict(row)
+        values["context"] = json.loads(values.pop("context_json"))
+        values["evidence_signal_ids"] = json.loads(values.pop("evidence_json"))
+        return BusinessProjectContextRevision.model_validate(values)
+
+    def _business_project_from_row(
+        self, row: sqlite3.Row, *, _db: sqlite3.Connection
+    ) -> BusinessProject:
+        values = dict(row)
+        candidate_values = json.loads(values.pop("crm_customer_candidates_json", "[]"))
+        evidence_value = json.loads(values.pop("crm_customer_evidence_json", "{}"))
+        values["crm_customer_candidates"] = [
+            ProjectCrmCustomerCandidate.model_validate(candidate)
+            for candidate in candidate_values
+        ]
+        values["crm_customer_evidence"] = (
+            SourceCitation.model_validate(evidence_value)
+            if evidence_value
+            else None
+        )
+        context = self.get_business_project_context_in_transaction(
+            project_id=int(values["id"]), _db=_db
+        )
+        values["context"] = context
+        return BusinessProject.model_validate(values)
+
+    @staticmethod
     def _business_attention_item_from_row(row: sqlite3.Row) -> BusinessAttentionItem:
         return BusinessAttentionItem.model_validate(dict(row))
 
@@ -6625,9 +6940,30 @@ class AutoReplyStore:
         self, *, dedupe_key: str, _db: sqlite3.Connection
     ) -> BusinessTaskSignal | None:
         row = _db.execute(
-            "select * from business_task_signals where dedupe_key=?", (dedupe_key,)
+            "select signal.*, document.body as evidence_text from business_task_signals signal "
+            "join business_source_documents document on document.id=signal.source_document_id "
+            "where signal.dedupe_key=?", (dedupe_key,)
         ).fetchone()
         return self._business_task_signal_from_row(row) if row is not None else None
+
+    @staticmethod
+    def _business_source_document_id(db: sqlite3.Connection, source: dict[str, object]) -> int:
+        identity_key = source_document_key(**{
+            field: source[field] for field in (
+                "source_type", "source_ref", "source_time", "conversation_id",
+                "author_user_id", "author_name", "author_kind", "evidence_text",
+            )
+        })
+        row = db.execute(
+            "select id from business_source_documents where identity_key=?", (identity_key,)
+        ).fetchone()
+        if row is not None:
+            return int(row["id"])
+        cursor = db.execute(
+            "insert into business_source_documents (identity_key, body) values (?, ?)",
+            (identity_key, source["evidence_text"]),
+        )
+        return int(cursor.lastrowid)
 
     def create_business_task_signal_in_transaction(
         self,
@@ -6651,6 +6987,7 @@ class AutoReplyStore:
         ).isoformat(timespec="seconds")
         signal = BusinessTaskSignal(
             id=0,
+            source_document_id=0,
             source_type=source_type,
             source_ref=source_ref,
             source_time=source_time,
@@ -6664,11 +7001,12 @@ class AutoReplyStore:
             dedupe_key=dedupe_key,
             created_at=timestamp,
         )
+        document_id = self._business_source_document_id(_db, signal.model_dump(mode="json"))
         cursor = _db.execute(
             """
             insert into business_task_signals (
                 source_type, source_ref, source_time, conversation_id, conversation_title,
-                author_user_id, author_name, evidence_text, context_json, dedupe_key,
+                author_user_id, author_name, source_document_id, context_json, dedupe_key,
                 created_at, author_kind
             ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -6680,7 +7018,7 @@ class AutoReplyStore:
                 signal.conversation_title,
                 signal.author_user_id,
                 signal.author_name,
-                signal.evidence_text,
+                document_id,
                 signal.context_json,
                 signal.dedupe_key,
                 signal.created_at,
@@ -6699,6 +7037,8 @@ class AutoReplyStore:
         formal_basis: FormalTaskBasis | str | None = None,
         business_relevance: BusinessRelevance | str = BusinessRelevance.UNKNOWN,
         description: str = "",
+        origin: str = "source",
+        suggestion_json: str = "{}",
         owner_user_id: str = "",
         owner_name: str = "",
         owner_evidence_json: str = "{}",
@@ -6716,6 +7056,8 @@ class AutoReplyStore:
             id=0,
             title=title,
             description=description,
+            origin=origin,
+            suggestion_json=suggestion_json,
             stage=stage,
             status=status,
             commitment_status=commitment_status,
@@ -6737,8 +7079,8 @@ class AutoReplyStore:
                 title, description, stage, status, commitment_status, formal_basis,
                 business_relevance, merged_into_task_id, owner_user_id, owner_name,
                 owner_evidence_json, deadline_at, missing_evidence_json,
-                last_activity_at, created_at, updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                last_activity_at, created_at, updated_at, origin, suggestion_json
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task.title,
@@ -6757,6 +7099,8 @@ class AutoReplyStore:
                 task.last_activity_at,
                 task.created_at,
                 task.updated_at,
+                task.origin,
+                task.suggestion_json,
             ),
         )
         return int(cursor.lastrowid)
@@ -6778,7 +7122,7 @@ class AutoReplyStore:
                 title=?, description=?, stage=?, status=?, commitment_status=?, formal_basis=?,
                 business_relevance=?, merged_into_task_id=?, owner_user_id=?, owner_name=?,
                 owner_evidence_json=?, deadline_at=?, missing_evidence_json=?,
-                last_activity_at=?, updated_at=?
+                last_activity_at=?, updated_at=?, origin=?, suggestion_json=?
             where id=?
             """,
             (
@@ -6797,6 +7141,8 @@ class AutoReplyStore:
                 task.missing_evidence_json,
                 task.last_activity_at,
                 task.updated_at,
+                task.origin,
+                task.suggestion_json,
                 task.id,
             ),
         )
@@ -6835,14 +7181,18 @@ class AutoReplyStore:
         return tuple(self._business_task_evidence_from_row(row) for row in rows)
 
     def get_business_task_signal_for_task_source_ref_in_transaction(
-        self, *, task_id: int, source_ref: str, _db: sqlite3.Connection
+        self, *, task_id: int, source_ref: str, _db: sqlite3.Connection,
+        source_type: str | None = None,
     ) -> BusinessTaskSignal | None:
+        source_type_filter = " and signal.source_type=?" if source_type is not None else ""
+        args = (task_id, source_ref, source_type) if source_type is not None else (task_id, source_ref)
         row = _db.execute(
-            """select signal.* from business_task_signals as signal
+            """select signal.*, document.body as evidence_text from business_task_signals as signal
+               join business_source_documents document on document.id=signal.source_document_id
                join business_task_evidence as evidence on evidence.signal_id=signal.id
-               where evidence.task_id=? and signal.source_ref=?
-               order by signal.id desc limit 1""",
-            (task_id, source_ref),
+               where evidence.task_id=? and signal.source_ref=?"""
+            + source_type_filter + " order by signal.id desc limit 1",
+            args,
         ).fetchone()
         return self._business_task_signal_from_row(row) if row is not None else None
 
@@ -6989,40 +7339,21 @@ class AutoReplyStore:
         context_json: str = "{}",
         now: datetime | None = None,
     ) -> int:
-        timestamp = ensure_utc_datetime(
-            now or datetime.now(timezone.utc), field="business task signal now"
-        ).isoformat(timespec="seconds")
-        signal = BusinessTaskSignal(
-            id=0, source_type=source_type, source_ref=source_ref, source_time=source_time,
-            conversation_id=conversation_id, conversation_title=conversation_title,
-            author_user_id=author_user_id, author_name=author_name,
-            author_kind=author_kind,
-            evidence_text=evidence_text, context_json=context_json,
-            dedupe_key=dedupe_key, created_at=timestamp,
-        )
         with self._immediate_write_transaction() as db:
-            cursor = db.execute(
-                """
-                insert into business_task_signals (
-                    source_type, source_ref, source_time, conversation_id, conversation_title,
-                    author_user_id, author_name, evidence_text, context_json, dedupe_key,
-                    created_at, author_kind
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    signal.source_type, signal.source_ref, signal.source_time,
-                    signal.conversation_id, signal.conversation_title,
-                    signal.author_user_id, signal.author_name, signal.evidence_text,
-                    signal.context_json, signal.dedupe_key, signal.created_at,
-                    signal.author_kind.value,
-                ),
+            return self.create_business_task_signal_in_transaction(
+                source_type=source_type, source_ref=source_ref, source_time=source_time,
+                conversation_id=conversation_id, conversation_title=conversation_title,
+                author_user_id=author_user_id, author_name=author_name,
+                author_kind=author_kind, evidence_text=evidence_text,
+                context_json=context_json, dedupe_key=dedupe_key, now=now, _db=db,
             )
-            return int(cursor.lastrowid)
 
     def list_business_task_signals(self) -> tuple[BusinessTaskSignal, ...]:
         with self._connect() as db:
             rows = db.execute(
-                "select * from business_task_signals order by id"
+                "select signal.*, document.body as evidence_text from business_task_signals signal "
+                "join business_source_documents document on document.id=signal.source_document_id "
+                "order by signal.id"
             ).fetchall()
             return tuple(self._business_task_signal_from_row(row) for row in rows)
 
@@ -7034,7 +7365,9 @@ class AutoReplyStore:
         self, *, signal_id: int, _db: sqlite3.Connection
     ) -> BusinessTaskSignal | None:
         row = _db.execute(
-            "select * from business_task_signals where id=?", (signal_id,)
+            "select signal.*, document.body as evidence_text from business_task_signals signal "
+            "join business_source_documents document on document.id=signal.source_document_id "
+            "where signal.id=?", (signal_id,)
         ).fetchone()
         return self._business_task_signal_from_row(row) if row else None
 
@@ -7048,6 +7381,8 @@ class AutoReplyStore:
         formal_basis: FormalTaskBasis | str | None = None,
         business_relevance: BusinessRelevance | str = BusinessRelevance.UNKNOWN,
         description: str = "",
+        origin: str = "source",
+        suggestion_json: str = "{}",
         owner_user_id: str = "",
         owner_name: str = "",
         owner_evidence_json: str = "{}",
@@ -7057,51 +7392,16 @@ class AutoReplyStore:
         last_activity_at: str | None = None,
         now: datetime | None = None,
     ) -> int:
-        timestamp = ensure_utc_datetime(
-            now or datetime.now(timezone.utc), field="business task now"
-        ).isoformat(timespec="seconds")
-        # Validate the model before writing so the Python and SQLite contracts
-        # reject the same invalid stage and merge combinations.
-        task = BusinessTask(
-            id=0,
-            title=title,
-            description=description,
-            stage=stage,
-            status=status,
-            commitment_status=commitment_status,
-            formal_basis=formal_basis,
-            business_relevance=business_relevance,
-            merged_into_task_id=merged_into_task_id,
-            owner_user_id=owner_user_id,
-            owner_name=owner_name,
-            owner_evidence_json=owner_evidence_json,
-            deadline_at=deadline_at,
-            missing_evidence_json=missing_evidence_json,
-            last_activity_at=timestamp if last_activity_at is None else last_activity_at,
-            created_at=timestamp,
-            updated_at=timestamp,
-        )
         with self._immediate_write_transaction() as db:
-            cursor = db.execute(
-                """
-                insert into business_tasks (
-                    title, description, stage, status, commitment_status, formal_basis,
-                    business_relevance, merged_into_task_id, owner_user_id, owner_name,
-                    owner_evidence_json, deadline_at, missing_evidence_json,
-                    last_activity_at, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    task.title, task.description, task.stage.value, task.status.value,
-                    task.commitment_status.value,
-                    task.formal_basis.value if task.formal_basis is not None else None,
-                    task.business_relevance.value, task.merged_into_task_id,
-                    task.owner_user_id, task.owner_name, task.owner_evidence_json,
-                    task.deadline_at, task.missing_evidence_json, task.last_activity_at,
-                    task.created_at, task.updated_at,
-                ),
+            return self.create_business_task_in_transaction(
+                title=title, description=description, stage=stage, status=status,
+                commitment_status=commitment_status, formal_basis=formal_basis,
+                business_relevance=business_relevance, merged_into_task_id=merged_into_task_id,
+                owner_user_id=owner_user_id, owner_name=owner_name, owner_evidence_json=owner_evidence_json,
+                deadline_at=deadline_at, missing_evidence_json=missing_evidence_json,
+                origin=origin, suggestion_json=suggestion_json,
+                last_activity_at=last_activity_at, now=now, _db=db,
             )
-            return int(cursor.lastrowid)
 
     def get_business_task(self, task_id: int) -> BusinessTask | None:
         with self._connect() as db:
@@ -7218,6 +7518,38 @@ class AutoReplyStore:
             ).fetchall()
             return tuple(self._business_task_event_from_row(row) for row in rows)
 
+    def list_business_project_ids_for_source(
+        self, *, source_type: str, source_id: str, limit: int = 100, offset: int = 0
+    ) -> tuple[int, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business source pagination requires positive limit and non-negative offset")
+        if not source_id.strip():
+            return ()
+        with self._connect() as db:
+            rows = db.execute(
+                "select distinct evidence.project_id from business_project_evidence evidence "
+                "join business_task_signals signal on signal.id=evidence.signal_id "
+                "where signal.source_type=? and (signal.source_ref=? or substr(signal.source_ref,1,?)=?) "
+                "order by evidence.project_id limit ? offset ?",
+                (source_type, source_id, len(source_id) + 1, source_id + "#", limit, offset),
+            ).fetchall()
+            return tuple(int(row["project_id"]) for row in rows)
+
+    def list_business_task_ids_for_project(
+        self, *, project_id: int, limit: int = 100, offset: int = 0
+    ) -> tuple[int, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("business project pagination requires positive limit and non-negative offset")
+        with self._connect() as db:
+            rows = db.execute(
+                "select link.task_id from business_task_anchor_links link "
+                "join business_projects project on project.canonical_anchor_id=link.anchor_id "
+                "join business_anchors anchor on anchor.id=link.anchor_id "
+                "where project.id=? and link.status='confirmed' and link.active=1 and anchor.active=1 "
+                "order by link.task_id desc limit ? offset ?", (project_id, limit, offset),
+            ).fetchall()
+            return tuple(int(row["task_id"]) for row in rows)
+
     def list_business_task_project_links(self, *, task_id: int) -> list[BusinessProject]:
         with self._connect() as db:
             rows = db.execute(
@@ -7230,7 +7562,7 @@ class AutoReplyStore:
                 """,
                 (task_id,),
             ).fetchall()
-            return [BusinessProject.model_validate(dict(row)) for row in rows]
+            return [self._business_project_from_row(row, _db=db) for row in rows]
 
     # Task 4 resolution primitives deliberately accept an existing transaction.
     # The resolution service owns the policy and composes these rows atomically.
@@ -7300,10 +7632,43 @@ class AutoReplyStore:
     def get_business_project_in_transaction(
         self, *, project_id: int, _db: sqlite3.Connection
     ) -> BusinessProject | None:
+        row = _db.execute("select * from business_projects where id=?", (project_id,)).fetchone()
+        return self._business_project_from_row(row, _db=_db) if row is not None else None
+
+    def get_business_project_context_in_transaction(
+        self, *, project_id: int, _db: sqlite3.Connection
+    ) -> ProjectContext | None:
         row = _db.execute(
-            "select * from business_projects where id=?", (project_id,)
+            "select context_json from business_project_context_revisions "
+            "where project_id=? order by id desc limit 1", (project_id,)
         ).fetchone()
-        return BusinessProject.model_validate(dict(row)) if row is not None else None
+        return ProjectContext.model_validate_json(str(row["context_json"])) if row else None
+
+    def list_business_project_context_revisions_in_transaction(
+        self, *, project_id: int, _db: sqlite3.Connection, limit: int = 100, offset: int = 0
+    ) -> tuple[BusinessProjectContextRevision, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("project context pagination requires positive limit and non-negative offset")
+        rows = _db.execute(
+            "select * from business_project_context_revisions where project_id=? order by id desc limit ? offset ?",
+            (project_id, limit, offset),
+        ).fetchall()
+        return tuple(self._business_project_context_revision_from_row(row) for row in rows)
+
+    def list_business_project_evidence_in_transaction(
+        self, *, project_id: int, _db: sqlite3.Connection, limit: int = 100, offset: int = 0,
+        pinned_signal_ids: tuple[int, ...] = (),
+    ) -> tuple[BusinessProjectEvidence, ...]:
+        if limit < 1 or offset < 0:
+            raise ValueError("project evidence pagination requires positive limit and non-negative offset")
+        rows = _db.execute(
+            "select * from business_project_evidence where project_id=? and (signal_id in ("
+            "select signal_id from business_project_evidence where project_id=? "
+            "order by signal_id desc limit ? offset ?) or signal_id in "
+            "(select value from json_each(?))) order by signal_id",
+            (project_id, project_id, limit, offset, json.dumps(pinned_signal_ids)),
+        ).fetchall()
+        return tuple(BusinessProjectEvidence.model_validate(dict(row)) for row in rows)
 
     def derive_business_task_relevance_in_transaction(
         self, *, task_id: int, _db: sqlite3.Connection
@@ -7440,6 +7805,141 @@ class AutoReplyStore:
             (project.canonical_anchor_id, project.title, project.registry_source),
         ).lastrowid)
 
+    def update_business_project_crm_customer_lookup_in_transaction(
+        self,
+        *,
+        project_id: int,
+        label: str,
+        evidence: SourceCitation | None,
+        lookup_status: str,
+        candidates: list[ProjectCrmCustomerCandidate | dict[str, object]],
+        _db: sqlite3.Connection,
+        matched_customer_id: str = "",
+        matched_customer_name: str = "",
+    ) -> bool:
+        allowed_statuses = {
+            "matched", "ambiguous", "needs_confirmation", "no_match", "unavailable", "conflict"
+        }
+        if lookup_status not in allowed_statuses:
+            raise ValueError("unsupported Project CRM customer lookup status")
+        normalized_candidates = [
+            ProjectCrmCustomerCandidate.model_validate(candidate)
+            for candidate in candidates
+        ]
+        row = _db.execute(
+            "select crm_customer_id, crm_customer_name from business_projects where id=?",
+            (project_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("official Project does not exist")
+        current_customer_id = str(row["crm_customer_id"] or "")
+        customer_id = current_customer_id
+        customer_name = str(row["crm_customer_name"] or "")
+        selected_status = lookup_status
+
+        if lookup_status == "matched":
+            if not matched_customer_id.strip() or not matched_customer_name.strip():
+                raise ValueError("matched CRM lookup requires a stable ID and display name")
+            if current_customer_id and current_customer_id != matched_customer_id:
+                # A later source cannot silently replace a confirmed Project link.
+                selected_status = "conflict"
+                if all(candidate.customer_id != matched_customer_id for candidate in normalized_candidates):
+                    raise ValueError("conflicting CRM match must be present as a candidate")
+            else:
+                customer_id = matched_customer_id
+                customer_name = matched_customer_name
+        elif lookup_status == "conflict" and not current_customer_id:
+            raise ValueError("CRM customer conflict requires an existing confirmed link")
+
+        evidence_json = (
+            evidence.model_dump_json() if evidence is not None else "{}"
+        )
+        _db.execute(
+            """update business_projects
+               set crm_customer_id=?, crm_customer_name=?, crm_customer_lookup_status=?,
+                   crm_customer_candidates_json=?, crm_customer_label=?,
+                   crm_customer_evidence_json=?
+               where id=?""",
+            (
+                customer_id,
+                customer_name,
+                selected_status,
+                json.dumps(
+                    [candidate.model_dump(mode="json") for candidate in normalized_candidates],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                label,
+                evidence_json,
+                project_id,
+            ),
+        )
+        return True
+
+    def confirm_business_project_crm_customer(
+        self, *, project_id: int, customer_id: str
+    ) -> bool:
+        if not customer_id.strip():
+            return False
+        with self._connect() as db:
+            row = db.execute(
+                "select crm_customer_id, crm_customer_name, crm_customer_candidates_json "
+                "from business_projects where id=?",
+                (project_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            current_id = str(row["crm_customer_id"] or "")
+            if current_id == customer_id:
+                return True
+            candidates = [
+                ProjectCrmCustomerCandidate.model_validate(value)
+                for value in json.loads(row["crm_customer_candidates_json"] or "[]")
+            ]
+            candidate = next(
+                (value for value in candidates if value.customer_id == customer_id), None
+            )
+            if candidate is None:
+                return False
+            db.execute(
+                """update business_projects
+                   set crm_customer_id=?, crm_customer_name=?,
+                       crm_customer_lookup_status='matched', crm_customer_candidates_json='[]'
+                   where id=?""",
+                (candidate.customer_id, candidate.name, project_id),
+            )
+            return True
+
+    def clear_business_project_crm_customer(self, *, project_id: int) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
+                """update business_projects
+                   set crm_customer_id='', crm_customer_name='',
+                       crm_customer_lookup_status='not_requested',
+                       crm_customer_candidates_json='[]', crm_customer_label='',
+                       crm_customer_evidence_json='{}'
+                   where id=?""",
+                (project_id,),
+            )
+            return cursor.rowcount == 1
+
+    def list_business_task_project_customer_names(self, *, task_id: int) -> tuple[str, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                """select distinct project.crm_customer_name
+                   from business_projects project
+                   join business_task_anchor_links link
+                     on link.anchor_id=project.canonical_anchor_id
+                   join business_anchors anchor on anchor.id=link.anchor_id
+                   where link.task_id=? and link.status='confirmed' and link.active=1
+                     and anchor.active=1 and project.crm_customer_id<>''
+                     and project.crm_customer_name<>''
+                   order by project.crm_customer_name""",
+                (task_id,),
+            ).fetchall()
+            return tuple(str(row[0]) for row in rows)
+
     def create_business_project_candidate_in_transaction(
         self, *, cluster_id: int, title: str, reason: str, _db: sqlite3.Connection
     ) -> int:
@@ -7489,8 +7989,24 @@ class AutoReplyStore:
 
     def get_business_project(self, project_id: int) -> BusinessProject | None:
         with self._connect() as db:
-            row = db.execute("select * from business_projects where id=?", (project_id,)).fetchone()
-            return BusinessProject.model_validate(dict(row)) if row else None
+            return self.get_business_project_in_transaction(project_id=project_id, _db=db)
+
+    def get_business_project_context(self, project_id: int) -> ProjectContext | None:
+        with self._connect() as db:
+            return self.get_business_project_context_in_transaction(project_id=project_id, _db=db)
+
+    def list_business_project_context_revisions(
+        self, project_id: int, *, limit: int = 100, offset: int = 0
+    ) -> tuple[BusinessProjectContextRevision, ...]:
+        with self._connect() as db:
+            return self.list_business_project_context_revisions_in_transaction(project_id=project_id, _db=db, limit=limit, offset=offset)
+
+    def list_business_project_evidence(
+        self, project_id: int, *, limit: int = 100, offset: int = 0,
+        pinned_signal_ids: tuple[int, ...] = (),
+    ) -> tuple[BusinessProjectEvidence, ...]:
+        with self._connect() as db:
+            return self.list_business_project_evidence_in_transaction(project_id=project_id, _db=db, limit=limit, offset=offset, pinned_signal_ids=pinned_signal_ids)
 
     def list_business_work_clusters(
         self, *, limit: int = 100, offset: int = 0
@@ -7579,7 +8095,7 @@ class AutoReplyStore:
                 "select * from business_projects order by id limit ? offset ?",
                 (limit if limit is not None else -1, offset),
             ).fetchall()
-            return [BusinessProject.model_validate(dict(row)) for row in rows]
+            return [self._business_project_from_row(row, _db=db) for row in rows]
 
     # Task 5 attention primitives accept an existing transaction.  The
     # projection service owns eligibility and event policy so these methods do
@@ -7612,6 +8128,7 @@ class AutoReplyStore:
         ceo_action: str,
         anchor_id: int,
         evidence_signal_id: int,
+        assessment_json: str = "{}",
         now: str,
         _db: sqlite3.Connection,
     ) -> int:
@@ -7620,15 +8137,16 @@ class AutoReplyStore:
             business_area=business_area, why_attention=why_attention,
             current_state=current_state, ceo_action=ceo_action, anchor_id=anchor_id,
             evidence_signal_id=evidence_signal_id, created_at=now, updated_at=now,
+            assessment_json=assessment_json,
         )
         return int(_db.execute(
             """insert into business_attention_items
                (stable_key, category, status, title, business_area, why_attention,
-                current_state, ceo_action, anchor_id, evidence_signal_id, created_at, updated_at)
-               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                current_state, ceo_action, anchor_id, evidence_signal_id, assessment_json, created_at, updated_at)
+               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (item.stable_key, item.category.value, item.status.value, item.title,
              item.business_area, item.why_attention, item.current_state, item.ceo_action,
-             item.anchor_id, item.evidence_signal_id, item.created_at, item.updated_at),
+             item.anchor_id, item.evidence_signal_id, item.assessment_json, item.created_at, item.updated_at),
         ).lastrowid)
 
     def update_business_attention_item_in_transaction(
@@ -7638,11 +8156,11 @@ class AutoReplyStore:
             """update business_attention_items set
                category=?, status=?, title=?, business_area=?, why_attention=?, current_state=?,
                ceo_action=?, anchor_id=?, evidence_signal_id=?, resolution_signal_id=?,
-               resolved_at=?, updated_at=? where id=?""",
+               resolved_at=?, assessment_json=?, updated_at=? where id=?""",
             (item.category.value, item.status.value, item.title, item.business_area,
              item.why_attention, item.current_state, item.ceo_action, item.anchor_id,
              item.evidence_signal_id, item.resolution_signal_id, item.resolved_at,
-             item.updated_at, item.id),
+             item.assessment_json, item.updated_at, item.id),
         )
 
     def link_business_attention_task_in_transaction(
@@ -8316,11 +8834,13 @@ class AutoReplyStore:
             return self._scheduled_task_from_row(db, row)
 
     @staticmethod
-    def _scheduled_task_run_columns() -> str:
+    def _scheduled_task_run_columns(alias: str = "scheduled_task_runs") -> str:
         return (
             "id, event_id, scheduled_task_id, trigger_kind, scheduled_for, "
             "first_scheduled_for, occurrence_count, "
-            "dispatch_status, skip_or_error_reason, snapshot_json, "
+            "dispatch_status, skip_or_error_reason, "
+            "(select snapshot_json from scheduled_task_config_versions "
+            f"where id={alias}.snapshot_id) as snapshot_json, "
             "execution_kind, execution_id, lease_owner, lease_expires_at, "
             "created_at, dispatched_at, result_summary"
         )
@@ -8463,6 +8983,8 @@ class AutoReplyStore:
             task = self._scheduled_task_from_row(db, task_row)
             snapshot_json = ScheduledTaskSnapshot.from_task(task).to_json()
             ScheduledTaskSnapshot.from_json(snapshot_json)
+            from app.scheduled_config_storage import intern_scheduled_config
+            snapshot_id = intern_scheduled_config(db, snapshot_json)
             dispatch_status = "skipped" if reason else "pending"
             if reason == "scheduled_task_previous_execution_active":
                 duplicate = db.execute(
@@ -8515,7 +9037,7 @@ class AutoReplyStore:
                     insert into scheduled_task_runs (
                         event_id, scheduled_task_id, trigger_kind, scheduled_for,
                         first_scheduled_for, occurrence_count,
-                        dispatch_status, skip_or_error_reason, snapshot_json,
+                        dispatch_status, skip_or_error_reason, snapshot_id,
                         created_at, dispatched_at
                     ) values (?, ?, 'scheduled', ?, ?, 1, ?, ?, ?, ?, ?)
                     """,
@@ -8526,7 +9048,7 @@ class AutoReplyStore:
                         scheduled_for_text,
                         dispatch_status,
                         reason,
-                        snapshot_json,
+                        snapshot_id,
                         now_text,
                         now_text if reason else None,
                     ),
@@ -8601,13 +9123,15 @@ class AutoReplyStore:
             snapshot_json = ScheduledTaskSnapshot.from_task(task).to_json()
             # Verify the exact bytes that will be persisted are readable.
             ScheduledTaskSnapshot.from_json(snapshot_json)
+            from app.scheduled_config_storage import intern_scheduled_config
+            snapshot_id = intern_scheduled_config(db, snapshot_json)
             try:
                 cursor = db.execute(
                     """
                     insert into scheduled_task_runs (
                         event_id, scheduled_task_id, trigger_kind, scheduled_for,
                         first_scheduled_for, occurrence_count,
-                        dispatch_status, skip_or_error_reason, snapshot_json,
+                        dispatch_status, skip_or_error_reason, snapshot_id,
                         created_at, dispatched_at
                     ) values (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
                     """,
@@ -8619,7 +9143,7 @@ class AutoReplyStore:
                         scheduled_for_text,
                         dispatch_status,
                         reason,
-                        snapshot_json,
+                        snapshot_id,
                         now_text,
                         now_text if dispatch_status == "skipped" else None,
                     ),
@@ -8944,7 +9468,7 @@ class AutoReplyStore:
         with self._connect() as db:
             rows = db.execute(
                 f"""
-                select {self._scheduled_task_run_columns()}
+                select {self._scheduled_task_run_columns("run")}
                   from scheduled_task_runs as run
                  where run.scheduled_task_id in ({placeholders})
                    and run.id = (
@@ -9038,12 +9562,13 @@ class AutoReplyStore:
         with self._connect() as db:
             row = db.execute(
                 f"""
-                select run.*
+                select run.*, config.snapshot_json
                   from reply_task_inputs as inputs
                   join scheduled_task_runs as run
                     on run.id=cast(
                         {_SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL} as integer
                     )
+                  join scheduled_task_config_versions as config on config.id=run.snapshot_id
                   join reply_attempts as attempts
                     on attempts.channel=inputs.channel
                    and attempts.conversation_id=inputs.conversation_id
@@ -9679,6 +10204,13 @@ class AutoReplyStore:
             where agent_run_id is null and status in ('starting', 'running')
             """
         )
+        db.execute(
+            """
+            create index if not exists idx_agent_runtime_attempts_run
+            on agent_runtime_attempts(agent_run_id, attempt_number)
+            where agent_run_id is not null
+            """
+        )
         db.execute("drop trigger if exists trg_runtime_attempt_generalized_lease_insert")
         db.execute("drop trigger if exists trg_runtime_attempt_generalized_lease_update")
         db.execute(
@@ -9799,8 +10331,31 @@ class AutoReplyStore:
         db: sqlite3.Connection,
         *,
         migration_name: str,
+        allow_existing_foreign_key_violations: bool = False,
     ) -> Iterator[None]:
-        """Run a table rebuild with foreign keys verifiably disabled."""
+        """Run a table rebuild with foreign keys verifiably disabled.
+
+        Most rebuilds require a globally clean database. A narrowly scoped
+        migration may instead preserve a pre-existing set of violations, but
+        only when the exact foreign_key_check rows are unchanged afterward.
+        """
+        baseline_violations = tuple(sorted(
+            tuple(row) for row in db.execute("pragma foreign_key_check").fetchall()
+        ))
+        if baseline_violations and not allow_existing_foreign_key_violations:
+            raise sqlite3.IntegrityError(
+                f"{migration_name} migration found pre-existing foreign key violations"
+            )
+
+        def verify_foreign_keys(*, stage: str) -> None:
+            actual = tuple(sorted(
+                tuple(row) for row in db.execute("pragma foreign_key_check").fetchall()
+            ))
+            if actual != baseline_violations:
+                raise sqlite3.IntegrityError(
+                    f"{migration_name} migration changed foreign key violations {stage}"
+                )
+
         if db.in_transaction:
             db.commit()
         if db.in_transaction:
@@ -9818,17 +10373,9 @@ class AutoReplyStore:
                 raise sqlite3.IntegrityError(
                     f"{migration_name} migration transaction is missing"
                 )
-            violations = db.execute("pragma foreign_key_check").fetchall()
-            if violations:
-                raise sqlite3.IntegrityError(
-                    f"{migration_name} migration broke foreign keys"
-                )
+            verify_foreign_keys(stage="before commit")
             db.commit()
-            violations = db.execute("pragma foreign_key_check").fetchall()
-            if violations:
-                raise sqlite3.IntegrityError(
-                    f"{migration_name} migration broke foreign keys"
-                )
+            verify_foreign_keys(stage="after commit; readback is not rollbackable")
         except Exception:
             if db.in_transaction:
                 db.rollback()
@@ -9841,6 +10388,68 @@ class AutoReplyStore:
                 raise sqlite3.IntegrityError(
                     f"{migration_name} migration could not restore foreign keys"
                 )
+
+    @staticmethod
+    def _migrate_business_task_source_documents(db: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in db.execute("pragma table_info(business_task_signals)")}
+        if "evidence_text" not in columns:
+            return
+        # Keep the referenced parent under its original name until every row
+        # has been copied and read back. Renaming the old parent would rewrite
+        # all existing child foreign keys to the temporary table's name.
+        with AutoReplyStore._foreign_key_rebuild(
+            db,
+            migration_name="business source documents",
+            allow_existing_foreign_key_violations=True,
+        ):
+            db.execute("begin immediate")
+            for statement in BUSINESS_SOURCE_DOCUMENT_SCHEMA:
+                db.execute(statement)
+            db.execute(_business_task_signal_table_sql("business_task_signals_source_migration"))
+            old_count = db.execute("select count(*) from business_task_signals").fetchone()[0]
+            old_sequence = db.execute(
+                "select seq from sqlite_sequence where name='business_task_signals'"
+            ).fetchone()
+            for row in db.execute("select * from business_task_signals order by id"):
+                original = dict(row)
+                source = dict(original)
+                if "author_kind" not in source:
+                    source["author_kind"] = "unknown"
+                document_id = AutoReplyStore._business_source_document_id(db, source)
+                values = {key: value for key, value in source.items() if key != "evidence_text"}
+                values["source_document_id"] = document_id
+                db.execute(
+                    f"insert into business_task_signals_source_migration ({', '.join(values)}) "
+                    f"values ({', '.join('?' for _ in values)})", tuple(values.values()),
+                )
+                restored = db.execute(
+                    "select signal.*, document.body as evidence_text "
+                    "from business_task_signals_source_migration signal "
+                    "join business_source_documents document on document.id=signal.source_document_id "
+                    "where signal.id=?", (original["id"],),
+                ).fetchone()
+                if restored is None or {key: restored[key] for key in original} != original:
+                    raise sqlite3.IntegrityError("business source document migration changed a signal")
+            new_count = db.execute(
+                "select count(*) from business_task_signals_source_migration"
+            ).fetchone()[0]
+            if new_count != old_count:
+                raise sqlite3.IntegrityError("business source document migration changed signal count")
+            db.execute("drop table business_task_signals")
+            db.execute("alter table business_task_signals_source_migration rename to business_task_signals")
+            if old_sequence is not None:
+                db.execute(
+                    "insert into sqlite_sequence (name, seq) "
+                    "select 'business_task_signals', ? where not exists "
+                    "(select 1 from sqlite_sequence where name='business_task_signals')",
+                    (old_sequence["seq"],),
+                )
+                db.execute(
+                    "update sqlite_sequence set seq=max(seq, ?) where name='business_task_signals'",
+                    (old_sequence["seq"],),
+                )
+            for statement in BUSINESS_TASK_SIGNAL_INDEXES_AND_TRIGGERS:
+                db.execute(statement)
 
     @staticmethod
     def _migrate_agent_run_turn_identity(db: sqlite3.Connection) -> None:
@@ -10243,65 +10852,13 @@ class AutoReplyStore:
     def _migrate_agent_run_events(db: sqlite3.Connection) -> None:
         if not AutoReplyStore._agent_runs_has_tool_events_column(db):
             return
-        rows = db.execute(
-            "select id, tool_events_json from agent_runs "
-            "where tool_events_json <> '[]'"
-        ).fetchall()
-        for row in rows:
-            try:
-                events = json.loads(row["tool_events_json"])
-            except json.JSONDecodeError as exc:
-                raise ValueError("agent run tool events are not valid JSON") from exc
-            if not isinstance(events, list) or any(
-                not isinstance(event, dict) for event in events
-            ):
-                raise ValueError("agent run tool events must be JSON objects")
-            for sequence, event in enumerate(events, start=1):
-                event_text = _json_object_text(event, field="event")
-                event_type, call_id, effect_kind, receipt_operation_id = (
-                    _agent_event_columns(event)
-                )
-                db.execute(
-                    """
-                    insert or ignore into agent_run_events (
-                        agent_run_id, sequence, event_json, event_type,
-                        call_id, effect_kind, receipt_operation_id
-                    ) values (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        row["id"],
-                        sequence,
-                        event_text,
-                        event_type,
-                        call_id,
-                        effect_kind,
-                        receipt_operation_id,
-                    ),
-                )
-                persisted = db.execute(
-                    "select event_json from agent_run_events "
-                    "where agent_run_id=? and sequence=?",
-                    (row["id"], sequence),
-                ).fetchone()
-                if persisted is None or json.loads(persisted["event_json"]) != event:
-                    raise ValueError("conflicting agent run event migration")
-            db.execute(
-                "update agent_runs set tool_events_json='[]' where id=?",
-                (row["id"],),
-            )
+        # Native transcripts are the sole trajectory source. Legacy payloads
+        # must never repopulate the retired event table when the DB is reopened.
+        db.execute("update agent_runs set tool_events_json='[]' where tool_events_json<>'[]'")
 
     @staticmethod
     def _drop_agent_run_tool_events_column(db: sqlite3.Connection) -> None:
-        """Remove the second copy of a run's trajectory.
-
-        agent_run_events holds one row per event and is what AgentRun.tool_events
-        is built from; the column was the older whole-array copy of the same
-        facts. Two stores of one truth is how they end up disagreeing, and a
-        reader has no way to tell which one is stale. _migrate_agent_run_events
-        has already moved every event into the table and blanked the column, so
-        this drops what is left. It refuses if anything is still there, because
-        dropping unread trajectory is not a migration, it is data loss.
-        """
+        """Remove the retired trajectory array after clearing its payload."""
         if not AutoReplyStore._agent_runs_has_tool_events_column(db):
             return
         undrained = db.execute(
@@ -10309,7 +10866,7 @@ class AutoReplyStore:
         ).fetchone()
         if undrained is not None:
             raise ValueError(
-                "agent run tool events were not migrated into agent_run_events; "
+                "retired agent run tool events were not cleared; "
                 f"run {undrained['id']} still carries its own copy"
             )
         db.execute("alter table agent_runs drop column tool_events_json")
@@ -10502,13 +11059,33 @@ class AutoReplyStore:
                 "where reply_task_id=?",
                 (key, int(task["id"])),
             )
-        db.execute("delete from business_object_tasks")
+        desired_bindings: dict[str, int] = {}
         for task in reversed(tasks):
+            desired_bindings.setdefault(task_keys[int(task["id"])], int(task["id"]))
+        existing_bindings = {
+            str(row["business_object_key"]): int(row["reply_task_id"])
+            for row in db.execute(
+                "select business_object_key, reply_task_id from business_object_tasks"
+            ).fetchall()
+        }
+        for key in existing_bindings.keys() - desired_bindings.keys():
             db.execute(
-                "insert or ignore into business_object_tasks "
-                "(business_object_key, reply_task_id) values (?, ?)",
-                (task_keys[int(task["id"])], int(task["id"])),
+                "delete from business_object_tasks where business_object_key=?",
+                (key,),
             )
+        for key, task_id in desired_bindings.items():
+            if key not in existing_bindings:
+                db.execute(
+                    "insert into business_object_tasks "
+                    "(business_object_key, reply_task_id) values (?, ?)",
+                    (key, task_id),
+                )
+            elif existing_bindings[key] != task_id:
+                db.execute(
+                    "update business_object_tasks set reply_task_id=?, "
+                    "updated_at=current_timestamp where business_object_key=?",
+                    (task_id, key),
+                )
 
     @staticmethod
     def _migrate_oa_notification_events(db: sqlite3.Connection) -> None:
@@ -10611,6 +11188,314 @@ class AutoReplyStore:
             )
 
     @staticmethod
+    def _migrate_reply_input_provenance(db: sqlite3.Connection) -> None:
+        for table in ("reply_tasks", "reply_task_inputs"):
+            columns = {row["name"] for row in db.execute(f"pragma table_info({table})")}
+            if "input_provenance_json" not in columns:
+                db.execute(
+                    f"alter table {table} add column input_provenance_json "
+                    "text not null default '{}'"
+                )
+            if "input_compacted" not in columns:
+                db.execute(
+                    f"alter table {table} add column input_compacted "
+                    "integer not null default 0"
+                )
+        attempt_columns = {
+            row["name"] for row in db.execute("pragma table_info(reply_attempts)")
+        }
+        if "trigger_text_provenance_json" not in attempt_columns:
+            db.execute(
+                "alter table reply_attempts add column "
+                "trigger_text_provenance_json text not null default '{}'"
+            )
+
+    @staticmethod
+    def _reply_input_provenance(trigger_text: str, trigger_message_json: str) -> str:
+        """Identify exact original bytes while retaining only small source facts."""
+        def digest(value: str) -> dict[str, object]:
+            raw = value.encode("utf-8")
+            return {"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+
+        source: dict[str, object] = {}
+        try:
+            payload = json.loads(trigger_message_json)
+        except (TypeError, json.JSONDecodeError):
+            payload = None
+        if isinstance(payload, dict):
+            for key in (
+                "schema", "lifecycle_version", "action_type", "action_identity",
+                "classification_id", "action_plan_id", "action_plan_version",
+                "account_id", "stable_message_identity", "thread_identity",
+                "sender_user_id", "open_conversation_id",
+                "open_message_id", "message_id", "create_time", "source_url",
+                "scheduled_task_id", "scheduled_task_run_id", "snapshot_id",
+                "config_version", "skill_revision_id", "skill_path",
+                "skill_sha256", "skill_protocol_source",
+            ):
+                value = payload.get(key)
+                if type(value) in (str, int, bool) and value != "":
+                    source[key] = value
+            names = payload.get("skill_names")
+            if isinstance(names, list) and all(isinstance(name, str) for name in names):
+                source["skill_names"] = names
+            if payload.get("schema") == "email_agent_action.v1":
+                category = payload.get("category")
+                if isinstance(category, str) and category:
+                    source["category"] = category
+                parameters = payload.get("action_parameters")
+                if isinstance(parameters, dict):
+                    candidate_source = parameters.get("candidate_source")
+                    if isinstance(candidate_source, str) and candidate_source:
+                        source["action_parameters"] = {
+                            "candidate_source": candidate_source,
+                        }
+                entries = payload.get("unsubscribe_entries")
+                if isinstance(entries, list):
+                    source["unsubscribe_entries"] = [
+                        {key: item[key] for key in (
+                            "index", "source", "digest", "reference"
+                        ) if key in item and type(item[key]) in (str, int)}
+                        for item in entries
+                        if isinstance(item, dict)
+                    ]
+                authentication = payload.get("unsubscribe_authentication")
+                if isinstance(authentication, dict):
+                    source["unsubscribe_authentication"] = {
+                        key: authentication[key] for key in (
+                            "evidence_reference", "one_click_verified"
+                        ) if key in authentication
+                        and type(authentication[key]) in (str, bool)
+                    }
+            materials = payload.get("skill_materials")
+            if isinstance(materials, list):
+                source["skill_materials"] = [
+                    {"name": material["name"], "content": digest(material["content"])}
+                    for material in materials
+                    if isinstance(material, dict)
+                    and isinstance(material.get("name"), str)
+                    and isinstance(material.get("content"), str)
+                ]
+            scheduled = payload.get("scheduled_consumer")
+            if isinstance(scheduled, dict):
+                run_id = scheduled.get("scheduled_task_run_id")
+                if type(run_id) is int:
+                    source["scheduled_task_run_id"] = run_id
+            raw = payload.get("raw_payload")
+            if isinstance(raw, dict):
+                for key in (
+                    "service_task", "source", "source_url", "scheduled_task_id",
+                    "scheduled_task_run_id", "snapshot_id", "classification_id",
+                    "action_identity",
+                ):
+                    value = raw.get(key)
+                    if type(value) in (str, int, bool) and value != "":
+                        source[key] = value
+                scheduled = raw.get("scheduled_consumer")
+                if isinstance(scheduled, dict):
+                    run_id = scheduled.get("scheduled_task_run_id")
+                    if type(run_id) is int:
+                        source["scheduled_task_run_id"] = run_id
+            context = payload.get("context")
+            if isinstance(context, dict):
+                raw = context.get("trigger_raw_payload")
+                if isinstance(raw, dict):
+                    for key in (
+                        "scheduled_task_id", "scheduled_task_version",
+                        "scheduled_task_run_id", "trigger_kind", "scheduled_for",
+                    ):
+                        value = raw.get(key)
+                        if type(value) in (str, int) and value != "":
+                            source[key] = value
+                    skills = raw.get("skills")
+                    if isinstance(skills, list):
+                        source["skills"] = [
+                            {key: item[key] for key in (
+                                "source", "name", "skill_id", "revision_id",
+                                "path", "sha256",
+                            ) if key in item and type(item[key]) in (str, int)}
+                            for item in skills if isinstance(item, dict)
+                        ]
+        return json.dumps(
+            {"trigger_text": digest(trigger_text),
+             "trigger_message_json": digest(trigger_message_json), "source": source},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
+
+    @staticmethod
+    def _compact_reply_input_json(provenance_json: str) -> str:
+        provenance = json.loads(provenance_json)
+        source = dict(provenance["source"])
+        run_id = source.get("scheduled_task_run_id")
+        if type(run_id) is int:
+            # Existing Scheduled run/Attempt readers use this typed JSON path.
+            source["context"] = {"trigger_raw_payload": {"scheduled_task_run_id": run_id}}
+        if "service_task" in source or "source" in source:
+            source["raw_payload"] = {
+                key: source[key] for key in ("service_task", "source") if key in source
+            }
+        source["input_compacted"] = True
+        return json.dumps(source, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    @classmethod
+    def _compact_settled_reply_task_input(
+        cls, db: sqlite3.Connection, task_id: int,
+    ) -> bool:
+        """Compact one settled task and its input copies in the same transaction."""
+        task = db.execute("select * from reply_tasks where id=?", (task_id,)).fetchone()
+        if task is None or task["status"] not in {"done", "skipped"}:
+            return False
+        if (int(task["claimed_input_version"]) > 0
+            and int(task["input_version"]) > int(task["claimed_input_version"])):
+            return False
+        if db.execute(
+            "select 1 from agent_runs where reply_task_id=? and status='running' limit 1",
+            (task_id,),
+        ).fetchone() is not None:
+            return False
+        if db.execute(
+            """select 1 from agent_runtime_attempts attempts
+               join agent_runs runs on runs.id=attempts.agent_run_id
+               where runs.reply_task_id=? and attempts.status in ('starting','running')
+               limit 1""",
+            (task_id,),
+        ).fetchone() is not None:
+            return False
+        if db.execute(
+            """select 1 from wechat_deliveries where reply_task_id=?
+               and execution_generation=? and status in ('ready_to_send','sending')
+               limit 1""",
+            (task_id, task["execution_generation"]),
+        ).fetchone() is not None:
+            return False
+        if db.execute(
+            """select 1 from dispatcher_claim_leases where source_id=?
+               and adapter_name in ('reply','scheduled_execution') and terminal_at=''
+               and owner<>'' limit 1""",
+            (str(task_id),),
+        ).fetchone() is not None:
+            return False
+        if task["status"] == "done":
+            latest = db.execute(
+                "select status from agent_runs where reply_task_id=? "
+                "and execution_generation=? order by id desc limit 1",
+                (task_id, task["execution_generation"]),
+            ).fetchone()
+            if latest is not None and latest["status"] == "failed":
+                # Match the receipt/settlement exclusions used by
+                # reconcile_done_reply_tasks_with_failed_current_run.
+                settled = db.execute(
+                    """select 1 from external_action_results actions
+                       join sent_replies replies
+                         on replies.external_action_key=actions.external_action_key
+                       where actions.business_object_key=? limit 1""",
+                    (task["business_object_key"],),
+                ).fetchone() is not None
+                if not settled:
+                    settled = db.execute(
+                        """select 1 from errors where conversation_id=?
+                           and message_id=? and kind='reply_task_already_settled'
+                           and trim(coalesce(resolved_at,''))<>''
+                           and trim(coalesce(resolution,''))<>'' limit 1""",
+                        (task["conversation_id"], task["trigger_message_id"]),
+                    ).fetchone() is not None
+                if not settled and cls._email_unsubscribe_receipts_table_exists(db):
+                    outcomes = [
+                        *cls._email_unsubscribe_outcomes_by_task_status()["done"],
+                        *cls._email_unsubscribe_outcomes_by_task_status()["skipped"],
+                    ]
+                    placeholders = ",".join("?" for _ in outcomes)
+                    settled = db.execute(
+                        f"select 1 from email_unsubscribe_receipts "
+                        f"where ?='email' and action_identity=? "
+                        f"and outcome in ({placeholders}) limit 1",
+                        (task["channel"], task["trigger_message_id"], *outcomes),
+                    ).fetchone() is not None
+                if not settled:
+                    return False
+        latest_attempt = db.execute(
+            """select send_status, resolved_at from reply_attempts where channel=?
+               and conversation_id=? and trigger_message_id=?
+               order by id desc limit 1""",
+            (task["channel"], task["conversation_id"], task["trigger_message_id"]),
+        ).fetchone()
+        if (latest_attempt is not None
+            and latest_attempt["send_status"] in {"pending", "processing", "blocked", "needs_human"}
+            and not str(latest_attempt["resolved_at"] or "").strip()):
+            return False
+        if not task["input_compacted"]:
+            provenance = cls._reply_input_provenance(
+                str(task["trigger_text"]), str(task["trigger_message_json"])
+            )
+            db.execute(
+                "update reply_tasks set trigger_text='', trigger_message_json=?, "
+                "input_provenance_json=?, input_compacted=1 where id=? and input_compacted=0",
+                (cls._compact_reply_input_json(provenance), provenance, task_id),
+            )
+        inputs = db.execute(
+            "select * from reply_task_inputs where reply_task_id=? and input_compacted=0",
+            (task_id,),
+        ).fetchall()
+        for item in inputs:
+            provenance = cls._reply_input_provenance(
+                str(item["trigger_text"]), str(item["trigger_message_json"])
+            )
+            db.execute(
+                "update reply_task_inputs set trigger_text='', trigger_message_json=?, "
+                "input_provenance_json=?, input_compacted=1 where id=? and input_compacted=0",
+                (cls._compact_reply_input_json(provenance), provenance, item["id"]),
+            )
+        identities = {
+            (str(task["channel"]), str(task["conversation_id"]),
+             str(task["trigger_message_id"])),
+            *((str(item["channel"]), str(item["conversation_id"]),
+               str(item["trigger_message_id"])) for item in db.execute(
+                   "select channel, conversation_id, trigger_message_id "
+                   "from reply_task_inputs where reply_task_id=?", (task_id,)
+               ).fetchall()),
+        }
+        for channel, conversation_id, message_id in identities:
+            other_active = db.execute(
+                """select 1 from reply_tasks where channel=? and conversation_id=?
+                   and trigger_message_id=? and id<>?
+                   and status in ('pending','processing','failed','needs_human')
+                   limit 1""",
+                (channel, conversation_id, message_id, task_id),
+            ).fetchone()
+            if other_active is None:
+                attempts = db.execute(
+                    "select id, trigger_text from reply_attempts where channel=? "
+                    "and conversation_id=? and trigger_message_id=? and trigger_text<>''",
+                    (channel, conversation_id, message_id),
+                ).fetchall()
+                input_refs = db.execute(
+                    "select id, input_provenance_json from reply_task_inputs "
+                    "where reply_task_id=? and channel=? and conversation_id=? "
+                    "and trigger_message_id=?",
+                    (task_id, channel, conversation_id, message_id),
+                ).fetchall()
+                for attempt in attempts:
+                    raw = str(attempt["trigger_text"]).encode("utf-8")
+                    digest = hashlib.sha256(raw).hexdigest()
+                    matching_input_id = next((
+                        int(item["id"]) for item in input_refs
+                        if json.loads(str(item["input_provenance_json"]))
+                        .get("trigger_text", {}).get("sha256") == digest
+                    ), 0)
+                    provenance = json.dumps(
+                        {"sha256": digest, "bytes": len(raw),
+                         "reply_task_id": task_id,
+                         "matching_input_id": matching_input_id},
+                        sort_keys=True, separators=(",", ":"),
+                    )
+                    db.execute(
+                        "update reply_attempts set trigger_text='', "
+                        "trigger_text_provenance_json=? where id=? and trigger_text<>''",
+                        (provenance, attempt["id"]),
+                    )
+        return True
+
+    @staticmethod
     def _reply_task_from_row(row: sqlite3.Row) -> ReplyTask:
         return ReplyTask(
             id=row["id"],
@@ -10647,6 +11532,14 @@ class AutoReplyStore:
                 if "claimed_input_version" in row.keys()
                 else 0
             ),
+            input_provenance_json=(
+                str(row["input_provenance_json"])
+                if "input_provenance_json" in row.keys() else "{}"
+            ),
+            input_compacted=(
+                bool(row["input_compacted"])
+                if "input_compacted" in row.keys() else False
+            ),
             status=row["status"],
             attempts=row["attempts"],
             locked_at=row["locked_at"],
@@ -10662,14 +11555,11 @@ class AutoReplyStore:
         db: sqlite3.Connection,
         load_events: bool = True,
     ) -> AgentRun:
+        from app.native_trajectory import hydrate_run_events, read_native_result_json
         tool_events: list[dict[str, object]] = []
         if load_events:
-            event_rows = db.execute(
-                "select event_json from agent_run_events "
-                "where agent_run_id=? order by sequence",
-                (row["id"],),
-            ).fetchall()
-            tool_events = [json.loads(event["event_json"]) for event in event_rows]
+            db_path = str(db.execute("pragma database_list").fetchone()[2])
+            tool_events = hydrate_run_events(db, row, db_path)
         return AgentRun(
             id=row["id"],
             reply_task_id=row["reply_task_id"],
@@ -10683,7 +11573,14 @@ class AutoReplyStore:
             codex_session_id=row["codex_session_id"],
             transcript_start_line=row["transcript_start_line"],
             transcript_end_line=row["transcript_end_line"],
-            final_result_json=row["final_result_json"],
+            final_result_json=(
+                read_native_result_json(db, row)
+                if load_events and row["status"] == "completed" else ""
+            ),
+            adopted_result_json=(
+                str(row["adopted_result_json"] or "")
+                if "adopted_result_json" in row.keys() else ""
+            ),
             structured_error_json=row["structured_error_json"],
             tool_events=tool_events,
             lease_owner=row["lease_owner"],
@@ -10934,6 +11831,7 @@ class AutoReplyStore:
                         channel=?, conversation_id=?, conversation_title=?,
                         single_chat=?, trigger_message_id=?, trigger_create_time=?,
                         trigger_sender=?, trigger_text=?, trigger_message_json=?,
+                        input_provenance_json='{}', input_compacted=0,
                         oa_url=?, business_object_key=?, input_version=input_version+1,
                         status=case when status in ('done','failed') then 'pending' else status end,
                         attempts=case when status in ('done','failed') then 0 else attempts end,
@@ -11232,7 +12130,13 @@ class AutoReplyStore:
                 "oa_url": spec.oa_url,
             }
             if input_row is None or any(
-                input_row[field_name] != expected
+                (
+                    json.loads(str(input_row["input_provenance_json"]))[field_name]["sha256"]
+                    != hashlib.sha256(expected.encode("utf-8")).hexdigest()
+                    if input_row["input_compacted"]
+                    and field_name in {"trigger_text", "trigger_message_json"}
+                    else input_row[field_name] != expected
+                )
                 for field_name, expected in expected_input.items()
             ):
                 raise ReplyTaskIdentityConflict(
@@ -11256,8 +12160,45 @@ class AutoReplyStore:
         attempt_id: int = 0,
         channel: str = "dingtalk",
         force_rotation: bool = False,
+        expected_execution_generation: str | None = None,
     ) -> ReplyTask:
         with self._immediate_write_transaction() as db:
+            if expected_execution_generation is not None:
+                from app.agent_reported_error import (
+                    PROVIDER_RISK_REJECTION_RERUN_BLOCK_REASON, is_provider_risk_rejection,
+                )
+
+                current = db.execute(
+                    "select id,execution_generation,error from reply_tasks "
+                    "where channel=? and conversation_id=? and trigger_message_id=?",
+                    (channel, conversation_id, trigger_message_id),
+                ).fetchone()
+                if current is None or current["execution_generation"] != expected_execution_generation:
+                    raise ManualRerunConflict("reply task generation changed during source read")
+                attempt = db.execute(
+                    "select agent_run_id,send_status,send_error,resolved_at,resolution "
+                    "from reply_attempts where id=? and channel=? "
+                    "and conversation_id=? and trigger_message_id=?",
+                    (attempt_id, channel, conversation_id, trigger_message_id),
+                ).fetchone()
+                if attempt is None:
+                    raise ManualRerunConflict("manual rerun attempt identity changed")
+                if attempt["resolved_at"] and attempt["send_status"] in {"needs_human", "skipped"}:
+                    raise ManualRerunConflict(attempt["resolution"] or "historical attempt was retired")
+                terminal = db.execute(
+                    "select structured_error_json from agent_runs where id=?",
+                    (attempt["agent_run_id"],),
+                ).fetchone()
+                current_errors = db.execute(
+                    "select structured_error_json from agent_runs "
+                    "where reply_task_id=? and execution_generation=?",
+                    (current["id"], expected_execution_generation),
+                ).fetchall()
+                if (is_provider_risk_rejection(
+                        terminal[0] if terminal is not None else "", attempt_error=attempt["send_error"])
+                        or is_provider_risk_rejection("", attempt_error=current["error"])
+                        or any(is_provider_risk_rejection(row[0]) for row in current_errors)):
+                    raise ManualRerunConflict(PROVIDER_RISK_REJECTION_RERUN_BLOCK_REASON)
             revision_key = self._manual_rerun_revision_key(db, attempt_id)
             task = self._enqueue_manual_rerun_reply_task_in_connection(
                 db,
@@ -11331,6 +12272,12 @@ class AutoReplyStore:
         channel: str,
         force_rotation: bool = False,
     ) -> ReplyTask:
+        try:
+            raw_input = json.loads(trigger_message_json)
+        except (TypeError, json.JSONDecodeError):
+            raw_input = None
+        if isinstance(raw_input, dict) and raw_input.get("input_compacted") is True:
+            raise ValueError("original reply task input is unavailable")
         existing = db.execute(
             """
             select * from reply_tasks
@@ -11390,6 +12337,8 @@ class AutoReplyStore:
                 trigger_sender=excluded.trigger_sender,
                 trigger_text=excluded.trigger_text,
                 trigger_message_json=excluded.trigger_message_json,
+                input_provenance_json='{}',
+                input_compacted=0,
                 available_at='',
                 attempts=0,
                 force_new_decision=1,
@@ -11430,13 +12379,21 @@ class AutoReplyStore:
             raise RuntimeError("manual rerun reply task was not persisted")
         return cls._reply_task_from_row(row)
 
-    def get_agent_run(self, run_id: int) -> AgentRun | None:
+    def get_agent_run(self, run_id: int, *, load_events: bool = True) -> AgentRun | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from agent_runs where id=?",
+                """select agent_runs.*,
+                          case agent_runs.role
+                            when 'consumer' then candidate.candidate_json
+                            when 'audit' then review.result_json
+                          end as adopted_result_json
+                   from agent_runs
+                   left join review_candidates candidate on candidate.consumer_run_id=agent_runs.id
+                   left join candidate_reviews review on review.audit_run_id=agent_runs.id
+                   where agent_runs.id=?""",
                 (run_id,),
             ).fetchone()
-            return self._agent_run_from_row(row, db=db) if row is not None else None
+            return self._agent_run_from_row(row, db=db, load_events=load_events) if row is not None else None
 
     def get_agent_run_for_turn(
         self,
@@ -11451,10 +12408,16 @@ class AutoReplyStore:
         with self._connect() as db:
             row = db.execute(
                 """
-                select *
+                select agent_runs.*,
+                       case agent_runs.role
+                         when 'consumer' then candidate.candidate_json
+                         when 'audit' then review.result_json
+                       end as adopted_result_json
                 from agent_runs
-                where reply_task_id=? and execution_generation=? and role=?
-                  and proposal_revision=? and turn_attempt=?
+                left join review_candidates candidate on candidate.consumer_run_id=agent_runs.id
+                left join candidate_reviews review on review.audit_run_id=agent_runs.id
+                where agent_runs.reply_task_id=? and agent_runs.execution_generation=? and agent_runs.role=?
+                  and agent_runs.proposal_revision=? and agent_runs.turn_attempt=?
                 """,
                 (
                     reply_task_id,
@@ -11501,19 +12464,73 @@ class AutoReplyStore:
         self,
         reply_task_id: int,
         execution_generation: str,
+        *,
+        load_events: bool = True,
     ) -> list[AgentRun]:
         with self._connect() as db:
             rows = db.execute(
                 """
-                select * from agent_runs
-                where reply_task_id=? and execution_generation=?
-                order by proposal_revision,
-                         case role when 'consumer' then 0 else 1 end,
-                         turn_attempt, id
+                select agent_runs.*,
+                       case agent_runs.role
+                         when 'consumer' then candidate.candidate_json
+                         when 'audit' then review.result_json
+                       end as adopted_result_json
+                from agent_runs
+                left join review_candidates candidate on candidate.consumer_run_id=agent_runs.id
+                left join candidate_reviews review on review.audit_run_id=agent_runs.id
+                where agent_runs.reply_task_id=? and agent_runs.execution_generation=?
+                order by agent_runs.proposal_revision,
+                         case agent_runs.role when 'consumer' then 0 else 1 end,
+                         agent_runs.turn_attempt, agent_runs.id
                 """,
                 (reply_task_id, execution_generation),
             ).fetchall()
-            return [self._agent_run_from_row(row, db=db) for row in rows]
+            runs = [
+                self._agent_run_from_row(row, db=db, load_events=False)
+                for row in rows
+            ]
+            event_attempts_by_run = {}
+            result_attempt_by_run = {}
+            if load_events and rows:
+                run_ids = [int(row["id"]) for row in rows]
+                placeholders = ",".join("?" for _ in run_ids)
+                event_attempts = db.execute(
+                    "select agent_run_id, runtime_kind, session_id, transcript_reference, "
+                    "transcript_start, transcript_end, started_at, finished_at "
+                    "from agent_runtime_attempts where session_id<>'' "
+                    f"and agent_run_id in ({placeholders}) order by agent_run_id,id",
+                    run_ids,
+                ).fetchall()
+                for attempt in event_attempts:
+                    event_attempts_by_run.setdefault(int(attempt["agent_run_id"]), []).append(attempt)
+                result_attempts = db.execute(
+                    "select agent_run_id, runtime_kind, session_id, transcript_start, transcript_end "
+                    "from agent_runtime_attempts where status='completed' "
+                    f"and agent_run_id in ({placeholders}) order by agent_run_id,id desc",
+                    run_ids,
+                ).fetchall()
+                for attempt in result_attempts:
+                    result_attempt_by_run.setdefault(int(attempt["agent_run_id"]), attempt)
+
+        if not load_events or not rows:
+            return runs
+        from app.native_trajectory import (
+            hydrate_run_events_from_attempts,
+            read_native_result_json_from_attempt,
+        )
+        db_path = str(self.path.resolve())
+        hydrated = []
+        for run, row in zip(runs, rows):
+            run_id = int(row["id"])
+            hydrated.append(run.model_copy(update={
+                "tool_events": hydrate_run_events_from_attempts(
+                    row, event_attempts_by_run.get(run_id, []), db_path
+                ),
+                "final_result_json": read_native_result_json_from_attempt(
+                    row, result_attempt_by_run.get(run_id)
+                ) if run.status == "completed" else "",
+            }))
+        return hydrated
 
     def list_agent_run_summaries_for_terminal_runs(
         self,
@@ -11535,11 +12552,17 @@ class AutoReplyStore:
                     from agent_runs
                     where id in ({placeholders})
                 )
-                select terminal_runs.terminal_id, agent_runs.*
+                select terminal_runs.terminal_id, agent_runs.*,
+                       case agent_runs.role
+                         when 'consumer' then candidate.candidate_json
+                         when 'audit' then review.result_json
+                       end as adopted_result_json
                 from terminal_runs
                 join agent_runs
                   on agent_runs.reply_task_id=terminal_runs.reply_task_id
                  and agent_runs.execution_generation=terminal_runs.execution_generation
+                left join review_candidates candidate on candidate.consumer_run_id=agent_runs.id
+                left join candidate_reviews review on review.audit_run_id=agent_runs.id
                 order by terminal_runs.terminal_id,
                          agent_runs.proposal_revision,
                          case agent_runs.role when 'consumer' then 0 else 1 end,
@@ -11639,9 +12662,14 @@ class AutoReplyStore:
             task_id, separator, suffix = workload_key.partition(":")
             if not task_id.isdecimal() or int(task_id) <= 0:
                 raise ValueError("task workload key must start with a persisted ID")
+            operation, _, round_text = suffix.partition(".")
             if separator and not (
                 suffix == "memory_backfill"
                 or re.fullmatch(r"deadline_backfill(?:\.[1-9]\d*)?", suffix)
+                or (
+                    operation == "decision_repair" and round_text.isdecimal()
+                    and int(round_text) > 0 and str(int(round_text)) == round_text
+                )
             ):
                 raise ValueError("task workload key has an unsupported suffix")
         elif workload_kind == "weekly_okr":
@@ -11780,7 +12808,7 @@ class AutoReplyStore:
                     "select 1 from work_todos where id=? "
                     "and status in ('open', 'waiting_owner')"
                 )
-            elif separator:
+            elif separator and not suffix.startswith("decision_repair."):
                 query = (
                     "select 1 from work_projects where id=? "
                     "and status in ('active', 'waiting', 'done', 'archived')"
@@ -12317,7 +13345,7 @@ class AutoReplyStore:
             row = self._runtime_attempt_for_transition(db, attempt_id)
             expected = (
                 session_id, transcript_reference, transcript_start, transcript_end,
-                result_schema_id, result_envelope_json,
+                result_schema_id,
             )
             actual = (
                 row["session_id"],
@@ -12325,9 +13353,12 @@ class AutoReplyStore:
                 row["transcript_start"],
                 row["transcript_end"],
                 row["result_schema_id"],
-                row["result_envelope_json"],
             )
             if row["status"] == "completed":
+                if agent_run_final_result is not None:
+                    candidate = db.execute("select candidate_json from review_candidates where consumer_run_id=?", (row["agent_run_id"],)).fetchone()
+                    if candidate is None or candidate[0] != agent_run_final_result_json:
+                        raise ValueError("conflicting terminal rewrite")
                 if actual == expected:
                     return self._agent_runtime_attempt_from_row(row)
                 raise ValueError("conflicting terminal rewrite")
@@ -12374,7 +13405,7 @@ class AutoReplyStore:
                     transcript_start,
                     transcript_end,
                     result_schema_id,
-                    result_envelope_json,
+                    "",
                     now_text,
                     now_text,
                     attempt_id,
@@ -12405,7 +13436,7 @@ class AutoReplyStore:
                       and lease_expires_at>?
                     """,
                     (
-                        agent_run_final_result_json,
+                        "",
                         agent_run_transcript_end,
                         now_text,
                         now_text,
@@ -12418,6 +13449,8 @@ class AutoReplyStore:
                     raise AgentRunLeaseLostError(
                         f"agent run lease lost: {row['agent_run_id']}"
                     )
+                completed_run = db.execute("select * from agent_runs where id=?", (row["agent_run_id"],)).fetchone()
+                self._adopt_review_candidate_in_connection(db, completed_run, agent_run_final_result)
             return self._agent_runtime_attempt_from_row(
                 self._runtime_attempt_for_transition(db, attempt_id)
             )
@@ -12513,7 +13546,8 @@ class AutoReplyStore:
                     lease_owner='', lease_expires_at='', finished_at=?, updated_at=?
                 where attempt.agent_run_id is null
                   and attempt.workload_kind='task'
-                  and attempt.workload_key not like '%:%'
+                  and (attempt.workload_key not like '%:%'
+                       or attempt.workload_key like '%:decision_repair.%')
                   and attempt.status in ('starting', 'running')
                   and attempt.first_effect_started_at=''
                   and attempt.lease_expires_at!=''
@@ -12521,7 +13555,7 @@ class AutoReplyStore:
                   and exists (
                       select 1
                       from task_agent_runs as task_run
-                      where cast(task_run.id as text)=attempt.workload_key
+                      where task_run.id=cast(attempt.workload_key as integer)
                         and task_run.status in ('completed', 'failed')
                   )
                 """,
@@ -12694,6 +13728,7 @@ class AutoReplyStore:
         session_id: str,
         transcript_reference: str | None = None,
         *,
+        transcript_start: int | None = None,
         owner: str = "legacy-runtime-owner",
         now: str | datetime | None = None,
     ) -> AgentRuntimeAttempt:
@@ -12722,13 +13757,17 @@ class AutoReplyStore:
             db.execute(
                 """
                 update agent_runtime_attempts
-                set session_id=?, transcript_reference=?, updated_at=?
+                set session_id=?, transcript_reference=?,
+                    transcript_start=coalesce(?,transcript_start),
+                    transcript_end=max(transcript_end,coalesce(?,transcript_start)),
+                    updated_at=?
                 where id=? and status in ('starting', 'running')
                   and (agent_run_id is not null
                        or (lease_owner=? and lease_expires_at>?))
                 """,
                 (
-                    session_id, selected_reference, now_text, attempt_id,
+                    session_id, selected_reference, transcript_start, transcript_start,
+                    now_text, attempt_id,
                     owner, now_text,
                 ),
             )
@@ -12748,6 +13787,8 @@ class AutoReplyStore:
         transcript_start: int | None = None,
         transcript_end: int | None = None,
         owner: str = "legacy-runtime-owner",
+        agent_run_error: dict[str, object] | None = None,
+        agent_run_transcript_end: int | None = None,
         now: str | datetime | None = None,
     ) -> AgentRuntimeAttempt:
         failure_class, failure_code, failover_permitted = self._validate_runtime_failure(
@@ -12757,6 +13798,11 @@ class AutoReplyStore:
             raise TypeError("runtime attempt session and transcript reference must be strings")
         if transcript_reference is not None and not isinstance(transcript_reference, str):
             raise TypeError("runtime attempt session and transcript reference must be strings")
+        error_json = ""
+        if agent_run_error is not None:
+            error_json = _json_object_text(agent_run_error, field="agent_run_error")
+            if agent_run_transcript_end is None or agent_run_transcript_end < 0:
+                raise ValueError("agent run transcript end is required")
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             row = self._runtime_attempt_for_transition(db, attempt_id)
             session_id = row["session_id"] if session_id is None else session_id
@@ -12794,6 +13840,10 @@ class AutoReplyStore:
                 row["transcript_end"],
             )
             if row["status"] == "failed":
+                if agent_run_error is not None:
+                    run = db.execute("select status,structured_error_json,transcript_end_line from agent_runs where id=?", (row["agent_run_id"],)).fetchone()
+                    if run is None or tuple(run) != ("failed", error_json, agent_run_transcript_end):
+                        raise ValueError("conflicting terminal rewrite")
                 if actual == expected:
                     return self._agent_runtime_attempt_from_row(row)
                 raise ValueError("conflicting terminal rewrite")
@@ -12802,6 +13852,13 @@ class AutoReplyStore:
                 raise ValueError("cannot transition from completed runtime attempt")
             if row["status"] == "superseded":
                 raise ValueError("cannot fail terminal runtime attempt")
+            if agent_run_error is not None:
+                if row["agent_run_id"] is None:
+                    raise ValueError("agent run error requires agent run")
+                self._require_current_agent_run_write_access(
+                    db, row["agent_run_id"], owner=owner, now_text=now_text,
+                    expected_status="running",
+                )
             cursor = db.execute(
                 """
                 update agent_runtime_attempts
@@ -12830,6 +13887,16 @@ class AutoReplyStore:
             )
             if cursor.rowcount != 1:
                 raise ValueError("runtime attempt transition conflict")
+            if agent_run_error is not None:
+                cursor = db.execute("""update agent_runs
+                    set status='failed',final_result_json='',structured_error_json=?,
+                        transcript_end_line=?,lease_owner='',lease_expires_at='',
+                        completed_at=?,updated_at=?
+                    where id=? and status='running' and lease_owner=? and lease_expires_at>?""",
+                    (error_json, agent_run_transcript_end, now_text, now_text,
+                     row["agent_run_id"], owner, now_text))
+                if cursor.rowcount != 1:
+                    raise AgentRunLeaseLostError(f"agent run lease lost: {row['agent_run_id']}")
             return self._agent_runtime_attempt_from_row(
                 self._runtime_attempt_for_transition(db, attempt_id)
             )
@@ -12884,6 +13951,39 @@ class AutoReplyStore:
                 (agent_run_id,),
             ).fetchall()
             return [self._agent_runtime_attempt_from_row(row) for row in rows]
+
+    def list_agent_runtime_attempts_for_runs(
+        self,
+        agent_run_ids: list[int],
+    ) -> dict[int, list[AgentRuntimeAttempt]]:
+        run_ids = list(
+            dict.fromkeys(
+                run_id
+                for run_id in agent_run_ids
+                if type(run_id) is int and run_id > 0
+            )
+        )
+        attempts_by_run: dict[int, list[AgentRuntimeAttempt]] = {
+            run_id: [] for run_id in run_ids
+        }
+        if not run_ids:
+            return attempts_by_run
+        with self._connect() as db:
+            for start in range(0, len(run_ids), 800):
+                chunk = run_ids[start : start + 800]
+                placeholders = ", ".join("?" for _ in chunk)
+                rows = db.execute(
+                    "select * from agent_runtime_attempts "
+                    f"where agent_run_id in ({placeholders}) "
+                    "order by agent_run_id, attempt_number",
+                    tuple(chunk),
+                ).fetchall()
+                for row in rows:
+                    run_id = int(row["agent_run_id"])
+                    attempts_by_run[run_id].append(
+                        self._agent_runtime_attempt_from_row(row)
+                    )
+        return attempts_by_run
 
     def list_runtime_operation_attempts(
         self,
@@ -13025,6 +14125,7 @@ class AutoReplyStore:
         parent_agent_run_id: int | None,
         operation_id: str,
         owner: str,
+        fresh_session: bool = False,
         lease_seconds: int = 1800,
         now: str | datetime | None = None,
     ) -> AgentRunClaim:
@@ -13112,9 +14213,14 @@ class AutoReplyStore:
                     )
             prior_session = db.execute(
                 """
-                select codex_session_id from agent_runs
+                select case
+                  when status='failed' and json_valid(structured_error_json)
+                  then case when json_type(structured_error_json, '$.session_continuable')='false'
+                    then '' else codex_session_id end
+                  else codex_session_id end as codex_session_id
+                from agent_runs
                 where reply_task_id=? and execution_generation=? and role=?
-                  and proposal_revision=? and codex_session_id<>''
+                  and proposal_revision=?
                 order by turn_attempt desc, id desc
                 limit 1
                 """,
@@ -13127,7 +14233,7 @@ class AutoReplyStore:
             ).fetchone()
             codex_session_id = (
                 str(prior_session["codex_session_id"])
-                if prior_session is not None
+                if prior_session is not None and not fresh_session
                 else ""
             )
             cursor = db.execute(
@@ -13351,15 +14457,9 @@ class AutoReplyStore:
     ) -> AgentRun:
         if not owner.strip():
             raise ValueError("owner must be non-empty")
+        from app.native_trajectory import remember_live_event
         event_text = _json_object_text(event, field="event")
         normalized_event = json.loads(event_text)
-        event_type = str(normalized_event.get("type") or "")
-        item = normalized_event.get("item")
-        call_id = (
-            str(item.get("id") or item.get("call_id") or "")
-            if isinstance(item, dict)
-            else ""
-        )
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             status_row = db.execute(
                 "select agent_runs.status, agent_runs.execution_generation, "
@@ -13383,29 +14483,6 @@ class AutoReplyStore:
                 now_text=now_text,
                 status_error="cannot append event to terminal agent run",
             )
-            sequence = db.execute(
-                "select coalesce(max(sequence), 0) + 1 from agent_run_events "
-                "where agent_run_id=?",
-                (run_id,),
-            ).fetchone()[0]
-            db.execute(
-                """
-                insert into agent_run_events (
-                    agent_run_id, sequence, event_json, event_type,
-                    call_id, effect_kind, receipt_operation_id, event_scope, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, 'direct', ?)
-                """,
-                (
-                    run_id,
-                    sequence,
-                    event_text,
-                    event_type,
-                    call_id,
-                    "",
-                    "",
-                    now_text,
-                ),
-            )
             cursor = db.execute(
                 """
                 update agent_runs
@@ -13422,9 +14499,108 @@ class AutoReplyStore:
                 "select * from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
-            return self._agent_run_from_row(updated, db=db, load_events=False)
+            result = self._agent_run_from_row(updated, db=db, load_events=False)
+            # Serialize publication with terminal writers using the existing
+            # SQLite write lock, so completion cannot evict before this append.
+            # This is the observed live stream: a later SQLite commit failure
+            # does not undo observing the event while the run is still active.
+            remember_live_event(str(self.path.resolve()), run_id, normalized_event)
+        return result
 
     def _transition_agent_run(
+        self, run_id: int, *, owner: str | None, target_status: str,
+        final_result_json: str, structured_error_json: str,
+        transcript_end_line: int | None, now: str | datetime | None,
+    ) -> AgentRun:
+        if owner is None or not owner.strip():
+            raise ValueError("owner must be non-empty")
+        if target_status not in {"completed", "failed"}:
+            raise ValueError("invalid terminal agent run status")
+        if transcript_end_line is not None and transcript_end_line < 0:
+            raise ValueError("transcript_end_line must not be negative")
+        snapshot = self._agent_run_terminal_native_snapshot(run_id) if target_status == "completed" else None
+        transition = {
+            "owner": owner, "target_status": target_status,
+            "final_result_json": final_result_json, "structured_error_json": structured_error_json,
+            "transcript_end_line": transcript_end_line, "now": now,
+        }
+        try:
+            metadata = self._transition_agent_run_locked(run_id, **transition, native_snapshot=snapshot)
+        except _AgentRunTerminalSnapshotRequired:
+            # Another writer completed after pre-read. The aborted transaction
+            # must release its lock before fetching the terminal native source.
+            snapshot = self._agent_run_terminal_native_snapshot(run_id)
+            metadata = self._transition_agent_run_locked(run_id, **transition, native_snapshot=snapshot)
+        loaded = self.get_agent_run(metadata.id)
+        if loaded is None:
+            raise ValueError("agent run does not exist")
+        return loaded
+
+    @staticmethod
+    def _agent_run_terminal_reference(db, row):
+        attempt = db.execute(
+            "select * from agent_runtime_attempts where agent_run_id=? and status='completed' order by id desc limit 1",
+            (row["id"],),
+        ).fetchone()
+        identity = tuple(row[key] for key in (
+            "id", "reply_task_id", "execution_generation", "task_execution_generation",
+            "task_channel", "role", "status", "codex_session_id",
+            "transcript_start_line", "transcript_end_line",
+        ))
+        reference = tuple(attempt[key] for key in (
+            "id", "runtime_kind", "session_id", "status", "transcript_start", "transcript_end",
+            "transcript_reference",
+        )) if attempt is not None else None
+        return (identity, reference), attempt
+
+    def _agent_run_terminal_native_snapshot(self, run_id):
+        from app.native_trajectory import read_native_result_json_from_attempt, read_native_result_stream
+
+        with self._connect() as db:
+            row = db.execute(
+                """select agent_runs.*, reply_tasks.channel as task_channel,
+                    reply_tasks.execution_generation as task_execution_generation
+                    from agent_runs join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
+                    where agent_runs.id=?""", (run_id,),
+            ).fetchone()
+            if row is None or row["status"] != "completed":
+                return None
+            if row["role"] == "consumer":
+                if row["task_channel"] != "wechat" or db.execute(
+                    "select 1 from review_candidates where consumer_run_id=?", (run_id,),
+                ).fetchone():
+                    return None
+            elif db.execute("select 1 from candidate_reviews where audit_run_id=?", (run_id,)).fetchone():
+                return None
+            fingerprint, attempt = self._agent_run_terminal_reference(db, row)
+        if row["role"] == "consumer":
+            from app.codex_decision import (
+                extract_codex_audit_events, finalize_codex_decision, parse_codex_json,
+            )
+            from app.codex_history import extract_codex_audit_events_from_session
+            from app.native_trajectory import read_run_events_from_attempts
+
+            events = []
+            kind = attempt["runtime_kind"] if attempt is not None else "codex_cli"
+            session = attempt["session_id"] if attempt is not None else row["codex_session_id"]
+            start = attempt["transcript_start"] if attempt is not None else row["transcript_start_line"]
+            end = attempt["transcript_end"] if attempt is not None else row["transcript_end_line"]
+            raw = read_native_result_stream(kind, session, start, end)
+            if not raw:
+                return fingerprint, ""
+            if kind == "codex_cli":
+                events = extract_codex_audit_events_from_session(
+                    session, start_line=start, end_line=end,
+                )
+            if not events:
+                native_events = read_run_events_from_attempts(row, [attempt] if attempt is not None else [])
+                events = extract_codex_audit_events("\n".join(json.dumps(event) for event in native_events))
+            result = finalize_codex_decision(parse_codex_json(raw), events).model_dump_json()
+        else:
+            result = read_native_result_json_from_attempt(row, attempt)
+        return fingerprint, result
+
+    def _transition_agent_run_locked(
         self,
         run_id: int,
         *,
@@ -13434,6 +14610,7 @@ class AutoReplyStore:
         structured_error_json: str,
         transcript_end_line: int | None,
         now: str | datetime | None,
+        native_snapshot=None,
     ) -> AgentRun:
         if owner is None or not owner.strip():
             raise ValueError("owner must be non-empty")
@@ -13445,7 +14622,8 @@ class AutoReplyStore:
             row = db.execute(
                 """
                 select agent_runs.*,
-                       reply_tasks.execution_generation as task_execution_generation
+                       reply_tasks.execution_generation as task_execution_generation,
+                       reply_tasks.channel as task_channel
                 from agent_runs
                 join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
                 where agent_runs.id=?
@@ -13461,14 +14639,32 @@ class AutoReplyStore:
                 if transcript_end_line is None
                 else transcript_end_line
             )
+            terminal_result = ""
+            if row["status"] == target_status and target_status == "completed":
+                if row["role"] == AgentRole.CONSUMER.value:
+                    candidate = db.execute("select candidate_json from review_candidates where consumer_run_id=?", (run_id,)).fetchone()
+                    terminal_result = candidate[0] if candidate else ""
+                else:
+                    review = db.execute("select result_json from candidate_reviews where audit_run_id=?", (run_id,)).fetchone()
+                    terminal_result = review[0] if review else ""
+                if (not terminal_result and native_snapshot is None
+                    and (row["role"] == AgentRole.AUDIT.value or row["task_channel"] == "wechat")):
+                    raise _AgentRunTerminalSnapshotRequired()
+                if not terminal_result and native_snapshot is not None:
+                    fingerprint, _ = self._agent_run_terminal_reference(db, row)
+                    if fingerprint != native_snapshot[0]:
+                        raise ValueError("native terminal reference changed")
+                    terminal_result = native_snapshot[1]
             exact_terminal_write = (
                 row["status"] == target_status
-                and row["final_result_json"] == final_result_json
+                and (target_status == "failed" or (
+                    bool(terminal_result) and json.loads(terminal_result) == json.loads(final_result_json)
+                ))
                 and row["structured_error_json"] == structured_error_json
                 and row["transcript_end_line"] == end_line
             )
             if exact_terminal_write:
-                return self._agent_run_from_row(row, db=db)
+                return self._agent_run_from_row(row, db=db, load_events=False)
             if row["status"] == target_status:
                 raise ValueError("conflicting terminal rewrite")
             if row["status"] == "completed":
@@ -13487,7 +14683,7 @@ class AutoReplyStore:
             completed_at = now_text
             values = (
                 target_status,
-                final_result_json,
+                "",
                 structured_error_json,
                 end_line,
                 completed_at,
@@ -13511,7 +14707,14 @@ class AutoReplyStore:
                 "select * from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
-            return self._agent_run_from_row(updated, db=db)
+            if target_status == "completed":
+                if row["role"] == AgentRole.CONSUMER.value:
+                    self._adopt_review_candidate_in_connection(db, updated, json.loads(final_result_json))
+                else:
+                    candidate = db.execute("select id from review_candidates where consumer_run_id=?", (row["parent_agent_run_id"],)).fetchone()
+                    if candidate is not None:
+                        self._adopt_candidate_review_in_connection(db, candidate["id"], run_id, json.loads(final_result_json))
+            return self._agent_run_from_row(updated, db=db, load_events=False)
 
     def complete_agent_run(
         self,
@@ -13574,14 +14777,18 @@ class AutoReplyStore:
         owner = self._require_runtime_attempt_text(owner, field="owner")
         with self._agent_run_write_transaction(None) as (db, _clock):
             row = db.execute(
-                "select status, lease_owner from agent_runs where id=?",
+                "select status, lease_owner, transcript_start_line, transcript_end_line from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
             if row is None or row["status"] != "running" or row["lease_owner"] != owner:
                 return False
+            if row['transcript_end_line'] > row['transcript_start_line']:
+                return False
+            from app.native_trajectory import live_events
+            if live_events(str(self.path.resolve()), run_id):
+                return False
             for table in (
                 "agent_runtime_attempts",
-                "agent_run_events",
                 "agent_effect_intents",
                 "agent_execution_receipts",
             ):
@@ -13759,6 +14966,10 @@ class AutoReplyStore:
         self, limit: int, now: str | None = None, *, channel: str = "dingtalk"
     ) -> list[ReplyTask]:
         if limit <= 0:
+            return []
+        # Empty polling must not contend with real writes. Recheck below after
+        # acquiring the write transaction; a preview never reserves a task.
+        if not self.peek_reply_tasks(1, now=now, channel=channel):
             return []
         with self._immediate_write_transaction() as db:
             now_expression = "current_timestamp" if now is None else "?"
@@ -14240,6 +15451,7 @@ class AutoReplyStore:
                     "delete from codex_session_locks where conversation_id=?",
                     (str(row["conversation_id"]),),
                 )
+                self._compact_settled_reply_task_input(db, task_id)
             updated_rows = db.execute(
                 f"select * from reply_tasks where id in ({placeholders}) order by id",
                 normalized_ids,
@@ -14490,6 +15702,9 @@ class AutoReplyStore:
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+
+            if next_status == "done":
+                self._compact_settled_reply_task_input(db, task_id)
 
 
 
@@ -15219,6 +16434,7 @@ class AutoReplyStore:
         *,
         expected_execution_generation: str,
         available_at: str = "",
+        refund_attempt: bool = True,
     ) -> None:
         if not expected_execution_generation.strip():
             raise ValueError("expected_execution_generation must be non-empty")
@@ -15227,14 +16443,14 @@ class AutoReplyStore:
                 """
                 update reply_tasks
                 set status='pending',
-                    attempts=max(attempts - 1, 0),
+                    attempts=max(attempts - ?, 0),
                     locked_at=null,
                     available_at=?,
                     error=?,
                     updated_at=current_timestamp
                 where id=? and status='processing' and execution_generation=?
                 """,
-                (available_at, error, task_id, expected_execution_generation),
+                (int(refund_attempt), available_at, error, task_id, expected_execution_generation),
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
@@ -15306,6 +16522,7 @@ class AutoReplyStore:
             )
             if ledger.rowcount != 1:
                 raise ValueError("scheduled execution claim is no longer current")
+            self._compact_settled_reply_task_input(db, task_id)
             return int(cursor.lastrowid)
 
     def defer_reply_task_for_authorization(
@@ -16174,11 +17391,14 @@ class AutoReplyStore:
         non-empty action start time but never performed a send.  User-rejected,
         sent, and uncertain deliveries do not meet this transition.
         """
-        from app.wechat.models import WechatDelivery
+        from app.wechat.models import WechatDelivery, principal_reply_supersession
 
         if delivery_id < 1:
             raise ValueError("delivery_id must be positive")
         with self._immediate_write_transaction() as db:
+            closed = db.execute("select error from wechat_deliveries where id=?", (delivery_id,)).fetchone()
+            if closed is not None and principal_reply_supersession(closed["error"]):
+                raise AgentRunLeaseLostError(f"WeChat delivery superseded by principal reply: {delivery_id}")
             cursor = db.execute(
                 """
                 update wechat_deliveries
@@ -17031,8 +18251,26 @@ class AutoReplyStore:
     @staticmethod
     def _meeting_alignment_run_from_row(
         row: sqlite3.Row,
+        ref: object,
     ) -> MeetingAlignmentRun:
-        return MeetingAlignmentRun.model_validate(dict(row))
+        from app.native_standalone import NativeStandaloneDecision, meeting_decision
+
+        values = dict(row)
+        native = (meeting_decision(ref) if ref is not None else
+                  NativeStandaloneDecision(
+                      False, "native_reference_unavailable",
+                      tool_events_reason="native_reference_unavailable",
+                  ))
+        values.update(
+            decision_json=native.decision_json,
+            audit_summary=native.audit_summary,
+            audit_tool_events_json=native.audit_tool_events_json,
+            native_available=native.available,
+            native_reason=native.reason,
+            tool_events_available=native.tool_events_available,
+            tool_events_reason=native.tool_events_reason,
+        )
+        return MeetingAlignmentRun.model_validate(values)
 
     @staticmethod
     def _validate_meeting_alignment_status(status: object) -> str:
@@ -17118,6 +18356,7 @@ class AutoReplyStore:
                         else meeting_alignment_jobs.status
                     end,
                     updated_at=current_timestamp
+                where meeting_alignment_jobs.status='waiting'
                 """,
                 (
                     meeting_id,
@@ -17309,7 +18548,7 @@ class AutoReplyStore:
         nothing reviews it. Every finished execution gets a row, including one
         with nothing to write, so "was this considered" always has an answer.
 
-        The memories are read from the stored result of the execution's last
+        The memories are read from the adopted candidate of the execution's last
         completed Consumer run, the revision the task finished on. The
         in-memory orchestration result is not used: most of its constructors
         leave ``consumer_result`` empty (OA task 384747 was queued as having no
@@ -17317,10 +18556,11 @@ class AutoReplyStore:
         """
         consumer_run = db.execute(
             """
-            select id, final_result_json from agent_runs
-            where reply_task_id=? and execution_generation=?
-              and role='consumer' and status='completed'
-            order by id desc limit 1
+            select r.id, c.candidate_json from agent_runs r
+            left join review_candidates c on c.consumer_run_id=r.id
+            where r.reply_task_id=? and r.execution_generation=?
+              and r.role='consumer' and r.status='completed'
+            order by r.id desc limit 1
             """,
             (task_id, execution_generation),
         ).fetchone()
@@ -17328,14 +18568,15 @@ class AutoReplyStore:
         if consumer_run is None:
             status, skip_reason = "skipped", "no_consumer_result"
         else:
+            adopted_result = consumer_run["candidate_json"]
             memories = list(
-                json.loads(consumer_run["final_result_json"] or "{}").get(
+                json.loads(adopted_result or "{}").get(
                     "durable_memories"
                 )
                 or []
             )
             status, skip_reason = (
-                ("pending", "") if memories else ("skipped", "no_durable_memories")
+                ("pending", "") if memories else ("skipped", "no_durable_memories" if adopted_result else "adopted_consumer_candidate_unavailable")
             )
         db.execute(
             """
@@ -17856,7 +19097,8 @@ class AutoReplyStore:
                           available_at=''
                           or datetime(available_at) <= datetime(?)
                       )
-                    order by datetime(eligible_at), id
+                    order by max(datetime(eligible_at),
+                        coalesce(datetime(nullif(available_at,'')), datetime(eligible_at))), id
                     limit ?
                 )
                 update meeting_alignment_jobs
@@ -17871,7 +19113,11 @@ class AutoReplyStore:
                 (now, now, limit),
             ).fetchall()
             jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
-            return sorted(jobs, key=lambda job: (job.eligible_at, job.id))
+            return sorted(jobs, key=lambda job: (
+                max(self._parse_stored_timestamp(job.eligible_at),
+                    self._parse_stored_timestamp(job.available_at or job.eligible_at)),
+                job.id,
+            ))
 
     def update_meeting_alignment_job(self, job_id: int, **values: object) -> None:
         if not values:
@@ -17960,7 +19206,7 @@ class AutoReplyStore:
     ) -> list[MeetingAlignmentJob]:
         if limit <= 0:
             return []
-        with self._connect() as db:
+        with self._immediate_write_transaction() as db:
             rows = db.execute(
                 """
                 with candidates as (
@@ -17985,7 +19231,17 @@ class AutoReplyStore:
                 """,
                 (now, limit),
             ).fetchall()
-            jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
+            token = uuid4().hex
+            jobs = [
+                self._meeting_alignment_job_from_row(row).model_copy(
+                    update={"delivery_claim_token": token}
+                ) for row in rows
+            ]
+            db.executemany(
+                """insert into meeting_alignment_delivery_claims(job_id, claim_token)
+                   values (?, ?) on conflict(job_id) do update set claim_token=excluded.claim_token""",
+                [(job.id, token) for job in jobs],
+            )
             return sorted(jobs, key=lambda job: job.id)
 
     def claim_ready_to_send_meeting_alignment_job(
@@ -17993,7 +19249,7 @@ class AutoReplyStore:
     ) -> MeetingAlignmentJob | None:
         if job_id <= 0:
             raise ValueError("meeting alignment job id must be positive")
-        with self._connect() as db:
+        with self._immediate_write_transaction() as db:
             row = db.execute(
                 """update meeting_alignment_jobs
                    set locked_at=current_timestamp, updated_at=current_timestamp
@@ -18002,7 +19258,39 @@ class AutoReplyStore:
                    returning *""",
                 (job_id, now),
             ).fetchone()
-            return self._meeting_alignment_job_from_row(row) if row else None
+            if row is None:
+                return None
+            token = uuid4().hex
+            db.execute(
+                """insert into meeting_alignment_delivery_claims(job_id, claim_token)
+                   values (?, ?) on conflict(job_id) do update set claim_token=excluded.claim_token""",
+                (job_id, token),
+            )
+            return self._meeting_alignment_job_from_row(row).model_copy(
+                update={"delivery_claim_token": token}
+            )
+
+    def release_ready_to_send_meeting_alignment_claims(
+        self, jobs: list[MeetingAlignmentJob]
+    ) -> None:
+        if not jobs:
+            return
+        with self._immediate_write_transaction() as db:
+            db.executemany(
+                """update meeting_alignment_jobs
+                   set locked_at=null
+                   where id=? and status='ready_to_send' and locked_at=?
+                     and exists (
+                         select 1 from meeting_alignment_delivery_claims claim
+                         where claim.job_id=meeting_alignment_jobs.id
+                           and claim.claim_token=? and claim.claim_token!=''
+                     )""",
+                [(job.id, job.locked_at, job.delivery_claim_token) for job in jobs],
+            )
+            db.executemany(
+                "delete from meeting_alignment_delivery_claims where job_id=? and claim_token=?",
+                [(job.id, job.delivery_claim_token) for job in jobs],
+            )
 
     def schedule_ready_to_send_meeting_alignment_retry(
         self,
@@ -18047,6 +19335,7 @@ class AutoReplyStore:
                 returning *
                 """
             ).fetchall()
+            db.execute("delete from meeting_alignment_delivery_claims")
             jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
             return sorted(jobs, key=lambda job: job.id)
 
@@ -18121,13 +19410,14 @@ class AutoReplyStore:
 
         Existing meeting alignment runs remain immutable. Only the queue
         projection and retry counter are reset; delivery must be reached again
-        through the current analysis and target-selection path.
+        through the current analysis and target-selection path. A prepared
+        delivery or live owner must use its existing recovery path instead.
         """
         ids = sorted({int(job_id) for job_id in job_ids if int(job_id) > 0})
         if not ids:
             return []
         placeholders = ",".join("?" for _ in ids)
-        with self._connect() as db:
+        with self._immediate_write_transaction() as db:
             rows = db.execute(
                 f"""update meeting_alignment_jobs
                     set status='retry', attempts=0, locked_at=null,
@@ -18136,6 +19426,37 @@ class AutoReplyStore:
                         mentions_json='[]', final_message='',
                         send_result_json='{{}}', updated_at=current_timestamp
                     where id in ({placeholders}) and status in ('failed', 'no_action')
+                      and coalesce(locked_at,'')=''
+                      and send_result_json='{{}}'
+                      and not exists (
+                        select 1 from outbound_postfixes outbound
+                        where outbound.channel='dingtalk' and outbound.delivery_key in (
+                          'meeting-alignment:' || meeting_alignment_jobs.id || ':' || meeting_alignment_jobs.meeting_id,
+                          'meeting-alignment:' || meeting_alignment_jobs.id || ':' || meeting_alignment_jobs.meeting_id || ':sensitive'
+                        )
+                      )
+                      and not exists (
+                        select 1 from meeting_alignment_delivery_claims delivery
+                        where delivery.job_id=meeting_alignment_jobs.id
+                      )
+                      and not exists (
+                        select 1 from dispatcher_claim_leases claim
+                        where claim.adapter_name='meeting'
+                          and claim.source_id=cast(meeting_alignment_jobs.id as text)
+                          and coalesce(claim.terminal_at,'')=''
+                          and julianday(claim.lease_expires_at)>julianday('now')
+                      )
+                      and not exists (
+                        select 1 from meeting_alignment_runs run
+                        where run.job_id=meeting_alignment_jobs.id and run.status='running'
+                      )
+                      and not exists (
+                        select 1 from agent_runtime_attempts runtime
+                        join meeting_alignment_runs run on runtime.workload_key=cast(run.id as text)
+                        where runtime.workload_kind='meeting'
+                          and run.job_id=meeting_alignment_jobs.id
+                          and runtime.status in ('starting','running')
+                      )
                     returning id""",
                 ids,
             ).fetchall()
@@ -18296,9 +19617,9 @@ class AutoReplyStore:
             codex_session_id,
             codex_transcript_start_line,
             codex_transcript_end_line,
-            decision_json,
-            audit_tool_events_json,
-            audit_summary,
+            "{}",
+            "[]",
+            "",
             error,
         )
         with self._agent_run_write_transaction(None) as (db, _):
@@ -18371,9 +19692,9 @@ class AutoReplyStore:
                     codex_session_id,
                     codex_transcript_start_line,
                     codex_transcript_end_line,
-                    decision_json,
-                    audit_tool_events_json,
-                    audit_summary,
+                    "{}",
+                    "[]",
+                    "",
                     status,
                     error,
                     status,
@@ -18385,6 +19706,8 @@ class AutoReplyStore:
         self,
         job_id: int,
     ) -> list[MeetingAlignmentRun]:
+        from app.native_standalone import latest_standalone_ref
+
         with self._connect() as db:
             rows = db.execute(
                 """
@@ -18395,21 +19718,44 @@ class AutoReplyStore:
                 """,
                 (job_id,),
             ).fetchall()
-            return [
-                self._meeting_alignment_run_from_row(row)
+            runs = [
+                (row, latest_standalone_ref(
+                    db, workload_kind="meeting", workload_key=str(row["id"]), legacy_row=row,
+                ))
                 for row in rows
             ]
+        return [self._meeting_alignment_run_from_row(row, ref) for row, ref in runs]
 
     def get_meeting_alignment_run(
         self,
         run_id: int,
     ) -> MeetingAlignmentRun | None:
+        from app.native_standalone import latest_standalone_ref
+
         with self._connect() as db:
             row = db.execute(
                 "select * from meeting_alignment_runs where id=?",
                 (run_id,),
             ).fetchone()
-        return self._meeting_alignment_run_from_row(row) if row is not None else None
+            ref = (latest_standalone_ref(
+                db, workload_kind="meeting", workload_key=str(run_id), legacy_row=row,
+            ) if row is not None else None)
+        return self._meeting_alignment_run_from_row(row, ref) if row is not None else None
+
+    def get_meeting_alignment_run_metadata(
+        self,
+        run_id: int,
+    ) -> MeetingAlignmentRun | None:
+        """Read status and job linkage without opening a native trajectory."""
+        with self._connect() as db:
+            row = db.execute(
+                "select * from meeting_alignment_runs where id=?", (run_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        values = dict(row)
+        values.update(decision_json="{}", audit_summary="", audit_tool_events_json="[]")
+        return MeetingAlignmentRun.model_validate(values)
 
     def recovered_meeting_alignment_run_ids_since(
         self,
@@ -18453,6 +19799,8 @@ class AutoReplyStore:
         self,
         codex_session_id: str,
     ) -> list[MeetingAlignmentRun]:
+        from app.native_standalone import latest_standalone_ref
+
         with self._connect() as db:
             rows = db.execute(
                 """
@@ -18462,7 +19810,13 @@ class AutoReplyStore:
                 """,
                 (codex_session_id,),
             ).fetchall()
-        return [self._meeting_alignment_run_from_row(row) for row in rows]
+            runs = [
+                (row, latest_standalone_ref(
+                    db, workload_kind="meeting", workload_key=str(row["id"]), legacy_row=row,
+                ))
+                for row in rows
+            ]
+        return [self._meeting_alignment_run_from_row(row, ref) for row, ref in runs]
 
     def create_okr_review_request(
         self,
@@ -18704,12 +20058,48 @@ class AutoReplyStore:
                     codex_session_id,
                     codex_transcript_start_line,
                     codex_transcript_end_line,
-                    envelope_json,
-                    audit_tool_events_json,
-                    audit_summary,
+                    "{}",
+                    "[]",
+                    "",
                 ),
             )
             return int(cursor.lastrowid)
+
+    def get_okr_review_run(self, run_id: int) -> dict[str, object] | None:
+        from app.native_standalone import (
+            _meeting_tool_events, exact_standalone_ref,
+            okr_envelope,
+        )
+
+        with self._connect() as db:
+            row = db.execute(
+                "select * from okr_review_runs where id=?", (run_id,)
+            ).fetchone()
+            ref = (exact_standalone_ref(
+                db, workload_kind="structured", workload_key=str(row["request_id"]),
+                row=row,
+            ) if row is not None else None)
+        if row is None:
+            return None
+        envelope_json, reason = okr_envelope(ref)
+        tool_events_json, tool_events_available, tool_events_reason = (
+            _meeting_tool_events(ref)
+            if not reason and ref is not None
+            else ("[]", False, reason or "native_reference_unavailable")
+        )
+        values = dict(row)
+        values.update(
+            envelope_json=envelope_json,
+            audit_tool_events_json=tool_events_json,
+            audit_summary=(
+                json.loads(envelope_json)["audit"]["summary"] if not reason else ""
+            ),
+            native_available=not reason,
+            native_reason=reason,
+            tool_events_available=tool_events_available,
+            tool_events_reason=tool_events_reason,
+        )
+        return values
 
     def record_okr_review_item(
         self,
@@ -19024,6 +20414,8 @@ class AutoReplyStore:
         caller may retry after a later step failed.
         """
 
+        from app.scheduled_config_storage import intern_scheduled_config
+
         old_name = self._require_runtime_attempt_text(old_name, field="route_name")
         new_name = self._require_runtime_attempt_text(new_name, field="route_name")
         if old_name == new_name:
@@ -19044,7 +20436,8 @@ class AutoReplyStore:
             runs = 0
             for row in db.execute(
                 """
-                select id, snapshot_json from scheduled_task_runs
+                select runs.id, configs.snapshot_json from scheduled_task_runs as runs
+                 join scheduled_task_config_versions as configs on configs.id=runs.snapshot_id
                  where dispatch_status in ('pending', 'dispatched')
                    and json_valid(snapshot_json)
                    and json_extract(snapshot_json, '$.runtime_id')=?
@@ -19053,9 +20446,9 @@ class AutoReplyStore:
             ).fetchall():
                 snapshot = ScheduledTaskSnapshot.from_json(str(row["snapshot_json"]))
                 db.execute(
-                    "update scheduled_task_runs set snapshot_json=? where id=?",
+                    "update scheduled_task_runs set snapshot_id=? where id=?",
                     (
-                        dataclass_replace(snapshot, runtime_id=new_name).to_json(),
+                        intern_scheduled_config(db, dataclass_replace(snapshot, runtime_id=new_name).to_json()),
                         int(row["id"]),
                     ),
                 )
@@ -19272,6 +20665,7 @@ class AutoReplyStore:
                 update reply_tasks
                 set trigger_text=?,
                     trigger_message_json=?,
+                    input_provenance_json='{}', input_compacted=0,
                     updated_at=current_timestamp
                 where id=?
                   and status='pending'
@@ -19296,6 +20690,7 @@ class AutoReplyStore:
                 update reply_tasks
                 set trigger_text=?,
                     trigger_message_json=?,
+                    input_provenance_json='{}', input_compacted=0,
                     updated_at=current_timestamp
                 where channel=?
                   and conversation_id=?
@@ -19347,11 +20742,15 @@ class AutoReplyStore:
                 """,
                 (channel, conversation_id, trigger_message_id),
             ).fetchone()
-            if (
-                row is None
-                or str(row["status"]) not in {"done", "failed"}
-                or str(row["trigger_text"]) == trigger_text
-            ):
+            if row is None or str(row["status"]) not in {"done", "failed"}:
+                return False
+            same_rendered_text = (
+                json.loads(str(row["input_provenance_json"]))["trigger_text"]["sha256"]
+                == hashlib.sha256(trigger_text.encode("utf-8")).hexdigest()
+                if row["input_compacted"]
+                else str(row["trigger_text"]) == trigger_text
+            )
+            if same_rendered_text:
                 return False
             next_input_version = int(row["input_version"]) + 1
             revision_digest = hashlib.sha256(
@@ -19400,6 +20799,7 @@ class AutoReplyStore:
                 set conversation_title=?, single_chat=?,
                     trigger_create_time=?, trigger_sender=?, trigger_text=?,
                     trigger_message_json=?, input_version=?,
+                    input_provenance_json='{}', input_compacted=0,
                     execution_generation=?, status='pending', attempts=0,
                     claimed_input_version=input_version,
                     force_new_decision=1, manual_rerun_attempt_id=0,
@@ -19407,7 +20807,7 @@ class AutoReplyStore:
                     available_at='', error='', recovery_code='',
                     updated_at=current_timestamp
                 where id=? and execution_generation=?
-                  and status in ('done', 'failed') and trigger_text != ?
+                  and status in ('done', 'failed')
                 """,
                 (
                     conversation_title,
@@ -19420,7 +20820,6 @@ class AutoReplyStore:
                     execution_generation,
                     int(row["id"]),
                     str(row["execution_generation"]),
-                    trigger_text,
                 ),
             )
             return cursor.rowcount == 1
@@ -20121,6 +21520,8 @@ class AutoReplyStore:
                 "where id=? and status='failed'",
                 (task_id,),
             )
+            if cursor.rowcount == 1:
+                self._compact_settled_reply_task_input(db, task_id)
             return cursor.rowcount == 1
 
     def reconcile_failed_agent_message_delivery(
@@ -20160,8 +21561,9 @@ class AutoReplyStore:
         consumer = self.get_agent_run(send_run.parent_agent_run_id)
         if consumer is None or consumer.status != "completed":
             raise ValueError("accepted consumer proposal is unavailable")
+        adopted = self.adopted_candidate_for_consumer_run(consumer.id)
         try:
-            proposal = json.loads(consumer.final_result_json)["proposal"]
+            proposal = json.loads(adopted["candidate_json"] if adopted else "")["proposal"]
             actions = proposal["actions"]
         except (json.JSONDecodeError, KeyError, TypeError):
             raise ValueError("accepted consumer proposal is invalid") from None
@@ -20337,6 +21739,7 @@ class AutoReplyStore:
                 "locked_at=null, updated_at=current_timestamp where id=?",
                 (send_run.reply_task_id,),
             )
+            self._compact_settled_reply_task_input(db, send_run.reply_task_id)
             return SentReply.model_validate(dict(sent))
 
     def reconcile_failed_audit_with_verified_delivery(self, task_id: int, run_id: int) -> bool:
@@ -20363,7 +21766,10 @@ class AutoReplyStore:
         consumer = self.get_agent_run(run.parent_agent_run_id) if run.parent_agent_run_id else None
         if consumer is None or consumer.role is not AgentRole.CONSUMER or consumer.status != "completed":
             raise ValueError("accepted Consumer proposal is unavailable")
-        actions = json.loads(consumer.final_result_json)["proposal"]["actions"]
+        adopted = self.adopted_candidate_for_consumer_run(consumer.id)
+        if adopted is None:
+            raise ValueError("accepted Consumer proposal is unavailable")
+        actions = json.loads(adopted["candidate_json"])["proposal"]["actions"]
         expected = {
             external_action_key(
                 business_object_key=task.business_object_key,
@@ -20420,6 +21826,7 @@ class AutoReplyStore:
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"failed Audit superseded: {run_id}")
+            self._compact_settled_reply_task_input(db, task_id)
             return True
 
     def reconcile_failed_reply_tasks_with_recorded_deliveries(self) -> int:
@@ -20432,7 +21839,7 @@ class AutoReplyStore:
         subsequent Audit run failed to serialize its own result.
         """
         with self._immediate_write_transaction() as db:
-            cursor = db.execute(
+            compact_ids = db.execute(
                 """
                 update reply_tasks as tasks
                 set status='done', error='', available_at='', locked_at=null,
@@ -20445,9 +21852,12 @@ class AutoReplyStore:
                         on replies.external_action_key=actions.external_action_key
                       where actions.business_object_key=tasks.business_object_key
                   )
+                returning id
                 """
-            )
-            return cursor.rowcount
+            ).fetchall()
+            for row in compact_ids:
+                self._compact_settled_reply_task_input(db, int(row["id"]))
+            return len(compact_ids)
 
     @staticmethod
     def _email_unsubscribe_outcomes_by_task_status() -> dict[str, list[str]]:
@@ -20497,7 +21907,7 @@ class AutoReplyStore:
         with self._immediate_write_transaction() as db:
             if not self._email_unsubscribe_receipts_table_exists(db):
                 return 0
-            cursor = db.execute(
+            compact_ids = db.execute(
                 f"""
                 update reply_tasks as tasks
                 set status=case
@@ -20517,10 +21927,13 @@ class AutoReplyStore:
                       and current_receipts.outcome in ({terminal_placeholders})
                 )
                   and receipts.action_identity=tasks.trigger_message_id
+                returning id
                 """,
                 [*done_outcomes, *terminal_outcomes],
-            )
-            return cursor.rowcount
+            ).fetchall()
+            for row in compact_ids:
+                self._compact_settled_reply_task_input(db, int(row["id"]))
+            return len(compact_ids)
 
     def resolve_failed_reply_attempt_already_settled(
         self,
@@ -20624,6 +22037,13 @@ class AutoReplyStore:
                     attempt["trigger_message_id"],
                 ),
             )
+            task = db.execute(
+                "select id from reply_tasks where channel=? and conversation_id=? "
+                "and trigger_message_id=?",
+                (attempt["channel"], attempt["conversation_id"], attempt["trigger_message_id"]),
+            ).fetchone()
+            if task is not None:
+                self._compact_settled_reply_task_input(db, int(task["id"]))
             return True
 
     def close_unresolved_reply_task_already_settled(
@@ -20671,12 +22091,14 @@ class AutoReplyStore:
                 "where id=? and status in ('failed', 'needs_human')",
                 (task_id,),
             )
+            if cursor.rowcount == 1:
+                self._compact_settled_reply_task_input(db, task_id)
             return cursor.rowcount == 1
 
     def reconcile_unresolved_reply_tasks_with_settlement_evidence(self) -> int:
         """Close stale tasks whose exact trigger has resolved settlement evidence."""
         with self._immediate_write_transaction() as db:
-            cursor = db.execute(
+            compact_ids = db.execute(
                 """
                 update reply_tasks as tasks
                 set status='done', error='', available_at='', locked_at=null,
@@ -20691,9 +22113,12 @@ class AutoReplyStore:
                         and trim(coalesce(settled.resolved_at, ''))<>''
                         and trim(coalesce(settled.resolution, ''))<>''
                   )
+                returning id
                 """
-            )
-            return cursor.rowcount
+            ).fetchall()
+            for row in compact_ids:
+                self._compact_settled_reply_task_input(db, int(row["id"]))
+            return len(compact_ids)
 
     def has_sent_reply_for_trigger(
         self,
@@ -23706,7 +25131,7 @@ class AutoReplyStore:
                     codex_transcript_start_line,
                     codex_transcript_end_line,
                     audit_documents_json,
-                    audit_tool_events_json,
+                    _audit_event_metadata_json(audit_tool_events_json),
                     audit_summary,
                     human_decision_options_json,
                     oa_process_instance_id,
@@ -23875,7 +25300,7 @@ class AutoReplyStore:
                     codex_transcript_start_line,
                     codex_transcript_end_line,
                     audit_documents_json,
-                    audit_tool_events_json,
+                    _audit_event_metadata_json(audit_tool_events_json),
                     audit_summary,
                     human_decision_options_json,
                     oa_process_instance_id,
@@ -24026,7 +25451,7 @@ class AutoReplyStore:
         A task that ends ``done`` also queues the durable memories its final
         Consumer result named, in the same transaction.
         """
-        if task_status not in {"done", "failed", "pending", "unchanged"}:
+        if task_status not in {"done", "failed", "pending", "unchanged", "needs_human", "skipped"}:
             raise ValueError("invalid reply task terminal status")
         if not expected_execution_generation.strip():
             raise ValueError("expected_execution_generation must be non-empty")
@@ -24129,7 +25554,7 @@ class AutoReplyStore:
                 codex_session_id,
                 codex_transcript_start_line,
                 codex_transcript_end_line,
-                audit_tool_events_json,
+                _audit_event_metadata_json(audit_tool_events_json),
                 audit_summary,
                 human_decision_options_json,
                 persisted_process_id,
@@ -24253,6 +25678,8 @@ class AutoReplyStore:
                         trigger_message_id,
                     ),
                 )
+            if task_status in {"done", "skipped"}:
+                self._compact_settled_reply_task_input(db, task_id)
             return attempt_id
 
     @staticmethod
@@ -24410,213 +25837,72 @@ class AutoReplyStore:
             return reconciled
 
     def reconcile_invalid_needs_human_projections(self) -> int:
-        """Replace current non-decision human projections with failed results.
+        """Do not rewrite historical human-decision or terminal projections.
 
-        A status string and a provider-side error cannot create a human task.
-        The current Attempt must instead reference a complete typed rule
-        decision that satisfies the shared decision-quality contract.
+        New questions are created only from a persisted approved candidate.
+        Legacy attempts remain readable, while the current projections and
+        decision endpoint separately decide whether they are actionable.
         """
-        with self._immediate_write_transaction() as db:
-            rows = db.execute(
-                """
-                select attempts.id as attempt_id, attempts.agent_run_id,
-                       attempts.send_status, attempts.send_error,
-                       attempts.channel, attempts.conversation_id,
-                       attempts.trigger_message_id,
-                       runs.reply_task_id, runs.execution_generation,
-                       runs.final_result_json,
-                       runs.structured_error_json
-                from reply_attempts as attempts
-                left join agent_runs as runs on runs.id=attempts.agent_run_id
-                where (
-                        attempts.send_status='needs_human'
-                        or (
-                            attempts.send_status='failed'
-                            and attempts.send_error in (
-                                'needs_human',
-                                'external_action_authorization_required',
-                                'invalid_needs_human_projection'
-                            )
-                        )
-                        or (
-                            attempts.send_status='failed'
-                            and exists (
-                                select 1
-                                from reply_tasks stale_tasks
-                                where stale_tasks.channel=attempts.channel
-                                  and stale_tasks.conversation_id=attempts.conversation_id
-                                  and stale_tasks.trigger_message_id=attempts.trigger_message_id
-                                  and stale_tasks.status='needs_human'
-                            )
-                        )
-                      )
-                  and attempts.reviewed_at is null
-                  and trim(coalesce(attempts.resolved_at, ''))=''
-                  and attempts.id=(
-                      select max(latest.id)
-                      from reply_attempts as latest
-                      where latest.channel=attempts.channel
-                        and latest.conversation_id=attempts.conversation_id
-                        and latest.trigger_message_id=attempts.trigger_message_id
-                  )
-                """
-            ).fetchall()
-            reconciled = 0
-            for row in rows:
-                if (
-                    classify_stored_needs_human_projection(
-                        row["final_result_json"]
-                    )
-                    is StoredNeedsHumanProjection.NEEDS_HUMAN
-                ):
-                    continue
-                # Once strict validation rejects a stored ``needs_human``
-                # payload, its former error code is not trustworthy.  In
-                # particular, ``external_action_authorization_required`` and
-                # ``needs_human`` used to be copied from malformed Consumer
-                # output and made a technical failure look like a live human
-                # authorization request.  Keep the current projection
-                # explicitly classified as invalid instead of preserving the
-                # misleading legacy label.
-                existing_error = str(row["send_error"] or "").strip()
-                error_code = (
-                    "invalid_needs_human_projection"
-                    if existing_error in {
-                        "",
-                        "needs_human",
-                        "external_action_authorization_required",
-                    }
-                    else existing_error
-                )
-                attempt_changed = 0
-                if row["send_status"] == "needs_human":
-                    cursor = db.execute(
-                        """
-                        update reply_attempts
-                        set send_status='failed', send_error=?,
-                            human_decision_options_json='[]', updated_at=current_timestamp
-                        where id=? and send_status='needs_human'
-                        """,
-                        (error_code, row["attempt_id"]),
-                    )
-                    if cursor.rowcount != 1:
-                        continue
-                    attempt_changed = 1
-                if row["reply_task_id"] is not None:
-                    task_cursor = db.execute(
-                        """
-                        update reply_tasks
-                        set status='failed', error=?, available_at='', locked_at=null,
-                            updated_at=current_timestamp
-                        where id=? and execution_generation=?
-                          and channel=? and conversation_id=? and trigger_message_id=?
-                          and status in ('done', 'needs_human', 'pending', 'processing')
-                        """,
-                        (
-                            error_code, row["reply_task_id"], row["execution_generation"],
-                            row["channel"], row["conversation_id"],
-                            row["trigger_message_id"],
-                        ),
-                    )
-                    if task_cursor.rowcount and not attempt_changed:
-                        reconciled += 1
-                reconciled += attempt_changed
-            return reconciled
+        return 0
 
     def reconcile_valid_needs_human_projections(self) -> int:
-        """Project the latest valid Consumer decision onto its current Attempt.
+        """Restore only a current, unselected, Audit-approved persisted question.
 
-        The latest run of the current task generation is authoritative. A
-        completed, typed human decision must not remain displayed as a failed
-        Attempt merely because an older projection stored its authorization
-        boundary as an error.
+        A raw Consumer or Audit result is never sufficient authority, and old
+        generations and previously resolved attempts are left untouched.
         """
         with self._immediate_write_transaction() as db:
-            rows = db.execute(
-                """
-                select tasks.id as task_id, attempts.id as attempt_id,
-                       attempts.send_status, attempts.oa_process_instance_id,
-                       attempts.oa_task_id, runs.id as run_id,
-                       runs.final_result_json
-                from reply_tasks as tasks
-                join agent_runs as runs on runs.id=(
-                    select latest_run.id
-                    from agent_runs as latest_run
-                    where latest_run.reply_task_id=tasks.id
-                      and latest_run.execution_generation=
-                          tasks.execution_generation
-                    order by latest_run.id desc
-                    limit 1
-                )
-                join reply_attempts as attempts on attempts.id=(
-                    select latest_attempt.id
-                    from reply_attempts as latest_attempt
-                    where latest_attempt.channel=tasks.channel
-                      and latest_attempt.conversation_id=tasks.conversation_id
-                      and latest_attempt.trigger_message_id=
-                          tasks.trigger_message_id
-                    order by latest_attempt.id desc
-                    limit 1
-                )
-                where tasks.status in ('failed', 'needs_human')
-                  and runs.status='completed'
-                  and attempts.send_status in ('failed', 'needs_human')
-                  and attempts.reviewed_at is null
-                  and trim(coalesce(attempts.resolved_at, ''))=''
-                order by tasks.id
-                """
-            ).fetchall()
+            rows = db.execute("""
+                select t.id as task_id, t.execution_generation, t.status as task_status,
+                       a.id as attempt_id, a.send_status, a.agent_run_id,
+                       c.id as candidate_id, c.candidate_json, c.candidate_digest,
+                       r.id as review_id, r.audit_run_id
+                from reply_tasks t
+                join review_candidates c on c.task_id=t.id
+                  and c.execution_generation=t.execution_generation
+                  and c.invalidated_at=''
+                join candidate_reviews r on r.candidate_id=c.id
+                  and r.decision='approve' and r.candidate_digest=c.candidate_digest
+                join reply_attempts a on a.channel=t.channel
+                  and a.conversation_id=t.conversation_id
+                  and a.trigger_message_id=t.trigger_message_id
+                left join candidate_selections choice on choice.candidate_id=c.id
+                where t.status in ('failed','needs_human')
+                  and a.send_status in ('failed','needs_human')
+                  and a.reviewed_at is null and trim(coalesce(a.resolved_at,''))=''
+                  and choice.id is null
+                  and c.id=(select max(newest.id) from review_candidates newest
+                      where newest.task_id=t.id and newest.execution_generation=t.execution_generation)
+                  and a.id=(select max(newest.id) from reply_attempts newest
+                      where newest.channel=t.channel and newest.conversation_id=t.conversation_id
+                        and newest.trigger_message_id=t.trigger_message_id)
+                  and exists(select 1 from business_object_tasks current_object
+                      where current_object.business_object_key=t.business_object_key
+                        and current_object.reply_task_id=t.id)
+            """).fetchall()
             reconciled = 0
             for row in rows:
-                decision = parse_stored_needs_human_decision(
-                    row["final_result_json"]
-                )
-                # A proposal that escalates is a question only once Audit has
-                # executed its action; as the latest run it has not been.
-                if decision is None or getattr(decision, "escalates", False) or not self._authorization_plan_matches_attempt(
-                    decision,
-                    oa_process_instance_id=str(row["oa_process_instance_id"] or ""),
-                    oa_task_id=str(row["oa_task_id"] or ""),
-                ):
+                try:
+                    candidate = json.loads(row["candidate_json"])
+                except (TypeError, json.JSONDecodeError):
                     continue
-                decision_options = json.dumps(
-                    [option.model_dump(mode="json") for option in decision.decision_options],
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
-                summary = decision.summary
-                attempt_cursor = db.execute(
-                    """
-                    update reply_attempts
-                    set send_status='needs_human', send_error='', agent_run_id=?,
-                        codex_reason=?, audit_summary=?,
-                        human_decision_options_json=?, updated_at=current_timestamp
-                    where id=? and (
-                        send_status<>'needs_human'
-                        or send_error<>''
-                        or agent_run_id<>?
-                        or codex_reason<>?
-                        or audit_summary<>?
-                        or human_decision_options_json<>?
-                    )
-                    """,
-                    (
-                        row["run_id"], summary, summary, decision_options,
-                        row["attempt_id"], row["run_id"], summary, summary,
-                        decision_options,
-                    ),
-                )
-                task_cursor = db.execute(
-                    """
-                    update reply_tasks
-                    set status='needs_human', error='', available_at='',
-                        locked_at=null, updated_at=current_timestamp
-                    where id=? and (status<>'needs_human' or error<>'')
-                    """,
-                    (row["task_id"],),
-                )
-                if attempt_cursor.rowcount or task_cursor.rowcount:
-                    reconciled += 1
+                if candidate.get("outcome") != "needs_human":
+                    continue
+                # A completed Audit run identifies the exact reviewed question.
+                # Never bind a failed projection to a different run.
+                if row["agent_run_id"] != row["audit_run_id"]:
+                    continue
+                if row["send_status"] == "needs_human" and row["task_status"] == "needs_human":
+                    continue
+                db.execute("""update reply_attempts set send_status='needs_human',
+                    send_error='', updated_at=current_timestamp where id=?
+                    and agent_run_id=? and send_status='failed'""",
+                    (row["attempt_id"], row["audit_run_id"]))
+                db.execute("""update reply_tasks set status='needs_human', error='',
+                    available_at='', locked_at=null, updated_at=current_timestamp
+                    where id=? and execution_generation=? and status='failed'""",
+                    (row["task_id"], row["execution_generation"]))
+                reconciled += 1
             return reconciled
 
     @staticmethod
@@ -24675,7 +25961,7 @@ class AutoReplyStore:
             "?" for _ in terminal_attempt_statuses
         )
         with self._immediate_write_transaction() as db:
-            task_cursor = db.execute(
+            skipped_tasks = db.execute(
                 """
                 update reply_tasks as historical
                 set status='skipped',
@@ -24692,8 +25978,9 @@ class AutoReplyStore:
                         and current_task.id<>historical.id
                         and current_task.status in ('done', 'skipped', 'needs_human')
                   )
+                returning id
                 """
-            )
+            ).fetchall()
             attempt_cursor = db.execute(
                 """
                 update reply_attempts as historical_attempt
@@ -24757,8 +26044,10 @@ class AutoReplyStore:
                 """,
                 terminal_attempt_statuses,
             )
+            for row in skipped_tasks:
+                self._compact_settled_reply_task_input(db, int(row["id"]))
             return (
-                task_cursor.rowcount
+                len(skipped_tasks)
                 + attempt_cursor.rowcount
                 + trigger_attempt_cursor.rowcount
             )
@@ -24841,6 +26130,8 @@ class AutoReplyStore:
                     ),
                 )
                 reconciled += cursor.rowcount
+                if cursor.rowcount:
+                    self._compact_settled_reply_task_input(db, int(row["id"]))
             return reconciled
 
     def skip_failed_reply_tasks_with_terminal_no_action_run(self) -> int:
@@ -24881,6 +26172,8 @@ class AutoReplyStore:
                     ),
                 )
                 skipped += cursor.rowcount
+                if cursor.rowcount:
+                    self._compact_settled_reply_task_input(db, int(row["id"]))
             return skipped
 
     def finalize_reply_task_without_run(
@@ -25234,7 +26527,8 @@ class AutoReplyStore:
                 "unknown reply_attempt update column: "
                 + ", ".join(sorted(unknown))
             )
-        return {column: value for column, value in updates.items() if value is not None}
+        return {column: (_audit_event_metadata_json(str(value)) if column == "audit_tool_events_json" else value)
+                for column, value in updates.items() if value is not None}
 
     @staticmethod
     def _update_reply_attempt_in_connection(
@@ -25341,6 +26635,7 @@ class AutoReplyStore:
                 """,
                 (decision, task_id),
             )
+            self._compact_settled_reply_task_input(db, task_id)
             return True
 
     def record_reviewed_reply_rerun(
@@ -25359,6 +26654,8 @@ class AutoReplyStore:
         channel: str = "dingtalk",
         oa_url: str = "",
         source_attempt_id: int = 0,
+        review_candidate_id: int = 0,
+        supplement_instruction: str = "",
     ) -> tuple[int, ReplyTask]:
         """Atomically persist one reviewed instruction and queue its generation."""
         feedback = reviewer_feedback.strip()
@@ -25366,6 +26663,22 @@ class AutoReplyStore:
         task: ReplyTask | None = None
         attempt_id = 0
         with self._immediate_write_transaction() as db:
+            if review_candidate_id > 0:
+                candidate = self._candidate_context(db, review_candidate_id)
+                source_review = db.execute("""select r.id from candidate_reviews r
+                    where r.candidate_id=? and r.decision='approve'
+                      and r.candidate_digest=? and r.audit_run_id=(
+                        select agent_run_id from reply_attempts where id=?)""",
+                    (review_candidate_id, candidate["candidate_digest"], source_attempt_id)).fetchone()
+                if (not supplement_instruction.strip() or source_review is None
+                    or candidate["invalidated_at"] or not source_attempt_id
+                    or db.execute("select 1 from candidate_selections where candidate_id=?",
+                                  (review_candidate_id,)).fetchone()):
+                    raise ValueError("reviewed candidate supplement mismatch")
+                db.execute("""insert into candidate_supplements(candidate_id,instruction)
+                    values (?,?)""", (review_candidate_id, supplement_instruction))
+                db.execute("""update review_candidates set invalidated_at=current_timestamp,
+                    invalidation_reason='supplement' where id=?""", (review_candidate_id,))
             source_row = None
             if source_attempt_id > 0:
                 source_row = db.execute(
@@ -25595,6 +26908,9 @@ class AutoReplyStore:
         single_chat: bool,
         trigger_create_time: str,
         trigger_message_json: str,
+        trigger_text: str | None = None,
+        review_candidate_id: int = 0,
+        supplement_instruction: str = "",
     ) -> tuple[int, ReplyTask]:
         feedback = reviewer_feedback.strip()
         if not feedback:
@@ -25602,6 +26918,8 @@ class AutoReplyStore:
         source = self.get_reply_attempt(source_attempt_id)
         if source is None:
             raise ValueError("actionable attempt does not exist")
+        if trigger_text is None and source.trigger_text_provenance_json != "{}":
+            raise ValueError("original reply task input is unavailable")
         return self.record_reviewed_reply_rerun(
             conversation_id=source.conversation_id,
             conversation_title=conversation_title,
@@ -25609,13 +26927,15 @@ class AutoReplyStore:
             trigger_message_id=source.trigger_message_id,
             trigger_create_time=trigger_create_time,
             trigger_sender=source.trigger_sender,
-            trigger_text=source.trigger_text,
+            trigger_text=source.trigger_text if trigger_text is None else trigger_text,
             trigger_message_json=trigger_message_json,
             suggested_reply_text="",
             reviewer_feedback=feedback,
             channel=source.channel or "dingtalk",
             oa_url=source.oa_url,
             source_attempt_id=source_attempt_id,
+            review_candidate_id=review_candidate_id,
+            supplement_instruction=supplement_instruction,
         )
 
     def get_reply_attempt(self, attempt_id: int) -> ReplyAttempt | None:
@@ -25670,9 +26990,8 @@ class AutoReplyStore:
         with self._connect() as db:
             rows = db.execute(
                 """
-                select attempts.*, runs.final_result_json as current_run_result_json
+                select attempts.*
                 from reply_attempts as attempts
-                left join agent_runs as runs on runs.id=attempts.agent_run_id
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
                   and __NOT_EXTERNAL__
                   and not exists (
@@ -25765,12 +27084,24 @@ class AutoReplyStore:
             attempts: list[ReplyAttempt] = []
             for row in rows:
                 values = dict(row)
-                run_result = values.pop("current_run_result_json", "")
                 attempt = ReplyAttempt.model_validate(values)
                 if (
                     attempt.send_status == "needs_human"
-                    and classify_stored_needs_human_projection(run_result)
-                    is not StoredNeedsHumanProjection.NEEDS_HUMAN
+                    and not db.execute("""select 1 from reply_tasks t
+                        join review_candidates c on c.task_id=t.id
+                          and c.execution_generation=t.execution_generation and c.invalidated_at=''
+                        join candidate_reviews r on r.candidate_id=c.id
+                          and r.decision='approve' and r.candidate_digest=c.candidate_digest
+                        left join candidate_selections choice on choice.candidate_id=c.id
+                        where t.channel=? and t.conversation_id=? and t.trigger_message_id=?
+                          and t.status='needs_human' and r.audit_run_id=? and choice.id is null
+                          and c.id=(select max(id) from review_candidates
+                            where task_id=t.id and execution_generation=t.execution_generation)
+                          and json_extract(c.candidate_json,'$.outcome')='needs_human'
+                        limit 1""", (
+                            attempt.channel, attempt.conversation_id,
+                            attempt.trigger_message_id, attempt.agent_run_id,
+                        )).fetchone()
                 ):
                     continue
                 attempts.append(attempt)
@@ -26101,6 +27432,7 @@ class AutoReplyStore:
                     end as output_text,
                     action,
                     case
+                        when send_status='needs_human' and trim(coalesce(resolved_at, ''))<>'' then 'skipped'
                         when channel = 'wechat' then coalesce((
                             select case deliveries.status
                                 when 'ready_to_send' then 'pending'
@@ -26244,7 +27576,7 @@ class AutoReplyStore:
                         when jobs.final_message != '' and jobs.calendar_summary_status='failed'
                             then jobs.final_message || '\n\n日历备注：等待补写。'
                         when jobs.final_message != '' then jobs.final_message
-                        else runs.audit_summary
+                        else '会议任务尚无已采用的最终消息。'
                     end as output_text,
                     case
                         when jobs.status='no_action' then 'no_action'
@@ -26710,19 +28042,13 @@ class AutoReplyStore:
         source_type: str,
         source_id: str,
         title: str,
-        summary_text: str,
-        fts_text: str,
+        summary_text: str = "",
+        fts_text: str = "",
         embedding: list[float] | None = None,
         embedding_model: str = "",
     ) -> None:
         if not session_id.strip():
             return
-        embedding_json = (
-            json.dumps(embedding, ensure_ascii=False) if embedding is not None else ""
-        )
-        embedding_updated_at_sql = (
-            "current_timestamp" if embedding is not None else "embedding_updated_at"
-        )
         with self._connect() as db:
             row = db.execute(
                 """
@@ -26733,7 +28059,7 @@ class AutoReplyStore:
             ).fetchone()
             if row is None:
                 cursor = db.execute(
-                    f"""
+                    """
                     insert into codex_session_search_index (
                         session_id,
                         source_type,
@@ -26745,91 +28071,46 @@ class AutoReplyStore:
                         embedding_model,
                         embedding_updated_at
                     )
-                    values (?, ?, ?, ?, ?, ?, ?, ?, {
-                        'current_timestamp' if embedding is not None else "''"
-                    })
+                    values (?, ?, ?, ?, '', '', '', '', '')
                     """,
-                    (
-                        session_id,
-                        source_type,
-                        source_id,
-                        title,
-                        summary_text,
-                        fts_text,
-                        embedding_json,
-                        embedding_model,
-                    ),
+                    (session_id, source_type, source_id, title),
                 )
                 row_id = int(cursor.lastrowid)
             else:
                 row_id = int(row["id"])
                 db.execute(
-                    f"""
+                    """
                     update codex_session_search_index
                     set source_type=?,
                         source_id=?,
                         title=?,
-                        summary_text=?,
-                        fts_text=?,
-                        embedding_json=case when ? != '' then ? else embedding_json end,
-                        embedding_model=case when ? != '' then ? else embedding_model end,
-                        embedding_updated_at={embedding_updated_at_sql},
+                        summary_text='',
+                        fts_text='',
+                        embedding_json='',
+                        embedding_model='',
+                        embedding_updated_at='',
                         updated_at=current_timestamp
                     where id=?
                     """,
-                    (
-                        source_type,
-                        source_id,
-                        title,
-                        summary_text,
-                        fts_text,
-                        embedding_json,
-                        embedding_json,
-                        embedding_model,
-                        embedding_model,
-                        row_id,
-                    ),
+                    (source_type, source_id, title, row_id),
                 )
                 db.execute(
                     "delete from codex_session_search_fts where rowid=?",
                     (row_id,),
                 )
-            db.execute(
-                """
-                insert into codex_session_search_fts (
-                    rowid, title, summary_text, fts_text
-                )
-                values (?, ?, ?, ?)
-                """,
-                (row_id, title, summary_text, fts_text),
-            )
+            # Native-derived corpus is assembled only for an in-memory search.
 
     def search_codex_sessions(
         self,
         *,
         fts_query: str,
         query_embedding: list[float] | None = None,
+        embedding_client: Callable[[list[str]], list[list[float]]] | None = None,
         limit: int = 3,
     ) -> list[CodexSessionSearchResult]:
-        fts_scores: dict[int, float] = {}
+        from app.native_standalone import latest_standalone_ref
+
         with self._connect() as db:
-            if fts_query.strip():
-                try:
-                    rows = db.execute(
-                        """
-                        select rowid, bm25(codex_session_search_fts) as bm25_score
-                        from codex_session_search_fts
-                        where codex_session_search_fts match ?
-                        order by bm25_score
-                        limit ?
-                        """,
-                        (fts_query, max(limit * 5, 10)),
-                    ).fetchall()
-                    fts_scores = {
-                        int(row["rowid"]): float(row["bm25_score"]) for row in rows
-                    }
-                except sqlite3.OperationalError:
-                    fts_scores = {}
             rows = db.execute(
                 """
                 select *
@@ -26837,10 +28118,87 @@ class AutoReplyStore:
                 order by updated_at desc
                 """
             ).fetchall()
+            source_ids = [str(row["source_id"]) for row in rows
+                          if row["source_type"] == "meeting_alignment"]
+            runs = {}
+            if source_ids:
+                placeholders = ",".join("?" for _ in source_ids)
+                runs = {str(run["id"]): run for run in db.execute(
+                    "select run.id, run.codex_session_id, run.codex_transcript_start_line, "
+                    "run.codex_transcript_end_line, job.meeting_id, job.title "
+                    "from meeting_alignment_runs run "
+                    "join meeting_alignment_jobs job on job.id=run.job_id "
+                    f"where run.id in ({placeholders})", source_ids,
+                ).fetchall()}
+            references = {
+                source_id: latest_standalone_ref(
+                    db, workload_kind="meeting", workload_key=source_id,
+                    legacy_row=runs.get(source_id),
+                )
+                for source_id in source_ids
+            }
+        corpus = [self._native_meeting_search_corpus(
+            row, runs.get(str(row["source_id"])), references.get(str(row["source_id"]))
+        ) for row in rows]
+        fts_scores: dict[int, float] = {}
+        with sqlite3.connect(":memory:") as search_db:
+            search_db.execute(
+                "create virtual table corpus using fts5(title, summary_text, fts_text)"
+            )
+            search_db.executemany(
+                "insert into corpus(rowid, title, summary_text, fts_text) "
+                "values (?, ?, ?, ?)",
+                (
+                    (int(row["id"]), row["title"], summary, fts)
+                    for row, summary, fts, _, _ in corpus
+                ),
+            )
+            if fts_query.strip():
+                try:
+                    matches = search_db.execute(
+                        "select rowid, bm25(corpus) from corpus where corpus match ? "
+                        "order by bm25(corpus) limit ?",
+                        (fts_query, max(limit * 5, 10)),
+                    ).fetchall()
+                    fts_scores = {int(row_id): float(score) for row_id, score in matches}
+                except sqlite3.OperationalError:
+                    pass
+        embeddings: dict[int, list[float]] = {}
+        if embedding_client is not None:
+            model = getattr(embedding_client, "model", None)
+            base_url = getattr(embedding_client, "base_url", None)
+            model_identity = (
+                (type(embedding_client), model, base_url)
+                if isinstance(model, str) and isinstance(base_url, str)
+                else (type(embedding_client), embedding_client)
+            )
+        else:
+            model_identity = ()
+        uncached: list[tuple[int, str, tuple]] = []
+        if query_embedding and embedding_client is not None:
+            for index, (_, summary, _, corpus_key, _) in enumerate(corpus):
+                if not summary:
+                    continue
+                vector_key = (corpus_key, model_identity)
+                cached = _meeting_search_cache_get(_MEETING_SEARCH_VECTOR_CACHE, vector_key)
+                if cached is None:
+                    uncached.append((index, summary, vector_key))
+                else:
+                    embeddings[index] = cached
+        if uncached and embedding_client is not None:
+            try:
+                vectors = embedding_client([summary for _, summary, _ in uncached])
+                for (index, _, vector_key), vector in zip(uncached, vectors):
+                    embeddings[index] = vector
+                    _meeting_search_cache_put(
+                        _MEETING_SEARCH_VECTOR_CACHE, vector_key, vector
+                    )
+            except Exception:
+                pass
         results = []
-        for row in rows:
+        for index, (row, summary_text, fts_text, _, native_reason) in enumerate(corpus):
             row_id = int(row["id"])
-            stored_embedding = _embedding_from_json(row["embedding_json"])
+            stored_embedding = embeddings.get(index, [])
             embedding_score = _embedding_score(
                 query_embedding,
                 stored_embedding,
@@ -26861,16 +28219,59 @@ class AutoReplyStore:
                     source_type=row["source_type"],
                     source_id=row["source_id"],
                     title=row["title"],
-                    summary_text=row["summary_text"],
-                    fts_text=row["fts_text"],
+                    summary_text=summary_text,
+                    fts_text=fts_text,
                     embedding_score=embedding_score,
                     bm25_score=bm25_score,
                     score=score,
                     updated_at=row["updated_at"],
+                    native_available=not native_reason,
+                    native_reason=native_reason,
                 )
             )
         results.sort(key=lambda result: result.score, reverse=True)
         return results[:limit]
+
+    def _native_meeting_search_corpus(
+        self, row: sqlite3.Row, run: sqlite3.Row | None, ref: object
+    ) -> tuple[sqlite3.Row, str, str, tuple, str]:
+        from app.meeting_alignment import _meeting_fts_text, _meeting_session_index_text
+        from app.meeting_alignment_models import MeetingAlignmentDecision
+        from app.native_standalone import meeting_decision, meeting_source
+        from app.native_trajectory import claude_session_path, find_codex_session_path
+
+        title_fts = _meeting_fts_text(str(row["title"]))
+        if row["source_type"] != "meeting_alignment" or run is None or ref is None:
+            return row, "", title_fts, (), "native_reference_unavailable"
+        if run["codex_session_id"] != row["session_id"]:
+            return row, "", title_fts, (), "native_reference_unavailable"
+        path = (find_codex_session_path(ref.session_id) if ref.kind == "codex_cli"
+                else claude_session_path(ref.session_id) if ref.kind == "claude_cli"
+                else None)
+        if path is not None and path.is_file():
+            stat = path.stat()
+            native_ref = (str(path), stat.st_mtime_ns, stat.st_size)
+        else:
+            native_ref = ("", 0, 0)
+        cache_key = (
+            str(self.path), int(row["id"]), str(row["source_id"]),
+            ref.kind, ref.session_id, ref.start, ref.end,
+            native_ref, row["title"], run["title"], run["meeting_id"],
+        )
+        cached = _meeting_search_cache_get(_MEETING_SEARCH_CORPUS_CACHE, cache_key)
+        if cached is not None:
+            return row, *cached, cache_key, ""
+        native = meeting_decision(ref)
+        if not native.available:
+            return row, "", title_fts, cache_key, native.reason
+        source = meeting_source(ref, meeting_id=str(run["meeting_id"]))
+        if source is None:
+            return row, "", title_fts, cache_key, "native_input_unavailable"
+        decision = MeetingAlignmentDecision.model_validate_json(native.decision_json)
+        text = _meeting_session_index_text(source, decision)
+        fts = _meeting_fts_text(text)
+        _meeting_search_cache_put(_MEETING_SEARCH_CORPUS_CACHE, cache_key, (text, fts))
+        return row, text, fts, cache_key, ""
 
     def list_reviewed_reply_attempts(
         self, limit: int | None = None
@@ -26987,16 +28388,22 @@ class AutoReplyStore:
         source_ref: str,
         payload_json: str,
     ) -> int:
+        source_created_at, body_sha256, body_bytes = self._work_summary_input_provenance(payload_json)
         with self._connect() as db:
             db.execute(
                 """
-                insert into work_summary_inputs (source_type, source_ref, payload_json)
-                values (?, ?, ?)
+                insert into work_summary_inputs
+                    (source_type, source_ref, payload_json, source_created_at, body_sha256, body_bytes)
+                values (?, ?, ?, ?, ?, ?)
                 on conflict(source_type, source_ref) do update set
                     payload_json=excluded.payload_json,
+                    source_created_at=excluded.source_created_at,
+                    body_sha256=excluded.body_sha256,
+                    body_bytes=excluded.body_bytes,
                     updated_at=current_timestamp
+                where work_summary_inputs.status not in ('processing', 'done', 'skipped')
                 """,
-                (source_type, source_ref, payload_json),
+                (source_type, source_ref, payload_json, source_created_at, body_sha256, body_bytes),
             )
             row = db.execute(
                 """
@@ -27006,6 +28413,37 @@ class AutoReplyStore:
                 (source_type, source_ref),
             ).fetchone()
             return int(row["id"])
+
+    @staticmethod
+    def _work_summary_input_provenance(payload_json: str) -> tuple[str, str, int]:
+        try:
+            decoded = json.loads(payload_json)
+        except json.JSONDecodeError:
+            decoded = {}
+        source = decoded.get("source", {}) if isinstance(decoded, dict) else {}
+        source_created_at = str(source.get("created_at") or "") if isinstance(source, dict) else ""
+        body = payload_json.encode("utf-8")
+        return source_created_at, hashlib.sha256(body).hexdigest(), len(body)
+
+    @classmethod
+    def _compact_work_summary_input(
+        cls, db: sqlite3.Connection, input_id: int, *, status: str, error: str
+    ) -> None:
+        row = db.execute(
+            "select payload_json from work_summary_inputs where id=? and status not in ('done', 'skipped')",
+            (input_id,),
+        ).fetchone()
+        if row is None:
+            return
+        source_created_at, body_sha256, body_bytes = cls._work_summary_input_provenance(row["payload_json"])
+        db.execute(
+            """update work_summary_inputs
+               set status=?, error=?, payload_json='{}',
+                   source_created_at=?, body_sha256=?, body_bytes=?, body_compacted=1,
+                   updated_at=current_timestamp
+               where id=? and status not in ('done', 'skipped')""",
+            (status, error, source_created_at, body_sha256, body_bytes, input_id),
+        )
 
     def claim_work_summary_inputs(
         self,
@@ -27114,11 +28552,13 @@ class AutoReplyStore:
                 failover_permitted=1, lease_owner='', lease_expires_at='',
                 finished_at=current_timestamp, updated_at=current_timestamp
             where workload_kind='task'
-              and workload_key in ({run_placeholders})
+              and cast(workload_key as integer) in ({run_placeholders})
+              and (workload_key not like '%:%'
+                   or workload_key like '%:decision_repair.%')
               and status in ('starting', 'running')
               and first_effect_started_at=''
             """,
-            [str(run_id) for run_id in run_ids],
+            run_ids,
         )
         return len(run_ids)
 
@@ -27187,14 +28627,7 @@ class AutoReplyStore:
         self, input_id: int, *, _db: sqlite3.Connection | None = None
     ) -> None:
         with self._optional_connection(_db) as db:
-            db.execute(
-                """
-                update work_summary_inputs
-                set status='done', error='', updated_at=current_timestamp
-                where id=?
-                """,
-                (input_id,),
-            )
+            self._compact_work_summary_input(db, input_id, status="done", error="")
 
     def mark_work_summary_input_skipped(
         self,
@@ -27204,14 +28637,7 @@ class AutoReplyStore:
         _db: sqlite3.Connection | None = None,
     ) -> None:
         with self._optional_connection(_db) as db:
-            db.execute(
-                """
-                update work_summary_inputs
-                set status='skipped', error=?, updated_at=current_timestamp
-                where id=?
-                """,
-                (reason, input_id),
-            )
+            self._compact_work_summary_input(db, input_id, status="skipped", error=reason)
 
     def mark_work_summary_input_failed(self, input_id: int, error: str) -> None:
         with self._connect() as db:
@@ -27219,7 +28645,8 @@ class AutoReplyStore:
                 """
                 update work_summary_inputs
                 set status='failed', error=?, updated_at=current_timestamp
-                where id=?
+                where id=? and status not in ('done', 'skipped')
+                  and body_compacted=0
                 """,
                 (error, input_id),
             )
@@ -27234,7 +28661,7 @@ class AutoReplyStore:
                     error=?,
                     available_at='',
                     updated_at=current_timestamp
-                where id=? and status='failed'
+                where id=? and status='failed' and body_compacted=0
                 """,
                 (reason.strip(), input_id),
             )
@@ -27244,24 +28671,26 @@ class AutoReplyStore:
         self, input_id: int, error: str, *, available_at: str
     ) -> None:
         with self._connect() as db:
-            db.execute(
+            cursor = db.execute(
                 """
                 update work_summary_inputs
                 set status='pending',
                     error=?,
                     available_at=?,
                     updated_at=current_timestamp
-                where id=?
+                where id=? and status not in ('done', 'skipped')
+                  and body_compacted=0
                 """,
                 (error, available_at, input_id),
             )
-            self._close_task_runs_leaving_processing(db, [input_id])
+            if cursor.rowcount:
+                self._close_task_runs_leaving_processing(db, [input_id])
 
     def defer_work_summary_input_for_capacity(
         self, input_id: int, error: str, *, available_at: str
     ) -> None:
         with self._connect() as db:
-            db.execute(
+            cursor = db.execute(
                 """
                 update work_summary_inputs
                 set status='pending',
@@ -27270,10 +28699,12 @@ class AutoReplyStore:
                     available_at=?,
                     updated_at=current_timestamp
                 where id=? and status in ('processing', 'failed')
+                  and body_compacted=0
                 """,
                 (error, available_at, input_id),
             )
-            self._close_task_runs_leaving_processing(db, [input_id])
+            if cursor.rowcount:
+                self._close_task_runs_leaving_processing(db, [input_id])
 
     def defer_meeting_alignment_job_for_capacity(
         self, job_id: int, *, available_at: str, error: str
@@ -28827,9 +30258,9 @@ class AutoReplyStore:
                 (
                     summary_input_id,
                     codex_session_id,
-                    decision_json,
-                    audit_summary,
-                    int(memory_recall_used),
+                    "{}",
+                    "",
+                    0,
                 ),
             )
             return int(cursor.lastrowid)
@@ -29181,9 +30612,9 @@ class AutoReplyStore:
         expected = (
             status,
             codex_session_id,
-            decision_json,
-            audit_summary,
-            int(memory_recall_used),
+            "{}",
+            "",
+            0,
             error,
         )
         if _db is not None:
@@ -29191,6 +30622,47 @@ class AutoReplyStore:
             return
         with self._agent_run_write_transaction(None) as (db, _):
             self._finish_task_agent_run_in_connection(db, run_id, expected)
+
+    def get_task_agent_run(self, run_id: int) -> dict[str, object] | None:
+        from app.native_standalone import latest_task_ref, task_decision
+
+        with self._connect() as db:
+            row = db.execute(
+                "select * from task_agent_runs where id=?", (run_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            ref = latest_task_ref(db, run_id)
+        native = task_decision(ref)
+        values = dict(row)
+        values.update(
+            decision_json=native.decision_json,
+            audit_summary=native.audit_summary,
+            memory_recall_used=int(native.memory_recall_used),
+            native_available=native.available,
+            native_reason=native.reason,
+        )
+        return values
+
+    def record_task_agent_projection(
+        self, run_id: int, projection_json: str, *,
+        _db: sqlite3.Connection | None = None,
+    ) -> None:
+        TaskAttentionProjectionReceipt.model_validate_json(projection_json)
+
+        def record(db: sqlite3.Connection) -> None:
+            cursor = db.execute(
+                "update task_agent_runs set projection_json=? where id=?",
+                (projection_json, run_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("task agent run does not exist")
+
+        if _db is not None:
+            record(_db)
+            return
+        with self._agent_run_write_transaction(None) as (db, _):
+            record(db)
 
     def recover_orphaned_task_agent_runs(self) -> int:
         """Close task runs whose parent input is no longer processing."""
@@ -29226,11 +30698,13 @@ class AutoReplyStore:
                     failover_permitted=1, lease_owner='', lease_expires_at='',
                     finished_at=?, updated_at=?
                 where workload_kind='task'
-                  and workload_key in ({placeholders})
+                  and cast(workload_key as integer) in ({placeholders})
+                  and (workload_key not like '%:%'
+                       or workload_key like '%:decision_repair.%')
                   and status in ('starting', 'running')
                   and first_effect_started_at=''
                 """,
-                [now_text, now_text, *[str(run_id) for run_id in run_ids]],
+                [now_text, now_text, *run_ids],
             )
             return len(run_ids)
 
@@ -29979,6 +31453,42 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def resolve_errors_before_successful_component_tick(
+        self, component: str, *, tick_at: datetime
+    ) -> int:
+        if not component.strip():
+            raise ValueError("component must be non-empty")
+        instant = tick_at if tick_at.tzinfo else tick_at.replace(tzinfo=timezone.utc)
+        # SQLite incident timestamps have second precision; the tick's second
+        # cannot establish whether an incident preceded or followed its start.
+        cutoff = instant.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+        with self._connect() as db:
+            eligible = db.execute(
+                """
+                select 1 from errors
+                where kind=? and coalesce(resolved_at, '')=''
+                  and julianday(created_at) < julianday(?) limit 1
+                """,
+                (component, cutoff),
+            ).fetchone()
+        if eligible is None:
+            return 0
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update errors
+                set resolved_at=current_timestamp, resolution=?
+                where kind=? and coalesce(resolved_at, '')=''
+                  and julianday(created_at) < julianday(?)
+                """,
+                (
+                    f"recovered_by_successful_tick:{instant.isoformat()}",
+                    component,
+                    cutoff,
+                ),
+            )
+            return cursor.rowcount
+
     def resolve_unresolved_errors_by_kind(
         self,
         kind: str,
@@ -30075,7 +31585,11 @@ class AutoReplyStore:
                   and exists (
                       select 1
                       from scheduled_task_runs as run
-                      where error_event.conversation_id =
+                      where run.scheduled_task_id=cast(
+                            substr(error_event.conversation_id, length('scheduled-task:') + 1)
+                            as integer
+                        )
+                        and error_event.conversation_id =
                             'scheduled-task:' || cast(run.scheduled_task_id as text)
                         and run.dispatch_status='dispatched'
                         and run.execution_kind='service_command'
@@ -30472,7 +31986,7 @@ class AutoReplyStore:
         source_tables: tuple[str, ...] | None = None,
         _skip_history_cache: bool = False,
     ) -> tuple[int, list[OperationLog]]:
-        """Return one page and its exact count from a single materialized query."""
+        """Count compact keys, then hydrate only the page in one snapshot."""
         cacheable = (
             limit <= 100
             and offset == 0
@@ -30515,34 +32029,51 @@ class AutoReplyStore:
             with operation_logs as (
                 {self._operation_logs_base_query(source_tables)}
             )
-            select operation_logs.*, count(*) over() as __total
+            select source_table, source_id, count(*) over() as __total
             from operation_logs
             {where_sql}
             order by occurred_at desc, source_table desc, source_id desc
             limit ? offset ?
         """
         args = [*where_args, max(0, limit), max(0, offset)]
-        with self._connect() as db:
-            rows = db.execute(sql, tuple(args)).fetchall()
-        if rows:
-            total = int(rows[0]["__total"] or 0)
-            items = []
-            for row in rows:
-                payload = dict(row)
-                payload.pop("__total", None)
-                items.append(OperationLog.model_validate(payload))
-            result = (total, items)
-        else:
-            result = (
-                self.count_operation_logs(
-                    query=query,
-                    log_type=log_type,
-                    statuses=statuses,
-                    history_types=history_types,
-                    source_tables=source_tables,
-                ),
-                [],
-            )
+        with self.read_snapshot(), self._connect() as db:
+            page_keys = db.execute(sql, tuple(args)).fetchall()
+            if page_keys:
+                total = int(page_keys[0]["__total"] or 0)
+                items_by_key = {}
+                for table in dict.fromkeys(row["source_table"] for row in page_keys):
+                    ids = [
+                        row["source_id"] for row in page_keys
+                        if row["source_table"] == table
+                    ]
+                    # Keep parameters below SQLite's limit for larger callers.
+                    for start in range(0, len(ids), 800):
+                        batch = ids[start:start + 800]
+                        placeholders = ",".join("?" for _ in batch)
+                        rows = db.execute(
+                            f"select * from ({self._operation_logs_base_query((table,))}) "
+                            f"where source_id in ({placeholders})",
+                            tuple(batch),
+                        ).fetchall()
+                        for row in rows:
+                            item = OperationLog.model_validate(dict(row))
+                            items_by_key[(item.source_table, item.source_id)] = item
+                result = (
+                    total,
+                    [items_by_key[(row["source_table"], row["source_id"])]
+                     for row in page_keys],
+                )
+            else:
+                result = (
+                    self.count_operation_logs(
+                        query=query,
+                        log_type=log_type,
+                        statuses=statuses,
+                        history_types=history_types,
+                        source_tables=source_tables,
+                    ),
+                    [],
+                )
         if cacheable:
             with self._history_page_cache_lock:
                 self._history_page_cache = (
@@ -30553,6 +32084,29 @@ class AutoReplyStore:
                 )
                 self._history_page_cache_refreshing = False
         return result
+
+    def list_reply_attempt_operation_statuses(
+        self, attempt_ids: list[int]
+    ) -> dict[int, str]:
+        """Project History statuses only for the attempts requested by a chart."""
+        ids = list(dict.fromkeys(i for i in attempt_ids if type(i) is int and i > 0))
+        if not ids:
+            return {}
+        statuses: dict[int, str] = {}
+        with self._connect() as db:
+            for start in range(0, len(ids), 800):
+                chunk = ids[start : start + 800]
+                placeholders = ", ".join("?" for _ in chunk)
+                rows = db.execute(
+                    "select source_id, status from ("
+                    f"{self._operation_logs_base_query(('reply_attempts',), chunk)}"
+                    f") where source_id in ({placeholders})",
+                    tuple(chunk),
+                ).fetchall()
+                statuses.update(
+                    {int(row["source_id"]): str(row["status"]) for row in rows}
+                )
+        return statuses
 
     def warm_history_page_cache(
         self, *, source_tables: tuple[str, ...], limit: int = 20
@@ -30618,7 +32172,9 @@ class AutoReplyStore:
         return False
 
     def _operation_logs_base_query(
-        self, source_tables: tuple[str, ...] | None = None
+        self,
+        source_tables: tuple[str, ...] | None = None,
+        reply_attempt_ids: list[int] | tuple[int, ...] | None = None,
     ) -> str:
         query = f"""
             select
@@ -30674,6 +32230,26 @@ class AutoReplyStore:
                     'Reply' as category,
                     action as action,
                     case
+                        when send_status='needs_human' and trim(coalesce(resolved_at, ''))<>'' then 'skipped'
+                        -- Candidate completion is independent of delivery.
+                        -- Only the latest delivery for this object and its
+                        -- owning task generation supplies its send outcome.
+                        when channel='wechat' and send_status='failed' and exists (
+                            select 1 from wechat_deliveries as delivery
+                            join reply_tasks as delivery_task
+                              on delivery_task.id=delivery.reply_task_id
+                            where delivery_task.channel=reply_attempts.channel
+                              and delivery.conversation_id=reply_attempts.conversation_id
+                              and delivery_task.conversation_id=reply_attempts.conversation_id
+                              and delivery_task.trigger_message_id=reply_attempts.trigger_message_id
+                              and delivery.execution_generation=delivery_task.execution_generation
+                              and delivery.status in ('failed', 'send_unknown')
+                              and delivery.id=(
+                                  select max(current_delivery.id) from wechat_deliveries as current_delivery
+                                  where current_delivery.reply_task_id=delivery_task.id
+                                    and current_delivery.execution_generation=delivery_task.execution_generation
+                              )
+                        ) then 'failed'
                         -- A failed attempt whose own task was handed to Derek
                         -- reads `needs_human`, not `recovered`. The task and
                         -- the attempt are two projections of one piece of
@@ -30780,7 +32356,10 @@ class AutoReplyStore:
                     0 as todo_id,
                     0 as follow_up_id
                 from reply_attempts
-                where not exists (
+                where {(
+                    'id in (' + ', '.join(str(int(i)) for i in reply_attempt_ids) + ') and '
+                    if reply_attempt_ids is not None else ''
+                )}not exists (
                     select 1 from agent_runs as attempt_run
                     join reply_tasks as current_task
                       on current_task.id=attempt_run.reply_task_id
@@ -30821,8 +32400,10 @@ class AutoReplyStore:
                     '{history_types.MEETING}' as history_type,
                     'Meeting Alignment Agent' as source_actor,
                     jobs.title as context,
-                    coalesce(nullif(jobs.final_message, ''), runs.audit_summary) as summary,
-                    runs.decision_json as detail,
+                    case when jobs.final_message<>'' then jobs.final_message
+                         else '会议任务尚无已采用的最终消息。' end as summary,
+                    case when jobs.final_message<>'' then jobs.final_message
+                         else '会议任务尚无已采用的最终消息。' end as detail,
                     '' as conversation_id,
                     '' as message_id,
                     0 as project_id,
@@ -30842,7 +32423,9 @@ class AutoReplyStore:
                     '{history_types.TASK}' as history_type,
                     'Task input' as source_actor,
                     source_type || ':' || source_ref as context,
-                    payload_json as summary,
+                    'Original input source: ' || source_type || ':' || source_ref ||
+                    case when body_sha256<>'' then '; SHA-256 ' || body_sha256 ||
+                        '; ' || body_bytes || ' bytes' else '' end as summary,
                     error as detail,
                     '' as conversation_id,
                     '' as message_id,
@@ -30965,7 +32548,7 @@ class AutoReplyStore:
                         else 'failed'
                     end as status,
                     case
-                        when coalesce(json_extract(runs.snapshot_json, '$.command'), '')<>''
+                        when coalesce(json_extract(configs.snapshot_json, '$.command'), '')<>''
                             then '{history_types.SCHEDULED_COMMAND}'
                         else '{history_types.SCHEDULED_AGENT}'
                     end as history_type,
@@ -30974,7 +32557,7 @@ class AutoReplyStore:
                         else 'Scheduled task'
                     end as source_actor,
                     coalesce(
-                        nullif(json_extract(runs.snapshot_json, '$.name'), ''),
+                        nullif(json_extract(configs.snapshot_json, '$.name'), ''),
                         'Scheduled task ' || runs.scheduled_task_id
                     ) as context,
                     coalesce(
@@ -30989,6 +32572,7 @@ class AutoReplyStore:
                     0 as todo_id,
                     0 as follow_up_id
                 from scheduled_task_runs as runs
+                join scheduled_task_config_versions as configs on configs.id=runs.snapshot_id
                 where {history_types.scheduled_run_filter_sql("runs")}
         """
         if self._email_actions_history_available():

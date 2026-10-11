@@ -82,8 +82,9 @@ def build_repair_manifest(
         projects = db.execute(
             "select * from work_projects order by id"
         ).fetchall()
-        agent_values = _latest_agent_values(db)
+        agent_refs = _latest_agent_refs(db)
         archives = tuple(_archive_candidates(db, projects))
+    agent_values = _latest_agent_values(agent_refs)
 
     historical_rows: dict[int, sqlite3.Row] = {}
     if historical_db_path is not None:
@@ -292,18 +293,28 @@ def apply_manifest(
     )
 
 
-def _latest_agent_values(
-    db: sqlite3.Connection,
-) -> dict[tuple[int, str], tuple[str, str, str, str]]:
-    values: dict[tuple[int, str], tuple[str, str, str, str]] = {}
+def _latest_agent_refs(db: sqlite3.Connection) -> list[tuple[int, str, object]]:
+    from app.native_standalone import latest_task_ref
+
     rows = db.execute(
-        "select id, decision_json, created_at from task_agent_runs "
+        "select id, created_at from task_agent_runs "
         "where status='completed' order by id desc"
-    )
-    for row in rows:
-        try:
-            decision = json.loads(row["decision_json"] or "{}")
-        except (TypeError, json.JSONDecodeError):
+    ).fetchall()
+    return [
+        (int(row["id"]), str(row["created_at"] or ""), latest_task_ref(db, int(row["id"])))
+        for row in rows
+    ]
+
+
+def _latest_agent_values(
+    refs: list[tuple[int, str, object]],
+) -> dict[tuple[int, str], tuple[str, str, str, str]]:
+    from app.native_standalone import task_project_value
+
+    values: dict[tuple[int, str], tuple[str, str, str, str]] = {}
+    for run_id, created_at, ref in refs:
+        decision = task_project_value(ref)
+        if decision is None:
             continue
         project = decision.get("project") if isinstance(decision, dict) else None
         if not isinstance(project, dict):
@@ -324,8 +335,8 @@ def _latest_agent_values(
             values[key] = (
                 serialized,
                 "task_agent_run",
-                f"task_agent_runs:{row['id']}",
-                str(row["created_at"] or ""),
+                f"task_agent_runs:{run_id}",
+                created_at,
             )
     return values
 
@@ -361,7 +372,7 @@ def _archive_candidates(
         all_historical = True
         for update in updates:
             input_row = db.execute(
-                "select payload_json from work_summary_inputs "
+                "select source_created_at, payload_json from work_summary_inputs "
                 "where source_type='local_file' and source_ref=? limit 1",
                 (update["source_ref"],),
             ).fetchone()
@@ -385,6 +396,9 @@ def _archive_candidates(
 def _source_created_at(row: sqlite3.Row | None) -> datetime | None:
     if row is None:
         return None
+    recorded = _parse_datetime(str(row["source_created_at"] or ""))
+    if recorded is not None:
+        return recorded
     try:
         payload = json.loads(row["payload_json"] or "{}")
         value = payload.get("source", {}).get("created_at", "")

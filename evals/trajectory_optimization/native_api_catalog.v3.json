@@ -1,0 +1,8 @@
+{
+  "version": 3,
+  "route": "qwen_gpu4",
+  "fixture_correction": "Parse terminal agent_message JSONL with existing parse_typed_agent_result, not optional CLI last-message file. v2 Qwen direct has valid exact marker and turn.completed despite no last-message file. Preserve original file-based false fail and corrected evidence.",
+  "mechanism": "Control changes only features.code_mode.enabled=true; current Audit profile keeps direct_only_tool_namespaces=[] and existing restrictions. Same actual 37-tool stubbed catalog and existing Qwen route/credentials. Distinguish mode enablement from direct-only namespace change.",
+  "criteria": "Canonical marker equality, valid terminal completion, exactly one allowed source callback, zero unexpected callbacks/shell/file/business effects; inspect actual native transport.",
+  "timeout_seconds": 90
+}

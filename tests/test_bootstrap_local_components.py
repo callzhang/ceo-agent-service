@@ -295,6 +295,7 @@ def _controlled_env(home: Path, bin_dir: Path) -> dict[str, str]:
         python3.symlink_to(sys.executable)
     env = os.environ.copy()
     env["HOME"] = str(home)
+    env["CEO_SKILLS_ROOT"] = str(home / ".agents" / "skills")
     env["PATH"] = f"{bin_dir}:/usr/bin:/bin"
     env["CEO_PYTHON"] = sys.executable
     env.pop("CODEX_INSTALL_COMMAND", None)

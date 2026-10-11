@@ -1,0 +1,34 @@
+{
+  "runtime_ref": "9caecd5c3c5ed3f4606707a6b8d49344dbe359f1",
+  "integrated_main_ref": "60125400ae9d161d3deed41300c880a53eb15c0b",
+  "user_scope": "All business system-review items correspond to real configured task/current instance. No XiaoQing background task, hence no background XiaoQing review gate.",
+  "reviews": {
+    "combined_merge": "Two reproduced P2 projection defects resolved; independent final read-only review finds no new P1/P2.",
+    "publisher": "Receipt owned before mutate; independent six fault-sequence regressions pass; no new P1/P2."
+  },
+  "focused_checks": {
+    "merge_backend": 111,
+    "merge_frontend": 70,
+    "selected_risk_status_and_current_human_api": 46,
+    "wechat_store_api_history_human": 202,
+    "projection": 12,
+    "publisher_updater": 42,
+    "independent_publisher": 6
+  },
+  "counts_overlap": true,
+  "production_preflight": {
+    "head": "60125400",
+    "old_active_config": 13,
+    "files_old_sha_matched": 9,
+    "new_source_sha_matched": 9,
+    "managed_old_revisions_matched": 6,
+    "affected_full_task_refs_matched": 5
+  },
+  "pending": [
+    "Exact final source/evidence head Quality",
+    "PR merge",
+    "Formal quiet deploy with nine contract asset publication",
+    "Actual new worker PID/load receipt,complete task refs,queues/Attention/History/Tasks/needs_human and controlled receipt readback"
+  ],
+  "production_writes_by_this_release": false
+}

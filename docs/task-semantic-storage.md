@@ -4,12 +4,15 @@ This document describes the storage, atomic commands, decision rules, and busine
 resolution commands introduced by Tasks 1–5, plus the Task 6 owner, acceptance,
 and typed-date semantic contract of the approved
 [implementation plan](superpowers/plans/2026-09-22-task-first-tasks.md). It does
-not describe a deployed Task Agent cutover. The runtime, console, providers,
-and legacy import workflow still belong to later tasks.
+not describe deployment; the live Agent and console contracts are documented in
+`architecture.md` and `runtime-mechanism.md`. The Project-centered domain
+extensions below follow the approved 2026-10-04 plan; their new Agent wire and
+console integration remain later steps in that plan.
 
-The schema version is `2026-09-23.1`. Initialization adds 16 bounded semantic
-tables to a pre-semantic database without reclassifying, copying, or deleting
-legacy work records. An existing `2026-09-22.1` semantic database gains the
+The current source-storage schema version is `2026-10-04.4`. The original
+semantic initialization added 16 bounded tables to a pre-semantic database
+without reclassifying, copying, or deleting legacy work records. An existing
+`2026-09-22.1` semantic database gains the
 append-only date-evidence table and signal actor kind; its Task events retain
 their IDs and history while their constraint gains `date_evidence_recorded`.
 The migration leaves every old, untyped `business_tasks.deadline_at` value
@@ -21,7 +24,7 @@ that overlapping event rows agree.
 
 ## Records and evidence
 
-Every table has a frozen, extra-forbid Pydantic record in
+Task-domain records use frozen, extra-forbid Pydantic models in
 `app/task_semantic_models.py`, with matching SQLite enum and state constraints.
 The records keep timestamps and JSON documents as strings, matching the plan's
 persisted contract. Object-valued JSON and the missing-evidence array are checked
@@ -39,7 +42,41 @@ and remain valid nonblank content.
 
 `business_task_signals` preserves source type/reference/time, conversation
 identity/title, author identity/name/kind (`human`, `system`, `agent`, or
-`unknown`), original evidence text, and context.
+`unknown`), and context. Its required `source_document_id` is a real foreign key
+to the immutable `business_source_documents` table, which stores the original
+body once per exact source version. That version is the SHA-256 of the UTF-8
+JSON list `[source_type, source_ref, source_time, conversation_id, author_user_id,
+author_name, author_kind, evidence_text]`, encoded with `ensure_ascii=False` and
+compact separators. Task/Signal deduplication keys, conversation titles, and
+per-Signal context do not participate in body identity. Distinct Task Signals
+may share that body while keeping their IDs, deduplication keys, metadata, and
+independent evidence roles. Different references, source types, versions, or
+actors do not share it; memory/session provenance remains separate from an
+observed source even when its reference and quoted text match.
+
+All Signal getters hydrate `BusinessTaskSignal.evidence_text` by joining the
+shared table. The public original-text field remains available, alongside the
+document ID, but no physical `business_task_signals.evidence_text` column or
+legacy read fallback remains. The meeting-owner backfill also joins this body
+table. Source documents reject UPDATE, DELETE, and replacement, just as Signal
+observations do.
+
+The one-time old-body migration uses the Store's existing foreign-key rebuild
+transaction. It creates shared bodies and a replacement Signal table under
+`BEGIN IMMEDIATE`, preserves every Signal ID and the AUTOINCREMENT high-water
+mark, and reads every original field/body back before removing the old table.
+It checks row counts and compares the exact sorted `foreign_key_check` rows
+before and after the rebuild. Pre-existing violations are preserved as-is;
+any added, removed, or changed violation aborts and rolls the transaction back.
+This migration-specific comparison does not repair or suppress unrelated
+integrity problems. It then installs the final indexes and immutability triggers
+in the same transaction. Existing Task/evidence relationships and event/run
+JSON are not rewritten. A genuinely older Signal without `author_kind` gets
+the existing `unknown` value before its document identity is computed; it is
+not promoted to a human or observed source. Fresh stores create the final
+structure directly. Reopening an upgraded store does not copy bodies again,
+and the schema marker advances only after the normal manifest verification.
+
 Unknown source context stays empty rather than being fabricated. Evidence text
 and source strings are not trimmed or summarized when stored. The caller supplies
 the source/content deduplication key; its unique constraint rejects duplicates.
@@ -73,6 +110,117 @@ excerpt and source reference. If a source-backed reassignment changes the
 identified owner of an accepted Task, the same `owner_changed` event records
 the prior accepted state and the new `assigned_unaccepted` state. The former
 owner's acceptance does not transfer to the new owner.
+
+## Project context
+
+An official Project has optional, source-backed current context independent of
+its linked Tasks. `business_project_context_revisions` is append-only and holds
+the complete `ProjectContext` snapshot plus the exact signal IDs used by that
+revision; the latest revision is the only current context. There is no mutable
+current-context JSON on `business_projects`. `business_project_evidence` holds
+the Project-to-Signal proof relation independently, so a context-free update
+can attach new proof without overwriting responsibilities or facts.
+
+`ProjectContext` carries a goal, scope, zero or one overall owner, role
+responsibilities, and sourced facts. Each responsibility names one person and
+has a nonblank responsibility plus at least one `SourceCitation`; an unknown
+overall owner is represented by null, never by concatenating names. Conflicting
+claims remain separate sourced facts. Facts may carry a date only when both its
+date type and value are present. Every stored citation has a real persisted
+Signal ID, its exact source reference, and an excerpt contained in that Signal's
+immutable source body or in one decoded string leaf of a structured JSON body.
+Validation never joins separate JSON fields to make a quote. Project context persistence rejects missing Signals,
+unresolved citations, or altered references/quotes before writing either table.
+`memory_provenance` and `session_provenance` quotation records are not observed
+originals and cannot become Project evidence or context proof.
+It does not derive an owner or a role from a Task.
+
+Applying structurally identical JSON does not create another revision (object
+key order is not meaningful). Passing `context=null` adds only validated Project
+evidence. An explicit empty responsibility snapshot is a real later revision
+and therefore clears the current roles while preserving prior revisions.
+
+## Project-first Agent source context
+
+Retrieval starts with the official Project registry and its own current context,
+then retrieves related Tasks. Project roles and facts are not inferred from
+Task owners; a Project with no Task still brings its latest context revision,
+recent Project-to-Signal evidence, and the older Signals cited by current roles
+and facts. Same-source Projects and Tasks remain visible across source revisions
+regardless of lexical rank. These forced Tasks are reserved before the remaining
+per-kind retrieval budget is filled; exceeding the budget for known source
+identity does not also retain unrelated ranked Tasks. Existing Attention membership is read unchanged;
+other Tasks in that Project are context, not automatically Attention members.
+
+Project revision reads are paginated (default 100; retrieval requests only the
+latest). Project proof reads are bounded recent rows plus explicitly pinned
+current-context Signal IDs, rather than a growing full-history load. Task owner,
+suggestion, and saved Attention citations also retain their original Signals.
+
+`source_bundle` renders each exact source version once in `source_documents`.
+`source_signals` retains real Signal IDs, persistent `source_document_id`, source
+type/ref/time, actor, conversation, and context, but replaces each repeated body
+with `document_id`. `current_work_item` retains source/context/task-signals and
+scheduled metadata without its summary body or stale `skill_protocol`. Its
+document shares a persistent ID only when all source-version identity fields
+match; otherwise a `current:<identity hash>` is an input-only locator, not a
+new stored Signal or proof ID. The immutable WorkItem still validates decisions.
+
+Documents show `full_length`, `truncated`, and exact half-open character
+`visible_ranges` with start/end/text. Historical bodies have the prior 2048
+character budget, retaining head/tail and cited raw spans. A decoded JSON quote
+is located in one actual string leaf via `decoded_excerpts` (path and leaf-local
+start/end/text), never joined across fields. Mandatory citations exceeding the
+budget are shown with `citation_budget_exceeded`, not silently cut or called
+full text. Current input keeps its pre-existing full-body visibility, including
+when it shares a historical document. Whole-prompt assembly does not echo its
+summary at the top a second time. `source_metrics` reports counts and full
+pre-sharing/unique-body/visible-body characters; metadata and quote repetition
+remain visible costs, so this is not a promised total-token reduction.
+
+## Display-only Task suggestions
+
+`business_tasks.origin` records discovery provenance (`source` or
+`agent_suggestion`); `suggestion_json` stores a typed `TaskSuggestion` with its
+reason, suggested person, responsibility citations, and basis citations. Schema
+version `2026-10-04.3` adds these columns with `source`/`{}` defaults. It does not
+promote old candidates, change owners or commitment states, or rewrite old run
+and event JSON.
+
+`RecordTaskSuggestion` uses the same Task, Signal, evidence, event and confirmed
+Project-link mechanisms. A new suggestion is an open candidate with no formal
+basis, commitment, actual owner or deadline. Citations must resolve to real
+observed Signal IDs with matching references and faithful raw/decoded quotes;
+the Agent's reason is never stored as observed source text. A suggested person
+requires responsibility proof, which may predate the new source and support a
+person not named in that new source.
+Both discovery and cited responsibility/basis Signals must be observations,
+not `memory_provenance`/`session_provenance` quotations. This reuses the existing
+original-source distinction; no new tool permission or semantic classifier is
+introduced.
+
+An explicit existing suggestion ID updates only its actual changed title,
+description or suggestion data; unchanged repetition writes no new event.
+Replaying the original creation (or other event-backed command) source without
+an ID preserves its recorded result ID, including after human promotion.
+An evidence-only update from a later source must retain the explicit Task ID
+on every application/replay: evidence links alone are not a command-result
+identity, because one source may support several Tasks and links can be copied
+by a merge. The Agent must match a later source to a retrieved Task and supply
+its ID; this service does not infer identity from shared citations. A suggestion update cannot
+relabel a real source Task or downgrade a promoted Task. Human assignment uses
+the existing promotion command on the same ID, retains suggestion provenance,
+and stores the actual owner from human evidence. Real acceptance and committed
+dates retain their existing meaning. Suggestions do not create follow-ups,
+notifications or TODO outbox work; after human promotion/acceptance the normal
+TODO eligibility rules apply regardless of the retained origin. The development
+branch now connects TaskDecision.suggestion to this command in the same Agent
+turn as independent Project decisions and assessments. Console integration reads
+persisted Project context and distinguishes current candidate suggestions from
+same-ID human-promoted formal Tasks; the retained origin is historical. An omitted update title/description retains the stored
+value. This wire is not a second assignment or outbound path and is not deployed.
+
+## Task dates and events
 
 `business_task_date_evidence` holds append-only typed facts: `assigned_at`,
 `requested_deadline_at`, `external_deadline_at`, `committed_deadline_at`,
@@ -138,8 +286,9 @@ Task event APIs; attention projections remain later work.
   constrained without a generic, unchecked entity ID. No import runs in Task 1.
 
 All semantic references have foreign keys, membership links have unique keys,
-and the required schema manifest covers all 16 tables, their columns, list
-indexes, and source/date-immutability triggers.
+and the required schema manifest covers the semantic and shared-body tables,
+their columns, list/document indexes, removed Signal body column, and
+source/document/date-immutability triggers.
 
 ## Primitive store API
 
@@ -224,7 +373,7 @@ creation time. Replays or an already-present identical fact do not duplicate it.
 
 Derek, 2026-09-25. Every Task decision cites its source, and the Agent may rely on evidence it read earlier.
 
-**What a citation is.** The source reference, one sentence of the original text (`source_excerpt`, an extract is fine and need not be word for word), and where a reader can find it: `source_link` whenever the source has one, otherwise `source_description` (a DingTalk message is its group and the person who sent it; group and person also count). The service no longer checks that the excerpt is a substring of the source. It still requires a non-empty excerpt, the owner's name inside an owner citation, and, for date evidence, an exact substring.
+**What a citation is.** The source reference, a contiguous verbatim extract of the original text (`source_excerpt`, preserving punctuation, spaces, and line breaks), and where a reader can find it: `source_link` whenever the source has one, otherwise `source_description` (a DingTalk message is its group and the person who sent it; group and person also count). The prompt, Skill, and field descriptions require verbatim quotes; ordinary Task validation still does not check that the excerpt is a source substring. Its unchanged requirements are a non-empty excerpt and the owner's name inside an owner citation; date evidence still requires an exact substring. Project assessment and Attention citations have their separately documented original-source checks. The new quotation guidance does not change ordinary Task or owner-evidence validation.
 
 **Earlier evidence.** `evidence_origin` is `current` (default), `session` (read earlier in the Agent's session) or `memory` (found through Memory provenance). `session` and `memory` cite the original source's reference and text, must carry a link or description, and may only refine an existing Task (`update_fields`) or record a candidate. Formal creation, promotion, acceptance, merges and dates still rest on the current Work Item's authority and identity metadata. Each such citation is stored as its own source signal of type `session_provenance` or `memory_provenance` (link and description in `context_json`, group and person in the conversation title and author name, `cited_while_processing` naming the Work Item). The service cannot re-read the original, so the record says the evidence was cited, not observed.
 
@@ -299,10 +448,11 @@ official Project creation.
 
 `BusinessAttentionProjection` accepts a typed `AttentionProposal` and uses its
 `stable_key` as the durable attention identity. A proposal requires nonblank
-title, why, current-state, and CEO-action text; all linked Tasks must exist and
-be unmerged; at least one must be relevant; and its registered anchor must be
-confirmed and active for at least one linked Task. Its supporting signal must
-exist and already be linked to an underlying Task. A proposal may say
+title, why, current-state, and CEO-action text, an active official Project, and
+a real supporting Signal already linked through `business_project_evidence`.
+Zero Tasks is valid. Optional Task members must each exist, be unmerged and
+relevant, and have an active confirmed link to the same Project. Task-only
+evidence does not substitute for the Project proof relation. A proposal may say
 `当前无需处理`, while still recording material information, risk, decision, or
 push context through its category and explanatory fields.
 
@@ -317,8 +467,8 @@ The command creates an `opened` event for a new item and keeps the same item ID
 when fields or category change. It records `updated`, `category_changed`, or
 `reopened` events with before/after snapshots only when the semantic item fields
 change. Attention Task links are idempotent membership facts, so one item can
-aggregate several independently open Tasks. Resolution requires a persisted
-signal already linked to an underlying Task and appends one `resolved` event.
+aggregate several independently open Tasks or no Tasks. Explicit resolution
+requires a persisted Signal linked to the same Project and appends one `resolved` event.
 `record_viewed` performs no authoritative write and cannot resolve an item.
 
 `recompute_for_tasks` never creates attention from a relevant anchor alone. It
@@ -335,15 +485,22 @@ the same attention item when eligibility returns; a newer explicit proposal
 removal changes the desired set and prevents resurrection. Every immutable
 attention lifecycle snapshot records both `task_ids` (the current eligible
 members) and `proposal_task_ids` (the explicit desired proposal members).
-Historical resolution lineage reads both snapshot sets as well as the current
-desired set, so an explicit proposal removal changes only future membership and
-does not erase evidence needed to resolve an older item. Resolution snapshots
-record the current member IDs on both sides of the state transition. Recompute
-preserves proposal-owned
+Project evidence survives Task membership removal, so explicit resolution does
+not depend on current or historical Task members. Resolution snapshots record
+current member IDs on both sides of the state transition. Recompute preserves proposal-owned
 `current_state` text and changes it only through a later explicit proposal.
 When current membership changes, recompute updates the attention item's
 `updated_at` in the same transaction as its membership event. Repeating
 unchanged recomputation adds no attention event, link, or timestamp update.
+
+Schema `.4` migrates proven original Signals from active legacy cards' Projects
+and their confirmed active Task links to Project evidence once. It excludes
+memory/session provenance, preserves old cards/tasks/history and preexisting
+Project evidence, deduplicates Signal roles, and never reactivates an anchor.
+The migration marker and inserts commit together or roll back together; later
+initialization and read paths do not keep copying new Task evidence to Projects.
+This is verified on isolated synthetic migration copies, not the frozen W39 or
+production database, whose existing unrelated meeting foreign-key fault remains pending.
 
 ## Repair verification
 

@@ -17,10 +17,34 @@ The flags the Agent sends with a code are never read.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 AGENT_REPORTED_FAILURE = "agent_reported_failure"
 AGENT_ERROR_SOURCE = "agent"
+PROVIDER_RISK_REJECTION_RERUN_BLOCK_REASON = (
+    "运行时已拒绝当前对外动作；此入口不能重放历史候选。若仍需办理，"
+    "请通过正式流程提交新候选并重新审核。"
+)
+
+
+def is_provider_risk_rejection(
+    structured_error_json: str, *, attempt_error: str = ""
+) -> bool:
+    """Recognize the service refusal even when an Agent wrapper normalized its code."""
+    if attempt_error.strip().lower() == "provider_risk_rejected":
+        return True
+    try:
+        payload = json.loads(structured_error_json or "")
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    return any(
+        isinstance(payload.get(field), str)
+        and payload[field].strip().lower() == "provider_risk_rejected"
+        for field in ("code", "source_code")
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +74,9 @@ def _reportable_policies() -> dict[str, ErrorPolicy]:
         "management_authorization_missing": _WAIT_FOR_PERSON,
         # The run was told not to execute; nothing to retry.
         "dry_run_execution_suppressed": _FINAL,
+        # Runtime risk refusal requires a safer action or informed approval,
+        # not another automatic Audit turn. Keep it failed, not needs_human.
+        "provider_risk_rejected": _FINAL,
         # The provider refused the send because the identical message is
         # already delivered. Reply task 135612 failed four runs in a row on
         # this: the turn notifies the applicant, DingTalk suppresses the

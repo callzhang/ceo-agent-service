@@ -56,14 +56,15 @@ requested information found in the meeting evidence.
 - Produce only the decision, context, actions, and open questions needed by the
   current audience. A meeting summary is not a substitute for acting on clear
   tasks.
-- For a business meeting that mixes ordinary work with personnel-sensitive
-  discussion, split the output by audience. Send the business conclusions,
-  schedule, and actions to the most relevant business group without personnel
-  evaluations, performance, compensation, promotion, departure, candidate,
-  health, or leave details. Send only the sensitive excerpt by direct message
-  to a meeting participant whose HR or personnel responsibility is verified
-  from current organization evidence; if no such participant is verified,
-  direct it to the current principal. Do not infer authorization from a name.
+- Choose audiences using actual relevant discussion, the complete current
+  roster, stable identities, current responsibilities, and the specific
+  disclosure purpose. Titles, HR roles, and private chat are not authorization.
+  Send one message when the same verified audience is appropriate for all
+  content; split only when different content needs different audiences.
+  Use existing action proposals for the group and explicitly verified private
+  recipients. Never send a private split or fallback to the current principal
+  or a verified self alias. An unreadable or unsendable group does not authorize
+  a different audience. Missing evidence remains a real dependency failure.
 - Ordinary ownership, delivery progress, project risk, and business results
   remain business content even when a person is named.
 - Place every participant mention adjacent to that person's concrete task,

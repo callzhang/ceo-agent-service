@@ -12,13 +12,26 @@ W39 的中汽创智与岚图是定点验收案例。NPS 等没有已确认项目
 
 ## 数据流与最小改动
 
-保留唯一的 `scan evidence → Task Agent → update Tasks` 路径和已有各来源扫描器，不建立「周报专属关注管线」。周报输入向 Task Agent 明确呈现独立项目登记行；相关 Task 决定仍引用自己的行动原句，`project_proposal` 另附登记表中的精确项目行。服务验证该行确实位于原周报的项目登记区域、标题一致，再登记/复用正式 Project 并关联 Task。已有正式 Project 的会议或聊天新证据沿用现有 Task/anchor 关联；项目和任务名称只是线索，不凭客户简称自动合并既有项目。
+保留唯一的 `scan evidence → Task Agent → update Tasks` 路径和已有各来源扫描器，不建立「周报专属关注管线」。周报输入向 Task Agent 明确呈现独立项目登记行；相关 Task 决定仍引用自己的行动原句，`project_proposal` 另附登记表中的精确项目行。服务验证该行确实位于原周报的项目登记区域、标题一致，再登记/复用正式 Project 并关联 Task。`project_proposal` 采用当前权威来源的正式定义，不仅用于新建；先解析当前登记名称，不因行动简称而采用另一个旧相似名称。报告和明确会议登记共用来源 Project 登记方法：复用唯一活动且标题精确相同的正式 Project 的实际 anchor，保留原登记 provenance，不受 legacy anchor_ref 格式影响；没有匹配对象时沿用标题 hash 身份注册，多个活动同名正式对象按身份冲突拒绝，不猜选 ID。通用 anchor 的 type/ref 身份不变。已有正式 Project 的会议或聊天新证据可用 `project_link_proposal` 明确补充该已知对象；项目和任务名称只是线索，不凭客户简称自动合并既有项目。
 
 关注提议引用说明经营影响的具体证据：当前周报中的引文可位于不同章节；会议/聊天引文可来自当前输入或已保存、可核对的相关来源信号。服务按每条引文的原始来源核验，而不是强迫所有风险文字包含在 Task 行的 `source_excerpt` 内。先完成 Task 与 Project 关联，再解析本轮刚取得或已有的 anchor ID，Agent 不需猜尚未创建的数字 ID。每个项目最多提出一条当前关注，持久化身份以已确认的项目 anchor 为准，新证据更新同一卡片；相关开放 Task 和来源链接作为卡片证据。`watch` 类可以明确写「当前无需你处理」和下一次应观察的结果，不被错误表达成「需介入」。
 
 本版沿用现有 Task Agent 运行与关注投影边界，不加入第二个 Agent、额外定时维护或按风险标签直投。投影成功与否必须有可读回执：每个来源输入按输入 ID/运行 ID 记录来源类型、Task 决定数、项目关联数、关注提议数、实际入库数，以及未入库的原因；周报额外记录识别到的项目登记行数。日志只存计数、ID 和简短原因，不复制原文全文。运行完成但关注投影失败时不能在诊断中显示为「已生成关注」；运维可以依据该输入 ID 定点复查和重试。
 
 ## 验收与上线
+
+### 新 Task 关系的决定相对输出契约补全
+
+TaskRelationProposal 不要求 Agent 在创建前猜当前 Task ID：必填真实已有 related_task_id、
+direction=current_to_related/related_to_current，保留 relation_type/reason。当前 Task 应用后
+服务用实际 task_id 派生两端；领域 add_relation/from/to/status=proposed/实际来源证据协议不变。
+不能表达与本决定无关的第三方两端；update 的 related ID 等于当前已知 task_id 在形状层拒绝，
+创建 dedupe 导致的实际自身或缺失目标由原领域层拒绝，不新增恢复或补链。旧 decision_json
+保持原始数据，不提供旧 from/to 输出兼容。update 指纹仍用实际端点和关系类型，reason 不
+构成身份；新创建身份不变，无字段变化 update 不因关系或关注而绕过原 guard。
+既有 Project link 可引用同一行动的完整 compound 原句，包含 stored Project/anchor 标题及
+较短 Task 行动引用；不是其他段落或整报告凑名，不改来源/标题核验或自动推断别名语义。
+这只补全先前无法表达新 Task 关系的输入端点，不增加 Agent、queue、权限或业务 gate。
 
 先写会在现状下失败的回归测试：同一周报内项目行与行动行分离、风险影响在第三处时，项目仍被关联，`watch` 关注落库；只写「有风险」却无实质影响时不落库；新项目无预存 anchor ID 时可在同轮完成；候选 Task 有确认的项目关联时可支持关注；已有关联项目的会议新风险或聊天补充证据无需等待周报即可更新关注；同一项目多条行动不产生重复卡片；投影失败留下明确诊断。用真实 W39 文本的脱敏固定样本检验中汽创智、岚图两项，同时确认 NPS 不被误注册为 Project。
 

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import json
 import sqlite3
 
 from app.email_classifier_contracts import (
@@ -34,6 +35,58 @@ def test_runtime_observability_sink_failure_never_changes_classification_path():
     )
 
     assert recorder.summary()["warm_success_cache"]["sample_count"] == 1
+
+
+def test_provider_scan_advances_folder_time_without_rewriting_message_rows(tmp_path):
+    store = EmailStore(tmp_path / "provider-observation-generation.sqlite3")
+    observations = tuple(
+        {
+            "account_id": "account-1",
+            "stable_message_identity": identity,
+            "provider_folder_id": "folder-inbox",
+            "provider_folder_name": "Inbox",
+            "folder_role": "inbox",
+            "bound_category_key": None,
+            "folder_binding_status": "unbound",
+            "important_signals": {
+                "provider_important": False,
+                "raw_signal_names": [],
+            },
+        }
+        for identity in ("message-one", "message-two")
+    )
+
+    store.record_current_provider_observations(
+        observations,
+        unavailable_folders=(),
+        active_account_ids=("account-1",),
+        observed_at="2026-10-08T10:00:00+00:00",
+    )
+    store.record_current_provider_observations(
+        observations,
+        unavailable_folders=(),
+        active_account_ids=("account-1",),
+        observed_at="2026-10-08T10:01:00+00:00",
+    )
+
+    with store._connect() as db:
+        message_times = tuple(
+            row["observed_at"]
+            for row in db.execute(
+                "select observed_at from email_provider_observations "
+                "order by stable_message_identity"
+            )
+        )
+        folder_time = db.execute(
+            "select observed_at from email_provider_folder_observation_generations "
+            "where account_id='account-1' and provider_folder_id='folder-inbox'"
+        ).fetchone()["observed_at"]
+
+    assert message_times == (
+        "2026-10-08T10:00:00+00:00",
+        "2026-10-08T10:00:00+00:00",
+    )
+    assert folder_time == "2026-10-08T10:01:00+00:00"
 
 
 def test_runtime_observability_persists_safe_bounded_samples_across_processes(
@@ -183,53 +236,16 @@ def test_latest_snapshot_projects_counts_and_provider_folder_truth(tmp_path):
                 20260905,
                 "2026-09-08T08:00:00+00:00",
                 "a" * 64,
-                "{}",
+                json.dumps({
+                    "sample_count": 3,
+                    "group_count": 3,
+                    "category_sample_counts": {"financing": 1, "legal": 2},
+                    "category_group_counts": {"financing": 1, "legal": 2},
+                    "splits": {"train": {"count": 3, "categories": ["financing", "legal"], "important": [False, True]}},
+                }),
                 "2026-09-08T08:00:00+00:00",
             ),
         )
-        rows = (
-            ("legal-1", "folder-legal", "Legal", "legal", "group-a"),
-            ("legal-2", "folder-legal", "Legal", "legal", "group-b"),
-            ("finance-1", "folder-financing", "Financing", "financing", "group-c"),
-        )
-        for identity, folder_id, folder_name, category, group in rows:
-            stable_identity = (
-                classification["stable_message_identity"]
-                if identity == "legal-1"
-                else f"account-1:message-id:<{identity}@example.com>"
-            )
-            db.execute(
-                """
-                insert into email_training_snapshot_observations (
-                    snapshot_id, account_id, stable_message_identity,
-                    provider_folder_id, provider_folder_name, category_key,
-                    important, normalized_model_input,
-                    normalized_model_input_hash, input_schema_version,
-                    provider_thread_id, normalized_body_digest,
-                    sender_template_signature, explicit_matter_group,
-                    group_key, observed_at, source, split,
-                    selected_for_training, ordered_record_digest
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null,
-                          ?, ?, 'natural', 'train', 1, ?)
-                """,
-                (
-                    "snapshot-observability",
-                    "account-1",
-                    stable_identity,
-                    folder_id,
-                    folder_name,
-                    category,
-                    1 if identity == "legal-1" else 0,
-                    identity,
-                    "b" * 64,
-                    "email-model-input.v3",
-                    group,
-                    "c" * 64,
-                    (group + "0" * 64)[:64],
-                    "2026-09-08T08:00:00+00:00",
-                    "d" * 64,
-                ),
-            )
         db.execute(
             "update email_training_snapshots set frozen=1 "
             "where snapshot_id='snapshot-observability'"

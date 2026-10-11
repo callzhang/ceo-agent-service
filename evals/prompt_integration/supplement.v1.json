@@ -1,0 +1,686 @@
+{
+  "version": "prompt-integration-matching-source.v1",
+  "baseline_ref": "0d6bf42eb2922ed57a6bc6de8b836f5a443106c3",
+  "settings": {
+    "route_name": "codex_oauth",
+    "runtime_kind": "codex_cli",
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "medium",
+    "concurrency": 1,
+    "timeout_seconds": 300,
+    "repetitions": 1,
+    "fixed_time": "2026-10-06T09:00:00-07:00",
+    "tools": "none",
+    "profile": "identical-synthetic-short"
+  },
+  "settings_evidence": {
+    "source": "http://127.0.0.1:8765/api/console/settings/prompt-preview?role={consumer,audit}",
+    "verified_at": "2026-10-06",
+    "consumer_and_audit": "codex_oauth / codex_cli / gpt-5.6-luna / medium"
+  },
+  "harness_contract": {
+    "task_render": "actual-AgentTaskContext/AuditTurnContext-plus-production-assembly",
+    "source_bindings": "complete-fixed-no-projection",
+    "audit_subject": "same-fixed-candidate-for-both-arms",
+    "score": "strict-schema-and-bindings-screening-plus-independent-semantic-review",
+    "native_history": "fresh-ephemeral-no-resume",
+    "provider_usage": "record-native-turn-completed-usage-if-present",
+    "shorter_alone": "never-a-quality-pass"
+  },
+  "cases": [
+    {
+      "id": "message-progress",
+      "category": "message",
+      "context": {
+        "task_id": 1001,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-1",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-1",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "请回复项目进度。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-1",
+            "sender": "Synthetic source owner",
+            "text": "Original project status: parser fix merged; deployment remains queued; delivery date is unconfirmed. Recent unrelated chatter asks for a budget approval.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-1",
+            "source_message_id": "message-1",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1001",
+              "value": {
+                "trigger_message_id": "message-1",
+                "facts": "Original project status: parser fix merged; deployment remains queued; delivery date is unconfirmed. Recent unrelated chatter asks for a budget approval.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Original project status: parser fix merged; deployment remains queued; delivery date is unconfirmed. Recent unrelated chatter asks for a budget approval."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Original project status: parser fix merged; deployment remains queued; delivery date is unconfirmed. Recent unrelated chatter asks for a budget approval."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "解析修复已合并，部署仍在队列中，交付日期尚未确认。",
+        "proposal": {
+          "objective": "请回复项目进度。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "action-1",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "conversation-1",
+                "message_id": "message-1"
+              },
+              "payload": {
+                "content": "解析修复已合并，部署仍在队列中，交付日期尚未确认。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Original project status: parser fix merged; deployment remains queued; delivery date is unconfirmed. Recent unrelated chatter asks for a budget approval.",
+              "references": [
+                "evidence-1"
+              ]
+            }
+          ],
+          "authored_judgment": "解析修复已合并，部署仍在队列中，交付日期尚未确认。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "message-1",
+            "value": {
+              "trigger_text": "请回复项目进度。",
+              "trigger_raw_payload": {
+                "synthetic_evaluation": true,
+                "source_bindings": [
+                  {
+                    "provider": "task_context",
+                    "object_ref": "task:1001",
+                    "value": {
+                      "trigger_message_id": "message-1",
+                      "facts": "Original project status: parser fix merged; deployment remains queued; delivery date is unconfirmed. Recent unrelated chatter asks for a budget approval.",
+                      "full_material": {
+                        "status": "synthetic-inline-verified",
+                        "body": "Original project status: parser fix merged; deployment remains queued; delivery date is unconfirmed. Recent unrelated chatter asks for a budget approval."
+                      },
+                      "participant_ids": [
+                        "principal",
+                        "partner"
+                      ]
+                    }
+                  }
+                ],
+                "verified_evidence": "Original project status: parser fix merged; deployment remains queued; delivery date is unconfirmed. Recent unrelated chatter asks for a budget approval."
+              },
+              "messages": [
+                {
+                  "message_id": "evidence-1",
+                  "sender": "Synthetic source owner",
+                  "text": "Original project status: parser fix merged; deployment remains queued; delivery date is unconfirmed. Recent unrelated chatter asks for a budget approval."
+                }
+              ],
+              "materials": [
+                {
+                  "kind": "synthetic_inline",
+                  "reference": "synthetic-material-1",
+                  "source_message_id": "message-1"
+                }
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "approve"
+      ],
+      "semantic_rubric": [
+        "Keep original progress request; no invented deployment or delivery commitment."
+      ],
+      "source_binding_sha256": "987a0cf23f5abf6bc7e617791133b732fc77c875e222deb0771c75f2f7beef5d"
+    },
+    {
+      "id": "oa-current-instance",
+      "category": "oa",
+      "context": {
+        "task_id": 1003,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-3",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-3",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "审核当前采购OA，并准备规则允许的意见。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-3",
+            "sender": "Synthetic source owner",
+            "text": "Synthetic applicable card: current purchase at USD 800, budget USD 1000, complete invoice, current pending task belongs to principal; approve allowed. process_instance_id=oa-3, task_id=oa-task-3.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-3",
+            "source_message_id": "message-3",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "dingtalk-oa",
+              "object_ref": "oa-3",
+              "value": {
+                "process_instance_id": "oa-3",
+                "task_id": "oa-task-3",
+                "facts": "Synthetic applicable card: current purchase at USD 800, budget USD 1000, complete invoice, current pending task belongs to principal; approve allowed. process_instance_id=oa-3, task_id=oa-task-3.",
+                "fields": {
+                  "amount": 800,
+                  "invoice_status": "present"
+                },
+                "complete_card": "Synthetic applicable card: current purchase at USD 800, budget USD 1000, complete invoice, current pending task belongs to principal; approve allowed. process_instance_id=oa-3, task_id=oa-task-3."
+              }
+            }
+          ],
+          "verified_evidence": "Synthetic applicable card: current purchase at USD 800, budget USD 1000, complete invoice, current pending task belongs to principal; approve allowed. process_instance_id=oa-3, task_id=oa-task-3."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task."
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "同意当前采购申请，金额800美元在1000美元预算内，发票完整。",
+        "proposal": {
+          "objective": "审核当前采购OA，并准备规则允许的意见。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "action-3",
+              "capability": "dingtalk-oa",
+              "operation": "approve",
+              "target": {
+                "process_instance_id": "oa-3",
+                "task_id": "oa-task-3"
+              },
+              "payload": {
+                "remark": "同意当前采购申请，金额800美元在1000美元预算内，发票完整。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Synthetic applicable card: current purchase at USD 800, budget USD 1000, complete invoice, current pending task belongs to principal; approve allowed. process_instance_id=oa-3, task_id=oa-task-3.",
+              "references": [
+                "evidence-3"
+              ]
+            }
+          ],
+          "authored_judgment": "同意当前采购申请，金额800美元在1000美元预算内，发票完整。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "message-3",
+            "value": {
+              "trigger_text": "审核当前采购OA，并准备规则允许的意见。",
+              "trigger_raw_payload": {
+                "synthetic_evaluation": true,
+                "source_bindings": [
+                  {
+                    "provider": "dingtalk-oa",
+                    "object_ref": "oa-3",
+                    "value": {
+                      "process_instance_id": "oa-3",
+                      "task_id": "oa-task-3",
+                      "facts": "Synthetic applicable card: current purchase at USD 800, budget USD 1000, complete invoice, current pending task belongs to principal; approve allowed. process_instance_id=oa-3, task_id=oa-task-3.",
+                      "fields": {
+                        "amount": 800,
+                        "invoice_status": "present"
+                      },
+                      "complete_card": "Synthetic applicable card: current purchase at USD 800, budget USD 1000, complete invoice, current pending task belongs to principal; approve allowed. process_instance_id=oa-3, task_id=oa-task-3."
+                    }
+                  }
+                ],
+                "verified_evidence": "Synthetic applicable card: current purchase at USD 800, budget USD 1000, complete invoice, current pending task belongs to principal; approve allowed. process_instance_id=oa-3, task_id=oa-task-3."
+              },
+              "messages": [
+                {
+                  "message_id": "evidence-3",
+                  "sender": "Synthetic source owner",
+                  "text": "Synthetic applicable card: current purchase at USD 800, budget USD 1000, complete invoice, current pending task belongs to principal; approve allowed. process_instance_id=oa-3, task_id=oa-task-3."
+                }
+              ],
+              "materials": [
+                {
+                  "kind": "synthetic_inline",
+                  "reference": "synthetic-material-3",
+                  "source_message_id": "message-3"
+                }
+              ]
+            }
+          },
+          {
+            "provider": "dingtalk-oa",
+            "object_ref": "oa-3",
+            "value": {
+              "process_instance_id": "oa-3",
+              "task_id": "oa-task-3",
+              "facts": "Synthetic applicable card: current purchase at USD 800, budget USD 1000, complete invoice, current pending task belongs to principal; approve allowed. process_instance_id=oa-3, task_id=oa-task-3.",
+              "fields": {
+                "amount": 800,
+                "invoice_status": "present"
+              },
+              "complete_card": "Synthetic applicable card: current purchase at USD 800, budget USD 1000, complete invoice, current pending task belongs to principal; approve allowed. process_instance_id=oa-3, task_id=oa-task-3."
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "approve"
+      ],
+      "semantic_rubric": [
+        "Bind current instance and pending task; use complete supplied rule card."
+      ],
+      "source_binding_sha256": "1ef7d6a07b2806bb781a87eb7633f3460b74ebbf0871310f20c8252178a931b8"
+    },
+    {
+      "id": "feedback-revision",
+      "category": "feedback",
+      "context": {
+        "task_id": 1018,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-18",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-18",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "请回复本群当前进度。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-18",
+            "sender": "Synthetic source owner",
+            "text": "Revision 2; Audit feedback says prior draft incorrectly claimed sent; current source says prepared only. Existing action_identity=reply-progress-18 remains same purpose.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-18",
+            "source_message_id": "message-18",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1018",
+              "value": {
+                "trigger_message_id": "message-18",
+                "facts": "Revision 2; Audit feedback says prior draft incorrectly claimed sent; current source says prepared only. Existing action_identity=reply-progress-18 remains same purpose.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Revision 2; Audit feedback says prior draft incorrectly claimed sent; current source says prepared only. Existing action_identity=reply-progress-18 remains same purpose."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Revision 2; Audit feedback says prior draft incorrectly claimed sent; current source says prepared only. Existing action_identity=reply-progress-18 remains same purpose."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task.",
+        "manual_rerun": {
+          "source_attempt_id": 218,
+          "reviewer_feedback": "Keep original progress goal.",
+          "suggested_reply_text": "进度回复候选已准备，尚未发送。"
+        }
+      },
+      "proposal_revision": 2,
+      "feedback": {
+        "rule": "supported_facts",
+        "observation": "The prior candidate claimed sent without receipt.",
+        "requested_revision": "Say prepared, not sent; retain same action_identity reply-progress-18."
+      },
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "proposal",
+        "summary": "进度回复候选已准备，尚未发送。",
+        "proposal": {
+          "objective": "请回复本群当前进度。",
+          "actions": [
+            {
+              "description": "Prepare sourced response for original request",
+              "action_identity": "reply-progress-18",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "conversation-18",
+                "message_id": "message-18"
+              },
+              "payload": {
+                "content": "进度回复候选已准备，尚未发送。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "Revision 2; Audit feedback says prior draft incorrectly claimed sent; current source says prepared only. Existing action_identity=reply-progress-18 remains same purpose.",
+              "references": [
+                "evidence-18"
+              ]
+            }
+          ],
+          "authored_judgment": "进度回复候选已准备，尚未发送。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "message-18",
+            "value": {
+              "trigger_text": "请回复本群当前进度。",
+              "trigger_raw_payload": {
+                "synthetic_evaluation": true,
+                "source_bindings": [
+                  {
+                    "provider": "task_context",
+                    "object_ref": "task:1018",
+                    "value": {
+                      "trigger_message_id": "message-18",
+                      "facts": "Revision 2; Audit feedback says prior draft incorrectly claimed sent; current source says prepared only. Existing action_identity=reply-progress-18 remains same purpose.",
+                      "full_material": {
+                        "status": "synthetic-inline-verified",
+                        "body": "Revision 2; Audit feedback says prior draft incorrectly claimed sent; current source says prepared only. Existing action_identity=reply-progress-18 remains same purpose."
+                      },
+                      "participant_ids": [
+                        "principal",
+                        "partner"
+                      ]
+                    }
+                  }
+                ],
+                "verified_evidence": "Revision 2; Audit feedback says prior draft incorrectly claimed sent; current source says prepared only. Existing action_identity=reply-progress-18 remains same purpose."
+              },
+              "messages": [
+                {
+                  "message_id": "evidence-18",
+                  "sender": "Synthetic source owner",
+                  "text": "Revision 2; Audit feedback says prior draft incorrectly claimed sent; current source says prepared only. Existing action_identity=reply-progress-18 remains same purpose."
+                }
+              ],
+              "materials": [
+                {
+                  "kind": "synthetic_inline",
+                  "reference": "synthetic-material-18",
+                  "source_message_id": "message-18"
+                }
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "proposal"
+      ],
+      "expected_audit_outcomes": [
+        "approve"
+      ],
+      "semantic_rubric": [
+        "Preserve feedback and revision/action identity, do not claim sent."
+      ],
+      "source_binding_sha256": "a75039e556b5015b55604247e2c9bd6d25f781d33f153239647414974d76fdda"
+    },
+    {
+      "id": "prior-stage",
+      "category": "prior_receipts",
+      "context": {
+        "task_id": 1019,
+        "channel": "dingtalk",
+        "conversation_id": "conversation-19",
+        "conversation_title": "Synthetic evaluation",
+        "single_chat": false,
+        "trigger_message_id": "message-19",
+        "trigger_sender": "Synthetic requester",
+        "trigger_text": "根据前阶段读回准备下一阶段候选。",
+        "trigger_create_time": "2026-10-06T08:00:00-07:00",
+        "messages": [
+          {
+            "message_id": "evidence-19",
+            "sender": "Synthetic source owner",
+            "text": "Stage 1, predecessor_review_id=219. Receipt request-19 completed=true records only applicant material request; invoice has not arrived. Prior human answer says choose once material verified; business-state change says still awaiting invoice.",
+            "create_time": "2026-10-06T08:01:00-07:00"
+          }
+        ],
+        "materials": [
+          {
+            "kind": "synthetic_inline",
+            "reference": "synthetic-material-19",
+            "source_message_id": "message-19",
+            "read_commands": []
+          }
+        ],
+        "prior_receipts": [
+          {
+            "receipt_id": "request-19",
+            "operation": "material_request",
+            "summary": "Requested invoice; no invoice received.",
+            "completed": true
+          }
+        ],
+        "trigger_raw_payload": {
+          "synthetic_evaluation": true,
+          "source_bindings": [
+            {
+              "provider": "task_context",
+              "object_ref": "task:1019",
+              "value": {
+                "trigger_message_id": "message-19",
+                "facts": "Stage 1, predecessor_review_id=219. Receipt request-19 completed=true records only applicant material request; invoice has not arrived. Prior human answer says choose once material verified; business-state change says still awaiting invoice.",
+                "full_material": {
+                  "status": "synthetic-inline-verified",
+                  "body": "Stage 1, predecessor_review_id=219. Receipt request-19 completed=true records only applicant material request; invoice has not arrived. Prior human answer says choose once material verified; business-state change says still awaiting invoice."
+                },
+                "participant_ids": [
+                  "principal",
+                  "partner"
+                ]
+              }
+            }
+          ],
+          "verified_evidence": "Stage 1, predecessor_review_id=219. Receipt request-19 completed=true records only applicant material request; invoice has not arrived. Prior human answer says choose once material verified; business-state change says still awaiting invoice."
+        },
+        "skill_protocol_override": "Synthetic evaluation: all supplied source_bindings and evidence bodies are fixed complete facts. No business/source tool exists. Prepare complete candidate only; preserve original task. No durable user preferences arise from this synthetic task.",
+        "stage_index": 1,
+        "predecessor_review_id": 219,
+        "prior_human_decisions": [
+          {
+            "answer": "choose once material verified",
+            "source_ref": "answer-19"
+          }
+        ],
+        "business_state_changes": [
+          {
+            "invoice_status": "awaiting",
+            "source_ref": "current-oa-19"
+          }
+        ]
+      },
+      "proposal_revision": 0,
+      "feedback": null,
+      "continuation": "",
+      "audit_subject": {
+        "outcome": "no_action",
+        "summary": "请求发票已完成，所以审批已经完成。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "stage_index": 1,
+        "predecessor_review_id": 219,
+        "source_bindings": [
+          {
+            "provider": "task_context",
+            "object_ref": "message-19",
+            "value": {
+              "trigger_text": "根据前阶段读回准备下一阶段候选。",
+              "trigger_raw_payload": {
+                "synthetic_evaluation": true,
+                "source_bindings": [
+                  {
+                    "provider": "task_context",
+                    "object_ref": "task:1019",
+                    "value": {
+                      "trigger_message_id": "message-19",
+                      "facts": "Stage 1, predecessor_review_id=219. Receipt request-19 completed=true records only applicant material request; invoice has not arrived. Prior human answer says choose once material verified; business-state change says still awaiting invoice.",
+                      "full_material": {
+                        "status": "synthetic-inline-verified",
+                        "body": "Stage 1, predecessor_review_id=219. Receipt request-19 completed=true records only applicant material request; invoice has not arrived. Prior human answer says choose once material verified; business-state change says still awaiting invoice."
+                      },
+                      "participant_ids": [
+                        "principal",
+                        "partner"
+                      ]
+                    }
+                  }
+                ],
+                "verified_evidence": "Stage 1, predecessor_review_id=219. Receipt request-19 completed=true records only applicant material request; invoice has not arrived. Prior human answer says choose once material verified; business-state change says still awaiting invoice."
+              },
+              "messages": [
+                {
+                  "message_id": "evidence-19",
+                  "sender": "Synthetic source owner",
+                  "text": "Stage 1, predecessor_review_id=219. Receipt request-19 completed=true records only applicant material request; invoice has not arrived. Prior human answer says choose once material verified; business-state change says still awaiting invoice."
+                }
+              ],
+              "materials": [
+                {
+                  "kind": "synthetic_inline",
+                  "reference": "synthetic-material-19",
+                  "source_message_id": "message-19"
+                }
+              ]
+            }
+          }
+        ],
+        "durable_memories": []
+      },
+      "expected_consumer_outcomes": [
+        "no_action"
+      ],
+      "expected_audit_outcomes": [
+        "return",
+        "reject"
+      ],
+      "semantic_rubric": [
+        "Audit fixed candidate claims request receipt proves approval; retain stage and historical answer."
+      ],
+      "source_binding_sha256": "9910d35ab8de75582109b67326f3340b31f167895a02d5f0f6fc4b50be082c77"
+    }
+  ],
+  "supplement_contract": {
+    "source": "exact-baseline-context_source-projection",
+    "changes": "subject.source_bindings-only-plus-checksum",
+    "facts_proposal_labels": "unchanged-v2",
+    "complete_bindings": "never-project-or-truncate",
+    "candidate_audit_reference": "must-be-exercised",
+    "catalog": "task-override-explicitly-excludes-selection-compaction"
+  }
+}

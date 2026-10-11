@@ -12,7 +12,8 @@ describe("SecretField", () => {
 
     const input = screen.getByLabelText("API Token");
     expect(input).toHaveValue("saved-token");
-    expect(screen.getByText(/已保存的凭据已回填/)).toBeInTheDocument();
+    expect(input).toHaveAttribute("type", "password");
+    expect(screen.getByRole("button", { name: "显示 API Token" })).toHaveAttribute("aria-pressed", "false");
 
     await user.clear(input);
     await user.type(input, "new-token");
@@ -21,6 +22,11 @@ describe("SecretField", () => {
     await user.click(toggle);
     expect(input).toHaveAttribute("type", "text");
     expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(toggle).toHaveAccessibleName("隐藏 API Token");
+    expect(toggle).toHaveAttribute("aria-controls", "token");
     expect(document.activeElement).toBe(toggle);
+    await user.click(toggle);
+    expect(input).toHaveAttribute("type", "password");
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
   });
 });

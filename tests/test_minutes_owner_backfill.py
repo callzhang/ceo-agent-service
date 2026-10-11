@@ -123,3 +123,13 @@ def test_limit_takes_the_newest_meetings_first(tmp_path):
     result = backfill_minutes_owners(store, FakeDws(), limit=1)
 
     assert [decision["minutes_id"] for decision in result.decisions] == ["new"]
+
+
+def test_two_ownerless_tasks_read_the_same_original_meeting_body(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    first = _candidate(store, title="整理访谈问题清单")
+    second = _candidate(store, title="确定访谈时间")
+    assert ownerless_candidate_meetings(store) == [("minutes-1", MEETING, [first, second])]
+    signals = store.list_business_task_signals()
+    assert len(signals) == 2
+    assert signals[0].source_document_id == signals[1].source_document_id

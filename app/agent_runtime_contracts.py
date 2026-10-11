@@ -120,13 +120,14 @@ LOCAL_SERVICE_RUNTIME_CAPABILITIES = frozenset(
         "local_service_database_access",
     }
 )
+ROLE_BOUND_AGENT_TOOLS = "role_bound_agent_tools"
 
 
 def runtime_route_surface_capabilities(
     route: RuntimeRoute,
 ) -> frozenset[str]:
     if route.runtime_kind in {RuntimeKind.CODEX_CLI, RuntimeKind.CLAUDE_CLI}:
-        return LOCAL_SERVICE_RUNTIME_CAPABILITIES
+        return LOCAL_SERVICE_RUNTIME_CAPABILITIES | {ROLE_BOUND_AGENT_TOOLS}
     return frozenset()
 
 

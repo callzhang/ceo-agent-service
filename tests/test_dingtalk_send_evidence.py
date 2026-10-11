@@ -72,7 +72,7 @@ def _driver(*, action=None, actions=None, tool_events: list, classifier=None, pa
         id=19556,
         role=AgentRole.CONSUMER,
         proposal_revision=0,
-        final_result_json=_proposal_with(actions if actions is not None else [action]),
+        final_result_json="",
     )
     audit_run = SimpleNamespace(
         id=19557, role=AgentRole.AUDIT, proposal_revision=0,
@@ -83,6 +83,9 @@ def _driver(*, action=None, actions=None, tool_events: list, classifier=None, pa
     runs = {19556: consumer_run, 19557: audit_run}
     store = SimpleNamespace(
         get_agent_run=lambda run_id: runs.get(run_id),
+        adopted_candidate_for_consumer_run=lambda run_id: {
+            "candidate_json": _proposal_with(actions if actions is not None else [action])
+        } if run_id == consumer_run.id else None,
         list_agent_runs_for_task_generation=lambda *_: [audit_run],
     )
     return DingTalkSendEvidenceDriver(store, classifier=classifier), task
@@ -108,6 +111,22 @@ def test_a_send_the_provider_accepted_has_evidence() -> None:
     driver, task = _driver(
         action=CHAT_SEND, tool_events=[_receipt_event("T4iUBCTxjrrq=")]
     )
+    assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
+
+
+def test_approved_message_tool_preserves_provider_execution_evidence() -> None:
+    response = {
+        "success": True,
+        "delivery_status": "sent",
+        "provider_result": {"success": True, "result": {"openTaskId": "approved-send"}},
+        "verification": {"state": "sent", "verified": True},
+    }
+    event = {"type": "item.completed", "item": {
+        "type": "mcp_tool_call", "server": "agent_cli",
+        "tool": "send_approved_dingtalk_message",
+        "result": {"content": [{"type": "text", "text": json.dumps(response)}]},
+    }}
+    driver, task = _driver(action=CHAT_SEND, tool_events=[event])
     assert driver.audit_run_has_execution_evidence(task, audit_run_id=19557) is True
 
 

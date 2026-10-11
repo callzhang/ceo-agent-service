@@ -48,9 +48,12 @@ const detail = {
   calendar: { event_id: "", response_status: "", result: {} },
   actions: {
     can_rerun: false,
+    rerun_block_reason: "",
     can_recall: false,
     can_submit_feedback: true,
     rerun_url: "/api/console/history/8448/rerun",
+    rerun_label: "重新处理",
+    rerun_confirmation: "确认重新处理这条 Attempt？",
     recall_url: "/api/console/history/8448/recall",
     feedback_url: "/api/console/history/8448/feedback",
     consumer_url: "/attempts/8448/execution/consumer",
@@ -66,7 +69,7 @@ const detail = {
     { role: "consumer", label: "处理过程", session_id: "session-consumer", url: "/codex/session-consumer" },
     { role: "audit", label: "审计过程", session_id: "session-8448", url: "/codex/session-8448" },
   ],
-  runtime_attempts: [{ role: "consumer", session_url: "/codex/session-consumer", proposal_revision: 0, turn_attempt: 0, route: "consumer", runtime: "codex", credential_mode: "configured", model: "qwen", session_available: true, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 1, transcript_end: 2, effect_started_at: "" }],
+  runtime_attempts: [{ role: "consumer", session_url: "/codex/session-consumer", proposal_revision: 0, turn_attempt: 0, route: "consumer", runtime: "codex", credential_mode: "configured", model: "qwen", session_available: true, status: "completed", run_status: "completed", failure_code: "", failover_permitted: false, transcript_start: 1, transcript_end: 2, effect_started_at: "" }],
   created_at: "2026-08-29T10:00:00Z",
   updated_at: "2026-08-29T10:01:00Z",
 };
@@ -143,11 +146,11 @@ describe("AttemptDetailPage", () => {
       item: {
         ...detail,
         runtime_attempts: [
-          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "failed", failure_code: "service_restart_before_effect", failover_permitted: true, transcript_start: 0, transcript_end: 0, effect_started_at: "", run_id: 1, execution_generation: "generation-old", attempt_number: 1, created_at: "2026-08-24 04:11:51", finished_at: "2026-08-24 04:12:31" },
-          { role: "audit", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "failed", failure_code: "runtime_capability_missing", failover_permitted: true, transcript_start: 0, transcript_end: 0, effect_started_at: "", run_id: 2, execution_generation: "generation-old", attempt_number: 2, created_at: "2026-08-24 04:14:58", finished_at: "2026-08-24 04:15:02" },
-          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 3, execution_generation: "generation-new", attempt_number: 1, created_at: "2026-08-25 18:26:05", finished_at: "2026-08-25 18:27:42" },
-          { role: "audit", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 4, execution_generation: "generation-new", attempt_number: 1, created_at: "2026-08-25 18:27:51", finished_at: "2026-08-27 06:34:48" },
-          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 5, execution_generation: "generation-newest", attempt_number: 1, created_at: "2026-09-08 02:17:28", finished_at: "2026-09-08 02:18:12" },
+          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "failed", run_status: "failed", failure_code: "service_restart_before_effect", failover_permitted: true, transcript_start: 0, transcript_end: 0, effect_started_at: "", run_id: 1, execution_generation: "generation-old", attempt_number: 1, created_at: "2026-08-24 04:11:51", finished_at: "2026-08-24 04:12:31" },
+          { role: "audit", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "failed", run_status: "failed", failure_code: "runtime_capability_missing", failover_permitted: true, transcript_start: 0, transcript_end: 0, effect_started_at: "", run_id: 2, execution_generation: "generation-old", attempt_number: 2, created_at: "2026-08-24 04:14:58", finished_at: "2026-08-24 04:15:02" },
+          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", run_status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 3, execution_generation: "generation-new", attempt_number: 1, created_at: "2026-08-25 18:26:05", finished_at: "2026-08-25 18:27:42" },
+          { role: "audit", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", run_status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 4, execution_generation: "generation-new", attempt_number: 1, created_at: "2026-08-25 18:27:51", finished_at: "2026-08-27 06:34:48" },
+          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", run_status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 5, execution_generation: "generation-newest", attempt_number: 1, created_at: "2026-09-08 02:17:28", finished_at: "2026-09-08 02:18:12" },
         ],
       },
       meta: { snapshot_at: "2026-09-14T10:01:00Z" },
@@ -167,13 +170,30 @@ describe("AttemptDetailPage", () => {
     expect(batches[2].open).toBe(true);
   });
 
+  it("describes a readable Claude range without offering a Codex link", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: {
+        ...detail,
+        runtime_attempts: [{
+          ...detail.runtime_attempts[0],
+          runtime: "claude_cli", session_available: true, session_url: "", native_reason: "",
+        }],
+      },
+      meta: { snapshot_at: "2026-10-10T00:00:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByText("原生过程记录可读；当前页面暂不支持打开此 Runtime 的过程。")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "查看这一步的 Agent 记录" })).not.toBeInTheDocument();
+  });
+
   it("explains that Consumer and Audit are the two steps of one processing batch", async () => {
     getAttemptDetail.mockResolvedValue({
       item: {
         ...detail,
         runtime_attempts: [
-          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 1, execution_generation: "same-batch", attempt_number: 1, created_at: "2026-09-16 08:43:08", finished_at: "2026-09-16 08:43:53" },
-          { role: "audit", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 2, execution_generation: "same-batch", attempt_number: 1, created_at: "2026-09-16 08:43:59", finished_at: "2026-09-16 08:47:17" },
+          { role: "consumer", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", run_status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 1, execution_generation: "same-batch", attempt_number: 1, created_at: "2026-09-16 08:43:08", finished_at: "2026-09-16 08:43:53" },
+          { role: "audit", session_url: "", proposal_revision: 0, turn_attempt: 0, route: "codex_oauth", runtime: "codex_cli", credential_mode: "local_oauth", model: "gpt-5.6-sol", session_available: false, status: "completed", run_status: "completed", failure_code: "", failover_permitted: false, transcript_start: 0, transcript_end: 4, effect_started_at: "", run_id: 2, execution_generation: "same-batch", attempt_number: 1, created_at: "2026-09-16 08:43:59", finished_at: "2026-09-16 08:47:17" },
         ],
       },
       meta: { snapshot_at: "2026-09-16T08:47:17Z" },
@@ -186,6 +206,34 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText("方案生成 · 第 1 轮")).toBeInTheDocument();
     expect(screen.getByText("方案审核 · 第 1 轮")).toBeInTheDocument();
   });
+
+  it.each(["/attempts/8448", "/attempts/8448/execution/audit"])(
+    "keeps a returned runtime call distinct from a failed Audit result at %s",
+    async (path) => {
+      getAttemptDetail.mockResolvedValue({
+        item: {
+          ...detail,
+          status: { ...detail.status, raw: "failed" },
+          runtime_attempts: [{
+            ...detail.runtime_attempts[0],
+            role: "audit",
+            run_status: "failed",
+            status: "completed",
+          }],
+        },
+        meta: { snapshot_at: "2026-10-04T19:39:00Z" },
+      });
+      renderPage(path);
+
+      const title = await screen.findByText("方案审核 · 第 1 轮");
+      const entry = title.closest("article")!;
+      const result = within(entry).getByLabelText("业务运行状态");
+      const runtime = within(entry).getByLabelText("运行时调用状态");
+      expect(result).toHaveTextContent("失败");
+      expect(result).not.toHaveTextContent("已完成");
+      expect(runtime).toHaveTextContent("已完成");
+    },
+  );
 
   it("turns internal audit labels into a readable explanation", async () => {
     getAttemptDetail.mockResolvedValue({
@@ -394,7 +442,7 @@ describe("AttemptDetailPage", () => {
 
     await screen.findByRole("heading", { name: "处理过程 · Consumer" });
     expect(screen.queryByRole("link", { name: "查看 Agent 记录" })).not.toBeInTheDocument();
-    expect(screen.getByText("本次执行的 Agent 记录已不在本机")).toBeInTheDocument();
+    expect(screen.getByText("本次执行的原生 Agent 过程不可用；详情请查看各运行步骤。")).toBeInTheDocument();
   });
 
   it("shows the email an email Attempt acted on and the receipt it earned", async () => {
@@ -816,8 +864,68 @@ describe("AttemptDetailPage", () => {
     renderPage();
 
     await user.click(await screen.findByRole("button", { name: "重新处理" }));
+    expect(window.confirm).toHaveBeenCalledWith("确认重新处理这条 Attempt？");
     expect(command).toHaveBeenCalledWith("/api/console/history/8448/rerun");
     vi.restoreAllMocks();
+  });
+
+  it("uses server-owned reevaluation wording only when the backend permits rerun", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        status: {
+          ...detail.status,
+          raw: "failed",
+          message: "重新评估候选，不重放历史被拒执行",
+        },
+        actions: {
+          ...detail.actions,
+          can_rerun: true,
+          terminal: false,
+          rerun_label: "重新评估候选",
+          rerun_confirmation: "确认重新评估候选？不会重放历史被拒执行。",
+        },
+      },
+      meta: { snapshot_at: "2026-08-29T10:01:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByText("重新评估候选，不重放历史被拒执行")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "重新评估候选" }));
+    expect(window.confirm).toHaveBeenCalledWith("确认重新评估候选？不会重放历史被拒执行。");
+    expect(command).toHaveBeenCalledWith("/api/console/history/8448/rerun");
+    vi.restoreAllMocks();
+  });
+
+  it("does not offer rerun for an explicit runtime risk refusal", async () => {
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        status: {
+          ...detail.status,
+          raw: "failed",
+          message: "运行时已拒绝当前动作，历史候选不能直接重放。",
+        },
+        failure_reason: "需要提交实质不同的方案或明确授权。",
+        actions: {
+          ...detail.actions,
+          can_rerun: false,
+          rerun_block_reason: "运行时已拒绝当前动作，历史候选不能直接重放。",
+          terminal: false,
+          action_label: "需要处理",
+        },
+      },
+      meta: { snapshot_at: "2026-08-29T10:01:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Attempt #8448" })).toBeInTheDocument();
+    expect(
+      await within(screen.getByTestId("attempt-conversation-actions")).findByRole("status"),
+    ).toHaveTextContent(/历史候选不能直接重放/);
+    expect(screen.queryByRole("button", { name: "重新处理" })).not.toBeInTheDocument();
   });
 
   it("refreshes the Attempt after submitting a custom human decision", async () => {
@@ -826,10 +934,17 @@ describe("AttemptDetailPage", () => {
     const decisionDetail = {
       ...detail,
       status: { ...detail.status, raw: "needs_human", requires_decision: true },
+      human_decision: {
+        candidate_id: 31, candidate_digest: "reviewed-digest", review_id: 41,
+        reason: "需要选定已审核的处理方式", requested_input: "补充新事实或处理要求",
+        basis: { verified_facts: [], rule_evidence: [], quality_explanation: "", no_external_action_evidence: [], conclusion: "" },
+        authorization_plan: null, selection: null,
+      },
       decision_options: [{
+        key: "notify_applicant",
         label: "授权通知申请人",
-        instruction: "向申请人发送审核结论。",
         consequence: "会向实际申请人发送一条钉钉消息。",
+        plan: { actions: [{ description: "向申请人发送审核结论" }] },
         url: "/api/console/history/8448/human-decision",
       }],
     };
@@ -838,19 +953,69 @@ describe("AttemptDetailPage", () => {
     command.mockResolvedValueOnce({ ok: true, message: "人工决策已提交", meta: { updated_at: "" } });
     renderPage();
 
-    const instruction = await screen.findByLabelText("补充处理要求");
-    expect(screen.getByRole("button", { name: "提交处理要求" })).toBeDisabled();
+    const instruction = await screen.findByLabelText("补充新事实或处理要求");
+    expect(screen.getByRole("button", { name: "提交补充信息" })).toBeDisabled();
     await user.type(instruction, "保留审批已执行事实，不向申请人发送额外通知。");
-    await user.click(screen.getByRole("button", { name: "提交处理要求" }));
+    await user.click(screen.getByRole("button", { name: "提交补充信息" }));
 
     expect(command).toHaveBeenCalledWith(
       "/api/console/history/8448/human-decision",
-      { instruction: "保留审批已执行事实，不向申请人发送额外通知。", feedback_scope: "one_time", skill_update_requested: false },
+      { kind: "supplement", candidate_id: 31, candidate_digest: "reviewed-digest", review_id: 41, instruction: "保留审批已执行事实，不向申请人发送额外通知。" },
     );
     expect(await screen.findByText("人工决策已提交")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "可选处理方式" })).not.toBeInTheDocument();
     expect(getAttemptDetail).toHaveBeenCalledTimes(2);
     vi.restoreAllMocks();
+  });
+
+  it("separates a selected plan's partial execution from verified receipts", async () => {
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        status: { ...detail.status, raw: "failed", message: "审核方案没有全部核验完成。" },
+        system_execution: {
+          candidate_id: 31, review_id: 41, stage_index: 1, is_current: true,
+          execution_id: 51, status: "uncertain", summary: "通知尚未核验",
+          error: { code: "external_action_uncertain" }, verified_actions: 1, total_actions: 2,
+          actions: [
+            { action_index: 0, action_identity: "oa", description: "通过审批", operation: "approve",
+              status: "verified", result: {}, receipt: { external_action_key: "oa-receipt", provider_result: { task_id: "original-oa-node" } } },
+            { action_index: 1, action_identity: "notify", description: "通知申请人", operation: "send_direct_message",
+              status: "uncertain", result: { reason: "provider_exception", source_code: "TIMEOUT" }, receipt: null },
+          ],
+        },
+      },
+      meta: { snapshot_at: "2026-10-04T10:02:00Z" },
+    });
+    renderPage();
+    const progress = await screen.findByRole("region", { name: "系统执行进度" });
+    expect(within(progress).getByText("已核验 1 / 2 项动作")).toBeInTheDocument();
+    expect(within(progress).getByText("外部结果待核验")).toBeInTheDocument();
+    expect(within(progress).getByText("通过审批")).toBeInTheDocument();
+    expect(within(progress).getByText("通知申请人")).toBeInTheDocument();
+    expect(within(progress).getByText("oa-receipt")).toBeInTheDocument();
+    expect(within(progress).getByText(/original-oa-node/)).toBeInTheDocument();
+    expect(within(progress).getByText(/TIMEOUT/)).toBeInTheDocument();
+    expect(within(progress).getAllByText("已核验回执")).toHaveLength(1);
+  });
+
+  it("does not describe an empty execution error as a problem after verified completion", async () => {
+    getAttemptDetail.mockResolvedValueOnce({
+      item: { ...detail, system_execution: {
+        candidate_id: 31, review_id: 41, stage_index: 0, is_current: false,
+        execution_id: 51, status: "done", summary: "All actions verified",
+        error: { code: "", retryable: false, authorization_required: false },
+        verified_actions: 1, total_actions: 1,
+        actions: [{ action_index: 0, action_identity: "notify", description: "通知申请人",
+          operation: "send_direct_message", status: "verified", result: {},
+          receipt: { external_action_key: "send-receipt", provider_result: { message_id: "original-message" } } }],
+      } }, meta: { snapshot_at: "2026-10-04T10:02:00Z" },
+    });
+    renderPage();
+    const progress = await screen.findByRole("region", { name: "系统执行进度" });
+    expect(within(progress).getByText(/历史方案/)).toBeInTheDocument();
+    expect(within(progress).getByText(/全部动作已核验完成/)).toBeInTheDocument();
+    expect(within(progress).queryByText("执行问题详情")).not.toBeInTheDocument();
   });
 
   it("shows a dedicated retry action for an expired WeChat delivery", async () => {

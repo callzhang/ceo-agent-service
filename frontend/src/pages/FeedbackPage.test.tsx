@@ -142,7 +142,7 @@ describe("FeedbackPage", () => {
     expect(within(decisions).getByText("round #2")).toBeInTheDocument();
     expect(within(decisions).getByRole("link", { name: "Workbench task task-2" })).toHaveAttribute("href", "/?task=task-2");
     expect(within(decisions).getByText("turn-2")).toBeInTheDocument();
-    expect(within(decisions).getByText(/2026\/9\/4/)).toBeInTheDocument();
+    expect(within(decisions).getByText(new Date("2026-09-05T00:00:00Z").toLocaleString("zh-CN", { hour12: false }))).toBeInTheDocument();
     expect(within(decisions).getByText("existing tool usage policy is missing")).toBeInTheDocument();
     expect(within(decisions).getByRole("link", { name: "attempt#8308" })).toHaveAttribute("href", "/attempts/8308");
     expect(within(decisions).getByRole("link", { name: "run#445" })).toHaveAttribute("href", "/attempts/8308/execution/consumer");

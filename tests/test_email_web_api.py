@@ -45,7 +45,9 @@ from app.email_store import (
 )
 from app.email_task_adapter import email_conversation_id
 from app.store import AgentRole, AutoReplyStore
+from app.agent_contracts import ConsumerAgentResult
 from app.web_api.email import _project_legacy_model_inventory, register_email_routes
+from tests.support.candidate_review import complete_synthetic_approval
 
 
 _CANONICAL_EMBEDDING_MODEL_FIRST = build_embedding_model_id(
@@ -402,10 +404,10 @@ def test_email_routes_initialize_and_reuse_one_store(
     factory_calls = 0
     original_initialize = EmailStore._initialize
 
-    def counted_initialize(self: EmailStore) -> None:
+    def counted_initialize(self: EmailStore, *, validate_rows: bool = True) -> None:
         nonlocal initialize_calls
         initialize_calls += 1
-        original_initialize(self)
+        original_initialize(self, validate_rows=validate_rows)
 
     def factory() -> EmailStore:
         nonlocal factory_calls
@@ -2205,6 +2207,23 @@ def test_model_detail_rejects_malformed_nested_evidence(
     assert response.json()["code"] == "email_model_integrity_error"
 
 
+def _synthetic_email_proposal(identity, account, message, thread, entry, operations):
+    return ConsumerAgentResult.model_validate({
+        "outcome": "proposal", "summary": "Synthetic unsubscribe proposal.",
+        "proposal": {
+            "objective": "Unsubscribe the current subscription.",
+            "actions": [{"action_identity": identity, "description": "Synthetic unsubscribe operation",
+                         "capability": "email_browser", "operation": "unsubscribe",
+                         "target": {"action_identity": identity, "account_id": account,
+                                    "stable_message_identity": message, "thread_identity": thread, "entry_reference": entry},
+                         "payload": {"operations": list(operations)}}],
+            "sourced_facts": [], "authored_judgment": "The synthetic ActionPlan authorizes unsubscribe.",
+        }, "decision_options": [],
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0, "information_completeness": 1.0,
+    }).model_dump(mode="json")
+
+
 def _audited_email_detail_fixture(
     tmp_path: Path,
 ) -> SimpleNamespace:
@@ -2295,6 +2314,8 @@ def _audited_email_detail_fixture(
         "query_token": "secret-query",
         "raw_tool_transcript": "private transcript",
     }
+    entry_url = "https://news.example.com/unsubscribe?token=fixture-entry"
+    entry_reference = "unsubscribe-entry:" + sha256(entry_url.encode("utf-8")).hexdigest()
     task_payload = {
         "schema": "email_agent_action.v1",
         "lifecycle_version": "email_unsubscribe_audited_v2",
@@ -2306,6 +2327,15 @@ def _audited_email_detail_fixture(
         "account_id": account_id,
         "stable_message_identity": stable_message_identity,
         "thread_identity": thread_identity,
+        "unsubscribe_entries": [{
+            "index": 0, "source": "header_https",
+            "digest": entry_reference.removeprefix("unsubscribe-entry:"),
+            "reference": entry_reference,
+        }],
+        "unsubscribe_authentication": {
+            "evidence_reference": "unsubscribe-auth:observability-41",
+            "one_click_verified": False,
+        },
         **private_markers,
     }
     task = task_store.ensure_reply_task(
@@ -2333,6 +2363,8 @@ def _audited_email_detail_fixture(
         send_status="done",
         channel="email",
     )
+    operations = ({"operation_reference": "step-observability-1", "kind": "open_entry", "target_reference": entry_reference},)
+    proposal = _synthetic_email_proposal(action_identity, account_id, stable_message_identity, thread_identity, entry_reference, operations)
     consumer = task_store.claim_agent_run(
         task.id,
         task.execution_generation,
@@ -2345,7 +2377,7 @@ def _audited_email_detail_fixture(
     ).run
     consumer = task_store.complete_agent_run(
         consumer.id,
-        {"outcome": "proposal"},
+        proposal,
         owner="consumer-observability-owner",
     )
     audit = task_store.claim_agent_run(
@@ -2358,17 +2390,6 @@ def _audited_email_detail_fixture(
         operation_id="audit-observability-1",
         owner="audit-observability-owner",
     ).run
-    entry_url = "https://news.example.com/unsubscribe?token=fixture-entry"
-    entry_reference = "unsubscribe-entry:" + sha256(
-        entry_url.encode("utf-8")
-    ).hexdigest()
-    operations = (
-        {
-            "operation_reference": "step-observability-1",
-            "kind": "open_entry",
-            "target_reference": entry_reference,
-        },
-    )
     binding = {
         "action_identity": action_identity,
         "action_plan_id": plan.action_plan_id,
@@ -2382,7 +2403,7 @@ def _audited_email_detail_fixture(
     }
     effect_digest = email_unsubscribe_effect_digest(**binding)
     claim_owner = {
-        "owner_id": "email-audit-worker",
+        "owner_id": f"email-audit-worker:{audit.id}",
         "generation": 1,
         "lease_token": "unsubscribe-observability-lease",
     }
@@ -2415,9 +2436,9 @@ def _audited_email_detail_fixture(
         },
         claim_owner=claim_owner,
     )
-    audit = task_store.complete_agent_run(
-        audit.id,
-        {"outcome": "executed"},
+    audit = complete_synthetic_approval(
+        task_store,
+        audit,
         owner="audit-observability-owner",
     )
     task_store.complete_reply_task(
@@ -2570,6 +2591,39 @@ def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
 
     _assert_no_audited_lineage(legacy_event)
     assert fixture.unrelated_run.id not in legacy_event["consumer_run_ids"]
+
+
+def test_compacted_email_unsubscribe_keeps_terminal_receipt_readable(
+    tmp_path: Path,
+) -> None:
+    fixture = _audited_email_detail_fixture(tmp_path)
+    task = fixture.task_store.get_reply_task(fixture.task.id)
+    assert task is not None and task.input_compacted
+    assert task.trigger_text == ""
+    compact = json.loads(task.trigger_message_json)
+    assert compact["input_compacted"] is True
+    assert compact["action_plan_id"] == fixture.plan.action_plan_id
+    assert compact["action_plan_version"] == fixture.plan.action_plan_version
+    assert compact["account_id"] == fixture.account_id
+    assert compact["stable_message_identity"] == fixture.stable_message_identity
+    assert compact["thread_identity"] == fixture.thread_identity
+    assert compact["unsubscribe_entries"] == fixture.task_payload["unsubscribe_entries"]
+    assert compact["unsubscribe_authentication"] == fixture.task_payload[
+        "unsubscribe_authentication"
+    ]
+    assert "private_url" not in compact
+    assert "provider_locator" not in compact
+
+    terminal = fixture.store.get_email_unsubscribe_terminal_snapshot(
+        fixture.action_identity, fixture.effect_digest,
+        task_id=task.id,
+        task_execution_generation=task.execution_generation,
+    )
+    assert terminal is not None
+    assert terminal["receipt"]["receipt_id"] == fixture.receipt["receipt_id"]
+    assert _audited_observability_event(fixture)["receipt_id"] == fixture.receipt[
+        "receipt_id"
+    ]
 
 
 def test_email_detail_marks_terminal_no_reliable_entry_as_non_success(
@@ -2767,7 +2821,7 @@ def test_email_detail_projects_safe_unsubscribe_continuation_state(
             "reference": "private-browser-step",
         },
         owner={
-            "owner_id": "email-audit-worker",
+            "owner_id": f"email-audit-worker:{fixture.audit.id}",
             "generation": 1,
             "lease_token": "unsubscribe-observability-lease",
         },
@@ -2866,9 +2920,14 @@ def test_email_detail_preserves_all_valid_continuation_rounds_in_lineage(
         operation_id="",
         owner="consumer-observability-revision-owner",
     ).run
+    proposal = _synthetic_email_proposal(
+        fixture.action_identity, fixture.account_id, fixture.stable_message_identity,
+        fixture.thread_identity, fixture.entry_reference,
+        ({"operation_reference": "step-observability-1", "kind": "open_entry", "target_reference": fixture.entry_reference},),
+    )
     revised_consumer = fixture.task_store.complete_agent_run(
         revised_consumer.id,
-        {"outcome": "revised-proposal"},
+        proposal,
         owner="consumer-observability-revision-owner",
     )
     final_audit = fixture.task_store.claim_agent_run(
@@ -2881,9 +2940,9 @@ def test_email_detail_preserves_all_valid_continuation_rounds_in_lineage(
         operation_id="audit-observability-2",
         owner="audit-observability-revision-owner",
     ).run
-    final_audit = fixture.task_store.complete_agent_run(
-        final_audit.id,
-        {"outcome": "executed"},
+    final_audit = complete_synthetic_approval(
+        fixture.task_store,
+        final_audit,
         owner="audit-observability-revision-owner",
     )
     with sqlite3.connect(fixture.database) as db:

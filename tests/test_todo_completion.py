@@ -115,8 +115,14 @@ def test_business_task_completion_recomputes_attention_membership(tmp_path):
     sibling_id, _ = _business_task_for_completion(store, title="客户合同")
     with store.business_task_transaction() as db:
         anchor_id = store.create_business_anchor_in_transaction(
-            anchor_type="customer", anchor_ref="customer:1", title="客户", _db=db,
+            anchor_type="project", anchor_ref="project:1", title="客户交付项目", _db=db,
         )
+        project_id = store.create_business_project_in_transaction(
+            canonical_anchor_id=anchor_id, title="客户交付项目", registry_source="meeting:delivery", _db=db,
+        )
+        from app.project_context_service import ProjectContextService
+
+        ProjectContextService(store).apply(project_id=project_id, context=None, signal_ids=(signal_id,), db=db)
         for linked_task_id in (task_id, sibling_id):
             store.create_business_task_anchor_link_in_transaction(
                 task_id=linked_task_id, anchor_id=anchor_id, status="confirmed",
@@ -144,6 +150,9 @@ def test_business_task_completion_recomputes_attention_membership(tmp_path):
     assert [link.task_id for link in store.list_business_attention_tasks(attention_id)] == [sibling_id]
     events = store.list_business_attention_events(attention_id)
     assert json.loads(events[-1].after_json)["task_ids"] == [sibling_id]
+    assert store.get_business_attention_item(attention_id).status.value == "active"
+    assert store.get_business_attention_item(attention_id).category is AttentionCategory.PUSH
+    assert store.get_business_attention_item(attention_id).current_state == "推进中"
 
 
 def test_close_todo_completion_evidence_completes_bound_follow_ups(tmp_path):

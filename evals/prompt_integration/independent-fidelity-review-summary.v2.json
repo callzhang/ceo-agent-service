@@ -1,0 +1,46 @@
+{
+  "refs": {
+    "baseline": "0d6bf42eb2922ed57a6bc6de8b836f5a443106c3",
+    "candidate": "e741f80a1d0ae8a5805082e35ec4f03acea4edd8"
+  },
+  "cases_sha256": "5041b0dfb2656fceea617ffedbae2913592878c7158917112937f0b5a89edea2",
+  "reviewed_outputs": 80,
+  "counts": {
+    "baseline": {
+      "none": 29,
+      "material": 9,
+      "critical": 2
+    },
+    "candidate": {
+      "none": 33,
+      "material": 7
+    }
+  },
+  "new_severity_regressions": [
+    {
+      "case_id": "calendar-known",
+      "role": "consumer",
+      "baseline_severity": "none",
+      "candidate_severity": "material"
+    },
+    {
+      "case_id": "ordinary-document",
+      "role": "audit",
+      "baseline_severity": "none",
+      "candidate_severity": "material"
+    }
+  ],
+  "accepted": false,
+  "reason": "New material regressions remain despite aggregate improvement; no deployment or profile publication.",
+  "independent_reviews": [
+    {
+      "file": "blind-review-fidelity-first-half.v2.json",
+      "sha256": "64378d7cbc7e7f24edde77076a125d0bed5a7b9ccb1faf984dddc718d8b3fc18"
+    },
+    {
+      "file": "blind-review-fidelity-second-half.v2.json",
+      "sha256": "637216a05056bdacbb5eaa7f32da35327c816ce82890862ae12480d00d799273"
+    }
+  ],
+  "review_correction": "Existing return and reject both enter a full Consumer revision; incorrect assumption that reject stops feedback was corrected before counts."
+}

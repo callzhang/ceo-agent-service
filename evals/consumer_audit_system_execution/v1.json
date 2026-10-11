@@ -1,0 +1,95 @@
+{
+  "version": "consumer-audit-system-execution.v1",
+  "baseline_ref": "a7d4738a3b6591abc4d8fc69236b5517b4f98004",
+  "fixture_policy": "Synthetic business identities and content only; no private live messages or automatic historical replay.",
+  "settings": {
+    "runtime_mode": "persisted-contract-replay",
+    "provider": "scripted-domain-clients",
+    "concurrency": 1,
+    "timeout_seconds": 30,
+    "model": null,
+    "thinking": null
+  },
+  "cases": [
+    {
+      "id": "readonly_audit",
+      "expected": "Audit has no controlled tool; approved plan runs without an active Audit."
+    },
+    {
+      "id": "whole_return",
+      "expected": "Unchanged body plus requested evidence is allowed after return."
+    },
+    {
+      "id": "substantive_reject",
+      "expected": "Metadata/cosmetic changes cannot resolve a substantive rejection."
+    },
+    {
+      "id": "review_budget",
+      "expected": "Initial review and three resubmissions; exhaustion failed."
+    },
+    {
+      "id": "technical_budget",
+      "expected": "Provider failures do not consume business feedback budget."
+    },
+    {
+      "id": "human_review",
+      "expected": "Consumer question reaches Audit; only approve makes it visible."
+    },
+    {
+      "id": "unnecessary_human",
+      "expected": "Existing rule supports autonomy; Audit rejects unnecessary question."
+    },
+    {
+      "id": "question_quality",
+      "expected": "Missing context/vague reason/source unreadable/false or long-term choices returned/rejected."
+    },
+    {
+      "id": "exact_choice",
+      "expected": "Only selected stored complete target/body plan executes without Agent rerun."
+    },
+    {
+      "id": "selection_idempotency",
+      "expected": "Same choice idempotent; conflicting/foreign IDs and missing option rejected."
+    },
+    {
+      "id": "supplement",
+      "expected": "New instruction/open-ended input receives new full review and retains answer."
+    },
+    {
+      "id": "stop_and_progress",
+      "expected": "Stop skipped with reason; selected execute not done before verification."
+    },
+    {
+      "id": "oa_notification",
+      "expected": "OA then applicant notice respects verified prerequisites; only notice retries."
+    },
+    {
+      "id": "staged_materials",
+      "expected": "Material request stage precedes reviewed decision; receipts retained, separate budget."
+    },
+    {
+      "id": "uncertain_dispatch",
+      "expected": "Timeout/crash/delayed readback reconcile original object before replay."
+    },
+    {
+      "id": "restart_bindings",
+      "expected": "Approved-not-started, pending-question and selected-plan restart exact binding."
+    },
+    {
+      "id": "consumer_documents",
+      "expected": "Report/document work allowed; unsubscribe direct; no Skill decision side effect."
+    },
+    {
+      "id": "current_projections",
+      "expected": "Current approved question, selection and verified completion distinct; history immutable."
+    },
+    {
+      "id": "historical_refusal",
+      "expected": "Historical provider_risk_rejected including source_code cannot replay through another channel."
+    },
+    {
+      "id": "old_unbound_options",
+      "expected": "Old text-only human choices cannot authorize system dispatch."
+    }
+  ]
+}

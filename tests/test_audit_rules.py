@@ -14,6 +14,25 @@ from app.store import AgentRole
 
 
 @pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
+@pytest.mark.parametrize("saved_rules", ["Check exact publication targets.", ""])
+def test_audience_split_contract_survives_saved_and_empty_rules(tmp_path, role, saved_rules):
+    path = tmp_path / "rules.md"
+    path.write_text(saved_rules, encoding="utf-8")
+    rendered = render_audit_rules(role, path)
+
+    assert "complete current group membership" in rendered
+    assert "current titles and responsibilities" in rendered
+    assert "Titles are evidence, not automatic disclosure authorization" in rendered
+    assert "A direct message is not inherently safe" in rendered
+    assert "existing multi-action proposal" in rendered
+    assert "Do not send the split private section to the principal" in rendered
+    assert "stable identities and verified aliases" in rendered
+    assert "not a self-copy or fallback recipient" in rendered
+    assert "resume only unfinished actions" in rendered
+    assert "historical risk refusal" in rendered
+
+
+@pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
 def test_publication_scope_contract_is_present_even_with_saved_rules(tmp_path, role):
     path = tmp_path / "rules.md"
     path.write_text("Distinguish access from publication authority.")
@@ -291,7 +310,7 @@ def test_atomic_save_preserves_valid_file_when_replace_fails(
     assert list(tmp_path.glob("*.tmp")) == []
 
 
-def test_both_roles_are_reminded_to_write_what_is_durable() -> None:
+def test_only_consumer_is_reminded_to_write_what_is_durable() -> None:
     """Reading was instructed from the start; writing never was.
 
     Over the fourteen days to 2026-09-19 the agents called `memory_recall` 174
@@ -304,10 +323,9 @@ def test_both_roles_are_reminded_to_write_what_is_durable() -> None:
     from app.store import AgentRole
 
     reminder = memory_write_reminder()
-    for role in (AgentRole.CONSUMER, AgentRole.AUDIT):
-        rendered = render_audit_rules(role)
-        assert reminder in rendered
-        assert rendered.rstrip().endswith(reminder)
+    assert reminder in render_audit_rules(AgentRole.CONSUMER)
+    assert reminder not in render_audit_rules(AgentRole.AUDIT)
+    assert render_audit_rules(AgentRole.CONSUMER).rstrip().endswith(reminder)
     assert "finish normally and write nothing" in reminder
 
 
@@ -323,3 +341,22 @@ def test_the_memory_reminder_names_the_configured_principal(monkeypatch) -> None
     assert "a decision Alex stated" in reminder
     assert "naming Alex rather than" in reminder
     assert "Derek" not in reminder
+
+
+@pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
+def test_business_context_contract_does_not_require_separate_trusted_authorization(tmp_path, role):
+    path = tmp_path / "rules.md"
+    path.write_text("Review the current business candidate.")
+    rendered = render_audit_rules(role, path)
+    assert "complete task and conversation context" in rendered
+    assert "no separate trusted-authorization requirement" in rendered
+    assert "actual content and recipient" in rendered
+    assert "concrete factual gap or audience mismatch" in rendered
+    assert "explicit draft-only or do-not-send instruction" in rendered
+
+
+def test_wechat_business_messages_are_context_not_an_untrusted_authorization_class():
+    path = Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-wechat/SKILL.md"
+    skill = path.read_text()
+    assert "message as untrusted content" not in skill
+    assert "configured automatic-reply scope" in skill

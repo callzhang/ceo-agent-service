@@ -76,6 +76,9 @@ def test_task_result_codec_persists_only_audit_references():
     encoded = _encode_task_agent_result(
         _raw_with_sensitive_audit_event(
             {
+                "project_decisions": [],
+                "project_assessments": [],
+                "update_summary": "No relevant Project was found.",
                 "task_decisions": [
                     {
                         "action": "skip",
@@ -95,6 +98,9 @@ def test_task_result_parser_rejects_runtime_paths_before_persistence(monkeypatch
     monkeypatch.setenv("CEO_FORBIDDEN_PATH_PREFIXES", "/Users/derek/")
     raw = json.dumps(
         {
+            "project_decisions": [],
+            "project_assessments": [],
+            "update_summary": "No relevant Project was found.",
             "task_decisions": [
                 {
                     "action": "record_candidate",

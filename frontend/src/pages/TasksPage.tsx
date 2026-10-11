@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
-import { confirmBusinessProjectCandidate, listBusinessAttention, listBusinessProjects, listBusinessTasks, type AttentionCategory, type BusinessAttentionSummary, type BusinessProjectCandidateSummary, type BusinessProjectSummary, type BusinessTaskSummary, type TaskView } from "../api/console";
+import { confirmBusinessProjectCandidate, listBusinessAttention, listBusinessProjects, listBusinessTasks, type AttentionCategory, type BusinessAttentionSummary, type BusinessProjectCandidateSummary, type BusinessProjectCustomerGroup, type BusinessProjectSummary, type BusinessTaskSummary, type TaskView } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 import { CandidateAction, TaskSkeleton } from "./TaskParts";
 import { TaskTime } from "./TaskTime";
-import { categoryLabels, categoryOrder, commitmentText, labelOf, taskStatusLabels } from "./taskLabels";
+import { categoryLabels, categoryOrder, commitmentText, isCurrentSuggestion, labelOf, taskDateText, taskOriginLabel, taskOwnerText, taskStatusLabels } from "./taskLabels";
 
 const stageOptions = [{ value: "candidate", label: "候选任务" }, { value: "formal", label: "正式任务" }];
 const statusOptions = ["open", "waiting", "done", "cancelled"];
@@ -20,46 +20,61 @@ function AttentionCard({ item }: { item: BusinessAttentionSummary }) {
     <dl>
       <div><dt>为什么关注</dt><dd>{item.why_attention}</dd></div>
       <div><dt>当前状态</dt><dd>{item.current_state}</dd></div>
-      <div className="business-attention-action"><dt>你的动作</dt><dd>{item.ceo_action}</dd></div>
+      <div className="business-attention-action"><dt>{item.category === "watch" ? "关注点" : "你的动作"}</dt><dd>{item.ceo_action}</dd></div>
     </dl>
     <footer><span>{item.anchor_label || "暂未关联业务主线"}</span><span>{item.linked_task_count} 个关联任务</span><TaskTime value={item.updated_at} /></footer>
   </article>;
 }
 
-/** Only what is worth reading: a candidate with no owner, the default status and no anchor shows nothing here. */
 function taskFacts(item: BusinessTaskSummary) {
   return [
-    item.owner ? `负责人 ${item.owner}` : "",
-    item.status !== "open" ? labelOf(taskStatusLabels, item.status) : "",
+    taskOwnerText(item),
+    labelOf(taskStatusLabels, item.status),
     commitmentText(item.status, item.commitment_status),
-    item.deadline_at ? `截止 ${item.deadline_at}` : "",
-    ...item.anchor_labels,
+    taskDateText(item),
+    ...item.anchor_labels.map((label) => `项目：${label}`),
+    ...(item.project_customer_names || []).map((label) => `客户：${label}`),
   ].filter(Boolean);
 }
 
 function TaskRow({ item, onChanged }: { item: BusinessTaskSummary; onChanged: () => void }) {
   const facts = taskFacts(item);
   return <li className={`business-task-row${item.status === "cancelled" ? " is-set-aside" : ""}`}>
-    <div className="business-task-row-main"><Link to={item.detail_url}>{item.title}</Link><span className={`business-stage ${item.stage}`}>{item.stage === "candidate" ? "候选任务" : "正式任务"}</span></div>
+    <div className="business-task-row-main"><Link to={item.detail_url}>{item.title}</Link><span className={`business-stage ${item.stage}`}>{item.stage === "candidate" ? "候选任务" : "正式任务"}</span><span className="business-origin">{taskOriginLabel(item)}</span></div>
     <span className="business-task-time"><TaskTime value={item.updated_at} /><CandidateAction task={item} onDone={onChanged} /></span>
     {facts.length > 0 && <p className="business-task-meta">{facts.map((fact) => <span key={fact}>{fact}</span>)}</p>}
+    {isCurrentSuggestion(item) && item.suggestion_reason && <p className="business-suggestion-reason">{item.suggestion_reason}</p>}
   </li>;
 }
 
 function ProjectRow({ item }: { item: BusinessProjectSummary }) {
-  const taskFacts = [
-    item.current_status ? `状态 ${item.current_status}` : "",
-    item.deadline ? `DDL ${item.deadline}` : "",
-    item.open_task_count !== undefined ? `进行中 ${item.open_task_count}` : "",
-    item.done_task_count ? `已完成 ${item.done_task_count}` : "",
-  ].filter(Boolean);
-  const sourceLabel = item.source_title || item.registry_source || "权威周报";
-  return <li className="business-project-row"><div className="business-task-row-main"><Link to={item.detail_url}>{item.title}</Link><span className="business-stage formal">正式项目</span></div><span className="business-task-time">{item.confirmed_task_count} 个确认关联任务</span><p className="business-task-meta">
-    {item.goal && <span>目标：{item.goal}</span>}
-    {item.responsible_content && <span>负责内容：{item.responsible_content}</span>}
-    {taskFacts.map((fact) => <span key={fact}>{fact}</span>)}
-    {item.source_url ? <a href={item.source_url} target="_blank" rel="noreferrer">来源：{sourceLabel}{item.reporting_period ? ` · ${item.reporting_period}` : ""}</a> : <span>登记依据：{sourceLabel}</span>}
-  </p></li>;
+  const sourceLabel = item.source_title || item.registry_source || "待明确";
+  return <li className="business-project-row">
+    <div className="business-task-row-main"><Link to={item.detail_url}>{item.title}</Link><span className="business-stage formal">正式项目</span></div>
+    <span className="business-task-time">资料更新 <TaskTime value={item.updated_at} /></span>
+    <div className="business-project-facts">
+      <p>CRM 客户：{item.crm_customer_name || (item.crm_customer_lookup_status === "needs_confirmation" || item.crm_customer_lookup_status === "ambiguous" ? "待确认" : item.crm_customer_lookup_status === "unavailable" ? "CRM 暂不可用" : item.crm_customer_lookup_status === "no_match" ? "未找到客户" : item.crm_customer_lookup_status === "conflict" ? "关联冲突" : "未关联（可为内部项目）")}</p>
+      <p>总负责人：{item.overall_owner || "待明确"}</p>
+      <p>整体负责事项：{item.overall_responsibility || "待明确"}</p>
+      {item.goal && <p>目标：{item.goal}</p>}
+      <p>总体情况：{item.current_status || "待明确"}</p>
+      <p>为什么关注：{item.attention_reason || "待明确"}</p>
+    </div>
+    <p className="business-task-meta"><span>来源任务 {item.confirmed_task_count} 个{item.open_task_count !== undefined && ` · 进行中 ${item.open_task_count}`}{item.done_task_count !== undefined && ` · 已完成 ${item.done_task_count}`}</span>
+      {item.source_url ? <a href={item.source_url} target="_blank" rel="noreferrer">来源：{sourceLabel}</a> : <span>登记依据：{sourceLabel}</span>}
+    </p>
+  </li>;
+}
+
+function CandidateGroups({ tasks, onChanged }: { tasks: BusinessTaskSummary[]; onChanged: () => void }) {
+  return <div className="business-candidate-groups">{(["source", "agent_suggestion"] as const).map((origin) => {
+    const items = tasks.filter((task) => task.stage === "candidate" && task.origin === origin);
+    const title = origin === "source" ? "来源线索" : "Agent 建议";
+    return <section key={origin} className="business-candidate-group" aria-label={title}>
+      <h2>{title}<span className="business-fold-count">本页 {items.length}</span></h2>
+      {items.length ? <ul className="business-task-list">{items.map((item) => <TaskRow key={item.id} item={item} onChanged={onChanged} />)}</ul> : <p className="business-empty-line">本页暂无{title}。</p>}
+    </section>;
+  })}</div>;
 }
 
 function ProjectCandidateRow({ item, onChanged }: { item: BusinessProjectCandidateSummary; onChanged: () => void }) {
@@ -89,13 +104,14 @@ interface Loaded {
   items: BusinessAttentionSummary[] | BusinessTaskSummary[] | BusinessProjectSummary[];
   candidates: BusinessProjectCandidateSummary[];
   candidateMeta: { page: number; page_size: number; total: number };
+  customerGroups: BusinessProjectCustomerGroup[];
 }
 
 export function TasksPage() {
   const [params, setParams] = useSearchParams();
   const requestedView = params.get("view");
   const view: TaskView = requestedView === "formal" || requestedView === "candidates"
-    || requestedView === "all" || requestedView === "projects" ? requestedView : "attention";
+    || requestedView === "all" || requestedView === "projects" || requestedView === "projects_by_customer" ? requestedView : "attention";
   const category = params.get("category") || "";
   const q = params.get("q") || "";
   const stage = params.get("stage") || "";
@@ -114,6 +130,7 @@ export function TasksPage() {
   const firstRender = useRef(true);
   const fixedStage = view === "formal" ? "formal" : view === "candidates" ? "candidate" : "";
   const taskView = view === "formal" || view === "candidates" || view === "all";
+  const projectView = view === "projects" || view === "projects_by_customer";
 
   useEffect(() => {
     const controller = new AbortController();
@@ -123,7 +140,7 @@ export function TasksPage() {
       ? listBusinessAttention({ category, page, page_size: 20 }, controller.signal)
       : taskView
         ? listBusinessTasks({ q, stage: fixedStage || stage, status, owner, sort, page, page_size: 20 }, controller.signal)
-        : listBusinessProjects({ q, page, page_size: 20, candidate_page: candidatePage, candidate_page_size: 20 }, controller.signal);
+        : listBusinessProjects({ q, page, page_size: 20, candidate_page: candidatePage, candidate_page_size: 20, group_by_customer: view === "projects_by_customer" ? "true" : undefined }, controller.signal);
     request.then((result) => {
       if (controller.signal.aborted) return;
       setLoaded({
@@ -131,6 +148,7 @@ export function TasksPage() {
         items: result.items,
         candidates: "candidates" in result ? result.candidates.filter((candidate) => candidate.provisional) : [],
         candidateMeta: "candidate_meta" in result ? result.candidate_meta : { page: 1, page_size: 20, total: 0 },
+        customerGroups: "customer_groups" in result ? result.customer_groups || [] : [],
       });
       setTotal(result.meta.total);
       setSnapshot(result.meta.snapshot_at);
@@ -161,7 +179,7 @@ export function TasksPage() {
   const candidatePages = Math.max(1, Math.ceil(candidateMeta.total / candidateMeta.page_size));
   // Rows of another tab must never be drawn by this tab's renderer; within one tab, the previous page stays (dimmed) while the next loads.
   const data = loaded?.view === view ? loaded : null;
-  const filtered = taskView ? Boolean(q || stage || status || owner) : view === "projects" ? Boolean(q) : Boolean(category);
+  const filtered = taskView ? Boolean(q || stage || status || owner) : projectView ? Boolean(q) : Boolean(category);
   const clearFilters = () => setParams(new URLSearchParams(view === "attention" ? { } : { view }));
 
   const empty = (message: string) => <div className="business-empty"><p>{message}</p>{filtered ? <button type="button" className="secondary-button" onClick={clearFilters}>清除筛选</button> : view === "attention" ? <Link className="secondary-button" to="/tasks?view=all">查看全部任务</Link> : null}</div>;
@@ -170,10 +188,16 @@ export function TasksPage() {
   if (state === "error") body = <div className="page-state page-state-error" role="alert">{error}</div>;
   else if (!data) body = <TaskSkeleton />;
   else if (view === "attention") body = data.items.length ? <div className="business-attention-list">{(data.items as BusinessAttentionSummary[]).map((item) => <AttentionCard key={item.id} item={item} />)}</div> : empty(filtered ? "该类别下没有事项。" : "当前没有需要关注的事项。");
-  else if (taskView) body = data.items.length ? <ul className="business-task-list">{(data.items as BusinessTaskSummary[]).map((item) => <TaskRow key={item.id} item={item} onChanged={() => setReloadKey((key) => key + 1)} />)}</ul> : empty(filtered ? "没有符合条件的任务。" : view === "formal" ? "暂无正式任务。" : view === "candidates" ? "暂无待确认线索。" : "暂无任务。");
+  else if (taskView) body = data.items.length
+    ? view === "candidates"
+      ? <CandidateGroups tasks={data.items as BusinessTaskSummary[]} onChanged={() => setReloadKey((key) => key + 1)} />
+      : <ul className="business-task-list">{(data.items as BusinessTaskSummary[]).map((item) => <TaskRow key={item.id} item={item} onChanged={() => setReloadKey((key) => key + 1)} />)}</ul>
+    : empty(filtered ? "没有符合条件的任务。" : view === "formal" ? "暂无正式任务。" : view === "candidates" ? "暂无待确认线索或建议。" : "暂无任务。");
   else body = <>
-    {data.items.length ? <ul className="business-task-list">{(data.items as BusinessProjectSummary[]).map((item) => <ProjectRow key={item.id} item={item} />)}</ul> : empty(filtered ? "没有符合条件的项目。" : "暂无正式项目。")}
-    {candidateMeta.total > 0 && <details className="business-project-candidates" open={data.items.length === 0}>
+    {view === "projects_by_customer"
+      ? data.customerGroups.length ? <div className="business-candidate-groups">{data.customerGroups.map((group) => <section key={group.crm_customer_id} className="business-candidate-group" aria-label={`客户：${group.crm_customer_name}`}><h2>{group.crm_customer_name}<span className="business-fold-count">{group.projects.length} 个项目</span></h2><ul className="business-task-list">{group.projects.map((item) => <ProjectRow key={item.id} item={item} />)}</ul></section>)}</div> : empty(filtered ? "没有符合条件的客户项目。" : "暂无已关联 CRM 客户的项目。")
+      : data.items.length ? <ul className="business-task-list">{(data.items as BusinessProjectSummary[]).map((item) => <ProjectRow key={item.id} item={item} />)}</ul> : empty(filtered ? "没有符合条件的项目。" : "暂无正式项目。")}
+    {view === "projects" && candidateMeta.total > 0 && <details className="business-project-candidates" open={data.items.length === 0}>
       <summary><h2>待确认的项目线索 <span>{candidateMeta.total}</span></h2></summary>
       <ul className="business-task-list">{data.candidates.map((item) => <ProjectCandidateRow key={item.id} item={item} onChanged={() => setReloadKey((key) => key + 1)} />)}</ul>
       <Pagination label="项目线索分页" page={candidatePage} pages={candidatePages} previous={() => update("candidate_page", candidatePage - 1)} next={() => update("candidate_page", candidatePage + 1)} previousLabel="项目线索上一页" nextLabel="项目线索下一页" />
@@ -188,6 +212,7 @@ export function TasksPage() {
         <Link to="/tasks?view=candidates" aria-current={view === "candidates" ? "page" : undefined}>待确认线索</Link>
         <Link to="/tasks?view=all" aria-current={view === "all" ? "page" : undefined}>全部任务</Link>
         <Link to="/tasks?view=projects" aria-current={view === "projects" ? "page" : undefined}>正式项目</Link>
+        <Link to="/tasks?view=projects_by_customer" aria-current={view === "projects_by_customer" ? "page" : undefined}>按客户查看</Link>
       </nav>
       {view === "attention" ? <div className="business-task-toolbar" role="group" aria-label="关注类别">
         <button type="button" aria-pressed={!category} onClick={() => update("category", "")}>全部关注</button>
@@ -200,7 +225,7 @@ export function TasksPage() {
           <select aria-label="负责人" value={owner} onChange={(event) => update("owner", event.target.value)}><option value="">全部负责人</option>{ownerOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
           <select aria-label="排序" value={sort} onChange={(event) => update("sort", event.target.value)}>{sortOptions.map((option) => <option key={option.value} value={option.value === "updated" ? "" : option.value}>{option.label}</option>)}</select>
         </>}
-        {state !== "error" && data && <span className="business-task-count">{view === "formal" ? "正式任务" : view === "candidates" ? "待确认线索" : view === "all" ? "全部记录" : "正式项目"} {total} 个</span>}
+        {state !== "error" && data && <span className="business-task-count">{view === "formal" ? "正式任务" : view === "candidates" ? "待确认线索" : view === "all" ? "全部记录" : view === "projects_by_customer" ? "客户" : "正式项目"} {total} 个</span>}
       </div>}
       <div className="business-list-body" aria-busy={state === "loading"} data-refreshing={state === "loading" && data ? "true" : undefined}>{body}</div>
       {state !== "error" && data && <Pagination label="Tasks 分页" page={page} pages={pages} previous={() => update("page", page - 1)} next={() => update("page", page + 1)} />}

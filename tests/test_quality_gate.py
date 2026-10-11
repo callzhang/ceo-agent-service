@@ -16,6 +16,24 @@ from app.store import AgentRole, AutoReplyStore
 NOW = datetime(2026, 8, 7, 1, 0, tzinfo=timezone.utc)
 
 
+def test_reply_quality_counts_do_not_read_business_payloads(tmp_path):
+    from app.quality_gate import _check_reply_attempts
+
+    store = AutoReplyStore(tmp_path / "quality-projection.sqlite3")
+    violations, attention = [], []
+    with store._connect() as db:
+        def authorize(action, table, column, database, source):
+            if action == sqlite3.SQLITE_READ and table == "reply_attempts":
+                if column in {"trigger_text", "final_reply_text", "context_json"}:
+                    return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        db.set_authorizer(authorize)
+        _check_reply_attempts(db, NOW, violations, attention)
+    assert violations == []
+    assert attention == []
+
+
 def _structured_needs_human_result(
     *, risk="high", confidence=0.2, rule_coverage=1.0,
     information_completeness=1.0, options=None,
@@ -27,14 +45,22 @@ def _structured_needs_human_result(
         "feedback": None,
         "external_result": None,
         "decision_options": options or [
-            {"key": "approve", "label": "Approve", "instruction": "approve", "consequence": "run"},
-            {"key": "reject", "label": "Reject", "instruction": "reject", "consequence": "stop"},
+            {"key": "approve", "label": "Approve", "instruction": "approve", "consequence": "run", "applies_to": "task_class"},
+            {"key": "reject", "label": "Reject", "instruction": "reject", "consequence": "stop", "applies_to": "task_class"},
         ],
-        "error": {"code": "", "message": "", "retryable": False, "authorization_required": False},
+        "error": {"code": "", "retryable": False, "authorization_required": False},
         "risk": risk,
         "confidence": confidence,
         "rule_coverage": rule_coverage,
         "information_completeness": information_completeness,
+        "needs_human_reason": "The applicable task class requires a rule choice.",
+        "decision_basis": {
+            "verified_facts": [{"assertion": "The task was read.", "references": ["task:1"]}],
+            "rule_evidence": [{"assertion": "The rule gap was checked.", "references": ["skill:review"]}],
+            "quality_explanation": "The score reflects the verified evidence and rule gap.",
+            "no_external_action_evidence": [{"assertion": "No write occurred.", "references": ["attempt:1"]}],
+            "conclusion": "A reusable rule choice is required.",
+        },
     }
 
 
@@ -684,18 +710,20 @@ def test_quality_gate_excludes_resolved_needs_human_attempt(tmp_path):
     )
 
 
-def test_quality_gate_reports_needs_human_projection_when_queue_task_is_done(tmp_path):
+def test_quality_gate_rejects_unreviewed_legacy_human_projection_when_queue_task_is_done(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     _insert_needs_human_projection(store, result=_structured_needs_human_result())
 
     report = scan_hourly_quality(store.path, now=NOW)
 
-    assert ("reply_attempts", "needs_human", 1) in {
+    assert ("reply_attempts", "needs_human", 1) not in {
         (item.source, item.code, item.count) for item in report.attention
     }
-    # The quality gate intentionally keeps a done-task needs_human projection
-    # actionable, while the queue helper excludes a trigger owned by a done
-    # current business object from its unresolved-work count.
+    assert ("reply_attempts", "invalid_needs_human_result", 1) in {
+        (item.source, item.code, item.count) for item in report.violations
+    }
+    # A raw legacy result remains in History but is not a current approved
+    # candidate, and the done current business object is not unresolved work.
     assert store.count_current_unresolved_problem_attempts() == 0
 
 
@@ -802,14 +830,14 @@ def test_quality_gate_rejects_audit_revision_failure_as_human_decision(tmp_path)
     )
 
 
-def test_quality_gate_requires_structured_high_risk_low_confidence_options(tmp_path):
+def test_quality_gate_requires_approved_review_even_with_structured_high_risk_options(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     _insert_needs_human_projection(store, result=_structured_needs_human_result())
 
     report = scan_hourly_quality(store.path, now=NOW)
 
-    assert ("reply_attempts", "needs_human", 1) in {
-        (item.source, item.code, item.count) for item in report.attention
+    assert ("reply_attempts", "invalid_needs_human_result", 1) in {
+        (item.source, item.code, item.count) for item in report.violations
     }
 
 
@@ -839,7 +867,7 @@ def test_quality_gate_does_not_report_low_risk_or_confident_needs_human_projecti
         assert not any(item.code == "needs_human" for item in report.attention)
 
 
-def test_quality_gate_low_risk_low_rule_coverage_still_requires_human(tmp_path):
+def test_quality_gate_low_rule_coverage_does_not_replace_approved_review(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     _insert_needs_human_projection(
         store,
@@ -848,8 +876,8 @@ def test_quality_gate_low_risk_low_rule_coverage_still_requires_human(tmp_path):
 
     report = scan_hourly_quality(store.path, now=NOW)
 
-    assert ("reply_attempts", "needs_human", 1) in {
-        (item.source, item.code, item.count) for item in report.attention
+    assert ("reply_attempts", "invalid_needs_human_result", 1) in {
+        (item.source, item.code, item.count) for item in report.violations
     }
 
 
@@ -879,15 +907,15 @@ def test_quality_gate_rejects_autonomous_outcome_even_when_information_is_incomp
     assert any(item.code == "invalid_needs_human_result" for item in report.violations)
 
 
-def test_quality_gate_reports_low_rule_coverage_but_incomplete_information_is_ask_back(tmp_path):
+def test_quality_gate_never_activates_unreviewed_quality_threshold_questions(tmp_path):
     complete = AutoReplyStore(tmp_path / "complete.sqlite3")
     _insert_needs_human_projection(
         complete,
         result=_structured_needs_human_result(rule_coverage=0.4),
     )
     assert any(
-        item.code == "needs_human"
-        for item in scan_hourly_quality(complete.path, now=NOW).attention
+        item.code == "invalid_needs_human_result"
+        for item in scan_hourly_quality(complete.path, now=NOW).violations
     )
 
     incomplete = AutoReplyStore(tmp_path / "incomplete.sqlite3")
@@ -1160,6 +1188,8 @@ def test_quality_gate_writes_coverage_state(tmp_path):
     content = state_path.read_text(encoding="utf-8")
     assert '"mode": "fail_closed_queue_coverage"' in content
     assert '"reply_tasks"' in content
+    assert "native_delivery_coverage" not in content
+    assert report.to_dict()["native_delivery_coverage"] is not None
 
 
 def test_quality_check_command_writes_state_and_returns_nonzero_for_violation(tmp_path):
@@ -1261,7 +1291,7 @@ def test_quality_gate_does_not_flag_an_outbox_row_still_being_retried(tmp_path):
     )
 
 
-def test_an_executed_send_with_no_delivery_record_is_reported(tmp_path):
+def test_an_executed_send_with_no_delivery_record_is_reported(tmp_path, monkeypatch):
     """Nothing rebuilds a delivery any more, so a missing one must be visible.
 
     The sweep that used to fill these in wrote seven rows for sends that never
@@ -1289,23 +1319,52 @@ def test_an_executed_send_with_no_delivery_record_is_reported(tmp_path):
         proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id,
         operation_id="op-1", owner="audit",
     ).run
-    store.complete_agent_run(audit.id, {
+    native_result = {
         "outcome": "executed", "risk": "low", "confidence": 1.0,
         "rule_coverage": 1.0, "information_completeness": 1.0,
         "summary": "sent", "proposal_revision": 0, "feedback": None,
         "external_result": {"operation_id": "op-1",
             "live_result_reference": {"open_task_id": "openTask-1"}},
         "error": {"code": "", "retryable": False, "authorization_required": False},
-    }, owner="audit")
+    }
+    store.complete_agent_run(audit.id, native_result, owner="audit")
+    monkeypatch.setattr(
+        "app.native_trajectory.read_native_result_json",
+        lambda _db, _row: json.dumps(native_result),
+    )
 
     with sqlite3.connect(database) as db:
         db.row_factory = sqlite3.Row
         violations: list = []
-        _check_delivery_records(db, violations)
+        coverage = _check_delivery_records(db, violations)
 
     assert [item.code for item in violations] == ["executed_without_record"]
     assert violations[0].count == 1
     assert "do not backfill" in violations[0].detail
+    assert coverage == {"checked": 1, "unavailable": 0}
+
+
+def test_missing_native_delivery_evidence_is_reported_as_coverage_not_success(tmp_path):
+    from app.quality_gate import _check_delivery_records
+
+    store = AutoReplyStore(tmp_path / "delivery.sqlite3")
+    with store._connect() as db:
+        db.execute(
+            "insert into reply_tasks (channel, single_chat, conversation_id, conversation_title, "
+            "trigger_message_id, trigger_create_time, trigger_sender, trigger_text) "
+            "values ('dingtalk', 0, 'c', 'Group', 'm', '2026-10-10', 'Derek', 'reply')"
+        )
+        task_id = db.execute("select last_insert_rowid()").fetchone()[0]
+        db.execute(
+            "insert into agent_runs (reply_task_id, execution_generation, role, status, completed_at) "
+            "values (?, 'initial', 'audit', 'completed', datetime('now'))",
+            (task_id,),
+        )
+    with store._connect() as db:
+        issues: list = []
+        coverage = _check_delivery_records(db, issues)
+    assert coverage == {"checked": 0, "unavailable": 1}
+    assert issues == []
 
 
 def _runtime_sample(store, *, outcome, recorded_at, fallback_code=""):

@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "routes": ["codex_api", "qwen_gpu4"],
+  "configuration_source": "Current production .env parsed by existing load_runtime_config; existing route credentials reused under the approved plan. No credential creation or changes.",
+  "mechanism": "Existing CodexRuntimeAdapter builds route provider/environment and current Audit role profile; only MCP transports are replaced with the side-effect-free actual 37-tool Audit catalog fixture. Compare default versus nested direct-only namespace override, no output schema in this tool-transport probe.",
+  "criteria": "Marker equality, one expected source callback, zero unexpected callbacks and shell/file/business effects; inspect full native trajectory. Provider quota/auth/transport failures are not tool-schema defects. No route fallback, new routing or production change.",
+  "timeout_seconds": 90,
+  "known_limits": "Cold tool-catalog compatibility probe only; full business output schemas and resume gates remain separate."
+}

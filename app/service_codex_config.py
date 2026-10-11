@@ -290,6 +290,7 @@ def service_mcp_config_options(
     *,
     env: Mapping[str, str] = os.environ,
     servers: Iterable[ServiceMcpServer] | None = None,
+    enabled_tools_by_server: Mapping[str, tuple[str, ...]] | None = None,
 ) -> list[str]:
     options: list[str] = []
     disabled_servers: tuple[str, ...] = ()
@@ -332,6 +333,12 @@ def service_mcp_config_options(
                 options,
                 f"{prefix}.tool_timeout_sec",
                 server.tool_timeout_sec,
+            )
+        if enabled_tools_by_server is not None:
+            _append_option(
+                options,
+                f"{prefix}.enabled_tools",
+                list(enabled_tools_by_server.get(server.name, ())),
             )
     for name in disabled_servers:
         if name in _REMOTE_DISABLED_SERVER_NAMES:

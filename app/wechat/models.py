@@ -104,3 +104,12 @@ class WechatDelivery(BaseModel):
     evidence: dict[str, str] = Field(default_factory=dict)
     error: str = ""
     pre_action_failure: bool = False
+
+
+def principal_reply_supersession(error: str) -> str:
+    """Read an exact source-message reference from the formal close reason."""
+    for field in error.split(";"):
+        name, separator, value = field.strip().partition(":")
+        if separator and name == "superseded_by_principal_reply" and value.strip():
+            return value.strip()
+    return ""

@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "low",
+  "fixture_correction": "Consumer command factory owns --skip-git-repo-check; do not also add it in the fixture's base command. v1 Consumer arms were rejected by CLI parsing before any model/tool work. v1 Audit arms passed and are retained. This reruns Consumer only with unchanged declarations, stubs and marker task.",
+  "mechanism": "Actual 41-tool Consumer catalog, all callbacks fixture-stubbed before server starts; only the existing group reader returns a marker. Current Consumer CLI profile; candidate adds nested direct namespace overrides only.",
+  "criteria": "One exact source callback, marker equality, zero unexpected callbacks and shell/file/business operations. Compare actual token usage. Not business or all-provider acceptance.",
+  "arms": ["consumer-baseline", "consumer-direct"]
+}

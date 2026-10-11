@@ -5,6 +5,7 @@ import pytest
 
 from app.store import AutoReplyStore
 from app.agent_cron.commands import (
+    SERVICE_COMMAND_OPTIONS,
     ServiceCommandConsumerContext,
     ServiceCommandRegistry,
 )
@@ -113,20 +114,8 @@ def test_scheduled_trigger_persists_consumer_prompt_and_skills(
     )
     registry = ServiceCommandRegistry(
         {
-            name: (producer.run_once if name == "wechat-produce-once" else lambda: 0)
-            for name in (
-                "email-message-check-once",
-                "produce-once",
-                "calendar-invites-once",
-                "recover-recent-messages",
-                "wechat-produce-once",
-                "scan-meetings-once",
-                "scan-oa-approvals",
-                "scan-meeting-todos-once",
-                "request-minutes-access",
-        "sync-minutes-once",
-                "weekly-okr-report",
-            )
+            option.name: (producer.run_once if option.name == "wechat-produce-once" else lambda: 0)
+            for option in SERVICE_COMMAND_OPTIONS
         }
     )
 

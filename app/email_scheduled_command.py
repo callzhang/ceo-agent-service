@@ -57,7 +57,7 @@ def build_email_discovery_dependencies(
 ) -> EmailDiscoveryBootstrap:
     """Build discovery without Agent runtimes, consumers, delivery, or training."""
 
-    email_store = EmailStore(Path(settings.db_path))
+    email_store = EmailStore(Path(settings.db_path), validate_rows=False)
     task_store = AutoReplyStore(Path(settings.db_path))
     classification_task_producer = EmailClassificationTaskProducer(email_store)
     action_task_producer = EmailActionTaskProducer(task_store, email_store)

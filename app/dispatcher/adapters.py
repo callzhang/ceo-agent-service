@@ -244,7 +244,7 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                 now=now_text,
             )
             claimed = db.execute(
-                "select * from scheduled_task_runs where id=?", (candidate["id"],)
+                f"select {self.store._scheduled_task_run_columns()} from scheduled_task_runs where id=?", (candidate["id"],)
             ).fetchone()
             assert claimed is not None
             run = self.store._scheduled_task_run_from_row(claimed)
@@ -369,6 +369,15 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
     def __init__(self, store: AutoReplyStore, *, owner_alive=_process_is_alive) -> None:
         self.store = store
         self.owner_alive = owner_alive
+
+    def complete(
+        self, envelope: DispatchEnvelope, *, owner: str, now: datetime
+    ) -> None:
+        with self.store._immediate_write_transaction() as db:
+            _complete_ledger_in_db(
+                db, envelope=envelope, owner=owner, now=_sqlite_time(now),
+            )
+            self.store._compact_settled_reply_task_input(db, int(envelope.source_id))
 
     def _channel_clause(self, alias: str = "task") -> str:
         return f"{alias}.channel in ('dingtalk','wechat')"
@@ -543,24 +552,25 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
         now: datetime,
         error: str,
     ) -> None:
-        """Return a source to the queue when its handler failed before a run.
-
-        The dispatcher lease and the business queue row are one recovery unit.
-        Releasing only ``dispatcher_claim_leases`` leaves ``reply_tasks`` in
-        ``processing`` and lets the live process reclaim the same task forever.
-        """
+        """Count handler failures against the task budget, with bounded backoff."""
+        from app.external_retry import retry_delay_seconds
+        from app.worker import MAX_REPLY_TASK_ATTEMPTS
         _validate_release(self.name, envelope, owner, now)
         now_text = _sqlite_time(now)
+        terminal = envelope.attempt >= MAX_REPLY_TASK_ATTEMPTS
+        available_at = '' if terminal else _sqlite_time(
+            now + timedelta(seconds=retry_delay_seconds(60, max(envelope.attempt - 1, 0)))
+        )
         with self.store._immediate_write_transaction() as db:
             _release_lease(db, envelope=envelope, owner=owner, now=now_text)
             cursor = db.execute(
                 """
                 update reply_tasks
-                set status='pending', attempts=max(attempts-1, 0),
-                    locked_at=null, available_at='', error=?, updated_at=?
+                set status=?,
+                    locked_at=null, available_at=?, error=?, updated_at=?
                 where id=? and status='processing'
                 """,
-                (error[:2000], now_text, int(envelope.source_id)),
+                ('failed' if terminal else 'pending', available_at, error[:2000], now_text, int(envelope.source_id)),
             )
             if cursor.rowcount != 1:
                 raise ValueError("reply dispatch handler error source is no longer owned")
@@ -682,6 +692,10 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
         owner_pid = os.getpid() if owner_pid is None else owner_pid
         _validate_claim(owner, lease)
         now_text = _sqlite_time(now)
+        ready_at = (
+            "max(datetime(job.eligible_at), "
+            "coalesce(datetime(nullif(job.available_at,'')), datetime(job.eligible_at)))"
+        )
         with self.store._immediate_write_transaction() as db:
 
             def fetch_page(after: sqlite3.Row | None, limit: int):
@@ -695,15 +709,15 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                 ]
                 if after is not None:
                     keyset = (
-                        "and (datetime(job.eligible_at)>datetime(?) or "
-                        "(datetime(job.eligible_at)=datetime(?) and job.id>?)) "
+                        f"and ({ready_at}>datetime(?) or "
+                        f"({ready_at}=datetime(?) and job.id>?)) "
                     )
                     params.extend(
-                        [after["eligible_at"], after["eligible_at"], after["id"]]
+                        [after["ready_at"], after["ready_at"], after["id"]]
                     )
                 params.append(limit)
                 return db.execute(
-                    "select job.*, claim.owner as claim_owner, "
+                    f"select job.*, {ready_at} as ready_at, claim.owner as claim_owner, "
                     "claim.generation as claim_generation, "
                     "claim.owner_pid as claim_owner_pid, "
                     "claim.lease_expires_at as claim_expires_at "
@@ -719,7 +733,7 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                     "or (job.status='processing' and claim.owner<>'' "
                     "and claim.lease_expires_at<=?)) "
                     + keyset
-                    + "order by datetime(job.eligible_at), job.id limit ?",
+                    + f"order by {ready_at}, job.id limit ?",
                     params,
                 ).fetchall()
 

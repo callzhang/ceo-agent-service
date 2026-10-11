@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "case_id": "assessment-existing-card-project-peer",
+      "work_item": {
+        "source": {"type": "reply_attempt", "ref": "eval:card-member-repeat", "created_at": "2026-10-02T20:00:00Z"},
+        "context": {"source_conversation_kind": "group"},
+        "summary": "项目群重申：星海交付客户拒绝本周验收，本月回款延后。"
+      },
+      "existing_context": {
+        "projects": [{"ref": "eval:project:star-sea", "title": "星海交付", "registry_source": "project_weekly_report"}],
+        "tasks": [
+          {
+            "title": "复核星海交付验收及回款计划", "description": "复核验收及回款计划。", "project_title": "星海交付",
+            "signal": {"source_type": "reply_attempt", "source_ref": "eval:card-member-repeat", "source_time": "2026-10-02T20:00:00Z", "evidence_text": "项目群重申：星海交付客户拒绝本周验收，本月回款延后。", "dedupe_key": "eval:card-member-task"}
+          },
+          {
+            "title": "整理星海交付培训资料", "description": "整理星海交付培训资料，按计划推进，不涉及客户验收及回款。", "project_title": "星海交付",
+            "signal": {"source_type": "project_weekly_report", "source_ref": "eval:card-project-peer-report", "source_time": "2026-09-25T12:00:00Z", "evidence_text": "星海交付培训资料整理按计划推进，不涉及客户验收及回款。", "dedupe_key": "eval:card-project-peer-task"}
+          }
+        ],
+        "attention": [{
+          "project_title": "星海交付", "task_titles": ["复核星海交付验收及回款计划"],
+          "title": "星海交付验收风险", "why_attention": "验收拒绝延后回款", "current_state": "客户拒绝验收", "ceo_action": "当前无需你处理；观察验收和回款结果。",
+          "assessment": {"assessment_basis": "current_observation", "material_trigger": "risk_escalation", "evidence_task_title": "复核星海交付验收及回款计划", "source_ref": "eval:card-member-repeat", "source_excerpt": "星海交付客户拒绝本周验收，本月回款延后。", "source_time": "2026-10-02T20:00:00Z", "source_link": ""}
+        }]
+      },
+      "expected": {
+        "attention_projects": ["星海交付"], "project_titles": ["星海交付"], "task_count": 2,
+        "minimum_evidence_sources": 1, "required_source_refs": ["eval:card-member-repeat"], "reuse_attention": true,
+        "required_project_member_counts": {"星海交付": 1},
+        "project_assessments": [{
+          "project_title": "星海交付", "outcome": "needs_attention",
+          "evidence": [{"source_ref": "eval:card-member-repeat", "source_excerpt": "星海交付客户拒绝本周验收，本月回款延后。"}],
+          "application_status": "existing", "task_count": 1, "attention_required": true
+        }]
+      }
+    }
+  ]
+}

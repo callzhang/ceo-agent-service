@@ -18,8 +18,8 @@ Read [report-contract.md](references/report-contract.md) and
 
 ## Required Inputs
 
-- **Service materials**: run the command given in the task prompt with the
-  trigger's `scheduled_task_run_id`. It returns the target Monday, the Beijing
+- **Service materials**: call the task-bound `agent_cli.weekly_report_materials`
+  read operation. It returns the target Monday, the Beijing
   window and cutoff, the target and previous `管理层周会` documents (title,
   node ID, URL, whether the target exists, its year page), and every meeting
   the service recorded in the window with its participants, its follow-up
@@ -38,17 +38,18 @@ revision changes under the write, or the write cannot be read back.
 
 ## Workflow
 
-1. Create the dated run directory under
-   `/Users/derek/Documents/memory/02_管理与组织/CEO周报运行/` and save the
-   materials output there as `materials.json`.
-2. When the target does not exist, create it in the materials' year page (create
-   the year page under the meeting folder first if it is missing) with the
-   previous meeting document's section headings and its `重点问题及待办跟踪`
-   table, then use it as the target. Fetch the target and previous documents
-   in full; save the target revision and JSONML as `target-before.jsonml`.
+1. Read the task-bound service materials. Keep the target, previous document,
+   meeting index, coverage and source identifiers in the report's manifest.
+2. Read the target and previous documents with
+   `agent_cli.read_dingtalk_document_full`; retain the target revision and
+   complete JSONML as the before state. When the target does not exist, prepare
+   its required section headings and `重点问题及待办跟踪` table from the previous
+   document; the task-bound document operation creates it in the resolved year
+   page, creating that page under the meeting folder when needed.
 3. Screen every meeting in the materials from its title, participants and
    follow-up message; read the archived transcript file of each one relevant to
-   Derek's management responsibilities or a business line.
+   Derek's management responsibilities or a business line, using
+   `agent_cli.read_weekly_report_archive` for each indexed path.
 4. Search all accessible chats for Derek's messages. Read sufficient context
    for every selected message.
 5. Read the business-line material and linked evidence without editing it.
@@ -65,19 +66,19 @@ revision changes under the write, or the write cannot be read back.
    diagnosis, deadline, and closure standard.
 7. Draft the seven-section `report.json` with `as_of` set to the cutoff's
    Beijing date. Classify every consequential claim and retain evidence IDs.
-8. Run `scripts.validate_run`; fix blockers locally. Render with
-   `--meeting-document` and `--draft-output draft.jsonml`; the draft keeps the
-   complete seven sections in the run directory. The renderer refuses to write
-   a malformed node; also run `python3 -m scripts.jsonml_check target-after.jsonml`
-   and `dws doc +script --command parse --doc-format jsonml --content @target-after.jsonml`
-   (read-only), and do not write until both pass. `dws doc +update --dry-run`
-   does not validate the body.
+8. Call `agent_cli.validate_weekly_report` with the manifest, report and prior
+   issues; fix blockers. Call `agent_cli.render_weekly_report` with the complete
+   before JSONML and report. It returns the target body and complete seven-section
+   draft after the Skill's JSONML check and native document parser pass.
 9. The scheduled run is authorized to write the target meeting document
-   (Derek 2026-09-24). Save a recoverable document version, re-fetch the
-   revision, and stop on any change.
-10. Perform one revision-guarded overwrite. Fetch the complete result and pass
-    every readback check before reporting completion. Unknown write status
-    requires readback, never a blind second write.
+   (Derek 2026-09-24). Call task-bound `agent_cli.consumer_document_write` with
+   the rendered target JSONML and the exact revision read in step 2. For an
+   existing target, the operation saves a recoverable version and performs one
+   revision-guarded overwrite; any revision change blocks the write.
+10. Compare the complete readback returned by that operation with the rendered
+    target and verify the unchanged places and issue table before reporting
+    completion. Unknown write status requires readback, never a blind second
+    write.
 
 ## What the report writes into the meeting document
 
@@ -110,7 +111,7 @@ meeting participants' and stay as they are.
 
 ## Completion Gate
 
-Completion requires `publishable: true`, a saved version, unchanged expected
-revision, one guarded write, and a full matching readback in which everything
-outside the three written places equals `target-before.jsonml`. A successful
-command response alone is insufficient.
+Completion requires `publishable: true`, a saved version for an existing
+target, unchanged expected revision, one guarded write, and a full matching
+readback in which everything outside the three written places equals the
+before JSONML. A successful command response alone is insufficient.

@@ -37,9 +37,10 @@ def test_recent_error_history_does_not_degrade_current_system_health(
     assert payload["service"]["state"] == "running"
     assert payload["system_health"] == {
         "state": "healthy",
-        "detail": "No current quality-gate violations.",
+        "detail": "No current quality-gate violations. Native delivery coverage unavailable.",
         "checked_at": "2026-08-29T22:00:00+00:00",
         "violations": 0,
+        "native_delivery_coverage": None,
     }
 
 

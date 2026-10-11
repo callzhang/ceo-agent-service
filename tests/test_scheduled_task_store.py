@@ -336,7 +336,7 @@ def test_previous_scheduled_tasks_gain_empty_runtime_requirements(
         snapshot = json.loads(run.snapshot.to_json())
         snapshot.pop("required_runtime_capabilities")
         db.execute(
-            "update scheduled_task_runs set snapshot_json=? where id=?",
+            "update scheduled_task_config_versions set snapshot_json=? where id=(select snapshot_id from scheduled_task_runs where id=?)",
             (json.dumps(snapshot), run.id),
         )
         db.execute(
@@ -920,7 +920,7 @@ def test_run_snapshot_rejects_corrupt_persisted_json(tmp_path: Path) -> None:
     )
     with sqlite3.connect(store.path) as db:
         db.execute(
-            "update scheduled_task_runs set snapshot_json='{}' where id=?",
+            "update scheduled_task_config_versions set snapshot_json='{}' where id=(select snapshot_id from scheduled_task_runs where id=?)",
             (run.id,),
         )
 
@@ -1002,7 +1002,7 @@ def test_run_snapshot_rejects_semantically_tampered_skill_refs(
     tampered_json = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     with sqlite3.connect(store.path) as db:
         db.execute(
-            "update scheduled_task_runs set snapshot_json=? where id=?",
+            "update scheduled_task_config_versions set snapshot_json=? where id=(select snapshot_id from scheduled_task_runs where id=?)",
             (tampered_json, run.id),
         )
 
@@ -1244,7 +1244,7 @@ def test_previous_scheduled_tasks_gain_empty_command(tmp_path: Path) -> None:
         snapshot = json.loads(run.snapshot.to_json())
         snapshot.pop("command")
         db.execute(
-            "update scheduled_task_runs set snapshot_json=? where id=?",
+            "update scheduled_task_config_versions set snapshot_json=? where id=(select snapshot_id from scheduled_task_runs where id=?)",
             (json.dumps(snapshot), run.id),
         )
         db.execute("alter table scheduled_tasks drop column command")
@@ -1302,7 +1302,7 @@ def test_pre_bump_schema_version_backfills_legacy_run_snapshot_fields(
         snapshot = json.loads(run.snapshot.to_json())
         snapshot.pop("command")
         db.execute(
-            "update scheduled_task_runs set snapshot_json=? where id=?",
+            "update scheduled_task_config_versions set snapshot_json=? where id=(select snapshot_id from scheduled_task_runs where id=?)",
             (json.dumps(snapshot), run.id),
         )
         db.execute(
@@ -1445,7 +1445,7 @@ def test_corrupt_run_snapshot_neither_crashes_startup_nor_loops_migration(
     )
     with store._connect() as db:
         db.execute(
-            "update scheduled_task_runs set snapshot_json=? where id=?",
+            "update scheduled_task_config_versions set snapshot_json=? where id=(select snapshot_id from scheduled_task_runs where id=?)",
             ("{not valid json", run.id),
         )
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
@@ -1456,7 +1456,7 @@ def test_corrupt_run_snapshot_neither_crashes_startup_nor_loops_migration(
 
     with reopened._connect() as db:
         stored = db.execute(
-            "select snapshot_json from scheduled_task_runs where id=?", (run.id,)
+            "select snapshot_json from scheduled_task_config_versions where id=(select snapshot_id from scheduled_task_runs where id=?)", (run.id,)
         ).fetchone()
     assert stored["snapshot_json"] == "{not valid json"
     # Healthy rows stay readable alongside the corrupt one.
@@ -1519,5 +1519,5 @@ def test_migration_still_verifies_the_run_snapshots_it_wrote(tmp_path, monkeypat
     statements = _traced_construction(tmp_path, monkeypatch, path)
 
     assert any(
-        "scheduled_task_runs" in text and "json_type" in text for text in statements
+        "scheduled_task_config_versions" in text and "json_type" in text for text in statements
     ), "post-migration verification must still read the snapshots back"

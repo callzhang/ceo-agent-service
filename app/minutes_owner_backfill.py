@@ -53,10 +53,11 @@ def ownerless_candidate_meetings(store: AutoReplyStore) -> list[tuple[str, dict[
     """(minutes id, the meeting record its Tasks were found through, ownerless open candidate Task ids), newest first."""
     with store._connect() as db:
         rows = db.execute(
-            """select s.id, s.source_ref, s.evidence_text, t.id
+            """select s.id, s.source_ref, document.body, t.id
                from business_tasks t
                join business_task_evidence e on e.task_id = t.id and e.evidence_role = 'discovery'
                join business_task_signals s on s.id = e.signal_id
+               join business_source_documents document on document.id = s.source_document_id
                where t.stage = 'candidate' and t.status in ('open', 'waiting')
                  and t.owner_name = '' and t.owner_user_id = '' and s.source_type = 'ai_minutes'
                order by s.id desc"""

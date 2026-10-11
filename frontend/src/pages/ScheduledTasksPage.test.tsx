@@ -315,7 +315,7 @@ describe("ScheduledTasksPage", () => {
     expect(within(list).getByText("检查钉钉消息")).toBeInTheDocument();
     expect(within(list).getByText("每分钟执行 · Asia/Shanghai")).toBeInTheDocument();
     expect(within(list).getByText(/下次.*2026/)).toBeInTheDocument();
-    expect(within(list).getByText(/最近.*dispatched/)).toBeInTheDocument();
+    expect(within(list).getByText(/最近.*已完成/)).toBeInTheDocument();
     expect(screen.getByText("检查新的钉钉消息 $dingtalk-chat")).toBeInTheDocument();
     expect(screen.getAllByText("dingtalk-chat").length).toBeGreaterThan(0);
     expect(screen.queryByRole("region", { name: "Skill 建议" })).not.toBeInTheDocument();

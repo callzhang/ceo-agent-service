@@ -452,6 +452,52 @@ def _stage_full(
     return model_id
 
 
+def test_prune_artifacts_keeps_active_previous_and_latest_live_candidate(tmp_path):
+    registry = EmailModelRegistry(tmp_path / "registry")
+    base = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    old = _stage_full(registry, tmp_path, suffix="old", trained_at=base)
+    registry.promote(old, reason="first")
+    active = _stage_full(registry, tmp_path, suffix="active", trained_at=base + timedelta(days=1))
+    registry.promote(active, reason="second")
+    older_candidate = _stage_full(registry, tmp_path, suffix="older", trained_at=base + timedelta(days=2))
+    latest_candidate = _stage_full(registry, tmp_path, suffix="latest", trained_at=base + timedelta(days=3))
+    rejected = _stage_full(registry, tmp_path, suffix="rejected", trained_at=base + timedelta(days=4))
+    registry.reject(rejected, reason="evaluated")
+
+    assert registry.prune_artifacts(training_active=True) == []
+    registry.prune_artifacts(training_active=False)
+
+    assert {record.metadata.model_id for record in registry.list_models()} == {
+        old, active, latest_candidate
+    }
+    assert not registry._artifact_path(older_candidate).exists()
+    assert not registry._artifact_path(rejected).exists()
+
+
+def test_prune_artifacts_keeps_only_one_candidate_across_model_families(tmp_path):
+    registry = EmailModelRegistry(tmp_path / "registry")
+    classic = _stage_full(
+        registry, tmp_path, suffix="classic",
+        trained_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
+    )
+    source = tmp_path / "embedding.artifact"
+    source.write_bytes(b"embedding head")
+    staged_id = "email-embedding-mlp-latest"
+    registry.stage_embedding_candidate(
+        staged_id, source,
+        {"model_id": staged_id, "status": "candidate",
+         "trained_at": "2026-10-02T00:00:00+00:00"},
+    )
+    abandoned = registry.runs / ".run.json.abandoned.tmp"
+    abandoned.write_bytes(b"incomplete")
+
+    registry.prune_artifacts(training_active=False)
+
+    assert not registry._artifact_path(classic).exists()
+    assert (registry.embedding_artifacts / f"{staged_id}.artifact").exists()
+    assert not abandoned.exists()
+
+
 def test_registry_rejects_deserializable_artifact_with_reserved_legacy_classes(
     tmp_path: Path,
 ):
@@ -1015,6 +1061,3 @@ def test_a_category_whose_evidence_shrank_is_held_back_alone() -> None:
 
     assert readiness.ready is True
     assert readiness.promoted_categories == ("work",)
-
-
-

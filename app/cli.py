@@ -1105,6 +1105,19 @@ def _resolve_service_runtime_skills(
     )
 
 
+def _record_successful_cron_tick(store, component: str, tick_at: datetime) -> None:
+    store.set_service_health_component(
+        component,
+        state="healthy",
+        status="running",
+        detail="",
+        latest_tick_at=tick_at.isoformat(),
+        latest_error="",
+        latest_error_at="",
+    )
+    store.resolve_errors_before_successful_component_tick(component, tick_at=tick_at)
+
+
 def run_agent_cron_scheduler_loop(
     settings: WorkerSettings,
     runtime_skill_snapshot,
@@ -1141,11 +1154,8 @@ def run_agent_cron_scheduler_loop(
             SERVICE_COMMAND_EXECUTION_KIND: lambda _execution_id: True,
         }),
         dispatcher_wake=(dispatcher_wake_event or wake_event).set,
-        tick_observer=lambda tick_at: store.set_service_health_component(
-            "agent-cron-scheduler",
-            state="healthy",
-            status="running",
-            latest_tick_at=tick_at.isoformat(),
+        tick_observer=lambda tick_at: _record_successful_cron_tick(
+            store, "agent-cron-scheduler", tick_at,
         ),
     )
     scheduler.run_forever(wake_event=wake_event)
@@ -1405,14 +1415,8 @@ def run_agent_cron_dispatcher_loop(
             shared_max_in_flight=agent_capacity,
             owner=f"scheduled-dispatcher:{os.getpid()}", lease=timedelta(minutes=5),
             wake_event=wake_event,
-            tick_observer=lambda tick_at: store.set_service_health_component(
-                "agent-cron-dispatcher",
-                state="healthy",
-                status="running",
-                detail="",
-                latest_tick_at=tick_at.isoformat(),
-                latest_error="",
-                latest_error_at="",
+            tick_observer=lambda tick_at: _record_successful_cron_tick(
+                store, "agent-cron-dispatcher", tick_at,
             ),
         )
         store.set_service_health_component(
@@ -1709,6 +1713,31 @@ def _process_work_items_with_session_lease(
 
 
 def _process_claimed_work_summary_input(
+    store,
+    runner,
+    work_input,
+    *,
+    dws=None,
+    session_lease: TaskAgentSessionLease | None = None,
+) -> bool:
+    if session_lease is not None or work_input.source_type in RETIRED_COMPLETION_SOURCE_TYPES:
+        return _process_claimed_work_summary_input_in_session(
+            store, runner, work_input, dws=dws, session_lease=session_lease
+        )
+    lease = TaskAgentSessionLease.try_acquire(store)
+    if lease is None:
+        store.schedule_work_summary_input_retry(
+            work_input.id, "Task Agent shared session is owned by another worker",
+            available_at=_work_summary_retry_available_at(work_input.attempts),
+        )
+        return False
+    with lease:
+        return _process_claimed_work_summary_input_in_session(
+            store, runner, work_input, dws=dws, session_lease=lease
+        )
+
+
+def _process_claimed_work_summary_input_in_session(
     store,
     runner,
     work_input,
@@ -2701,7 +2730,7 @@ def daily_report_facts_command(
     store = AutoReplyStore(settings.db_path)
     payload = collect_daily_report_facts(
         store,
-        EmailStore(settings.db_path),
+        EmailStore(settings.db_path, validate_rows=False),
         report_window_for_run(store, scheduled_run_id),
     )
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str), flush=True)
@@ -3052,38 +3081,22 @@ def send_attempt_command(
             and current_oa_task.conversation_id == attempt.conversation_id
         ):
             task = current_oa_task
-    conversation = store.get_conversation(attempt.conversation_id)
-    if task is not None:
-        trigger_message_json = task.trigger_message_json
-        trigger_create_time = task.trigger_create_time
-        conversation_title = task.conversation_title
-        single_chat = task.single_chat
-        trigger_message_id = task.trigger_message_id
-        trigger_sender = task.trigger_sender
-        trigger_text = task.trigger_text
-        oa_url = task.oa_url or attempt.oa_url
-    else:
-        if attempt.channel != "dingtalk" or conversation is None:
-            raise SystemExit(
-                f"original trigger is unavailable for reply attempt {attempt_id}"
-            )
-        trigger = DingTalkMessage(
-            open_conversation_id=attempt.conversation_id,
-            open_message_id=attempt.trigger_message_id,
-            conversation_title=conversation.title,
-            single_chat=conversation.single_chat,
-            sender_name=attempt.trigger_sender,
-            create_time=attempt.created_at,
-            content=attempt.trigger_text,
+    from app.audit_web import _is_valid_rerun_trigger_json
+
+    if task is None or task.input_compacted or not _is_valid_rerun_trigger_json(
+        task.trigger_message_json, channel=attempt.channel,
+    ):
+        raise SystemExit(
+            f"original trigger is unavailable for reply attempt {attempt_id}"
         )
-        trigger_message_json = trigger.model_dump_json()
-        trigger_create_time = trigger.create_time
-        conversation_title = conversation.title
-        single_chat = conversation.single_chat
-        trigger_message_id = attempt.trigger_message_id
-        trigger_sender = attempt.trigger_sender
-        trigger_text = attempt.trigger_text
-        oa_url = attempt.oa_url
+    trigger_message_json = task.trigger_message_json
+    trigger_create_time = task.trigger_create_time
+    conversation_title = task.conversation_title
+    single_chat = task.single_chat
+    trigger_message_id = task.trigger_message_id
+    trigger_sender = task.trigger_sender
+    trigger_text = task.trigger_text
+    oa_url = task.oa_url or attempt.oa_url
     # A pending task with an error is a deferred failed generation, not an
     # active duplicate.  Replaying the reviewed attempt must create a fresh
     # generation so it can use repaired runtime behavior immediately.

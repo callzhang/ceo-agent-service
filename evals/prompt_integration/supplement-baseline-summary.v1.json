@@ -1,0 +1,99 @@
+{
+  "completed": true,
+  "refs": {
+    "baseline": "0d6bf42eb2922ed57a6bc6de8b836f5a443106c3"
+  },
+  "settings": {
+    "route_name": "codex_oauth",
+    "runtime_kind": "codex_cli",
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "medium",
+    "concurrency": 1,
+    "timeout_seconds": 300,
+    "repetitions": 1,
+    "fixed_time": "2026-10-06T09:00:00-07:00",
+    "tools": "none",
+    "profile": "identical-synthetic-short"
+  },
+  "cases_sha256": "2433049a74ad6206af93adba5e488e10271eef95bc1cb3f8354fc174672f9658",
+  "arms": {
+    "baseline": {
+      "size_summary": {
+        "consumer": {
+          "static_developer_chars": {
+            "min": 37921,
+            "mean": 37921.0,
+            "max": 37921
+          },
+          "developer_chars": {
+            "min": 38735,
+            "mean": 38739.25,
+            "max": 38742
+          },
+          "task_chars": {
+            "min": 5997,
+            "mean": 6484.5,
+            "max": 7146
+          },
+          "total_chars": {
+            "min": 44736,
+            "mean": 45223.75,
+            "max": 45881
+          }
+        },
+        "audit": {
+          "static_developer_chars": {
+            "min": 28168,
+            "mean": 28168.0,
+            "max": 28168
+          },
+          "developer_chars": {
+            "min": 28906,
+            "mean": 28910.25,
+            "max": 28913
+          },
+          "task_chars": {
+            "min": 15503,
+            "mean": 16027.75,
+            "max": 16535
+          },
+          "total_chars": {
+            "min": 44413,
+            "mean": 44938.0,
+            "max": 45448
+          }
+        }
+      },
+      "roles": {
+        "consumer": {
+          "invocations": 4,
+          "native_json_valid": 4,
+          "strict_schema_valid": 4,
+          "outcome_and_binding_screen_passed": 4,
+          "tool_events": 0,
+          "screen_failures": [],
+          "provider_usage_events": 4,
+          "provider_input_tokens_total": 93016,
+          "provider_output_tokens_total": 2925,
+          "elapsed_seconds_total": 78.17051291797543,
+          "elapsed_seconds_mean": 19.542628229493857,
+          "semantic_quality": "pending independent exact-output review"
+        },
+        "audit": {
+          "invocations": 4,
+          "native_json_valid": 4,
+          "strict_schema_valid": 4,
+          "outcome_and_binding_screen_passed": 4,
+          "tool_events": 0,
+          "screen_failures": [],
+          "provider_usage_events": 4,
+          "provider_input_tokens_total": 90862,
+          "provider_output_tokens_total": 2258,
+          "elapsed_seconds_total": 66.53067620901857,
+          "elapsed_seconds_mean": 16.63266905225464,
+          "semantic_quality": "pending independent exact-output review"
+        }
+      }
+    }
+  }
+}

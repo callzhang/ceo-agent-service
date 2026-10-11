@@ -1,0 +1,292 @@
+{
+  "manifest": "role_contract_matrix.v2.json",
+  "baseline_commit": "266b8c99",
+  "candidate_commit": "84300f77",
+  "scope": "Controlled source fixtures; native OAuth model and stubbed actual role tool schemas. Not production/provider execution acceptance.",
+  "accepted_runs": [
+    {
+      "arm": "baseline",
+      "case": "calendar-cross-midnight",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12865-6a42-7531-8b82-115c999eaf93",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "read_system_action_contract",
+        "list_dingtalk_calendar_events"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal",
+      "business_review": "pass"
+    },
+    {
+      "arm": "baseline",
+      "case": "calendar-real-overlap",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12865-b9b7-7d70-9b8a-de404bd10f75",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "list_dingtalk_calendar_events",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal",
+      "business_review": "pass"
+    },
+    {
+      "arm": "candidate",
+      "case": "calendar-cross-midnight",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12865-6a42-73b1-9fe6-cc3124c074d1",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal",
+      "business_review": "pass"
+    },
+    {
+      "arm": "candidate",
+      "case": "calendar-real-overlap",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12866-2a11-7440-bcb1-a3e95b1610a0",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal",
+      "business_review": "pass"
+    },
+    {
+      "arm": "baseline",
+      "case": "calendar-cross-midnight",
+      "phase": "resume",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12865-6a42-7531-8b82-115c999eaf93",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events"
+      ],
+      "canonical_valid": true,
+      "outcome": "no_action",
+      "business_review": "pass"
+    },
+    {
+      "arm": "candidate",
+      "case": "calendar-cross-midnight",
+      "phase": "resume",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12865-6a42-73b1-9fe6-cc3124c074d1",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events"
+      ],
+      "canonical_valid": true,
+      "outcome": "no_action",
+      "business_review": "pass"
+    },
+    {
+      "arm": "baseline",
+      "case": "mail-already-handled",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128a3-0cb6-7c13-9adc-09136cae30b4",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_dingtalk_messages"
+      ],
+      "canonical_valid": true,
+      "outcome": "no_action",
+      "business_review": "pass"
+    },
+    {
+      "arm": "candidate",
+      "case": "mail-already-handled",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128a3-0cb6-7f73-b425-62c56a7ad5dd",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_messages"
+      ],
+      "canonical_valid": true,
+      "outcome": "no_action",
+      "business_review": "pass"
+    },
+    {
+      "arm": "candidate",
+      "case": "document-material-conflicts",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128a3-404a-7420-8512-5de06ba4aab8",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal",
+      "business_review": "pass"
+    },
+    {
+      "arm": "baseline",
+      "case": "document-material-conflicts",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128a3-3c8d-7013-b1b7-13f04150670b",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal",
+      "business_review": "pass"
+    },
+    {
+      "arm": "baseline",
+      "case": "work-tracking-existing-remediation",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128a3-a9bf-7120-ad0e-2e6a090746a6",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal",
+      "business_review": "pass"
+    },
+    {
+      "arm": "candidate",
+      "case": "work-tracking-existing-remediation",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128a3-d6b3-7b91-9d7f-19e40db9eb65",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal",
+      "business_review": "pass"
+    },
+    {
+      "arm": "baseline",
+      "case": "audit-document-feedback",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128a3-f7c8-7dc1-a885-339568a028cf",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "return",
+      "business_review": "pass"
+    },
+    {
+      "arm": "candidate",
+      "case": "audit-document-feedback",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128a4-1d27-7200-a521-7812c2d8df28",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "return",
+      "business_review": "pass"
+    }
+  ],
+  "technical_review": {
+    "accepted_count": 14,
+    "completed_read_list_callbacks": 57,
+    "mcp_errors": 0,
+    "write_callbacks": 0,
+    "exact_native_skill_outputs": 30,
+    "distinct_native_sessions": 12
+  },
+  "blind_business_review": {
+    "baseline": "7/7",
+    "candidate": "7/7",
+    "mapping_hidden_from_reviewer": true
+  },
+  "frozen_artifact_sha256": {
+    "config.json": "9bc073a681d39f4ac1ed121afb4bc47cac07bad10d3f6ee8389edb99dd881b03",
+    "audit_rules.txt": "80469b84c54ef25f118b5087ed5daf579bf9c2f62af1101a4d4231f0e75b5bc1",
+    "cases.json": "9e6bb578a321cee3865c20051f47762de12710c1076b2e4fbf1c333008a192af",
+    "skills.json": "b971763de8549644bd05f30ee72c73eb881a697a7d06da61705b0888cc91905c",
+    "refs.json": "0f7f18635ec9a5061b1ac883fe0aade1a8c5a72189c9050b34d4b51d6a4b9881"
+  },
+  "excluded_original_failures": [
+    "V1 resume startup exit 2 due to fixture argument insertion; neither reached model.",
+    "V1 wrapper timeout and late child completion; never relabeled as a timely pass."
+  ],
+  "preservation": "Original native session JSONL remains the trajectory source; task-owned intermediate fixtures retained while investigation continues."
+}

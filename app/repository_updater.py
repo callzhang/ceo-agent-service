@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -17,6 +18,8 @@ from app.repository_upgrade import GitRepository
 
 
 UPGRADE_OPERATION_STATE_KEY = "repository_upgrade_operation:v1"
+UPGRADE_STATE_WRITE_RETRY_ATTEMPTS = 3
+UPGRADE_STATE_WRITE_RETRY_DELAY_SECONDS = 0.25
 
 
 class UpgradePreconditionError(RuntimeError):
@@ -31,6 +34,62 @@ class UpgradeStateStore(Protocol):
     def get_service_state(self, key: str) -> str | None: ...
 
     def set_service_state(self, key: str, value: str) -> None: ...
+
+
+class ExistingSchemaUpgradeStateStore:
+    """Persist deploy progress without constructing a newer application store.
+
+    A full AutoReplyStore construction can migrate the live database before
+    the quiet wait and backup. The existing service_state table is enough for
+    this upgrader's progress record.
+    """
+
+    def __init__(self, database_path: Path) -> None:
+        self.database_path = Path(database_path)
+
+    def get_service_state(self, key: str) -> str | None:
+        with sqlite3.connect(
+            f"file:{self.database_path}?mode=rw", uri=True, timeout=30
+        ) as db:
+            row = db.execute("select value from service_state where key=?", (key,)).fetchone()
+            return None if row is None else str(row[0])
+
+    def set_service_state(self, key: str, value: str) -> None:
+        for attempt in range(UPGRADE_STATE_WRITE_RETRY_ATTEMPTS):
+            try:
+                with sqlite3.connect(
+                    f"file:{self.database_path}?mode=rw", uri=True, timeout=30
+                ) as db:
+                    db.execute("begin immediate")
+                    db.execute(
+                        """insert into service_state (key, value, updated_at)
+                           values (?, ?, current_timestamp)
+                           on conflict(key) do update set
+                             value=excluded.value, updated_at=current_timestamp""",
+                        (key, value),
+                    )
+                return
+            except sqlite3.OperationalError as exc:
+                message = str(exc).casefold()
+                is_lock_error = "locked" in message or "busy" in message
+                if (
+                    not is_lock_error
+                    or attempt + 1 >= UPGRADE_STATE_WRITE_RETRY_ATTEMPTS
+                ):
+                    raise
+                time.sleep(UPGRADE_STATE_WRITE_RETRY_DELAY_SECONDS * (attempt + 1))
+
+
+class UpgradePublication(Protocol):
+    """External release assets changed while the service is stopped."""
+
+    def publish(self) -> None: ...
+
+    def verify_loaded(self) -> None: ...
+
+    def rollback(self) -> None: ...
+
+    def finalize(self) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -96,14 +155,30 @@ def persist_operation(store: UpgradeStateStore, operation: UpgradeOperation) -> 
 
 
 def _default_restart() -> None:
+    target = f"gui/{_uid()}/com.ceo-agent-service.main"
     result = subprocess.run(
-        ["launchctl", "kickstart", "-k", f"gui/{_uid()}/com.ceo-agent-service.main"],
+        ["launchctl", "kickstart", "-k", target],
         check=False,
         capture_output=True,
         text=True,
         timeout=30,
     )
     if result.returncode != 0:
+        state = subprocess.run(
+            ["launchctl", "print", target],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if state.returncode != 0 and "could not find service" in (
+            state.stdout + state.stderr
+        ).lower():
+            # A failed deployment can leave the service booted out before a
+            # replacement was installed. In that case kickstart cannot find
+            # the label; bootstrap the existing production plist instead.
+            _default_start()
+            return
         raise UpgradeFailed("launchd restart failed")
 
 
@@ -172,12 +247,37 @@ def wait_for_health(
 
 def in_flight_work(database_path: Path) -> int:
     """Count work a restart would cut off: running turns and claimed items."""
-    with sqlite3.connect(f"file:{database_path}?mode=ro", uri=True, timeout=30) as db:
+    with closing(sqlite3.connect(
+        f"file:{database_path}?mode=ro", uri=True, timeout=30
+    )) as db:
         return int(db.execute(
             "select (select count(*) from agent_runtime_attempts "
             "        where status not in ('completed','failed','superseded'))"
-            " + (select count(*) from reply_tasks where status='processing')"
+            " + (select count(*) from reply_tasks as task "
+            "    where task.status='processing' and ("
+            "      exists (select 1 from agent_runs as runs "
+            "        where runs.reply_task_id=task.id "
+            "          and runs.status in ('starting','running')) "
+            "      or exists (select 1 from dispatcher_claim_leases as claim "
+            "        where claim.adapter_name='reply' "
+            "          and claim.source_id=cast(task.id as text) "
+            "          and coalesce(claim.terminal_at,'')='' "
+            "          and julianday(claim.lease_expires_at)>julianday('now'))))"
             " + (select count(*) from work_summary_inputs where status='processing')"
+            " + (select count(*) from meeting_alignment_jobs as jobs "
+            "    where (jobs.status='processing' and ("
+            "      exists (select 1 from meeting_alignment_runs as runs "
+            "        where runs.job_id=jobs.id and runs.status='running') "
+            "      or exists (select 1 from dispatcher_claim_leases as claim "
+            "        where claim.adapter_name='meeting' "
+            "          and claim.source_id=cast(jobs.id as text) "
+            "          and coalesce(claim.terminal_at,'')='' "
+            "          and julianday(claim.lease_expires_at)>julianday('now')))) "
+            "    or (jobs.status='ready_to_send' "
+            "      and coalesce(jobs.locked_at,'')<>''))"
+            " + (select count(*) from dispatcher_claim_leases"
+            "    where coalesce(terminal_at,'')=''"
+            "    and julianday(lease_expires_at)>julianday('now'))"
             " + (select count(*) from scheduled_task_runs where dispatch_status='pending'"
             "    and lease_owner<>'' and lease_expires_at>strftime('%Y-%m-%dT%H:%M:%S+00:00','now'))"
         ).fetchone()[0])
@@ -271,6 +371,8 @@ class RepositoryUpdater:
         stop: Callable[[], None] = lambda: None,
         health: Callable[[], bool] = _default_health,
         wait_for_quiet: Callable[[], None] = lambda: None,
+        publication: Callable[[], UpgradePublication] | None = None,
+        pre_checkout_cleanup: Callable[[], None] | None = None,
     ) -> None:
         self.repository = GitRepository(repository_root)
         self.store = store
@@ -283,6 +385,8 @@ class RepositoryUpdater:
         self.stop = stop
         self.health = health
         self.wait_for_quiet = wait_for_quiet
+        self.publication = publication
+        self.pre_checkout_cleanup = pre_checkout_cleanup
 
     @property
     def target_ref(self) -> str:
@@ -292,19 +396,25 @@ class RepositoryUpdater:
     def remote_ref(self) -> str:
         return f"refs/remotes/{self.remote}/{self.branch}"
 
-    def execute(self, operation: UpgradeOperation) -> UpgradeResult:
-        with self.repository.mutex():
-            self._persist(operation, "preparing")
+    def execute(
+        self, operation: UpgradeOperation, *, already_locked: bool = False
+    ) -> UpgradeResult:
+        lock = nullcontext() if already_locked else self.repository.mutex()
+        with lock:
             self.repository.fetch(self.remote)
             records = self._recheck(operation)
-            self._persist(operation, "waiting_for_idle")
             self.wait_for_quiet()
             self.stop()
             backup_path = self._backup(operation)
-            if records:
-                self._preserve_local_changes(operation)
-            self._persist(operation, "updating", backup_path=backup_path)
+            published: UpgradePublication | None = None
+            replacement_started = False
             try:
+                self._persist(operation, "updating", backup_path=backup_path)
+                if self.pre_checkout_cleanup is not None:
+                    self.pre_checkout_cleanup()
+                    records = self.repository.status_records()
+                if records:
+                    self._preserve_local_changes(operation)
                 self.repository._run(
                     ["merge", "--ff-only", self.remote_ref],
                     category="upgrade_merge",
@@ -312,13 +422,25 @@ class RepositoryUpdater:
                 self._persist(operation, "verifying", backup_path=backup_path)
                 self.dependency_sync()
                 self.verification()
+                if self.publication is not None:
+                    # Hold the restoration snapshot before the first asset
+                    # changes so every partial failure uses this same receipt.
+                    published = self.publication()
+                    published.publish()
                 self._persist(operation, "restarting", backup_path=backup_path)
                 self.restart()
+                replacement_started = True
                 if not self.health():
                     raise UpgradeFailed("replacement service health check failed")
+                if published is not None:
+                    published.verify_loaded()
             except Exception as exc:
                 rollback_status = "failed"
                 try:
+                    if published is not None:
+                        if replacement_started:
+                            self.stop()
+                        published.rollback()
                     installed = self.repository.resolve_ref(self.target_ref)
                     if installed == operation.target_commit and not self.repository.status_records():
                         self.repository._run(
@@ -335,6 +457,22 @@ class RepositoryUpdater:
                         rollback_status = "rolled_back"
                 except Exception:
                     rollback_status = "needs_manual"
+                if rollback_status == "failed":
+                    installed = self.repository.resolve_ref(self.target_ref)
+                    if (
+                        not replacement_started
+                        and installed == operation.original_commit
+                        and not self.repository.status_records()
+                    ):
+                        try:
+                            self.restart()
+                            if not self.health():
+                                raise UpgradeFailed(
+                                    "original service did not become healthy after deploy failure"
+                                )
+                            rollback_status = "rolled_back"
+                        except Exception:
+                            rollback_status = "needs_manual"
                 self._persist(
                     operation,
                     rollback_status,
@@ -342,19 +480,34 @@ class RepositoryUpdater:
                     error="upgrade verification or restart failed",
                 )
                 raise UpgradeFailed("upgrade verification or restart failed") from exc
+            finalize_error = ""
+            if published is not None:
+                try:
+                    published.finalize()
+                except Exception as exc:
+                    # The replacement passed health and loaded-file readback.
+                    # Receipt cleanup failure must not turn a healthy service
+                    # into an apparent rollback or leave progress at restarting.
+                    finalize_error = f"publication receipt finalization failed: {exc}"
             installed = self.repository.resolve_ref(self.target_ref)
             self._persist(
                 operation,
                 "succeeded",
                 backup_path=backup_path,
                 installed_commit=installed,
+                error=finalize_error,
             )
             return UpgradeResult(
                 operation_id=operation.operation_id,
                 status="succeeded",
                 installed_commit=installed,
                 backup_path=str(backup_path) if backup_path else "",
+                error=finalize_error,
             )
+
+    def execute_locked(self, operation: UpgradeOperation) -> UpgradeResult:
+        """Execute while the caller holds this repository's deploy mutex."""
+        return self.execute(operation, already_locked=True)
 
     def _recheck(self, operation: UpgradeOperation) -> list[object]:
         current = self.repository.resolve_ref(self.target_ref)

@@ -38,7 +38,7 @@ CURRENT_EMAIL_CATEGORIES = tuple(
 
 
 @pytest.mark.parametrize("has_embedding", [True, False])
-def test_multifamily_success_observes_only_embedding_candidate(tmp_path, has_embedding):
+def test_multifamily_success_observes_only_embedding_candidate(tmp_path, has_embedding, monkeypatch):
     embedding_id = "email-embedding-mlp-source"
     classic_id = "email-tfidf-lr-source"
     families = {"tfidf-logistic-regression": {"status": "succeeded", "model_id": classic_id}}
@@ -64,8 +64,12 @@ def test_multifamily_success_observes_only_embedding_candidate(tmp_path, has_emb
     registry = EmailModelRegistry(tmp_path / "models")
     state_path = tmp_path / "state.json"
     save_retrain_state(state_path, RetrainState().with_active_run("multi"))
+    store = EmailStore(tmp_path / "email.sqlite3")
+    pruned = []
+    monkeypatch.setattr(store, "prune_training_snapshot_data", lambda *, training_active: pruned.append(("data", training_active)))
+    monkeypatch.setattr(registry, "prune_artifacts", lambda *, training_active: pruned.append(("models", training_active)))
     service = EmailClassifierLearningService(
-        EmailStore(tmp_path / "email.sqlite3"), registry=registry,
+        store, registry=registry,
         retrain_state_path=state_path, controller=Controller(),
         description_optimizer=Optimizer(),
     )
@@ -73,6 +77,7 @@ def test_multifamily_success_observes_only_embedding_candidate(tmp_path, has_emb
     assert observed == ([embedding_id] if has_embedding else [])
     assert result.state.active_run_id is None
     assert load_retrain_state(state_path).active_run_id is None
+    assert pruned == [("data", False), ("models", False)]
 
 
 def test_selection_provenance_rejects_empty_selection_by_default() -> None:

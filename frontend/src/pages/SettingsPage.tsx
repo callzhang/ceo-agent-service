@@ -13,11 +13,12 @@ import { StatusBadge } from "../components/status/StatusBadge";
 import { AttentionPanel } from "./AttentionPage";
 import { StatusPanel } from "./StatusPage";
 import { ManagedSkillsPanel } from "../components/settings/ManagedSkillsPanel";
+import { RuntimePromptPreview } from "./RuntimePromptPreview";
 import { McpPanel } from "../components/settings/McpPanel";
 
 type RecordValue = Record<string, unknown>;
 type SettingsSection = "status" | "info" | "configuration" | "agent-runtime" | "prompts" | "connectors" | "audit-rules" | "skills" | "mcp" | "attention";
-type PromptKind = "developer" | "user" | "profile";
+type PromptKind = "developer" | "user" | "profile" | "runtime";
 
 const sections: Array<[SettingsSection, string]> = [
   ["status", "Status"], ["info", "Info"], ["configuration", "Configuration"], ["agent-runtime", "Agent Runtime"],
@@ -83,7 +84,8 @@ function highlightRenderedPreview(template: string, preview: string): ReactNode 
     }
     return escapeRegExp(part);
   }).join("");
-  const match = new RegExp(pattern).exec(preview);
+  // A final placeholder must consume its rendered value, not an empty lazy match.
+  const match = new RegExp(pattern + (parts.at(-1) === "" ? "$" : "")).exec(preview);
   if (!match) return preview;
   let groupIndex = 1;
   const highlighted = parts.map((part, index) => {
@@ -107,19 +109,48 @@ function InfoPanel({ payload }: { payload: RecordValue }) {
   </SettingsCard>;
 }
 
+function PromptOverview() {
+  return <section aria-label="提示词作用与上下文顺序">
+    <h3>提示词作用与上下文顺序</h3>
+    <div className="settings-table-wrap"><table className="settings-table">
+      <thead><tr><th>提示词 / 内容</th><th>作用与使用位置</th></tr></thead>
+      <tbody>
+        <tr><td>Developer Prompt（可配置）</td><td>Consumer 与 Audit 共用的工作原则，如证据、判断与沟通方式；它只是完整 Developer 输入中的一段。</td></tr>
+        <tr><td>完整 Developer 输入</td><td>服务按角色组装共同工作原则、角色指令、输出与动作契约、Work Profile 和 Runtime Context；Audit 还包含 Audit Rules。</td></tr>
+        <tr><td>User Prompt（可配置）</td><td>只用于组织 Consumer 的 Task 输入；通过 <code>{"{{task_context}}"}</code> 填入服务生成的完整任务上下文。</td></tr>
+        <tr><td>Task 输入</td><td>每轮提供任务专属指令、Skill 入口、事实或候选及反馈，已有 session 也会收到。Consumer 使用 User 模板；Audit 使用独立候选审核上下文，不使用 User 模板。</td></tr>
+        <tr><td>Work Profile</td><td>工作人格与长期偏好，作为独立分段进入 Consumer 与 Audit 的 Developer 输入。</td></tr>
+        <tr><td>角色指令与契约</td><td>角色职责、输出 schema、能力边界与 System 动作契约由代码定义，不能在 Developer Prompt 模板中配置。</td></tr>
+        <tr><td>Skill</td><td>任务选定 Skill 时，只在 Task 中列名称、用途和读取入口；未选定时提供极简业务发现目录，由 Agent 按需读取正文。</td></tr>
+      </tbody>
+    </table></div>
+    <p>共同内容与任务专属来源会分别标记。实际顺序以“运行输入”的分段回执为准；每行显示服务记录的来源、Developer/Task 提交位置和已清理文本字符数。</p>
+    <p className="muted">这组配置不影响 Workbench、WeChat 独立流程、纯服务命令与 Email 退订。保存后由下一次角色调用读取；已保存历史输入保留原文，同一对话继续复用已有 session。</p>
+    <p className="muted">上述顺序表示内容在各输入中的拼接位置；Developer 与 Task 分别提交给运行路线。CLI 自带的系统提示、工具定义和会话历史不包含在此预览中。Template 查看原文，Rendered preview 查看已保存模板的渲染结果；完整后台输入请打开“运行输入”。</p>
+  </section>;
+}
+
 function PromptPanel({ payload, prompt, view, draft, setDraft, saveState, saveError }: { payload: RecordValue; prompt: PromptKind; view: "template" | "preview"; draft: RecordValue; setDraft: (value: RecordValue) => void; saveState: "idle" | "saving" | "saved" | "error"; saveError: string }) {
+  const sectionTabs = <div className="settings-pill-row" role="tablist" aria-label="Prompt sections">{([['developer', 'Developer Prompt'], ['user', 'User Prompt'], ['profile', 'Distilled work profile'], ['runtime', '运行输入']] as const).map(([key, title]) => <Link key={key} role="tab" aria-selected={prompt === key} className={prompt === key ? "active" : ""} to={`/settings?tab=prompts&prompt=${key}&view=${key === 'runtime' ? 'preview' : 'template'}`}>{title}</Link>)}</div>;
+  if (prompt === "runtime") return <SettingsCard><h2>Prompts</h2><p className="muted">后台 Consumer/Audit 的完整运行输入，由角色契约、共同工作原则、Skill、工作人格、任务上下文和 Runtime Context 共同组装。此页只读；Developer/User 模板的变量替换结果请在各自的 Rendered preview 查看。</p><PromptOverview />{sectionTabs}<div id="prompt-panel" role="tabpanel" aria-label="运行输入"><RuntimePromptPreview /></div></SettingsCard>;
   const isProfile = prompt === "profile";
   const templateKey = isProfile ? "profile" : `${prompt}_template`;
   const rawTemplate = draft[templateKey] ?? fieldsOf(payload)[templateKey];
   const value = typeof rawTemplate === "string" ? rawTemplate : displayValue(rawTemplate);
   const preview = displayValue(record(payload.preview)[prompt]);
+  const rawPreviewError = record(payload.preview_errors)[prompt];
+  const previewError = typeof rawPreviewError === "string" ? rawPreviewError : "";
   const label = isProfile ? "Distilled work profile" : prompt === "developer" ? "Developer Prompt" : "User Prompt";
+  const consumers = record(payload.consumers)[prompt];
+  const purpose = isProfile ? "Consumer 与 Audit 共用的工作人格与长期偏好。" : prompt === "developer" ? "Consumer 与 Audit 共用的工作原则；角色和输出契约由代码提供。" : "Consumer 的任务组织模板；Audit 使用独立候选审核上下文。";
   const path = isProfile ? "work_profile.md" : prompt === "developer" ? "developer_prompt.md" : "user_prompt.md";
   const viewTabs = <div className="settings-pill-row settings-view-row" role="tablist" aria-label="Prompt view"><Link role="tab" aria-selected={view === "template"} className={view === "template" ? "active" : ""} to={`/settings?tab=prompts&prompt=${prompt}&view=template`}>Template</Link><Link role="tab" aria-selected={view === "preview"} className={view === "preview" ? "active" : ""} to={`/settings?tab=prompts&prompt=${prompt}&view=preview`}>Rendered preview</Link></div>;
   return <SettingsCard>
-    <div className="settings-card-heading"><div><h2>Prompts</h2><p className="muted">{label} · {isProfile ? "在新的 Consumer 或 Audit 运行中追加到 Developer Prompt。" : "模板由服务端读取，预览使用当前运行时上下文。"}</p></div><span className="settings-path">{path}</span></div>
-    <div className="settings-pill-row" role="tablist" aria-label="Prompt sections"><Link role="tab" aria-selected={prompt === "developer"} className={prompt === "developer" ? "active" : ""} to="/settings?tab=prompts&prompt=developer&view=template">Developer Prompt</Link><Link role="tab" aria-selected={prompt === "user"} className={prompt === "user" ? "active" : ""} to="/settings?tab=prompts&prompt=user&view=template">User Prompt</Link><Link role="tab" aria-selected={isProfile} className={isProfile ? "active" : ""} to="/settings?tab=prompts&prompt=profile&view=template">Distilled work profile</Link></div>
-    <div className="prompt-editor-shell" id="prompt-panel" role="tabpanel" aria-label={view === "template" ? "Template" : "Rendered preview"}>{view === "template" ? <form onSubmit={(event) => event.preventDefault()}><div className="prompt-editor-toolbar">{viewTabs}</div><TokenEditor id="prompt-template" label="Template" value={value} onChange={(next) => setDraft({ ...draft, [templateKey]: next })} autoResize /><p className="muted prompt-runtime-note">{isProfile ? "保存后仅影响后续新建运行。" : <>运行时注入变量：<code>{"{{principal}}"}</code> <code>{"{{conversation}}"}</code>。这些变量不需要手动填写。</>}</p><SaveBar state={saveState} error={saveError} /></form> : <><div className="prompt-editor-toolbar">{viewTabs}</div><pre className="prompt-preview">{preview ? (isProfile ? preview : highlightRenderedPreview(value, preview)) : "未提供预览"}</pre></>}</div>
+    <div className="settings-card-heading"><div><h2>Prompts</h2><p className="muted">{label} · {view === "template" ? "模板" : "渲染结果"}</p><p className="muted">{purpose} Rendered preview 展示这份已保存模板的渲染结果；后台完整输入见“运行输入”。</p>{Array.isArray(consumers) && <p className="muted">使用角色：{consumers.join("、")}</p>}</div><span className="settings-path">{path}</span></div>
+    <PromptOverview />
+    {sectionTabs}
+    {previewError && <p role="alert">模板无法渲染：{previewError}。请在 Template 中修正并保存；当前预览不可用。</p>}
+    <div className="prompt-editor-shell" id="prompt-panel" role="tabpanel" aria-label={view === "template" ? "Template" : "Rendered preview"}>{view === "template" ? <form onSubmit={(event) => event.preventDefault()}><div className="prompt-editor-toolbar">{viewTabs}</div><TokenEditor id="prompt-template" label="Template" value={value} onChange={(next) => setDraft({ ...draft, [templateKey]: next })} autoResize /><p className="muted prompt-runtime-note">{isProfile ? "保存后由下一次 Consumer 或 Audit 调用读取。" : prompt === "user" ? <>必须保留 <code>{"{{task_context}}"}</code> 恰好一次，服务将完整注入任务、来源、材料、阶段、历史回执、审核反馈与续接内容。</> : <>可使用 <code>{"<var: principal>"}</code> 引用当前配置显示名；共同原则之外的角色、输出和能力契约由服务组装。</>}</p><SaveBar state={saveState} error={saveError} /></form> : <><div className="prompt-editor-toolbar">{viewTabs}</div><p className="muted">预览使用已保存的模板；未保存的改动不会进入预览。</p>{prompt === "user" && payload.preview_kind === "example" && <p className="muted">示例变量渲染：使用合成的完整任务示例填入这份 User 模板，不是实际运行输入。</p>}{!previewError && <pre className="prompt-preview">{isProfile ? preview || "未提供预览" : highlightRenderedPreview(displayValue(fieldsOf(payload)[templateKey]), preview) || "未提供预览"}</pre>}</>}</div>
   </SettingsCard>;
 }
 
@@ -1010,7 +1041,7 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
   </SettingsCard>;
 }
 
-function SettingsContent({ section, payload, draft, setDraft, prompt, view, connector, auditRule, saveState, saveError, onAttentionCountChange }: { section: SettingsSection; payload: RecordValue; draft: RecordValue; setDraft: (value: RecordValue) => void; prompt: PromptKind; view: "template" | "preview"; connector: string; auditRule: "template" | "consumer" | "audit"; saveState: "idle" | "saving" | "saved" | "error"; saveError: string; onAttentionCountChange: (count: number) => void }) {
+function SettingsContent({ section, payload, draft, setDraft, prompt, view, connector, auditRule, saveState, saveError, onAttentionCountChange }: { section: SettingsSection; payload: RecordValue; draft: RecordValue; setDraft: (value: RecordValue) => void; prompt: PromptKind; view: "template" | "preview"; connector: string; auditRule: "template" | "audit"; saveState: "idle" | "saving" | "saved" | "error"; saveError: string; onAttentionCountChange: (count: number) => void }) {
   if (section === "status") return <StatusPanel />;
   if (section === "attention") return <AttentionPanel onCountChange={onAttentionCountChange} />;
   if (section === "skills") return <ManagedSkillsPanel />;
@@ -1021,14 +1052,14 @@ function SettingsContent({ section, payload, draft, setDraft, prompt, view, conn
   if (section === "audit-rules") {
     const template = displayValue(draft.template ?? fieldsOf(payload).template);
     const preview = displayValue(record(payload.preview)[auditRule]);
-    const ruleLabels = { template: "Template", consumer: "Consumer", audit: "Audit" } as const;
+    const ruleLabels = { template: "Template", audit: "Audit" } as const;
     const viewLabel = view === "template" ? "Template" : "Rendered preview";
     const panelLabel = view === "template" ? `${ruleLabels[auditRule]} template` : `${ruleLabels[auditRule]} rendered preview`;
     const templatePanel = auditRule === "template"
       ? <form onSubmit={(event) => event.preventDefault()}><TokenEditor id="audit-rules-template" label="Configurable rules" value={template} onChange={(next) => setDraft({ ...draft, template: next })} rows={16} /><SaveBar state={saveState} /></form>
       : <><p className="muted">当前 tab 使用同一份 Audit Rules template；切换到 Template tab 编辑。</p><pre className="prompt-preview">{template || "未提供模板"}</pre></>;
     const previewPanel = <><p className="muted">Rendered preview · current configuration</p><pre className="prompt-preview">{preview ? highlightRenderedPreview(template, preview) : "未提供预览"}</pre></>;
-    return <SettingsCard><h2>Audit Rules</h2><p className="muted">Audit Rules 先定义可配置模板，再分别查看 Consumer 和 Audit wrapper 的最终渲染结果。Template 中的 <code>{"{{principal}}"}</code> 会使用当前配置显示名替换。</p><p className="muted">当前规则：{ruleLabels[auditRule]} · 当前视图：{viewLabel}</p><div className="settings-control-group"><span className="settings-control-label">规则类型</span><div className="settings-pill-row" role="tablist" aria-label="Audit Rule sections">{(["template", "consumer", "audit"] as const).map((key) => <Link key={key} role="tab" aria-selected={auditRule === key} className={auditRule === key ? "active" : ""} to={`/settings?tab=audit-rules&rule=${key}&view=${view}`}>{ruleLabels[key]}</Link>)}</div></div><div className="settings-control-group"><span className="settings-control-label">查看方式</span><div className="settings-pill-row settings-view-row" role="tablist" aria-label="Audit Rule view"><Link role="tab" aria-selected={view === "template"} className={view === "template" ? "active" : ""} to={`/settings?tab=audit-rules&rule=${auditRule}&view=template`}>Template</Link><Link role="tab" aria-selected={view === "preview"} className={view === "preview" ? "active" : ""} to={`/settings?tab=audit-rules&rule=${auditRule}&view=preview`}>Rendered preview</Link></div></div><div id="audit-rules-panel" role="tabpanel" aria-label={panelLabel}>{view === "template" ? templatePanel : previewPanel}</div></SettingsCard>;
+    return <SettingsCard><h2>Audit Rules</h2><p className="muted">规则仅用于 Audit；Template 编辑规则原文，Audit 查看独立审核 wrapper 的渲染结果。Template 中的 <code>{"{{principal}}"}</code> 会使用当前配置显示名替换。</p><p className="muted">当前规则：{ruleLabels[auditRule]} · 当前视图：{viewLabel}</p><div className="settings-control-group"><span className="settings-control-label">规则类型</span><div className="settings-pill-row" role="tablist" aria-label="Audit Rule sections">{(["template", "audit"] as const).map((key) => <Link key={key} role="tab" aria-selected={auditRule === key} className={auditRule === key ? "active" : ""} to={`/settings?tab=audit-rules&rule=${key}&view=${view}`}>{ruleLabels[key]}</Link>)}</div></div><div className="settings-control-group"><span className="settings-control-label">查看方式</span><div className="settings-pill-row settings-view-row" role="tablist" aria-label="Audit Rule view"><Link role="tab" aria-selected={view === "template"} className={view === "template" ? "active" : ""} to={`/settings?tab=audit-rules&rule=${auditRule}&view=template`}>Template</Link><Link role="tab" aria-selected={view === "preview"} className={view === "preview" ? "active" : ""} to={`/settings?tab=audit-rules&rule=${auditRule}&view=preview`}>Rendered preview</Link></div></div><div id="audit-rules-panel" role="tabpanel" aria-label={panelLabel}>{view === "template" ? templatePanel : previewPanel}</div></SettingsCard>;
   }
   if (section === "configuration") { const groups = Array.isArray(payload.groups) ? payload.groups.map(record) : []; const compatibility = Array.isArray(payload.compatibility) ? payload.compatibility.map(record) : []; return <SettingsCard><h2>Configuration</h2><p className="muted">所有影响服务行为的环境配置统一保存在 <code>.env</code>；每个配置项的说明和当前值保持在同一行。</p><form onSubmit={(event) => event.preventDefault()}><ConfigTable groups={groups} compatibility={compatibility} draft={draft} setDraft={setDraft} /><SaveBar state={saveState} /></form></SettingsCard>; }
   return <InfoPanel payload={payload} />;
@@ -1039,10 +1070,10 @@ export function SettingsPage() {
   const rawSection = params.get("tab") || "status";
   const candidateSection = rawSection === "config" ? "configuration" : rawSection;
   const section = sections.some(([key]) => key === candidateSection) ? candidateSection as SettingsSection : "status";
-  const prompt: PromptKind = params.get("prompt") === "user" ? "user" : params.get("prompt") === "profile" ? "profile" : "developer";
+  const prompt: PromptKind = params.get("prompt") === "runtime" ? "runtime" : params.get("prompt") === "user" ? "user" : params.get("prompt") === "profile" ? "profile" : "developer";
   const view = params.get("view") === "preview" ? "preview" : "template";
   const connector = params.get("connector") || "dingtalk";
-  const auditRule = (["template", "consumer", "audit"] as const).includes(params.get("rule") as never) ? params.get("rule") as "template" | "consumer" | "audit" : "template";
+  const auditRule = params.get("rule") === "audit" ? "audit" : "template";
   const [payload, setPayload] = useState<RecordValue | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
@@ -1050,6 +1081,7 @@ export function SettingsPage() {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveError, setSaveError] = useState("");
   const [attentionCount, setAttentionCount] = useState(0);
+  const sectionGeneration = useRef(0);
   useEffect(() => {
     if (section === "attention") return;
     let active = true;
@@ -1061,6 +1093,7 @@ export function SettingsPage() {
     return () => { active = false; };
   }, [section]);
   useEffect(() => {
+    sectionGeneration.current += 1;
     if (section === "skills" || section === "mcp") { setState("ready"); setPayload(null); setError(""); return; }
     if (section === "status" || section === "attention") return;
     const controller = new AbortController(); setState("loading"); setSaveState("idle"); setSaveError("");
@@ -1070,7 +1103,7 @@ export function SettingsPage() {
     getSettings(section, controller.signal).then((response) => { clearTimeout(timer); setPayload(response.item); setDraft(fieldsOf(response.item)); setState("ready"); setError(""); }).catch((reason: unknown) => { clearTimeout(timer); if (controller.signal.aborted) return; setError(reason instanceof Error ? reason.message : "加载失败"); setState("error"); });
     return () => { clearTimeout(timer); controller.abort(); };
   }, [section]);
-  async function save() { if (!payload) return; setSaveState("saving"); setSaveError(""); try { const promptKey = prompt === "profile" ? "profile" : `${prompt}_template`; const rawPrompt = draft[promptKey] ?? fieldsOf(payload)[promptKey]; const fields = section === "prompts" ? { template: typeof rawPrompt === "string" ? rawPrompt : displayValue(rawPrompt) } : section === "audit-rules" ? { template: displayValue(draft.template) } : draft; await saveSettings(section, fields, section === "prompts" ? { prompt } : {}); setSaveState("saved"); } catch (reason: unknown) { setSaveState("error"); setSaveError(reason instanceof Error && reason.message ? reason.message : "保存失败，草稿仍保留"); } }
+  async function save() { if (!payload) return; const generation = sectionGeneration.current; setSaveState("saving"); setSaveError(""); try { const promptKey = prompt === "profile" ? "profile" : `${prompt}_template`; const rawPrompt = draft[promptKey] ?? fieldsOf(payload)[promptKey]; const fields = section === "prompts" ? { template: typeof rawPrompt === "string" ? rawPrompt : displayValue(rawPrompt) } : section === "audit-rules" ? { template: displayValue(draft.template) } : draft; await saveSettings(section, fields, section === "prompts" ? { prompt } : {}); if (section === "prompts" || section === "audit-rules") { const refreshed = await getSettings(section); if (generation !== sectionGeneration.current) return; setPayload(refreshed.item); } if (generation !== sectionGeneration.current) return; setSaveState("saved"); } catch (reason: unknown) { if (generation !== sectionGeneration.current) return; setSaveState("error"); setSaveError(reason instanceof Error && reason.message ? reason.message : "保存失败，草稿仍保留"); } }
   const content = state === "error" ? <SettingsCard><div className="page-state page-state-error" role="alert">{error}</div></SettingsCard> : state === "loading" && !payload && section !== "status" && section !== "attention" && section !== "skills" && section !== "mcp" ? <SettingsCard><div className="page-state" role="status">正在加载…</div></SettingsCard> : <SettingsContent section={section} payload={payload || {}} draft={draft} setDraft={setDraft} prompt={prompt} view={view} connector={connector} auditRule={auditRule} saveState={saveState} saveError={saveError} onAttentionCountChange={setAttentionCount} />;
   return <main className="console-page settings-page" aria-labelledby="settings-page-title"><h1 id="settings-page-title" className="sr-only">Settings</h1><div className="settings-layout-react"><SectionNav section={section} attentionCount={attentionCount} /><div className="settings-content" onSubmit={(event) => { const form = event.target as HTMLFormElement; if (form.tagName === "FORM" && form.elements.namedItem("settings-save")) { event.preventDefault(); void save(); } }}>{content}</div></div></main>;
 }

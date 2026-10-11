@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "low",
+  "source_records": 100,
+  "source_reference": "Exact complete service/group sources recovered from native v3 MCP results, preserving the recorded source hashes. Both arms disable shell tools; baseline uses original daily-report Skill, candidate adds only native notify/store access guidance.",
+  "mechanism": "Retain full source and emit bounded pages through native notify rather than accumulating text within one cell. No fixture-specific filters or prescribed gold-answer extraction.",
+  "criteria": "Both original source decisions, IDs/types, business owners and numeric amounts; count 100; inspect every original record in model-visible output without truncation; no shell/file/business effects. Semantic JSON and complete visible-source coverage are separate gates.",
+  "cases": [
+    {"id":"service-facts", "tool":"daily_report_facts", "session":"01a127b7-3bea-7490-bfa6-a1183620acf3", "source_sha256":"711a863ea959e287042dc59114bf9d2a6d89646d0161ae93ec499b1d7d75fc6e", "critical_indices":[42,99], "owners":["Maya","Noah"], "amounts":[74000,45000]},
+    {"id":"group-window", "tool":"read_dingtalk_messages_in_window", "session":"01a127b7-6b4b-7a02-97ba-a8218b86da03", "source_sha256":"7f8d05bf83d48ab321e754a09a9612389d99d7037c50a12fe4e84a1d13030ea0", "critical_indices":[42,99], "owners":["Avery","Alex"], "amounts":[32000,58000]}
+  ]
+}

@@ -1,0 +1,3249 @@
+{
+  "mode": "native_synthetic_business_judgment",
+  "business_model_evaluation": true,
+  "manifest_sha256": "64013ebdb30634b57f6b40322768a3e8f2846d3226402bc465d6a7dc3705d81e",
+  "harness_sha256": "dea5d24807bd345d41c656b78b41ec6d57c8bc5ce3877d2c2e336bbe7bd31d78",
+  "source_flags": {
+    "native_disabled_features": [
+      "shell_tool",
+      "unified_exec",
+      "unified_exec_tty",
+      "shell_snapshot",
+      "apps",
+      "plugins",
+      "remote_plugin",
+      "hooks",
+      "computer_use",
+      "browser_use",
+      "browser_use_external",
+      "browser_use_full_cdp_access",
+      "in_app_browser",
+      "in_app_local_automation",
+      "in_app_chat",
+      "image_generation",
+      "multi_agent",
+      "code_mode_host",
+      "goals",
+      "worktrees",
+      "in_app_updates",
+      "skill_mcp_dependency_install",
+      "memories"
+    ],
+    "web_search": "disabled",
+    "inherited_mcp_servers": "disabled",
+    "tool_events": "fail_any_native_tool_item"
+  },
+  "baseline_ref": "a7d4738a3b6591abc4d8fc69236b5517b4f98004",
+  "candidate_ref": "2403cf28cb965712553b2688d142b376180a8d8b",
+  "settings": {
+    "model": "gpt-5.6-sol",
+    "reasoning_effort": "high",
+    "concurrency": 1,
+    "timeout_seconds_per_case": 300,
+    "tools": "none",
+    "external_facts": "synthetic-inline-only"
+  },
+  "baseline": {
+    "identity": {
+      "head": null,
+      "dirty": null,
+      "source_fingerprint_sha256": "b0cb212913543cd05f3dc7f66cf2afc6b9e0c5b4f458ce956d3612781e897132",
+      "prompt_sha256": {
+        "consumer": "30442a5f0c386eb144208f32d82e474bebe31a07981fc679d8fd34e7ac63262d",
+        "audit": "85e1584838f1efa758a78ce23bb77c695970736db92a43b69a63acae8f376409"
+      },
+      "schema_sha256": {
+        "consumer": "49978bb6b1ec594e935963598206538a29e53575ba54796bfaba31387bc7d0cd",
+        "audit": "cfdadfdb475b34083a331953427a26d402c4922287e456a4f7b16a45a39d393d"
+      }
+    },
+    "cases": [
+      {
+        "id": "complete_finance_approval",
+        "score": {
+          "consumer_ok": false,
+          "audit_ok": false,
+          "errors": [
+            "forbidden concept: needs_human",
+            "Audit outcome feedback_provided not in ['reject', 'return', 'revision_required']"
+          ]
+        },
+        "consumer": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "Propose approving synthetic expense OA process P-101, task 801, under the verified ≤ CNY 1000 rule, then notifying applicant U-1 only after Audit Agent B verifies the approval succeeded.",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "durable_memories": [],
+            "outcome": "proposal",
+            "proposal": {
+              "objective": "Approve the fully supported CNY 800 expense in OA process P-101 and notify the applicant after approval is verified.",
+              "actions": [
+                {
+                  "description": "Approve OA expense process P-101, task 801.",
+                  "action_identity": "oa-expense-P-101-task-801-approve",
+                  "capability": "dingtalk-oa-approval",
+                  "operation": "approve",
+                  "target": {
+                    "process_instance_id": "P-101",
+                    "task_id": "801"
+                  },
+                  "payload": {
+                    "decision": "approve"
+                  },
+                  "effect": "external"
+                },
+                {
+                  "description": "After the approval of task 801 is verified, notify applicant U-1 that the CNY 800 expense was approved.",
+                  "action_identity": "oa-expense-P-101-notify-U-1",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_direct_message",
+                  "target": {
+                    "user_id": "U-1"
+                  },
+                  "payload": {
+                    "message": "**费用审批已通过。**\n\n- OA 流程：**P-101**\n- 审批任务：**801**\n- 金额：**CNY 800**\n- 本通知仅在审批结果核验为通过后发送。",
+                    "precondition": {
+                      "process_instance_id": "P-101",
+                      "task_id": "801",
+                      "verified_status": "approved"
+                    }
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "The governing business rule authorizes autonomous approval for an expense at or below CNY 1000 when the receipt, manager endorsement, finance code, and current pending task are all verified.",
+                  "references": [
+                    "Business Skill excerpt"
+                  ]
+                },
+                {
+                  "assertion": "The rule requires notifying the applicant only after the approval is verified.",
+                  "references": [
+                    "Business Skill excerpt"
+                  ]
+                },
+                {
+                  "assertion": "The reviewed item is OA process P-101, task 801, for applicant U-1.",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "The expense amount is CNY 800 and is within the CNY 1000 budget.",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "Valid itemized receipt R-1, manager endorsement E-1, and finance code F-1 are present.",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "Task 801 is currently pending for the principal.",
+                  "references": [
+                    "Verified facts"
+                  ]
+                }
+              ],
+              "authored_judgment": "Every approval condition in the supplied rule is satisfied: CNY 800 is within the autonomous threshold, the required receipt, endorsement, and finance code are verified, and task 801 is currently pending for the principal. The bounded approval therefore qualifies for autonomous handling with low consequence under the rule. Audit Agent B must verify the exact process and task, execute the approval, read back the approved state, and only then send the notification to U-1; the notification must not be sent if approval is not verified."
+            },
+            "decision_options": [],
+            "needs_human_reason": null,
+            "decision_basis": null
+          },
+          "raw": "{\n  \"summary\": \"Propose approving synthetic expense OA process P-101, task 801, under the verified ≤ CNY 1000 rule, then notifying applicant U-1 only after Audit Agent B verifies the approval succeeded.\",\n  \"error_code\": null,\n  \"error_retryable\": false,\n  \"error_authorization_required\": false,\n  \"risk\": \"low\",\n  \"confidence\": 1.0,\n  \"rule_coverage\": 1.0,\n  \"information_completeness\": 1.0,\n  \"durable_memories\": [],\n  \"outcome\": \"proposal\",\n  \"proposal\": {\n    \"objective\": \"Approve the fully supported CNY 800 expense in OA process P-101 and notify the applicant after approval is verified.\",\n    \"actions\": [\n      {\n        \"description\": \"Approve OA expense process P-101, task 801.\",\n        \"action_identity\": \"oa-expense-P-101-task-801-approve\",\n        \"capability\": \"dingtalk-oa-approval\",\n        \"operation\": \"approve\",\n        \"target\": {\n          \"process_instance_id\": \"P-101\",\n          \"task_id\": \"801\"\n        },\n        \"payload\": {\n          \"decision\": \"approve\"\n        },\n        \"effect\": \"external\"\n      },\n      {\n        \"description\": \"After the approval of task 801 is verified, notify applicant U-1 that the CNY 800 expense was approved.\",\n        \"action_identity\": \"oa-expense-P-101-notify-U-1\",\n        \"capability\": \"dingtalk-chat\",\n        \"operation\": \"send_direct_message\",\n        \"target\": {\n          \"user_id\": \"U-1\"\n        },\n        \"payload\": {\n          \"message\": \"**费用审批已通过。**\\n\\n- OA 流程：**P-101**\\n- 审批任务：**801**\\n- 金额：**CNY 800**\\n- 本通知仅在审批结果核验为通过后发送。\",\n          \"precondition\": {\n            \"process_instance_id\": \"P-101\",\n            \"task_id\": \"801\",\n            \"verified_status\": \"approved\"\n          }\n        },\n        \"effect\": \"external\"\n      }\n    ],\n    \"sourced_facts\": [\n      {\n        \"assertion\": \"The governing business rule authorizes autonomous approval for an expense at or below CNY 1000 when the receipt, manager endorsement, finance code, and current pending task are all verified.\",\n        \"references\": [\n          \"Business Skill excerpt\"\n        ]\n      },\n      {\n        \"assertion\": \"The rule requires notifying the applicant only after the approval is verified.\",\n        \"references\": [\n          \"Business Skill excerpt\"\n        ]\n      },\n      {\n        \"assertion\": \"The reviewed item is OA process P-101, task 801, for applicant U-1.\",\n        \"references\": [\n          \"Verified facts\"\n        ]\n      },\n      {\n        \"assertion\": \"The expense amount is CNY 800 and is within the CNY 1000 budget.\",\n        \"references\": [\n          \"Verified facts\"\n        ]\n      },\n      {\n        \"assertion\": \"Valid itemized receipt R-1, manager endorsement E-1, and finance code F-1 are present.\",\n        \"references\": [\n          \"Verified facts\"\n        ]\n      },\n      {\n        \"assertion\": \"Task 801 is currently pending for the principal.\",\n        \"references\": [\n          \"Verified facts\"\n        ]\n      }\n    ],\n    \"authored_judgment\": \"Every approval condition in the supplied rule is satisfied: CNY 800 is within the autonomous threshold, the required receipt, endorsement, and finance code are verified, and task 801 is currently pending for the principal. The bounded approval therefore qualifies for autonomous handling with low consequence under the rule. Audit Agent B must verify the exact process and task, execute the approval, read back the approved state, and only then send the notification to U-1; the notification must not be sent if approval is not verified.\"\n  },\n  \"decision_options\": [],\n  \"needs_human_reason\": null,\n  \"decision_basis\": null\n}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "consumer_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "proposal",
+            "summary": "Propose approving synthetic expense OA process P-101, task 801, under the verified ≤ CNY 1000 rule, then notifying applicant U-1 only after Audit Agent B verifies the approval succeeded.",
+            "proposal": {
+              "objective": "Approve the fully supported CNY 800 expense in OA process P-101 and notify the applicant after approval is verified.",
+              "actions": [
+                {
+                  "description": "Approve OA expense process P-101, task 801.",
+                  "action_identity": "oa-expense-P-101-task-801-approve",
+                  "capability": "dingtalk-oa-approval",
+                  "operation": "approve",
+                  "target": {
+                    "process_instance_id": "P-101",
+                    "task_id": "801"
+                  },
+                  "payload": {
+                    "decision": "approve"
+                  },
+                  "effect": "external"
+                },
+                {
+                  "description": "After the approval of task 801 is verified, notify applicant U-1 that the CNY 800 expense was approved.",
+                  "action_identity": "oa-expense-P-101-notify-U-1",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_direct_message",
+                  "target": {
+                    "user_id": "U-1"
+                  },
+                  "payload": {
+                    "message": "**费用审批已通过。**\n\n- OA 流程：**P-101**\n- 审批任务：**801**\n- 金额：**CNY 800**\n- 本通知仅在审批结果核验为通过后发送。",
+                    "precondition": {
+                      "process_instance_id": "P-101",
+                      "task_id": "801",
+                      "verified_status": "approved"
+                    }
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "The governing business rule authorizes autonomous approval for an expense at or below CNY 1000 when the receipt, manager endorsement, finance code, and current pending task are all verified.",
+                  "references": [
+                    "Business Skill excerpt"
+                  ]
+                },
+                {
+                  "assertion": "The rule requires notifying the applicant only after the approval is verified.",
+                  "references": [
+                    "Business Skill excerpt"
+                  ]
+                },
+                {
+                  "assertion": "The reviewed item is OA process P-101, task 801, for applicant U-1.",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "The expense amount is CNY 800 and is within the CNY 1000 budget.",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "Valid itemized receipt R-1, manager endorsement E-1, and finance code F-1 are present.",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "Task 801 is currently pending for the principal.",
+                  "references": [
+                    "Verified facts"
+                  ]
+                }
+              ],
+              "authored_judgment": "Every approval condition in the supplied rule is satisfied: CNY 800 is within the autonomous threshold, the required receipt, endorsement, and finance code are verified, and task 801 is currently pending for the principal. The bounded approval therefore qualifies for autonomous handling with low consequence under the rule. Audit Agent B must verify the exact process and task, execute the approval, read back the approved state, and only then send the notification to U-1; the notification must not be sent if approval is not verified."
+            },
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "authorization_plan": null,
+            "durable_memories": []
+          },
+          "digest": null
+        },
+        "audit": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "The expense approval is substantively supported, but the proposal cannot be accepted because the approval action lacks the mandatory non-empty decision remark required before an OA approval that ends the matter for the applicant.",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "proposal_revision": 0,
+            "outcome": "feedback_provided",
+            "feedback": {
+              "rule": "Before executing an OA approval that ends the matter for the other party, the approval command must carry a non-empty remark stating the rule or fact supporting the decision and what the other party should do next.",
+              "observation": "The candidate fully verifies the CNY 800 amount, receipt R-1, manager endorsement E-1, finance code F-1, and current pending task 801, and its scores satisfy the required execution band. However, the approval action payload contains only {\"decision\":\"approve\"} and supplies no remark. Audit must execute an accepted candidate exactly as authored and therefore cannot add the missing remark during execution.",
+              "requested_revision": "Regenerate proposal revision 1 for the same OA process P-101, task 801, preserving both action_identity values and the conditional post-verification notification. Add a non-empty remark to the approval action payload stating that the CNY 800 expense is within the CNY 1000 autonomous threshold, receipt R-1, endorsement E-1, finance code F-1, and the pending task were verified, and telling applicant U-1 the appropriate next step after approval."
+            },
+            "external_result": null,
+            "decision_options": []
+          },
+          "raw": "{\"summary\":\"The expense approval is substantively supported, but the proposal cannot be accepted because the approval action lacks the mandatory non-empty decision remark required before an OA approval that ends the matter for the applicant.\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"low\",\"confidence\":1.0,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"proposal_revision\":0,\"outcome\":\"feedback_provided\",\"feedback\":{\"rule\":\"Before executing an OA approval that ends the matter for the other party, the approval command must carry a non-empty remark stating the rule or fact supporting the decision and what the other party should do next.\",\"observation\":\"The candidate fully verifies the CNY 800 amount, receipt R-1, manager endorsement E-1, finance code F-1, and current pending task 801, and its scores satisfy the required execution band. However, the approval action payload contains only {\\\"decision\\\":\\\"approve\\\"} and supplies no remark. Audit must execute an accepted candidate exactly as authored and therefore cannot add the missing remark during execution.\",\"requested_revision\":\"Regenerate proposal revision 1 for the same OA process P-101, task 801, preserving both action_identity values and the conditional post-verification notification. Add a non-empty remark to the approval action payload stating that the CNY 800 expense is within the CNY 1000 autonomous threshold, receipt R-1, endorsement E-1, finance code F-1, and the pending task were verified, and telling applicant U-1 the appropriate next step after approval.\"},\"external_result\":null,\"decision_options\":[]}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "audit_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "feedback_provided",
+            "summary": "The expense approval is substantively supported, but the proposal cannot be accepted because the approval action lacks the mandatory non-empty decision remark required before an OA approval that ends the matter for the applicant.",
+            "proposal_revision": 0,
+            "feedback": {
+              "rule": "Before executing an OA approval that ends the matter for the other party, the approval command must carry a non-empty remark stating the rule or fact supporting the decision and what the other party should do next.",
+              "observation": "The candidate fully verifies the CNY 800 amount, receipt R-1, manager endorsement E-1, finance code F-1, and current pending task 801, and its scores satisfy the required execution band. However, the approval action payload contains only {\"decision\":\"approve\"} and supplies no remark. Audit must execute an accepted candidate exactly as authored and therefore cannot add the missing remark during execution.",
+              "requested_revision": "Regenerate proposal revision 1 for the same OA process P-101, task 801, preserving both action_identity values and the conditional post-verification notification. Add a non-empty remark to the approval action payload stating that the CNY 800 expense is within the CNY 1000 autonomous threshold, receipt R-1, endorsement E-1, finance code F-1, and the pending task were verified, and telling applicant U-1 the appropriate next step after approval."
+            },
+            "external_result": null,
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "authorization_plan": null
+          },
+          "digest": null
+        }
+      },
+      {
+        "id": "applicant_material_gap",
+        "score": {
+          "consumer_ok": true,
+          "audit_ok": false,
+          "errors": [
+            "Audit outcome None not in ['approve', 'executed']"
+          ]
+        },
+        "consumer": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "OA 流程 P-102 缺少审批必需的逐项明细收据；提议在原审批中向申请人 U-2 请求补件并同步发送通知，任务 802 继续保持待处理，不批准也不驳回。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "durable_memories": [],
+            "outcome": "proposal",
+            "proposal": {
+              "objective": "向申请人 U-2 请求补充 OA 流程 P-102 中缺失的逐项明细收据，待材料到达后重新读取完整申请并形成新的审核候选。",
+              "actions": [
+                {
+                  "description": "在 OA 流程 P-102 的任务 802 中评论，请申请人 U-2 补充逐项明细收据，同时保持任务待处理。",
+                  "action_identity": "P-102:802:request-itemized-receipt:oa-comment",
+                  "capability": "dingtalk-oa-approval",
+                  "operation": "comment_on_approval",
+                  "target": {
+                    "process_instance_id": "P-102",
+                    "task_id": "802"
+                  },
+                  "payload": {
+                    "comment": "当前附件中缺少 CNY 800 报销对应的逐项明细收据。请申请人 U-2 在本审批中补充上传该收据；收到后将基于最新完整材料重新审核。本次仅请求补件，不批准或驳回任务 802，任务保持待处理。"
+                  },
+                  "effect": "external"
+                },
+                {
+                  "description": "向申请人 U-2 发送补件通知，明确所缺材料、补充位置和当前审批边界。",
+                  "action_identity": "P-102:802:request-itemized-receipt:applicant-notification",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_direct_message",
+                  "target": {
+                    "user_id": "U-2"
+                  },
+                  "payload": {
+                    "message": "**请补充 P-102 的报销明细凭证。**\n\n- 当前已收到 **CNY 800** 金额信息和经理背书 **E-2**。\n- 目前缺少逐项明细收据，请在原审批 **P-102** 中补充上传。\n- 收据补齐后会基于最新完整材料重新审核；本次仅请求补件，未批准或驳回任务 **802**。"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "当前业务对象是 OA 流程 P-102、任务 802，申请人为 U-2。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                },
+                {
+                  "assertion": "申请金额为 CNY 800，经理背书 E-2 已存在，但逐项明细收据缺失。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                },
+                {
+                  "assertion": "申请人能够补充缺失的逐项明细收据，当前任务仍处于待处理状态。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                },
+                {
+                  "assertion": "业务规则要求在批准费用前取得逐项明细收据；可由申请人补充时，应先请求具体材料，收到后再审核新的完整候选，补件阶段不得批准或驳回 OA。",
+                  "references": [
+                    "business_skill_excerpt"
+                  ]
+                }
+              ],
+              "authored_judgment": "现有证据足以执行低风险的补件阶段：在原审批中明确请求唯一缺失的必需材料，并通知实际申请人。两项动作仅收集材料，不改变审批结论、不产生付款或费用承诺；Audit Agent B 应核对流程 P-102、任务 802、申请人 U-2、消息边界及任务仍为待处理后再执行。收据到达后必须重新读取最新完整 OA，不能沿用本候选直接批准或驳回。"
+            }
+          },
+          "raw": "{\n  \"summary\": \"OA 流程 P-102 缺少审批必需的逐项明细收据；提议在原审批中向申请人 U-2 请求补件并同步发送通知，任务 802 继续保持待处理，不批准也不驳回。\",\n  \"error_code\": null,\n  \"error_retryable\": false,\n  \"error_authorization_required\": false,\n  \"risk\": \"low\",\n  \"confidence\": 1.0,\n  \"rule_coverage\": 1.0,\n  \"information_completeness\": 1.0,\n  \"durable_memories\": [],\n  \"outcome\": \"proposal\",\n  \"proposal\": {\n    \"objective\": \"向申请人 U-2 请求补充 OA 流程 P-102 中缺失的逐项明细收据，待材料到达后重新读取完整申请并形成新的审核候选。\",\n    \"actions\": [\n      {\n        \"description\": \"在 OA 流程 P-102 的任务 802 中评论，请申请人 U-2 补充逐项明细收据，同时保持任务待处理。\",\n        \"action_identity\": \"P-102:802:request-itemized-receipt:oa-comment\",\n        \"capability\": \"dingtalk-oa-approval\",\n        \"operation\": \"comment_on_approval\",\n        \"target\": {\n          \"process_instance_id\": \"P-102\",\n          \"task_id\": \"802\"\n        },\n        \"payload\": {\n          \"comment\": \"当前附件中缺少 CNY 800 报销对应的逐项明细收据。请申请人 U-2 在本审批中补充上传该收据；收到后将基于最新完整材料重新审核。本次仅请求补件，不批准或驳回任务 802，任务保持待处理。\"\n        },\n        \"effect\": \"external\"\n      },\n      {\n        \"description\": \"向申请人 U-2 发送补件通知，明确所缺材料、补充位置和当前审批边界。\",\n        \"action_identity\": \"P-102:802:request-itemized-receipt:applicant-notification\",\n        \"capability\": \"dingtalk-chat\",\n        \"operation\": \"send_direct_message\",\n        \"target\": {\n          \"user_id\": \"U-2\"\n        },\n        \"payload\": {\n          \"message\": \"**请补充 P-102 的报销明细凭证。**\\n\\n- 当前已收到 **CNY 800** 金额信息和经理背书 **E-2**。\\n- 目前缺少逐项明细收据，请在原审批 **P-102** 中补充上传。\\n- 收据补齐后会基于最新完整材料重新审核；本次仅请求补件，未批准或驳回任务 **802**。\"\n        },\n        \"effect\": \"external\"\n      }\n    ],\n    \"sourced_facts\": [\n      {\n        \"assertion\": \"当前业务对象是 OA 流程 P-102、任务 802，申请人为 U-2。\",\n        \"references\": [\n          \"verified_facts\"\n        ]\n      },\n      {\n        \"assertion\": \"申请金额为 CNY 800，经理背书 E-2 已存在，但逐项明细收据缺失。\",\n        \"references\": [\n          \"verified_facts\"\n        ]\n      },\n      {\n        \"assertion\": \"申请人能够补充缺失的逐项明细收据，当前任务仍处于待处理状态。\",\n        \"references\": [\n          \"verified_facts\"\n        ]\n      },\n      {\n        \"assertion\": \"业务规则要求在批准费用前取得逐项明细收据；可由申请人补充时，应先请求具体材料，收到后再审核新的完整候选，补件阶段不得批准或驳回 OA。\",\n        \"references\": [\n          \"business_skill_excerpt\"\n        ]\n      }\n    ],\n    \"authored_judgment\": \"现有证据足以执行低风险的补件阶段：在原审批中明确请求唯一缺失的必需材料，并通知实际申请人。两项动作仅收集材料，不改变审批结论、不产生付款或费用承诺；Audit Agent B 应核对流程 P-102、任务 802、申请人 U-2、消息边界及任务仍为待处理后再执行。收据到达后必须重新读取最新完整 OA，不能沿用本候选直接批准或驳回。\"\n  }\n}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "consumer_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "proposal",
+            "summary": "OA 流程 P-102 缺少审批必需的逐项明细收据；提议在原审批中向申请人 U-2 请求补件并同步发送通知，任务 802 继续保持待处理，不批准也不驳回。",
+            "proposal": {
+              "objective": "向申请人 U-2 请求补充 OA 流程 P-102 中缺失的逐项明细收据，待材料到达后重新读取完整申请并形成新的审核候选。",
+              "actions": [
+                {
+                  "description": "在 OA 流程 P-102 的任务 802 中评论，请申请人 U-2 补充逐项明细收据，同时保持任务待处理。",
+                  "action_identity": "P-102:802:request-itemized-receipt:oa-comment",
+                  "capability": "dingtalk-oa-approval",
+                  "operation": "comment_on_approval",
+                  "target": {
+                    "process_instance_id": "P-102",
+                    "task_id": "802"
+                  },
+                  "payload": {
+                    "comment": "当前附件中缺少 CNY 800 报销对应的逐项明细收据。请申请人 U-2 在本审批中补充上传该收据；收到后将基于最新完整材料重新审核。本次仅请求补件，不批准或驳回任务 802，任务保持待处理。"
+                  },
+                  "effect": "external"
+                },
+                {
+                  "description": "向申请人 U-2 发送补件通知，明确所缺材料、补充位置和当前审批边界。",
+                  "action_identity": "P-102:802:request-itemized-receipt:applicant-notification",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_direct_message",
+                  "target": {
+                    "user_id": "U-2"
+                  },
+                  "payload": {
+                    "message": "**请补充 P-102 的报销明细凭证。**\n\n- 当前已收到 **CNY 800** 金额信息和经理背书 **E-2**。\n- 目前缺少逐项明细收据，请在原审批 **P-102** 中补充上传。\n- 收据补齐后会基于最新完整材料重新审核；本次仅请求补件，未批准或驳回任务 **802**。"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "当前业务对象是 OA 流程 P-102、任务 802，申请人为 U-2。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                },
+                {
+                  "assertion": "申请金额为 CNY 800，经理背书 E-2 已存在，但逐项明细收据缺失。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                },
+                {
+                  "assertion": "申请人能够补充缺失的逐项明细收据，当前任务仍处于待处理状态。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                },
+                {
+                  "assertion": "业务规则要求在批准费用前取得逐项明细收据；可由申请人补充时，应先请求具体材料，收到后再审核新的完整候选，补件阶段不得批准或驳回 OA。",
+                  "references": [
+                    "business_skill_excerpt"
+                  ]
+                }
+              ],
+              "authored_judgment": "现有证据足以执行低风险的补件阶段：在原审批中明确请求唯一缺失的必需材料，并通知实际申请人。两项动作仅收集材料，不改变审批结论、不产生付款或费用承诺；Audit Agent B 应核对流程 P-102、任务 802、申请人 U-2、消息边界及任务仍为待处理后再执行。收据到达后必须重新读取最新完整 OA，不能沿用本候选直接批准或驳回。"
+            },
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "authorization_plan": null,
+            "durable_memories": []
+          },
+          "digest": null
+        },
+        "audit": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "候选方案符合补件阶段规则：针对 OA 流程 P-102、任务 802，先在原审批中请求申请人 U-2 补充缺失的 CNY 800 逐项明细收据，并向同一申请人发送一致的补件通知；两项动作均保持任务待处理，不批准或驳回。目标、事实、受众、时机和消息边界均由内联事实及 Skill 摘要支持，可以批准该候选，但本次为只读评估，未执行任何外部动作。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "proposal_revision": 0,
+            "outcome": "dry_run",
+            "feedback": null,
+            "external_result": null,
+            "decision_options": []
+          },
+          "raw": "{\"summary\":\"候选方案符合补件阶段规则：针对 OA 流程 P-102、任务 802，先在原审批中请求申请人 U-2 补充缺失的 CNY 800 逐项明细收据，并向同一申请人发送一致的补件通知；两项动作均保持任务待处理，不批准或驳回。目标、事实、受众、时机和消息边界均由内联事实及 Skill 摘要支持，可以批准该候选，但本次为只读评估，未执行任何外部动作。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"low\",\"confidence\":1.0,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"proposal_revision\":0,\"outcome\":\"dry_run\",\"feedback\":null,\"external_result\":null,\"decision_options\":[]}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "audit_contract": {
+          "ok": false,
+          "error": "role_wire_contract_invalid",
+          "result": null,
+          "digest": null
+        }
+      },
+      {
+        "id": "current_instance_policy_choice",
+        "score": {
+          "consumer_ok": false,
+          "audit_ok": false,
+          "errors": [
+            "Consumer JSON missing"
+          ]
+        },
+        "consumer": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "Request P-103 is a complete one-off request for a nonstandard CNY 600 payment from the principal’s discretionary budget. Because no standing rule decides whether the exception is worth funding, the principal must make the current-instance yes/no decision; no external action has been taken.",
+            "error_code": "authorization_required",
+            "error_retryable": false,
+            "error_authorization_required": true,
+            "risk": "medium",
+            "confidence": 1.0,
+            "rule_coverage": 0.0,
+            "information_completeness": 1.0,
+            "durable_memories": [],
+            "outcome": "needs_human",
+            "proposal": null,
+            "decision_options": [
+              {
+                "key": "option_1",
+                "label": "逐案提交判断",
+                "instruction": "对于事实完整、金额明确但无既定规则覆盖的非标准 discretionary-budget 例外，继续逐案提交 principal 作明确的是或否判断。",
+                "consequence": "不会自动批准或拒绝此类请求；每个实例都需 principal 单独决定，当前 P-103 仍按本次授权计划处理。",
+                "applies_to": "task_class"
+              },
+              {
+                "key": "option_2",
+                "label": "建立例外规则",
+                "instruction": "为非标准 discretionary-budget 例外补充书面适用条件、金额边界和自动处理权限；规则发布前仍逐案提交 principal 判断。",
+                "consequence": "后续符合完整规则的请求可按规则处理；不追溯决定当前 P-103，也不会在规则发布前自动产生支出。",
+                "applies_to": "task_class"
+              }
+            ],
+            "needs_human_reason": "你需要决定是否从 discretionary budget 为 P-103 支付这笔 CNY 600 的一次性非标准例外；事实已经完整，但没有既定规则能够判断这次例外是否值得资助。",
+            "decision_basis": {
+              "verified_facts": [
+                {
+                  "assertion": "P-103 请求从 principal 的 discretionary budget 支付一次性、非标准的 CNY 600 例外。",
+                  "references": [
+                    "P-103"
+                  ]
+                },
+                {
+                  "assertion": "该请求的必要事实完整，已知接收方为 U-3，且没有更多申请人事实能够解决这项政策判断。",
+                  "references": [
+                    "P-103",
+                    "U-3"
+                  ]
+                }
+              ],
+              "rule_evidence": [
+                {
+                  "assertion": "适用的 Business Skill 要求：当完整的当前实例需要 principal 的 discretionary policy judgment 且没有 standing rule 决定时，必须呈现具体的是或否选择、准确后果和可执行计划，不得静默批准。",
+                  "references": [
+                    "business_skill_excerpt"
+                  ]
+                },
+                {
+                  "assertion": "现有规则没有规定 P-103 这一项一次性例外是否值得资助，因此规则覆盖存在决定性缺口。",
+                  "references": [
+                    "business_skill_excerpt",
+                    "P-103"
+                  ]
+                }
+              ],
+              "quality_explanation": "当前实例所需事实已全部核实，因而信息完整度和证据置信度均为 1.0；但没有任何书面规则决定该非标准例外应否获得资金，规则覆盖度为 0.0。该缺口属于 principal 的 discretionary policy judgment，不能由 Consumer Agent A 自行补写规则或默认为批准。",
+              "no_external_action_evidence": [
+                {
+                  "assertion": "本次评估是合成、只读流程；没有可用的真实 provider、外部写入或执行工具，因此尚未付款、承诺资金或通知 U-3。",
+                  "references": [
+                    "synthetic_read_only_evaluation",
+                    "P-103",
+                    "U-3"
+                  ]
+                }
+              ],
+              "conclusion": "必须由 principal 对 P-103 作当前实例的明确决定：若同意，则按下述计划支付 CNY 600；若不同意，则保持请求未资助，不付款、不形成预算承诺，也不向 U-3 表示该例外已获批准。"
+            },
+            "authorization_plan": {
+              "summary": "从 principal 的 discretionary budget 为请求 P-103 向 U-3 支付一次性非标准例外款 CNY 600。",
+              "primary_action": {
+                "description": "从 principal 的 discretionary budget 为请求 P-103 向 U-3 支付一次性非标准例外款 CNY 600。",
+                "action_identity": "P-103-fund-CNY-600-U-3",
+                "capability": "discretionary_budget",
+                "operation": "fund_one_off_exception",
+                "target": {
+                  "request_id": "P-103",
+                  "recipient_id": "U-3"
+                },
+                "payload": {
+                  "amount": 600,
+                  "currency": "CNY",
+                  "funding_source": "principal_discretionary_budget",
+                  "exception_type": "one_off_nonstandard"
+                },
+                "effect": "external"
+              },
+              "follow_up_actions": [],
+              "side_effects": [
+                "principal 的 discretionary budget 将减少 CNY 600。",
+                "U-3 将获得与 P-103 对应的 CNY 600 一次性例外资金。",
+                "该动作只批准当前 P-103，不构成其他非标准请求的先例或 standing rule。"
+              ],
+              "will_not_do": [
+                "不会支付超过 CNY 600 的金额。",
+                "不会向 U-3 以外的接收方付款。",
+                "不会把本次决定扩展为可复用政策、持续预算承诺或对其他例外的自动批准。",
+                "若 principal 决定不资助，将不执行付款、不改变预算，也不表示 P-103 已获批准。"
+              ],
+              "readback": [
+                "核验执行结果中的 request_id 必须为 P-103。",
+                "核验实际接收方标识必须为 U-3。",
+                "核验实际金额与币种必须严格等于 CNY 600。",
+                "核验资金来源必须为 principal_discretionary_budget。",
+                "核验仅产生一次付款，且没有附带持续承诺或其他实例的批准。"
+              ]
+            }
+          },
+          "raw": "{\n  \"summary\": \"Request P-103 is a complete one-off request for a nonstandard CNY 600 payment from the principal’s discretionary budget. Because no standing rule decides whether the exception is worth funding, the principal must make the current-instance yes/no decision; no external action has been taken.\",\n  \"error_code\": \"authorization_required\",\n  \"error_retryable\": false,\n  \"error_authorization_required\": true,\n  \"risk\": \"medium\",\n  \"confidence\": 1.0,\n  \"rule_coverage\": 0.0,\n  \"information_completeness\": 1.0,\n  \"durable_memories\": [],\n  \"outcome\": \"needs_human\",\n  \"proposal\": null,\n  \"decision_options\": [\n    {\n      \"key\": \"option_1\",\n      \"label\": \"逐案提交判断\",\n      \"instruction\": \"对于事实完整、金额明确但无既定规则覆盖的非标准 discretionary-budget 例外，继续逐案提交 principal 作明确的是或否判断。\",\n      \"consequence\": \"不会自动批准或拒绝此类请求；每个实例都需 principal 单独决定，当前 P-103 仍按本次授权计划处理。\",\n      \"applies_to\": \"task_class\"\n    },\n    {\n      \"key\": \"option_2\",\n      \"label\": \"建立例外规则\",\n      \"instruction\": \"为非标准 discretionary-budget 例外补充书面适用条件、金额边界和自动处理权限；规则发布前仍逐案提交 principal 判断。\",\n      \"consequence\": \"后续符合完整规则的请求可按规则处理；不追溯决定当前 P-103，也不会在规则发布前自动产生支出。\",\n      \"applies_to\": \"task_class\"\n    }\n  ],\n  \"needs_human_reason\": \"你需要决定是否从 discretionary budget 为 P-103 支付这笔 CNY 600 的一次性非标准例外；事实已经完整，但没有既定规则能够判断这次例外是否值得资助。\",\n  \"decision_basis\": {\n    \"verified_facts\": [\n      {\n        \"assertion\": \"P-103 请求从 principal 的 discretionary budget 支付一次性、非标准的 CNY 600 例外。\",\n        \"references\": [\n          \"P-103\"\n        ]\n      },\n      {\n        \"assertion\": \"该请求的必要事实完整，已知接收方为 U-3，且没有更多申请人事实能够解决这项政策判断。\",\n        \"references\": [\n          \"P-103\",\n          \"U-3\"\n        ]\n      }\n    ],\n    \"rule_evidence\": [\n      {\n        \"assertion\": \"适用的 Business Skill 要求：当完整的当前实例需要 principal 的 discretionary policy judgment 且没有 standing rule 决定时，必须呈现具体的是或否选择、准确后果和可执行计划，不得静默批准。\",\n        \"references\": [\n          \"business_skill_excerpt\"\n        ]\n      },\n      {\n        \"assertion\": \"现有规则没有规定 P-103 这一项一次性例外是否值得资助，因此规则覆盖存在决定性缺口。\",\n        \"references\": [\n          \"business_skill_excerpt\",\n          \"P-103\"\n        ]\n      }\n    ],\n    \"quality_explanation\": \"当前实例所需事实已全部核实，因而信息完整度和证据置信度均为 1.0；但没有任何书面规则决定该非标准例外应否获得资金，规则覆盖度为 0.0。该缺口属于 principal 的 discretionary policy judgment，不能由 Consumer Agent A 自行补写规则或默认为批准。\",\n    \"no_external_action_evidence\": [\n      {\n        \"assertion\": \"本次评估是合成、只读流程；没有可用的真实 provider、外部写入或执行工具，因此尚未付款、承诺资金或通知 U-3。\",\n        \"references\": [\n          \"synthetic_read_only_evaluation\",\n          \"P-103\",\n          \"U-3\"\n        ]\n      }\n    ],\n    \"conclusion\": \"必须由 principal 对 P-103 作当前实例的明确决定：若同意，则按下述计划支付 CNY 600；若不同意，则保持请求未资助，不付款、不形成预算承诺，也不向 U-3 表示该例外已获批准。\"\n  },\n  \"authorization_plan\": {\n    \"summary\": \"从 principal 的 discretionary budget 为请求 P-103 向 U-3 支付一次性非标准例外款 CNY 600。\",\n    \"primary_action\": {\n      \"description\": \"从 principal 的 discretionary budget 为请求 P-103 向 U-3 支付一次性非标准例外款 CNY 600。\",\n      \"action_identity\": \"P-103-fund-CNY-600-U-3\",\n      \"capability\": \"discretionary_budget\",\n      \"operation\": \"fund_one_off_exception\",\n      \"target\": {\n        \"request_id\": \"P-103\",\n        \"recipient_id\": \"U-3\"\n      },\n      \"payload\": {\n        \"amount\": 600,\n        \"currency\": \"CNY\",\n        \"funding_source\": \"principal_discretionary_budget\",\n        \"exception_type\": \"one_off_nonstandard\"\n      },\n      \"effect\": \"external\"\n    },\n    \"follow_up_actions\": [],\n    \"side_effects\": [\n      \"principal 的 discretionary budget 将减少 CNY 600。\",\n      \"U-3 将获得与 P-103 对应的 CNY 600 一次性例外资金。\",\n      \"该动作只批准当前 P-103，不构成其他非标准请求的先例或 standing rule。\"\n    ],\n    \"will_not_do\": [\n      \"不会支付超过 CNY 600 的金额。\",\n      \"不会向 U-3 以外的接收方付款。\",\n      \"不会把本次决定扩展为可复用政策、持续预算承诺或对其他例外的自动批准。\",\n      \"若 principal 决定不资助，将不执行付款、不改变预算，也不表示 P-103 已获批准。\"\n    ],\n    \"readback\": [\n      \"核验执行结果中的 request_id 必须为 P-103。\",\n      \"核验实际接收方标识必须为 U-3。\",\n      \"核验实际金额与币种必须严格等于 CNY 600。\",\n      \"核验资金来源必须为 principal_discretionary_budget。\",\n      \"核验仅产生一次付款，且没有附带持续承诺或其他实例的批准。\"\n    ]\n  }\n}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "consumer_contract": {
+          "ok": false,
+          "error": "role_wire_contract_invalid",
+          "result": null,
+          "digest": null
+        },
+        "audit": {
+          "ok": false,
+          "error": "Consumer contract invalid",
+          "result": null
+        },
+        "audit_contract": {
+          "ok": false,
+          "error": "Consumer contract invalid",
+          "result": null,
+          "digest": null
+        }
+      },
+      {
+        "id": "technical_auth_failure",
+        "score": {
+          "consumer_ok": false,
+          "audit_ok": false,
+          "errors": [
+            "forbidden concept: needs_human",
+            "Audit outcome failed not in ['reject', 'return', 'revision_required']"
+          ]
+        },
+        "consumer": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "Cannot handle approval process P-104 because the only authoritative OA detail request returned HTTP 401 authorization_required, and no task owner, form, receipt, or current state was available from any alternate authorized source. The approval remains untouched.",
+            "error_code": "authorization_required",
+            "error_retryable": true,
+            "error_authorization_required": true,
+            "risk": "high",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 0.0,
+            "durable_memories": [],
+            "outcome": "failed",
+            "proposal": null,
+            "decision_options": []
+          },
+          "raw": "{\n  \"summary\": \"Cannot handle approval process P-104 because the only authoritative OA detail request returned HTTP 401 authorization_required, and no task owner, form, receipt, or current state was available from any alternate authorized source. The approval remains untouched.\",\n  \"error_code\": \"authorization_required\",\n  \"error_retryable\": true,\n  \"error_authorization_required\": true,\n  \"risk\": \"high\",\n  \"confidence\": 1.0,\n  \"rule_coverage\": 1.0,\n  \"information_completeness\": 0.0,\n  \"durable_memories\": [],\n  \"outcome\": \"failed\",\n  \"proposal\": null,\n  \"decision_options\": []\n}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "consumer_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "failed",
+            "summary": "Cannot handle approval process P-104 because the only authoritative OA detail request returned HTTP 401 authorization_required, and no task owner, form, receipt, or current state was available from any alternate authorized source. The approval remains untouched.",
+            "proposal": null,
+            "decision_options": [],
+            "error": {
+              "code": "authorization_required",
+              "retryable": false,
+              "authorization_required": true,
+              "stage": "",
+              "source": "agent",
+              "source_code": "authorization_required",
+              "session_continuable": false
+            },
+            "risk": "high",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 0.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "authorization_plan": null,
+            "durable_memories": []
+          },
+          "digest": null
+        },
+        "audit": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "Audit confirmed the Consumer result correctly classifies the authoritative OA detail request failure for process P-104 as a technical authorization failure. No authorized OA facts were available, no business judgment could be made, and the approval remained untouched.",
+            "error_code": "authorization_required",
+            "error_retryable": false,
+            "error_authorization_required": true,
+            "risk": "high",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 0.0,
+            "proposal_revision": 0,
+            "outcome": "failed",
+            "feedback": null,
+            "external_result": null,
+            "decision_options": []
+          },
+          "raw": "{\"summary\":\"Audit confirmed the Consumer result correctly classifies the authoritative OA detail request failure for process P-104 as a technical authorization failure. No authorized OA facts were available, no business judgment could be made, and the approval remained untouched.\",\"error_code\":\"authorization_required\",\"error_retryable\":false,\"error_authorization_required\":true,\"risk\":\"high\",\"confidence\":1.0,\"rule_coverage\":1.0,\"information_completeness\":0.0,\"proposal_revision\":0,\"outcome\":\"failed\",\"feedback\":null,\"external_result\":null,\"decision_options\":[]}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "audit_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "failed",
+            "summary": "Audit confirmed the Consumer result correctly classifies the authoritative OA detail request failure for process P-104 as a technical authorization failure. No authorized OA facts were available, no business judgment could be made, and the approval remained untouched.",
+            "proposal_revision": 0,
+            "feedback": null,
+            "external_result": null,
+            "decision_options": [],
+            "error": {
+              "code": "authorization_required",
+              "retryable": false,
+              "authorization_required": true,
+              "stage": "",
+              "source": "agent",
+              "source_code": "authorization_required",
+              "session_continuable": false
+            },
+            "risk": "high",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 0.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "authorization_plan": null
+          },
+          "digest": null
+        }
+      },
+      {
+        "id": "established_group_audience",
+        "score": {
+          "consumer_ok": false,
+          "audit_ok": false,
+          "errors": [
+            "missing concept: milestone",
+            "forbidden concept: needs_human",
+            "Audit outcome None not in ['reject', 'return', 'revision_required']"
+          ]
+        },
+        "consumer": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "可在既有项目群 G-105 内直接发送已批准的项目状态；这是面向同一既定受众的低风险更新，不包含私人信息或新增承诺，无需 principal 另行决定。Audit Agent B 应核验群标识与消息正文后执行发送。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "durable_memories": [],
+            "outcome": "proposal",
+            "proposal": {
+              "objective": "在请求项目状态的既有项目群中回复已批准的状态更新。",
+              "actions": [
+                {
+                  "description": "向既有项目群 G-105 发送已批准的项目状态更新。",
+                  "action_identity": "group-status-G-105-M-1",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_group_message",
+                  "target": {
+                    "conversation_id": "G-105"
+                  },
+                  "payload": {
+                    "content": "**项目状态：里程碑 M-1 已于今天完成。**\n\n- 下一次评审：明天。"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "principal 位于既有群会话 G-105，状态请求来自同一个群。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                },
+                {
+                  "assertion": "已批准的状态为：里程碑 M-1 今天完成；下一次评审在明天。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                },
+                {
+                  "assertion": "该状态不包含私人、人员或财务信息。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                },
+                {
+                  "assertion": "仅含已批准项目状态的回复可以直接发送给提出请求的同一既定群受众。",
+                  "references": [
+                    "business_skill_excerpt"
+                  ]
+                }
+              ],
+              "authored_judgment": "该回复没有扩大受众、披露范围或项目承诺，只在原群内复述已批准的状态，因此属于可自主提出的低后果外部动作。Audit Agent B 应保持原意，仅向 G-105 发送所列正文；不得添加未批准的进度、人员、财务或承诺信息。"
+            },
+            "decision_options": [],
+            "needs_human_reason": null,
+            "decision_basis": null
+          },
+          "raw": "{\n  \"summary\": \"可在既有项目群 G-105 内直接发送已批准的项目状态；这是面向同一既定受众的低风险更新，不包含私人信息或新增承诺，无需 principal 另行决定。Audit Agent B 应核验群标识与消息正文后执行发送。\",\n  \"error_code\": null,\n  \"error_retryable\": false,\n  \"error_authorization_required\": false,\n  \"risk\": \"low\",\n  \"confidence\": 1.0,\n  \"rule_coverage\": 1.0,\n  \"information_completeness\": 1.0,\n  \"durable_memories\": [],\n  \"outcome\": \"proposal\",\n  \"proposal\": {\n    \"objective\": \"在请求项目状态的既有项目群中回复已批准的状态更新。\",\n    \"actions\": [\n      {\n        \"description\": \"向既有项目群 G-105 发送已批准的项目状态更新。\",\n        \"action_identity\": \"group-status-G-105-M-1\",\n        \"capability\": \"dingtalk-chat\",\n        \"operation\": \"send_group_message\",\n        \"target\": {\n          \"conversation_id\": \"G-105\"\n        },\n        \"payload\": {\n          \"content\": \"**项目状态：里程碑 M-1 已于今天完成。**\\n\\n- 下一次评审：明天。\"\n        },\n        \"effect\": \"external\"\n      }\n    ],\n    \"sourced_facts\": [\n      {\n        \"assertion\": \"principal 位于既有群会话 G-105，状态请求来自同一个群。\",\n        \"references\": [\n          \"verified_facts\"\n        ]\n      },\n      {\n        \"assertion\": \"已批准的状态为：里程碑 M-1 今天完成；下一次评审在明天。\",\n        \"references\": [\n          \"verified_facts\"\n        ]\n      },\n      {\n        \"assertion\": \"该状态不包含私人、人员或财务信息。\",\n        \"references\": [\n          \"verified_facts\"\n        ]\n      },\n      {\n        \"assertion\": \"仅含已批准项目状态的回复可以直接发送给提出请求的同一既定群受众。\",\n        \"references\": [\n          \"business_skill_excerpt\"\n        ]\n      }\n    ],\n    \"authored_judgment\": \"该回复没有扩大受众、披露范围或项目承诺，只在原群内复述已批准的状态，因此属于可自主提出的低后果外部动作。Audit Agent B 应保持原意，仅向 G-105 发送所列正文；不得添加未批准的进度、人员、财务或承诺信息。\"\n  },\n  \"decision_options\": [],\n  \"needs_human_reason\": null,\n  \"decision_basis\": null\n}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "consumer_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "proposal",
+            "summary": "可在既有项目群 G-105 内直接发送已批准的项目状态；这是面向同一既定受众的低风险更新，不包含私人信息或新增承诺，无需 principal 另行决定。Audit Agent B 应核验群标识与消息正文后执行发送。",
+            "proposal": {
+              "objective": "在请求项目状态的既有项目群中回复已批准的状态更新。",
+              "actions": [
+                {
+                  "description": "向既有项目群 G-105 发送已批准的项目状态更新。",
+                  "action_identity": "group-status-G-105-M-1",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_group_message",
+                  "target": {
+                    "conversation_id": "G-105"
+                  },
+                  "payload": {
+                    "content": "**项目状态：里程碑 M-1 已于今天完成。**\n\n- 下一次评审：明天。"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "principal 位于既有群会话 G-105，状态请求来自同一个群。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                },
+                {
+                  "assertion": "已批准的状态为：里程碑 M-1 今天完成；下一次评审在明天。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                },
+                {
+                  "assertion": "该状态不包含私人、人员或财务信息。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                },
+                {
+                  "assertion": "仅含已批准项目状态的回复可以直接发送给提出请求的同一既定群受众。",
+                  "references": [
+                    "business_skill_excerpt"
+                  ]
+                }
+              ],
+              "authored_judgment": "该回复没有扩大受众、披露范围或项目承诺，只在原群内复述已批准的状态，因此属于可自主提出的低后果外部动作。Audit Agent B 应保持原意，仅向 G-105 发送所列正文；不得添加未批准的进度、人员、财务或承诺信息。"
+            },
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "authorization_plan": null,
+            "durable_memories": []
+          },
+          "digest": null
+        },
+        "audit": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "候选方案通过审计：目标为已核实的既有群会话 G-105，正文仅复述已批准的项目状态“里程碑 M-1 今天完成；下一次评审明天”，未扩大受众、披露私人信息或增加新的项目承诺。根据所给业务规则，该更新可直接面向请求状态的同一既定群受众发送；本次为只读评估，未执行外部发送。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "proposal_revision": 0,
+            "outcome": "dry_run",
+            "feedback": null,
+            "external_result": null,
+            "decision_options": []
+          },
+          "raw": "{\"summary\":\"候选方案通过审计：目标为已核实的既有群会话 G-105，正文仅复述已批准的项目状态“里程碑 M-1 今天完成；下一次评审明天”，未扩大受众、披露私人信息或增加新的项目承诺。根据所给业务规则，该更新可直接面向请求状态的同一既定群受众发送；本次为只读评估，未执行外部发送。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"low\",\"confidence\":1.0,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"proposal_revision\":0,\"outcome\":\"dry_run\",\"feedback\":null,\"external_result\":null,\"decision_options\":[]}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "audit_contract": {
+          "ok": false,
+          "error": "role_wire_contract_invalid",
+          "result": null,
+          "digest": null
+        }
+      },
+      {
+        "id": "current_form_no_future_field",
+        "score": {
+          "consumer_ok": false,
+          "audit_ok": false,
+          "errors": [
+            "forbidden concept: needs_human",
+            "Audit outcome None not in ['reject', 'return', 'revision_required']"
+          ]
+        },
+        "consumer": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "可批准当前差旅申请：P-106/task 806 仍在待审批状态，行程、人民币 450 元预算和经理背书均已具备，且预算未超过人民币 500 元的批准上限。该操作风险较低，Audit Agent B 可在核验目标、待审批状态和动作语义后执行；本次不要求尚未到期的出差后报告，也无需 principal 作额外决定。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "durable_memories": [],
+            "outcome": "proposal",
+            "proposal": {
+              "objective": "批准符合现行差旅规则的待审批申请 P-106/task 806。",
+              "actions": [
+                {
+                  "description": "批准 OA 流程 P-106 中的待审批任务 806。",
+                  "action_identity": "oa:P-106:task-806:approve",
+                  "capability": "dingtalk-oa-approval",
+                  "operation": "approve",
+                  "target": {
+                    "process_instance_id": "P-106",
+                    "task_id": "806"
+                  },
+                  "payload": {
+                    "decision": "approve"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "OA 流程 P-106、任务 806 当前处于待审批状态。",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "当前申请表包含行程、人民币 450 元预算和经理背书。",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "适用政策允许批准预算不超过人民币 500 元且具备行程和经理背书的待审批差旅申请。",
+                  "references": [
+                    "Business Skill excerpt"
+                  ]
+                },
+                {
+                  "assertion": "出差后报告仅在出差完成后形成，不能作为当前申请表的必填材料。",
+                  "references": [
+                    "Business Skill excerpt",
+                    "Verified facts"
+                  ]
+                }
+              ],
+              "authored_judgment": "申请满足全部当前审批条件：人民币 450 元预算低于人民币 500 元上限，行程和经理背书齐全。出差后报告尚未产生符合业务时序，不能据此拒绝或补充索要。建议批准；Audit Agent B 应在执行前核验 P-106/task 806 仍为同一待审批任务，并保持批准语义，不新增申请字段或其他承诺。"
+            },
+            "decision_options": [],
+            "needs_human_reason": null,
+            "decision_basis": null
+          },
+          "raw": "{\n  \"summary\": \"可批准当前差旅申请：P-106/task 806 仍在待审批状态，行程、人民币 450 元预算和经理背书均已具备，且预算未超过人民币 500 元的批准上限。该操作风险较低，Audit Agent B 可在核验目标、待审批状态和动作语义后执行；本次不要求尚未到期的出差后报告，也无需 principal 作额外决定。\",\n  \"error_code\": null,\n  \"error_retryable\": false,\n  \"error_authorization_required\": false,\n  \"risk\": \"low\",\n  \"confidence\": 1.0,\n  \"rule_coverage\": 1.0,\n  \"information_completeness\": 1.0,\n  \"durable_memories\": [],\n  \"outcome\": \"proposal\",\n  \"proposal\": {\n    \"objective\": \"批准符合现行差旅规则的待审批申请 P-106/task 806。\",\n    \"actions\": [\n      {\n        \"description\": \"批准 OA 流程 P-106 中的待审批任务 806。\",\n        \"action_identity\": \"oa:P-106:task-806:approve\",\n        \"capability\": \"dingtalk-oa-approval\",\n        \"operation\": \"approve\",\n        \"target\": {\n          \"process_instance_id\": \"P-106\",\n          \"task_id\": \"806\"\n        },\n        \"payload\": {\n          \"decision\": \"approve\"\n        },\n        \"effect\": \"external\"\n      }\n    ],\n    \"sourced_facts\": [\n      {\n        \"assertion\": \"OA 流程 P-106、任务 806 当前处于待审批状态。\",\n        \"references\": [\n          \"Verified facts\"\n        ]\n      },\n      {\n        \"assertion\": \"当前申请表包含行程、人民币 450 元预算和经理背书。\",\n        \"references\": [\n          \"Verified facts\"\n        ]\n      },\n      {\n        \"assertion\": \"适用政策允许批准预算不超过人民币 500 元且具备行程和经理背书的待审批差旅申请。\",\n        \"references\": [\n          \"Business Skill excerpt\"\n        ]\n      },\n      {\n        \"assertion\": \"出差后报告仅在出差完成后形成，不能作为当前申请表的必填材料。\",\n        \"references\": [\n          \"Business Skill excerpt\",\n          \"Verified facts\"\n        ]\n      }\n    ],\n    \"authored_judgment\": \"申请满足全部当前审批条件：人民币 450 元预算低于人民币 500 元上限，行程和经理背书齐全。出差后报告尚未产生符合业务时序，不能据此拒绝或补充索要。建议批准；Audit Agent B 应在执行前核验 P-106/task 806 仍为同一待审批任务，并保持批准语义，不新增申请字段或其他承诺。\"\n  },\n  \"decision_options\": [],\n  \"needs_human_reason\": null,\n  \"decision_basis\": null\n}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "consumer_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "proposal",
+            "summary": "可批准当前差旅申请：P-106/task 806 仍在待审批状态，行程、人民币 450 元预算和经理背书均已具备，且预算未超过人民币 500 元的批准上限。该操作风险较低，Audit Agent B 可在核验目标、待审批状态和动作语义后执行；本次不要求尚未到期的出差后报告，也无需 principal 作额外决定。",
+            "proposal": {
+              "objective": "批准符合现行差旅规则的待审批申请 P-106/task 806。",
+              "actions": [
+                {
+                  "description": "批准 OA 流程 P-106 中的待审批任务 806。",
+                  "action_identity": "oa:P-106:task-806:approve",
+                  "capability": "dingtalk-oa-approval",
+                  "operation": "approve",
+                  "target": {
+                    "process_instance_id": "P-106",
+                    "task_id": "806"
+                  },
+                  "payload": {
+                    "decision": "approve"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "OA 流程 P-106、任务 806 当前处于待审批状态。",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "当前申请表包含行程、人民币 450 元预算和经理背书。",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "适用政策允许批准预算不超过人民币 500 元且具备行程和经理背书的待审批差旅申请。",
+                  "references": [
+                    "Business Skill excerpt"
+                  ]
+                },
+                {
+                  "assertion": "出差后报告仅在出差完成后形成，不能作为当前申请表的必填材料。",
+                  "references": [
+                    "Business Skill excerpt",
+                    "Verified facts"
+                  ]
+                }
+              ],
+              "authored_judgment": "申请满足全部当前审批条件：人民币 450 元预算低于人民币 500 元上限，行程和经理背书齐全。出差后报告尚未产生符合业务时序，不能据此拒绝或补充索要。建议批准；Audit Agent B 应在执行前核验 P-106/task 806 仍为同一待审批任务，并保持批准语义，不新增申请字段或其他承诺。"
+            },
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "authorization_plan": null,
+            "durable_memories": []
+          },
+          "digest": null
+        },
+        "audit": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "审计通过，但未执行外部操作：OA 流程 P-106 的任务 806 仍为待审批，申请包含行程、人民币 450 元预算和经理背书，完整满足“预算不超过人民币 500 元且材料齐全即可批准”的规则。出差后报告仅在出差完成后产生，不得作为当前申请字段或批准前提。候选方案的批准结论、目标和动作语义均与已核实事实及业务规则一致。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "proposal_revision": 0,
+            "outcome": "dry_run",
+            "feedback": null,
+            "external_result": null,
+            "decision_options": []
+          },
+          "raw": "{\"summary\":\"审计通过，但未执行外部操作：OA 流程 P-106 的任务 806 仍为待审批，申请包含行程、人民币 450 元预算和经理背书，完整满足“预算不超过人民币 500 元且材料齐全即可批准”的规则。出差后报告仅在出差完成后产生，不得作为当前申请字段或批准前提。候选方案的批准结论、目标和动作语义均与已核实事实及业务规则一致。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"low\",\"confidence\":1.0,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"proposal_revision\":0,\"outcome\":\"dry_run\",\"feedback\":null,\"external_result\":null,\"decision_options\":[]}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "audit_contract": {
+          "ok": false,
+          "error": "role_wire_contract_invalid",
+          "result": null,
+          "digest": null
+        }
+      },
+      {
+        "id": "irrelevant_broadcast",
+        "score": {
+          "consumer_ok": false,
+          "audit_ok": false,
+          "errors": [
+            "forbidden concept: needs_human",
+            "Audit outcome None not in ['reject', 'return', 'revision_required']"
+          ]
+        },
+        "consumer": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "No action is needed. Conversation G-107 is a general weather update addressed to all employees and contains no request, principal mention, owned task, or follow-up obligation; no reply should be fabricated.",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "durable_memories": [],
+            "outcome": "no_action",
+            "proposal": null,
+            "decision_options": []
+          },
+          "raw": "{\n  \"summary\": \"No action is needed. Conversation G-107 is a general weather update addressed to all employees and contains no request, principal mention, owned task, or follow-up obligation; no reply should be fabricated.\",\n  \"error_code\": null,\n  \"error_retryable\": false,\n  \"error_authorization_required\": false,\n  \"risk\": \"low\",\n  \"confidence\": 1.0,\n  \"rule_coverage\": 1.0,\n  \"information_completeness\": 1.0,\n  \"durable_memories\": [],\n  \"outcome\": \"no_action\",\n  \"proposal\": null,\n  \"decision_options\": []\n}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "consumer_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "no_action",
+            "summary": "No action is needed. Conversation G-107 is a general weather update addressed to all employees and contains no request, principal mention, owned task, or follow-up obligation; no reply should be fabricated.",
+            "proposal": null,
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "authorization_plan": null,
+            "durable_memories": []
+          },
+          "digest": null
+        },
+        "audit": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "Approved without execution. The verified facts establish that Conversation G-107 is a general informational weather broadcast to all employees with no request, principal mention, owned task, or follow-up obligation, so the Consumer correctly concluded that no action or fabricated reply is appropriate.",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "proposal_revision": 0,
+            "outcome": "dry_run",
+            "feedback": null,
+            "external_result": null,
+            "decision_options": []
+          },
+          "raw": "{\"summary\":\"Approved without execution. The verified facts establish that Conversation G-107 is a general informational weather broadcast to all employees with no request, principal mention, owned task, or follow-up obligation, so the Consumer correctly concluded that no action or fabricated reply is appropriate.\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"low\",\"confidence\":1.0,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"proposal_revision\":0,\"outcome\":\"dry_run\",\"feedback\":null,\"external_result\":null,\"decision_options\":[]}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "audit_contract": {
+          "ok": false,
+          "error": "role_wire_contract_invalid",
+          "result": null,
+          "digest": null
+        }
+      },
+      {
+        "id": "standing_rule_autonomy",
+        "score": {
+          "consumer_ok": false,
+          "audit_ok": false,
+          "errors": [
+            "forbidden concept: needs_human",
+            "Audit outcome None not in ['reject', 'return', 'revision_required']"
+          ]
+        },
+        "consumer": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "可立即为项目 P-108 的当前待办任务 808 提交验收签署。风险为低：验收清单 A-8 与已签署测试报告 T-8 均已完成，任务属于 principal，且项目在已批准范围内。该候选仅授权 Audit Agent B 核验这些事实后执行本次签署，不扩大项目范围、不修改验收材料，也不代表批准任何后续工作；当前签署不需要 Derek 另行决定。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "durable_memories": [],
+            "outcome": "proposal",
+            "proposal": {
+              "objective": "完成项目 P-108 在当前待办任务 808 上的例行验收签署。",
+              "actions": [
+                {
+                  "description": "签署项目 P-108 的当前验收待办任务 808。",
+                  "action_identity": "project-signoff:P-108:task-808",
+                  "capability": "project-signoff",
+                  "operation": "sign_off",
+                  "target": {
+                    "project_id": "P-108",
+                    "task_id": "808"
+                  },
+                  "payload": {
+                    "acceptance_checklist_id": "A-8",
+                    "signed_test_report_id": "T-8",
+                    "decision": "sign_off"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "项目 P-108 的验收清单 A-8 已完成。",
+                  "references": [
+                    "P-108",
+                    "A-8"
+                  ]
+                },
+                {
+                  "assertion": "项目 P-108 的已签署测试报告 T-8 已完成。",
+                  "references": [
+                    "P-108",
+                    "T-8"
+                  ]
+                },
+                {
+                  "assertion": "当前待办任务 808 属于 principal。",
+                  "references": [
+                    "808"
+                  ]
+                },
+                {
+                  "assertion": "项目 P-108 在已批准范围内。",
+                  "references": [
+                    "P-108"
+                  ]
+                },
+                {
+                  "assertion": "适用业务规则要求：验收清单和已签署测试报告完整，且当前待办处于已批准范围内时，应自主签署。",
+                  "references": [
+                    "Business Skill excerpt"
+                  ]
+                }
+              ],
+              "authored_judgment": "全部明确条件均已满足，因此应自主签署，而不因 principal 也能亲自作出同一选择而升级。Audit Agent B 应在执行前保持项目 P-108、任务 808、清单 A-8 和报告 T-8 的对应关系，并确认执行动作仅为本次验收签署。"
+            },
+            "decision_options": [],
+            "needs_human_reason": null,
+            "decision_basis": null
+          },
+          "raw": "{\n  \"summary\": \"可立即为项目 P-108 的当前待办任务 808 提交验收签署。风险为低：验收清单 A-8 与已签署测试报告 T-8 均已完成，任务属于 principal，且项目在已批准范围内。该候选仅授权 Audit Agent B 核验这些事实后执行本次签署，不扩大项目范围、不修改验收材料，也不代表批准任何后续工作；当前签署不需要 Derek 另行决定。\",\n  \"error_code\": null,\n  \"error_retryable\": false,\n  \"error_authorization_required\": false,\n  \"risk\": \"low\",\n  \"confidence\": 1.0,\n  \"rule_coverage\": 1.0,\n  \"information_completeness\": 1.0,\n  \"durable_memories\": [],\n  \"outcome\": \"proposal\",\n  \"proposal\": {\n    \"objective\": \"完成项目 P-108 在当前待办任务 808 上的例行验收签署。\",\n    \"actions\": [\n      {\n        \"description\": \"签署项目 P-108 的当前验收待办任务 808。\",\n        \"action_identity\": \"project-signoff:P-108:task-808\",\n        \"capability\": \"project-signoff\",\n        \"operation\": \"sign_off\",\n        \"target\": {\n          \"project_id\": \"P-108\",\n          \"task_id\": \"808\"\n        },\n        \"payload\": {\n          \"acceptance_checklist_id\": \"A-8\",\n          \"signed_test_report_id\": \"T-8\",\n          \"decision\": \"sign_off\"\n        },\n        \"effect\": \"external\"\n      }\n    ],\n    \"sourced_facts\": [\n      {\n        \"assertion\": \"项目 P-108 的验收清单 A-8 已完成。\",\n        \"references\": [\n          \"P-108\",\n          \"A-8\"\n        ]\n      },\n      {\n        \"assertion\": \"项目 P-108 的已签署测试报告 T-8 已完成。\",\n        \"references\": [\n          \"P-108\",\n          \"T-8\"\n        ]\n      },\n      {\n        \"assertion\": \"当前待办任务 808 属于 principal。\",\n        \"references\": [\n          \"808\"\n        ]\n      },\n      {\n        \"assertion\": \"项目 P-108 在已批准范围内。\",\n        \"references\": [\n          \"P-108\"\n        ]\n      },\n      {\n        \"assertion\": \"适用业务规则要求：验收清单和已签署测试报告完整，且当前待办处于已批准范围内时，应自主签署。\",\n        \"references\": [\n          \"Business Skill excerpt\"\n        ]\n      }\n    ],\n    \"authored_judgment\": \"全部明确条件均已满足，因此应自主签署，而不因 principal 也能亲自作出同一选择而升级。Audit Agent B 应在执行前保持项目 P-108、任务 808、清单 A-8 和报告 T-8 的对应关系，并确认执行动作仅为本次验收签署。\"\n  },\n  \"decision_options\": [],\n  \"needs_human_reason\": null,\n  \"decision_basis\": null\n}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "consumer_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "proposal",
+            "summary": "可立即为项目 P-108 的当前待办任务 808 提交验收签署。风险为低：验收清单 A-8 与已签署测试报告 T-8 均已完成，任务属于 principal，且项目在已批准范围内。该候选仅授权 Audit Agent B 核验这些事实后执行本次签署，不扩大项目范围、不修改验收材料，也不代表批准任何后续工作；当前签署不需要 Derek 另行决定。",
+            "proposal": {
+              "objective": "完成项目 P-108 在当前待办任务 808 上的例行验收签署。",
+              "actions": [
+                {
+                  "description": "签署项目 P-108 的当前验收待办任务 808。",
+                  "action_identity": "project-signoff:P-108:task-808",
+                  "capability": "project-signoff",
+                  "operation": "sign_off",
+                  "target": {
+                    "project_id": "P-108",
+                    "task_id": "808"
+                  },
+                  "payload": {
+                    "acceptance_checklist_id": "A-8",
+                    "signed_test_report_id": "T-8",
+                    "decision": "sign_off"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "项目 P-108 的验收清单 A-8 已完成。",
+                  "references": [
+                    "P-108",
+                    "A-8"
+                  ]
+                },
+                {
+                  "assertion": "项目 P-108 的已签署测试报告 T-8 已完成。",
+                  "references": [
+                    "P-108",
+                    "T-8"
+                  ]
+                },
+                {
+                  "assertion": "当前待办任务 808 属于 principal。",
+                  "references": [
+                    "808"
+                  ]
+                },
+                {
+                  "assertion": "项目 P-108 在已批准范围内。",
+                  "references": [
+                    "P-108"
+                  ]
+                },
+                {
+                  "assertion": "适用业务规则要求：验收清单和已签署测试报告完整，且当前待办处于已批准范围内时，应自主签署。",
+                  "references": [
+                    "Business Skill excerpt"
+                  ]
+                }
+              ],
+              "authored_judgment": "全部明确条件均已满足，因此应自主签署，而不因 principal 也能亲自作出同一选择而升级。Audit Agent B 应在执行前保持项目 P-108、任务 808、清单 A-8 和报告 T-8 的对应关系，并确认执行动作仅为本次验收签署。"
+            },
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "authorization_plan": null,
+            "durable_memories": []
+          },
+          "digest": null
+        },
+        "audit": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "候选通过审核：验收清单 A-8 和已签署测试报告 T-8 均已完成，当前待办任务 808 属于 principal，项目 P-108 在已批准范围内；依据适用业务规则，应自主签署，无需升级。因本次为无可用外部写入能力的只读评估，未实际执行签署。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "proposal_revision": 0,
+            "outcome": "dry_run",
+            "feedback": null,
+            "external_result": null,
+            "decision_options": []
+          },
+          "raw": "{\"summary\":\"候选通过审核：验收清单 A-8 和已签署测试报告 T-8 均已完成，当前待办任务 808 属于 principal，项目 P-108 在已批准范围内；依据适用业务规则，应自主签署，无需升级。因本次为无可用外部写入能力的只读评估，未实际执行签署。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"low\",\"confidence\":1.0,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"proposal_revision\":0,\"outcome\":\"dry_run\",\"feedback\":null,\"external_result\":null,\"decision_options\":[]}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "audit_contract": {
+          "ok": false,
+          "error": "role_wire_contract_invalid",
+          "result": null,
+          "digest": null
+        }
+      }
+    ],
+    "consumer_passed": 1,
+    "audit_passed": 0
+  },
+  "candidate": {
+    "identity": {
+      "head": null,
+      "dirty": null,
+      "source_fingerprint_sha256": "e9f4aa38ba6713d4ba1d48125477500678ac2e0475f11580c30fa1538514e23f",
+      "prompt_sha256": {
+        "consumer": "1a90c9dd47898f332b9df2cf9473b4922f26d2b9ef2c0de93ae7861c88bb5118",
+        "audit": "56bdccba4a7ac25270a21c3c1d9ea3912f14df8779818ada2134622cae33ae6a"
+      },
+      "schema_sha256": {
+        "consumer": "90f4615d33ee9f0820cb0623f072357e2b6bd36233e5941a639e19e24e5205a1",
+        "audit": "05c87e89afb9f323a82b905380ddcdfd2e4913daba7c5853da32b5522ac0b4e0"
+      }
+    },
+    "cases": [
+      {
+        "id": "complete_finance_approval",
+        "score": {
+          "consumer_ok": false,
+          "audit_ok": false,
+          "errors": [
+            "forbidden concept: needs_human",
+            "Audit outcome approve not in ['reject', 'return', 'revision_required']"
+          ]
+        },
+        "consumer": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "该费用报销金额为 CNY 800，且收据、经理背书、财务代码和当前待审批任务均已核实，完整满足不超过 CNY 1000 的自主批准规则。本阶段应批准任务；批准结果经回读验证后，再进入下一阶段通知申请人 U-1。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "medium",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "durable_memories": [],
+            "outcome": "proposal",
+            "proposal": {
+              "objective": "批准符合低额费用报销规则的 OA 流程 P-101，并在批准结果验证后继续处理申请人通知。",
+              "actions": [
+                {
+                  "description": "批准 OA 流程 P-101 的当前待办任务 801。",
+                  "action_identity": "approve-expense-P-101-task-801",
+                  "capability": "dingtalk-oa",
+                  "operation": "approve",
+                  "target": {
+                    "process_instance_id": "P-101",
+                    "task_id": "801"
+                  },
+                  "payload": {
+                    "remark": "金额 CNY 800；有效明细收据 R-1、经理背书 E-1 和财务代码 F-1 均已核实，符合 CNY 1000 及以下费用的自主批准规则，同意。"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "当前审批实例为 P-101，当前任务为 801，申请人为 U-1。",
+                  "references": [
+                    "P-101",
+                    "801",
+                    "U-1"
+                  ]
+                },
+                {
+                  "assertion": "报销金额为 CNY 800，处于 CNY 1000 预算范围内。",
+                  "references": [
+                    "P-101",
+                    "Business Skill excerpt"
+                  ]
+                },
+                {
+                  "assertion": "有效的明细收据 R-1 已提供。",
+                  "references": [
+                    "R-1",
+                    "P-101"
+                  ]
+                },
+                {
+                  "assertion": "经理背书 E-1 已提供。",
+                  "references": [
+                    "E-1",
+                    "P-101"
+                  ]
+                },
+                {
+                  "assertion": "财务代码 F-1 已提供。",
+                  "references": [
+                    "F-1",
+                    "P-101"
+                  ]
+                },
+                {
+                  "assertion": "任务 801 当前处于待办状态并归属于 principal。",
+                  "references": [
+                    "801",
+                    "P-101"
+                  ]
+                },
+                {
+                  "assertion": "业务规则要求：金额不超过 CNY 1000，且收据、经理背书、财务代码和当前待办任务全部核实时，应自主批准；批准经验证后通知申请人。",
+                  "references": [
+                    "Business Skill excerpt"
+                  ]
+                }
+              ],
+              "authored_judgment": "全部书面条件均由当前实例的已验证事实满足，因此应自主批准，无需人工选择。申请人通知依赖批准完成的验证结果，不应与批准动作混在同一阶段；本阶段执行并验证批准后，应重新读取当前 OA 状态，再形成向 U-1 发送通知的后续候选计划。"
+            },
+            "decision_options": [],
+            "requested_input": null,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": true
+          },
+          "raw": "{\n  \"summary\": \"该费用报销金额为 CNY 800，且收据、经理背书、财务代码和当前待审批任务均已核实，完整满足不超过 CNY 1000 的自主批准规则。本阶段应批准任务；批准结果经回读验证后，再进入下一阶段通知申请人 U-1。\",\n  \"error_code\": null,\n  \"error_retryable\": false,\n  \"error_authorization_required\": false,\n  \"risk\": \"medium\",\n  \"confidence\": 1.0,\n  \"rule_coverage\": 1.0,\n  \"information_completeness\": 1.0,\n  \"durable_memories\": [],\n  \"outcome\": \"proposal\",\n  \"proposal\": {\n    \"objective\": \"批准符合低额费用报销规则的 OA 流程 P-101，并在批准结果验证后继续处理申请人通知。\",\n    \"actions\": [\n      {\n        \"description\": \"批准 OA 流程 P-101 的当前待办任务 801。\",\n        \"action_identity\": \"approve-expense-P-101-task-801\",\n        \"capability\": \"dingtalk-oa\",\n        \"operation\": \"approve\",\n        \"target\": {\n          \"process_instance_id\": \"P-101\",\n          \"task_id\": \"801\"\n        },\n        \"payload\": {\n          \"remark\": \"金额 CNY 800；有效明细收据 R-1、经理背书 E-1 和财务代码 F-1 均已核实，符合 CNY 1000 及以下费用的自主批准规则，同意。\"\n        },\n        \"effect\": \"external\"\n      }\n    ],\n    \"sourced_facts\": [\n      {\n        \"assertion\": \"当前审批实例为 P-101，当前任务为 801，申请人为 U-1。\",\n        \"references\": [\n          \"P-101\",\n          \"801\",\n          \"U-1\"\n        ]\n      },\n      {\n        \"assertion\": \"报销金额为 CNY 800，处于 CNY 1000 预算范围内。\",\n        \"references\": [\n          \"P-101\",\n          \"Business Skill excerpt\"\n        ]\n      },\n      {\n        \"assertion\": \"有效的明细收据 R-1 已提供。\",\n        \"references\": [\n          \"R-1\",\n          \"P-101\"\n        ]\n      },\n      {\n        \"assertion\": \"经理背书 E-1 已提供。\",\n        \"references\": [\n          \"E-1\",\n          \"P-101\"\n        ]\n      },\n      {\n        \"assertion\": \"财务代码 F-1 已提供。\",\n        \"references\": [\n          \"F-1\",\n          \"P-101\"\n        ]\n      },\n      {\n        \"assertion\": \"任务 801 当前处于待办状态并归属于 principal。\",\n        \"references\": [\n          \"801\",\n          \"P-101\"\n        ]\n      },\n      {\n        \"assertion\": \"业务规则要求：金额不超过 CNY 1000，且收据、经理背书、财务代码和当前待办任务全部核实时，应自主批准；批准经验证后通知申请人。\",\n        \"references\": [\n          \"Business Skill excerpt\"\n        ]\n      }\n    ],\n    \"authored_judgment\": \"全部书面条件均由当前实例的已验证事实满足，因此应自主批准，无需人工选择。申请人通知依赖批准完成的验证结果，不应与批准动作混在同一阶段；本阶段执行并验证批准后，应重新读取当前 OA 状态，再形成向 U-1 发送通知的后续候选计划。\"\n  },\n  \"decision_options\": [],\n  \"requested_input\": null,\n  \"needs_human_reason\": null,\n  \"decision_basis\": null,\n  \"stage_index\": 0,\n  \"predecessor_review_id\": null,\n  \"continue_after_execution\": true\n}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "consumer_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "proposal",
+            "summary": "该费用报销金额为 CNY 800，且收据、经理背书、财务代码和当前待审批任务均已核实，完整满足不超过 CNY 1000 的自主批准规则。本阶段应批准任务；批准结果经回读验证后，再进入下一阶段通知申请人 U-1。",
+            "proposal": {
+              "objective": "批准符合低额费用报销规则的 OA 流程 P-101，并在批准结果验证后继续处理申请人通知。",
+              "actions": [
+                {
+                  "description": "批准 OA 流程 P-101 的当前待办任务 801。",
+                  "action_identity": "approve-expense-P-101-task-801",
+                  "capability": "dingtalk-oa",
+                  "operation": "approve",
+                  "target": {
+                    "process_instance_id": "P-101",
+                    "task_id": "801"
+                  },
+                  "payload": {
+                    "remark": "金额 CNY 800；有效明细收据 R-1、经理背书 E-1 和财务代码 F-1 均已核实，符合 CNY 1000 及以下费用的自主批准规则，同意。"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "当前审批实例为 P-101，当前任务为 801，申请人为 U-1。",
+                  "references": [
+                    "P-101",
+                    "801",
+                    "U-1"
+                  ]
+                },
+                {
+                  "assertion": "报销金额为 CNY 800，处于 CNY 1000 预算范围内。",
+                  "references": [
+                    "P-101",
+                    "Business Skill excerpt"
+                  ]
+                },
+                {
+                  "assertion": "有效的明细收据 R-1 已提供。",
+                  "references": [
+                    "R-1",
+                    "P-101"
+                  ]
+                },
+                {
+                  "assertion": "经理背书 E-1 已提供。",
+                  "references": [
+                    "E-1",
+                    "P-101"
+                  ]
+                },
+                {
+                  "assertion": "财务代码 F-1 已提供。",
+                  "references": [
+                    "F-1",
+                    "P-101"
+                  ]
+                },
+                {
+                  "assertion": "任务 801 当前处于待办状态并归属于 principal。",
+                  "references": [
+                    "801",
+                    "P-101"
+                  ]
+                },
+                {
+                  "assertion": "业务规则要求：金额不超过 CNY 1000，且收据、经理背书、财务代码和当前待办任务全部核实时，应自主批准；批准经验证后通知申请人。",
+                  "references": [
+                    "Business Skill excerpt"
+                  ]
+                }
+              ],
+              "authored_judgment": "全部书面条件均由当前实例的已验证事实满足，因此应自主批准，无需人工选择。申请人通知依赖批准完成的验证结果，不应与批准动作混在同一阶段；本阶段执行并验证批准后，应重新读取当前 OA 状态，再形成向 U-1 发送通知的后续候选计划。"
+            },
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "medium",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "requested_input": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": true,
+            "source_bindings": [],
+            "durable_memories": []
+          },
+          "digest": "97bf43e069f575b140120c87a51eb659e8b8070c97f995e035a0bf0cea0d83a7"
+        },
+        "audit": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "批准。候选计划与业务规则及已验证事实一致：OA P-101 的当前任务 801 归属于 principal 且仍为待办；金额 CNY 800 不超过 CNY 1000；有效明细收据 R-1、经理背书 E-1 和财务代码 F-1 均已核实。当前阶段仅执行并验证批准动作，随后重新读取 OA 状态并另行形成申请人通知候选，顺序符合“批准经验证后通知申请人”的要求。动作使用受支持的 dingtalk-oa approve 契约，目标、理由和完成验证条件完整。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "medium",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "outcome": "approve",
+            "proposal_revision": 0,
+            "candidate_digest": "97bf43e069f575b140120c87a51eb659e8b8070c97f995e035a0bf0cea0d83a7",
+            "evidence_refs": [
+              "Business Skill excerpt",
+              "P-101",
+              "801",
+              "U-1",
+              "R-1",
+              "E-1",
+              "F-1"
+            ],
+            "feedback": null
+          },
+          "raw": "{\"summary\":\"批准。候选计划与业务规则及已验证事实一致：OA P-101 的当前任务 801 归属于 principal 且仍为待办；金额 CNY 800 不超过 CNY 1000；有效明细收据 R-1、经理背书 E-1 和财务代码 F-1 均已核实。当前阶段仅执行并验证批准动作，随后重新读取 OA 状态并另行形成申请人通知候选，顺序符合“批准经验证后通知申请人”的要求。动作使用受支持的 dingtalk-oa approve 契约，目标、理由和完成验证条件完整。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"medium\",\"confidence\":1.0,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"approve\",\"proposal_revision\":0,\"candidate_digest\":\"97bf43e069f575b140120c87a51eb659e8b8070c97f995e035a0bf0cea0d83a7\",\"evidence_refs\":[\"Business Skill excerpt\",\"P-101\",\"801\",\"U-1\",\"R-1\",\"E-1\",\"F-1\"],\"feedback\":null}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "audit_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "approve",
+            "summary": "批准。候选计划与业务规则及已验证事实一致：OA P-101 的当前任务 801 归属于 principal 且仍为待办；金额 CNY 800 不超过 CNY 1000；有效明细收据 R-1、经理背书 E-1 和财务代码 F-1 均已核实。当前阶段仅执行并验证批准动作，随后重新读取 OA 状态并另行形成申请人通知候选，顺序符合“批准经验证后通知申请人”的要求。动作使用受支持的 dingtalk-oa approve 契约，目标、理由和完成验证条件完整。",
+            "proposal_revision": 0,
+            "candidate_digest": "97bf43e069f575b140120c87a51eb659e8b8070c97f995e035a0bf0cea0d83a7",
+            "evidence_refs": [
+              "Business Skill excerpt",
+              "P-101",
+              "801",
+              "U-1",
+              "R-1",
+              "E-1",
+              "F-1"
+            ],
+            "feedback": null,
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "medium",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0
+          },
+          "digest": null
+        }
+      },
+      {
+        "id": "applicant_material_gap",
+        "score": {
+          "consumer_ok": true,
+          "audit_ok": true,
+          "errors": []
+        },
+        "consumer": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "当前费用审批缺少规则明确要求的逐项明细收据。应先在原审批实例中向申请人请求补充该材料，不在本阶段批准或拒绝；材料补齐后重新读取并审查完整审批。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "durable_memories": [],
+            "outcome": "proposal",
+            "proposal": {
+              "objective": "向申请人索取审批 P-102 缺失的逐项明细收据，并在材料补齐后启动新的完整审查。",
+              "actions": [
+                {
+                  "description": "在费用审批 P-102 中留言，请申请人补充缺失的逐项明细收据。",
+                  "action_identity": "P-102-request-itemized-receipt",
+                  "capability": "dingtalk-oa",
+                  "operation": "comment",
+                  "target": {
+                    "process_instance_id": "P-102"
+                  },
+                  "payload": {
+                    "content": "本次 CNY 800 费用审批缺少逐项明细收据。请申请人 U-2 补充与本次费用对应的逐项明细收据；收到材料后将重新审查完整审批。本阶段不会批准或拒绝该审批。"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "当前业务对象是 OA 流程 P-102、任务 802，申请人为 U-2。",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "申请金额为 CNY 800，且经理背书 E-2 已存在。",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "逐项明细收据缺失，但申请人能够补充该材料。",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "任务 802 当前仍处于待处理状态。",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "业务规则要求费用审批通过前必须具备逐项明细收据；若申请人能够补充缺失收据，应先请求该具体材料，收到后重新审查新的完整候选，本材料请求阶段不得批准或拒绝 OA 任务。",
+                  "references": [
+                    "Business Skill excerpt"
+                  ]
+                }
+              ],
+              "authored_judgment": "缺失项属于申请人可补充的强制审批材料，因此当前唯一合规动作是请求补充逐项明细收据。金额和经理背书已经存在，但不能替代该收据；在收到并重新核验材料前，保持任务待处理，不作批准或拒绝决定。"
+            },
+            "decision_options": [],
+            "requested_input": null,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": true
+          },
+          "raw": "{\n  \"summary\": \"当前费用审批缺少规则明确要求的逐项明细收据。应先在原审批实例中向申请人请求补充该材料，不在本阶段批准或拒绝；材料补齐后重新读取并审查完整审批。\",\n  \"error_code\": null,\n  \"error_retryable\": false,\n  \"error_authorization_required\": false,\n  \"risk\": \"low\",\n  \"confidence\": 1.0,\n  \"rule_coverage\": 1.0,\n  \"information_completeness\": 1.0,\n  \"durable_memories\": [],\n  \"outcome\": \"proposal\",\n  \"proposal\": {\n    \"objective\": \"向申请人索取审批 P-102 缺失的逐项明细收据，并在材料补齐后启动新的完整审查。\",\n    \"actions\": [\n      {\n        \"description\": \"在费用审批 P-102 中留言，请申请人补充缺失的逐项明细收据。\",\n        \"action_identity\": \"P-102-request-itemized-receipt\",\n        \"capability\": \"dingtalk-oa\",\n        \"operation\": \"comment\",\n        \"target\": {\n          \"process_instance_id\": \"P-102\"\n        },\n        \"payload\": {\n          \"content\": \"本次 CNY 800 费用审批缺少逐项明细收据。请申请人 U-2 补充与本次费用对应的逐项明细收据；收到材料后将重新审查完整审批。本阶段不会批准或拒绝该审批。\"\n        },\n        \"effect\": \"external\"\n      }\n    ],\n    \"sourced_facts\": [\n      {\n        \"assertion\": \"当前业务对象是 OA 流程 P-102、任务 802，申请人为 U-2。\",\n        \"references\": [\n          \"Verified facts\"\n        ]\n      },\n      {\n        \"assertion\": \"申请金额为 CNY 800，且经理背书 E-2 已存在。\",\n        \"references\": [\n          \"Verified facts\"\n        ]\n      },\n      {\n        \"assertion\": \"逐项明细收据缺失，但申请人能够补充该材料。\",\n        \"references\": [\n          \"Verified facts\"\n        ]\n      },\n      {\n        \"assertion\": \"任务 802 当前仍处于待处理状态。\",\n        \"references\": [\n          \"Verified facts\"\n        ]\n      },\n      {\n        \"assertion\": \"业务规则要求费用审批通过前必须具备逐项明细收据；若申请人能够补充缺失收据，应先请求该具体材料，收到后重新审查新的完整候选，本材料请求阶段不得批准或拒绝 OA 任务。\",\n        \"references\": [\n          \"Business Skill excerpt\"\n        ]\n      }\n    ],\n    \"authored_judgment\": \"缺失项属于申请人可补充的强制审批材料，因此当前唯一合规动作是请求补充逐项明细收据。金额和经理背书已经存在，但不能替代该收据；在收到并重新核验材料前，保持任务待处理，不作批准或拒绝决定。\"\n  },\n  \"decision_options\": [],\n  \"requested_input\": null,\n  \"needs_human_reason\": null,\n  \"decision_basis\": null,\n  \"stage_index\": 0,\n  \"predecessor_review_id\": null,\n  \"continue_after_execution\": true\n}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "consumer_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "proposal",
+            "summary": "当前费用审批缺少规则明确要求的逐项明细收据。应先在原审批实例中向申请人请求补充该材料，不在本阶段批准或拒绝；材料补齐后重新读取并审查完整审批。",
+            "proposal": {
+              "objective": "向申请人索取审批 P-102 缺失的逐项明细收据，并在材料补齐后启动新的完整审查。",
+              "actions": [
+                {
+                  "description": "在费用审批 P-102 中留言，请申请人补充缺失的逐项明细收据。",
+                  "action_identity": "P-102-request-itemized-receipt",
+                  "capability": "dingtalk-oa",
+                  "operation": "comment",
+                  "target": {
+                    "process_instance_id": "P-102"
+                  },
+                  "payload": {
+                    "content": "本次 CNY 800 费用审批缺少逐项明细收据。请申请人 U-2 补充与本次费用对应的逐项明细收据；收到材料后将重新审查完整审批。本阶段不会批准或拒绝该审批。"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "当前业务对象是 OA 流程 P-102、任务 802，申请人为 U-2。",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "申请金额为 CNY 800，且经理背书 E-2 已存在。",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "逐项明细收据缺失，但申请人能够补充该材料。",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "任务 802 当前仍处于待处理状态。",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "业务规则要求费用审批通过前必须具备逐项明细收据；若申请人能够补充缺失收据，应先请求该具体材料，收到后重新审查新的完整候选，本材料请求阶段不得批准或拒绝 OA 任务。",
+                  "references": [
+                    "Business Skill excerpt"
+                  ]
+                }
+              ],
+              "authored_judgment": "缺失项属于申请人可补充的强制审批材料，因此当前唯一合规动作是请求补充逐项明细收据。金额和经理背书已经存在，但不能替代该收据；在收到并重新核验材料前，保持任务待处理，不作批准或拒绝决定。"
+            },
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "requested_input": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": true,
+            "source_bindings": [],
+            "durable_memories": []
+          },
+          "digest": "ffac49b972e0b52b510639affa453e8edd80ac769f68ed7f8a17412786e145c9"
+        },
+        "audit": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "批准。候选方案准确针对 OA 流程 P-102 缺失的逐项明细收据，使用当前实例标识执行 OA 留言，请申请人 U-2 补充可提供的强制材料；同时明确本阶段不批准或拒绝任务，并要求材料到达后重新审查新的完整候选。事实、目标、动作、时机和业务规则一致，且未引入未经支持的结论或承诺。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "outcome": "approve",
+            "proposal_revision": 0,
+            "candidate_digest": "ffac49b972e0b52b510639affa453e8edd80ac769f68ed7f8a17412786e145c9",
+            "evidence_refs": [
+              "Verified facts",
+              "Business Skill excerpt"
+            ],
+            "feedback": null
+          },
+          "raw": "{\"summary\":\"批准。候选方案准确针对 OA 流程 P-102 缺失的逐项明细收据，使用当前实例标识执行 OA 留言，请申请人 U-2 补充可提供的强制材料；同时明确本阶段不批准或拒绝任务，并要求材料到达后重新审查新的完整候选。事实、目标、动作、时机和业务规则一致，且未引入未经支持的结论或承诺。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"low\",\"confidence\":1.0,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"approve\",\"proposal_revision\":0,\"candidate_digest\":\"ffac49b972e0b52b510639affa453e8edd80ac769f68ed7f8a17412786e145c9\",\"evidence_refs\":[\"Verified facts\",\"Business Skill excerpt\"],\"feedback\":null}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "audit_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "approve",
+            "summary": "批准。候选方案准确针对 OA 流程 P-102 缺失的逐项明细收据，使用当前实例标识执行 OA 留言，请申请人 U-2 补充可提供的强制材料；同时明确本阶段不批准或拒绝任务，并要求材料到达后重新审查新的完整候选。事实、目标、动作、时机和业务规则一致，且未引入未经支持的结论或承诺。",
+            "proposal_revision": 0,
+            "candidate_digest": "ffac49b972e0b52b510639affa453e8edd80ac769f68ed7f8a17412786e145c9",
+            "evidence_refs": [
+              "Verified facts",
+              "Business Skill excerpt"
+            ],
+            "feedback": null,
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0
+          },
+          "digest": null
+        }
+      },
+      {
+        "id": "current_instance_policy_choice",
+        "score": {
+          "consumer_ok": true,
+          "audit_ok": true,
+          "errors": []
+        },
+        "consumer": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "P-103 的事实材料完整，但是否从负责人酌情预算中为该次非标准人民币 600 元例外提供资金，属于没有现行规则可直接决定的一次性政策判断，需要负责人在“同意”与“不同意”之间作出选择。选择后仅向已知收件人 U-3 发送对应决定；消息不会执行付款，也不会建立可复用政策。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": true,
+            "risk": "medium",
+            "confidence": 1.0,
+            "rule_coverage": 0.5,
+            "information_completeness": 1.0,
+            "durable_memories": [],
+            "outcome": "needs_human",
+            "proposal": null,
+            "decision_options": [
+              {
+                "key": "fund_exception",
+                "label": "同意资助",
+                "instruction": "同意仅针对 P-103，从负责人酌情预算中支持人民币 600 元的一次性非标准例外，并向 U-3 发送决定通知。",
+                "consequence": "U-3 将收到 P-103 已获一次性人民币 600 元资金批准的通知；该通知仅确认本次决定，不建立通用规则，也不执行实际付款。",
+                "plan": {
+                  "objective": "向 U-3 通知负责人已同意资助 P-103 的一次性人民币 600 元非标准例外。",
+                  "actions": [
+                    {
+                      "description": "向 U-3 发送 P-103 一次性资助批准通知。",
+                      "action_identity": "P-103-fund-exception-approve-notify-U-3",
+                      "capability": "dingtalk-chat",
+                      "operation": "send_direct_message",
+                      "target": {
+                        "open_dingtalk_id": "U-3"
+                      },
+                      "payload": {
+                        "content": "### P-103 决定通知\n\n同意从负责人酌情预算中，为 P-103 提供人民币 600 元的一次性非标准例外支持。\n\n本决定仅适用于 P-103，不构成后续类似申请的通用规则或先例。此消息用于确认决定，不代表款项已经支付；实际款项仍需按现有合规流程办理。"
+                      },
+                      "effect": "external"
+                    }
+                  ],
+                  "sourced_facts": [
+                    {
+                      "assertion": "P-103 请求从负责人酌情预算中为一次性非标准例外提供人民币 600 元资金。",
+                      "references": [
+                        "verified_facts"
+                      ]
+                    },
+                    {
+                      "assertion": "当前实例的事实完整，已知收件人为 U-3。",
+                      "references": [
+                        "verified_facts"
+                      ]
+                    },
+                    {
+                      "assertion": "没有现行规则决定该例外是否值得资助，补充申请人事实也无法解决这一政策选择。",
+                      "references": [
+                        "verified_facts",
+                        "business_skill_excerpt"
+                      ]
+                    }
+                  ],
+                  "authored_judgment": "如果负责人选择同意，应将决定严格限定在 P-103 和人民币 600 元这一当前实例，并明确通知不建立先例、也不等同于已经完成付款。"
+                },
+                "terminal_outcome": null,
+                "reason": null
+              },
+              {
+                "key": "decline_exception",
+                "label": "不同意资助",
+                "instruction": "不同意从负责人酌情预算中资助 P-103 的人民币 600 元一次性非标准例外，并向 U-3 发送拒绝通知。",
+                "consequence": "U-3 将收到 P-103 本次资金例外未获同意的通知；不会形成资金承诺，也不会建立通用规则。",
+                "plan": {
+                  "objective": "向 U-3 通知负责人不同意资助 P-103 的一次性人民币 600 元非标准例外。",
+                  "actions": [
+                    {
+                      "description": "向 U-3 发送 P-103 一次性资助拒绝通知。",
+                      "action_identity": "P-103-fund-exception-decline-notify-U-3",
+                      "capability": "dingtalk-chat",
+                      "operation": "send_direct_message",
+                      "target": {
+                        "open_dingtalk_id": "U-3"
+                      },
+                      "payload": {
+                        "content": "### P-103 决定通知\n\n不同意从负责人酌情预算中，为 P-103 提供人民币 600 元的一次性非标准例外支持。\n\n因此，本次申请不形成资金承诺。本决定仅适用于 P-103，不构成后续类似申请的通用规则。"
+                      },
+                      "effect": "external"
+                    }
+                  ],
+                  "sourced_facts": [
+                    {
+                      "assertion": "P-103 请求从负责人酌情预算中为一次性非标准例外提供人民币 600 元资金。",
+                      "references": [
+                        "verified_facts"
+                      ]
+                    },
+                    {
+                      "assertion": "当前实例的事实完整，已知收件人为 U-3。",
+                      "references": [
+                        "verified_facts"
+                      ]
+                    },
+                    {
+                      "assertion": "没有现行规则决定该例外是否值得资助，补充申请人事实也无法解决这一政策选择。",
+                      "references": [
+                        "verified_facts",
+                        "business_skill_excerpt"
+                      ]
+                    }
+                  ],
+                  "authored_judgment": "如果负责人选择不同意，应明确终止 P-103 本次资金例外，不作资金承诺，同时将决定限定于当前实例。"
+                },
+                "terminal_outcome": null,
+                "reason": null
+              }
+            ],
+            "requested_input": null,
+            "needs_human_reason": "P-103 是否值得从负责人酌情预算中支出人民币 600 元，没有现行规则可以决定，且事实已经完整，继续向申请人补充取证也不会解决这一政策判断。请负责人仅就本次申请选择同意或不同意；这一选择直接决定是否形成该笔一次性资金承诺。",
+            "decision_basis": {
+              "verified_facts": [
+                {
+                  "assertion": "P-103 请求从负责人酌情预算中资助人民币 600 元的一次性非标准例外。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                },
+                {
+                  "assertion": "当前实例所需事实完整，通知收件人 U-3 已知。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                },
+                {
+                  "assertion": "没有额外的申请人事实能够解决是否资助的政策选择。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                }
+              ],
+              "rule_evidence": [
+                {
+                  "assertion": "当完整的当前实例需要负责人作酌情政策判断且没有现行规则决定时，必须呈现具体的是或否选择、准确后果和当前实例的可执行计划，不得擅自批准或创设可复用政策。",
+                  "references": [
+                    "business_skill_excerpt"
+                  ]
+                },
+                {
+                  "assertion": "没有现行规则规定 P-103 这一例外是否值得资助。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                }
+              ],
+              "quality_explanation": "决定所需的当前实例事实已全部核实，因此信息完整度为 1.0；对如何处理无规则的酌情事项有明确流程规则，但对资助或拒绝本身没有实质性判断规则，因此规则覆盖率为 0.5。两种选择都被限定在 P-103、人民币 600 元和 U-3，且通知明确区分决定、实际付款与长期政策。",
+              "no_external_action_evidence": [
+                {
+                  "assertion": "本次为合成只读评估，没有执行任何真实提供方操作、外部写入、消息发送或付款。",
+                  "references": [
+                    "evaluation_context"
+                  ]
+                }
+              ],
+              "conclusion": "该事项不能自动同意或拒绝；负责人必须对 P-103 作出一次性的同意或不同意选择，随后系统才能执行所选分支中的精确通知计划。"
+            },
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false
+          },
+          "raw": "{\n  \"summary\": \"P-103 的事实材料完整，但是否从负责人酌情预算中为该次非标准人民币 600 元例外提供资金，属于没有现行规则可直接决定的一次性政策判断，需要负责人在“同意”与“不同意”之间作出选择。选择后仅向已知收件人 U-3 发送对应决定；消息不会执行付款，也不会建立可复用政策。\",\n  \"error_code\": null,\n  \"error_retryable\": false,\n  \"error_authorization_required\": true,\n  \"risk\": \"medium\",\n  \"confidence\": 1.0,\n  \"rule_coverage\": 0.5,\n  \"information_completeness\": 1.0,\n  \"durable_memories\": [],\n  \"outcome\": \"needs_human\",\n  \"proposal\": null,\n  \"decision_options\": [\n    {\n      \"key\": \"fund_exception\",\n      \"label\": \"同意资助\",\n      \"instruction\": \"同意仅针对 P-103，从负责人酌情预算中支持人民币 600 元的一次性非标准例外，并向 U-3 发送决定通知。\",\n      \"consequence\": \"U-3 将收到 P-103 已获一次性人民币 600 元资金批准的通知；该通知仅确认本次决定，不建立通用规则，也不执行实际付款。\",\n      \"plan\": {\n        \"objective\": \"向 U-3 通知负责人已同意资助 P-103 的一次性人民币 600 元非标准例外。\",\n        \"actions\": [\n          {\n            \"description\": \"向 U-3 发送 P-103 一次性资助批准通知。\",\n            \"action_identity\": \"P-103-fund-exception-approve-notify-U-3\",\n            \"capability\": \"dingtalk-chat\",\n            \"operation\": \"send_direct_message\",\n            \"target\": {\n              \"open_dingtalk_id\": \"U-3\"\n            },\n            \"payload\": {\n              \"content\": \"### P-103 决定通知\\n\\n同意从负责人酌情预算中，为 P-103 提供人民币 600 元的一次性非标准例外支持。\\n\\n本决定仅适用于 P-103，不构成后续类似申请的通用规则或先例。此消息用于确认决定，不代表款项已经支付；实际款项仍需按现有合规流程办理。\"\n            },\n            \"effect\": \"external\"\n          }\n        ],\n        \"sourced_facts\": [\n          {\n            \"assertion\": \"P-103 请求从负责人酌情预算中为一次性非标准例外提供人民币 600 元资金。\",\n            \"references\": [\n              \"verified_facts\"\n            ]\n          },\n          {\n            \"assertion\": \"当前实例的事实完整，已知收件人为 U-3。\",\n            \"references\": [\n              \"verified_facts\"\n            ]\n          },\n          {\n            \"assertion\": \"没有现行规则决定该例外是否值得资助，补充申请人事实也无法解决这一政策选择。\",\n            \"references\": [\n              \"verified_facts\",\n              \"business_skill_excerpt\"\n            ]\n          }\n        ],\n        \"authored_judgment\": \"如果负责人选择同意，应将决定严格限定在 P-103 和人民币 600 元这一当前实例，并明确通知不建立先例、也不等同于已经完成付款。\"\n      },\n      \"terminal_outcome\": null,\n      \"reason\": null\n    },\n    {\n      \"key\": \"decline_exception\",\n      \"label\": \"不同意资助\",\n      \"instruction\": \"不同意从负责人酌情预算中资助 P-103 的人民币 600 元一次性非标准例外，并向 U-3 发送拒绝通知。\",\n      \"consequence\": \"U-3 将收到 P-103 本次资金例外未获同意的通知；不会形成资金承诺，也不会建立通用规则。\",\n      \"plan\": {\n        \"objective\": \"向 U-3 通知负责人不同意资助 P-103 的一次性人民币 600 元非标准例外。\",\n        \"actions\": [\n          {\n            \"description\": \"向 U-3 发送 P-103 一次性资助拒绝通知。\",\n            \"action_identity\": \"P-103-fund-exception-decline-notify-U-3\",\n            \"capability\": \"dingtalk-chat\",\n            \"operation\": \"send_direct_message\",\n            \"target\": {\n              \"open_dingtalk_id\": \"U-3\"\n            },\n            \"payload\": {\n              \"content\": \"### P-103 决定通知\\n\\n不同意从负责人酌情预算中，为 P-103 提供人民币 600 元的一次性非标准例外支持。\\n\\n因此，本次申请不形成资金承诺。本决定仅适用于 P-103，不构成后续类似申请的通用规则。\"\n            },\n            \"effect\": \"external\"\n          }\n        ],\n        \"sourced_facts\": [\n          {\n            \"assertion\": \"P-103 请求从负责人酌情预算中为一次性非标准例外提供人民币 600 元资金。\",\n            \"references\": [\n              \"verified_facts\"\n            ]\n          },\n          {\n            \"assertion\": \"当前实例的事实完整，已知收件人为 U-3。\",\n            \"references\": [\n              \"verified_facts\"\n            ]\n          },\n          {\n            \"assertion\": \"没有现行规则决定该例外是否值得资助，补充申请人事实也无法解决这一政策选择。\",\n            \"references\": [\n              \"verified_facts\",\n              \"business_skill_excerpt\"\n            ]\n          }\n        ],\n        \"authored_judgment\": \"如果负责人选择不同意，应明确终止 P-103 本次资金例外，不作资金承诺，同时将决定限定于当前实例。\"\n      },\n      \"terminal_outcome\": null,\n      \"reason\": null\n    }\n  ],\n  \"requested_input\": null,\n  \"needs_human_reason\": \"P-103 是否值得从负责人酌情预算中支出人民币 600 元，没有现行规则可以决定，且事实已经完整，继续向申请人补充取证也不会解决这一政策判断。请负责人仅就本次申请选择同意或不同意；这一选择直接决定是否形成该笔一次性资金承诺。\",\n  \"decision_basis\": {\n    \"verified_facts\": [\n      {\n        \"assertion\": \"P-103 请求从负责人酌情预算中资助人民币 600 元的一次性非标准例外。\",\n        \"references\": [\n          \"verified_facts\"\n        ]\n      },\n      {\n        \"assertion\": \"当前实例所需事实完整，通知收件人 U-3 已知。\",\n        \"references\": [\n          \"verified_facts\"\n        ]\n      },\n      {\n        \"assertion\": \"没有额外的申请人事实能够解决是否资助的政策选择。\",\n        \"references\": [\n          \"verified_facts\"\n        ]\n      }\n    ],\n    \"rule_evidence\": [\n      {\n        \"assertion\": \"当完整的当前实例需要负责人作酌情政策判断且没有现行规则决定时，必须呈现具体的是或否选择、准确后果和当前实例的可执行计划，不得擅自批准或创设可复用政策。\",\n        \"references\": [\n          \"business_skill_excerpt\"\n        ]\n      },\n      {\n        \"assertion\": \"没有现行规则规定 P-103 这一例外是否值得资助。\",\n        \"references\": [\n          \"verified_facts\"\n        ]\n      }\n    ],\n    \"quality_explanation\": \"决定所需的当前实例事实已全部核实，因此信息完整度为 1.0；对如何处理无规则的酌情事项有明确流程规则，但对资助或拒绝本身没有实质性判断规则，因此规则覆盖率为 0.5。两种选择都被限定在 P-103、人民币 600 元和 U-3，且通知明确区分决定、实际付款与长期政策。\",\n    \"no_external_action_evidence\": [\n      {\n        \"assertion\": \"本次为合成只读评估，没有执行任何真实提供方操作、外部写入、消息发送或付款。\",\n        \"references\": [\n          \"evaluation_context\"\n        ]\n      }\n    ],\n    \"conclusion\": \"该事项不能自动同意或拒绝；负责人必须对 P-103 作出一次性的同意或不同意选择，随后系统才能执行所选分支中的精确通知计划。\"\n  },\n  \"stage_index\": 0,\n  \"predecessor_review_id\": null,\n  \"continue_after_execution\": false\n}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "consumer_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "needs_human",
+            "summary": "P-103 的事实材料完整，但是否从负责人酌情预算中为该次非标准人民币 600 元例外提供资金，属于没有现行规则可直接决定的一次性政策判断，需要负责人在“同意”与“不同意”之间作出选择。选择后仅向已知收件人 U-3 发送对应决定；消息不会执行付款，也不会建立可复用政策。",
+            "proposal": null,
+            "decision_options": [
+              {
+                "key": "fund_exception",
+                "label": "同意资助",
+                "instruction": "同意仅针对 P-103，从负责人酌情预算中支持人民币 600 元的一次性非标准例外，并向 U-3 发送决定通知。",
+                "consequence": "U-3 将收到 P-103 已获一次性人民币 600 元资金批准的通知；该通知仅确认本次决定，不建立通用规则，也不执行实际付款。",
+                "plan": {
+                  "objective": "向 U-3 通知负责人已同意资助 P-103 的一次性人民币 600 元非标准例外。",
+                  "actions": [
+                    {
+                      "description": "向 U-3 发送 P-103 一次性资助批准通知。",
+                      "action_identity": "P-103-fund-exception-approve-notify-U-3",
+                      "capability": "dingtalk-chat",
+                      "operation": "send_direct_message",
+                      "target": {
+                        "open_dingtalk_id": "U-3"
+                      },
+                      "payload": {
+                        "content": "### P-103 决定通知\n\n同意从负责人酌情预算中，为 P-103 提供人民币 600 元的一次性非标准例外支持。\n\n本决定仅适用于 P-103，不构成后续类似申请的通用规则或先例。此消息用于确认决定，不代表款项已经支付；实际款项仍需按现有合规流程办理。"
+                      },
+                      "effect": "external"
+                    }
+                  ],
+                  "sourced_facts": [
+                    {
+                      "assertion": "P-103 请求从负责人酌情预算中为一次性非标准例外提供人民币 600 元资金。",
+                      "references": [
+                        "verified_facts"
+                      ]
+                    },
+                    {
+                      "assertion": "当前实例的事实完整，已知收件人为 U-3。",
+                      "references": [
+                        "verified_facts"
+                      ]
+                    },
+                    {
+                      "assertion": "没有现行规则决定该例外是否值得资助，补充申请人事实也无法解决这一政策选择。",
+                      "references": [
+                        "verified_facts",
+                        "business_skill_excerpt"
+                      ]
+                    }
+                  ],
+                  "authored_judgment": "如果负责人选择同意，应将决定严格限定在 P-103 和人民币 600 元这一当前实例，并明确通知不建立先例、也不等同于已经完成付款。"
+                },
+                "terminal_outcome": null,
+                "reason": null
+              },
+              {
+                "key": "decline_exception",
+                "label": "不同意资助",
+                "instruction": "不同意从负责人酌情预算中资助 P-103 的人民币 600 元一次性非标准例外，并向 U-3 发送拒绝通知。",
+                "consequence": "U-3 将收到 P-103 本次资金例外未获同意的通知；不会形成资金承诺，也不会建立通用规则。",
+                "plan": {
+                  "objective": "向 U-3 通知负责人不同意资助 P-103 的一次性人民币 600 元非标准例外。",
+                  "actions": [
+                    {
+                      "description": "向 U-3 发送 P-103 一次性资助拒绝通知。",
+                      "action_identity": "P-103-fund-exception-decline-notify-U-3",
+                      "capability": "dingtalk-chat",
+                      "operation": "send_direct_message",
+                      "target": {
+                        "open_dingtalk_id": "U-3"
+                      },
+                      "payload": {
+                        "content": "### P-103 决定通知\n\n不同意从负责人酌情预算中，为 P-103 提供人民币 600 元的一次性非标准例外支持。\n\n因此，本次申请不形成资金承诺。本决定仅适用于 P-103，不构成后续类似申请的通用规则。"
+                      },
+                      "effect": "external"
+                    }
+                  ],
+                  "sourced_facts": [
+                    {
+                      "assertion": "P-103 请求从负责人酌情预算中为一次性非标准例外提供人民币 600 元资金。",
+                      "references": [
+                        "verified_facts"
+                      ]
+                    },
+                    {
+                      "assertion": "当前实例的事实完整，已知收件人为 U-3。",
+                      "references": [
+                        "verified_facts"
+                      ]
+                    },
+                    {
+                      "assertion": "没有现行规则决定该例外是否值得资助，补充申请人事实也无法解决这一政策选择。",
+                      "references": [
+                        "verified_facts",
+                        "business_skill_excerpt"
+                      ]
+                    }
+                  ],
+                  "authored_judgment": "如果负责人选择不同意，应明确终止 P-103 本次资金例外，不作资金承诺，同时将决定限定于当前实例。"
+                },
+                "terminal_outcome": null,
+                "reason": null
+              }
+            ],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "medium",
+            "confidence": 1.0,
+            "rule_coverage": 0.5,
+            "information_completeness": 1.0,
+            "needs_human_reason": "P-103 是否值得从负责人酌情预算中支出人民币 600 元，没有现行规则可以决定，且事实已经完整，继续向申请人补充取证也不会解决这一政策判断。请负责人仅就本次申请选择同意或不同意；这一选择直接决定是否形成该笔一次性资金承诺。",
+            "decision_basis": {
+              "verified_facts": [
+                {
+                  "assertion": "P-103 请求从负责人酌情预算中资助人民币 600 元的一次性非标准例外。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                },
+                {
+                  "assertion": "当前实例所需事实完整，通知收件人 U-3 已知。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                },
+                {
+                  "assertion": "没有额外的申请人事实能够解决是否资助的政策选择。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                }
+              ],
+              "rule_evidence": [
+                {
+                  "assertion": "当完整的当前实例需要负责人作酌情政策判断且没有现行规则决定时，必须呈现具体的是或否选择、准确后果和当前实例的可执行计划，不得擅自批准或创设可复用政策。",
+                  "references": [
+                    "business_skill_excerpt"
+                  ]
+                },
+                {
+                  "assertion": "没有现行规则规定 P-103 这一例外是否值得资助。",
+                  "references": [
+                    "verified_facts"
+                  ]
+                }
+              ],
+              "quality_explanation": "决定所需的当前实例事实已全部核实，因此信息完整度为 1.0；对如何处理无规则的酌情事项有明确流程规则，但对资助或拒绝本身没有实质性判断规则，因此规则覆盖率为 0.5。两种选择都被限定在 P-103、人民币 600 元和 U-3，且通知明确区分决定、实际付款与长期政策。",
+              "no_external_action_evidence": [
+                {
+                  "assertion": "本次为合成只读评估，没有执行任何真实提供方操作、外部写入、消息发送或付款。",
+                  "references": [
+                    "evaluation_context"
+                  ]
+                }
+              ],
+              "conclusion": "该事项不能自动同意或拒绝；负责人必须对 P-103 作出一次性的同意或不同意选择，随后系统才能执行所选分支中的精确通知计划。"
+            },
+            "requested_input": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false,
+            "source_bindings": [],
+            "durable_memories": []
+          },
+          "digest": "ddb2e756ae139200fae23e1d59bdf47f3fc016efff0c02cc114c9a67d820dd80"
+        },
+        "audit": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "批准。P-103 是事实完整、无法由现行规则决定且不能通过补充申请人材料解决的一次性酌情预算选择，确实需要负责人作出同意或不同意的业务判断。两个选项均明确限定于当前实例、人民币 600 元和已核实收件人 U-3；各自后果与通知计划完整、可执行且实质不同。通知内容准确区分了决定、资金承诺和实际付款，也未创设可复用政策。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "medium",
+            "confidence": 1.0,
+            "rule_coverage": 0.5,
+            "information_completeness": 1.0,
+            "outcome": "approve",
+            "proposal_revision": 0,
+            "candidate_digest": "ddb2e756ae139200fae23e1d59bdf47f3fc016efff0c02cc114c9a67d820dd80",
+            "evidence_refs": [
+              "business_skill_excerpt",
+              "verified_facts",
+              "evaluation_context"
+            ],
+            "feedback": null
+          },
+          "raw": "{\"summary\":\"批准。P-103 是事实完整、无法由现行规则决定且不能通过补充申请人材料解决的一次性酌情预算选择，确实需要负责人作出同意或不同意的业务判断。两个选项均明确限定于当前实例、人民币 600 元和已核实收件人 U-3；各自后果与通知计划完整、可执行且实质不同。通知内容准确区分了决定、资金承诺和实际付款，也未创设可复用政策。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"medium\",\"confidence\":1.0,\"rule_coverage\":0.5,\"information_completeness\":1.0,\"outcome\":\"approve\",\"proposal_revision\":0,\"candidate_digest\":\"ddb2e756ae139200fae23e1d59bdf47f3fc016efff0c02cc114c9a67d820dd80\",\"evidence_refs\":[\"business_skill_excerpt\",\"verified_facts\",\"evaluation_context\"],\"feedback\":null}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "audit_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "approve",
+            "summary": "批准。P-103 是事实完整、无法由现行规则决定且不能通过补充申请人材料解决的一次性酌情预算选择，确实需要负责人作出同意或不同意的业务判断。两个选项均明确限定于当前实例、人民币 600 元和已核实收件人 U-3；各自后果与通知计划完整、可执行且实质不同。通知内容准确区分了决定、资金承诺和实际付款，也未创设可复用政策。",
+            "proposal_revision": 0,
+            "candidate_digest": "ddb2e756ae139200fae23e1d59bdf47f3fc016efff0c02cc114c9a67d820dd80",
+            "evidence_refs": [
+              "business_skill_excerpt",
+              "verified_facts",
+              "evaluation_context"
+            ],
+            "feedback": null,
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "medium",
+            "confidence": 1.0,
+            "rule_coverage": 0.5,
+            "information_completeness": 1.0
+          },
+          "digest": null
+        }
+      },
+      {
+        "id": "technical_auth_failure",
+        "score": {
+          "consumer_ok": false,
+          "audit_ok": false,
+          "errors": [
+            "forbidden concept: needs_human",
+            "Audit outcome failed not in ['reject', 'return', 'revision_required']"
+          ]
+        },
+        "consumer": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "Cannot evaluate or handle approval P-104 because the only authoritative OA detail read failed with HTTP 401 authorization_required. No task owner, form, receipt, or current state was returned, and no alternate authorized source exists. The approval remains unchanged.",
+            "error_code": "HTTP_401_AUTHORIZATION_REQUIRED",
+            "error_retryable": false,
+            "error_authorization_required": true,
+            "risk": "high",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 0.0,
+            "durable_memories": [],
+            "outcome": "failed",
+            "proposal": null,
+            "decision_options": [],
+            "requested_input": null,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false
+          },
+          "raw": "{\n  \"summary\": \"Cannot evaluate or handle approval P-104 because the only authoritative OA detail read failed with HTTP 401 authorization_required. No task owner, form, receipt, or current state was returned, and no alternate authorized source exists. The approval remains unchanged.\",\n  \"error_code\": \"HTTP_401_AUTHORIZATION_REQUIRED\",\n  \"error_retryable\": false,\n  \"error_authorization_required\": true,\n  \"risk\": \"high\",\n  \"confidence\": 1.0,\n  \"rule_coverage\": 1.0,\n  \"information_completeness\": 0.0,\n  \"durable_memories\": [],\n  \"outcome\": \"failed\",\n  \"proposal\": null,\n  \"decision_options\": [],\n  \"requested_input\": null,\n  \"needs_human_reason\": null,\n  \"decision_basis\": null,\n  \"stage_index\": 0,\n  \"predecessor_review_id\": null,\n  \"continue_after_execution\": false\n}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "consumer_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "failed",
+            "summary": "Cannot evaluate or handle approval P-104 because the only authoritative OA detail read failed with HTTP 401 authorization_required. No task owner, form, receipt, or current state was returned, and no alternate authorized source exists. The approval remains unchanged.",
+            "proposal": null,
+            "decision_options": [],
+            "error": {
+              "code": "agent_reported_failure",
+              "retryable": true,
+              "authorization_required": false,
+              "stage": "",
+              "source": "agent",
+              "source_code": "HTTP_401_AUTHORIZATION_REQUIRED",
+              "session_continuable": false
+            },
+            "risk": "high",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 0.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "requested_input": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false,
+            "source_bindings": [],
+            "durable_memories": []
+          },
+          "digest": "9a88451801c406ef4143684f0c5a4c64216c0d5d490bde4b224f27d2c76bbe19"
+        },
+        "audit": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "Audit could not verify or approve any OA action for process P-104 because the sole authoritative detail read failed with HTTP 401 authorization_required and returned no task ownership, form, receipt, or current-state evidence. This is a technical dependency-authorization failure, not a business question. The Consumer correctly proposed no external action and left the approval unchanged, although its nested error incorrectly marked authorization_required as false.",
+            "error_code": "HTTP_401_AUTHORIZATION_REQUIRED",
+            "error_retryable": false,
+            "error_authorization_required": true,
+            "risk": "high",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 0.0,
+            "outcome": "failed",
+            "proposal_revision": 0,
+            "candidate_digest": "9a88451801c406ef4143684f0c5a4c64216c0d5d490bde4b224f27d2c76bbe19",
+            "evidence_refs": [
+              "verified_fact:process_P-104_authoritative_OA_detail_read_HTTP_401_authorization_required",
+              "verified_fact:no_task_owner_form_receipt_or_current_state_returned",
+              "verified_fact:no_alternate_authorized_source"
+            ],
+            "feedback": null
+          },
+          "raw": "{\"summary\":\"Audit could not verify or approve any OA action for process P-104 because the sole authoritative detail read failed with HTTP 401 authorization_required and returned no task ownership, form, receipt, or current-state evidence. This is a technical dependency-authorization failure, not a business question. The Consumer correctly proposed no external action and left the approval unchanged, although its nested error incorrectly marked authorization_required as false.\",\"error_code\":\"HTTP_401_AUTHORIZATION_REQUIRED\",\"error_retryable\":false,\"error_authorization_required\":true,\"risk\":\"high\",\"confidence\":1.0,\"rule_coverage\":1.0,\"information_completeness\":0.0,\"outcome\":\"failed\",\"proposal_revision\":0,\"candidate_digest\":\"9a88451801c406ef4143684f0c5a4c64216c0d5d490bde4b224f27d2c76bbe19\",\"evidence_refs\":[\"verified_fact:process_P-104_authoritative_OA_detail_read_HTTP_401_authorization_required\",\"verified_fact:no_task_owner_form_receipt_or_current_state_returned\",\"verified_fact:no_alternate_authorized_source\"],\"feedback\":null}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "audit_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "failed",
+            "summary": "Audit could not verify or approve any OA action for process P-104 because the sole authoritative detail read failed with HTTP 401 authorization_required and returned no task ownership, form, receipt, or current-state evidence. This is a technical dependency-authorization failure, not a business question. The Consumer correctly proposed no external action and left the approval unchanged, although its nested error incorrectly marked authorization_required as false.",
+            "proposal_revision": 0,
+            "candidate_digest": "9a88451801c406ef4143684f0c5a4c64216c0d5d490bde4b224f27d2c76bbe19",
+            "evidence_refs": [
+              "verified_fact:process_P-104_authoritative_OA_detail_read_HTTP_401_authorization_required",
+              "verified_fact:no_task_owner_form_receipt_or_current_state_returned",
+              "verified_fact:no_alternate_authorized_source"
+            ],
+            "feedback": null,
+            "error": {
+              "code": "agent_reported_failure",
+              "retryable": true,
+              "authorization_required": false,
+              "stage": "",
+              "source": "agent",
+              "source_code": "HTTP_401_AUTHORIZATION_REQUIRED",
+              "session_continuable": false
+            },
+            "risk": "high",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 0.0
+          },
+          "digest": null
+        }
+      },
+      {
+        "id": "established_group_audience",
+        "score": {
+          "consumer_ok": false,
+          "audit_ok": false,
+          "errors": [
+            "forbidden concept: needs_human",
+            "Audit outcome approve not in ['reject', 'return', 'revision_required']"
+          ]
+        },
+        "consumer": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "建议在既有项目群 G-105 直接发送仅包含已批准项目状态的更新；内容未扩大受众，也不含人员或财务隐私。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "durable_memories": [],
+            "outcome": "proposal",
+            "proposal": {
+              "objective": "向提出询问的既有项目群 G-105 回复已批准的项目状态。",
+              "actions": [
+                {
+                  "description": "在既有项目群 G-105 发送已批准的项目状态更新。",
+                  "action_identity": "project-status-G-105-M-1",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_group_message",
+                  "target": {
+                    "conversation_id": "G-105"
+                  },
+                  "payload": {
+                    "content": "大家好，项目状态更新：\n\n- 里程碑 M-1 已于今天完成。\n- 下一次评审安排在明天。"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "The principal is in the established group conversation G-105, and the project-status request was made in that same group.",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "The approved status is that milestone M-1 was completed today and the next review is tomorrow.",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "The approved update contains no private personnel or financial facts.",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "A response containing only approved project status may be sent directly to the same established group audience that requested it.",
+                  "references": [
+                    "Business Skill excerpt"
+                  ]
+                }
+              ],
+              "authored_judgment": "The proposed message stays within the approved status, addresses the same established group audience, introduces no new commitment, and discloses no private personnel or financial information. Because no trigger message_id was supplied, the supported group-send operation is used for G-105 rather than claiming a native reply to a specific message."
+            },
+            "decision_options": [],
+            "requested_input": null,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false
+          },
+          "raw": "{\n  \"summary\": \"建议在既有项目群 G-105 直接发送仅包含已批准项目状态的更新；内容未扩大受众，也不含人员或财务隐私。\",\n  \"error_code\": null,\n  \"error_retryable\": false,\n  \"error_authorization_required\": false,\n  \"risk\": \"low\",\n  \"confidence\": 1.0,\n  \"rule_coverage\": 1.0,\n  \"information_completeness\": 1.0,\n  \"durable_memories\": [],\n  \"outcome\": \"proposal\",\n  \"proposal\": {\n    \"objective\": \"向提出询问的既有项目群 G-105 回复已批准的项目状态。\",\n    \"actions\": [\n      {\n        \"description\": \"在既有项目群 G-105 发送已批准的项目状态更新。\",\n        \"action_identity\": \"project-status-G-105-M-1\",\n        \"capability\": \"dingtalk-chat\",\n        \"operation\": \"send_group_message\",\n        \"target\": {\n          \"conversation_id\": \"G-105\"\n        },\n        \"payload\": {\n          \"content\": \"大家好，项目状态更新：\\n\\n- 里程碑 M-1 已于今天完成。\\n- 下一次评审安排在明天。\"\n        },\n        \"effect\": \"external\"\n      }\n    ],\n    \"sourced_facts\": [\n      {\n        \"assertion\": \"The principal is in the established group conversation G-105, and the project-status request was made in that same group.\",\n        \"references\": [\n          \"Verified facts\"\n        ]\n      },\n      {\n        \"assertion\": \"The approved status is that milestone M-1 was completed today and the next review is tomorrow.\",\n        \"references\": [\n          \"Verified facts\"\n        ]\n      },\n      {\n        \"assertion\": \"The approved update contains no private personnel or financial facts.\",\n        \"references\": [\n          \"Verified facts\"\n        ]\n      },\n      {\n        \"assertion\": \"A response containing only approved project status may be sent directly to the same established group audience that requested it.\",\n        \"references\": [\n          \"Business Skill excerpt\"\n        ]\n      }\n    ],\n    \"authored_judgment\": \"The proposed message stays within the approved status, addresses the same established group audience, introduces no new commitment, and discloses no private personnel or financial information. Because no trigger message_id was supplied, the supported group-send operation is used for G-105 rather than claiming a native reply to a specific message.\"\n  },\n  \"decision_options\": [],\n  \"requested_input\": null,\n  \"needs_human_reason\": null,\n  \"decision_basis\": null,\n  \"stage_index\": 0,\n  \"predecessor_review_id\": null,\n  \"continue_after_execution\": false\n}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "consumer_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "proposal",
+            "summary": "建议在既有项目群 G-105 直接发送仅包含已批准项目状态的更新；内容未扩大受众，也不含人员或财务隐私。",
+            "proposal": {
+              "objective": "向提出询问的既有项目群 G-105 回复已批准的项目状态。",
+              "actions": [
+                {
+                  "description": "在既有项目群 G-105 发送已批准的项目状态更新。",
+                  "action_identity": "project-status-G-105-M-1",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_group_message",
+                  "target": {
+                    "conversation_id": "G-105"
+                  },
+                  "payload": {
+                    "content": "大家好，项目状态更新：\n\n- 里程碑 M-1 已于今天完成。\n- 下一次评审安排在明天。"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "The principal is in the established group conversation G-105, and the project-status request was made in that same group.",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "The approved status is that milestone M-1 was completed today and the next review is tomorrow.",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "The approved update contains no private personnel or financial facts.",
+                  "references": [
+                    "Verified facts"
+                  ]
+                },
+                {
+                  "assertion": "A response containing only approved project status may be sent directly to the same established group audience that requested it.",
+                  "references": [
+                    "Business Skill excerpt"
+                  ]
+                }
+              ],
+              "authored_judgment": "The proposed message stays within the approved status, addresses the same established group audience, introduces no new commitment, and discloses no private personnel or financial information. Because no trigger message_id was supplied, the supported group-send operation is used for G-105 rather than claiming a native reply to a specific message."
+            },
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "requested_input": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false,
+            "source_bindings": [],
+            "durable_memories": []
+          },
+          "digest": "a3ccd4c472a8e37eab2b43a8f646a2c6a0eb9adcae4ab2f973ee5604f0fa4c30"
+        },
+        "audit": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "批准。候选动作使用 dingtalk-chat.send_group_message，目标为经验证的既有群会话 G-105；消息仅复述已批准的项目状态（里程碑 M-1 今天完成、下一次评审明天），受众与触发询问的群一致，不含人员或财务隐私，也未增加新的承诺、评价或结论。由于事实中未提供 trigger message_id，使用群发送而非 reply_to_message 符合动作契约，且执行结果可通过群消息原生发送回执验证。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "outcome": "approve",
+            "proposal_revision": 0,
+            "candidate_digest": "a3ccd4c472a8e37eab2b43a8f646a2c6a0eb9adcae4ab2f973ee5604f0fa4c30",
+            "evidence_refs": [
+              "Verified facts",
+              "Business Skill excerpt"
+            ],
+            "feedback": null
+          },
+          "raw": "{\"summary\":\"批准。候选动作使用 dingtalk-chat.send_group_message，目标为经验证的既有群会话 G-105；消息仅复述已批准的项目状态（里程碑 M-1 今天完成、下一次评审明天），受众与触发询问的群一致，不含人员或财务隐私，也未增加新的承诺、评价或结论。由于事实中未提供 trigger message_id，使用群发送而非 reply_to_message 符合动作契约，且执行结果可通过群消息原生发送回执验证。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"low\",\"confidence\":1.0,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"approve\",\"proposal_revision\":0,\"candidate_digest\":\"a3ccd4c472a8e37eab2b43a8f646a2c6a0eb9adcae4ab2f973ee5604f0fa4c30\",\"evidence_refs\":[\"Verified facts\",\"Business Skill excerpt\"],\"feedback\":null}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "audit_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "approve",
+            "summary": "批准。候选动作使用 dingtalk-chat.send_group_message，目标为经验证的既有群会话 G-105；消息仅复述已批准的项目状态（里程碑 M-1 今天完成、下一次评审明天），受众与触发询问的群一致，不含人员或财务隐私，也未增加新的承诺、评价或结论。由于事实中未提供 trigger message_id，使用群发送而非 reply_to_message 符合动作契约，且执行结果可通过群消息原生发送回执验证。",
+            "proposal_revision": 0,
+            "candidate_digest": "a3ccd4c472a8e37eab2b43a8f646a2c6a0eb9adcae4ab2f973ee5604f0fa4c30",
+            "evidence_refs": [
+              "Verified facts",
+              "Business Skill excerpt"
+            ],
+            "feedback": null,
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0
+          },
+          "digest": null
+        }
+      },
+      {
+        "id": "current_form_no_future_field",
+        "score": {
+          "consumer_ok": false,
+          "audit_ok": false,
+          "errors": [
+            "forbidden concept: needs_human",
+            "Audit outcome approve not in ['reject', 'return', 'revision_required']"
+          ]
+        },
+        "consumer": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "当前差旅审批满足书面规则：预算为 CNY 450，未超过 CNY 500 上限，且行程与经理背书均已提供。行后报告只能在出差结束后形成，不是当前申请的必填材料，因此应批准 P-106 的任务 806。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "medium",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "durable_memories": [],
+            "outcome": "proposal",
+            "proposal": {
+              "objective": "批准符合差旅政策的待办审批 P-106／任务 806。",
+              "actions": [
+                {
+                  "description": "批准预算在政策限额内且材料齐全的当前差旅申请。",
+                  "action_identity": "approve-travel-P-106-task-806",
+                  "capability": "dingtalk-oa",
+                  "operation": "approve",
+                  "target": {
+                    "process_instance_id": "P-106",
+                    "task_id": "806"
+                  },
+                  "payload": {
+                    "remark": "同意。申请已提供行程和经理背书，预算 CNY 450 未超过 CNY 500 的政策上限。行后报告应在出差结束后提交，不作为当前申请的前置材料。"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "OA 流程 P-106 的任务 806 当前处于待审批状态。",
+                  "references": [
+                    "verified-facts:pending-status"
+                  ]
+                },
+                {
+                  "assertion": "当前申请已包含行程和经理背书。",
+                  "references": [
+                    "verified-facts:current-form"
+                  ]
+                },
+                {
+                  "assertion": "当前申请预算为 CNY 450，低于或等于 CNY 500 的审批上限。",
+                  "references": [
+                    "verified-facts:current-form",
+                    "business-skill-excerpt:travel-approval-threshold"
+                  ]
+                },
+                {
+                  "assertion": "行后报告仅在出差结束后形成，不能被要求作为当前申请字段。",
+                  "references": [
+                    "verified-facts:post-trip-report-timing",
+                    "business-skill-excerpt:post-trip-report-rule"
+                  ]
+                }
+              ],
+              "authored_judgment": "该申请完整满足自动批准条件。缺少行后报告不构成材料缺口，也不应阻止当前审批，因此批准是规则直接支持的结论。"
+            },
+            "decision_options": [],
+            "requested_input": null,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false
+          },
+          "raw": "{\n  \"summary\": \"当前差旅审批满足书面规则：预算为 CNY 450，未超过 CNY 500 上限，且行程与经理背书均已提供。行后报告只能在出差结束后形成，不是当前申请的必填材料，因此应批准 P-106 的任务 806。\",\n  \"error_code\": null,\n  \"error_retryable\": false,\n  \"error_authorization_required\": false,\n  \"risk\": \"medium\",\n  \"confidence\": 1.0,\n  \"rule_coverage\": 1.0,\n  \"information_completeness\": 1.0,\n  \"durable_memories\": [],\n  \"outcome\": \"proposal\",\n  \"proposal\": {\n    \"objective\": \"批准符合差旅政策的待办审批 P-106／任务 806。\",\n    \"actions\": [\n      {\n        \"description\": \"批准预算在政策限额内且材料齐全的当前差旅申请。\",\n        \"action_identity\": \"approve-travel-P-106-task-806\",\n        \"capability\": \"dingtalk-oa\",\n        \"operation\": \"approve\",\n        \"target\": {\n          \"process_instance_id\": \"P-106\",\n          \"task_id\": \"806\"\n        },\n        \"payload\": {\n          \"remark\": \"同意。申请已提供行程和经理背书，预算 CNY 450 未超过 CNY 500 的政策上限。行后报告应在出差结束后提交，不作为当前申请的前置材料。\"\n        },\n        \"effect\": \"external\"\n      }\n    ],\n    \"sourced_facts\": [\n      {\n        \"assertion\": \"OA 流程 P-106 的任务 806 当前处于待审批状态。\",\n        \"references\": [\n          \"verified-facts:pending-status\"\n        ]\n      },\n      {\n        \"assertion\": \"当前申请已包含行程和经理背书。\",\n        \"references\": [\n          \"verified-facts:current-form\"\n        ]\n      },\n      {\n        \"assertion\": \"当前申请预算为 CNY 450，低于或等于 CNY 500 的审批上限。\",\n        \"references\": [\n          \"verified-facts:current-form\",\n          \"business-skill-excerpt:travel-approval-threshold\"\n        ]\n      },\n      {\n        \"assertion\": \"行后报告仅在出差结束后形成，不能被要求作为当前申请字段。\",\n        \"references\": [\n          \"verified-facts:post-trip-report-timing\",\n          \"business-skill-excerpt:post-trip-report-rule\"\n        ]\n      }\n    ],\n    \"authored_judgment\": \"该申请完整满足自动批准条件。缺少行后报告不构成材料缺口，也不应阻止当前审批，因此批准是规则直接支持的结论。\"\n  },\n  \"decision_options\": [],\n  \"requested_input\": null,\n  \"needs_human_reason\": null,\n  \"decision_basis\": null,\n  \"stage_index\": 0,\n  \"predecessor_review_id\": null,\n  \"continue_after_execution\": false\n}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "consumer_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "proposal",
+            "summary": "当前差旅审批满足书面规则：预算为 CNY 450，未超过 CNY 500 上限，且行程与经理背书均已提供。行后报告只能在出差结束后形成，不是当前申请的必填材料，因此应批准 P-106 的任务 806。",
+            "proposal": {
+              "objective": "批准符合差旅政策的待办审批 P-106／任务 806。",
+              "actions": [
+                {
+                  "description": "批准预算在政策限额内且材料齐全的当前差旅申请。",
+                  "action_identity": "approve-travel-P-106-task-806",
+                  "capability": "dingtalk-oa",
+                  "operation": "approve",
+                  "target": {
+                    "process_instance_id": "P-106",
+                    "task_id": "806"
+                  },
+                  "payload": {
+                    "remark": "同意。申请已提供行程和经理背书，预算 CNY 450 未超过 CNY 500 的政策上限。行后报告应在出差结束后提交，不作为当前申请的前置材料。"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "OA 流程 P-106 的任务 806 当前处于待审批状态。",
+                  "references": [
+                    "verified-facts:pending-status"
+                  ]
+                },
+                {
+                  "assertion": "当前申请已包含行程和经理背书。",
+                  "references": [
+                    "verified-facts:current-form"
+                  ]
+                },
+                {
+                  "assertion": "当前申请预算为 CNY 450，低于或等于 CNY 500 的审批上限。",
+                  "references": [
+                    "verified-facts:current-form",
+                    "business-skill-excerpt:travel-approval-threshold"
+                  ]
+                },
+                {
+                  "assertion": "行后报告仅在出差结束后形成，不能被要求作为当前申请字段。",
+                  "references": [
+                    "verified-facts:post-trip-report-timing",
+                    "business-skill-excerpt:post-trip-report-rule"
+                  ]
+                }
+              ],
+              "authored_judgment": "该申请完整满足自动批准条件。缺少行后报告不构成材料缺口，也不应阻止当前审批，因此批准是规则直接支持的结论。"
+            },
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "medium",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "requested_input": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false,
+            "source_bindings": [],
+            "durable_memories": []
+          },
+          "digest": "3980465fbc2c24d0eb6a8bdf077a4327a97a796e8097206f19383a3c54d29cc5"
+        },
+        "audit": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "批准该完整行动方案。当前待审批目标已明确为 OA 流程 P-106／任务 806；申请已提供行程与经理背书，CNY 450 预算未超过 CNY 500 政策上限，符合书面自动批准条件。行后报告仅在出差结束后形成，不得作为当前申请字段，因此候选方案的批准操作、目标及备注均有充分事实和规则支持。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "medium",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "outcome": "approve",
+            "proposal_revision": 0,
+            "candidate_digest": "3980465fbc2c24d0eb6a8bdf077a4327a97a796e8097206f19383a3c54d29cc5",
+            "evidence_refs": [
+              "verified-facts:pending-status",
+              "verified-facts:current-form",
+              "verified-facts:post-trip-report-timing",
+              "business-skill-excerpt:travel-approval-threshold",
+              "business-skill-excerpt:post-trip-report-rule"
+            ],
+            "feedback": null
+          },
+          "raw": "{\"summary\":\"批准该完整行动方案。当前待审批目标已明确为 OA 流程 P-106／任务 806；申请已提供行程与经理背书，CNY 450 预算未超过 CNY 500 政策上限，符合书面自动批准条件。行后报告仅在出差结束后形成，不得作为当前申请字段，因此候选方案的批准操作、目标及备注均有充分事实和规则支持。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"medium\",\"confidence\":1.0,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"approve\",\"proposal_revision\":0,\"candidate_digest\":\"3980465fbc2c24d0eb6a8bdf077a4327a97a796e8097206f19383a3c54d29cc5\",\"evidence_refs\":[\"verified-facts:pending-status\",\"verified-facts:current-form\",\"verified-facts:post-trip-report-timing\",\"business-skill-excerpt:travel-approval-threshold\",\"business-skill-excerpt:post-trip-report-rule\"],\"feedback\":null}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "audit_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "approve",
+            "summary": "批准该完整行动方案。当前待审批目标已明确为 OA 流程 P-106／任务 806；申请已提供行程与经理背书，CNY 450 预算未超过 CNY 500 政策上限，符合书面自动批准条件。行后报告仅在出差结束后形成，不得作为当前申请字段，因此候选方案的批准操作、目标及备注均有充分事实和规则支持。",
+            "proposal_revision": 0,
+            "candidate_digest": "3980465fbc2c24d0eb6a8bdf077a4327a97a796e8097206f19383a3c54d29cc5",
+            "evidence_refs": [
+              "verified-facts:pending-status",
+              "verified-facts:current-form",
+              "verified-facts:post-trip-report-timing",
+              "business-skill-excerpt:travel-approval-threshold",
+              "business-skill-excerpt:post-trip-report-rule"
+            ],
+            "feedback": null,
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "medium",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0
+          },
+          "digest": null
+        }
+      },
+      {
+        "id": "irrelevant_broadcast",
+        "score": {
+          "consumer_ok": false,
+          "audit_ok": false,
+          "errors": [
+            "Consumer JSON missing"
+          ]
+        },
+        "consumer": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "无需采取行动。群聊 G-107 中的消息只是面向全体员工的一般天气通知，不包含请求、对 principal 的提及、归属任务或后续跟进义务；依据业务规则，不应回复或执行任何外部动作。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "durable_memories": [],
+            "outcome": "no_action",
+            "proposal": null,
+            "decision_options": [],
+            "requested_input": null,
+            "needs_human_reason": null,
+            "decision_basis": {
+              "verified_facts": [
+                {
+                  "assertion": "Conversation G-107 contains a general weather update addressed to all employees.",
+                  "references": [
+                    "synthetic:conversation:G-107"
+                  ]
+                },
+                {
+                  "assertion": "The broadcast contains no request, no mention of the principal, no owned task, and no follow-up obligation.",
+                  "references": [
+                    "synthetic:conversation:G-107"
+                  ]
+                }
+              ],
+              "rule_evidence": [
+                {
+                  "assertion": "General informational broadcasts with no request, principal mention, owned task, or follow-up obligation require no action.",
+                  "references": [
+                    "synthetic:business-skill-excerpt"
+                  ]
+                }
+              ],
+              "quality_explanation": "The current conversation facts cover every condition in the supplied no-action rule, and the evidence identifies no ambiguity or missing fact relevant to this decision.",
+              "no_external_action_evidence": [
+                {
+                  "assertion": "No reply or other external action is warranted because the message is purely informational and creates no obligation for the principal.",
+                  "references": [
+                    "synthetic:conversation:G-107",
+                    "synthetic:business-skill-excerpt"
+                  ]
+                }
+              ],
+              "conclusion": "Take no action and do not fabricate a reply."
+            },
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false
+          },
+          "raw": "{\n  \"summary\": \"无需采取行动。群聊 G-107 中的消息只是面向全体员工的一般天气通知，不包含请求、对 principal 的提及、归属任务或后续跟进义务；依据业务规则，不应回复或执行任何外部动作。\",\n  \"error_code\": null,\n  \"error_retryable\": false,\n  \"error_authorization_required\": false,\n  \"risk\": \"low\",\n  \"confidence\": 1.0,\n  \"rule_coverage\": 1.0,\n  \"information_completeness\": 1.0,\n  \"durable_memories\": [],\n  \"outcome\": \"no_action\",\n  \"proposal\": null,\n  \"decision_options\": [],\n  \"requested_input\": null,\n  \"needs_human_reason\": null,\n  \"decision_basis\": {\n    \"verified_facts\": [\n      {\n        \"assertion\": \"Conversation G-107 contains a general weather update addressed to all employees.\",\n        \"references\": [\n          \"synthetic:conversation:G-107\"\n        ]\n      },\n      {\n        \"assertion\": \"The broadcast contains no request, no mention of the principal, no owned task, and no follow-up obligation.\",\n        \"references\": [\n          \"synthetic:conversation:G-107\"\n        ]\n      }\n    ],\n    \"rule_evidence\": [\n      {\n        \"assertion\": \"General informational broadcasts with no request, principal mention, owned task, or follow-up obligation require no action.\",\n        \"references\": [\n          \"synthetic:business-skill-excerpt\"\n        ]\n      }\n    ],\n    \"quality_explanation\": \"The current conversation facts cover every condition in the supplied no-action rule, and the evidence identifies no ambiguity or missing fact relevant to this decision.\",\n    \"no_external_action_evidence\": [\n      {\n        \"assertion\": \"No reply or other external action is warranted because the message is purely informational and creates no obligation for the principal.\",\n        \"references\": [\n          \"synthetic:conversation:G-107\",\n          \"synthetic:business-skill-excerpt\"\n        ]\n      }\n    ],\n    \"conclusion\": \"Take no action and do not fabricate a reply.\"\n  },\n  \"stage_index\": 0,\n  \"predecessor_review_id\": null,\n  \"continue_after_execution\": false\n}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "consumer_contract": {
+          "ok": false,
+          "error": "role_wire_contract_invalid",
+          "result": null,
+          "digest": null
+        },
+        "audit": {
+          "ok": false,
+          "error": "Consumer contract invalid",
+          "result": null
+        },
+        "audit_contract": {
+          "ok": false,
+          "error": "Consumer contract invalid",
+          "result": null,
+          "digest": null
+        }
+      },
+      {
+        "id": "standing_rule_autonomy",
+        "score": {
+          "consumer_ok": false,
+          "audit_ok": false,
+          "errors": [
+            "missing concept: sign off",
+            "forbidden concept: needs_human",
+            "Audit outcome approve not in ['reject', 'return', 'revision_required']"
+          ]
+        },
+        "consumer": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "项目 P-108 的验收清单 A-8 和已签署测试报告 T-8 均已完成，当前待办任务 808 属于 principal，且项目在已批准范围内；依据业务规则，应自主通过本次项目验收签署。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "medium",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "durable_memories": [],
+            "outcome": "proposal",
+            "proposal": {
+              "objective": "通过项目 P-108 当前待办任务 808，完成例行项目验收签署。",
+              "actions": [
+                {
+                  "description": "批准项目 P-108 的当前验收签署任务 808。",
+                  "action_identity": "approve-project-signoff-P-108-task-808",
+                  "capability": "dingtalk-oa",
+                  "operation": "approve",
+                  "target": {
+                    "process_instance_id": "P-108",
+                    "task_id": "808"
+                  },
+                  "payload": {
+                    "remark": "验收清单 A-8 与已签署测试报告 T-8 均已完成，项目在已批准范围内，同意验收签署。"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "项目 P-108 的验收清单 A-8 已完成。",
+                  "references": [
+                    "Verified facts: acceptance checklist A-8"
+                  ]
+                },
+                {
+                  "assertion": "项目 P-108 的已签署测试报告 T-8 已完成。",
+                  "references": [
+                    "Verified facts: signed test report T-8"
+                  ]
+                },
+                {
+                  "assertion": "当前待办任务 808 属于 principal。",
+                  "references": [
+                    "Verified facts: current pending task 808"
+                  ]
+                },
+                {
+                  "assertion": "项目 P-108 位于已批准范围内。",
+                  "references": [
+                    "Verified facts: project P-108 approved scope"
+                  ]
+                },
+                {
+                  "assertion": "当验收清单和已签署测试报告齐备，且当前待办处于已批准范围内时，应自主完成签署，不应仅因 principal 也能作出同样选择而升级。",
+                  "references": [
+                    "Business Skill excerpt"
+                  ]
+                }
+              ],
+              "authored_judgment": "全部明确条件均已满足，且规则直接要求自主签署，因此应批准任务 808，无需升级给 principal。"
+            },
+            "decision_options": [],
+            "requested_input": null,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false
+          },
+          "raw": "{\n  \"summary\": \"项目 P-108 的验收清单 A-8 和已签署测试报告 T-8 均已完成，当前待办任务 808 属于 principal，且项目在已批准范围内；依据业务规则，应自主通过本次项目验收签署。\",\n  \"error_code\": null,\n  \"error_retryable\": false,\n  \"error_authorization_required\": false,\n  \"risk\": \"medium\",\n  \"confidence\": 1.0,\n  \"rule_coverage\": 1.0,\n  \"information_completeness\": 1.0,\n  \"durable_memories\": [],\n  \"outcome\": \"proposal\",\n  \"proposal\": {\n    \"objective\": \"通过项目 P-108 当前待办任务 808，完成例行项目验收签署。\",\n    \"actions\": [\n      {\n        \"description\": \"批准项目 P-108 的当前验收签署任务 808。\",\n        \"action_identity\": \"approve-project-signoff-P-108-task-808\",\n        \"capability\": \"dingtalk-oa\",\n        \"operation\": \"approve\",\n        \"target\": {\n          \"process_instance_id\": \"P-108\",\n          \"task_id\": \"808\"\n        },\n        \"payload\": {\n          \"remark\": \"验收清单 A-8 与已签署测试报告 T-8 均已完成，项目在已批准范围内，同意验收签署。\"\n        },\n        \"effect\": \"external\"\n      }\n    ],\n    \"sourced_facts\": [\n      {\n        \"assertion\": \"项目 P-108 的验收清单 A-8 已完成。\",\n        \"references\": [\n          \"Verified facts: acceptance checklist A-8\"\n        ]\n      },\n      {\n        \"assertion\": \"项目 P-108 的已签署测试报告 T-8 已完成。\",\n        \"references\": [\n          \"Verified facts: signed test report T-8\"\n        ]\n      },\n      {\n        \"assertion\": \"当前待办任务 808 属于 principal。\",\n        \"references\": [\n          \"Verified facts: current pending task 808\"\n        ]\n      },\n      {\n        \"assertion\": \"项目 P-108 位于已批准范围内。\",\n        \"references\": [\n          \"Verified facts: project P-108 approved scope\"\n        ]\n      },\n      {\n        \"assertion\": \"当验收清单和已签署测试报告齐备，且当前待办处于已批准范围内时，应自主完成签署，不应仅因 principal 也能作出同样选择而升级。\",\n        \"references\": [\n          \"Business Skill excerpt\"\n        ]\n      }\n    ],\n    \"authored_judgment\": \"全部明确条件均已满足，且规则直接要求自主签署，因此应批准任务 808，无需升级给 principal。\"\n  },\n  \"decision_options\": [],\n  \"requested_input\": null,\n  \"needs_human_reason\": null,\n  \"decision_basis\": null,\n  \"stage_index\": 0,\n  \"predecessor_review_id\": null,\n  \"continue_after_execution\": false\n}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "consumer_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "proposal",
+            "summary": "项目 P-108 的验收清单 A-8 和已签署测试报告 T-8 均已完成，当前待办任务 808 属于 principal，且项目在已批准范围内；依据业务规则，应自主通过本次项目验收签署。",
+            "proposal": {
+              "objective": "通过项目 P-108 当前待办任务 808，完成例行项目验收签署。",
+              "actions": [
+                {
+                  "description": "批准项目 P-108 的当前验收签署任务 808。",
+                  "action_identity": "approve-project-signoff-P-108-task-808",
+                  "capability": "dingtalk-oa",
+                  "operation": "approve",
+                  "target": {
+                    "process_instance_id": "P-108",
+                    "task_id": "808"
+                  },
+                  "payload": {
+                    "remark": "验收清单 A-8 与已签署测试报告 T-8 均已完成，项目在已批准范围内，同意验收签署。"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "项目 P-108 的验收清单 A-8 已完成。",
+                  "references": [
+                    "Verified facts: acceptance checklist A-8"
+                  ]
+                },
+                {
+                  "assertion": "项目 P-108 的已签署测试报告 T-8 已完成。",
+                  "references": [
+                    "Verified facts: signed test report T-8"
+                  ]
+                },
+                {
+                  "assertion": "当前待办任务 808 属于 principal。",
+                  "references": [
+                    "Verified facts: current pending task 808"
+                  ]
+                },
+                {
+                  "assertion": "项目 P-108 位于已批准范围内。",
+                  "references": [
+                    "Verified facts: project P-108 approved scope"
+                  ]
+                },
+                {
+                  "assertion": "当验收清单和已签署测试报告齐备，且当前待办处于已批准范围内时，应自主完成签署，不应仅因 principal 也能作出同样选择而升级。",
+                  "references": [
+                    "Business Skill excerpt"
+                  ]
+                }
+              ],
+              "authored_judgment": "全部明确条件均已满足，且规则直接要求自主签署，因此应批准任务 808，无需升级给 principal。"
+            },
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "medium",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "requested_input": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false,
+            "source_bindings": [],
+            "durable_memories": []
+          },
+          "digest": "24322728a0174d5e119e24fd77aa7b5fbe69bc694b9c63632b5a9c9cdce58a7d"
+        },
+        "audit": {
+          "ok": true,
+          "exit_code": 0,
+          "result": {
+            "summary": "批准。项目 P-108 的验收清单 A-8 和已签署测试报告 T-8 均已完成，当前待办任务 808 属于 principal，且项目处于已批准范围内；候选方案依照适用业务规则自主批准该当前任务，目标、操作、理由和时机均与已验证事实一致。",
+            "error_code": null,
+            "error_retryable": false,
+            "error_authorization_required": false,
+            "risk": "medium",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "outcome": "approve",
+            "proposal_revision": 0,
+            "candidate_digest": "24322728a0174d5e119e24fd77aa7b5fbe69bc694b9c63632b5a9c9cdce58a7d",
+            "evidence_refs": [
+              "Business Skill excerpt",
+              "Verified facts: acceptance checklist A-8",
+              "Verified facts: signed test report T-8",
+              "Verified facts: current pending task 808",
+              "Verified facts: project P-108 approved scope"
+            ],
+            "feedback": null
+          },
+          "raw": "{\"summary\":\"批准。项目 P-108 的验收清单 A-8 和已签署测试报告 T-8 均已完成，当前待办任务 808 属于 principal，且项目处于已批准范围内；候选方案依照适用业务规则自主批准该当前任务，目标、操作、理由和时机均与已验证事实一致。\",\"error_code\":null,\"error_retryable\":false,\"error_authorization_required\":false,\"risk\":\"medium\",\"confidence\":1.0,\"rule_coverage\":1.0,\"information_completeness\":1.0,\"outcome\":\"approve\",\"proposal_revision\":0,\"candidate_digest\":\"24322728a0174d5e119e24fd77aa7b5fbe69bc694b9c63632b5a9c9cdce58a7d\",\"evidence_refs\":[\"Business Skill excerpt\",\"Verified facts: acceptance checklist A-8\",\"Verified facts: signed test report T-8\",\"Verified facts: current pending task 808\",\"Verified facts: project P-108 approved scope\"],\"feedback\":null}",
+          "tool_item_types": [],
+          "error": ""
+        },
+        "audit_contract": {
+          "ok": true,
+          "error": "",
+          "result": {
+            "outcome": "approve",
+            "summary": "批准。项目 P-108 的验收清单 A-8 和已签署测试报告 T-8 均已完成，当前待办任务 808 属于 principal，且项目处于已批准范围内；候选方案依照适用业务规则自主批准该当前任务，目标、操作、理由和时机均与已验证事实一致。",
+            "proposal_revision": 0,
+            "candidate_digest": "24322728a0174d5e119e24fd77aa7b5fbe69bc694b9c63632b5a9c9cdce58a7d",
+            "evidence_refs": [
+              "Business Skill excerpt",
+              "Verified facts: acceptance checklist A-8",
+              "Verified facts: signed test report T-8",
+              "Verified facts: current pending task 808",
+              "Verified facts: project P-108 approved scope"
+            ],
+            "feedback": null,
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "medium",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0
+          },
+          "digest": null
+        }
+      }
+    ],
+    "consumer_passed": 2,
+    "audit_passed": 2
+  }
+}

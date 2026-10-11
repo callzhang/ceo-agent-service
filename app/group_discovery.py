@@ -11,6 +11,17 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Mapping, Protocol, Sequence
 
+from app.dws_client import DwsError
+
+
+def is_non_retryable_dingtalk_group_read_denial(error: Exception) -> bool:
+    return (
+        isinstance(error, DwsError)
+        and error.code == "1001"
+        and error.business_message.strip() == "该群为保密群，无法获取消息记录"
+        and not error.retryable_external_dependency
+    )
+
 
 @dataclass(frozen=True)
 class ProviderScope:
@@ -105,12 +116,30 @@ class DiscussionEvidence:
 
 
 @dataclass(frozen=True)
+class HistoryReadDenial:
+    code: str
+    reason: str
+
+
+class GroupHistoryReadDenied(RuntimeError):
+    """A provider conclusively denied history access for one scoped group."""
+
+    def __init__(self, group: GroupRef, *, code: str, reason: str) -> None:
+        super().__init__(reason)
+        self.group = group
+        self.code = code
+        self.reason = reason
+
+
+@dataclass(frozen=True)
 class GroupEvidence:
     title_score: float | None = None
     participant_coverage: ParticipantCoverageEvidence | None = None
     discussion: DiscussionEvidence | None = None
     sendability: Sendability | None = None
     prior_delivery_count: int = 0
+    members: tuple[MemberRef, ...] | None = None
+    history_read_denial: HistoryReadDenial | None = None
 
 
 @dataclass(frozen=True)
@@ -125,6 +154,7 @@ class GroupDiscoveryOutcome(StrEnum):
     AMBIGUOUS = "ambiguous"
     NO_VERIFIED_GROUP = "no_verified_group"
     RETRYABLE_FAILURE = "retryable_failure"
+    HISTORY_READ_DENIED = "history_read_denied"
 
 
 @dataclass(frozen=True)
@@ -203,16 +233,50 @@ class GroupDiscoveryService:
                     groups.setdefault(group.dedup_key, group)
                     reads += 1
 
+            candidate_groups = tuple(groups.values())
+            prechecked_sendability: dict[tuple[str, str, str], Sendability] = {}
+            # With no authoritative attendee filter, title selection is
+            # independent of member reads. Do not fetch discarded rosters.
+            if not request.audience_is_complete:
+                for group in candidate_groups:
+                    sendability = (
+                        self.provider.get_group_sendability(group)
+                        if self.provider.capabilities.sendability
+                        else Sendability(None, "unavailable")
+                    )
+                    if self.provider.capabilities.sendability:
+                        reads += 1
+                    if sendability.allowed is not False:
+                        prechecked_sendability[group.dedup_key] = sendability
+                candidate_groups = tuple(
+                    group for group in candidate_groups
+                    if group.dedup_key in prechecked_sendability
+                )
+                threshold = self.policy.minimum_title_score(request)
+                title_selected = tuple(
+                    group for group in candidate_groups
+                    if self.policy.title_score(request, group.display_name) >= threshold
+                )
+                if title_selected:
+                    candidate_groups = title_selected
+
             staged: list[tuple[GroupRef, GroupEvidence]] = []
             audience_keys = {member.scoped_key for member in request.audience}
-            for group in groups.values():
+            for group in candidate_groups:
                 coverage: ParticipantCoverageEvidence | None = None
+                members: tuple[MemberRef, ...] | None = None
+                if self.provider.capabilities.member_lists:
+                    unique_members: dict[tuple[str, str, str], MemberRef] = {}
+                    for member in self.provider.list_group_members(group):
+                        if member.provider_scope != request.provider_scope:
+                            raise ValueError("group member scope does not match request")
+                        unique_members.setdefault(member.scoped_key, member)
+                    members = tuple(unique_members.values())
+                    reads += 1
                 if request.audience_is_complete:
                     if not self.provider.capabilities.member_lists:
                         coverage = ParticipantCoverageEvidence(None, len(request.audience), "unavailable")
                     else:
-                        members = tuple(self.provider.list_group_members(group))
-                        reads += 1
                         member_keys = {member.scoped_key for member in members}
                         matched = len(audience_keys & member_keys)
                         coverage = self.policy.participant_coverage(request, members)
@@ -223,14 +287,16 @@ class GroupDiscoveryService:
 
                 title_score = self.policy.title_score(request, group.display_name)
                 sendability: Sendability | None = None
-                if self.provider.capabilities.sendability:
+                if not request.audience_is_complete:
+                    sendability = prechecked_sendability[group.dedup_key]
+                elif self.provider.capabilities.sendability:
                     sendability = self.provider.get_group_sendability(group)
                     reads += 1
                     if sendability.allowed is False:
                         continue
                 elif self.provider.capabilities.sendability is False:
                     sendability = Sendability(None, "unavailable")
-                staged.append((group, GroupEvidence(title_score=title_score, participant_coverage=coverage, sendability=sendability)))
+                staged.append((group, GroupEvidence(title_score=title_score, participant_coverage=coverage, sendability=sendability, members=members)))
 
             minimum_title_score = self.policy.minimum_title_score(request)
             if any((evidence.title_score or 0) >= minimum_title_score for _, evidence in staged):
@@ -250,22 +316,31 @@ class GroupDiscoveryService:
             candidates: list[GroupCandidate] = []
             for group, evidence in staged:
                 discussion: DiscussionEvidence | None = None
+                denial: HistoryReadDenial | None = None
                 if not self.provider.capabilities.message_history:
                     discussion = DiscussionEvidence(0.0, ("unavailable",))
                 else:
-                    messages = tuple(self.provider.read_recent_group_messages(group, limit=30))
                     reads += 1
-                    discussion = self.policy.discussion_score(request, messages)
+                    try:
+                        messages = tuple(self.provider.read_recent_group_messages(group, limit=30))
+                    except GroupHistoryReadDenied as exc:
+                        if exc.group != group:
+                            raise ValueError("history denial does not match requested group") from exc
+                        denial = HistoryReadDenial(exc.code, exc.reason)
+                    else:
+                        discussion = self.policy.discussion_score(request, messages)
                 candidate = GroupCandidate(
                     group=group,
                     evidence=GroupEvidence(
                         title_score=evidence.title_score,
                         participant_coverage=evidence.participant_coverage,
                         discussion=discussion,
-                        sendability=evidence.sendability,
+                        sendability=Sendability(None, denial.reason) if denial else evidence.sendability,
+                        members=evidence.members,
+                        history_read_denial=denial,
                     ),
                 )
-                if self.policy.accepts(request, candidate):
+                if denial is not None or self.policy.accepts(request, candidate):
                     candidates.append(candidate)
 
             candidates.sort(key=self._sort_key, reverse=True)
@@ -275,6 +350,10 @@ class GroupDiscoveryService:
             )
             if not ranked:
                 outcome = GroupDiscoveryOutcome.NO_VERIFIED_GROUP
+            elif all(item.evidence.history_read_denial is not None for item in ranked):
+                outcome = GroupDiscoveryOutcome.HISTORY_READ_DENIED
+            elif any(item.evidence.history_read_denial is not None for item in ranked):
+                outcome = GroupDiscoveryOutcome.AMBIGUOUS
             elif len(ranked) == 1:
                 outcome = GroupDiscoveryOutcome.VERIFIED
             else:
@@ -328,6 +407,8 @@ class DingTalkGroupDiscoveryProvider:
                 for index, message in enumerate(self.dws.read_recent_messages(conversation, limit=limit))
             )
         except Exception as exc:
+            if is_non_retryable_dingtalk_group_read_denial(exc):
+                raise GroupHistoryReadDenied(group, code=exc.code, reason=exc.business_message) from exc
             raise RetryableProviderError(str(exc)) from exc
 
     def get_group_sendability(self, group: GroupRef) -> Sendability:

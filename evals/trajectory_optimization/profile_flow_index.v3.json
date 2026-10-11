@@ -1,0 +1,27 @@
+{
+  "version": 3,
+  "supersedes": "profile_flow_index.v2.json",
+  "original_result_preserved": "V1 baseline 7/7 candidate 6/7 under original adjacent-event criterion. V2 baseline 8/8 candidate 7/8; candidate Consumer project reply fails. Wrong Task-Agent-only Skill binding recorded separately; no retrospective pass.",
+  "assembly_commit": "55cbecef890bac80784bfaf872cf0eb9d01fa8d4",
+  "case_source": "evals/task_scoped_prompts/v1.json",
+  "case_overrides": "profile_flow_index_overrides.v3.json",
+  "cases": [
+    "calendar-cross-midnight",
+    "calendar-real-overlap",
+    "mail-already-handled",
+    "document-material-conflicts",
+    "project-review-existing-remediation",
+    "audit-document-feedback",
+    "calendar-midnight-overlap"
+  ],
+  "continuation": "calendar-cross-midnight, same valid cold session after accepted state, per arm",
+  "candidate": "Delete only Profile E's message/calendar paragraphs. No new global Skill index; exact selected Skill names and reading instructions already appear in Task. Keep every other Profile clause and complete Audit Rules unchanged.",
+  "evaluation_change": "Retain v2 complete-interval coverage and true cross-midnight overlap. Correct Consumer project-document reply fixture to ceo-document-review in both arms; rename domain truthfully. Preserve all source facts and business criteria. Fresh cold sessions and valid same-session continuation; do not treat Consumer project reply as Task Agent extraction validation.",
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "medium",
+  "output_schema": false,
+  "maximum_parallel_calls": 2,
+  "timeout_seconds": 180,
+  "controls": "Same frozen full production configuration, Skills, facts, clock and actual role tool schemas with every callback stubbed. Only two duplicate Profile paragraphs differ across arms. New interval test and grading are frozen before either v2 arm runs.",
+  "acceptance": "Seven cold business cases and one valid same-session continuation per arm. Required source reads and exact targets, complete meeting-interval query coverage, no acceptance of real overlapping Blocked, exact document/work/Audit criteria, independent anonymous complete-output review. A queried calendar interval does not prove attendance beyond its supported scope."
+}

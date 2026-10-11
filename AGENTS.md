@@ -1,5 +1,12 @@
 # CEO Agent Service Instructions
 
+## Agent 指令与错误排查
+
+- 不同任务按需注入不同指令；只有适用于所有任务的通用逻辑才全量注入。
+- 能由 Skill 承载的逻辑，不在 prompt 中全量展开；只给出极简的用途和调用提示，由 Agent 按需读取 Skill。
+- 属于常识的逻辑不重复写入指令，相信 Agent 的基本判断能力，保持 prompt 精简。
+- 遇到 Agent 错误，先完整查看该次运行的 trajectory（实际输入、工具调用与返回、模型输出及执行结果），思考并确认本质原因，再修复产生错误的机制；不要针对单个错误打补丁或堆叠 prompt 规则。
+
 ## Explicit approval for audit and safety behavior
 
 Do not add audit, review, authorization, confirmation, safety-gate, effect-reconciliation, or other safety-policy logic as an incidental part of an unrelated feature or bug fix. Any such logic must be proposed and confirmed as a separate, explicitly scoped change before implementation. Keep its code, tests, documentation, and commit separate from the surrounding functional change; do not hide or silently introduce it through shared helpers, routing, retry, or status handling.

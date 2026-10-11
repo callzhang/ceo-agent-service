@@ -1,0 +1,306 @@
+{
+  "version": 2,
+  "manifest": "profile_flow_index.v2.json",
+  "technical_summary": [
+    {
+      "arm": "baseline",
+      "case": "calendar-cross-midnight",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128da-044a-7fe0-bbe0-e2cc26f1a645",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "candidate",
+      "case": "calendar-cross-midnight",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128da-0c7a-71f3-85dc-35e7241faa48",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "baseline",
+      "case": "calendar-real-overlap",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128da-57eb-7491-9fa6-b81b7f0a88a1",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "candidate",
+      "case": "calendar-real-overlap",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128da-61c0-7110-927c-fd3e5fd06a33",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract",
+        "read_skill"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "candidate",
+      "case": "mail-already-handled",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128da-cda7-7501-a471-080fa7fa0177",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_messages"
+      ],
+      "canonical_valid": true,
+      "outcome": "no_action"
+    },
+    {
+      "arm": "baseline",
+      "case": "mail-already-handled",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128da-ca9a-71c2-a640-17815fa78aa7",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_messages_in_window",
+        "read_dingtalk_messages"
+      ],
+      "canonical_valid": true,
+      "outcome": "no_action"
+    },
+    {
+      "arm": "baseline",
+      "case": "document-material-conflicts",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128db-4467-78c2-aff9-8b230018f9ae",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "candidate",
+      "case": "document-material-conflicts",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128db-4d3a-7260-b6e5-019c3e8c021c",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "baseline",
+      "case": "work-tracking-existing-remediation",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128db-a46e-7061-9d91-9d50ec8f2475",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "candidate",
+      "case": "work-tracking-existing-remediation",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128db-c428-7dd2-a9d3-55118abeb485",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_dingtalk_document"
+      ],
+      "canonical_valid": true,
+      "outcome": "no_action"
+    },
+    {
+      "arm": "baseline",
+      "case": "audit-document-feedback",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128db-e652-7472-a873-cf03e86aa8e9",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "return"
+    },
+    {
+      "arm": "candidate",
+      "case": "audit-document-feedback",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128dc-16d0-71b1-a785-e2e461e88a68",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "return"
+    },
+    {
+      "arm": "candidate",
+      "case": "calendar-midnight-overlap",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128dc-55d4-79d0-a509-98ab1a4fe24f",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "baseline",
+      "case": "calendar-midnight-overlap",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128dc-2449-7b73-813b-588a552dbacd",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_skill",
+        "read_system_action_contract",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "outcome": "proposal"
+    },
+    {
+      "arm": "candidate",
+      "case": "calendar-cross-midnight",
+      "phase": "resume",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128da-0c7a-71f3-85dc-35e7241faa48",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events"
+      ],
+      "canonical_valid": true,
+      "outcome": "no_action"
+    },
+    {
+      "arm": "baseline",
+      "case": "calendar-cross-midnight",
+      "phase": "resume",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a128da-044a-7fe0-bbe0-e2cc26f1a645",
+      "terminal_completed": true,
+      "calls": [
+        "read_task_skill",
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events"
+      ],
+      "canonical_valid": true,
+      "outcome": "no_action"
+    }
+  ],
+  "independent_business_review": {
+    "baseline": "8/8",
+    "candidate": "7/8",
+    "candidate_failure": "work-tracking-existing-remediation returns no_action without required source reply. Preserve FAIL.",
+    "setup_error": "Consumer reply task selected Task-Agent-only ceo-work-tracking with Do not reply to source. Correct fixture in v3; do not add reply exception or change Skill body.",
+    "tool_error": "Baseline mail first called unsupported fixture read_dingtalk_messages_in_window; explicit error retained, subsequent full thread read supports final no_action.",
+    "both_arms_pass": [
+      "full meeting interval read coverage",
+      "true cross-midnight overlap decline and verified organizer notification",
+      "same-session accepted invitation no duplicate action",
+      "document conflicts",
+      "audit revision and digest"
+    ]
+  },
+  "production_candidate_published": false
+}

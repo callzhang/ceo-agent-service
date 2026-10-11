@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "low",
+  "mechanism": "Compare default native transport against documented features.code_mode={enabled=true,direct_only_tool_namespaces=[mcp__fixture]} using one anonymous marker read. Keep host enabled. Capability-only probe, no production config change.",
+  "criteria": "One exact read, marker equality, no shell/file/business calls. Actual native trajectory must prove direct function transport; configuration acceptance and final JSON alone do not prove it.",
+  "arms": ["baseline", "direct"]
+}

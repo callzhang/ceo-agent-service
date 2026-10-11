@@ -92,22 +92,8 @@ def _ensure_developer_prompt_file(template_path: Path) -> None:
         template_path.write_text(seed_text, encoding="utf-8")
         marker_path.write_text(seed_digest + "\n", encoding="ascii")
         return
-    current_text = template_path.read_text(encoding="utf-8")
-    current_digest = _sha256_text(current_text)
-    previous_seed = (
-        marker_path.read_text(encoding="ascii").strip()
-        if marker_path.is_file()
-        else ""
-    )
-    unmodified = current_digest == previous_seed or (
-        not previous_seed
-        and current_digest in LEGACY_UNCUSTOMIZED_DEVELOPER_PROMPT_SHA256S
-    )
-    if unmodified and current_digest != seed_digest:
-        template_path.write_text(seed_text, encoding="utf-8")
-        current_digest = seed_digest
-    if current_digest == seed_digest:
-        marker_path.write_text(seed_digest + "\n", encoding="ascii")
+    # Existing files are user configuration. Default migration is published
+    # explicitly in the stopped deployment window, never during a read.
 
 
 def developer_prompt_upgrade_status(path: Path | None = None) -> str:
@@ -139,6 +125,7 @@ def read_user_prompt_template(path: Path | None = None) -> str:
 
 
 def write_developer_prompt_template(text: str, path: Path | None = None) -> Path:
+    render_developer_prompt_template(text)
     template_path = path or developer_prompt_template_path()
     template_path.parent.mkdir(parents=True, exist_ok=True)
     template_path.write_text(text, encoding="utf-8")
@@ -146,7 +133,7 @@ def write_developer_prompt_template(text: str, path: Path | None = None) -> Path
 
 
 def write_user_prompt_template(text: str, path: Path | None = None) -> Path:
-    validate_user_prompt_template(text)
+    validate_consumer_task_template(text)
     template_path = path or user_prompt_template_path()
     template_path.parent.mkdir(parents=True, exist_ok=True)
     template_path.write_text(text, encoding="utf-8")
@@ -166,6 +153,19 @@ def validate_user_prompt_template(text: str) -> None:
         raise DeveloperPromptTemplateError(
             "User Prompt contains an invalid runtime variable"
         )
+
+
+def validate_consumer_task_template(text: str) -> None:
+    definitions, body = split_developer_prompt_template(text)
+    names = [match.group(1) for match in NAMED_RUNTIME_VARIABLE_RE.finditer(body)]
+    if definitions or TAG_RE.search(body) or names != ["task_context"]:
+        raise DeveloperPromptTemplateError("Consumer User Prompt must contain exactly one {{task_context}} slot and no other runtime slots")
+    validate_user_prompt_template(text)
+
+
+def render_consumer_task_template(template: str, task_context: str) -> str:
+    validate_consumer_task_template(template)
+    return NAMED_RUNTIME_VARIABLE_RE.sub(lambda _: task_context, template)
 
 
 def render_developer_prompt(path: Path | None = None) -> str:
@@ -211,6 +211,7 @@ def render_user_prompt_template(
 
 
 _USER_PROMPT_RUNTIME_VARIABLES = {
+    "task_context": "task_context_block",
     "style_lines": "style_lines",
     "current_message": "current_message_block",
     "sender_org": "sender_org_block",

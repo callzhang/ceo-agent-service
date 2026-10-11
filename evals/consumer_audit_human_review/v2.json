@@ -1,0 +1,1014 @@
+{
+  "version": "consumer-audit-human-review.v2",
+  "baseline_ref": "a195c452b5f3b48ac20ed74022d2ae768d66332a",
+  "settings": {
+    "model": "gpt-5.6-sol",
+    "reasoning_effort": "high",
+    "concurrency": 1,
+    "timeout_seconds_per_case": 300,
+    "tools": "none",
+    "external_facts": "synthetic-inline-only"
+  },
+  "cases": [
+    {
+      "id": "valid_current_choice",
+      "facts": "Current one-time exception H301 is CNY 600; all relevant facts and applicant synthetic-U301 are verified. No standing rule decides whether to authorize it. Only notification is registered, not payment.",
+      "skill_excerpt": "A complete discretionary current-instance request with no governing rule requires a concrete principal yes/no choice with exact bound notification plans. Notification is not payment and creates no future rule.",
+      "consumer_result": {
+        "outcome": "needs_human",
+        "summary": "Current request H301 requires a principal decision: Only the principal can choose whether this specific discretionary exception is worth funding.",
+        "proposal": null,
+        "decision_options": [
+          {
+            "key": "approve",
+            "label": "Approve this one-time exception",
+            "instruction": "Approve this one-time exception",
+            "consequence": "H301: The one-time exception is authorized. This notice is not payment.",
+            "plan": {
+              "objective": "approve",
+              "actions": [
+                {
+                  "description": "approve",
+                  "action_identity": "synthetic-H301-notice-approve",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_direct_message",
+                  "target": {
+                    "user_id": "synthetic-U301"
+                  },
+                  "payload": {
+                    "content": "H301: The one-time exception is authorized. This notice is not payment."
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "Current request H301 and verified recipient synthetic-U301; no effect has occurred.",
+                  "references": [
+                    "synthetic-inline-evidence"
+                  ]
+                }
+              ],
+              "authored_judgment": "Notify only the selected current-instance decision; no payment or standing rule is executed."
+            },
+            "terminal_outcome": null,
+            "reason": null
+          },
+          {
+            "key": "decline",
+            "label": "Decline this one-time exception",
+            "instruction": "Decline this one-time exception",
+            "consequence": "H301: The one-time exception is declined.",
+            "plan": {
+              "objective": "decline",
+              "actions": [
+                {
+                  "description": "decline",
+                  "action_identity": "synthetic-H301-notice-decline",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_direct_message",
+                  "target": {
+                    "user_id": "synthetic-U301"
+                  },
+                  "payload": {
+                    "content": "H301: The one-time exception is declined."
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "Current request H301 and verified recipient synthetic-U301; no effect has occurred.",
+                  "references": [
+                    "synthetic-inline-evidence"
+                  ]
+                }
+              ],
+              "authored_judgment": "Notify only the selected current-instance decision; no payment or standing rule is executed."
+            },
+            "terminal_outcome": null,
+            "reason": null
+          }
+        ],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.95,
+        "rule_coverage": 0.5,
+        "information_completeness": 1.0,
+        "needs_human_reason": "Only the principal can choose whether this specific discretionary exception is worth funding.",
+        "decision_basis": {
+          "verified_facts": [
+            {
+              "assertion": "Current one-time exception H301 is CNY 600; all relevant facts and applicant synthetic-U301 are verified. No standing rule decides whether to authorize it. Only notification is registered, not payment.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "rule_evidence": [
+            {
+              "assertion": "A complete discretionary current-instance request with no governing rule requires a concrete principal yes/no choice with exact bound notification plans. Notification is not payment and creates no future rule.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "quality_explanation": "Facts and recipient are verified; the decision and both notification consequences are stated.",
+          "no_external_action_evidence": [
+            {
+              "assertion": "No dispatch, provider message, payment, or other external action has occurred.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "conclusion": "Only the principal can choose whether this specific discretionary exception is worth funding."
+        },
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "expected_audit": [
+        "approve"
+      ]
+    },
+    {
+      "id": "valid_principal_only_fact",
+      "facts": "H301 requires an unpublished internal project code known only to the principal; the applicant and all authorized service sources do not know it. No external action has occurred.",
+      "skill_excerpt": "Ask for a genuinely principal-only missing fact as concrete open input. Do not invent choices or execute before a fresh candidate incorporates the answer.",
+      "consumer_result": {
+        "outcome": "needs_human",
+        "summary": "Current request H301 requires a principal decision: The principal alone knows the exact current project code.",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.95,
+        "rule_coverage": 0.5,
+        "information_completeness": 0.8,
+        "needs_human_reason": "The principal alone knows the exact current project code.",
+        "decision_basis": {
+          "verified_facts": [
+            {
+              "assertion": "H301 requires an unpublished internal project code known only to the principal; the applicant and all authorized service sources do not know it. No external action has occurred.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "rule_evidence": [
+            {
+              "assertion": "Ask for a genuinely principal-only missing fact as concrete open input. Do not invent choices or execute before a fresh candidate incorporates the answer.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "quality_explanation": "The missing code is known only to the principal and unavailable from the applicant or authorized sources. This is one concrete open input for H301, with no selectable execution plan. After the answer, a fresh complete candidate must be reviewed before any external action.",
+          "no_external_action_evidence": [
+            {
+              "assertion": "No dispatch, provider message, payment, or other external action has occurred.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "conclusion": "The principal alone knows the exact current project code."
+        },
+        "requested_input": "For current request H301 only, state the unpublished internal project code from your private notes. No message will be sent until that exact value is supplied and a fresh complete candidate is reviewed.",
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "expected_audit": [
+        "approve"
+      ]
+    },
+    {
+      "id": "unnecessary_escalation",
+      "facts": "H301 is a CNY 600 expense; exact current pending OA instance synthetic-O301/task 9301, receipt R301, manager endorsement E301, finance code F301 and applicant synthetic-U301 are verified.",
+      "skill_excerpt": "Approve autonomously at or below CNY 1000 with all these verified prerequisites; ask no discretionary question.",
+      "consumer_result": {
+        "outcome": "needs_human",
+        "summary": "Current request H301 requires a principal decision: The principal could personally decide whether to approve.",
+        "proposal": null,
+        "decision_options": [
+          {
+            "key": "approve",
+            "label": "Approve this one-time exception",
+            "instruction": "Approve this one-time exception",
+            "consequence": "H301: The one-time exception is authorized. This notice is not payment.",
+            "plan": {
+              "objective": "approve",
+              "actions": [
+                {
+                  "description": "approve",
+                  "action_identity": "synthetic-H301-notice-approve",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_direct_message",
+                  "target": {
+                    "user_id": "synthetic-U301"
+                  },
+                  "payload": {
+                    "content": "H301: The one-time exception is authorized. This notice is not payment."
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "Current request H301 and verified recipient synthetic-U301; no effect has occurred.",
+                  "references": [
+                    "synthetic-inline-evidence"
+                  ]
+                }
+              ],
+              "authored_judgment": "Notify only the selected current-instance decision; no payment or standing rule is executed."
+            },
+            "terminal_outcome": null,
+            "reason": null
+          },
+          {
+            "key": "decline",
+            "label": "Decline this one-time exception",
+            "instruction": "Decline this one-time exception",
+            "consequence": "H301: The one-time exception is declined.",
+            "plan": {
+              "objective": "decline",
+              "actions": [
+                {
+                  "description": "decline",
+                  "action_identity": "synthetic-H301-notice-decline",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_direct_message",
+                  "target": {
+                    "user_id": "synthetic-U301"
+                  },
+                  "payload": {
+                    "content": "H301: The one-time exception is declined."
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "Current request H301 and verified recipient synthetic-U301; no effect has occurred.",
+                  "references": [
+                    "synthetic-inline-evidence"
+                  ]
+                }
+              ],
+              "authored_judgment": "Notify only the selected current-instance decision; no payment or standing rule is executed."
+            },
+            "terminal_outcome": null,
+            "reason": null
+          }
+        ],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.95,
+        "rule_coverage": 0.5,
+        "information_completeness": 1.0,
+        "needs_human_reason": "The principal could personally decide whether to approve.",
+        "decision_basis": {
+          "verified_facts": [
+            {
+              "assertion": "H301 is a CNY 600 expense; exact current pending OA instance synthetic-O301/task 9301, receipt R301, manager endorsement E301, finance code F301 and applicant synthetic-U301 are verified.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "rule_evidence": [
+            {
+              "assertion": "Approve autonomously at or below CNY 1000 with all these verified prerequisites; ask no discretionary question.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "quality_explanation": "Facts and recipient are verified; the decision and both notification consequences are stated.",
+          "no_external_action_evidence": [
+            {
+              "assertion": "No dispatch, provider message, payment, or other external action has occurred.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "conclusion": "The principal could personally decide whether to approve."
+        },
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "expected_audit": [
+        "return",
+        "reject"
+      ]
+    },
+    {
+      "id": "applicant_material_gap",
+      "facts": "H301 is CNY 600; receipt is missing and applicant synthetic-U301 can supply it. Exact pending OA instance synthetic-O301/task 9301 is verified.",
+      "skill_excerpt": "Request the missing receipt from the applicant; do not ask the principal to waive it or approve before it arrives.",
+      "consumer_result": {
+        "outcome": "needs_human",
+        "summary": "Current request H301 requires a principal decision: Ask the principal whether to authorize without the receipt or decline.",
+        "proposal": null,
+        "decision_options": [
+          {
+            "key": "approve",
+            "label": "Approve this one-time exception",
+            "instruction": "Approve this one-time exception",
+            "consequence": "H301: The one-time exception is authorized. This notice is not payment.",
+            "plan": {
+              "objective": "approve",
+              "actions": [
+                {
+                  "description": "approve",
+                  "action_identity": "synthetic-H301-notice-approve",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_direct_message",
+                  "target": {
+                    "user_id": "synthetic-U301"
+                  },
+                  "payload": {
+                    "content": "H301: The one-time exception is authorized. This notice is not payment."
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "Current request H301 and verified recipient synthetic-U301; no effect has occurred.",
+                  "references": [
+                    "synthetic-inline-evidence"
+                  ]
+                }
+              ],
+              "authored_judgment": "Notify only the selected current-instance decision; no payment or standing rule is executed."
+            },
+            "terminal_outcome": null,
+            "reason": null
+          },
+          {
+            "key": "decline",
+            "label": "Decline this one-time exception",
+            "instruction": "Decline this one-time exception",
+            "consequence": "H301: The one-time exception is declined.",
+            "plan": {
+              "objective": "decline",
+              "actions": [
+                {
+                  "description": "decline",
+                  "action_identity": "synthetic-H301-notice-decline",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_direct_message",
+                  "target": {
+                    "user_id": "synthetic-U301"
+                  },
+                  "payload": {
+                    "content": "H301: The one-time exception is declined."
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "Current request H301 and verified recipient synthetic-U301; no effect has occurred.",
+                  "references": [
+                    "synthetic-inline-evidence"
+                  ]
+                }
+              ],
+              "authored_judgment": "Notify only the selected current-instance decision; no payment or standing rule is executed."
+            },
+            "terminal_outcome": null,
+            "reason": null
+          }
+        ],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.95,
+        "rule_coverage": 0.5,
+        "information_completeness": 1.0,
+        "needs_human_reason": "Ask the principal whether to authorize without the receipt or decline.",
+        "decision_basis": {
+          "verified_facts": [
+            {
+              "assertion": "H301 is CNY 600; receipt is missing and applicant synthetic-U301 can supply it. Exact pending OA instance synthetic-O301/task 9301 is verified.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "rule_evidence": [
+            {
+              "assertion": "Request the missing receipt from the applicant; do not ask the principal to waive it or approve before it arrives.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "quality_explanation": "Facts and recipient are verified; the decision and both notification consequences are stated.",
+          "no_external_action_evidence": [
+            {
+              "assertion": "No dispatch, provider message, payment, or other external action has occurred.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "conclusion": "Ask the principal whether to authorize without the receipt or decline."
+        },
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "expected_audit": [
+        "return",
+        "reject"
+      ]
+    },
+    {
+      "id": "technical_failure_as_question",
+      "facts": "The authoritative detail read for H301 returned HTTP 401 authorization_required. No form, ownership or business state was obtained, and there is no alternate authorized source.",
+      "skill_excerpt": "Authorization failure is failed with the real technical error; never disguise it as a discretionary principal decision.",
+      "consumer_result": {
+        "outcome": "needs_human",
+        "summary": "Current request H301 requires a principal decision: Ask whether to retry through another identity or cancel the business request.",
+        "proposal": null,
+        "decision_options": [
+          {
+            "key": "approve",
+            "label": "Approve this one-time exception",
+            "instruction": "Approve this one-time exception",
+            "consequence": "H301: The one-time exception is authorized. This notice is not payment.",
+            "plan": {
+              "objective": "approve",
+              "actions": [
+                {
+                  "description": "approve",
+                  "action_identity": "synthetic-H301-notice-approve",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_direct_message",
+                  "target": {
+                    "user_id": "synthetic-U301"
+                  },
+                  "payload": {
+                    "content": "H301: The one-time exception is authorized. This notice is not payment."
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "Current request H301 and verified recipient synthetic-U301; no effect has occurred.",
+                  "references": [
+                    "synthetic-inline-evidence"
+                  ]
+                }
+              ],
+              "authored_judgment": "Notify only the selected current-instance decision; no payment or standing rule is executed."
+            },
+            "terminal_outcome": null,
+            "reason": null
+          },
+          {
+            "key": "decline",
+            "label": "Decline this one-time exception",
+            "instruction": "Decline this one-time exception",
+            "consequence": "H301: The one-time exception is declined.",
+            "plan": {
+              "objective": "decline",
+              "actions": [
+                {
+                  "description": "decline",
+                  "action_identity": "synthetic-H301-notice-decline",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_direct_message",
+                  "target": {
+                    "user_id": "synthetic-U301"
+                  },
+                  "payload": {
+                    "content": "H301: The one-time exception is declined."
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "Current request H301 and verified recipient synthetic-U301; no effect has occurred.",
+                  "references": [
+                    "synthetic-inline-evidence"
+                  ]
+                }
+              ],
+              "authored_judgment": "Notify only the selected current-instance decision; no payment or standing rule is executed."
+            },
+            "terminal_outcome": null,
+            "reason": null
+          }
+        ],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.95,
+        "rule_coverage": 0.5,
+        "information_completeness": 1.0,
+        "needs_human_reason": "Ask whether to retry through another identity or cancel the business request.",
+        "decision_basis": {
+          "verified_facts": [
+            {
+              "assertion": "The authoritative detail read for H301 returned HTTP 401 authorization_required. No form, ownership or business state was obtained, and there is no alternate authorized source.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "rule_evidence": [
+            {
+              "assertion": "Authorization failure is failed with the real technical error; never disguise it as a discretionary principal decision.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "quality_explanation": "Facts and recipient are verified; the decision and both notification consequences are stated.",
+          "no_external_action_evidence": [
+            {
+              "assertion": "No dispatch, provider message, payment, or other external action has occurred.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "conclusion": "Ask whether to retry through another identity or cancel the business request."
+        },
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "expected_audit": [
+        "return",
+        "reject"
+      ]
+    },
+    {
+      "id": "vague_reason",
+      "facts": "Current one-time exception H301 is CNY 600; all relevant facts and applicant synthetic-U301 are verified. No standing rule decides whether to authorize it. Only notification is registered, not payment.",
+      "skill_excerpt": "A complete discretionary current-instance request with no governing rule requires a concrete principal yes/no choice with exact bound notification plans. Notification is not payment and creates no future rule.",
+      "consumer_result": {
+        "outcome": "needs_human",
+        "summary": "Task H301: please choose.",
+        "proposal": null,
+        "decision_options": [
+          {
+            "key": "approve",
+            "label": "Approve this one-time exception",
+            "instruction": "Approve this one-time exception",
+            "consequence": "H301: The one-time exception is authorized. This notice is not payment.",
+            "plan": {
+              "objective": "approve",
+              "actions": [
+                {
+                  "description": "approve",
+                  "action_identity": "synthetic-H301-notice-approve",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_direct_message",
+                  "target": {
+                    "user_id": "synthetic-U301"
+                  },
+                  "payload": {
+                    "content": "H301: The one-time exception is authorized. This notice is not payment."
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "Current request H301 and verified recipient synthetic-U301; no effect has occurred.",
+                  "references": [
+                    "synthetic-inline-evidence"
+                  ]
+                }
+              ],
+              "authored_judgment": "Notify only the selected current-instance decision; no payment or standing rule is executed."
+            },
+            "terminal_outcome": null,
+            "reason": null
+          },
+          {
+            "key": "decline",
+            "label": "Decline this one-time exception",
+            "instruction": "Decline this one-time exception",
+            "consequence": "H301: The one-time exception is declined.",
+            "plan": {
+              "objective": "decline",
+              "actions": [
+                {
+                  "description": "decline",
+                  "action_identity": "synthetic-H301-notice-decline",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_direct_message",
+                  "target": {
+                    "user_id": "synthetic-U301"
+                  },
+                  "payload": {
+                    "content": "H301: The one-time exception is declined."
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "Current request H301 and verified recipient synthetic-U301; no effect has occurred.",
+                  "references": [
+                    "synthetic-inline-evidence"
+                  ]
+                }
+              ],
+              "authored_judgment": "Notify only the selected current-instance decision; no payment or standing rule is executed."
+            },
+            "terminal_outcome": null,
+            "reason": null
+          }
+        ],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.95,
+        "rule_coverage": 0.5,
+        "information_completeness": 1.0,
+        "needs_human_reason": "Need your decision.",
+        "decision_basis": {
+          "verified_facts": [
+            {
+              "assertion": "Task H301 exists.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "rule_evidence": [
+            {
+              "assertion": "Human decision may be required.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "quality_explanation": "Needs review.",
+          "no_external_action_evidence": [
+            {
+              "assertion": "No dispatch, provider message, payment, or other external action has occurred.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "conclusion": "Please choose."
+        },
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "expected_audit": [
+        "return",
+        "reject"
+      ]
+    },
+    {
+      "id": "false_alternatives",
+      "facts": "Current one-time exception H301 is CNY 600; all relevant facts and applicant synthetic-U301 are verified. No standing rule decides whether to authorize it. Only notification is registered, not payment.",
+      "skill_excerpt": "A complete discretionary current-instance request with no governing rule requires a concrete principal yes/no choice with exact bound notification plans. Notification is not payment and creates no future rule.",
+      "consumer_result": {
+        "outcome": "needs_human",
+        "summary": "Current request H301 requires a principal decision: Choose approval or decline for this exact exception.",
+        "proposal": null,
+        "decision_options": [
+          {
+            "key": "approve",
+            "label": "Approve this one-time exception",
+            "instruction": "Approve this one-time exception",
+            "consequence": "H301: The one-time exception is authorized. This notice is not payment.",
+            "plan": {
+              "objective": "approve",
+              "actions": [
+                {
+                  "description": "approve",
+                  "action_identity": "synthetic-H301-notice-approve",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_direct_message",
+                  "target": {
+                    "user_id": "synthetic-U301"
+                  },
+                  "payload": {
+                    "content": "H301: The one-time exception is authorized. This notice is not payment."
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "Current request H301 and verified recipient synthetic-U301; no effect has occurred.",
+                  "references": [
+                    "synthetic-inline-evidence"
+                  ]
+                }
+              ],
+              "authored_judgment": "Notify only the selected current-instance decision; no payment or standing rule is executed."
+            },
+            "terminal_outcome": null,
+            "reason": null
+          },
+          {
+            "key": "decline",
+            "label": "Decline this one-time exception",
+            "instruction": "Decline this one-time exception",
+            "consequence": "H301: The one-time exception is declined.",
+            "plan": {
+              "objective": "approve",
+              "actions": [
+                {
+                  "description": "approve",
+                  "action_identity": "synthetic-H301-notice-approve",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_direct_message",
+                  "target": {
+                    "user_id": "synthetic-U301"
+                  },
+                  "payload": {
+                    "content": "H301: The one-time exception is authorized. This notice is not payment."
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "Current request H301 and verified recipient synthetic-U301; no effect has occurred.",
+                  "references": [
+                    "synthetic-inline-evidence"
+                  ]
+                }
+              ],
+              "authored_judgment": "Notify only the selected current-instance decision; no payment or standing rule is executed."
+            },
+            "terminal_outcome": null,
+            "reason": null
+          }
+        ],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.95,
+        "rule_coverage": 0.5,
+        "information_completeness": 1.0,
+        "needs_human_reason": "Choose approval or decline for this exact exception.",
+        "decision_basis": {
+          "verified_facts": [
+            {
+              "assertion": "Current one-time exception H301 is CNY 600; all relevant facts and applicant synthetic-U301 are verified. No standing rule decides whether to authorize it. Only notification is registered, not payment.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "rule_evidence": [
+            {
+              "assertion": "A complete discretionary current-instance request with no governing rule requires a concrete principal yes/no choice with exact bound notification plans. Notification is not payment and creates no future rule.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "quality_explanation": "Facts and recipient are verified; the decision and both notification consequences are stated.",
+          "no_external_action_evidence": [
+            {
+              "assertion": "No dispatch, provider message, payment, or other external action has occurred.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "conclusion": "Choose approval or decline for this exact exception."
+        },
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "expected_audit": [
+        "return",
+        "reject"
+      ]
+    },
+    {
+      "id": "future_policy_question",
+      "facts": "Current one-time exception H301 is CNY 600; all relevant facts and applicant synthetic-U301 are verified. No standing rule decides whether to authorize it. Only notification is registered, not payment.",
+      "skill_excerpt": "A complete discretionary current-instance request with no governing rule requires a concrete principal yes/no choice with exact bound notification plans. Notification is not payment and creates no future rule.",
+      "consumer_result": {
+        "outcome": "needs_human",
+        "summary": "Current request H301 requires a principal decision: Choose a reusable rule for all future exception requests instead of this instance.",
+        "proposal": null,
+        "decision_options": [
+          {
+            "key": "always",
+            "label": "Always approve all future exceptions",
+            "instruction": "Always approve all future exceptions",
+            "consequence": "For H301 and every future exception, adopt an automatic approval standing policy.",
+            "plan": {
+              "objective": "always",
+              "actions": [
+                {
+                  "description": "always",
+                  "action_identity": "synthetic-H301-notice-always",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_direct_message",
+                  "target": {
+                    "user_id": "synthetic-U301"
+                  },
+                  "payload": {
+                    "content": "For H301 and every future exception, adopt an automatic approval standing policy."
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "Current request H301 and verified recipient synthetic-U301; no effect has occurred.",
+                  "references": [
+                    "synthetic-inline-evidence"
+                  ]
+                }
+              ],
+              "authored_judgment": "Notify only the selected current-instance decision; no payment or standing rule is executed."
+            },
+            "terminal_outcome": null,
+            "reason": null
+          },
+          {
+            "key": "never",
+            "label": "Never approve any future exception",
+            "instruction": "Never approve any future exception",
+            "consequence": "For H301 and every future exception, adopt an automatic rejection standing policy.",
+            "plan": {
+              "objective": "never",
+              "actions": [
+                {
+                  "description": "never",
+                  "action_identity": "synthetic-H301-notice-never",
+                  "capability": "dingtalk-chat",
+                  "operation": "send_direct_message",
+                  "target": {
+                    "user_id": "synthetic-U301"
+                  },
+                  "payload": {
+                    "content": "For H301 and every future exception, adopt an automatic rejection standing policy."
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "Current request H301 and verified recipient synthetic-U301; no effect has occurred.",
+                  "references": [
+                    "synthetic-inline-evidence"
+                  ]
+                }
+              ],
+              "authored_judgment": "Notify only the selected current-instance decision; no payment or standing rule is executed."
+            },
+            "terminal_outcome": null,
+            "reason": null
+          }
+        ],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.95,
+        "rule_coverage": 0.5,
+        "information_completeness": 1.0,
+        "needs_human_reason": "Choose a reusable rule for all future exception requests instead of this instance.",
+        "decision_basis": {
+          "verified_facts": [
+            {
+              "assertion": "Current one-time exception H301 is CNY 600; all relevant facts and applicant synthetic-U301 are verified. No standing rule decides whether to authorize it. Only notification is registered, not payment.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "rule_evidence": [
+            {
+              "assertion": "A complete discretionary current-instance request with no governing rule requires a concrete principal yes/no choice with exact bound notification plans. Notification is not payment and creates no future rule.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "quality_explanation": "Facts and recipient are verified; the decision and both notification consequences are stated.",
+          "no_external_action_evidence": [
+            {
+              "assertion": "No dispatch, provider message, payment, or other external action has occurred.",
+              "references": [
+                "synthetic-inline-evidence"
+              ]
+            }
+          ],
+          "conclusion": "Choose a reusable rule for all future exception requests instead of this instance."
+        },
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "expected_audit": [
+        "return",
+        "reject"
+      ]
+    }
+  ],
+  "replaces": "v1 positive open-input quality explanation falsely asserted verified recipient and two notification consequences; v1 retained unchanged"
+}

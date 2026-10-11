@@ -1,0 +1,1 @@
+Use the configured agent_cli read_skill once. In code mode inspect ALL_TOOLS and return JSON with keys nonce and tool_names, using the actual read_skill result and exact catalog names. Do not call send_approved_dingtalk_message, consumer_document_write, shell, or apply_patch.

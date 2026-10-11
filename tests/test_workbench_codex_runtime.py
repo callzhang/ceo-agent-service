@@ -267,6 +267,9 @@ def test_command_uses_service_auto_review_without_approval_bypass(
     assert "include_permissions_instructions=false" not in command
     assert "workbench_confirmation" not in command_text
     assert "request_reviewed_action" not in command_text
+    assert "features.shell_tool=false" not in command
+    assert "features.unified_exec=false" not in command
+    assert not any(option.startswith("mcp_servers.agent_cli.") for option in command)
     assert "-m" in command and "gpt-example" in command
     assert "--image" in command and str(image) in command
 
@@ -801,7 +804,10 @@ def test_credential_shaped_assistant_text_is_preserved_in_white_box_timeline(
     assert result.final_text == "api_token=credential-value-1234"
     assert any(
         event.event_type == "text_delta"
-        and event.payload_json_value() == {"text": "api_token=credential-value-1234"}
+        and event.payload_json_value() == {
+            "text": "api_token=credential-value-1234",
+            "native_ordinal": 1,
+        }
         for event in events
     )
 

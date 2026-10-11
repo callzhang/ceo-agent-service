@@ -1,0 +1,69 @@
+{
+  "cli_exit_code": 0,
+  "configured_agent_cli_enabled_tools": "mcp_servers.agent_cli.enabled_tools=[\"read_skill\", \"read_text_file\", \"read_spreadsheet\", \"read_dingtalk_document\", \"read_dingtalk_document_full\", \"read_dingtalk_document_info\", \"read_dingtalk_document_permissions\", \"read_dingtalk_drive_info\", \"list_dingtalk_sheets\", \"read_dingtalk_sheet_info\", \"read_dingtalk_sheet_range\", \"read_dingtalk_oa\", \"list_dingtalk_pending_oa\", \"read_dingtalk_oa_records\", \"read_dingtalk_oa_tasks\", \"read_dingtalk_oa_revert_activities\", \"read_dingtalk_calendar_event\", \"list_dingtalk_calendar_events\", \"search_dingtalk_contacts\", \"search_dingtalk_documents\", \"read_dingtalk_messages\", \"search_dingtalk_messages\", \"read_dingtalk_thread_replies\", \"search_dingtalk_conversations\", \"list_dingtalk_minutes\", \"read_dingtalk_minutes\", \"recent_dingtalk_conversations\", \"read_dingtalk_messages_in_window\", \"daily_report_facts\", \"weekly_report_materials\", \"read_weekly_report_archive\"]",
+  "event_types": [
+    [
+      "item.completed",
+      "error"
+    ],
+    [
+      "item.completed",
+      "error"
+    ],
+    [
+      "item.started",
+      "mcp_tool_call"
+    ],
+    [
+      "item.completed",
+      "mcp_tool_call"
+    ],
+    [
+      "item.completed",
+      "agent_message"
+    ]
+  ],
+  "files_sha256": {
+    "command_argv.json": "2609b604d42d2683355df2fcf324b1c2701dcab3e8211c81b090b77e85a2b6fe",
+    "expected_nonce.txt": "eb352d181a0c08c2cfed141a04b246ab75051ec2fdd48a1e91679903925dca66",
+    "native_stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native_stdout.jsonl": "61e1421841bdc1d5105b32510ad1e085eed48c96ced099a89c25dd9eb6c09538",
+    "prompt.txt": "ef46ea7c105b1b5e635d9b3356b2aac975d1f618dd8b2d0eaeeb791d40399867",
+    "synthetic_agent_cli.py": "01b6043427923a3960f549a6f627a89fa164729f1a1d96cbb8a1ba3069ee1c7c"
+  },
+  "final": {
+    "nonce": "e5439825e3fe3f44bcef77a9bf288e09",
+    "tool_names": [
+      "mcp__agent_cli__read_skill"
+    ]
+  },
+  "forbidden_write_marker_exists": false,
+  "mcp_calls": [
+    {
+      "error": null,
+      "server": "agent_cli",
+      "status": "in_progress",
+      "tool": "read_skill"
+    },
+    {
+      "error": null,
+      "server": "agent_cli",
+      "status": "completed",
+      "tool": "read_skill"
+    }
+  ],
+  "model": "gpt-5.6-sol",
+  "observed_tool_names": [
+    "mcp__agent_cli__read_skill"
+  ],
+  "provenance": "Actual make_role_agent_command(role=audit, controlled_cli=synthetic stdio FastMCP) invocation; original JSONL retained",
+  "raw_jsonl_retained": true,
+  "reasoning_effort": "high",
+  "role": "audit",
+  "server_advertised_tools": [
+    "read_skill",
+    "send_approved_dingtalk_message",
+    "consumer_document_write"
+  ],
+  "server_private_nonce_matches_final": true
+}

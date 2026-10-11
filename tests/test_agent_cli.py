@@ -2,18 +2,91 @@ import asyncio
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 import zipfile
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
+from mcp.server.fastmcp.exceptions import ToolError
 
 import app.agent_cli as agent_cli
 from app.agent_result import EffectKind
 from app.feedback_spike import prepare_outgoing_reply_text
 from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.native_cli_metadata import AgentReadOnlyViolationError
+
+
+def test_weekly_report_tool_declares_metric_array_and_rejects_object_mapping():
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
+    arguments = {"manifest": {}, "report": {"company_metrics": {"orders": {"current": "无数据"}}}, "previous_issues": []}
+    with pytest.raises(ValidationError) as error:
+        tool.fn_metadata.arg_model.model_validate(arguments)
+    assert ("report", "company_metrics") in [entry["loc"] for entry in error.value.errors()]
+    report_schema = tool.parameters["$defs"]["WeeklyReport"]
+    assert report_schema["properties"]["company_metrics"]["type"] == "array"
+
+
+def test_weekly_report_tool_preserves_complete_input_and_business_checks():
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
+    arguments = {
+        "manifest": {"future_metadata": {"nested": [None, True, 3]}},
+        "report": {"company_metrics": [{"key": "orders", "current": "无数据", "future_value": {"a": [1, None]}}], "future_section": {"data": True}},
+        "previous_issues": [{"id": "COMP-001", "future_evidence": [False]}],
+    }
+    assert tool.fn_metadata.arg_model.model_validate(arguments).model_dump() == arguments
+
+
+@pytest.mark.parametrize("field", ["minutes", "messages", "target", "previous", "business_reports"])
+def test_weekly_report_tool_rejects_list_where_manifest_requires_object(field):
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
+    with pytest.raises(ValidationError) as error:
+        tool.fn_metadata.arg_model.model_validate({"manifest": {field: []}, "report": {}, "previous_issues": []})
+    assert ("manifest", field) in [entry["loc"] for entry in error.value.errors()]
+
+
+def test_weekly_report_native_tool_reports_shape_error_before_business_call(monkeypatch):
+    def unexpected_business_call(*args):
+        pytest.fail("malformed input reached business validation")
+
+    monkeypatch.setattr(agent_cli, "_bound_report", unexpected_business_call)
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
+    with pytest.raises(ToolError, match=r"report.company_metrics"):
+        asyncio.run(tool.run({"manifest": {}, "report": {"company_metrics": {"orders": {}}}, "previous_issues": []}))
+
+
+def test_weekly_report_tool_preserves_nullable_business_values():
+    arguments = {"manifest": {}, "report": {
+        "company_metrics": [{"key": "orders", "current": "无数据", "data_date": None, "decision_critical": False, "responsible_user_id": None}],
+        "issues": [{"id": "COMP-001", "deadline": None, "as_of": None, "status": None}],
+        "claims": [{"type": "hypothesis_pending_validation", "evidence": None}],
+    }, "previous_issues": []}
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
+    assert tool.fn_metadata.arg_model.model_validate(arguments).model_dump() == arguments
+
+
+def test_weekly_report_complete_skill_fixture_remains_publishable():
+    # Isolate the standalone Skill's `scripts` package from the service package.
+    code = '''
+import pathlib, runpy, sys
+from app.agent_cli import build_role_server
+root = pathlib.Path("ci/shared-skills/ceo-weekly-report").resolve()
+sys.path.insert(0, str(root))
+fixture = runpy.run_path(str(root / "tests/test_report_contract.py"))
+sample = fixture["ReportContractTests"]()
+report = sample.complete_report()
+report["company_metrics"][0]["data_date"] = None
+report["issues"] = [{"id": "COMP-001", "deadline": None}]
+report["claims"] = [{"type": "hypothesis_pending_validation", "evidence": None}]
+arguments = {"manifest": sample.complete_manifest(), "report": report, "previous_issues": []}
+tool = build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
+validated = tool.fn_metadata.arg_model.model_validate(arguments).model_dump()
+assert validated == arguments
+assert fixture["validate_run"](**arguments) == fixture["validate_run"](**validated) == {"publishable": True, "errors": []}
+'''
+    subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[1], check=True, capture_output=True, text=True)
 
 
 def test_agent_cli_mcp_tools_publish_searchable_descriptions():
@@ -24,356 +97,11 @@ def test_agent_cli_mcp_tools_publish_searchable_descriptions():
         "read_skill",
         "read_text_file",
         "read_spreadsheet",
-        "execute_audited_email_unsubscribe",
-        "unsubscribe_email",
-        "send_approved_dingtalk_message",
     }
     assert all(description.strip() for description in descriptions.values())
     assert "PDF" in descriptions["read_text_file"]
-    assert "email unsubscribe" in descriptions["execute_audited_email_unsubscribe"]
-    assert "Unsubscribe this email task" in descriptions["unsubscribe_email"]
-    assert (
-        "exact prepared DingTalk action"
-        in descriptions["send_approved_dingtalk_message"]
-    )
-    assert "Consumer and Audit commands" in agent_cli.server.instructions
+    assert "task-bound server catalog" in agent_cli.server.instructions
     assert "execute_email_unsubscribe" not in descriptions
-
-
-def test_approved_dingtalk_message_tool_reaches_service_helper(monkeypatch, tmp_path):
-    import app.config as config
-
-    calls = []
-    db_path = tmp_path / "worker.sqlite3"
-    monkeypatch.setattr(config, "worker_db_path", lambda: db_path)
-    monkeypatch.setattr(
-        agent_cli,
-        "send_approved_dingtalk_message",
-        lambda received_db, task_id, action_identity: (
-            calls.append((received_db, task_id, action_identity))
-            or {"delivery_status": "sent"}
-        ),
-    )
-
-    result = asyncio.run(
-        agent_cli.send_approved_dingtalk_message_tool(17, "clarify-scope")
-    )
-
-    assert result == {"delivery_status": "sent"}
-    assert calls == [(db_path, 17, "clarify-scope")]
-
-
-@pytest.mark.parametrize(
-    ("channel", "proposal_target", "sent_to", "trigger_message_json"),
-    [
-        ("dingtalk", {"open_dingtalk_id": "open-recipient"},
-         ("user_id", "user-recipient"), json.dumps({
-             "open_conversation_id": "cid-trigger",
-             "open_message_id": "msg-trigger",
-             "conversation_title": "Direct chat",
-             "single_chat": True,
-             "sender_name": "Sender",
-             "sender_open_dingtalk_id": "open-recipient",
-             "sender_user_id": None,
-             "create_time": "2026-09-21 10:00:00",
-             "content": "Please clarify",
-         })),
-        ("dingtalk", {"conversation_id": "cid-trigger", "open_dingtalk_id": "open-recipient"},
-         ("user_id", "user-recipient"), json.dumps({
-             "open_conversation_id": "cid-trigger",
-             "open_message_id": "msg-trigger",
-             "conversation_title": "Direct chat",
-             "single_chat": True,
-             "sender_name": "Sender",
-             "sender_open_dingtalk_id": "open-recipient",
-             "sender_user_id": None,
-             "create_time": "2026-09-21 10:00:00",
-             "content": "Please clarify",
-         })),
-        # A scheduled task (the CEO daily report) messages Derek by user id
-        # from his own account (Derek 2026-09-24).
-        ("scheduled", {"user_id": "derek-user"}, ("user_id", "derek-user"), None),
-    ],
-)
-def test_approved_dingtalk_message_uses_persisted_proposal_body_and_target(
-    tmp_path, channel, proposal_target, sent_to, trigger_message_json
-):
-    from app.service_message_sender import agent_message_delivery_key
-    from app.store import AgentRole, AutoReplyStore
-
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    assert store.enqueue_reply_task(
-        conversation_id="cid-trigger",
-        conversation_title="Direct chat",
-        single_chat=True,
-        trigger_message_id="msg-trigger",
-        trigger_create_time="2026-09-21 10:00:00",
-        trigger_sender="Sender",
-        trigger_text="Please clarify",
-        trigger_message_json=trigger_message_json or "",
-        execution_generation="generation-1",
-        channel=channel,
-    )
-    # Scheduled executions are claimed by their own dispatcher adapter; the
-    # send path only needs the task and its running Audit run.
-    [task] = store.list_reply_tasks(channel=channel)
-    consumer = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.CONSUMER,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=None,
-        operation_id="",
-        owner="consumer",
-    ).run
-    store.complete_agent_run(
-        consumer.id,
-        {
-            "outcome": "proposal",
-            "summary": "Ask one clarification.",
-            "proposal": {
-                "objective": "Clarify scope",
-                "actions": [
-                    {
-                        "description": "Ask the sender.",
-                        "action_identity": "clarify-scope",
-                        "capability": "dingtalk-chat",
-                        "operation": "send_direct_message",
-                        "effect": "external",
-                        "target": proposal_target,
-                        "payload": {"content": "Which scope?"},
-                    }
-                ],
-                "sourced_facts": [],
-                "authored_judgment": "Clarification is required.",
-            },
-            "decision_options": [],
-            "error": {
-                "code": "",
-                "retryable": False,
-                "authorization_required": False,
-            },
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 0.4,
-        },
-        owner="consumer",
-    )
-    audit = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=consumer.id,
-        operation_id="audit-1",
-        owner="audit",
-    ).run
-    assert audit.status == "running"
-    delivery_key = agent_message_delivery_key(
-        business_object_key=task.business_object_key,
-        action_identity="clarify-scope",
-        execution_generation=task.execution_generation,
-        proposal_revision=0,
-    )
-    prepared = store.prepare_outbound_postfix(
-        "dingtalk", delivery_key, "Which scope?", "Please clarify"
-    )
-
-    class FakeDws:
-        def __init__(self):
-            self.calls = []
-
-        def send_message(self, conversation_id, text, **target):
-            self.calls.append((conversation_id, text, target))
-            return {"success": True, "result": {"openTaskId": "task-1"}}
-
-        @staticmethod
-        def resolve_message_sender(message):
-            assert message.sender_open_dingtalk_id == "open-recipient"
-            return "user-recipient"
-
-        @staticmethod
-        def verify_message_send_result(result):
-            assert result["result"]["openTaskId"] == "task-1"
-            return {"state": "sent", "open_task_id": "task-1"}
-
-    dws = FakeDws()
-    result = agent_cli.send_approved_dingtalk_message(
-        store.path,
-        task.id,
-        "clarify-scope",
-        dws_client=dws,
-    )
-
-    assert result["delivery_status"] == "sent"
-    assert result["delivery_key"] == delivery_key
-    assert dws.calls[0][0] is None
-    assert dws.calls[0][1] == prepared.final_body
-    assert dws.calls[0][2][sent_to[0]] == sent_to[1]
-    assert dws.calls[0][2]["idempotency_uuid"]
-
-
-@pytest.mark.parametrize("verification_state", ("sent", "pending"))
-def test_approved_dingtalk_reply_uses_persisted_trigger_and_reuses_receipt(
-    tmp_path, verification_state
-):
-    from app.dingtalk_models import DingTalkMessage
-    from app.service_message_sender import agent_message_delivery_key
-    from app.store import AgentRole, AutoReplyStore
-
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    trigger = DingTalkMessage(
-        open_conversation_id="cid-trigger",
-        open_message_id="msg-trigger",
-        conversation_title="Friday",
-        single_chat=False,
-        sender_name="Reporter",
-        sender_open_dingtalk_id="open-reporter",
-        create_time="2026-09-22 10:00:00",
-        content="Please close the loop",
-    )
-    assert store.enqueue_reply_task(
-        conversation_id=trigger.open_conversation_id,
-        conversation_title=trigger.conversation_title,
-        single_chat=trigger.single_chat,
-        trigger_message_id=trigger.open_message_id,
-        trigger_create_time=trigger.create_time,
-        trigger_sender=trigger.sender_name,
-        trigger_text=trigger.content,
-        trigger_message_json=trigger.model_dump_json(),
-        execution_generation="generation-1",
-    )
-    task = store.claim_reply_tasks(limit=1)[0]
-    consumer = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.CONSUMER,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=None,
-        operation_id="",
-        owner="consumer",
-    ).run
-    store.complete_agent_run(
-        consumer.id,
-        {
-            "outcome": "proposal",
-            "summary": "Reply to the report.",
-            "proposal": {
-                "objective": "Close the loop",
-                "actions": [
-                    {
-                        "description": "Reply to the triggering report.",
-                        "action_identity": "reply-to-report",
-                        "capability": "dingtalk-chat",
-                        "operation": "messages-reply",
-                        "effect": "external",
-                        "target": {
-                            "conversation_id": trigger.open_conversation_id,
-                            "message_id": trigger.open_message_id,
-                        },
-                        "payload": {"content": "Please send the success receipt."},
-                    }
-                ],
-                "sourced_facts": [],
-                "authored_judgment": "A reply is required.",
-            },
-            "decision_options": [],
-            "error": {
-                "code": "",
-                "retryable": False,
-                "authorization_required": False,
-            },
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-        },
-        owner="consumer",
-    )
-    audit = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=consumer.id,
-        operation_id="audit-reply",
-        owner="audit",
-    ).run
-    assert audit.status == "running"
-    delivery_key = agent_message_delivery_key(
-        business_object_key=task.business_object_key,
-        action_identity="reply-to-report",
-        execution_generation=task.execution_generation,
-        proposal_revision=0,
-    )
-    prepared = store.prepare_outbound_postfix(
-        "dingtalk",
-        delivery_key,
-        "Please send the success receipt.",
-        trigger.content,
-    )
-
-    class FakeDws:
-        def __init__(self):
-            self.calls = []
-
-        def send_reply_to_trigger(self, conversation, received_trigger, text):
-            self.calls.append((conversation, received_trigger, text))
-            return {"success": True, "result": {"processQueryKey": "reply-1"}}
-
-        @staticmethod
-        def verify_message_send_result(result):
-            assert result["result"]["processQueryKey"] == "reply-1"
-            return {"state": verification_state, "open_task_id": ""}
-
-    dws = FakeDws()
-    if verification_state != "sent":
-        with pytest.raises(RuntimeError, match="dingtalk_message_delivery_pending"):
-            agent_cli.send_approved_dingtalk_message(
-                store.path, task.id, "reply-to-report", dws_client=dws
-            )
-        assert store.list_sent_replies_after(0) == []
-        assert store.get_reply_task(task.id).status == "processing"
-        return
-    first = agent_cli.send_approved_dingtalk_message(
-        store.path,
-        task.id,
-        "reply-to-report",
-        dws_client=dws,
-    )
-    replay = agent_cli.send_approved_dingtalk_message(
-        store.path,
-        task.id,
-        "reply-to-report",
-        dws_client=dws,
-    )
-
-    assert first == replay
-    assert first["delivery_status"] == "sent"
-    assert first["delivery_key"] == delivery_key
-    assert len(dws.calls) == 1
-    conversation, received_trigger, text = dws.calls[0]
-    assert conversation.open_conversation_id == trigger.open_conversation_id
-    assert received_trigger == trigger
-    assert text == prepared.final_body
-
-    # Provider evidence must survive an Audit result-serialization failure.
-    store.fail_agent_run(
-        audit.id,
-        {"code": "codex_result_invalid", "retryable": True},
-        owner="audit",
-    )
-    replies = store.list_sent_replies_after(0)
-    assert len(replies) == 1
-    assert replies[0].agent_run_id == audit.id
-    assert replies[0].reply_text == prepared.final_body
-    assert replies[0].external_action_key
-    assert store.get_reply_task(task.id).status == "processing"
 
 
 def test_audited_email_unsubscribe_tool_reaches_worker_helper(monkeypatch, tmp_path):
@@ -420,7 +148,7 @@ def test_audited_email_unsubscribe_tool_reaches_worker_helper(monkeypatch, tmp_p
     assert calls == [(db_path, 17, "generation-17", 29, accepted_action)]
 
 
-def test_registered_audited_unsubscribe_does_not_block_mcp_event_loop(
+def test_unregistered_audited_unsubscribe_helper_does_not_block_event_loop(
     monkeypatch,
     tmp_path,
 ):
@@ -443,17 +171,9 @@ def test_registered_audited_unsubscribe_does_not_block_mcp_event_loop(
         timer.start()
         try:
             call = asyncio.create_task(
-                agent_cli.server.call_tool(
-                    "execute_audited_email_unsubscribe",
-                    {
-                        "task_id": 17,
-                        "execution_generation": "generation-17",
-                        "audit_agent_run_id": 29,
-                        "accepted_action": {
-                            "operation": "unsubscribe",
-                            "target": {"id": "opaque"},
-                        },
-                    },
+                agent_cli.execute_audited_email_unsubscribe_tool(
+                    17, "generation-17", 29,
+                    {"operation": "unsubscribe", "target": {"id": "opaque"}},
                 )
             )
             await asyncio.sleep(0.05)
@@ -467,11 +187,11 @@ def test_registered_audited_unsubscribe_does_not_block_mcp_event_loop(
     responsive_after, result = asyncio.run(exercise())
 
     assert responsive_after < 0.15
-    assert isinstance(result, tuple)
-    assert result[1] == {"status": "done", "summary": "fake result"}
+    assert result == {"status": "done", "summary": "fake result"}
 
 
-def test_registered_reaction_write_is_accepted_when_dws_schema_is_incomplete():
+def test_registered_reaction_write_is_accepted_when_dws_schema_is_incomplete(monkeypatch):
+    monkeypatch.setattr(agent_cli.shutil, "which", lambda name: f"/test/bin/{name}")
     class Unclassified:
         @staticmethod
         def classify(_item):
@@ -687,6 +407,92 @@ def test_read_skill_ignores_missing_configured_roots(
 
     assert result["path"] == str(skill_path.resolve())
     assert result["name"] == "business-review"
+
+
+def test_read_skill_tool_discovers_metadata_and_reads_exact_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    root = tmp_path / "skills"
+    skill_path = root / "business-review" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text(
+        "---\nname: business-review\n"
+        "description: Review business material: with evidence.\n"
+        "metadata:\n  requires:\n    bins:\n      - tool\n"
+        "---\n\nEXACT BODY\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (root,))
+    tool = agent_cli.build_role_server("audit")._tool_manager.get_tool("read_skill").fn
+    descriptor = next(
+        item
+        for item in asyncio.run(agent_cli.build_role_server("audit").list_tools())
+        if item.name == "read_skill"
+    )
+
+    discovered = tool()
+    assert discovered == {
+        "skills": [{
+            "name": "business-review",
+            "description": "Review business material: with evidence.",
+            "path": str(skill_path.resolve()),
+        }]
+    }
+    assert "EXACT BODY" not in json.dumps(discovered)
+    assert set(descriptor.inputSchema["properties"]) == {"path", "name"}
+    assert "required" not in descriptor.inputSchema
+    by_name = tool(name="business-review")
+    by_path = tool(path=str(skill_path))
+    assert by_name == by_path
+    assert tool(name="business-review", path=None) == by_name
+    assert tool(path=str(skill_path), name=None) == by_path
+    assert by_name["content"].endswith("EXACT BODY\n")
+    with pytest.raises(ValueError, match="only one"):
+        tool(path=str(skill_path), name="business-review")
+    with pytest.raises(ValueError, match="unknown"):
+        tool(name="missing")
+
+
+def test_read_skill_tool_rejects_ambiguous_installed_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    roots = (tmp_path / "one", tmp_path / "two")
+    for root in roots:
+        path = root / "same" / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            "---\nname: same\ndescription: Same.\n---\n\nBODY\n",
+            encoding="utf-8",
+        )
+    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", roots)
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("read_skill").fn
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        tool(name="same")
+
+
+def test_read_skill_discovery_excludes_skill_symlink_outside_authorized_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    root = tmp_path / "skills"
+    root.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text(
+        "---\nname: secret-skill\ndescription: SECRET SENTINEL\n---\n",
+        encoding="utf-8",
+    )
+    linked = root / "linked" / "SKILL.md"
+    linked.parent.mkdir()
+    linked.symlink_to(outside)
+    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (root,))
+    tool = agent_cli.build_role_server("audit")._tool_manager.get_tool("read_skill").fn
+
+    discovered = tool()
+
+    assert discovered == {"skills": []}
+    assert "SECRET SENTINEL" not in json.dumps(discovered)
+    with pytest.raises(ValueError, match="unknown"):
+        tool(name="secret-skill")
 
 
 @pytest.mark.parametrize("alias", ("tilde", "symlink"))

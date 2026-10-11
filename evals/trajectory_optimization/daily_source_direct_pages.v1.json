@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "low",
+  "source_records": 100,
+  "mechanism": "Both arms use identical five-record MCP pages and unchanged Skill/source/prompt. Candidate sets native features.code_mode_host=false and features.code_mode=false; baseline retains defaults. Inspect actual exposed tools and native trajectory to establish whether pages enter context directly. No production configuration change.",
+  "criteria": "All 20 pages consumed, original IDs and business owners and numeric amounts for both seeded interventions, source_count 100, no source output truncation, no shell or business action. CLI feature acceptance alone does not prove direct tool transport.",
+  "cases": [
+    {"id":"group-window", "tool":"read_dingtalk_messages_in_window", "critical_indices":[42,99], "projects":["Delta","Vega"], "amounts":[32000,58000], "owners":["Avery","Alex"]}
+  ]
+}

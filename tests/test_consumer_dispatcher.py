@@ -115,6 +115,32 @@ def _work_summary(store: AutoReplyStore) -> int:
     return store.enqueue_work_summary_input("reply_attempt", "task-1", "{}")
 
 
+@pytest.mark.parametrize("claim_path", ["dispatcher", "legacy"])
+def test_due_meeting_retry_does_not_starve_earlier_pending_attempt(
+    tmp_path: Path, claim_path: str
+) -> None:
+    store = _store(tmp_path)
+    retry_id = _meeting(store)
+    store.update_meeting_alignment_job(
+        retry_id, status="retry", available_at=(NOW - timedelta(minutes=1)).isoformat()
+    )
+    pending_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-2", title="New meeting", source_json="{}",
+        participants_json="[]", ended_at=(NOW - timedelta(minutes=5)).isoformat(),
+        eligible_at=(NOW - timedelta(minutes=3)).isoformat(), status="pending",
+    )
+    if claim_path == "dispatcher":
+        envelope = MeetingQueueAdapter(store).claim(
+            NOW, owner="dispatcher", owner_pid=42, lease=timedelta(minutes=5)
+        )
+        assert envelope is not None
+        claimed_id = int(envelope.source_id)
+    else:
+        claimed_id = store.claim_meeting_alignment_jobs(1, NOW.isoformat())[0].id
+    assert claimed_id == pending_id
+    assert store.get_meeting_alignment_job(retry_id).status == "retry"
+
+
 def _okr_review(store: AutoReplyStore, *, index: int = 1) -> int:
     return store.create_okr_review_request(
         conversation_id=f"okr-cid-{index}",
@@ -2425,3 +2451,68 @@ def test_a_finished_claim_that_lets_go_is_claimable_while_its_owner_lives(
     )
     assert reclaimed is not None
     assert reclaimed.source_id == envelope.source_id
+
+
+@pytest.mark.parametrize("scheduled", [False, True])
+def test_reply_handler_errors_stop_after_three_claims_with_backoff(tmp_path, scheduled):
+    from app.dispatcher.adapters import ScheduledExecutionQueueAdapter
+    store = _store(tmp_path)
+    _reply(store)
+    if scheduled:
+        with store._connect() as db:
+            db.execute("update reply_tasks set channel='scheduled' where id=1")
+    adapter = (ScheduledExecutionQueueAdapter if scheduled else ReplyQueueAdapter)(store, owner_alive=lambda _pid: False)
+    when = NOW
+    for attempt in range(1, 4):
+        envelope = adapter.claim(when, owner='test', owner_pid=101, lease=timedelta(minutes=5))
+        assert envelope is not None and envelope.attempt == attempt
+        adapter.handle_handler_error(envelope, owner='test', now=when, error='root failure')
+        task = store.get_reply_task(1)
+        assert task.attempts == attempt
+        assert task.execution_generation == 'generation-7'
+        assert task.error == 'root failure'
+        if attempt < 3:
+            assert task.status == 'pending'
+            assert adapter.claim(when, owner='test', owner_pid=101, lease=timedelta(minutes=5)) is None
+            when += timedelta(seconds=60 * 2 ** (attempt - 1))
+        else:
+            assert task.status == 'failed'
+            assert adapter.claim(when + timedelta(days=1), owner='test', owner_pid=101, lease=timedelta(minutes=5)) is None
+
+
+@pytest.mark.parametrize("scheduled", [False, True])
+@pytest.mark.parametrize("expired", [False, True])
+def test_reply_lease_completion_compacts_deferred_settled_input(tmp_path, scheduled, expired):
+    from app.dispatcher.adapters import ScheduledExecutionQueueAdapter
+
+    store = _store(tmp_path)
+    task = store.ensure_reply_task(
+        channel="scheduled" if scheduled else "dingtalk",
+        conversation_id="cid-compact-lease", conversation_title="Source",
+        single_chat=False, trigger_message_id="msg-compact-lease",
+        trigger_create_time=NOW.isoformat(), trigger_sender="Sender",
+        trigger_text="Original input with dispatcher lease",
+        trigger_message_json='{"content":"Original input with dispatcher lease"}',
+    )
+    adapter = (ScheduledExecutionQueueAdapter if scheduled else ReplyQueueAdapter)(store)
+    when = datetime.now(UTC)
+    envelope = adapter.claim(when, owner="owner-a", owner_pid=101,
+                             lease=timedelta(minutes=5))
+    assert envelope is not None
+    if expired:
+        with store._connect() as db:
+            db.execute(
+                "update dispatcher_claim_leases set lease_expires_at=? "
+                "where adapter_name=? and source_id=?",
+                ("2000-01-01 00:00:00", adapter.name, str(task.id)),
+            )
+    claimed = store.get_reply_task(task.id)
+    assert claimed is not None
+    store.complete_reply_task(task.id,
+                              expected_execution_generation=claimed.execution_generation)
+    assert store.get_reply_task(task.id).status == "done"
+    assert not store.get_reply_task(task.id).input_compacted
+    adapter.complete(envelope, owner="owner-a", now=when + timedelta(seconds=1))
+    settled = store.get_reply_task(task.id)
+    assert settled is not None and settled.input_compacted
+    assert settled.trigger_text == ""

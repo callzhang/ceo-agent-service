@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Callable, Mapping
 from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
 
 from app.agent_context import _AUDIT_AGENT_RULES, _CONSUMER_AGENT_RULES, AgentTaskContext
+from app.action_contract_catalog import action_contract_catalog, system_action_contract_document
 from app.agent_contracts import (
     DINGTALK_MESSAGE_CHANNELS,
     AuditAgentResult,
@@ -16,18 +18,11 @@ from app.agent_contracts import (
     ProposedAction,
     dingtalk_chat_delivery,
 )
-from app.agent_effect_claim import (
-    EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT,
-    channel_is_judged_by_tool_events,
-    claims_external_action_without_tools,
-    generation_tool_events,
-)
 from app.agent_result import ResultParseError
 from app.agent_effects import LEASE_SECONDS
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import RuntimeKind
 from app.agent_runtime_router import AgentRuntimeRouter
-from app.agent_effect_guard import provider_receipts
 from app.agent_turn_runner import (
     AgentTurnProcess,
     AgentTurnRunResult,
@@ -44,6 +39,7 @@ from app.audit_rules import validate_audit_rules_text
 from app.business_skills import (
     BUNDLED_BUSINESS_SKILL_NAMES,
     default_skill_catalog,
+    frozen_task_skill_names,
     installed_runtime_skills,
     render_business_skill_protocol,
 )
@@ -53,10 +49,19 @@ from app.codex_history import find_codex_session_path
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.config import principal_display_name
-from app.prompt import runtime_context_instruction, work_profile_instruction
+from app.prompt import runtime_context_instruction
+from app.prompt_composition import (
+    PromptConfiguration,
+    PromptSection,
+    compose_consumer_task_assembly,
+    load_prompt_configuration,
+    prompt_section_facts,
+    render_prompt_sections,
+)
+from app.runtime_prompt_context import explicit_participant_timezones
 from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.store import AgentRole, AutoReplyStore, ReplyTask
-from app.wechat.codex_safety import make_consumer_agent_command
+from app.wechat.codex_safety import ControlledCliConfig, make_consumer_agent_command
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 # The Consumer's output schema is generated from ConsumerAgentResult at prompt
@@ -74,214 +79,123 @@ CONSUMER_DYNAMIC_SKILL_SENTENCE = (
     "Consumer Agent A independently selects and reads every applicable business and operation Skill before forming the candidate. Provider command names, MCP tools, receipts, and readback procedures belong to the Agent/runtime capability and are not application review conditions."
 )
 AUDIT_DYNAMIC_SKILL_SENTENCE = (
-    "Audit Agent B independently selects and applies every applicable business and operation Skill to the typed candidate. Legacy revision_required is accepted only as an input alias and is normalized to the canonical feedback_provided output. Provider command names, MCP tools, receipts, and readback procedures remain runtime-owned."
+    "Audit Agent B independently selects and applies every applicable business and operation Skill to the typed candidate. Review the whole candidate with approve, return or reject; execution is owned by system code. Provider command names, MCP tools, receipts, and readback procedures remain runtime-owned."
 )
 AUDIT_DYNAMIC_SKILL_COMPATIBILITY = f"{DYNAMIC_SKILL_MARKER} {AUDIT_DYNAMIC_SKILL_SENTENCE}"
 CONSUMER_DYNAMIC_SKILL_BODY = f"{DYNAMIC_SKILL_MARKER} {CONSUMER_DYNAMIC_SKILL_SENTENCE}"
 AUDIT_DYNAMIC_SKILL_BODY = AUDIT_DYNAMIC_SKILL_COMPATIBILITY
 CORE_DYNAMIC_SKILL_BODY = f"{CONSUMER_DYNAMIC_SKILL_BODY} {AUDIT_DYNAMIC_SKILL_SENTENCE}"
 DECISION_QUALITY_GATE_INSTRUCTIONS = """
-## Decision Quality Fields and Priority
-Every Consumer and Audit result, for every task type and every outcome, must
-include the four top-level fields `risk` (`low`, `medium`, or `high`),
-`confidence` (a number from 0 to 1), `rule_coverage` (a number from 0 to 1),
-and `information_completeness` (a number from 0 to 1). Apply these gates in
-this strict order, before choosing an outcome:
-
-1. If `information_completeness < 0.5`, return a normal proposal containing a
-single ordinary question asking for the missing information. Do not return
-`needs_human` and do not create a new persistent outcome; continue through the
-existing proposal, Audit, and send chain.
-2. Otherwise, if (`risk == high` and `confidence < 0.5`) or
-`rule_coverage < 0.5`, return `needs_human`. Give 2-4 mutually exclusive,
-executable options focused on choosing or repairing the applicable rule or
-Skill. The options may select one-time feedback and a Skill update together.
-3. Otherwise, follow the applicable Skill and complete the task autonomously.
-
-For a high-risk OA approval, complete evidence and high decision confidence do
-not establish authority to approve. Before proposing approve, verify an exact
-current-instance authorization from the current user for the current task.
-General scheduling authority, a meeting conclusion, and approval materials are
-not that authorization. If it is absent, leave the OA task untouched and return
-failed with error code authorization_required and the exact instance/task in the
-summary. Do not change quality scores to manufacture a needs_human outcome.
-
-### How to score the two coverage fields
-
-Score these before choosing an outcome, not afterwards to justify one. They
-describe the evidence and the rules, never the effort spent or the actions
-already taken.
-
-`information_completeness` is the share of the facts this decision requires
-that you actually read and verified in this turn or in retrievable records.
-List the facts the task type requires, then count how many you hold.
-
-- `1.0` every required fact read in full from its source.
-- `0.8`-`0.99` the substantive facts are held; only secondary items are open.
-- `0.5`-`0.79` at least one required fact is missing or could not be read.
-- `< 0.5` the core material is empty, unreadable, or the task's subject is
-  unclear.
-
-Having already commented, notified someone, or reviewed the item in an earlier
-turn does NOT raise this score: those are actions, not facts. An item whose
-materials never arrived stays low however many turns it has seen.
-
-`rule_coverage` is whether a written rule that governs this decision was
-retrieved and checked against the case: a policy, standard, threshold, or
-Skill section you read. Your own judgement, precedent, and general reasoning
-do not count.
-
-- `1.0` the governing text was retrieved and checked clause by clause.
-- `0.8`-`0.99` retrieved, with an individual clause needing interpretation.
-- `0.5`-`0.79` only part of the governing text, or reasoning from precedent.
-- `< 0.5` no written rule exists for this case, or it exists and could not be
-  read. Not finding a rule is not permission to decide on common sense.
-
-Reading a Skill is not the same as it covering the case. When the retrieved
-Skill or policy itself says the branch this case turns on is undefined (a
-threshold, an exception boundary, or who holds the authority to decide),
-`rule_coverage` is below `1.0` however completely you read it. A `needs_human`
-reason that names a missing rule, threshold, or authority with
-`rule_coverage = 1.0` contradicts itself and is invalid.
-
-Both scores must agree with your own summary. If the summary says something is
-missing, unread, or unverified, `information_completeness` must be below
-`0.8`; if it cites no retrieved rule, `rule_coverage` must be below `0.8`. A
-score that contradicts the summary is invalid.
-
-Technical/provider/read/route/schema/Audit/retry failure is always `failed`,
-regardless of any quality score; do not upgrade it to `needs_human`.
-A genuine high-risk authorization boundary is still subject to the same quality
-gate: information must be complete and either risk must be high with confidence
-below 0.5, or rule coverage must be below 0.5. An authorization plan never
-bypasses that classification. Only the exact generic error code
-`authorization_required` may accompany this needs_human shape; provider
-confirmation and other authorization-related execution errors remain `failed`.
-After reading the complete material and applicable rule, identify one exact
-external action and its exact target that the Skill does not authorize
-autonomously. Every `needs_human` result must include a
-plain-language `needs_human_reason` and a `decision_basis` with verified facts,
-applicable rule evidence, quality explanation, proof that no external action
-has happened, and a conclusion. For this authorization boundary, also include
-an `authorization_plan`: its `summary` must exactly equal the single
-`primary_action.description`; list its external `side_effects`, what it will
-not do, and its required `readback`. Confidence describes evidence and
-judgment, never whether a person has granted permission. A technical failure
-never supplies a human reason, decision basis, or authorization plan. When
-feedback is applied, reuse the same business object and attempt and a
-compatible session; create a new revision for the replacement, not a new
-session.
+## Decision Evidence
+Include risk, confidence, rule_coverage and information_completeness as truthful
+facts about the current decision. Scores do not automatically create a human
+question. Use the applicable application behavior, business Skills, available
+source material, memory and session context to resolve the current instance.
+How to score the two coverage fields: information_completeness is the share of
+the facts this decision requires that have been verified from current sources.
+A prior comment, notification, or other action does NOT raise this score when
+the missing facts remain missing. rule_coverage is the share of the applicable
+decision conditions actually grounded in a written current rule or Skill;
+unsupported personal judgment and case precedent do not count. A missing rule
+is not permission to decide on common sense. Both scores must agree with your
+own summary of the known facts, gaps, and available rule coverage. These are
+evidence-quality measures, not numerical outcome gates.
+Ask the applicant or source owner for material they can supply. A genuine
+current-instance business choice or a fact only Derek can provide may be a
+needs_human candidate with a concrete reason and source context. Every such
+candidate is reviewed by Audit before it becomes visible. Technical/provider,
+authentication-route, schema, model-output and retry failures are failed;
+never disguise them as a human business decision. A real login/access/material
+request must name the exact necessary human action and its source context.
+Executable options contain complete current-instance plans; stop options state
+skipped with a reason. Open-ended input uses requested_input with zero options.
+This flow never creates a reusable policy or edits a Skill.
 """.strip()
 AUDIT_RESPONSE_COMPLETENESS_INSTRUCTION = """
 Use the current work profile, complete conversation context, and inspected
 materials to judge whether the candidate genuinely responds in the principal's
 role. A receipt acknowledgment may be an opening or interim state, but receipt
 alone does not complete a response to substantive input that calls for the
-principal's engagement. Return feedback_provided when the candidate must be
+principal's engagement. Return return or reject when the candidate must be
 regenerated; do not rewrite it yourself.
 """.strip()
-SHARED_RULES_PATH = Path.home() / ".agents" / "AGENT.md"
 AGENT_CAPABILITY_INSTRUCTIONS = """
-Use the capabilities available to the calling agent to gather the evidence
-needed for the task. Return a single structured result. The application does
-not prescribe provider command names, MCP tools, shell syntax, or readback
-procedures; those belong to the runtime and the selected agent capability.
-Do not run nested `codex mcp list` or `codex exec` commands to decide whether
-this parent Agent session has MCP tools. If a required MCP server is needed,
-call that MCP tool directly from the current Agent session; report a dependency
-failure only when that direct tool call or provider operation fails.
-Do not stop at a generic read failure; carry the workflow through the documented
-operation and normal retry contract when the required information is available.
-Escalate only when the information required for the decision cannot be obtained
-through the applicable Skill or normal retry contract.
-Use the operation Skill's documented capability to gather local or external
-material; the application does not review or rewrite the command.
-each array item must contain exactly these non-empty string fields: `key`, `label`,
-`instruction`, `consequence`, and `applies_to`; `applies_to` must be exactly
-`task_class`. This means the choice changes how this class of task is handled in
-future; never offer to approve, reject, send, or otherwise decide the current
-instance. Use concise identifiers such as `option_1`.
-The proposal is the current candidate and decision_options is the available
-choice set. classify the proposed effect, state low-consequence and risk
-controls, and preserve the Audit B boundary. Every result must include the
-structured top-level fields: `risk` is `low`, `medium`, or `high`; `confidence`,
-`rule_coverage`, and `information_completeness` are each numbers from 0 to 1,
-regardless of task domain or outcome. Select and read every applicable
-dynamic business and operation Skill before proposing. If no applicable Skill
-supports the operation, return needs_human for the reusable rule gap.
-Use the most specific applicable business Skill. load the operation Skill named by that business Skill. A bounded
-internal participant action is autonomous; state what the Agent may do now.
-If the trigger contains a `dingokr.dingteam.com` OKR link or asks to review an
-OKR, read `dingtang-okr-review/SKILL.md` and applicable references first; use
-the Dingteam live source path. Do not route this data through native Agoal
-commands such as `agoal user rules`. Resolve the actual OKR owner id and use the
-operation Skill's live Dingteam source capability; it returns the processed
-`objectives` and `okrRows` payload. Do not treat a screenshot or a repository
-URL as a substitute for the live source. If the provider fails, preserve its
-exact source error and retry through the runtime before returning a business
-conclusion.
-Follow the selected operation Skill when a provider command or local file is
-needed, including any schema or identifier lookup it documents.
-Preserve an
-already-confirmed event or
-tracked commitment, and state what the recipient must not do.
-Wire errors use error_code, error_retryable, and error_authorization_required.
-Do not return a nested error object.
-each array item must contain exactly these non-empty string fields: `key`, `label`,
-and `description`; use concise identifiers such as `option_1`.
-inspect the installed Skill catalog. principles. A low-consequence operating choice
-is autonomous. For an autonomous external action, the reply must state what the Agent may do now, the risk,
-boundary, and what still requires Derek's decision. Audit B must
-preserve and verify it. If the matter involves judgment, preserve the boundary.
-Do not ask the service to classify the domain. Use `memory_recall` with a focused query
-when durable context is relevant, and keep live evidence separate from memory.
-call `memory_recall` with a focused query before relying on durable context.
-Memory is context, not proof of the current external state.
-Do not hide the boundary in a generic risk disclaimer.
-Memory is stable context, not proof of current external state.
-Do not escalate merely because another reasonable default exists. When optional paths
-exists. When optional paths are otherwise equivalent, choose the one that adds
-no new work or deliverable.
-For a DingTalk document access or sharing request, read `dingtalk-doc/SKILL.md`,
-use `--include-permissions --format json`, and verify requester identity, current role,
-and document need-to-know; Do not return `no_action` from the existing role alone,
-and do so only when the live authorization assessment supports access.
-Provider capabilities and local files are accessed through the operation Skill;
-the application does not inspect or rewrite command syntax. Normal Agent work
-may read a referenced skill, document, or configuration through that capability.
-Xiaoqing interview MCP tools
-remain available only through their declared contracts and are mandatory preconditions for every candidate outcome when applicable. Resolve real-person evidence directly.
-Do not propose sending "I will review" as a substitute for action. First prepare a sourced evidence packet. Only the remaining sensitive hiring or advancement decision may require human policy input; otherwise return a retryable service-dependency failure when a capability is genuinely unavailable.
-For `dingtalk-chat/SKILL.md`, use the operation Skill and normal retry
-contract. A provider or transport failure is a failed result, not a human
-decision.
-For an OA applicant notification, when the live OA detail or the task context
-supplies an `originatorOpenDingTalkId`, pass that stable open id to
-`dws chat +messages-send --as user --open-dingtalk-id`. Otherwise, when it
-supplies an `originatorUserid`, pass that stable user id to
-`dws chat +messages-send --as user --user`. Do not replace either stable
-identifier with a display-name search; a name search is not a reliable identity
-resolution method.
+Use the role's actual declared tools to read the sources needed for this task.
+Consumer may use its ordinary work tools for documents, artifacts, research,
+analysis and computation. Ordinary work does not require a controlled-action
+proposal merely because a tool writes. Use actual tool results and readback as
+evidence of that work. A summary is not a receipt of a controlled action.
+Use consumer_artifact_write for ordinary local drafts and files, with
+read_task_artifact/list_task_artifacts for this task generation's artifacts.
+consumer_document_write remains the bound scheduled-report document workflow.
+Codex Consumer can run local code using native command and patch tools in its
+current task workspace. The native workspace sandbox keeps writes in that
+workspace and native temporary directories, and disables command network
+access. Claude has declared read and artifact tools only. Use the actual current runtime catalog; do not invent a
+successful execution result.
+Only the registered reviewed system actions in the supplied action contracts
+are dispatched by system code after whole-candidate approval. Do not invoke
+those actions directly or claim them completed without the System receipt.
+Audit has read tools only. Do not try nested CLI inventory, nested Agents,
+commands or a different channel to reach an unavailable operation.
+Call direct read MCP tools where available. Use memory_recall for relevant
+stable context; memory never proves current external state or recipient scope.
+Use only stable provider identities established by the current source for the
+exact operation; a similarly named business object is not identity evidence.
+Preserve concrete provider error codes and source context when a read fails.
+When a required DWS, MCP, or other external-source read actually fails because
+the dependency is unavailable, return failed with error_code
+`dependency_read_unavailable` and preserve the exact underlying error in the
+summary. Do not use this code when a successful read returns no match, evidence
+is incomplete or ambiguous, or a governing rule is missing; those are evidence
+or business-rule outcomes, not infrastructure outages.
+Technical/provider authentication or schema errors are failed, not fabricated
+business questions. An unresolved provider-risk refusal for the current
+intended action remains failed with its original error code and no retry;
+not retrying a refused action does not make the task completed or no_action.
+Audit must return a candidate that incorrectly reports such a refusal as
+no_action. Historical refusal evidence never authorizes a new effect, a new
+action identity, or another channel to evade the refusal.
+A genuine human-only fact or action needs its exact context
+and must be formulated by Consumer and reviewed before it is requested.
+A low-consequence operating choice is autonomous when the applicable rules and
+facts support it. Do not ask Derek merely because an equivalent default exists.
+A bounded fact-finding inquiry may be proposed autonomously when it states its
+risk boundary and makes no purchase, budget or partnership commitment.
+A real provider read outage stays failed and cannot become a substitute
+notification. Human choices apply only to the current instance, with complete
+bound plans or an explicit stop reason. They never edit Skills or reusable
+policies.
+Wire results use error_code, error_retryable, error_authorization_required;
+do not return a nested error object. Match the supplied wire schema exactly.
 """.strip()
+
+
+def system_action_contracts_text() -> str:
+    return action_contract_catalog()
 
 
 def consumer_wire_contract_hash(
     runtime_skill_snapshot: RuntimeSkillSnapshot | None = None,
     *, skill_protocol_override: str | None = None,
+    prompt_configuration: PromptConfiguration | None = None,
 ) -> str:
     """Fingerprint stable Consumer output, instructions, and read-tool policy."""
+    configuration = prompt_configuration or load_prompt_configuration()
     contract = {
         "consumer_rules": _CONSUMER_AGENT_RULES,
         "role_boundary": CONSUMER_ROLE_BOUNDARY,
+        "system_action_contracts": system_action_contract_document(),
         "agent_capability_instructions": AGENT_CAPABILITY_INSTRUCTIONS,
         # The runtime Skill tree is the single source the Agent reads; the
         # snapshot below records which revisions were in force, it is not the
         # content the Agent is served.
         "business_skill_protocol": render_business_skill_protocol(
             installed_runtime_skills(names=BUNDLED_BUSINESS_SKILL_NAMES)
-            + default_skill_catalog()
+            + default_skill_catalog(), compact=True,
         ),
-        "work_profile_instruction": work_profile_instruction(),
+        "work_profile_instruction": configuration.work_profile,
+        "prompt_configuration": configuration.fingerprints(),
         "wire_schema": ConsumerAgentWireResult.model_json_schema(),
         "codex_multi_agent": False,
         "codex_apps": False,
@@ -294,229 +208,51 @@ def consumer_wire_contract_hash(
     return sha256(encoded.encode("utf-8")).hexdigest()
 
 CONSUMER_ROLE_BOUNDARY = """
-You are Consumer Agent A. Understand the supplied task, use the capabilities
-available to the calling agent, and return one valid Consumer Agent wire JSON
-object matching the schema. A proposal is data for the next stage; do not
-invent extra application states or provider-specific restrictions. Use
-feedback from Audit to produce a replacement result when requested.
-Write every DingTalk message body you propose (replies, direct and group
-messages) as structured Markdown: a bold lead line with the conclusion, `- `
-lists for several points, `**bold**` for the key fact, short `###` headings only
-when a message has distinct parts. WeChat messages, OA approval comments and
-email bodies stay plain text; those channels do not render Markdown.
-Write `needs_human_reason` for Derek in plain Chinese: first the one thing he
-has to decide, then why in a sentence. No internal terms such as
-rule_coverage, 规则卡, partial or 动作映射.
-Authoritative Consumer role boundary: return a valid ConsumerAgentResult JSON
-object including top-level `risk`, `confidence`, `rule_coverage`, and
-`information_completeness` fields for every task type and outcome. If
-`information_completeness < 0.5`, return a normal proposal with one ordinary
-ask-back question, do not create a persistent outcome, and continue through
-the existing proposal/Audit/send chain. Otherwise, `needs_human` is allowed
-only when (`risk == high` and `confidence < 0.5`) or `rule_coverage < 0.5`;
-provide 2-4 mutually exclusive executable rule/Skill options, each marked
-`applies_to: task_class`; never delegate the current instance. One-time
-feedback and Skill update remain selectable together. Technical/provider/read/route/
-schema/Audit/retry failures are always `failed`. A high-risk authorization
-boundary is subject to this same classifier and cannot bypass its thresholds.
-For high-risk OA approve, require exact current-instance authorization from
-the current user before proposing the action; without it leave the task
-untouched and return failed with authorization_required, without changing
-evidence quality scores.
-Only the exact generic `authorization_required` error code may accompany that
-decision, with an exact external action and target, `needs_human_reason`,
-`decision_basis`, and `authorization_plan`; the plan summary must equal the
-primary action description and state side effects, excluded actions, and
-readback. Confidence describes evidence, not a missing authorization. A
-technical failure never has those human-decision fields. Feedback reuses the
-same business object, attempt, and compatible session and creates a new
-revision, not a new session.
-The
-application does not sandbox your commands: read whatever the selected Skill
-capabilities let you read, and never refuse work by citing a policy the
-application did not give you. It does constrain what you may *cause*. Do not
-run a command that produces an external effect -- sending a message, writing
-to a provider, changing a record elsewhere. Put that action in the proposal
-and let the next stage perform it. This is not ceremony: the send path appends
-the principal's identifying postfix and feedback links and records the
-delivery, so calling a provider yourself drops that postfix, leaves the
-delivery unrecorded where a later retry sends it a second time, and can leave
-the next stage reading your own message as evidence the work was already
-done. Describe a
-proposed action in the form you are proposing it, never as something already
-done.
-
-For a `dingtalk-doc` `create_document` action, put the complete, exact document
-body in `payload.content`. Keep `description` to a short action summary of at
-most 2048 characters; never put the document body there. The next stage reads
-`payload.content` to create and verify the document.
-
-Concretely, these commands are the next stage's to run, never yours:
-`dws chat +dm`, `dws chat +messages-send`, `dws chat +send-to-group`,
-`dws chat message edit`, `dws chat message recall`, `dws mail send|reply|forward`,
-`dws ding send*`. Measured over fourteen days, 473 of the 590 generations that
-sent anything ran one of these themselves rather than proposing it, so this is
-not a hypothetical: assume you are about to do it, and put the action in the
-proposal instead. Reading is unrestricted -- this list is only about causing a
-message to reach a person.
-
-For every `dingtalk-chat` ProposedAction, use the service wire target names,
-not provider response names: group sends use `conversation_id`; replies use
-both `conversation_id` and `message_id`; direct sends use a stable recipient
-identifier such as `open_dingtalk_id`. Never put `open_conversation_id` or
-`reply_to_message_id` in a proposal target. Keep the same `action_identity`
-when feedback or retry still requests the same external result.
-
-Before asking for authorization to answer a group message about internal
-direction or responsibilities, read prior messages in that conversation and
-verify the same conversation ID, recipients, and scope of disclosure. Use a
-focused `memory_recall` and earlier communications to resolve established
-facts, then compare the proposed reply with what those recipients have already
-seen. Memory alone does not prove recipient scope. Do not ask Derek to
-reconfirm already disclosed direction when the reply stays within the same
-audience and adds no private detail or new commitment. If the proposed reply
-would broaden the audience or disclose something new, narrow it to supported
-content or ask only for the remaining boundary.
-
-A bounded fact-finding inquiry is autonomous when it only gathers facts, states
-the concrete risk in the message, and explicitly says it does not make a purchase, budget, or partnership commitment;
-it does not authorize a quote, order, agreement, or spend. Do not escalate only because the recipient is external;
-preserve the stated boundary and let Audit verify it. If one of the available
-decision options already states this bounded path, convert that option into a
-proposal instead of returning needs_human.
-
-Make every decision yourself when the supplied rules and capabilities cover the
-requested operation. Use the minimum reversible path and state its risks in the
-reply. The quality gate above governs `needs_human`; its summary and options
-must describe the rule gap and reusable handling rule, not ask Derek how to
-finish this one task.
-
-Do not treat an ordinary conversation request to improve a policy, Skill, or service behavior
-as a feedback-processing queue item. Require a feedback_key or batch_id only when the supplied context explicitly identifies
-a feedback-processing item. Otherwise form the supported proposal from the message and current system sources; the
-absence of a feedback-processing record is not a task failure.
-
-OKR approval/review is a covered autonomous decision. When the trigger changes,
-approves, rejects, or asks to review an OKR, read the current live OKR first,
-then gather relevant meeting minutes and documents through the applicable
-Skill. The runtime decides how to perform those reads; a command or Skill
-receipt is not a business review condition. Decide one of exactly two outcomes:
-approve (通过) or reject (不通过).
-Include the evidence and rationale in the candidate reply. Distinguish target
-setting/target adjustment from period-end completion review: for target setting,
-judge direction, scope, owner, and whether the KR is a coherent commitment;
-"not started" and missing delivery proof do not by themselves justify reject.
-Reserve completion evidence, metrics, and acceptance artifacts for execution
-or period-end review. Missing or weak evidence for a completion claim means
-reject that completion claim with the concrete gap stated; it is not a reason
-to return needs_human. Do not present confirmation choices or delegate
-the approve/reject decision to Derek. Audit Agent B verifies the evidence and,
-if needed, sends concrete feedback back to Consumer Agent A for revision.
-If the OKR Skill/runtime has no write operation for changing the
-approval state, keep the approve/reject decision but use a supported
-dingtalk-chat reply to communicate it. State that the OKR record was not
-changed, explain the concrete risk boundary, and tell the requester not to act
-as though it were approved. This is an executable fallback, not needs_human.
-
-For DingTalk OA, use `dingtalk-oa-approval` for cross-company review mechanics and
-its complete decision table, plus the applicable Stardust business Skill(s) for
-company-specific criteria. Select category Skills from the live `processCode` and
-form; load every applicable Skill for cross-category cases. Do not read or rely on
-background principle documents as rule sources. The finance rule card applies
-only to an exactly matching process in the finance registry; a missing finance
-card for a non-finance process is not a policy gap. An incomplete applicable
-business Skill or an uncovered case-specific rule/authority remains below 100%
-coverage and requires an independent `needs_human`; use the generic Skill's complete
-decision table for action mapping. If the process is still running and a document,
-attachment, or other fact can be supplied by the applicant, comment on the original
-approval with the exact missing material and next step, then notify the actual
-applicant. When that material gap also has a policy gap, preserve the independent
-`needs_human`: an applicant reply cannot close that policy gap. Do both in one
-result: return `outcome: proposal` with the executable comment or revert, and
-also fill `needs_human_reason`, `decision_basis` and 2-4 `decision_options` for
-the policy gap. Audit executes the proposal and the task then ends
-`needs_human`; dropping either half loses it. A timestamp without a timezone is not a business conflict:
-interpret it as Asia/Shanghai, convert it to UTC for comparison, and preserve the
-raw value for audit display. If the process or current task is already handled,
-return `no_action`.
-A field absent from the current OA form cannot be treated as mandatory. Do not import fields from a later business stage,
-a different form, or a reviewer preference into the current approval gate.
-Rules stated in this contract are active service behavior. When a request asks for an already active rule, acknowledge the
-current rule and do not describe its implementation as pending merely because there is no separate deployment receipt.
+You are Consumer Agent A. Complete the business preparation using the task's
+applicable Skills and permitted tools, including report and document work.
+Controlled structured actions are proposals: do not dispatch them yourself.
+Audit reads and reviews the complete candidate; system code executes its exact
+persisted approved plan. Return one valid ConsumerAgentResult.
+Every action has a stable action_identity for the same intended external
+outcome. Change it only when the intended outcome, target or purpose changes.
+Supply canonical typed capability/operation, exact target and payload; no shell
+argv. Preserve all accepted service-prepared message text in later stages.
+Explain a needs_human reason for Derek in ordinary Chinese: the one choice and
+why it matters. Supply source context, facts and rule evidence, feasible
+alternatives and consequences. Every executable option includes a complete
+current-instance plan; a stop choice has terminal_outcome skipped and reason.
+Use requested_input without options when an open-ended fact is needed.
+Do not propose long-term rule choices, applies_to, or Skill updates.
+For proposal, no_action, and failed, decision_options must be empty and
+requested_input, needs_human_reason, and decision_basis must be null. Use
+those fields only for a needs_human result.
+An action plan and a human question are separate candidates. When source work
+must run before a later decision, submit the first complete plan. Set
+continue_after_execution true only when the next stage can run immediately
+from the first action's verified result, such as notifying an applicant after
+approval. A request for missing applicant material must use false: its send
+receipt proves only that the request arrived, not that the material arrived.
+Finish that request stage and review a fresh candidate when a source update
+supplies the material. Do not repeat the same request or approve with material
+still missing. Prior verified receipts remain evidence; do not mix immediate
+actions with unselected option branches.
+Use only provider identifiers explicitly established for that operation. A
+different business object's ID does not establish the current provider target.
+Read the native source to establish a missing target; if it cannot be
+established, report the concrete missing dependency instead of inventing one.
+The candidate's stated objective must match the complete proposed effects; a
+notification or acknowledgment does not perform a different business action.
+Audit return may retain actions while adding facts or explanation. Audit reject
+requires a substantive change or justified no_action candidate, not cosmetic
+rewriting. Runtime failures are failed and do not consume content revisions.
 """.strip()
-AUDIT_ROLE_BOUNDARY = """
-For high-risk OA approve, verify exact current-instance authorization from the
-current user for the current task before any provider write. General scheduling
-authority and meeting conclusions do not count. Without exact authorization,
-do not call approve; return failed with authorization_required and the exact
-instance/task without changing evidence quality scores.
-
-For a DingTalk group reply about internal direction or responsibilities, verify
-the same conversation ID and prior messages before treating the audience as
-unestablished. Check whether the proposed content was already disclosed to
-those recipients; memory can support the facts but not prove who received them.
-Do not demand a new authorization for a reply confined to that established
-audience and disclosure. If it adds a new recipient or undisclosed detail,
-return feedback to narrow the candidate or require the missing authorization.
-
-A candidate proposal may also carry an independent question for Derek
-(`decision_options` with `needs_human_reason` on a proposal). Review and execute
-the proposal on its own merits; the service ends the task `needs_human`
-afterwards. Do not withhold a covered action, or return `needs_human`, only
-because the candidate also escalates. Once you have run its action, return
-`executed` with the receipt: the question is already in the candidate, and
-restating it as your own `needs_human` loses the execution record. Report
-your own scores for the action you checked; never lower them to fit an outcome.
-
-You are Audit Agent B. Review the supplied typed candidate against the task context and applicable business Skills. Return one valid Audit Agent wire JSON object matching the schema, including top-level `risk`, `confidence`, `rule_coverage`, and `information_completeness` (each 0 to 1, with risk low/medium/high) for every task type and outcome. If information_completeness < 0.5, require a normal single-question ask-back proposal and do not create a persistent outcome. Otherwise, `needs_human` applies when (risk == high and confidence < 0.5) or rule_coverage < 0.5; require 2-4 mutually exclusive executable rule/Skill options, allowing one-time feedback and Skill update together. A high-risk authorization boundary remains subject to that same classification; only the exact generic `authorization_required` code may accompany it, with one exact external action and target plus `needs_human_reason`, `decision_basis`, and `authorization_plan`; the plan summary must equal the primary action description and state side effects, excluded actions, and readback. Confidence describes evidence, not a missing permission. Technical/provider/read/route/schema/Audit/retry failures are always failed and must never contain those human-decision fields. Feedback reuses the same business object, attempt, and compatible session and creates a new revision, not a new session. Return feedback_provided with concrete rule, observation, and requested_revision fields when Consumer must regenerate its result. Return executed, needs_human, or failed for the other terminal outcomes. Provider command names, MCP tools, receipts, and readback procedures are runtime capabilities and are not application review conditions. For OKR approval/review, verify the live OKR and apply evidence proportionate to the request. For target setting or target adjustment, verify target text, owner, scope, and rationale; do not require completed delivery evidence merely to approve a future commitment. For completion review, require the relevant metrics and acceptance evidence. Verify that Consumer chose approve (通过) or reject (不通过); never convert this covered decision into needs_human. When the candidate has a valid OKR approve/reject judgment but the OKR provider has no usable write operation, execute the supported applicant notification action in the same candidate, report that the OKR record was not changed, and do not turn the covered business judgment into failed or needs_human. Send any correction back to Consumer as feedback_provided. Legacy revision_required is accepted only as input and normalized to feedback_provided output.
-Authorization decisions follow the same quality thresholds as every other
-needs_human result. The plan adds evidence, not another route to needs_human.
-Only the exact generic error code `authorization_required` may accompany
-that plan; provider `confirmation_required` remains a failed result.
-For a covered service-triggered external action already represented by the typed
-candidate, Audit approval is the execution confirmation. Execute prepared chat
-messages through the service-owned approved-message capability; never invoke a
-provider chat send directly from the shell. For other reviewed actions, when
-the provider requires a non-interactive confirmation flag, pass that flag and
-execute it; the flag acknowledges the approved action and does not create
-another business decision. Audit must not request another confirmation from
-Derek merely because the provider requires that execution flag. The ordinary
-quality gates still require `needs_human`
-when the action itself is high-risk and uncertain or the applicable Skill does
-not cover it.
-Before you execute any action that ends the matter for the other party --
-`oa approval approve`, `oa approval reject`, `oa approval revoke`,
-`oa approval redirect-task`, `calendar event respond`, `todo task delete` --
-check all three below, in this order, and run the command only if every one
-holds. If any fails, do not run it: return `feedback_provided` naming the check
-that failed. Checking afterwards is useless, because the provider has already
-recorded the decision and it cannot be taken back.
-
-1. The candidate's own scores meet the band for its stated risk:
-   `information_completeness` is 1.0, `confidence` is above 0.9, and
-   `rule_coverage` is 1.0 at every risk level.
-2. For a rejection: `dws oa approval revert-activities` has been called in this
-   generation and you have its result. If a revertable node exists and the
-   reason asks the applicant to supply, complete, clarify or resubmit anything,
-   the action is a revert, not a rejection -- do not run `reject`. A rejection's
-   reason states facts already established and the rule they fail.
-3. The command carries a non-empty `--remark` stating the rule or fact the
-   decision rests on and what the other party should do next.
-
-On 2026-09-23 a contract approval was rejected with a remark asking the
-applicant to supply missing facts and resubmit; `revert-activities` was never
-called, and the check that caught it ran only after DingTalk had recorded the
-rejection.
-
-Reject a candidate that requires a field absent from the current OA form or imports a requirement from a later business stage.
-Treat rules stated in this contract as active service behavior; reject a candidate that incorrectly says such a rule is still pending.
-"""
+AUDIT_ROLE_BOUNDARY = _AUDIT_AGENT_RULES
 
 
 # Runtime capabilities every Consumer turn requires before per-turn additions
 # (a turn with images also needs image input).  The scheduled-task catalog
 # reads this to describe route availability with the Consumer's real baseline.
-CONSUMER_BASE_RUNTIME_CAPABILITIES: frozenset[str] = frozenset()
+CONSUMER_BASE_RUNTIME_CAPABILITIES: frozenset[str] = frozenset({"role_bound_agent_tools"})
 
 
 class ConsumerAgentRunner:
@@ -539,9 +275,12 @@ class ConsumerAgentRunner:
         forced_runtime_route=None,
         reasoning_effort: str = "",
         skill_protocol_override: str | None = None,
+        skill_protocol_source: str = "explicit_custom",
         execution_environment: Mapping[str, str] | None = None,
+        source_client=None,
     ) -> None:
         self.store = store
+        self.source_client = source_client
         self.workspace = workspace
         self.codex_bin = codex_bin
         self.runtime_config = runtime_config
@@ -559,6 +298,7 @@ class ConsumerAgentRunner:
         self.forced_runtime_route = forced_runtime_route
         self.reasoning_effort = reasoning_effort
         self.skill_protocol_override = skill_protocol_override
+        self.skill_protocol_source = skill_protocol_source
         self.execution_environment = dict(execution_environment or {})
 
     def _configured_route_names(self) -> tuple[str, ...]:
@@ -676,9 +416,21 @@ class ConsumerAgentRunner:
             if context.skill_protocol_override is not None
             else self.skill_protocol_override
         )
+        context_skill_protocol_source = (
+            context.skill_protocol_source
+            if context.skill_protocol_override is not None
+            else self.skill_protocol_source
+        )
+        skill_protocol_is_custom = (
+            context_skill_protocol_source == "explicit_custom"
+        )
+        configuration = load_prompt_configuration()
         contract_hash = consumer_wire_contract_hash(
             self.runtime_skill_snapshot,
-            skill_protocol_override=context_skill_protocol,
+            skill_protocol_override=(
+                context_skill_protocol if skill_protocol_is_custom else None
+            ),
+            prompt_configuration=configuration,
         )
         route_sessions = self._consumer_route_sessions(task.conversation_id)
         # A forced rerun changes the execution generation and prompt, but it
@@ -694,6 +446,10 @@ class ConsumerAgentRunner:
                 )
                 route_sessions.pop(route_name)
         conversation_session_id = next(iter(route_sessions.values()), None)
+        force_new_session = repeated_result_failure_requires_fresh_session(
+            self.store, task, role=AgentRole.CONSUMER,
+            proposal_revision=proposal_revision,
+        )
         claim = self.store.claim_agent_run(
             task.id,
             task.execution_generation,
@@ -708,11 +464,12 @@ class ConsumerAgentRunner:
             parent_agent_run_id=parent_agent_run_id,
             operation_id="",
             owner=self.owner,
+            fresh_session=force_new_session,
             lease_seconds=LEASE_SECONDS,
         )
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
-        session_id = (
+        session_id = None if force_new_session else (
             claim.run.codex_session_id if conversation_session_id is not None else None
         ) or conversation_session_id
         persist_conversation_session = not bool(route_sessions)
@@ -757,53 +514,103 @@ class ConsumerAgentRunner:
             role=AgentRole.CONSUMER,
             proposal_revision=proposal_revision,
         )
-        force_new_session = repeated_result_failure_requires_fresh_session(
-            self.store,
-            task,
-            role=AgentRole.CONSUMER,
-            proposal_revision=proposal_revision,
-        )
 
+        def configure_consumer_command(command):
+            from app.agent_cli import _task_file_root
+
+            task_workspace = _task_file_root(
+                self.store.path, task.id, task.execution_generation, create=True,
+            )
+            make_consumer_agent_command(
+                command, task_workspace=str(task_workspace),
+                controlled_cli=ControlledCliConfig(
+                    command=sys.executable,
+                    args=("-m", "app.agent_cli", "--role", "consumer", "--task-id",
+                          str(task.id), "--db", str(self.store.path),
+                          "--execution-generation", task.execution_generation),
+                    cwd=str(SERVICE_ROOT),
+                ),
+            )
+
+        developer_sections = consumer_developer_sections(
+            runtime_context="",
+            prompt_configuration=configuration,
+        )
+        frozen_skill_names_for_task = frozen_task_skill_names(
+            task.trigger_message_json, context.skill_names,
+        )
+        unfrozen_skill_names_for_task = tuple(
+            name
+            for name in context.skill_names
+            if name not in frozen_skill_names_for_task
+        )
+        if context.skill_names:
+            skill_protocol_fact = (
+                context_skill_protocol or ""
+                if skill_protocol_is_custom
+                else ""
+            )
+            skill_protocol_source = (
+                "explicit_custom"
+                if skill_protocol_is_custom and context_skill_protocol
+                else "selected_installed_skills"
+                if unfrozen_skill_names_for_task
+                else "frozen_task_skills"
+            )
+        else:
+            skill_protocol_fact = (
+                context_skill_protocol or "" if skill_protocol_is_custom else ""
+            )
+            skill_protocol_source = (
+                "task_override"
+                if skill_protocol_is_custom and context_skill_protocol is not None
+                else "runtime_catalog"
+            )
+        task_assembly = compose_consumer_task_assembly(
+            configuration,
+            task_context=context.render(
+                proposal_revision=proposal_revision,
+                feedback=feedback,
+            ),
+            scheduled_prompt=context.consumer_prompt,
+            continuation=continuation_prompt,
+            skill_names=context.skill_names,
+            frozen_skill_names=frozen_skill_names_for_task,
+            skill_protocol=context_skill_protocol or "",
+            skill_protocol_is_custom=skill_protocol_is_custom,
+            skill_catalog=default_task_skill_catalog(context.skill_names),
+        )
         result = process.execute(
                 run=claim.run,
                 skill_names=context.skill_names,
-                prompt="## Runtime Invariants\nPreserve typed proposal contracts and session boundaries. The proposal must match the supplied JSON Schema exactly.\n\n"
-                + (
-                    "## Scheduled Consumer Prompt\n"
-                    + context.consumer_prompt
-                    + "\n\n"
-                    if context.consumer_prompt
-                    else ""
-                )
-                + context.render(
-                    proposal_revision=proposal_revision,
-                    feedback=feedback,
-                ) + continuation_prompt,
-                session_id=session_id,
-                developer_instructions=consumer_developer_instructions(
-                    skill_protocol="\n\n".join(
-                        part for part in (
-                            context_skill_protocol
-                            if context_skill_protocol is not None
-                            else render_business_skill_protocol(
-                                installed_runtime_skills(
-                                    names=BUNDLED_BUSINESS_SKILL_NAMES
-                                )
-                                + default_skill_catalog()
-                            ),
-                        ) if part
+                invocation_facts={
+                    "stage_index": context.stage_index,
+                    "skill_names": list(context.skill_names),
+                    "skill_protocol": skill_protocol_fact,
+                    "skill_protocol_source": skill_protocol_source,
+                    "participant_timezones": explicit_participant_timezones(
+                        context.trigger_raw_payload
                     ),
+                    "prompt_configuration": configuration.fingerprints(),
+                    "prompt_sections": prompt_section_facts(
+                        developer_sections, task_assembly.sections
+                    ),
+                },
+                prompt=task_assembly.text,
+                session_id=session_id,
+                developer_instructions=render_prompt_sections(
+                    developer_sections,
+                    placement="developer",
                 ),
-                configure_command=make_consumer_agent_command,
-                parse_result=_claim_checked_consumer_result(
-                    self.store, claim.run.id, task.channel
-                ),
-                prepare_result=lambda parsed: _prepare_outgoing_dingtalk_messages(
+                configure_command=configure_consumer_command,
+                parse_result=_parse_consumer_result,
+                prepare_result=lambda parsed: _prepare_reviewable_candidate(
                     parsed,
                     store=self.store,
                     task=task,
                     context=context,
                     proposal_revision=proposal_revision,
+                    source_client=self.source_client,
                 ),
                 persist_conversation_session=persist_conversation_session,
                 on_progress=renew_session_lock,
@@ -812,43 +619,16 @@ class ConsumerAgentRunner:
                 conversation_contract_hash=contract_hash,
                 force_new_session=force_new_session,
         )
-        self._report_unreviewed_provider_effects(task, result)
         return result
 
-    def _report_unreviewed_provider_effects(
-        self,
-        task: ReplyTask,
-        result: AgentTurnRunResult[ConsumerAgentResult],
-    ) -> None:
-        """Record that this proposal turn reached a provider, if it did.
 
-        Consumer may only propose; Audit executes.  The effect review in
-        app.agent_cli governs commands routed through that controlled CLI, so a
-        turn with plain shell access can call a provider directly and never
-        meet the gate.  The resulting effect is invisible: the delivery ledger
-        has no entry, so a retry repeats it, and because a DingTalk send posts
-        as the principal, Audit can read this turn's own message as
-        pre-existing evidence and close the task as a duplicate.
-
-        Recording it does not undo the effect.  It makes the breach visible
-        instead of self-concealing, and names the receipt so the delivery can
-        be reconciled by hand before anything is retried.
-        """
-        run = self.store.get_agent_run(result.run_id)
-        receipts = provider_receipts(run.tool_events if run is not None else None)
-        if not receipts:
-            return
-        self.store.record_error(
-            task.conversation_id,
-            task.trigger_message_id,
-            CONSUMER_UNREVIEWED_EFFECT,
-            (
-                f"Consumer run {result.run_id} on task {task.id} reached a provider "
-                f"during a proposal turn; provider receipts: {', '.join(receipts)}. "
-                "The delivery ledger has no record of this effect, so the task must "
-                "be reconciled by hand and must not be retried blindly."
-            ),
-        )
+def _prepare_reviewable_candidate(parsed, *, store, task, context, proposal_revision, source_client):
+    from app.reviewed_sources import capture_candidate_sources
+    prepared = _prepare_outgoing_dingtalk_messages(parsed, store=store, task=task,
+        context=context, proposal_revision=proposal_revision)
+    if prepared.outcome is ConsumerOutcome.FAILED:
+        return prepared
+    return capture_candidate_sources(prepared, context, source_client)
 
 
 def _prepare_outgoing_dingtalk_messages(
@@ -860,29 +640,30 @@ def _prepare_outgoing_dingtalk_messages(
     proposal_revision: int,
 ) -> ConsumerAgentResult:
     """Apply the service-owned reply postfix before Audit reviews the candidate."""
-    proposal = result.proposal
-    if proposal is None or context.channel not in DINGTALK_MESSAGE_CHANNELS:
+    if context.channel not in DINGTALK_MESSAGE_CHANNELS:
         return result
+    from app.agent_orchestrator import _enrich_oa_applicant_target
     sender = ServiceMessageSender(store=store)
-    actions = tuple(
-        _prepare_outgoing_dingtalk_action(
-            action,
-            sender=sender,
-            delivery_key=agent_message_delivery_key(
-                business_object_key=task.business_object_key,
-                action_identity=action.action_identity,
-                execution_generation=task.execution_generation,
-                proposal_revision=proposal_revision,
-            ),
-            context=context,
+    def prepare_plan(proposal, option_key=""):
+        if proposal is None:
+            return None
+        proposal = _enrich_oa_applicant_target(proposal, context)
+        actions = tuple(
+            _prepare_outgoing_dingtalk_action(
+                action, sender=sender,
+                delivery_key=agent_message_delivery_key(
+                    business_object_key=task.business_object_key,
+                    action_identity=action.action_identity + (":" + option_key if option_key else ""),
+                    execution_generation=task.execution_generation,
+                    proposal_revision=proposal_revision,
+                ), context=context,
+            ) for action in proposal.actions
         )
-        for index, action in enumerate(proposal.actions)
-    )
-    if actions == proposal.actions:
-        return result
-    return result.model_copy(
-        update={"proposal": proposal.model_copy(update={"actions": actions})}
-    )
+        return proposal.model_copy(update={"actions": actions})
+    return result.model_copy(update={
+        "proposal": prepare_plan(result.proposal),
+        "decision_options": tuple(option.model_copy(update={"plan": prepare_plan(option.plan, option.key)}) for option in result.decision_options),
+    })
 
 
 def _prepare_outgoing_dingtalk_action(
@@ -976,60 +757,77 @@ def consumer_developer_instructions(
     audit_rules: str | None = None,
     *,
     skill_protocol: str = "",
+    runtime_context: str | None = None,
+    work_profile: str | None = None,
+    prompt_configuration: PromptConfiguration | None = None,
 ) -> str:
+    return render_prompt_sections(
+        consumer_developer_sections(
+            audit_rules,
+            skill_protocol=skill_protocol,
+            runtime_context=runtime_context,
+            work_profile=work_profile,
+            prompt_configuration=prompt_configuration,
+        ),
+        placement="developer",
+    )
+
+
+def consumer_developer_sections(
+    audit_rules: str | None = None,
+    *,
+    skill_protocol: str = "",
+    runtime_context: str | None = None,
+    work_profile: str | None = None,
+    prompt_configuration: PromptConfiguration | None = None,
+) -> tuple[PromptSection, ...]:
     # Retain the legacy argument for caller compatibility, but never expose
     # Audit's independent review policy to the Consumer.
-    del audit_rules
-    core = _developer_instructions(
+    del audit_rules, skill_protocol
+    configuration = prompt_configuration or load_prompt_configuration()
+    core = _developer_instruction_sections(
         audit_rules=None,
         skill_instruction=CONSUMER_DYNAMIC_SKILL_BODY,
+        common_principles=configuration.developer_instructions,
         wire_model=ConsumerAgentWireResult,
     )
-    instructions = _role_developer_instructions(
+    sections = _role_developer_sections(
         core,
         capability_instructions=AGENT_CAPABILITY_INSTRUCTIONS,
         role_boundary=CONSUMER_ROLE_BOUNDARY.replace("Derek", principal_display_name()),
     )
-    return "\n\n".join(
-        part
-        for part in (
-            instructions,
-            DECISION_QUALITY_GATE_INSTRUCTIONS,
-            _CONSUMER_AGENT_RULES,
-            skill_protocol,
-            runtime_context_instruction(),
-            work_profile_instruction(),
-        )
-        if part
+    return sections + (
+        PromptSection("决策证据", "服务决策质量合同", "developer", DECISION_QUALITY_GATE_INSTRUCTIONS),
+        PromptSection("应用结果合同", "服务应用合同", "developer", _CONSUMER_AGENT_RULES),
+        PromptSection(
+            "运行环境",
+            "当前运行环境",
+            "developer",
+            runtime_context_instruction() if runtime_context is None else runtime_context,
+        ),
+        PromptSection(
+            "工作人格",
+            "已保存 Work Profile",
+            "developer",
+            configuration.work_profile if work_profile is None else work_profile,
+        ),
     )
 
 
-def _claim_checked_consumer_result(store, run_id: int, channel: str = ""):
-    """Hold a result that says an external action happened to this turn's tools.
+def default_consumer_skill_protocol() -> str:
+    return render_business_skill_protocol(
+        installed_runtime_skills(names=BUNDLED_BUSINESS_SKILL_NAMES) + default_skill_catalog(), compact=True,
+    )
 
-    Consumer run 20016 returned `no_action` whose summary read "已按实时 OA 材料
-    核验并执行通过" after making zero tool calls; the approval was untouched and
-    the task closed `done`. A turn that called no tool cannot report a
-    completed external action, so that gets the ordinary correction turn.
-    """
 
-    def parse(raw: str):
-        result = _parse_consumer_result(raw)
-        if not channel_is_judged_by_tool_events(channel):
-            return result
-        run = store.get_agent_run(run_id)
-        if run is not None and claims_external_action_without_tools(
-            result=result.model_dump(mode="json") if hasattr(result, "model_dump") else result,
-            tool_events=generation_tool_events(
-                store,
-                reply_task_id=run.reply_task_id,
-                execution_generation=run.execution_generation,
-            ),
-        ):
-            raise ResultParseError(EXTERNAL_CLAIM_WITHOUT_TOOLS_REQUIREMENT)
-        return result
-
-    return parse
+def default_task_skill_catalog(
+    selected_names: tuple[str, ...] = (), *, target_root: Path | None = None
+):
+    if selected_names:
+        catalog = installed_runtime_skills(target_root, names=selected_names)
+    else:
+        catalog = ()
+    return tuple(dict((entry.name, entry) for entry in catalog).values())
 
 
 def _parse_consumer_result(raw: str):
@@ -1077,13 +875,36 @@ def _is_parent_mcp_inventory_failure(code: str) -> bool:
 
 def audit_developer_instructions(
     audit_rules: str,
+    *, runtime_context: str | None = None, work_profile: str | None = None,
+    prompt_configuration: PromptConfiguration | None = None,
 ) -> str:
     """Render the Audit contract; provider policy belongs to the runtime."""
-    core = _developer_instructions(
+    return render_prompt_sections(
+        audit_developer_sections(
+            audit_rules,
+            runtime_context=runtime_context,
+            work_profile=work_profile,
+            prompt_configuration=prompt_configuration,
+        ),
+        placement="developer",
+        omit_empty=False,
+    )
+
+
+def audit_developer_sections(
+    audit_rules: str,
+    *,
+    runtime_context: str | None = None,
+    work_profile: str | None = None,
+    prompt_configuration: PromptConfiguration | None = None,
+) -> tuple[PromptSection, ...]:
+    configuration = prompt_configuration or load_prompt_configuration(role="audit")
+    core = _developer_instruction_sections(
         audit_rules=audit_rules, skill_instruction=AUDIT_DYNAMIC_SKILL_BODY,
+        common_principles=configuration.developer_instructions,
         wire_model=AuditAgentWireResult,
     )
-    instructions = _role_developer_instructions(
+    sections = _role_developer_sections(
         core,
         capability_instructions=(
             "Use the capabilities available to the calling Agent. Apply the applicable "
@@ -1094,49 +915,81 @@ def audit_developer_instructions(
             "capability to verify that state itself before returning feedback for missing live "
             "evidence. A proposal need not embed raw tool output, and Audit must not ask Consumer "
             "to reproduce runtime tool output. If the read fails, return failed for the dependency "
-            "instead of requesting another content revision. Return feedback_provided when the "
-            "candidate must change, and ordinary failed when execution or a dependency does not "
+            "instead of requesting another content revision. Return return or reject when the "
+            "candidate must change, and ordinary failed when a dependency does not "
             "complete."
-        ), role_boundary=AUDIT_ROLE_BOUNDARY,
+        ), role_boundary=None,
     )
-    return "\n\n".join(
-        (
-            instructions,
-            DECISION_QUALITY_GATE_INSTRUCTIONS,
-            _AUDIT_AGENT_RULES,
+    return sections + (
+        PromptSection("决策证据", "服务决策质量合同", "developer", DECISION_QUALITY_GATE_INSTRUCTIONS),
+        PromptSection("应用结果合同", "服务应用合同", "developer", _AUDIT_AGENT_RULES),
+        PromptSection(
+            "响应完整性",
+            "审核角色合同",
+            "developer",
             AUDIT_RESPONSE_COMPLETENESS_INSTRUCTION,
-            runtime_context_instruction(),
-            work_profile_instruction(),
-        )
+        ),
+        PromptSection(
+            "运行环境",
+            "当前运行环境",
+            "developer",
+            runtime_context_instruction() if runtime_context is None else runtime_context,
+        ),
+        PromptSection(
+            "工作人格",
+            "已保存 Work Profile",
+            "developer",
+            configuration.work_profile if work_profile is None else work_profile,
+        ),
     )
 
 
-def _developer_instructions(
+def _developer_instruction_sections(
     *,
     audit_rules: str | None,
     skill_instruction: str,
+    common_principles: str,
     wire_model: type[ConsumerAgentWireResult] | type[AuditAgentWireResult],
-) -> str:
-    sections: list[str] = []
+) -> tuple[PromptSection, ...]:
+    sections: list[PromptSection] = []
     if audit_rules is not None:
         validate_audit_rules_text(audit_rules)
-        sections.append(f"## Audit Rules\n{audit_rules}")
+        sections.append(
+            PromptSection("审核规则", "已保存 Audit Rules", "developer", f"## Audit Rules\n{audit_rules}")
+        )
     sections.extend(
         (
-            "## Runtime Invariants\n"
-            "1. [role_boundary] Consumer Agent A gathers facts and proposes a typed candidate; Audit Agent B applies the operation Skill and executes an accepted candidate.\n"
-            "2. [output_contracts] Output Contracts: return the typed wire contract.\n"
-            "3. [supported_facts] Supported Facts: use only supported facts.\n"
-            "4. [meaning_preservation] Meaning Preservation: preserve candidate meaning.\n"
-            "5. [duplicate_effects] Duplicate Effects: retry through the normal result contract and use current business state.\n"
-            "6. [execution_facts] Execution Facts: preserve stable provider identifiers supplied by the runtime.\n"
-            "7. [external_secrecy] External Secrecy: do not expose secrets.\n"
-            "8. [dependency_auth] Dependency Authentication: verify dependency evidence.",
-            f"## Dynamic Skill\n{skill_instruction}",
-            f"## Pydantic Wire Contract\n{_schema_json(wire_model)}",
+            PromptSection(
+                "角色合同",
+                "服务角色合同",
+                "developer",
+                "## Runtime Invariants\n"
+                "1. [role_boundary] Consumer Agent A gathers facts and proposes a typed candidate; Audit Agent B reads and reviews the whole candidate; system code executes the exact persisted approved action plan.\n"
+                "2. [output_contracts] Output Contracts: return the typed wire contract.\n"
+                "3. [supported_facts] Supported Facts: use only supported facts.\n"
+                "4. [meaning_preservation] Meaning Preservation: preserve candidate meaning.\n"
+                "5. [duplicate_effects] Duplicate Effects: retry through the normal result contract and use current business state.\n"
+                "6. [execution_facts] Execution Facts: preserve stable provider identifiers supplied by the runtime.\n"
+                "7. [external_secrecy] External Secrecy: do not expose secrets.\n"
+                "8. [dependency_auth] Dependency Authentication: verify dependency evidence.",
+            ),
+            PromptSection("Skill 使用约定", "服务角色合同", "developer", f"## Dynamic Skill\n{skill_instruction}"),
+            PromptSection("共同工作原则", "已保存 Developer 模板", "developer", common_principles),
+            PromptSection(
+                "系统动作目录",
+                "系统动作合同",
+                "developer",
+                "## System Action Contracts\n" + system_action_contracts_text(),
+            ),
+            PromptSection(
+                "输出契约",
+                "Pydantic 业务模型",
+                "developer",
+                f"## Pydantic Wire Contract\n{_schema_json(wire_model)}",
+            ),
         )
     )
-    return "\n\n".join(sections)
+    return tuple(sections)
 
 
 def _schema_json(
@@ -1148,44 +1001,64 @@ def _schema_json(
     ],
 ) -> str:
     return json.dumps(
-        model.model_json_schema(),
+        _compact_prompt_schema(model.model_json_schema()),
         ensure_ascii=False,
         separators=(",", ":"),
     )
 
 
-def _role_developer_instructions(
-    role_instruction: str,
+def _compact_prompt_schema(value):
+    """Omit schema annotations, preserving property/definition names and assertions."""
+    if isinstance(value, list):
+        return [_compact_prompt_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {}
+    for key, item in value.items():
+        if key in {"title", "default"}:
+            continue
+        if key in {"properties", "$defs", "definitions", "patternProperties", "dependentSchemas"}:
+            result[key] = {name: _compact_prompt_schema(schema) for name, schema in item.items()}
+        elif key in {
+            "allOf", "anyOf", "oneOf", "prefixItems", "items", "additionalProperties",
+            "additionalItems", "contains", "not", "if", "then", "else", "propertyNames",
+            "unevaluatedProperties", "unevaluatedItems", "contentSchema",
+        }:
+            result[key] = _compact_prompt_schema(item)
+        else:
+            result[key] = item
+    return result
+
+
+def _role_developer_sections(
+    role_sections: tuple[PromptSection, ...],
     *,
     capability_instructions: str,
-    role_boundary: str,
-) -> str:
-    shared = (
-        SHARED_RULES_PATH.read_text(encoding="utf-8").strip()
-        if SHARED_RULES_PATH.is_file()
-        else ""
-    )
-    instructions = (
-        role_instruction
-        + "\n\n## Capability Instructions\n"
-        + capability_instructions
-    )
-    quoted_shared = (
-        "\n".join(f"> {line}" for line in shared.splitlines())
-        if shared
-        else "> No host-specific shared agent rules are installed."
-    )
-    instructions += "\n\n## Shared Agent Rules\n" + quoted_shared
-    instructions += (
-        "\n\nThe shared-rules section above is the complete service-provided context "
-        "for this turn. Do not reopen AGENT.md with shell, Python, or a native "
-        "command tool; use the selected Skill capability for additional material."
-    )
-    instructions += (
-        "\n\nThis is a background service turn, not an interactive Codex session. "
+    role_boundary: str | None,
+) -> tuple[PromptSection, ...]:
+    sections = role_sections + (
+        PromptSection(
+            "能力边界",
+            "服务能力合同",
+            "developer",
+            "## Capability Instructions\n" + capability_instructions,
+        ),
+        PromptSection(
+            "后台记忆说明",
+            "服务运行合同",
+            "developer",
+            "This is a background service turn, not an interactive Codex session. "
         "The current work profile is already injected below, so interactive session "
         "bootstrap requirements do not apply: do not call `memory_connector.user_get` "
         "as a session-start prerequisite. Use Memory tools only when the current "
-        "business task specifically needs durable memory evidence."
+            "business task specifically needs durable memory evidence.",
+        ),
     )
-    return instructions + "\n\n## Role Boundary\n" + role_boundary
+    if role_boundary is not None:
+        sections += (PromptSection(
+            "角色边界",
+            "服务角色合同",
+            "developer",
+            "## Role Boundary\n" + role_boundary,
+        ),)
+    return sections

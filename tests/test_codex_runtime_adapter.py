@@ -411,7 +411,7 @@ def test_existing_provider_auth_signatures_allow_failover(adapter, stderr):
     assert failure.route_pause_required is True
 
 
-def test_near_miss_provider_auth_signature_is_fail_closed(adapter):
+def test_near_miss_auth_signature_remains_unclassified_but_allows_failover(adapter):
     failure = adapter.classify_failure(
         stderr=(
             "unexpected status 401 Unauthorized: Invalid API key, url: "
@@ -423,7 +423,8 @@ def test_near_miss_provider_auth_signature_is_fail_closed(adapter):
 
     assert failure.failure_class.value == "unclassified"
     assert failure.code == "runtime_unclassified"
-    assert failure.failover_permitted is False
+    assert failure.failover_permitted is True
+    assert failure.route_pause_required is False
 
 
 @pytest.mark.parametrize(
@@ -648,7 +649,7 @@ def test_context_compaction_error_with_possessive_model_word_is_classified(adapt
     assert failure.code == "codex_context_window_exceeded"
 
 
-def test_unknown_failure_is_fail_closed(adapter):
+def test_unknown_failure_allows_failover_without_pausing_or_reclassifying(adapter):
     failure = adapter.classify_failure(
         stderr="unexpected command result",
         stdout="",
@@ -658,7 +659,7 @@ def test_unknown_failure_is_fail_closed(adapter):
     assert failure.code == "runtime_unclassified"
     assert failure.failure_class.value == "unclassified"
     assert failure.retryable_on_same_route is False
-    assert failure.failover_permitted is False
+    assert failure.failover_permitted is True
     assert failure.route_pause_required is False
 
 

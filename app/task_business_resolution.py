@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from contextlib import nullcontext
+import hashlib
 import json
 import sqlite3
 
@@ -173,6 +174,36 @@ class BusinessResolutionService:
                 registry_source=registry_source,
                 _db=db,
             )
+
+    def register_source_project(
+        self, *, title: str, registry_source: str, _db: sqlite3.Connection | None = None
+    ) -> BusinessProject:
+        """Register the source's exact Project definition or reuse its official identity."""
+        self._require_nonblank(title, field="Project title")
+        self._require_nonblank(registry_source, field="canonical registry source")
+        with self._transaction(_db) as db:
+            matches = db.execute(
+                """select p.* from business_projects p
+                   join business_anchors a on a.id=p.canonical_anchor_id
+                   where p.title=? and a.anchor_type='project' and a.active=1 limit 2""",
+                (title,),
+            ).fetchall()
+            if len(matches) > 1:
+                raise ValueError("Project identity conflict: multiple active official Projects have this exact title")
+            if matches:
+                return self.store.get_business_project_in_transaction(
+                    project_id=int(matches[0]["id"]), _db=db
+                )
+            project_key = hashlib.sha256(" ".join(title.split()).casefold().encode("utf-8")).hexdigest()
+            anchor_id = self.register_anchor(
+                anchor_type="project", anchor_ref=f"task-agent-project:{project_key}", title=title, _db=db,
+            )
+            project_id = self.register_official_project(anchor_id=anchor_id, registry_source=registry_source, _db=db)
+            project = self.store.get_business_project_in_transaction(
+                project_id=project_id, _db=db
+            )
+            assert project is not None
+            return project
 
     def propose_anchor_match(
         self,
@@ -365,6 +396,15 @@ class BusinessResolutionService:
                 (int(cluster_row["cluster_id"]),),
             ).fetchall()
             for task_row in task_rows:
+                existing = self.store.get_business_task_anchor_link_in_transaction(
+                    task_id=int(task_row["task_id"]), anchor_id=int(project_row["canonical_anchor_id"]), _db=db,
+                )
+                if existing is not None and existing.status is BusinessRelationStatus.CONFIRMED and existing.active:
+                    self.store.link_business_task_evidence_in_transaction(
+                        task_id=int(task_row["task_id"]), signal_id=evidence_signal_id,
+                        evidence_role=BusinessEvidenceRole.RELEVANCE, _db=db,
+                    )
+                    continue
                 self.confirm_anchor_match(
                     task_id=int(task_row["task_id"]),
                     anchor_id=int(project_row["canonical_anchor_id"]),

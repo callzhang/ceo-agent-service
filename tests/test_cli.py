@@ -164,17 +164,16 @@ def enqueue_trigger_task(
         trigger_create_time="2026-05-28 18:00:00",
         trigger_sender=trigger_sender,
         trigger_text=trigger_text,
-        trigger_message_json=json.dumps(
-            {
-                "openConversationId": conversation_id,
-                "openMessageId": trigger_message_id,
-                "sender": trigger_sender,
-                "senderOpenDingTalkId": sender_open_dingtalk_id,
-                "createTime": "2026-05-28 18:00:00",
-                "content": trigger_text,
-            },
-            ensure_ascii=False,
-        ),
+        trigger_message_json=cli.DingTalkMessage(
+            open_conversation_id=conversation_id,
+            open_message_id=trigger_message_id,
+            conversation_title=conversation_title,
+            single_chat=single_chat,
+            sender_name=trigger_sender,
+            sender_open_dingtalk_id=sender_open_dingtalk_id,
+            create_time="2026-05-28 18:00:00",
+            content=trigger_text,
+        ).model_dump_json(),
     )
 
 
@@ -2311,6 +2310,17 @@ def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatc
         def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             return TaskAgentDecision.model_validate(
                 {
+                    "project_decisions": [],
+                    "project_assessments": [
+                        {
+                            "project_title": "售前知识库",
+                            "outcome": "insufficient_evidence",
+                            "reason": "当前来源只有待补齐来源链接的候选行动，缺少正式 Project 身份、负责人和风险事实。",
+                            "assessment_basis": "current_observation",
+                            "evidence": [{"source_ref": "1", "source_excerpt": "售前知识库需要补齐来源链接。"}],
+                            "decision_indexes": [0],
+                        }
+                    ],
                     "task_decisions": [
                         {
                             "action": "record_candidate",
@@ -2517,10 +2527,58 @@ def test_claimed_work_summary_input_skips_retired_completion_checks(
     work_input = SimpleNamespace(source_type=source_type, id=1)
     runner = SimpleNamespace(codex=object())
 
-    processed = cli._process_claimed_work_summary_input(Store(), runner, work_input)
+    processed = cli._process_claimed_work_summary_input(
+        Store(), runner, work_input,
+        session_lease=SimpleNamespace(assert_owned=lambda: None),
+    )
 
     assert processed is (expected_route == "task")
     assert routed == [expected_route]
+
+
+def test_claimed_work_summary_does_not_start_agent_while_shared_session_is_owned(tmp_path, monkeypatch):
+    from app.task_agent_session import TaskAgentSessionLease
+
+    store = AutoReplyStore(tmp_path / "shared-work-session.sqlite3")
+    item = WorkItem.model_validate({
+        "source": {"type": "reply_attempt", "ref": "shared-session-source"},
+        "summary": "Prepare the report.", "context": {"source_conversation_kind": "direct"},
+    })
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json()
+    )
+    claimed = store.claim_work_summary_inputs(limit=1)[0]
+    calls = []
+    monkeypatch.setattr(cli, "process_work_item", lambda *args, **kwargs: calls.append(kwargs))
+    lease = TaskAgentSessionLease.try_acquire(store)
+    assert lease is not None
+    with lease:
+        assert cli._process_claimed_work_summary_input(store, object(), claimed) is False
+        assert calls == []
+        lease.assert_owned()
+    assert store.get_work_summary_input(input_id).status.value == "pending"
+
+
+def test_claimed_work_summary_acquires_and_releases_shared_session(tmp_path, monkeypatch):
+    from app.task_agent_session import TaskAgentSessionLease
+
+    store = AutoReplyStore(tmp_path / "work-session-owner.sqlite3")
+    item = WorkItem.model_validate({
+        "source": {"type": "reply_attempt", "ref": "session-owner-source"},
+        "summary": "Prepare the report.", "context": {"source_conversation_kind": "direct"},
+    })
+    store.enqueue_work_summary_input(item.source.type.value, item.source.ref, item.model_dump_json())
+    claimed = store.claim_work_summary_inputs(limit=1)[0]
+
+    def process(*args, **kwargs):
+        kwargs["session_lease"].assert_owned()
+        assert TaskAgentSessionLease.try_acquire(store) is None
+
+    monkeypatch.setattr(cli, "process_work_item", process)
+    assert cli._process_claimed_work_summary_input(store, object(), claimed) is True
+    lease = TaskAgentSessionLease.try_acquire(store)
+    assert lease is not None
+    lease.close()
 
 
 def test_claimed_work_summary_input_retries_after_session_lease_loss(
@@ -2602,6 +2660,16 @@ def test_process_work_items_command_processes_existing_input_without_feature_gat
         def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             return TaskAgentDecision.model_validate(
                 {
+                    "project_decisions": [],
+                    "project_assessments": [
+                        {
+                            "project_title": "已有项目",
+                            "outcome": "insufficient_evidence",
+                            "reason": "当前来源只有待处理描述，没有可核实的正式 Project 身份、真实 Task 或关注风险事实。",
+                            "assessment_basis": "current_observation",
+                            "evidence": [{"source_ref": "1", "source_excerpt": "已有事项等待处理。"}],
+                        }
+                    ],
                     "task_decisions": [
                         {
                             "action": "skip",
@@ -2622,7 +2690,7 @@ def test_process_work_items_command_processes_existing_input_without_feature_gat
     with store._connect() as db:
         assert db.execute(
             "select status from work_summary_inputs where id=?", (input_id,)
-        ).fetchone()["status"] == "skipped"
+        ).fetchone()["status"] == "done"
 def test_process_work_items_command_reclaims_stale_processing_input(
     tmp_path,
     monkeypatch,
@@ -2640,6 +2708,17 @@ def test_process_work_items_command_reclaims_stale_processing_input(
         def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             return TaskAgentDecision.model_validate(
                 {
+                    "project_decisions": [],
+                    "project_assessments": [
+                        {
+                            "project_title": "售前知识库",
+                            "outcome": "insufficient_evidence",
+                            "reason": "当前来源只有待补齐来源链接的候选行动，缺少正式 Project 身份、负责人和风险事实。",
+                            "assessment_basis": "current_observation",
+                            "evidence": [{"source_ref": "1", "source_excerpt": "售前知识库需要补齐来源链接。"}],
+                            "decision_indexes": [0],
+                        }
+                    ],
                     "task_decisions": [
                         {
                             "action": "record_candidate",
@@ -3401,6 +3480,9 @@ def test_process_work_items_command_uses_task_agent_timeouts(
         def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             return TaskAgentDecision.model_validate(
                 {
+                    "project_decisions": [],
+                    "project_assessments": [],
+                    "update_summary": "当前来源是一次性同步，没有相关的业务 Project 或 Project 线索。",
                     "task_decisions": [
                         {
                             "action": "skip",
@@ -4145,6 +4227,10 @@ def test_scan_meeting_todos_once_command_reads_todos_and_honors_limit(
             self.kwargs = kwargs
 
     monkeypatch.setattr("app.task_scanners.scan_meeting_todos", fake_scan)
+    monkeypatch.setattr(
+        "app.task_report_scanner.scan_task_reports",
+        lambda store, dws, *, max_new_items=None: 0,
+    )
     monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
     db_path = tmp_path / "task.sqlite3"
 
@@ -4633,6 +4719,105 @@ def test_send_attempt_command_dedupes_same_pending_rerun_without_direct_send(
     assert store.get_sent_reply("cid-1", "msg-1") is None
 
 
+@pytest.mark.parametrize("source", ["missing", "compacted", "invalid"])
+def test_send_attempt_command_refuses_unavailable_original_without_queue(
+    tmp_path, source,
+):
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Friday", False, None)
+    if source != "missing":
+        enqueue_trigger_task(store)
+        if source == "compacted":
+            with sqlite3.connect(settings.db_path) as db:
+                db.execute(
+                    "update reply_tasks set input_compacted=1, trigger_text='', "
+                    "trigger_message_json=? where conversation_id='cid-1'",
+                    (json.dumps({"input_compacted": True, "open_message_id": "msg-1"}),),
+                )
+        else:
+            with sqlite3.connect(settings.db_path) as db:
+                db.execute(
+                    "update reply_tasks set trigger_message_json='{}' "
+                    "where conversation_id='cid-1'"
+                )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1", conversation_title="Friday",
+        trigger_message_id="msg-1", trigger_sender="Phina",
+        trigger_text="@Alex Chen 看一下", action="send_reply",
+        sensitivity_kind="general", send_status="failed",
+    )
+    with pytest.raises(SystemExit, match="original trigger is unavailable"):
+        send_attempt_command(settings, attempt_id)
+    assert store.get_reply_attempt(attempt_id).send_status == "failed"
+    task = store.get_reply_task_for_message("cid-1", "msg-1")
+    assert (task is None) if source == "missing" else task.status == "pending"
+
+
+@pytest.mark.parametrize("compacted", [False, True])
+def test_send_attempt_email_requires_exact_uncompacted_action_payload(
+    tmp_path, compacted,
+):
+    from app.email_classifier_contracts import EmailAction
+    from app.email_store import email_action_identity
+    from app.email_task_adapter import email_conversation_id
+
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
+    store = cli.AutoReplyStore(settings.db_path)
+    account_id = "account-1"
+    stable_id = "message-1"
+    thread_id = "thread-1"
+    action_identity = email_action_identity(
+        account_id=account_id, stable_message_identity=stable_id,
+        action_type=EmailAction.AUTO_REPLY, action_plan_version=1,
+    )
+    conversation_id = email_conversation_id(account_id, thread_id)
+    payload = {
+        "schema": "email_agent_action.v1",
+        "lifecycle_version": "consumer_audit_v1",
+        "action_type": "auto_reply", "action_identity": action_identity,
+        "action_plan_id": "plan-1", "action_plan_version": 1,
+        "classification_id": 1, "account_id": account_id,
+        "stable_message_identity": stable_id, "thread_identity": thread_id,
+        "category": "work", "classification_source": "model",
+        "confidence": 0.99, "model_id": "model-1", "config_version": "v1",
+        "action_parameters": {},
+    }
+    task = store.enqueue_reply_task(
+        channel="email", conversation_id=conversation_id,
+        conversation_title="Email", single_chat=True,
+        trigger_message_id=action_identity,
+        trigger_create_time="2026-10-10 00:00:00", trigger_sender="sender@example.com",
+        trigger_text="Process this email action",
+        trigger_message_json=json.dumps(payload),
+    )
+    assert task
+    attempt_id = store.record_reply_attempt(
+        channel="email", conversation_id=conversation_id,
+        conversation_title="Email", trigger_message_id=action_identity,
+        trigger_sender="sender@example.com", trigger_text="Process this email action",
+        action="agent_run", sensitivity_kind="general", send_status="failed",
+    )
+    if compacted:
+        with sqlite3.connect(settings.db_path) as db:
+            db.execute(
+                "update reply_tasks set input_compacted=1, trigger_text='', "
+                "trigger_message_json=? where channel='email'",
+                (json.dumps({**payload, "input_compacted": True}),),
+            )
+        with pytest.raises(SystemExit, match="original trigger is unavailable"):
+            send_attempt_command(settings, attempt_id)
+        assert store.get_reply_task_for_message(
+            conversation_id, action_identity, channel="email"
+        ).manual_rerun_attempt_id == 0
+    else:
+        queued = send_attempt_command(settings, attempt_id)
+        assert queued["send_status"] == "queued"
+        assert queued["task_id"] == store.get_reply_task_for_message(
+            conversation_id, action_identity, channel="email"
+        ).id
+
+
 def test_send_attempt_command_persists_instruction_as_new_reviewed_attempt(
     monkeypatch, tmp_path
 ):
@@ -4739,6 +4924,15 @@ def test_send_attempt_oa_rerun_uses_current_business_object_task(tmp_path):
             trigger_create_time=f"{day} 00:00:00",
             trigger_sender="Derek OA",
             trigger_text=f"审批待办 {oa_url}",
+            trigger_message_json=cli.DingTalkMessage(
+                open_conversation_id=conversation_id,
+                open_message_id=f"oa-pending:process-1:{day}",
+                conversation_title="审批待办",
+                single_chat=True,
+                sender_name="Derek OA",
+                create_time=f"{day} 00:00:00",
+                content=f"审批待办 {oa_url}",
+            ).model_dump_json(),
             oa_url=oa_url,
             business_object_key=key,
         )
@@ -4831,6 +5025,10 @@ def test_send_attempt_command_queues_existing_calendar_attempt(
     )
     store = cli.AutoReplyStore(settings.db_path)
     store.upsert_conversation("cid-1", "Calendar", True, None)
+    enqueue_trigger_task(
+        store, conversation_title="Calendar", single_chat=True,
+        trigger_sender="Avery", trigger_text="[日程]",
+    )
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
         conversation_title="Calendar",
@@ -7595,6 +7793,7 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
             futures.append(
                 self.executors["meeting"].submit(pending_started.set)
             )
+            captured["stop_requested_at"] = time.monotonic()
             raise StopDispatcher
 
     fake_runtime = SimpleNamespace(
@@ -7617,14 +7816,13 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
         lambda **_: object(),
     )
 
-    started_at = time.monotonic()
     with pytest.raises(StopDispatcher):
         cli.run_agent_cron_dispatcher_loop(
             WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False),
             object(),
             wake_event=threading.Event(),
         )
-    assert time.monotonic() - started_at < 2
+    assert time.monotonic() - captured["stop_requested_at"] < 2
 
     assert not futures[0].done()
     assert futures[1].cancelled()
@@ -7750,6 +7948,7 @@ def test_agent_cron_dispatcher_dry_run_leaves_todo_outbox_unclaimed(
 
 
 def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_seed_scheduled_tasks_on_service_start", lambda *_: None)
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     store.enqueue_reply_task(
@@ -7798,6 +7997,7 @@ def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path, monkey
 def test_run_service_requeues_processing_work_summary_inputs_on_startup(
     tmp_path, monkeypatch
 ):
+    monkeypatch.setattr(cli, "_seed_scheduled_tasks_on_service_start", lambda *_: None)
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     item = WorkItem.model_validate(
@@ -8703,6 +8903,62 @@ def test_agent_cron_treats_terminal_reply_task_status_as_finished(
 
     resolver = captured["terminal_resolver"]
     assert resolver.is_terminal("reply_task", "383933") is True
+
+
+def test_scheduler_success_closes_only_earlier_same_component_errors(monkeypatch, tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    captured = {}
+
+    class Scheduler:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def run_forever(self, **kwargs):
+            pass
+
+    monkeypatch.setattr(cli, "_scheduled_task_option_service", lambda *_: object())
+    monkeypatch.setattr("app.agent_cron.scheduler.AgentCronScheduler", Scheduler)
+    for kind, detail in (
+        ("agent-cron-scheduler", "earlier"),
+        ("agent-cron-scheduler", "later"),
+        ("agent-cron-dispatcher", "other"),
+    ):
+        store.record_error("", "", kind, detail)
+    with store._connect() as db:
+        db.execute("update errors set created_at='2026-10-10 10:00:00'")
+        db.execute("update errors set created_at='2026-10-10 12:00:00' where detail='later'")
+    cli.run_agent_cron_scheduler_loop(
+        SimpleNamespace(db_path=store.path), object(), wake_event=threading.Event()
+    )
+    captured["tick_observer"](datetime.fromisoformat("2026-10-10T11:00:00+00:00"))
+    errors = {error.detail: error for error in store.list_errors()}
+    assert errors["earlier"].resolved_at
+    assert not errors["later"].resolved_at
+    assert not errors["other"].resolved_at
+
+
+def test_successful_cron_tick_without_incident_does_not_acquire_writer(monkeypatch, tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    def unexpected_writer():
+        raise AssertionError("empty incident recovery must not acquire a writer")
+
+    monkeypatch.setattr(store, "_immediate_write_transaction", unexpected_writer)
+    assert store.resolve_errors_before_successful_component_tick(
+        "agent-cron-scheduler", tick_at=datetime.fromisoformat("2026-10-10T11:00:00+00:00")
+    ) == 0
+
+
+def test_cron_recovery_preserves_incident_from_tick_second(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error("", "", "agent-cron-scheduler", "during tick")
+    with store._connect() as db:
+        db.execute("update errors set created_at='2026-10-10 11:00:00'")
+    assert store.resolve_errors_before_successful_component_tick(
+        "agent-cron-scheduler",
+        tick_at=datetime.fromisoformat("2026-10-10T11:00:00.500000+00:00"),
+    ) == 0
+    assert not store.list_errors()[0].resolved_at
 
 
 def test_task_agent_queue_runs_one_turn_at_a_time():

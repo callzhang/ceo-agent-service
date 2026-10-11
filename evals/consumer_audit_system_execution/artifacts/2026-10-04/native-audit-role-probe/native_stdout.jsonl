@@ -1,0 +1,8 @@
+{"type":"thread.started","thread_id":"01a10755-765e-7613-8382-40b6af5b6a0e"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Under-development features enabled: chronicle, code_mode_only. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/derek/.codex/config.toml."}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_1","type":"error","message":"Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest."}}
+{"type":"item.started","item":{"id":"item_2","type":"mcp_tool_call","server":"agent_cli","tool":"read_skill","arguments":{},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"mcp_tool_call","server":"agent_cli","tool":"read_skill","arguments":{},"result":{"content":[{"type":"text","text":"{\n  \"nonce\": \"e5439825e3fe3f44bcef77a9bf288e09\",\n  \"skill\": \"synthetic_read_only\"\n}"}],"structured_content":null},"error":null,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"{\"nonce\":\"e5439825e3fe3f44bcef77a9bf288e09\",\"tool_names\":[\"mcp__agent_cli__read_skill\"]}"}}
+{"type":"turn.completed","usage":{"input_tokens":45398,"cached_input_tokens":29568,"cache_write_input_tokens":0,"output_tokens":653,"reasoning_output_tokens":474}}

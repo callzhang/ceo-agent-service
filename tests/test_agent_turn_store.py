@@ -9,7 +9,6 @@ import pytest
 
 from app.agent_contracts import (
     AuditAgentResult,
-    AuditExternalResult,
     AuditOutcome,
     ConsumerAgentResult,
 )
@@ -139,6 +138,52 @@ def test_claude_consumer_session_is_route_scoped_and_survives_contract_revision(
     assert store.get_conversation_runtime_session(
         task.conversation_id, "claude_api"
     ) == "claude-session"
+
+
+def test_resumed_attempt_can_fail_before_transcript_end_is_recorded(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_consumer(store, task).run
+    attempt = store.claim_agent_runtime_attempt(
+        run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.6-sol",
+        session_mode="resume", source_session_id="existing-session",
+    )
+    store.mark_agent_runtime_attempt_running_once(attempt.id)
+    running = store.set_agent_runtime_attempt_session(
+        attempt.id, "existing-session", "codex_session:existing-session",
+        transcript_start=124,
+    )
+    failed = store.fail_agent_runtime_attempt(
+        attempt.id, "result", "codex_result_invalid", False,
+    )
+    assert running.transcript_start == running.transcript_end == 124
+    with pytest.raises(ValueError, match="invalid runtime attempt transcript range"):
+        store.complete_agent_runtime_attempt(
+            attempt.id, "existing-session", "codex_session:existing-session", 124, 0,
+        )
+    assert failed.status == "failed"
+    assert failed.failure_code == "codex_result_invalid"
+    assert failed.transcript_start == failed.transcript_end == 124
+
+
+def test_resumed_session_binding_preserves_captured_transcript_end(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_consumer(store, task).run
+    attempt = store.claim_agent_runtime_attempt(
+        run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.6-sol",
+        session_mode="resume", source_session_id="existing-session",
+    )
+    store.mark_agent_runtime_attempt_running_once(attempt.id)
+    with store._connect() as db:
+        db.execute("update agent_runtime_attempts set transcript_end=158 where id=?", (attempt.id,))
+    bound = store.set_agent_runtime_attempt_session(
+        attempt.id, "existing-session", "codex_session:existing-session", transcript_start=124,
+    )
+    assert bound.transcript_start == 124
+    assert bound.transcript_end == 158
+    failed = store.fail_agent_runtime_attempt(attempt.id, "result", "codex_result_invalid", False)
+    assert failed.transcript_end == 158
 
 
 def test_claude_incompatible_resume_clears_only_matching_route_slot(tmp_path):
@@ -308,10 +353,18 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
 
         def __call__(self, command, *, on_stdout_line, **kwargs):
             self.commands.append(command)
+            with native_path.open("a") as native:
+                for line in self.stream.splitlines():
+                    if json.loads(line).get("type") == "assistant":
+                        native.write(line + "\n")
             for line in self.stream.splitlines():
                 on_stdout_line(line)
             return ProcessRunResult(0, self.stream, "")
 
+    from app import native_trajectory
+    native_path = tmp_path / "claude-native.jsonl"
+    native_path.touch()
+    monkeypatch.setattr(native_trajectory, "claude_session_path", lambda *a, **k: native_path)
     executor = Executor(stream)
 
     def execute(
@@ -446,10 +499,10 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
         proposal_task.id, proposal_task.execution_generation
     )
     [proposal_attempt] = store.list_agent_runtime_attempts(proposal_run.id)
-    proposal_envelope = json.loads(proposal_attempt.result_envelope_json)
     assert proposal_run.status == "completed"
-    assert proposal_envelope["result_ref"]["agent_run_id"] == proposal_run.id
-    assert "result" not in proposal_envelope
+    assert proposal_attempt.result_envelope_json == ""
+    adopted = store.adopted_candidate_for_consumer_run(proposal_run.id)
+    assert body_marker in adopted["candidate_json"]
     assert body_marker not in proposal_attempt.result_envelope_json
     assert url_marker not in proposal_attempt.result_envelope_json
     assert body_marker in proposal_run.final_result_json
@@ -457,7 +510,7 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
 
     # Sensitive payload policy is covered by runtime contract tests; this case focuses on session ownership.
 
-def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path):
+def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     config = load_runtime_config(
@@ -534,12 +587,19 @@ def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path):
             ),
         )
     )
+    from app import native_trajectory
+    native_path = tmp_path / "claude-native.jsonl"
+    native_path.touch()
+    monkeypatch.setattr(native_trajectory, "claude_session_path", lambda *a, **k: native_path)
     commands: list[list[str]] = []
     submitted_prompts: list[str] = []
+    prompt_snapshots = []
 
     def executor(command, *, prompt, on_stdout_line, **kwargs):
         commands.append(command)
         submitted_prompts.append(prompt)
+        prompt_snapshots[:] = [event for event in native_trajectory.live_events(str(store.path.resolve()), claim.run.id)
+                               if event.get('type') == 'runtime.prompt']
         if command[0] != "claude-test":
             return ProcessRunResult(
                 1,
@@ -547,6 +607,10 @@ def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path):
                 "unexpected status 401 Unauthorized: missing bearer or basic "
                 "authentication /v1/responses",
             )
+        with native_path.open("a") as native:
+            for line in claude_stream.splitlines():
+                if json.loads(line).get("type") == "assistant":
+                    native.write(line + "\n")
         for line in claude_stream.splitlines():
             on_stdout_line(line)
         return ProcessRunResult(0, claude_stream, "")
@@ -596,14 +660,23 @@ def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path):
         "claude-test",
     ]
     assert submitted_prompts[:2] == ["Read-only decision", "Read-only decision"]
+    saved_run = store.get_agent_run(claim.run.id)
+    assert native_trajectory.live_events(str(store.path.resolve()), claim.run.id) is None
+    assert not any(event.get("type") == "runtime.prompt" for event in saved_run.tool_events)
+    assert [event["runtime_attempt_id"] for event in prompt_snapshots] == [attempt.id for attempt in attempts]
+    assert [event["route_name"] for event in prompt_snapshots] == [attempt.route_name for attempt in attempts]
+    claude_input = prompt_snapshots[2]
+    assert claude_input["runtime_kind"] == "claude_cli"
+    assert "route：claude_api" in claude_input["runtime_context"]
+    assert claude_input["developer_instructions"] == "Return the exact schema.\n\n" + claude_input["runtime_context"]
     assert submitted_prompts[2] == (
         "<developer-instructions>\n"
-        "Return the exact schema.\n"
-        "</developer-instructions>\n"
-        "<task>\n"
-        "Read-only decision\n"
-        "</task>"
+        + claude_input["developer_instructions"]
+        + "\n</developer-instructions>\n<task>\nRead-only decision\n</task>"
     )
+    assert claude_input["submitted_input"] == submitted_prompts[2]
+    assert all("test-openai-secret" not in json.dumps(event) and "test-anthropic-secret" not in json.dumps(event)
+               for event in prompt_snapshots)
     assert "Return the exact schema." not in commands[2]
     assert store.get_conversation_runtime_session(
         task.conversation_id,
@@ -895,17 +968,11 @@ def test_runtime_domain_result_codec_rejects_business_document_reference(tmp_pat
     store.mark_agent_runtime_attempt_running_once(attempt.id)
     document_marker = "full-business-document-must-not-persist"
     result = AuditAgentResult(
-        outcome=AuditOutcome.EXECUTED,
+        outcome=AuditOutcome.APPROVE,
         summary="Confirmed.",
         proposal_revision=0,
+        candidate_digest="a" * 64,
         feedback=None,
-        external_result=AuditExternalResult(
-            operation_id="operation-0",
-            live_result_reference={
-                "message_id": "mid-1",
-                "document_content": {"confidential": document_marker},
-            },
-        ),
         error=AgentError(),
         risk="low",
         confidence=1.0,
@@ -913,35 +980,34 @@ def test_runtime_domain_result_codec_rejects_business_document_reference(tmp_pat
         information_completeness=1.0,
     )
 
-    with pytest.raises(ValueError, match="runtime_result_envelope_document_field_invalid"):
-        _encode_runtime_domain_result(
+    envelope = json.loads(_encode_runtime_domain_result(
+        schema_id="schema-v1", role=AgentRole.AUDIT, result=result,
+    ))
+    envelope["result"]["external_result"] = {
+        "operation_id": "operation-0",
+        "live_result_reference": {"document_content": {"confidential": document_marker}},
+    }
+    with pytest.raises(ValueError, match="runtime_result_envelope_invalid"):
+        _decode_runtime_domain_result(
+            json.dumps(envelope),
             schema_id="schema-v1",
             role=AgentRole.AUDIT,
-            result=result,
         )
     assert document_marker.encode() not in store.path.read_bytes()
     persisted_attempt = store.get_agent_runtime_attempt(attempt.id)
     assert persisted_attempt is not None and persisted_attempt.status == "running"
 
 
-def test_runtime_domain_result_codec_preserves_message_readback_for_ledger_projection():
+def test_system_message_receipt_preserves_readback_for_ledger_projection(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_audit(store, task)
     result = AuditAgentResult(
-        outcome=AuditOutcome.EXECUTED,
-        summary="Message sent and read back.",
+        outcome=AuditOutcome.APPROVE,
+        summary="Exact message candidate approved.",
         proposal_revision=0,
+        candidate_digest="a" * 64,
         feedback=None,
-        external_result=AuditExternalResult(
-            operation_id="operation-readback",
-            live_result_reference={
-                "send_status": "SUCCESS",
-                "message_id": "message-1",
-                "readback": {
-                    "conversationId": "conversation-1",
-                    "messageId": "message-1",
-                    "text": "已发送正文",
-                },
-            },
-        ),
         error=AgentError(),
         risk="low",
         confidence=1.0,
@@ -955,12 +1021,29 @@ def test_runtime_domain_result_codec_preserves_message_readback_for_ledger_proje
         result=result,
     )
     decoded = json.loads(encoded)
-
-    assert decoded["result"]["external_result"]["live_result_reference"]["readback"] == {
-        "conversationId": "conversation-1",
+    assert decoded["result"]["outcome"] == "approve"
+    assert "external_result" not in decoded["result"]
+    store.complete_agent_run(run.id, result.model_dump(mode="json"), owner="audit")
+    readback = {
+        "conversationId": task.conversation_id,
         "messageId": "message-1",
         "text": "已发送正文",
     }
+    provider_result = {"send_status": "SUCCESS", "message_id": "message-1", "readback": readback}
+    sent = store.record_completed_agent_message_delivery(
+        agent_run_id=run.id, external_action_key="operation-readback",
+        business_object_key=task.business_object_key, action_identity="send-reply",
+        operation="send_group_message", target_identifiers={"conversation_id": task.conversation_id},
+        conversation_id=task.conversation_id, trigger_message_id=task.trigger_message_id,
+        reply_text="已发送正文", provider_result=provider_result,
+    )
+    receipt = store.get_candidate_external_action("operation-readback")
+    assert receipt is not None
+    assert json.loads(receipt["provider_result_json"])["readback"] == readback
+    assert json.loads(sent.send_result_json)["readback"] == readback
+    # This fixture has no native transcript; the independent provider ledger
+    # still retains its verified message/readback, without fabricating raw output.
+    assert store.get_agent_run(run.id).final_result_json == ""
 
 
 def test_runtime_domain_result_codec_preserves_consumer_action_identity():
@@ -1143,7 +1226,8 @@ def test_runtime_attempt_completion_does_not_treat_provider_events_as_result_evi
     persisted_attempt = store.get_agent_runtime_attempt(attempt.id)
     assert persisted_attempt is not None
     assert persisted_attempt.status == "completed"
-    assert persisted_attempt.result_envelope_json == envelope
+    assert persisted_attempt.result_envelope_json == ""
+    assert persisted_attempt.result_schema_id == schema_id
 
 
 @pytest.mark.parametrize("outcome", ("no_action", "needs_human"))
@@ -1171,12 +1255,25 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
                 "label": "Approve",
                 "instruction": "Approve the reviewed option.",
                 "consequence": "The reviewed plan may continue.",
+                "plan": {
+                    "objective": "Notify the applicant about this instance",
+                    "actions": [{
+                        "description": "Send the exact reviewed answer", "action_identity": "notify-applicant",
+                        "capability": "dingtalk-chat", "operation": "send_group_message",
+                        "target": {"conversation_id": task.conversation_id},
+                        "payload": {"content": "The approved answer"},
+                    }],
+                    "sourced_facts": [{"assertion": "Applicant requests an answer", "references": ["test_case"]}],
+                    "authored_judgment": "This instance may receive the reviewed answer",
+                },
             },
             {
                 "key": "B",
                 "label": "Hold",
                 "instruction": "Hold the reviewed option.",
                 "consequence": "No further action is taken.",
+                "terminal_outcome": "skipped",
+                "reason": "This current instance is already resolved",
             },
         ]
         if outcome == "needs_human"
@@ -1318,7 +1415,12 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
     assert completed_attempt is not None and completed_attempt.status == "completed"
     assert summary not in completed_attempt.result_envelope_json
     assert completed_run is not None and completed_run.status == "completed"
-    assert summary in completed_run.final_result_json
+    assert completed_run.final_result_json == ""
+    adopted = store.adopted_candidate_for_consumer_run(run.id)
+    assert json.loads(adopted["candidate_json"]) == result.model_dump(mode="json")
+    assert summary in adopted["candidate_json"]
+    with store._connect() as db:
+        assert db.execute("select final_result_json from agent_runs where id=?", (run.id,)).fetchone()[0] == ""
     assert store.get_conversation_runtime_session(
         task.conversation_id,
         "claude_api",
@@ -1772,14 +1874,15 @@ def test_provider_event_append_does_not_rescan_history(tmp_path):
     assert sum("from agent_run_events" in statement for statement in normalized) <= 4
 
 
-def test_failed_run_preserves_effect_event_fact(tmp_path):
+def test_failed_run_without_native_does_not_fabricate_effect_event_fact(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     run = _claim_audit(store, _task(store))
     store.append_agent_run_event(run.id, _effect_event(operation_digest="command-digest"), owner="audit")
     store.fail_agent_run(run.id, {"code": "crash_after_write", "retryable": True}, owner="audit")
     persisted = store.get_agent_run(run.id)
     assert persisted is not None and persisted.status == "failed"
-    assert len(persisted.tool_events) == 1
+    assert persisted.tool_events == []
+    assert json.loads(persisted.structured_error_json)["code"] == "crash_after_write"
 
 
 def _create_pre_role_database(path: Path) -> Path:
@@ -1896,7 +1999,7 @@ def _create_pre_role_database(path: Path) -> Path:
     return path
 
 
-def test_agent_run_migration_preserves_events_and_receipts(tmp_path):
+def test_agent_run_migration_preserves_receipts_without_exposing_legacy_events(tmp_path):
     db_path = _create_pre_role_database(tmp_path / "old.sqlite3")
 
     store = AutoReplyStore(db_path)
@@ -1908,7 +2011,7 @@ def test_agent_run_migration_preserves_events_and_receipts(tmp_path):
     assert run.turn_attempt == 0
     assert run.parent_agent_run_id is None
     assert run.operation_id == ""
-    assert run.tool_events == [{"type": "item.completed"}]
+    assert run.tool_events == []
     assert store.foreign_key_violations() == []
     with sqlite3.connect(db_path) as db:
         event = db.execute(
@@ -1996,7 +2099,7 @@ def test_agent_run_migration_rolls_back_before_commit_on_foreign_key_failure(
             """
         )
 
-    with pytest.raises(sqlite3.IntegrityError, match="broke foreign keys"):
+    with pytest.raises(sqlite3.IntegrityError, match="pre-existing foreign key violations"):
         AutoReplyStore(db_path)
 
     with sqlite3.connect(db_path) as db:

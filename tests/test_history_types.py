@@ -234,11 +234,13 @@ def _scheduled_run(
     summary: str = "",
     reason: str = "",
 ) -> None:
+    from app.scheduled_config_storage import intern_scheduled_config
+
     at = f"2026-09-25T08:{minute:02d}:00+00:00"
     db.execute(
         "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind, "
         "scheduled_for, first_scheduled_for, dispatch_status, skip_or_error_reason, "
-        "snapshot_json, execution_kind, execution_id, created_at, dispatched_at, "
+        "snapshot_id, execution_kind, execution_id, created_at, dispatched_at, "
         "result_summary) values (?, ?, 'scheduled', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             f"event-{task_id}-{minute}",
@@ -247,7 +249,7 @@ def _scheduled_run(
             at,
             status,
             reason,
-            json.dumps({"name": name, "command": command}, ensure_ascii=False),
+            intern_scheduled_config(db, json.dumps({"name": name, "command": command}, ensure_ascii=False)),
             "service_command" if status == "dispatched" else "",
             command if status == "dispatched" else "",
             at,

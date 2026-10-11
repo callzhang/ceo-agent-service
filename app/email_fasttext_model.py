@@ -29,17 +29,19 @@ class FastTextEmailClassifier:
             handle.flush()
             self._model = fasttext.train_supervised(
                 input=handle.name, loss="softmax", dim=32, bucket=50_000,
-                minCount=1, thread=1, lr=0.1, epoch=50, wordNgrams=2, verbose=0,
+                # fastText initializes one tenth of the input matrix per thread.
+                # Fewer than ten threads leave hashed feature rows uninitialized.
+                minCount=1, thread=10, lr=0.1, epoch=50, wordNgrams=2, verbose=0,
             )
         return self
 
     def predict(self, text: str) -> EmailModelPrediction:
         if self._model is None:
             raise RuntimeError("classifier is not fitted")
-        labels, probabilities = self._model.predict(text, k=len(self.class_labels()))
+        labels, probabilities = self._model.predict([text], k=len(self.class_labels()))
         values = {
             label.removeprefix("__label__"): float(probability)
-            for label, probability in zip(labels, probabilities, strict=True)
+            for label, probability in zip(labels[0], probabilities[0], strict=True)
         }
         ordered = sorted(values.items(), key=lambda item: item[1], reverse=True)
         label, probability = ordered[0]

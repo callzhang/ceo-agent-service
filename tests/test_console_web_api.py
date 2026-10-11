@@ -30,7 +30,7 @@ from app.setup_wizard_models import SetupWizardEvent
 from app.wechat.models import WechatReplyScope
 from tests.test_audit_web import seed_attempt
 from app.web_api.attention import group_attention_rows
-from app.web_api.status import ComponentStatus, DispatcherQueueStatus
+from app.web_api.status import ComponentStatus, DispatcherQueueStatus, SystemHealth
 from app.web_api.common import (
     ApiItemEnvelope,
     ApiMeta,
@@ -853,18 +853,23 @@ def test_console_history_chart_reuses_a_short_lived_snapshot(monkeypatch, tmp_pa
     calls: list[int] = []
 
     def fake_chart(_store, *, hours):
-        calls.append(hours)
+        if _store.path == tmp_path / "worker.sqlite3":
+            calls.append(hours)
         return {"labels": [], "series": [], "total": 0, "range": str(hours)}
 
     monkeypatch.setattr(audit_web_module, "_history_chart_payload", fake_chart)
 
     with _client(tmp_path) as client:
+        assert calls == []
         first = client.get("/api/console/history/chart?range=1m")
+        first_calls = list(calls)
+        assert first_calls == [24 * 30]
+        fake_chart(AutoReplyStore(tmp_path / "other.sqlite3"), hours=24 * 30)
         second = client.get("/api/console/history/chart?range=1m")
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert calls == [24, 24 * 7, 24 * 30]
+    assert calls == first_calls
 
 
 def test_console_history_completed_filter_includes_sent_records(tmp_path: Path):
@@ -944,13 +949,16 @@ def test_console_history_sends_a_running_scheduled_task_to_its_own_run_history(
     )
     assert task is not None
     with store._connect() as db:
+        from app.scheduled_config_storage import intern_scheduled_config
+
+        snapshot_id = intern_scheduled_config(db, '{}')
         db.execute(
             "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind, "
-            "scheduled_for, first_scheduled_for, dispatch_status, snapshot_json, "
+            "scheduled_for, first_scheduled_for, dispatch_status, snapshot_id, "
             "execution_kind, execution_id, created_at) values ('event-91606', 13, "
             "'scheduled', '2026-09-26T19:00:00Z', '2026-09-26T19:00:00Z', 'dispatched', "
-            "'{}', 'reply_task', ?, '2026-09-26T19:00:00Z')",
-            (str(task.id),),
+            "?, 'reply_task', ?, '2026-09-26T19:00:00Z')",
+            (snapshot_id, str(task.id)),
         )
 
     with _client(tmp_path) as client:
@@ -1029,6 +1037,56 @@ def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path
     assert meeting_item["title"] == "History meeting"
 
 
+def test_meeting_history_page_uses_adopted_message_without_reading_native_run(
+    tmp_path: Path, monkeypatch,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    run_ids = []
+    for index, final_message in enumerate(("", "已采用的会后对齐消息。"), start=1):
+        job_id = store.upsert_meeting_alignment_job(
+            meeting_id=f"meeting-history-{index}",
+            title=f"会议标题 {index}",
+            source_json="{}",
+            participants_json="[]",
+            ended_at="2026-08-29T10:00:00Z",
+            eligible_at="2026-08-29T10:05:00Z",
+            status="pending",
+        )
+        if final_message:
+            store.update_meeting_alignment_job(
+                job_id, status="sent", final_message=final_message,
+            )
+        run_ids.append(store.record_meeting_alignment_run(
+            job_id=job_id,
+            codex_session_id=f"meeting-history-session-{index}",
+            decision_json='{"action":"send"}',
+            audit_summary=f"原生审计摘要 {index}",
+            status="sent",
+            error="",
+        ))
+
+    def reject_native_run(*_args, **_kwargs):
+        raise AssertionError("History list must not hydrate a native meeting run")
+
+    monkeypatch.setattr(AutoReplyStore, "get_meeting_alignment_run", reject_native_run)
+    with _client(tmp_path) as client:
+        first = client.get("/api/console/history?object_type=meeting&page=1&page_size=1")
+        second = client.get("/api/console/history?object_type=meeting&page=2&page_size=1")
+
+    assert first.status_code == second.status_code == 200
+    first_body, second_body = first.json(), second.json()
+    assert first_body["meta"]["total"] == second_body["meta"]["total"] == 2
+    adopted, unavailable = first_body["items"][0], second_body["items"][0]
+    assert [adopted["id"], unavailable["id"]] == [str(run_ids[1]), str(run_ids[0])]
+    assert adopted["title"] == "会议标题 2"
+    assert adopted["input"] == "会议标题 2"
+    assert adopted["output"] == adopted["summary"] == "已采用的会后对齐消息。"
+    assert unavailable["title"] == "会议标题 1"
+    assert unavailable["input"] == "会议标题 1"
+    assert unavailable["output"] == unavailable["summary"] == "会议任务尚无已采用的最终消息。"
+    assert unavailable["detail_url"] == f"/meeting-attempts/{run_ids[0]}"
+
+
 def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     job_id = store.upsert_meeting_alignment_job(
@@ -1043,6 +1101,8 @@ def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path):
     store.update_meeting_alignment_job(
         job_id,
         status="sent",
+        target_kind="group",
+        target_id="cid-meeting-console",
         final_message="会后对齐：请确认上线范围。",
     )
     run_id = store.record_meeting_alignment_run(
@@ -1076,18 +1136,11 @@ def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path):
     item = response.json()["item"]
     assert item["id"] == run_id
     assert item["title"] == "项目评审会"
-    assert item["decision"]["action"] == "send"
+    assert item["decision"] == {}
+    assert item["native_available"] is False
+    assert item["tool_events_available"] is False
+    assert item["tool_uses"] == []
     assert item["actions"]["dingtalk_url"] == "/open-dingtalk-popup?conversation_id=cid-meeting-console"
-    assert item["tool_uses"] == [{
-        "title": "读取会议记忆",
-        "tool": "memory_recall",
-        "call_id": "call-meeting-1",
-        "relevance": "确认历史判断",
-        "source": "memory.md · memory_recall",
-        "format": "mcp/json",
-        "args": {"query": "上线范围"},
-        "output": '{"summary":"风险预算需要确认"}',
-    }]
     assert item["output"] == "会后对齐：请确认上线范围。"
     assert "codex_session_id" not in json.dumps(item)
 
@@ -1173,12 +1226,126 @@ def test_console_status_route_registers_a_response_model(tmp_path: Path):
     assert route.response_model is not None
 
 
+def test_console_status_accepts_live_native_delivery_coverage(
+    monkeypatch, tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    monkeypatch.setattr(
+        audit_web_module,
+        "scan_hourly_quality",
+        lambda _path: SimpleNamespace(
+            violations=(),
+            checked_at="2026-10-10T00:00:00+00:00",
+            native_delivery_coverage={"checked": 2, "unavailable": 3},
+        ),
+    )
+    monkeypatch.setattr(
+        audit_web_module, "_launchd_service_status", _running_launchd_service_status,
+    )
+    monkeypatch.setattr(audit_web_module, "_connector_status_snapshots", lambda: {})
+    monkeypatch.setattr(
+        audit_web_module, "_wechat_status_snapshot", lambda _store: _ready_wechat_status(),
+    )
+
+    health = audit_web_module._system_health_snapshot(
+        store,
+        {"ok": True},
+        meeting_memory_health={"delayed": 0, "ghost_runtime_attempts": 0},
+    )
+    assert SystemHealth.model_validate(health).native_delivery_coverage.model_dump() == {
+        "checked": 2, "unavailable": 3,
+    }
+
+    with _client(tmp_path, raise_server_exceptions=False) as client:
+        for _ in range(50):
+            response = client.get("/api/console/status")
+            if response.status_code != 200:
+                break
+            if response.json()["item"]["system_health"]["state"] == "healthy":
+                break
+            time.sleep(0.02)
+
+    assert response.status_code == 200
+    assert response.json()["item"]["system_health"]["native_delivery_coverage"] == {
+        "checked": 2, "unavailable": 3,
+    }
+
+
+@pytest.mark.parametrize("path", ("/api/console/status", "/api/workers/status"))
+def test_status_reads_each_queue_section_once_from_one_fresh_snapshot(
+    monkeypatch, tmp_path: Path, path: str,
+):
+    monkeypatch.setattr(
+        audit_web_module, "_launchd_service_status", _running_launchd_service_status,
+    )
+    monkeypatch.setattr(audit_web_module, "_connector_status_snapshots", lambda: {})
+    monkeypatch.setattr(
+        audit_web_module, "_wechat_status_snapshot", lambda _store: _ready_wechat_status(),
+    )
+    monkeypatch.setattr(
+        audit_web_module, "_system_health_snapshot",
+        lambda _store, _service: {
+            "state": "healthy", "detail": "No violations.",
+            "checked_at": "2026-10-04T00:00:00Z", "violations": 0,
+        },
+    )
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    work_input_id = store.enqueue_work_summary_input(
+        "reply_attempt", "snapshot-test", '{"summary":"A current work item"}',
+    )
+    reads = []
+
+    def observe(name, original):
+        def read(current_store, *args, **kwargs):
+            reads.append((name, current_store._read_snapshot_connection.get()))
+            return original(current_store, *args, **kwargs)
+        return read
+
+    with _client(tmp_path) as client:
+        for name in (
+            "_queue_status_snapshots", "_queue_attention_rows",
+            "_human_decision_attention_rows",
+        ):
+            monkeypatch.setattr(
+                audit_web_module, name, observe(name, getattr(audit_web_module, name)),
+            )
+        first = client.get(path)
+        assert first.status_code == 200
+        first_item = first.json()["item"] if "item" in first.json() else first.json()
+        assert first_item["summary"]["pending"] == 1
+        assert first_item["summary"]["attention"] == 0
+        first_reads = reads[:]
+        reads.clear()
+
+        store.mark_work_summary_input_failed(work_input_id, "processing failed")
+        second = client.get(path)
+        assert second.status_code == 200
+        second_item = second.json()["item"] if "item" in second.json() else second.json()
+        assert second_item["summary"]["pending"] == 0
+        assert second_item["summary"]["failed"] == 1
+        assert second_item["summary"]["attention"] == 1
+        assert second_item["attention_rows"][0]["id"] == str(work_input_id)
+        assert second_item["human_decision_rows"] == []
+        second_reads = reads[:]
+
+    expected = [
+        "_queue_status_snapshots", "_queue_attention_rows",
+        "_human_decision_attention_rows",
+    ]
+    for request_reads in (first_reads, second_reads):
+        assert [name for name, _snapshot in request_reads] == expected
+        snapshot = request_reads[0][1]
+        assert snapshot is not None
+        assert all(current is snapshot for _name, current in request_reads)
+    assert first_reads[0][1] is not second_reads[0][1]
+
+
 def test_console_status_accepts_human_decision_evidence(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         audit_web_module,
         "_human_decision_attention_rows",
         lambda _store: [{
-            "category": "Rule decision",
+            "category": "本次事项选择",
             "id": "42",
             "status": "needs_human",
             "context": "Approval",
@@ -1280,6 +1447,7 @@ def test_console_status_is_json_serializable_and_has_snapshot(monkeypatch, tmp_p
             "queues": [],
             "dispatcher_queues": [],
             "attention_rows": [],
+            "human_decision_rows": [],
             # A Path is not JSON-native; the endpoint must normalise it before
             # the strict response contract validates the snapshot.
             "database": {"path": database},
@@ -2213,13 +2381,9 @@ def test_console_agent_runtime_preserves_omitted_auth_disabled_setting(monkeypat
         response = client.post(
             "/api/console/settings/agent-runtime",
             json={"fields": {
-                "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,friday_runtime",
+                "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth",
                 "CEO_CODEX_MODEL": "gpt-5.5",
                 "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
-                "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:8080",
-                "CEO_FRIDAY_RUNTIME_PROJECT_ID": "project-1",
-                "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL": "",
-                "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL": "",
             }},
         )
 
@@ -2392,6 +2556,7 @@ def test_spa_attention_reads_current_snapshot_after_status_cache_is_warm(monkeyp
             "summary": "database is locked",
             "updated_at": "2026-08-29 18:27:11",
             "error": "database is locked",
+            "error_code": None,
             "root_cause": None,
             "detail_url": "/history/errors/12830",
         },
@@ -2431,37 +2596,31 @@ def test_spa_attention_reads_current_snapshot_after_status_cache_is_warm(monkeyp
     assert payload["items"][0]["records"][0]["id"] == "12831"
 
 
-def test_status_refresh_placeholder_uses_current_email_contract(monkeypatch, tmp_path: Path):
-    refresh_started = threading.Event()
-    release_refresh = threading.Event()
+def test_status_uses_fresh_worker_snapshot_and_current_email_contract(monkeypatch, tmp_path: Path):
+    calls = []
+    build_status = audit_web_module.build_worker_status_payload
 
-    def blocked_status_refresh(*_args, **_kwargs):
-        refresh_started.set()
-        assert release_refresh.wait(timeout=2)
-        return {}
+    def read_status(*args, **kwargs):
+        calls.append(kwargs)
+        return build_status(*args, **kwargs)
 
     monkeypatch.setattr(
         audit_web_module,
         "build_worker_status_payload",
-        blocked_status_refresh,
+        read_status,
     )
 
-    try:
-        with _client(tmp_path, spa_enabled=True, asset=b"<!doctype html>") as client:
-            assert refresh_started.wait(timeout=1)
-            response = client.get("/api/console/status")
-
-            assert response.status_code == 200
-            assert response.json()["item"]["email"] == {
-                "status": "refreshing",
-                "updated_at": "",
-                "process": None,
-                "runtime_loops": [],
-                "accounts": [],
-                "checks": [],
-            }
-    finally:
-        release_refresh.set()
+    with _client(tmp_path, spa_enabled=True, asset=b"<!doctype html>") as client:
+        calls.clear()
+        first = client.get("/api/console/status")
+        second = client.get("/api/console/status")
+    assert first.status_code == second.status_code == 200
+    assert calls == [{"include_system_health": False}] * 2
+    email = second.json()["item"]["email"]
+    assert email["status"] != "refreshing"
+    assert set(email) == {
+        "status", "updated_at", "process", "runtime_loops", "accounts", "checks",
+    }
 
 
 def test_spa_attention_does_not_expose_empty_cold_cache(monkeypatch, tmp_path: Path):
@@ -3300,3 +3459,113 @@ def test_console_history_puts_what_waits_on_derek_first(tmp_path: Path):
     items = response.json()["items"]
     assert items[0]["status"] == "needs_human"
     assert [item["status"] for item in items[1:]] == ["sent", "sent", "sent"]
+
+
+@pytest.mark.parametrize("delivery_status,delivery_generation,delivery_conversation,expected_failed", [
+    ("failed", "initial", "melody", True),
+    ("send_unknown", "initial", "melody", True),
+    ("failed", "old-generation", "melody", False),
+    ("failed", "initial", "another-object", False),
+])
+def test_current_wechat_delivery_failure_remains_in_history_after_candidate_done(
+    tmp_path: Path, delivery_status: str, delivery_generation: str,
+    delivery_conversation: str, expected_failed: bool,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="melody", conversation_title="Morgan",
+        single_chat=True, trigger_message_id="message-1",
+        trigger_create_time="2026-10-04 13:05:00", trigger_sender="Morgan",
+        trigger_text="Can you help later?",
+    )
+    task = store.get_reply_task_for_message("melody", "message-1", channel="wechat")
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=task.id, account_id="acct-1", target_type="direct",
+        target_id="melody", conversation_id="melody", reply_text="Yes.",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="melody", conversation_title="Morgan",
+        trigger_message_id="message-1", trigger_sender="Morgan",
+        trigger_text="Can you help later?", action="send_reply",
+        sensitivity_kind="normal", send_status="failed", channel="wechat",
+    )
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='done' where id=?", (task.id,))
+        db.execute(
+            "update wechat_deliveries set status=?, error='wechat_ui_not_ready', "
+            "pre_action_failure=1, execution_generation=?, conversation_id=? where id=?",
+            (delivery_status, delivery_generation, delivery_conversation, delivery_id),
+        )
+        before = tuple(db.execute(
+            "select status, error from wechat_deliveries where id=?", (delivery_id,)
+        ).fetchone())
+    with _client(tmp_path) as client:
+        response = client.get("/api/console/history?status=failed")
+        assert response.status_code == 200
+        assert response.json()["meta"]["total"] == int(expected_failed)
+        assert (str(attempt_id) in {str(item["id"]) for item in response.json()["items"]}) == expected_failed
+        detail = client.get(f"/api/console/history/{attempt_id}")
+        assert detail.status_code == 200
+        assert detail.json()["item"]["status"]["raw"] == ("failed" if expected_failed else "done")
+    with store._connect() as db:
+        assert tuple(db.execute(
+            "select status, error from wechat_deliveries where id=?", (delivery_id,)
+        ).fetchone()) == before
+    assert store.get_reply_task(task.id).status == "done"
+    assert store.get_reply_attempt(attempt_id).send_status == "failed"
+
+
+def test_principal_superseded_wechat_delivery_is_terminal_in_detail_and_retry_api(tmp_path, monkeypatch):
+    from tests.wechat.test_store import _seed_exhausted_target_open_failure, _wechat_delivery_and_attempt_state
+
+    store, delivery_id, attempt_id, generation = _seed_exhausted_target_open_failure(tmp_path)
+    store.replace_wechat_reply_scopes("acct-1", [WechatReplyScope(
+        account_id="acct-1", target_type="direct", target_id="u1", conversation_id="u1",
+        display_name="Alex", trigger_mode="every_inbound_text", binding_status="verified",
+    )])
+    store.skip_exhausted_stale_wechat_delivery(
+        delivery_id, expected_execution_generation=generation,
+        reason="stale_pre_action_retry_exhausted; superseded_by_principal_reply:synthetic-reply",
+        inactive_before="2026-07-30 10:10:00",
+    )
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='done' where id=1")
+    before = _wechat_delivery_and_attempt_state(store, delivery_id)
+    sends = []
+    monkeypatch.setattr("app.wechat.service.build_sender", lambda: SimpleNamespace())
+    monkeypatch.setattr("app.wechat.accessibility.WechatSender.send", lambda self, delivery, scope: sends.append(delivery.id) or SimpleNamespace(status="sent"))
+    with _client(tmp_path, spa_enabled=True) as client:
+        detail = client.get(f"/api/console/history/{attempt_id}")
+        response = client.post(f"/api/console/wechat/deliveries/{delivery_id}/retry")
+    item = detail.json()["item"]
+    assert item["status"]["raw"] == "skipped"
+    assert "已在后续消息中亲自回复" in item["status"]["message"]
+    assert "无需重试" in item["status"]["message"]
+    assert item["actions"]["delivery_action_url"] == ""
+    assert item["actions"]["can_rerun"] is False
+    assert item["actions"]["terminal"] is True
+    assert response.status_code == 409
+    assert sends == []
+    assert _wechat_delivery_and_attempt_state(store, delivery_id) == before
+    assert store.get_reply_task(1).status == "done"
+
+
+@pytest.mark.parametrize("generation,conversation", [("new-generation", "u1"), ("initial", "other")])
+def test_old_principal_supersession_does_not_describe_current_pending_task(tmp_path, generation, conversation):
+    from tests.wechat.test_store import _seed_exhausted_target_open_failure, _wechat_delivery_and_attempt_state
+
+    store, delivery_id, attempt_id, old_generation = _seed_exhausted_target_open_failure(tmp_path)
+    store.skip_exhausted_stale_wechat_delivery(
+        delivery_id, expected_execution_generation=old_generation,
+        reason="stale_pre_action_retry_exhausted; superseded_by_principal_reply:synthetic-reply",
+        inactive_before="2026-07-30 10:10:00",
+    )
+    with store._connect() as db:
+        db.execute("update reply_tasks set execution_generation=?,status='pending' where id=1", (generation,))
+        db.execute("update wechat_deliveries set conversation_id=? where id=?", (conversation, delivery_id))
+    before = _wechat_delivery_and_attempt_state(store, delivery_id)
+    with _client(tmp_path) as client:
+        item = client.get(f"/api/console/history/{attempt_id}").json()["item"]
+    assert item["status"]["raw"] == "pending"
+    assert "已在后续消息中亲自回复" not in item["status"]["message"]
+    assert _wechat_delivery_and_attempt_state(store, delivery_id) == before

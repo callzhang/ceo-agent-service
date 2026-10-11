@@ -1,0 +1,183 @@
+{
+  "version": 4,
+  "cases": [
+    {
+      "case_id": "project-risk-without-task",
+      "source_inputs": [
+        {"source":{"type":"ai_minutes","ref":"eval:p0:meeting","created_at":"2026-10-01T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"会议决定：甲客户一期交付项目正式启动，目标完成一期验收与回款；项目总负责人待明确。"},
+        {"source":{"type":"reply_attempt","ref":"eval:p0:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付项目的付款日期尚未确定，这会影响本期现金安排。目前没有新增行动项。"}
+      ],
+      "work_item": {"source":{"type":"reply_attempt","ref":"eval:p0:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付项目的付款日期尚未确定，这会影响本期现金安排。目前没有新增行动项。"},
+      "existing_context":{"projects":[],"tasks":[],"attention":[]},
+      "expected":{"project_titles":["甲客户一期交付项目"],"attention_projects":["甲客户一期交付项目"],"task_count":0,"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:p0:meeting","eval:p0:chat"],"zero_task_attention_projects":["甲客户一期交付项目"],"project_contexts":{"甲客户一期交付项目":{"overall_owner":null,"responsibilities":[],"fact_text_contains":["付款日期"]}},"project_assessments":[{"project_title":"甲客户一期交付项目","outcome":"needs_attention","evidence":[{"source_ref":"eval:p0:chat","source_excerpt":"付款日期尚未确定"}],"application_status":"applied","task_count":0,"attention_required":true}]}
+    },
+    {
+      "case_id": "role-based-unnamed-suggestion",
+      "source_inputs": [
+        {"source":{"type":"ai_minutes","ref":"eval:role:meeting","created_at":"2026-10-01T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"会议确认甲客户一期交付项目：张三总负责交付和验收，王五负责商务回款，目标是完成一期交付并回款。"},
+        {"source":{"type":"reply_attempt","ref":"eval:role:risk","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付项目付款日期未确定，影响本期现金安排。当前消息没有指派任何人或提出行动项。"}
+      ],
+      "work_item":{"source":{"type":"reply_attempt","ref":"eval:role:risk","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付项目付款日期未确定，影响本期现金安排。当前消息没有指派任何人或提出行动项。"},
+      "existing_context":{"projects":[],"tasks":[],"attention":[]},
+      "expected":{"project_titles":["甲客户一期交付项目"],"attention_projects":["甲客户一期交付项目"],"task_count":1,"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:role:meeting","eval:role:risk"],"project_contexts":{"甲客户一期交付项目":{"overall_owner":"张三","responsibilities":[{"person_name":"王五","responsibility_contains":"回款"}],"fact_text_contains":["付款日期"]}},"task_expectations":[{"project_title":"甲客户一期交付项目","origin":"agent_suggestion","stage":"candidate","owner_name":"","commitment_status":"none","suggested_owner_name":"王五"}],"project_assessments":[{"project_title":"甲客户一期交付项目","outcome":"needs_attention","evidence":[{"source_ref":"eval:role:risk","source_excerpt":"付款日期未确定，影响本期现金安排"}],"application_status":"applied","allowed_task_counts":[0,1],"attention_required":true}],"max_outbound_intent_delta":0}
+    },
+    {
+      "case_id": "role-based-settled-negative",
+      "source_inputs": [
+        {"source":{"type":"ai_minutes","ref":"eval:role-ok:meeting","created_at":"2026-10-01T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"会议确认甲客户一期交付项目：张三总负责交付和验收，王五负责商务回款，目标是完成一期交付并回款。"},
+        {"source":{"type":"reply_attempt","ref":"eval:role-ok:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付项目款项已按计划到账，验收和回款均正常推进，当前无需处理。"}
+      ],
+      "work_item":{"source":{"type":"reply_attempt","ref":"eval:role-ok:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付项目款项已按计划到账，验收和回款均正常推进，当前无需处理。"},
+      "existing_context":{"projects":[],"tasks":[],"attention":[]},
+      "expected":{"project_titles":["甲客户一期交付项目"],"attention_projects":[],"task_count":0,"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:role-ok:meeting","eval:role-ok:chat"],"project_contexts":{"甲客户一期交付项目":{"overall_owner":"张三","responsibilities":[{"person_name":"王五","responsibility_contains":"回款"}],"fact_text_contains":["到账"]}},"project_assessments":[{"project_title":"甲客户一期交付项目","outcome":"not_needed","evidence":[{"source_ref":"eval:role-ok:chat","source_excerpt":"款项已按计划到账"}],"application_status":"recorded","task_count":0,"attention_required":false}],"max_outbound_intent_delta":0}
+    },
+    {
+      "case_id": "same-project-three-sources",
+      "source_inputs": [
+        {"source":{"type":"ai_minutes","ref":"eval:three:meeting","created_at":"2026-10-01T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付项目启动；张三总负责交付验收，李四负责验收材料，王五负责商务回款。"},
+        {"source":{"type":"project_weekly_report","ref":"eval:three:report","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付项目周报：验收材料还待客户确认，付款日期暂未给出。"},
+        {"source":{"type":"reply_attempt","ref":"eval:three:chat","created_at":"2026-10-03T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付项目客户表示付款须待验收材料齐备；日期仍未确定，可能影响本期现金安排。"}
+      ],
+      "work_item":{"source":{"type":"reply_attempt","ref":"eval:three:chat","created_at":"2026-10-03T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付项目客户表示付款须待验收材料齐备；日期仍未确定，可能影响本期现金安排。"},
+      "existing_context":{"projects":[],"tasks":[],"attention":[]},
+      "expected":{"project_titles":["甲客户一期交付项目"],"attention_projects":["甲客户一期交付项目"],"allowed_task_counts":[0,1],"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:three:meeting","eval:three:report","eval:three:chat"],"project_contexts":{"甲客户一期交付项目":{"overall_owner":"张三","responsibilities":[{"person_name":"李四","responsibility_contains":"材料"},{"person_name":"王五","responsibility_contains":"回款"}],"fact_text_contains":["付款"]}},"project_assessments":[{"project_title":"甲客户一期交付项目","outcome":"needs_attention","evidence":[{"source_ref":"eval:three:chat","source_excerpt":"日期仍未确定"},{"source_ref":"eval:three:chat","source_excerpt":"可能影响本期现金安排"}],"application_status":"applied","allowed_task_counts":[0,1],"attention_required":true}]}
+    },
+    {
+      "case_id": "single-report-two-projects",
+      "source_inputs":[{"source":{"type":"project_weekly_report","ref":"eval:two:report","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"{\"markdown\":\"## 手头项目\\n| 项目名 | 负责内容 | 目标 | 状态 |\\n| --- | --- | --- | --- |\\n| 甲客户一期交付 | 张三总负责交付验收 | 完成一期交付 | 付款日期不确定，影响本期现金安排 |\\n| 乙客户采购协同 | 赵六总负责采购落地 | 完成采购协同 | 供应商交期改变，影响上线计划 |\"}"}],
+      "work_item":{"source":{"type":"project_weekly_report","ref":"eval:two:report","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"{\"markdown\":\"## 手头项目\\n| 项目名 | 负责内容 | 目标 | 状态 |\\n| --- | --- | --- | --- |\\n| 甲客户一期交付 | 张三总负责交付验收 | 完成一期交付 | 付款日期不确定，影响本期现金安排 |\\n| 乙客户采购协同 | 赵六总负责采购落地 | 完成采购协同 | 供应商交期改变，影响上线计划 |\"}"},
+      "existing_context":{"projects":[],"tasks":[],"attention":[]},
+      "expected":{"project_titles":["甲客户一期交付","乙客户采购协同"],"attention_projects":["甲客户一期交付","乙客户采购协同"],"allowed_task_counts":[0,1,2],"minimum_evidence_sources":1,"required_source_refs":["eval:two:report"],"required_project_source_refs":["eval:two:report"],"project_assessments":[{"project_title":"甲客户一期交付","outcome":"needs_attention","evidence":[{"source_ref":"eval:two:report","source_excerpt":"付款日期不确定，影响本期现金安排"}],"application_status":"applied","allowed_task_counts":[0,1],"attention_required":true},{"project_title":"乙客户采购协同","outcome":"needs_attention","evidence":[{"source_ref":"eval:two:report","source_excerpt":"供应商交期改变，影响上线计划"}],"application_status":"applied","allowed_task_counts":[0,1],"attention_required":true}]}
+    },
+    {
+      "case_id":"meeting-chat-no-report",
+      "source_inputs":[
+        {"source":{"type":"ai_minutes","ref":"eval:no-report:meeting","created_at":"2026-10-01T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"会议确定甲客户一期交付为正式项目，目标完成一期验收；张三总负责交付验收。"},
+        {"source":{"type":"reply_attempt","ref":"eval:no-report:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付的验收材料已按计划收齐，下一步按原排期提交客户确认。"}
+      ],
+      "work_item":{"source":{"type":"reply_attempt","ref":"eval:no-report:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付的验收材料已按计划收齐，下一步按原排期提交客户确认。"},
+      "existing_context":{"projects":[],"tasks":[],"attention":[]},
+      "expected":{"project_titles":["甲客户一期交付"],"attention_projects":[],"task_count":0,"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:no-report:meeting","eval:no-report:chat"],"project_contexts":{"甲客户一期交付":{"overall_owner":"张三","responsibilities":[],"fact_text_contains":["验收材料"]}},"project_assessments":[{"project_title":"甲客户一期交付","outcome":"not_needed","evidence":[{"source_ref":"eval:no-report:chat","source_excerpt":"验收材料已按计划收齐"}],"application_status":"recorded","task_count":0,"attention_required":false}]}
+    },
+    {
+      "case_id":"routine-progress",
+      "source_inputs":[
+        {"source":{"type":"ai_minutes","ref":"eval:routine:meeting","created_at":"2026-10-01T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"会议确认甲客户一期交付项目由张三总负责，目标完成一期交付验收。"},
+        {"source":{"type":"reply_attempt","ref":"eval:routine:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付项目本周正常推进，验收材料按计划完成，没有新风险或需要处理的事项。"}
+      ],
+      "work_item":{"source":{"type":"reply_attempt","ref":"eval:routine:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付项目本周正常推进，验收材料按计划完成，没有新风险或需要处理的事项。"},
+      "existing_context":{"projects":[],"tasks":[],"attention":[]},
+      "expected":{"project_titles":["甲客户一期交付项目"],"attention_projects":[],"task_count":0,"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:routine:meeting","eval:routine:chat"],"project_contexts":{"甲客户一期交付项目":{"overall_owner":"张三","responsibilities":[],"fact_text_contains":["按计划"]}},"project_assessments":[{"project_title":"甲客户一期交付项目","outcome":"not_needed","evidence":[{"source_ref":"eval:routine:chat","source_excerpt":"正常推进"}],"application_status":"recorded","task_count":0,"attention_required":false}]}
+    },
+    {
+      "case_id":"ambiguous-risk",
+      "source_inputs":[
+        {"source":{"type":"ai_minutes","ref":"eval:ambiguous:meeting","created_at":"2026-10-01T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"会议确认甲客户一期交付项目由张三总负责，目标完成一期验收。"},
+        {"source":{"type":"reply_attempt","ref":"eval:ambiguous:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付项目可能有风险，具体是什么风险、影响范围和时间尚未说明。"}
+      ],
+      "work_item":{"source":{"type":"reply_attempt","ref":"eval:ambiguous:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付项目可能有风险，具体是什么风险、影响范围和时间尚未说明。"},
+      "existing_context":{"projects":[],"tasks":[],"attention":[]},
+      "expected":{"project_titles":["甲客户一期交付项目"],"attention_projects":[],"task_count":0,"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:ambiguous:meeting","eval:ambiguous:chat"],"project_assessments":[{"project_title":"甲客户一期交付项目","outcome":"insufficient_evidence","evidence":[{"source_ref":"eval:ambiguous:chat","source_excerpt":"可能有风险"}],"application_status":"recorded","task_count":0,"attention_required":false}]}
+    },
+    {
+      "case_id":"unconfirmed-project",
+      "source_inputs":[{"source":{"type":"reply_attempt","ref":"eval:unconfirmed:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"群聊提到一个叫北区优化的方向，可能以后会做；没有项目立项、目标、范围或负责人确认。"}],
+      "work_item":{"source":{"type":"reply_attempt","ref":"eval:unconfirmed:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"群聊提到一个叫北区优化的方向，可能以后会做；没有项目立项、目标、范围或负责人确认。"},
+      "existing_context":{"projects":[],"tasks":[],"attention":[]},
+      "expected":{"project_titles":[],"attention_projects":[],"task_count":0,"minimum_evidence_sources":1,"required_source_refs":[],"project_assessments":[{"project_title":"北区优化","outcome":"insufficient_evidence","evidence":[{"source_ref":"eval:unconfirmed:chat","source_excerpt":"没有项目立项、目标、范围或负责人确认"}],"application_status":"recorded","task_count":0,"attention_required":false,"anchor_required":false}]}
+    },
+    {
+      "case_id":"independent-explicit-task",
+      "source_inputs":[{"source":{"type":"reply_attempt","ref":"eval:independent:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group","assignment_authorized":true},"summary":"主管明确安排李四在周五前提交财务系统权限清单；这不是某个已确认项目的一部分。"}],
+      "work_item":{"source":{"type":"reply_attempt","ref":"eval:independent:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group","assignment_authorized":true},"summary":"主管明确安排李四在周五前提交财务系统权限清单；这不是某个已确认项目的一部分。"},
+      "existing_context":{"projects":[],"tasks":[],"attention":[]},
+      "expected":{"project_titles":[],"attention_projects":[],"task_count":1,"minimum_evidence_sources":1,"required_source_refs":[],"task_expectations":[{"title_contains":"权限清单","origin":"source","stage":"formal","owner_name":"李四","commitment_status":"assigned_unaccepted"}],"project_assessments":[]}
+    },
+    {
+      "case_id":"unknown-overall-owner",
+      "source_inputs":[{"source":{"type":"ai_minutes","ref":"eval:unknown-owner:meeting","created_at":"2026-10-01T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"会议决定启动甲客户一期交付项目，目标完成一期验收。总负责人尚未确定；李四负责验收材料，王五负责商务回款。"}],
+      "work_item":{"source":{"type":"ai_minutes","ref":"eval:unknown-owner:meeting","created_at":"2026-10-01T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"会议决定启动甲客户一期交付项目，目标完成一期验收。总负责人尚未确定；李四负责验收材料，王五负责商务回款。"},
+      "existing_context":{"projects":[],"tasks":[],"attention":[]},
+      "expected":{"project_titles":["甲客户一期交付项目"],"attention_projects":[],"task_count":0,"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:unknown-owner:meeting"],"project_contexts":{"甲客户一期交付项目":{"overall_owner":null,"responsibilities":[{"person_name":"李四","responsibility_contains":"材料"},{"person_name":"王五","responsibility_contains":"回款"}],"fact_text_contains":[]}},"project_assessments":[{"project_title":"甲客户一期交付项目","outcome":"not_needed","evidence":[{"source_ref":"eval:unknown-owner:meeting","source_excerpt":"总负责人尚未确定"}],"application_status":"recorded","task_count":0,"attention_required":false}]}
+    },
+    {
+      "case_id":"responsibility-change-conflict",
+      "source_inputs":[
+        {"source":{"type":"ai_minutes","ref":"eval:conflict:meeting","created_at":"2026-10-01T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"会议确认甲客户一期交付项目由张三总负责交付验收，李四负责验收材料。"},
+        {"source":{"type":"reply_attempt","ref":"eval:conflict:change","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"项目群称甲客户一期交付的总负责人已改为赵六，李四继续负责验收材料。"},
+        {"source":{"type":"reply_attempt","ref":"eval:conflict:challenge","created_at":"2026-10-03T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"张三表示未确认负责人移交；甲客户一期交付到底由张三还是赵六总负责仍有冲突，需要核实。"}
+      ],
+      "work_item":{"source":{"type":"reply_attempt","ref":"eval:conflict:challenge","created_at":"2026-10-03T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"张三表示未确认负责人移交；甲客户一期交付到底由张三还是赵六总负责仍有冲突，需要核实。"},
+      "existing_context":{"projects":[],"tasks":[],"attention":[]},
+      "expected":{"project_titles":["甲客户一期交付项目"],"attention_projects":["甲客户一期交付项目"],"task_count":0,"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:conflict:meeting","eval:conflict:change","eval:conflict:challenge"],"zero_task_attention_projects":["甲客户一期交付项目"],"project_contexts":{"甲客户一期交付项目":{"overall_owner":null,"responsibilities":[{"person_name":"李四","responsibility_contains":"材料"}],"fact_text_contains":["冲突"]}},"project_assessments":[{"project_title":"甲客户一期交付项目","outcome":"needs_attention","evidence":[{"source_ref":"eval:conflict:challenge","source_excerpt":"到底由张三还是赵六总负责仍有冲突，需要核实"}],"allowed_application_statuses":["applied","existing"],"task_count":0,"attention_required":true}]}
+    },
+    {
+      "case_id":"suggestion-promoted-same-id",
+      "source_inputs":[
+        {"source":{"type":"ai_minutes","ref":"eval:promotion:meeting","created_at":"2026-10-01T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付项目正式启动，张三总负责交付验收，王五负责商务回款。"},
+        {"source":{"type":"reply_attempt","ref":"eval:promotion:risk","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付付款时间未定，影响本期现金安排；目前没有正式指派。"},
+        {"source":{"type":"ai_minutes","ref":"eval:promotion:assignment#todos-sha256=assignment-v2","created_at":"2026-10-03T09:00:00Z"},"context":{"source_conversation_kind":"minutes"},"summary":"会议正式安排王五负责确认甲客户一期交付的付款排期，周五前反馈；王五尚未表示接受。"}
+      ],
+      "work_item":{"source":{"type":"ai_minutes","ref":"eval:promotion:assignment#todos-sha256=assignment-v2","created_at":"2026-10-03T09:00:00Z"},"context":{"source_conversation_kind":"minutes"},"summary":"会议正式安排王五负责确认甲客户一期交付的付款排期，周五前反馈；王五尚未表示接受。"},
+      "existing_context":{"projects":[],"tasks":[],"attention":[]},
+      "expected":{"project_titles":["甲客户一期交付项目"],"attention_projects":["甲客户一期交付项目"],"task_count":1,"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:promotion:meeting","eval:promotion:risk","eval:promotion:assignment#todos-sha256=assignment-v2"],"task_expectations":[{"title_contains_any":["付款时间","付款安排","付款排期"],"project_title":"甲客户一期交付项目","origin":"agent_suggestion","stage":"formal","owner_name":"王五","commitment_status":"assigned_unaccepted"}],"project_assessments":[{"project_title":"甲客户一期交付项目","outcome":"needs_attention","evidence":[{"source_ref":"eval:promotion:risk","source_excerpt":"付款时间未定，影响本期现金安排"}],"allowed_application_statuses":["applied","existing"],"allowed_task_counts":[0,1],"attention_required":true}]}
+    },
+    {
+      "case_id":"existing-task-update",
+      "source_inputs":[
+        {"source":{"type":"ai_minutes","ref":"eval:update:meeting#todos-sha256=update-v2","created_at":"2026-10-01T09:00:00Z"},"context":{"source_conversation_kind":"minutes"},"summary":"甲客户一期交付项目正式启动，张三总负责；会议安排李四准备一期验收材料并提交客户，李四尚未接受。"},
+        {"source":{"type":"reply_attempt","ref":"eval:update:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付的验收材料任务仍由李四负责；已补充客户要求的签章页，原提交事项继续推进。"}
+      ],
+      "work_item":{"source":{"type":"reply_attempt","ref":"eval:update:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付的验收材料任务仍由李四负责；已补充客户要求的签章页，原提交事项继续推进。"},
+      "existing_context":{"projects":[],"tasks":[],"attention":[]},
+      "expected":{"project_titles":["甲客户一期交付项目"],"attention_projects":[],"task_count":1,"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:update:meeting#todos-sha256=update-v2","eval:update:chat"],"task_expectations":[{"title_contains":"验收材料","project_title":"甲客户一期交付项目","origin":"source","stage":"formal","owner_name":"李四","commitment_status":"assigned_unaccepted"}],"project_assessments":[{"project_title":"甲客户一期交付项目","outcome":"not_needed","evidence":[{"source_ref":"eval:update:chat","source_excerpt":"原提交事项继续推进"}],"application_status":"recorded","task_count":1,"attention_required":false}]}
+    },
+    {
+      "case_id":"distinct-deliverables",
+      "source_inputs":[{"source":{"type":"ai_minutes","ref":"eval:two-actions:meeting#todos-sha256=two-v2","created_at":"2026-10-01T09:00:00Z"},"context":{"source_conversation_kind":"minutes"},"summary":"会议确认甲客户一期交付项目由张三总负责。行动一：李四负责准备验收材料并提交客户。行动二：王五负责完成商务对账并提交财务。这是两个独立交付物。"}],
+      "work_item":{"source":{"type":"ai_minutes","ref":"eval:two-actions:meeting#todos-sha256=two-v2","created_at":"2026-10-01T09:00:00Z"},"context":{"source_conversation_kind":"minutes"},"summary":"会议确认甲客户一期交付项目由张三总负责。行动一：李四负责准备验收材料并提交客户。行动二：王五负责完成商务对账并提交财务。这是两个独立交付物。"},
+      "existing_context":{"projects":[],"tasks":[],"attention":[]},
+      "expected":{"project_titles":["甲客户一期交付项目"],"attention_projects":[],"task_count":2,"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:two-actions:meeting#todos-sha256=two-v2"],"task_expectations":[{"title_contains":"验收材料","origin":"source","stage":"formal","owner_name":"李四"},{"title_contains":"商务对账","origin":"source","stage":"formal","owner_name":"王五"}],"project_assessments":[{"project_title":"甲客户一期交付项目","outcome":"not_needed","evidence":[],"evidence_any":[{"source_ref":"eval:two-actions:meeting#todos-sha256=two-v2","source_excerpt":"这是两个独立交付物"},{"source_ref":"eval:two-actions:meeting#todos-sha256=two-v2","source_excerpt":"行动一：李四负责准备验收材料并提交客户"},{"source_ref":"eval:two-actions:meeting#todos-sha256=two-v2","source_excerpt":"会议确认甲客户一期交付项目由张三总负责"}],"application_status":"recorded","allowed_task_counts":[0,1,2],"attention_required":false}]}
+    },
+    {
+      "case_id":"repeated-same-source",
+      "source_inputs":[
+      {"source":{"type":"ai_minutes","ref":"eval:repeat:meeting#todos-sha256=repeat-v2","created_at":"2026-10-01T09:00:00Z"},"context":{"source_conversation_kind":"minutes"},"summary":"会议决定继续推进甲客户一期交付项目，张三总负责；会议安排李四准备验收材料并提交客户。"},
+      {"source":{"type":"ai_minutes","ref":"eval:repeat:meeting#todos-sha256=repeat-v2","created_at":"2026-10-01T09:00:00Z"},"context":{"source_conversation_kind":"minutes"},"summary":"会议决定继续推进甲客户一期交付项目，张三总负责；会议安排李四准备验收材料并提交客户。"}
+      ],
+      "work_item":{"source":{"type":"ai_minutes","ref":"eval:repeat:meeting#todos-sha256=repeat-v2","created_at":"2026-10-01T09:00:00Z"},"context":{"source_conversation_kind":"minutes"},"summary":"会议决定继续推进甲客户一期交付项目，张三总负责；会议安排李四准备验收材料并提交客户。"},
+      "existing_context":{"projects":[],"tasks":[],"attention":[]},
+      "expected":{"project_titles":["甲客户一期交付项目"],"attention_projects":[],"task_count":1,"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:repeat:meeting#todos-sha256=repeat-v2"],"project_assessments":[{"project_title":"甲客户一期交付项目","outcome":"not_needed","evidence":[{"source_ref":"eval:repeat:meeting#todos-sha256=repeat-v2","source_excerpt":"会议安排李四准备验收材料并提交客户"}],"application_status":"recorded","allowed_task_counts":[0,1],"attention_required":false}],"repeat_domain_unchanged":true}
+    },
+    {
+      "case_id":"same-ref-new-version",
+      "source_inputs":[
+        {"source":{"type":"project_weekly_report","ref":"eval:version:report","created_at":"2026-10-01T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"{\"markdown\":\"## 手头项目\\n| 项目名 | 总负责 | 目标 | 状态 |\\n| --- | --- | --- | --- |\\n| 甲客户一期交付项目 | 张三总负责项目交付验收 | 完成一期交付验收 | 验收和回款按原计划推进 |\"}"},
+        {"source":{"type":"project_weekly_report","ref":"eval:version:report","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"{\"markdown\":\"## 手头项目\\n| 项目名 | 总负责 | 目标 | 状态 |\\n| --- | --- | --- | --- |\\n| 甲客户一期交付项目 | 张三总负责项目交付验收 | 完成一期交付验收 | 新版本：客户验收推迟，付款日期未定，影响本期现金安排 |\"}"}
+      ],
+      "work_item":{"source":{"type":"project_weekly_report","ref":"eval:version:report","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"{\"markdown\":\"## 手头项目\\n| 项目名 | 总负责 | 目标 | 状态 |\\n| --- | --- | --- | --- |\\n| 甲客户一期交付项目 | 张三总负责项目交付验收 | 完成一期交付验收 | 新版本：客户验收推迟，付款日期未定，影响本期现金安排 |\"}"},
+      "existing_context":{"projects":[],"tasks":[],"attention":[]},
+      "expected":{"project_titles":["甲客户一期交付项目"],"attention_projects":["甲客户一期交付项目"],"task_count":1,"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:version:report"],"minimum_signal_versions_for_ref":{"eval:version:report":2},"project_contexts":{"甲客户一期交付项目":{"overall_owner":"张三","responsibilities":[],"fact_text_contains":["验收推迟"]}},"task_expectations":[{"title_contains_any":["付款安排","付款日期","付款排期"],"project_title":"甲客户一期交付项目","origin":"agent_suggestion","stage":"candidate","owner_name":"","commitment_status":"none","suggested_owner_name":"张三"}],"project_assessments":[{"project_title":"甲客户一期交付项目","outcome":"needs_attention","evidence":[{"source_ref":"eval:version:report","source_excerpt":"客户验收推迟，付款日期未定，影响本期现金安排"}],"application_status":"applied","task_count":1,"attention_required":true}]}
+    },
+    {
+      "case_id":"peer-not-auto-member",
+      "source_inputs":[
+        {"source":{"type":"ai_minutes","ref":"eval:peer:meeting","created_at":"2026-10-01T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"会议决定正式启动甲客户一期交付项目，由张三总负责。李四负责核实客户付款排期并反馈；付款日期不确定，影响本期现金安排。"},
+        {"source":{"type":"reply_attempt","ref":"eval:peer:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付项目中王五负责另一项独立的商务对账；核实付款排期的任务继续由李四处理，付款不确定性仍存在。"}
+      ],
+      "work_item":{"source":{"type":"reply_attempt","ref":"eval:peer:chat","created_at":"2026-10-02T09:00:00Z"},"context":{"source_conversation_kind":"group"},"summary":"甲客户一期交付项目中王五负责另一项独立的商务对账；核实付款排期的任务继续由李四处理，付款不确定性仍存在。"},
+      "existing_context":{"projects":[],"tasks":[],"attention":[]},
+      "expected":{"project_titles":["甲客户一期交付项目"],"attention_projects":["甲客户一期交付项目"],"task_count":1,"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:peer:meeting","eval:peer:chat"],"project_contexts":{"甲客户一期交付项目":{"overall_owner":"张三","responsibilities":[{"person_name":"李四","responsibility_contains":"付款排期"},{"person_name":"王五","responsibility_contains":"商务对账"}],"fact_text_contains":["付款不确定性"]}},"required_project_member_counts":{"甲客户一期交付项目":1},"attention_member_counts":{"甲客户一期交付项目":1},"attention_member_task_title_contains":{"甲客户一期交付项目":["付款排期"]},"task_expectations":[{"title_contains":"付款排期","origin":"source","stage":"candidate","owner_name":"李四","commitment_status":"none"}],"project_assessments":[{"project_title":"甲客户一期交付项目","outcome":"needs_attention","evidence":[{"source_ref":"eval:peer:chat","source_excerpt":"付款不确定性仍存在"}],"allowed_application_statuses":["applied","existing"],"task_count":1,"attention_required":true}]}
+    },
+    {
+      "case_id":"completed-task-risk-persists",
+      "source_inputs":[
+        {"source":{"type":"ai_minutes","ref":"eval:complete:meeting#todos-sha256=complete-v3","created_at":"2026-10-01T09:00:00Z","conversation_id":"eval:complete:thread"},"context":{"source_conversation_kind":"minutes","owner_identity":{"name":"李四","user_id":"li-si-eval"}},"summary":"会议决定继续推进甲客户一期交付项目，由张三总负责。会议安排李四提交验收材料；客户付款日期仍未确定，影响本期现金安排。"},
+        {"source":{"type":"reply_attempt","ref":"eval:complete:chat","created_at":"2026-10-02T09:00:00Z","conversation_id":"eval:complete:thread"},"context":{"source_conversation_kind":"group","sender":"李四","sender_user_id":"li-si-eval","owner_identity":{"name":"李四","user_id":"li-si-eval"},"reply_to_source_ref":"eval:complete:meeting#todos-sha256=complete-v3"},"summary":"李四已提交甲客户一期交付的验收材料；客户付款日期依然未确定，现金安排风险仍在。"}
+      ],
+      "work_item":{"source":{"type":"reply_attempt","ref":"eval:complete:chat","created_at":"2026-10-02T09:00:00Z","conversation_id":"eval:complete:thread"},"context":{"source_conversation_kind":"group","sender":"李四","sender_user_id":"li-si-eval","owner_identity":{"name":"李四","user_id":"li-si-eval"},"reply_to_source_ref":"eval:complete:meeting#todos-sha256=complete-v3"},"summary":"李四已提交甲客户一期交付的验收材料；客户付款日期依然未确定，现金安排风险仍在。"},
+      "existing_context":{"projects":[],"tasks":[],"attention":[]},
+      "expected":{"project_titles":["甲客户一期交付项目"],"attention_projects":["甲客户一期交付项目"],"attention_member_counts":{"甲客户一期交付项目":1},"attention_member_task_title_contains":{"甲客户一期交付项目":["付款日期"]},"task_count":2,"minimum_evidence_sources":1,"required_source_refs":[],"required_project_source_refs":["eval:complete:meeting#todos-sha256=complete-v3","eval:complete:chat"],"task_expectations":[{"title_contains":"验收材料","origin":"source","stage":"formal","owner_name":"李四","status":"done"},{"title_contains":"付款日期","origin":"agent_suggestion","stage":"candidate","owner_name":"","commitment_status":"none","suggested_owner_name":"张三"}],"project_assessments":[{"project_title":"甲客户一期交付项目","outcome":"needs_attention","evidence":[{"source_ref":"eval:complete:chat","source_excerpt":"付款日期依然未确定"}],"allowed_application_statuses":["applied","existing"],"task_count":1,"attention_required":true}]}
+    }
+  ]
+}

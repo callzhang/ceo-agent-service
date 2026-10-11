@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "target": "Installed codex-cli 0.154.0; no model turn",
+  "case": "debug prompt-input with project_doc_max_bytes=0 and PROBE_ONLY_NO_MODEL_TURN",
+  "control": "Reuse the native CLI home/config/auth unchanged. Count complete message text and verify exact trimmed global AGENTS contents; do not print or store its body.",
+  "global_file_characters": 4323,
+  "global_file_sha256": "c0064cdca26257b6619289e53aa5eba44732b5bfa8888176d37084015f6c3e78",
+  "result": {
+    "exit_code": 0,
+    "messages": [
+      {"role": "developer", "characters": 27678, "contains_global_instructions_verbatim": false},
+      {"role": "user", "characters": 5797, "contains_global_instructions_verbatim": true},
+      {"role": "user", "characters": 24, "contains_global_instructions_verbatim": false}
+    ]
+  },
+  "official_source_commit": "cc7ba33601286a751477832b01de7b6f8de0dd9c",
+  "official_source": "codex-rs/codex-home/src/instructions/mod.rs",
+  "acceptance_boundary": "Proves installed CLI prompt assembly, not model receipt, business judgment or a supported global-instruction opt-out. Current public source describes the separate loader; exact installed source revision is not inferred from this reference."
+}

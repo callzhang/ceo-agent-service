@@ -1,0 +1,161 @@
+{
+  "completed": true,
+  "refs": {
+    "baseline": "0d6bf42eb2922ed57a6bc6de8b836f5a443106c3"
+  },
+  "settings": {
+    "route_name": "codex_oauth",
+    "runtime_kind": "codex_cli",
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "medium",
+    "concurrency": 1,
+    "timeout_seconds": 300,
+    "repetitions": 1,
+    "fixed_time": "2026-10-06T09:00:00-07:00",
+    "tools": "none",
+    "profile": "identical-synthetic-short"
+  },
+  "cases_sha256": "5041b0dfb2656fceea617ffedbae2913592878c7158917112937f0b5a89edea2",
+  "arms": {
+    "baseline": {
+      "size_summary": {
+        "consumer": {
+          "static_developer_chars": {
+            "min": 37921,
+            "mean": 37921.0,
+            "max": 37921
+          },
+          "developer_chars": {
+            "min": 38731,
+            "mean": 38739.0,
+            "max": 38743
+          },
+          "task_chars": {
+            "min": 5865,
+            "mean": 6156.4,
+            "max": 7146
+          },
+          "total_chars": {
+            "min": 44603,
+            "mean": 44895.4,
+            "max": 45881
+          }
+        },
+        "audit": {
+          "static_developer_chars": {
+            "min": 28168,
+            "mean": 28168.0,
+            "max": 28168
+          },
+          "developer_chars": {
+            "min": 28902,
+            "mean": 28910.0,
+            "max": 28914
+          },
+          "task_chars": {
+            "min": 13431,
+            "mean": 14372.35,
+            "max": 14974
+          },
+          "total_chars": {
+            "min": 42338,
+            "mean": 43282.35,
+            "max": 43886
+          }
+        }
+      },
+      "roles": {
+        "consumer": {
+          "invocations": 20,
+          "native_json_valid": 20,
+          "strict_schema_valid": 20,
+          "outcome_and_binding_screen_passed": 15,
+          "tool_events": 0,
+          "screen_failures": [
+            {
+              "case_id": "email-attachment",
+              "errors": [
+                "unexpected_consumer_outcome"
+              ]
+            },
+            {
+              "case_id": "calendar-fold",
+              "errors": [
+                "unexpected_consumer_outcome"
+              ]
+            },
+            {
+              "case_id": "calendar-gap",
+              "errors": [
+                "unexpected_consumer_outcome"
+              ]
+            },
+            {
+              "case_id": "scheduled-report",
+              "errors": [
+                "unexpected_consumer_outcome"
+              ]
+            },
+            {
+              "case_id": "prior-stage",
+              "errors": [
+                "unexpected_consumer_outcome"
+              ]
+            }
+          ],
+          "provider_usage_events": 20,
+          "provider_input_tokens_total": 487319,
+          "provider_output_tokens_total": 18002,
+          "elapsed_seconds_total": 275.0655116637936,
+          "elapsed_seconds_mean": 13.75327558318968,
+          "semantic_quality": "pending independent exact-output review"
+        },
+        "audit": {
+          "invocations": 20,
+          "native_json_valid": 20,
+          "strict_schema_valid": 20,
+          "outcome_and_binding_screen_passed": 15,
+          "tool_events": 0,
+          "screen_failures": [
+            {
+              "case_id": "oa-missing-material",
+              "errors": [
+                "unexpected_audit_outcome"
+              ]
+            },
+            {
+              "case_id": "oa-policy-gap",
+              "errors": [
+                "unexpected_audit_outcome"
+              ]
+            },
+            {
+              "case_id": "email-reply",
+              "errors": [
+                "unexpected_audit_outcome"
+              ]
+            },
+            {
+              "case_id": "calendar-known",
+              "errors": [
+                "unexpected_audit_outcome"
+              ]
+            },
+            {
+              "case_id": "ordinary-document",
+              "errors": [
+                "unexpected_audit_outcome"
+              ]
+            }
+          ],
+          "provider_usage_events": 20,
+          "provider_input_tokens_total": 448502,
+          "provider_output_tokens_total": 10367,
+          "elapsed_seconds_total": 233.55751645797864,
+          "elapsed_seconds_mean": 11.677875822898931,
+          "semantic_quality": "pending independent exact-output review"
+        }
+      }
+    }
+  }
+}

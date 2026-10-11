@@ -1,0 +1,81 @@
+{
+  "version": "runtime-context.v1",
+  "baseline_ref": "0636969cafe866017af91ea4a3d7781d26f8d0c8",
+  "settings": {
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "medium",
+    "timeout_seconds": 300,
+    "max_concurrency": 2,
+    "fixed_time": "2026-10-22T15:00:00+00:00"
+  },
+  "skill_content": {
+    "dingtalk-calendar": "# 日历读取\n按明确时间窗口读取 principal 的日历事件；来源仅覆盖本人日历。事件外的其他参与者日程必须由独立来源核实。候选时段需写清日期和时区。",
+    "dingtalk-chat": "# 群消息\n读取已知会话消息以核实原请求和后续事实。向原群回复时使用准确的 conversation_id 与 message_id。此 Skill 不证明消息已发出。",
+    "ceo-message-triage": "# 消息处理\n识别原请求的交付目标，先用已声明的读取入口核实可得资料，再形成符合当前来源和权限范围的候选。"
+  },
+  "cases": [
+    {
+      "id": "candidate-windows-unknown-zone",
+      "scene": "positive",
+      "repeats": 10,
+      "conversation_id": "synthetic-group-17",
+      "trigger_message_id": "synthetic-message-101",
+      "trigger": "协调者：下周请给我您和阿岚可以开会的两个具体候选时段，我再去协调安排。",
+      "messages": [
+        {"open_conversation_id": "synthetic-group-17", "open_message_id": "synthetic-message-101", "conversation_title": "模拟项目群", "single_chat": false, "sender_name": "协调者", "create_time": "2026-10-22T14:30:00+00:00", "content": "下周请给我您和阿岚可以开会的两个具体候选时段，我再去协调安排。"},
+        {"open_conversation_id": "synthetic-group-17", "open_message_id": "synthetic-message-102", "conversation_title": "模拟项目群", "single_chat": false, "sender_name": "负责人", "create_time": "2026-10-22T14:35:00+00:00", "content": "我下周在洛杉矶，按 America/Los_Angeles 时区看日历。"}
+      ],
+      "events": [
+        {"event_id": "synthetic-event-1", "title": "已占用", "start_time": "2026-10-27T09:00:00-07:00", "end_time": "2026-10-27T10:00:00-07:00"},
+        {"event_id": "synthetic-event-2", "title": "已占用", "start_time": "2026-10-27T11:00:00-07:00", "end_time": "2026-10-27T12:00:00-07:00"},
+        {"event_id": "synthetic-event-3", "title": "已占用", "start_time": "2026-10-28T09:00:00-07:00", "end_time": "2026-10-28T10:00:00-07:00"},
+        {"event_id": "synthetic-event-4", "title": "已占用", "start_time": "2026-10-28T11:00:00-07:00", "end_time": "2026-10-28T12:00:00-07:00"}
+      ]
+    },
+    {
+      "id": "candidate-windows-known-zone",
+      "scene": "positive",
+      "repeats": 1,
+      "conversation_id": "synthetic-group-18",
+      "trigger_message_id": "synthetic-message-201",
+      "trigger": "协调者：下周给我您和阿岚两个可供协调的会议时段，我来确认安排。",
+      "messages": [
+        {"open_conversation_id": "synthetic-group-18", "open_message_id": "synthetic-message-201", "conversation_title": "模拟项目群", "single_chat": false, "sender_name": "协调者", "create_time": "2026-10-22T14:30:00+00:00", "content": "下周给我您和阿岚两个可供协调的会议时段，我来确认安排。"},
+        {"open_conversation_id": "synthetic-group-18", "open_message_id": "synthetic-message-202", "conversation_title": "模拟项目群", "single_chat": false, "sender_name": "负责人", "create_time": "2026-10-22T14:35:00+00:00", "content": "我下周在洛杉矶，按 America/Los_Angeles 时区看日历。"},
+        {"open_conversation_id": "synthetic-group-18", "open_message_id": "synthetic-message-203", "conversation_title": "模拟项目群", "single_chat": false, "sender_name": "阿岚", "create_time": "2026-10-22T14:40:00+00:00", "content": "我下周在伦敦，按 Europe/London；通常 10:00 到 18:00 可以协调，具体空档请再和我确认。"}
+      ],
+      "events": [
+        {"event_id": "synthetic-event-5", "title": "已占用", "start_time": "2026-10-27T09:00:00-07:00", "end_time": "2026-10-27T10:00:00-07:00"},
+        {"event_id": "synthetic-event-6", "title": "已占用", "start_time": "2026-10-28T09:00:00-07:00", "end_time": "2026-10-28T10:00:00-07:00"}
+      ]
+    },
+    {
+      "id": "calendar-auth-failure",
+      "scene": "negative",
+      "repeats": 1,
+      "inherits": "candidate-windows-unknown-zone",
+      "calendar_error": {"code": "calendar_auth_expired", "source": "synthetic-calendar", "message": "Calendar read denied for this session"}
+    },
+    {
+      "id": "calendar-tool-absent",
+      "scene": "negative",
+      "repeats": 1,
+      "inherits": "candidate-windows-unknown-zone",
+      "absent_tools": ["list_dingtalk_calendar_events"]
+    },
+    {
+      "id": "prior-risk-refusal",
+      "scene": "negative",
+      "repeats": 1,
+      "inherits": "candidate-windows-unknown-zone",
+      "prior_error": {"code": "provider_risk_refused", "retryable": false, "operation": "dingtalk-chat.reply_to_message", "target": "synthetic-group-17/synthetic-message-101"}
+    },
+    {
+      "id": "draft-only",
+      "scene": "negative",
+      "repeats": 1,
+      "inherits": "candidate-windows-unknown-zone",
+      "trigger": "协调者：下周请给我您和阿岚可供协调的两个时段草稿，我自己发送；不要代我发消息。"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "low",
+  "source_records": 100,
+  "fixture_corrections": "Match production MCP structuredContent with typed dict returns. Distinct projects prevent treating the later request as a superseding update. Explicit field meanings preserve the original record-count, business-owner, numeric-amount and source-ID criteria.",
+  "criteria": "Valid preparation JSON; source_count is the number of records, not provider sources; every seeded intervention with unchanged source ID and JSON type, business owner and numeric USD amount; no business action. Compare source request counts and model-facing truncation separately.",
+  "cases": [
+    {"id":"service-facts", "tool":"daily_report_facts", "critical_indices":[42,99], "projects":["Atlas","Orion"], "amounts":[74000,45000], "owners":["Maya","Noah"]},
+    {"id":"group-window", "tool":"read_dingtalk_messages_in_window", "critical_indices":[42,99], "projects":["Delta","Vega"], "amounts":[32000,58000], "owners":["Avery","Alex"]}
+  ]
+}

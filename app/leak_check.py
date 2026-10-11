@@ -413,8 +413,11 @@ def is_sensitive_url_component_name(value: str) -> bool:
     )
 
 
-def contains_local_runtime_leak(text: str) -> bool:
-    if any(prefix in text for prefix in forbidden_path_prefixes()):
+def contains_local_runtime_leak(
+    text: str, *, path_prefixes: tuple[str, ...] | None = None
+) -> bool:
+    prefixes = forbidden_path_prefixes() if path_prefixes is None else path_prefixes
+    if any(prefix in text for prefix in prefixes):
         return True
     return any(path in text for path in ("/tmp/", "/var/", "/private/var/"))
 

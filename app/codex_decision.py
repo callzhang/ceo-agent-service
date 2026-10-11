@@ -566,6 +566,26 @@ def _failed_dws_transient_read_command(
     return ""
 
 
+def finalize_codex_decision(
+    decision: CodexDecision, audit_events: list[dict[str, str]],
+) -> CodexDecision:
+    """Derive the decision from parsed output and the same turn's tool evidence."""
+    CodexDecisionRunner._validate_decision(decision)
+    failed_command = _failed_dws_transient_read_command(audit_events)
+    if (failed_command and decision.action != CodexAction.STOP_WITH_ERROR
+        and not decision.audit_documents):
+        reason = (
+            f"{DWS_TRANSIENT_DEPENDENCY_UNAVAILABLE_PREFIX} "
+            f"{failed_command} failed with exit code 6 and no usable "
+            "material was recorded"
+        )
+        return CodexDecision(
+            action=CodexAction.STOP_WITH_ERROR, reason=reason, audit_summary=reason,
+            external_dependency_failed=True,
+        )
+    return decision
+
+
 def _decision_envelope_repair_prompt(raw_output: str) -> str:
     """Tell the model which schema rules its last envelope broke."""
     problems = _decision_envelope_problems(raw_output)
@@ -865,26 +885,7 @@ class CodexDecisionRunner:
         self._validate_decision(decision)
         if remember_events:
             self._remember_audit_tool_events(raw_outputs)
-        failed_command = _failed_dws_transient_read_command(
-            self.last_audit_tool_events
-        )
-        if (
-            failed_command
-            and decision.action != CodexAction.STOP_WITH_ERROR
-            and not decision.audit_documents
-        ):
-            reason = (
-                f"{DWS_TRANSIENT_DEPENDENCY_UNAVAILABLE_PREFIX} "
-                f"{failed_command} failed with exit code 6 and no usable "
-                "material was recorded"
-            )
-            return CodexDecision(
-                action=CodexAction.STOP_WITH_ERROR,
-                reason=reason,
-                audit_summary=reason,
-                external_dependency_failed=True,
-            )
-        return decision
+        return finalize_codex_decision(decision, self.last_audit_tool_events)
 
     def _remember_session_id(self, raw: str) -> None:
         session_id = extract_codex_session_id(raw)

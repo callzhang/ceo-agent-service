@@ -1,0 +1,144 @@
+{
+  "completed": true,
+  "refs": {
+    "baseline": "0d6bf42eb2922ed57a6bc6de8b836f5a443106c3",
+    "candidate": "e741f80a1d0ae8a5805082e35ec4f03acea4edd8"
+  },
+  "settings": {
+    "route_name": "codex_oauth",
+    "runtime_kind": "codex_cli",
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "medium",
+    "concurrency": 1,
+    "timeout_seconds": 300,
+    "repetitions": 1,
+    "fixed_time": "2026-10-06T09:00:00-07:00",
+    "tools": "none",
+    "profile": "identical-synthetic-short"
+  },
+  "cases_sha256": "5041b0dfb2656fceea617ffedbae2913592878c7158917112937f0b5a89edea2",
+  "arms": {
+    "candidate": {
+      "size_summary": {
+        "consumer": {
+          "static_developer_chars": {
+            "min": 39141,
+            "mean": 39141.0,
+            "max": 39141
+          },
+          "developer_chars": {
+            "min": 39951,
+            "mean": 39959.0,
+            "max": 39963
+          },
+          "task_chars": {
+            "min": 5865,
+            "mean": 6156.4,
+            "max": 7146
+          },
+          "total_chars": {
+            "min": 45823,
+            "mean": 46115.4,
+            "max": 47101
+          }
+        },
+        "audit": {
+          "static_developer_chars": {
+            "min": 25089,
+            "mean": 25089.0,
+            "max": 25089
+          },
+          "developer_chars": {
+            "min": 25823,
+            "mean": 25831.0,
+            "max": 25835
+          },
+          "task_chars": {
+            "min": 8835,
+            "mean": 9776.35,
+            "max": 10378
+          },
+          "total_chars": {
+            "min": 34663,
+            "mean": 35607.35,
+            "max": 36211
+          }
+        }
+      },
+      "roles": {
+        "consumer": {
+          "invocations": 20,
+          "native_json_valid": 20,
+          "strict_schema_valid": 20,
+          "outcome_and_binding_screen_passed": 16,
+          "tool_events": 0,
+          "screen_failures": [
+            {
+              "case_id": "email-attachment",
+              "errors": [
+                "unexpected_consumer_outcome"
+              ]
+            },
+            {
+              "case_id": "calendar-known",
+              "errors": [
+                "unexpected_consumer_outcome"
+              ]
+            },
+            {
+              "case_id": "calendar-fold",
+              "errors": [
+                "unexpected_consumer_outcome"
+              ]
+            },
+            {
+              "case_id": "scheduled-report",
+              "errors": [
+                "unexpected_consumer_outcome"
+              ]
+            }
+          ],
+          "provider_usage_events": 20,
+          "provider_input_tokens_total": 467797,
+          "provider_output_tokens_total": 17206,
+          "elapsed_seconds_total": 386.26693295604036,
+          "elapsed_seconds_mean": 19.313346647802017,
+          "semantic_quality": "pending independent exact-output review"
+        },
+        "audit": {
+          "invocations": 20,
+          "native_json_valid": 20,
+          "strict_schema_valid": 20,
+          "outcome_and_binding_screen_passed": 17,
+          "tool_events": 0,
+          "screen_failures": [
+            {
+              "case_id": "oa-policy-gap",
+              "errors": [
+                "unexpected_audit_outcome"
+              ]
+            },
+            {
+              "case_id": "email-reply",
+              "errors": [
+                "unexpected_audit_outcome"
+              ]
+            },
+            {
+              "case_id": "scheduled-report",
+              "errors": [
+                "unexpected_audit_outcome"
+              ]
+            }
+          ],
+          "provider_usage_events": 20,
+          "provider_input_tokens_total": 441399,
+          "provider_output_tokens_total": 10644,
+          "elapsed_seconds_total": 306.6965162890165,
+          "elapsed_seconds_mean": 15.334825814450824,
+          "semantic_quality": "pending independent exact-output review"
+        }
+      }
+    }
+  }
+}

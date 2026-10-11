@@ -364,6 +364,48 @@ class FridayRuntimeAdapter:
         )
         self.poll_interval_seconds = poll_interval_seconds
 
+    def read_final_artifact(self, thread_id: str, *, timeout_seconds: float = 60.0) -> str:
+        """Read the final Artifact of an existing native Friday thread."""
+        if not isinstance(thread_id, str) or not thread_id.strip():
+            raise ValueError("Friday thread_id is required")
+        if isinstance(timeout_seconds, bool) or timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        credential = self._configured_credential()
+        if self._resolve_through_cli:
+            base_url = ensure_desktop_friday_runtime()
+            if (
+                not isinstance(self.transport, UrllibFridayHttpTransport)
+                or self.transport.base_url != base_url
+            ):
+                self.transport = UrllibFridayHttpTransport(base_url)
+            ticket, session, auth_disabled = mint_friday_ticket(), None, False
+        elif self.config.friday_runtime_auth_disabled:
+            ticket, session, auth_disabled = None, None, True
+        elif self.config.friday_runtime_auth_mode == "session_token":
+            ticket, session, auth_disabled = None, credential, False
+        else:
+            ticket, session, auth_disabled = credential, None, False
+        try:
+            headers = self.contract.authentication_headers(
+                runtime_ticket=ticket,
+                friday_session_token=session,
+                auth_disabled=auth_disabled,
+            )
+        except FridayRuntimeContractError as exc:
+            raise FridayRuntimeError(
+                "friday_runtime_auth_failed", str(exc), retryable=False
+            ) from exc
+        payload = self._request(
+            "GET",
+            f"{self.contract.artifacts_path()}?{urllib.parse.urlencode({'thread_id': thread_id})}",
+            headers=headers,
+            body=None,
+            deadline=time.monotonic() + timeout_seconds,
+            credential=ticket or session or credential,
+        )
+        artifact = self.contract.select_final_artifact(payload, thread_id=thread_id)
+        return _artifact_result_text(artifact)
+
     def execute(
         self,
         prompt: str,

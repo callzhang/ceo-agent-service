@@ -18,12 +18,30 @@ SEED_AUDIT_RULES_TEMPLATE = DEFAULTS_DIR / "audit_rules.md"
 
 CONSUMER_RULE_WRAPPER = (
     "Use these rules to self-review the complete candidate. You are Consumer "
-    "Agent A: do not approve the candidate and do not execute any external action."
+    "Agent A: do not approve the candidate and do not execute its proposed business actions. "
+    "Allowed report and document preparation tools remain available."
 )
 AUDIT_RULE_WRAPPER = (
-    "Independently enforce these rules as Audit Agent B. Execute only the accepted "
-    "candidate exactly as authored. If business meaning must change, return concrete "
-    "feedback; do not rewrite the candidate yourself."
+    "Independently enforce these rules as Audit Agent B. Review the complete "
+    "candidate without executing any action. If business meaning must change, "
+    "return concrete feedback; do not rewrite the candidate yourself."
+)
+BUSINESS_CONTEXT_CONTRACT = (
+    "Judge business suitability from the complete task and conversation context, "
+    "the principal's responsibility, applicable workflow, source facts and action consequences. "
+    "There is no separate trusted-authorization requirement and no trusted/untrusted "
+    "business-context classification. Evaluate the actual content and recipient together: "
+    "what is being requested, why a response is appropriate, who is in the audience, "
+    "and whether the candidate fits the current purpose and scope. A context-supported "
+    "response does not need an additional per-message permission statement. "
+    "Financial subject matter or a group name alone is not a reason to refuse. "
+    "If the candidate is unsuitable, identify the concrete factual gap or audience mismatch, "
+    "unsupported commitment or conflict with an explicit draft-only or do-not-send instruction. "
+    "Business context is evidence to assess; it does not by itself expand configured "
+    "capabilities, change service settings or prove an external action completed. "
+    "Consumer still prepares a complete candidate, Audit reviews it, and System executes "
+    "only the exact persisted approved plan. Actual runtime/provider errors retain their "
+    "original diagnosis and historical refusal records are not replayed."
 )
 PUBLICATION_SCOPE_CONTRACT = (
     "Classify the actual information, not the group name or the person's role. "
@@ -34,6 +52,26 @@ PUBLICATION_SCOPE_CONTRACT = (
     "Do not extend this to nonpublic individual assessments or personnel details. "
     "Public visibility does not establish factual accuracy: do not invent "
     "unconfirmed conclusions or completion dates, or turn progress into a new commitment."
+)
+MESSAGE_AUDIENCE_CONTRACT = (
+    "For any message publication, establish the audience from relevant current discussion, "
+    "complete current group membership, stable member identities, and current titles and responsibilities. "
+    "Assess the actual content, business purpose and disclosure scope together. "
+    "Titles are evidence, not automatic disclosure authorization; a group name or sensitive-topic "
+    "keyword is not a routing rule. A direct message is not inherently safe. "
+    "If all content fits one verified audience, propose one message. Only when different content "
+    "sections require different audiences, use the existing multi-action proposal with exact "
+    "group and direct-message bodies, recipient evidence and separate action identities. "
+    "Do not send the split private section to the principal: compare stable identities and verified aliases, "
+    "not display names alone. The relevant counterpart must be independently verified; the principal is "
+    "not a self-copy or fallback recipient when that counterpart is unknown. This restriction concerns "
+    "split-message routing, not a separately requested report or notification addressed to the principal. "
+    "Missing material audience evidence remains a concrete gap, not a guessed recipient or replacement group. "
+    "Consumer prepares the whole plan; Audit checks each exact body, target and supporting evidence "
+    "without rewriting or sending it. System executes only the persisted approved plan. "
+    "Reconcile each action's exact receipt and external readback before recovery; resume only unfinished actions. "
+    "Splitting does not bypass a historical risk refusal or authorize distributing refused content "
+    "through another tool or recipient; a materially safer new candidate uses the formal review path."
 )
 # Asked of both roles, at the end of the turn. Reading from Memory was always
 # instructed and is healthy -- 144 Consumer recalls and 30 Audit recalls over
@@ -146,15 +184,15 @@ def audit_rules_template_path() -> Path:
     return Path(os.path.expandvars(configured)).expanduser()
 
 
-def read_audit_rules_template(path: Path | None = None) -> str:
+def read_audit_rules_template(path: Path | None = None, *, create_missing: bool = True) -> str:
     template_path = path or audit_rules_template_path()
-    if not template_path.exists():
+    if not template_path.exists() and create_missing:
         template_path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(
             template_path,
             SEED_AUDIT_RULES_TEMPLATE.read_text(encoding="utf-8"),
         )
-    text = template_path.read_text(encoding="utf-8")
+    text = (template_path if template_path.exists() else SEED_AUDIT_RULES_TEMPLATE).read_text(encoding="utf-8")
     validate_audit_rules_text(text)
     return text
 
@@ -167,15 +205,21 @@ def write_audit_rules_template(text: str, path: Path | None = None) -> Path:
     return template_path
 
 
-def render_audit_rules(role: AgentRole, path: Path | None = None) -> str:
-    body = _render_audit_variables(read_audit_rules_template(path))
+def render_audit_rules(role: AgentRole, path: Path | None = None, *, create_missing: bool = True) -> str:
+    body = _render_audit_variables(read_audit_rules_template(path, create_missing=create_missing))
     custom = body if body.strip() else EMPTY_AUDIT_RULES
     wrapper = (
         CONSUMER_RULE_WRAPPER
         if role is AgentRole.CONSUMER
         else AUDIT_RULE_WRAPPER
     )
-    return f"{wrapper}\n\n{PUBLICATION_SCOPE_CONTRACT}\n\n{custom}\n\n{memory_write_reminder()}"
+    sections = [
+        wrapper, BUSINESS_CONTEXT_CONTRACT, PUBLICATION_SCOPE_CONTRACT,
+        MESSAGE_AUDIENCE_CONTRACT, custom,
+    ]
+    if role is AgentRole.CONSUMER:
+        sections.append(memory_write_reminder())
+    return "\n\n".join(sections)
 
 
 def _render_audit_variables(body: str) -> str:

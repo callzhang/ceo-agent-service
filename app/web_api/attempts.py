@@ -1,10 +1,13 @@
 """Structured Attempt detail payloads for the React console."""
 
 import json
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 from urllib.parse import quote
 
+from app.wechat.models import principal_reply_supersession
+from app.attempt_rerun_presentation import RerunPresentation, attempt_rerun_presentation
 from app.attempt_what_happened import build_what_happened
 from app.web_api.common import json_safe, normalize_display_value
 
@@ -24,8 +27,12 @@ def _permission_display(attempt: Any) -> str:
     return action or reason
 
 
-def _status_message(attempt: Any, attention: Any) -> tuple[str, bool]:
+def _status_message(
+    attempt: Any, attention: Any, *, rerun_block_reason: str = ""
+) -> tuple[str, bool]:
     status = str(getattr(attempt, "send_status", "") or "").strip().lower()
+    if getattr(attempt, "resolved_at", "") and getattr(attempt, "resolution", ""):
+        return str(attempt.resolution), False
     if status == "sent":
         return "这条回复已发送，无需你操作。", False
     if status == "completed":
@@ -35,6 +42,8 @@ def _status_message(attempt: Any, attention: Any) -> tuple[str, bool]:
     if status == "needs_human":
         return "这条事项等待你的决策。请阅读已核验事实后提交处理指令。", True
     if status == "failed":
+        if rerun_block_reason:
+            return rerun_block_reason, False
         return "这次处理没有完成，可重新处理当前事项。", False
     if attention is not None:
         return "系统正在处理这条事项。", False
@@ -108,13 +117,40 @@ def _agent_sessions(attempt: Any, agent_runs: list[Any]) -> list[dict[str, Any]]
 
 
 def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
-    from app.codex_history import find_codex_session_path
+    from app.native_trajectory import (
+        _native_records,
+        claude_session_path,
+        find_codex_session_path,
+    )
 
+    run_ids = [int(getattr(run, "id", 0) or 0) for run in agent_runs]
+    batch_reader = getattr(store, "list_agent_runtime_attempts_for_runs", None)
+    attempts_by_run = (
+        batch_reader(run_ids)
+        if callable(batch_reader)
+        else {run_id: store.list_agent_runtime_attempts(run_id) for run_id in run_ids}
+    )
     result = []
     for run in agent_runs:
         role = _run_role(run)
-        for item in store.list_agent_runtime_attempts(run.id):
+        for item in attempts_by_run.get(int(getattr(run, "id", 0) or 0), []):
             session_id = str(getattr(item, "session_id", "") or "").strip()
+            runtime_kind = str(getattr(item, "runtime_kind", "") or "")
+            start = int(getattr(item, "transcript_start", 0) or 0)
+            end = int(getattr(item, "transcript_end", 0) or 0)
+            path = (
+                find_codex_session_path(session_id)
+                if runtime_kind == "codex_cli" and session_id else
+                claude_session_path(session_id)
+                if runtime_kind == "claude_cli" and session_id else None
+            )
+            native_available = bool(_native_records(path, start, end))
+            native_reason = (
+                "" if native_available else
+                "friday_artifact_remote" if runtime_kind == "friday_runtime" else
+                "native_session_unavailable" if session_id else
+                "native_session_not_started"
+            )
             result.append(
                 {
                     "role": normalize_display_value(role),
@@ -130,18 +166,19 @@ def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
                         getattr(item, "finished_at", "")
                     ),
                     "session_url": (
-                        f"/codex/{quote(session_id, safe='')}" if session_id else ""
+                        f"/codex/{quote(session_id, safe='')}"
+                        if runtime_kind == "codex_cli" and native_available else ""
                     ),
                     "proposal_revision": int(getattr(run, "proposal_revision", 0) or 0),
                     "turn_attempt": int(getattr(run, "turn_attempt", 0) or 0),
                     "route": normalize_display_value(getattr(item, "route_name", "")),
-                    "runtime": normalize_display_value(getattr(item, "runtime_kind", "")),
+                    "runtime": normalize_display_value(runtime_kind),
                     "credential_mode": normalize_display_value(getattr(item, "credential_mode", "")),
                     "model": normalize_display_value(getattr(item, "model", "")),
-                    "session_available": bool(
-                        session_id and find_codex_session_path(session_id) is not None
-                    ),
+                    "session_available": native_available,
+                    "native_reason": native_reason,
                     "status": normalize_display_value(getattr(item, "status", "")),
+                    "run_status": normalize_display_value(run.status),
                     "failure_code": normalize_display_value(getattr(item, "failure_code", "")),
                     "failover_permitted": bool(getattr(item, "failover_permitted", False)),
                     "transcript_start": int(getattr(item, "transcript_start", 0) or 0),
@@ -191,8 +228,8 @@ def _consumer_error_reason(consumer_run: Any | None) -> str:
 
                     return safe_observability_error(value, limit=180)
         return "Consumer 运行失败"
-    if not str(getattr(consumer_run, "final_result_json", "") or "").strip():
-        return "Consumer 未保存最终结果"
+    if not str(getattr(consumer_run, "adopted_result_json", "") or "").strip():
+        return "Consumer 已采用业务结果不可用"
     return "Consumer 结果不符合当前契约"
 
 
@@ -218,7 +255,7 @@ def _consumer_result_payload(
     result = None
     raw_result = ""
     if consumer_run is not None and str(getattr(consumer_run, "status", "") or "") != "failed":
-        raw_result = str(getattr(consumer_run, "final_result_json", "") or "")
+        raw_result = str(getattr(consumer_run, "adopted_result_json", "") or "")
         if raw_result.strip():
             from app.agent_contracts import ConsumerAgentResult
 
@@ -297,7 +334,7 @@ def _consumer_result_payload(
 
 
 def _email_payload(
-    attempt: Any, reply_task: Any, email_store: Any
+    attempt: Any, reply_task: Any, email_store_factory: Callable[[], Any] | None
 ) -> dict[str, Any] | None:
     """Return the email an email-channel Attempt acted on, and what it did.
 
@@ -340,8 +377,9 @@ def _email_payload(
         payload["candidate_source"] = normalize_display_value(
             parameters.get("candidate_source")
         )
-    if email_store is None:
+    if email_store_factory is None:
         return payload
+    email_store = email_store_factory()
     if classification_id.isdigit():
         classification = email_store.get_classification(int(classification_id))
         if classification is not None:
@@ -443,11 +481,14 @@ def _action_links(
     reply_task: Any,
     sent_reply: Any,
     wechat_delivery: Any,
+    rerun: RerunPresentation,
+    *,
+    rerun_block_reason: str = "",
 ) -> dict[str, Any]:
     from app.audit_web import _sent_reply_has_recall_target
 
     status = str(getattr(attempt, "send_status", "") or "").strip().lower()
-    terminal = status in {"sent", "skipped", "completed", "commented", "calendar", "document", "reacted"}
+    terminal = status in {"done", "sent", "skipped", "completed", "commented", "calendar", "document", "reacted"}
     dingtalk_url = ""
     approval_url = _oa_url(attempt, reply_task)
     if approval_url:
@@ -471,6 +512,7 @@ def _action_links(
             delivery_action_url = f"/api/console/wechat/deliveries/{delivery_id}/approve"
         elif (
             delivery_status == "skipped"
+            and not principal_reply_supersession(str(getattr(wechat_delivery, "error", "") or ""))
             and str(getattr(wechat_delivery, "action_started_at", "") or "").strip()
             and delivery_id
         ):
@@ -478,7 +520,10 @@ def _action_links(
             delivery_action_url = f"/api/console/wechat/deliveries/{delivery_id}/retry"
     terminal = terminal and not delivery_action_url
     return {
-        "can_rerun": status == "failed",
+        "can_rerun": status == "failed" and not rerun_block_reason,
+        "rerun_label": rerun.label,
+        "rerun_confirmation": rerun.confirmation,
+        "rerun_block_reason": rerun_block_reason,
         "can_recall": _sent_reply_has_recall_target(sent_reply),
         "can_submit_feedback": True,
         "rerun_url": f"/api/console/history/{int(attempt.id)}/rerun",
@@ -549,36 +594,89 @@ def _consumer_result_with_deciding_scores(
     return updated
 
 
-def _human_decision_payload(attempt: Any, terminal_run: Any) -> dict[str, Any] | None:
-    """Expose only the typed decision whose run owns the current Attempt."""
-    if (
-        str(getattr(attempt, "send_status", "") or "").strip() != "needs_human"
-        or terminal_run is None
-        or str(getattr(terminal_run, "status", "") or "").strip() != "completed"
-        or int(getattr(attempt, "agent_run_id", 0) or 0)
-        != int(getattr(terminal_run, "id", 0) or 0)
-    ):
+def _human_decision_payload(reviewed: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Show persisted reviewed context, including historical answered questions."""
+    if reviewed is None or reviewed["decision"] != "approve":
         return None
     from app.decision_quality import parse_stored_needs_human_decision
 
-    decision = parse_stored_needs_human_decision(
-        getattr(terminal_run, "final_result_json", "")
-    )
+    decision = parse_stored_needs_human_decision(reviewed["candidate_json"])
     if decision is None:
         return None
     return {
         "reason": normalize_display_value(decision.needs_human_reason),
         "basis": json_safe(decision.decision_basis.model_dump(mode="json")),
-        "authorization_plan": (
-            json_safe(decision.authorization_plan.model_dump(mode="json"))
-            if decision.authorization_plan is not None
-            else None
-        ),
+        "requested_input": normalize_display_value(decision.requested_input) if decision.requested_input else "",
+        "candidate_id": reviewed["id"],
+        "candidate_digest": reviewed["candidate_digest"],
+        "review_id": reviewed["review_id"],
+        "selection": {"option_key": reviewed["option_key"], "status": reviewed["selection_status"]}
+        if reviewed["selection_id"] else None,
+        "authorization_plan": None,
+    }
+
+
+def _system_execution_payload(
+    store: Any, reviewed: dict[str, Any] | None, *, is_current: bool,
+) -> dict[str, Any] | None:
+    """Project the bound plan and canonical verified receipts independently."""
+    if reviewed is None:
+        return None
+    candidate = _stored_json(reviewed["candidate_json"], {})
+    branch = _stored_json(reviewed.get("branch_json"), {})
+    if candidate.get("outcome") == "needs_human" and not reviewed.get("selection_id"):
+        return None
+    if not branch and reviewed.get("selection_id"):
+        # Historical review projections retain the selected key, while the
+        # immutable candidate holds that key's exact reviewed action plan.
+        branch = next((option for option in candidate.get("decision_options", [])
+                       if option.get("key") == reviewed.get("option_key")), {})
+    plan = branch.get("plan") if branch else candidate.get("proposal")
+    actions = plan.get("actions", []) if isinstance(plan, dict) else []
+    execution = store.get_candidate_execution(reviewed["id"])
+    if candidate.get("outcome") == "no_action" and execution is None:
+        return None
+    attempts = {
+        item["action_index"]: item
+        for item in store.list_candidate_action_attempts(execution["id"])
+    } if execution else {}
+    result = _stored_json(execution["result_json"], {}) if execution else {}
+    projected_actions = []
+    for index, action in enumerate(actions):
+        attempt = attempts.get(index)
+        receipt = (
+            store.get_candidate_external_action(attempt["external_action_key"])
+            if attempt and attempt["status"] == "verified" else None
+        )
+        projected_actions.append({
+            "action_index": index,
+            "action_identity": action["action_identity"],
+            "description": normalize_display_value(action.get("description")),
+            "operation": action["operation"],
+            "status": (
+                "uncertain" if attempt and attempt["status"] == "verified" and receipt is None
+                else attempt["status"] if attempt else "pending"
+            ),
+            "result": json_safe(_stored_json(attempt["result_json"], {})) if attempt else {},
+            "receipt": {
+                "external_action_key": receipt["external_action_key"],
+                "provider_result": json_safe(_stored_json(receipt["provider_result_json"], {})),
+            } if receipt else None,
+        })
+    return {
+        "candidate_id": reviewed["id"], "review_id": reviewed["review_id"],
+        "stage_index": candidate.get("stage_index", 0), "is_current": is_current,
+        "execution_id": execution["id"] if execution else None,
+        "status": execution["status"] if execution else "pending",
+        "summary": normalize_display_value(result.get("summary")) if execution else "",
+        "error": json_safe(result.get("error", {})),
+        "verified_actions": sum(action["receipt"] is not None for action in projected_actions),
+        "total_actions": len(actions), "actions": projected_actions,
     }
 
 
 def build_attempt_detail(
-    store: Any, attempt_id: int, *, email_store: Any = None
+    store: Any, attempt_id: int, *, email_store_factory: Callable[[], Any] | None = None
 ) -> tuple[int, dict[str, Any] | None]:
     """Build a rich, JSON-safe Attempt DTO without rendering HTML."""
     attempt = store.get_reply_attempt(attempt_id)
@@ -590,11 +688,11 @@ def build_attempt_detail(
         _attempt_action_label_text,
         _attempt_detail_reply_text,
         _attempt_info_tooltip,
-        _audit_tool_uses_for_attempt,
         _feedback_token_for_sent_reply,
         _attempt_reason_text,
         _needs_human_decision_options,
         _quality_warnings,
+        _attempt_rerun_block_reason,
         _route_failure_recovery_state,
         reply_history_attention,
     )
@@ -611,13 +709,32 @@ def build_attempt_detail(
     reply_task = store.get_reply_task_for_message(
         attempt.conversation_id, attempt.trigger_message_id, channel=attempt.channel
     )
+    current_reviewed = (
+        store.current_reviewed_candidate(reply_task.id, reply_task.execution_generation)
+        if reply_task is not None else None
+    )
+    history_reviewed = (
+        store.reviewed_candidate_for_audit_run(attempt.agent_run_id)
+        if attempt.agent_run_id else None
+    )
+    if current_reviewed is not None and current_reviewed["audit_run_id"] != attempt.agent_run_id:
+        current_reviewed = None
+    decision_reviewed = current_reviewed or history_reviewed
     # Some historical/manual rerun Attempts have no agent_run_id.  In that
     # case the Attempt key still identifies the owning task, so load its runs
     # directly instead of incorrectly rendering "no Consumer run".
     if reply_task is not None and not agent_runs and hasattr(store, "_connect"):
         with store._connect() as db:
             rows = db.execute(
-                "select * from agent_runs where reply_task_id=? order by id",
+                """select agent_runs.*,
+                          case agent_runs.role
+                            when 'consumer' then candidate.candidate_json
+                            when 'audit' then review.result_json
+                          end as adopted_result_json
+                   from agent_runs
+                   left join review_candidates candidate on candidate.consumer_run_id=agent_runs.id
+                   left join candidate_reviews review on review.audit_run_id=agent_runs.id
+                   where agent_runs.reply_task_id=? order by agent_runs.id""",
                 (reply_task.id,),
             ).fetchall()
             agent_runs = [
@@ -634,7 +751,9 @@ def build_attempt_detail(
         )
     ):
         current_agent_runs = store.list_agent_runs_for_task_generation(
-            reply_task.id, reply_task.execution_generation
+            reply_task.id,
+            reply_task.execution_generation,
+            load_events=False,
         )
         if not current_agent_runs:
             # A manual rerun may close without creating a run.  Keep the
@@ -644,35 +763,40 @@ def build_attempt_detail(
     # The stored Attempt row is historical.  Render the current projection
     # from the task generation's last effective run so an old pending row
     # cannot mask a later done/skipped result.
-    from app.attempt_projection import project_attempt_status
+    from app.attempt_projection import current_wechat_delivery_matches, project_attempt_status
 
-    attempt = attempt.model_copy(
-        update={
-            "send_status": project_attempt_status(
-                attempt, reply_task, current_agent_runs
-            )
-        }
-    )
     wechat_delivery = (
         store.get_wechat_delivery_for_task(reply_task.id)
         if reply_task is not None and str(attempt.channel or "") == "wechat"
         else None
     )
+    projected_status = project_attempt_status(
+        attempt, reply_task, current_agent_runs, delivery=wechat_delivery
+    )
+    if current_reviewed is not None and reply_task is not None:
+        if reply_task.status == "needs_human" and current_reviewed["selection_id"] is None:
+            projected_status = "needs_human"
+        elif current_reviewed["selection_id"] is not None and reply_task.status in ("pending", "processing"):
+            projected_status = reply_task.status
+    attempt = attempt.model_copy(update={"send_status": projected_status})
     attention = reply_history_attention(
         attempt,
         task=reply_task,
-        decision_options=_needs_human_decision_options(attempt, agent_runs),
+        decision_options=_needs_human_decision_options(store, attempt),
     )
+    rerun_block_reason = _attempt_rerun_block_reason(attempt, agent_runs)
     runtime_attempts = _runtime_payload(agent_runs, store)
     agent_sessions = _agent_sessions(attempt, agent_runs)
     feedback_token = _feedback_token_for_sent_reply(sent_reply)
     feedback_events = store.list_feedback_events_for_tokens([feedback_token]).get(feedback_token, [])
-    status_message, requires_decision = _status_message(attempt, attention)
+    rerun = (attempt_rerun_presentation(store, reply_task, agent_runs)
+             if attempt.send_status == "failed" else RerunPresentation())
+    status_message, requires_decision = _status_message(attempt, attention, rerun_block_reason=rerun_block_reason)
     # A sent-reply ledger is direct evidence that a DingTalk response reached
     # the provider. Prefer it to the task projection (which can simply be
     # "done") so the person viewing the Attempt is not left guessing whether
     # anything was actually delivered.
-    if sent_reply is not None and str(attempt.channel or "") == "dingtalk":
+    if sent_reply is not None and str(attempt.channel or "") == "dingtalk" and decision_reviewed is None:
         recipient = str(attempt.conversation_title or "").strip() or "对方"
         status_message = f"已向 {recipient} 发送回复，并已记录投递回执。"
         requires_decision = False
@@ -683,20 +807,60 @@ def build_attempt_detail(
         ).strip()
         if delivery_status == "ready_to_send":
             status_message = "这条微信回复已准备好，确认后即可发送。"
+        elif delivery_status == "skipped" and principal_reply_supersession(str(getattr(wechat_delivery, "error", "") or "")):
+            if current_wechat_delivery_matches(attempt, reply_task, wechat_delivery):
+                status_message = "你已在后续消息中亲自回复；这条旧候选已跳过，未发送，无需重试。"
         elif delivery_status == "skipped" and delivery_started:
             status_message = "这条微信回复此前未能打开会话，尚未发送；你可以重试。"
     decision_options = []
+    decision_actionable = (
+        attempt.send_status == "needs_human"
+        and reply_task is not None and reply_task.status == "needs_human"
+        and current_reviewed is not None and current_reviewed["selection_id"] is None
+        and json.loads(current_reviewed["candidate_json"]).get("outcome") == "needs_human"
+    )
     if attempt.send_status == "needs_human":
-        for option in _needs_human_decision_options(attempt, agent_runs):
+        requires_decision = bool(decision_actionable)
+    if decision_actionable:
+        from app.decision_quality import parse_stored_needs_human_decision
+
+        decision = parse_stored_needs_human_decision(current_reviewed["candidate_json"])
+        for option in decision.decision_options if decision is not None else ():
             decision_options.append(
                 {
+                    "key": option.key,
                     "label": normalize_display_value(getattr(option, "label", "")),
                     "instruction": normalize_display_value(getattr(option, "instruction", "")),
                     "consequence": normalize_display_value(getattr(option, "consequence", "")),
+                    "plan": json_safe(option.plan.model_dump(mode="json")) if option.plan else None,
+                    "terminal_outcome": option.terminal_outcome,
+                    "reason": option.reason,
                     "url": f"/api/console/history/{int(attempt.id)}/human-decision",
                 }
             )
-    human_decision = _human_decision_payload(attempt, terminal_run)
+    human_decision = _human_decision_payload(decision_reviewed)
+    system_execution = _system_execution_payload(
+        store, decision_reviewed, is_current=current_reviewed is not None,
+    )
+    if current_reviewed is not None:
+        # A previous stage's send is evidence for that stage, never completion
+        # of the current reviewed question or selected plan.
+        status_message, _ = _status_message(attempt, attention)
+        if system_execution is not None:
+            execution_messages = {
+                "pending": "已审核方案等待系统执行；尚未核验业务完成。",
+                "running": "系统正在执行已审核方案，完成状态以核验回执为准。",
+                "retry": "已审核方案没有全部核验完成，系统将按原方案恢复。",
+                "uncertain": "已审核方案没有全部核验完成，外部结果仍待核验。",
+                "failed": "已审核方案执行失败；已完成动作的回执仍保留。",
+                "done": "已审核方案的全部动作已核验完成。",
+                "skipped": "已按审核通过的停止方案结束，原因已记录。",
+            }
+            status_message = execution_messages.get(system_execution["status"], status_message)
+    if rerun_block_reason:
+        status_message = rerun_block_reason
+    elif attempt.send_status == "failed" and rerun.explanation:
+        status_message = rerun.explanation
     try:
         audit_explanation = _attempt_reason_text(attempt)
     except RuntimeError:
@@ -709,16 +873,8 @@ def build_attempt_detail(
         action_pills.append({"label": f"📆 {attempt.calendar_response_status.strip()}", "status": attempt.calendar_response_status})
     if _route_failure_recovery_state(attempt, reply_task):
         action_pills.append({"label": "↻ Recovery", "status": _route_failure_recovery_state(attempt, reply_task)})
-    # The calls a run made are the only readable account of what it did. They
-    # used to be dropped whenever agent runs existed, on the assumption that a
-    # per-role page showed them instead; no such page ever rendered them, so
-    # the process was missing from every agent Attempt. When the runs do have
-    # readable transcripts their calls are carried per role by agent_sessions,
-    # addressed by the run that made them; this field then holds nothing, and
-    # it stays the only source for an Attempt whose transcript is gone.
-    tool_uses = (
-        [] if agent_sessions else json_safe(_audit_tool_uses_for_attempt(attempt))
-    )
+    # Attempt rows are service state; native sessions own tool-call detail.
+    tool_uses: list[dict[str, Any]] = []
     metadata = [
         {"label": "trigger message id", "value": normalize_display_value(attempt.trigger_message_id)},
         {"label": "action", "value": normalize_display_value(attempt.action)},
@@ -795,7 +951,7 @@ def build_attempt_detail(
                 or _attempt_detail_reply_text(attempt, sent_reply)
             ),
         },
-        "email": _email_payload(attempt, reply_task, email_store),
+        "email": _email_payload(attempt, reply_task, email_store_factory),
         "references": _references_payload(attempt),
         "feedback": {
             "reviewer_feedback": normalize_display_value(attempt.reviewer_feedback),
@@ -805,6 +961,7 @@ def build_attempt_detail(
         },
         "decision_options": decision_options,
         "human_decision": human_decision,
+        "system_execution": system_execution,
         "audit_summary": normalize_display_value(attempt.audit_summary),
         "draft_reply": normalize_display_value(attempt.draft_reply_text),
         "failure_reason": normalize_display_value(_agent_failure_reason_text(attempt, agent_runs)),
@@ -832,7 +989,7 @@ def build_attempt_detail(
             "result": _stored_json(attempt.calendar_response_result_json, {}),
         },
         "actions": _action_links(
-            attempt, agent_sessions, reply_task, sent_reply, wechat_delivery
+            attempt, agent_sessions, reply_task, sent_reply, wechat_delivery, rerun, rerun_block_reason=rerun_block_reason
         ),
         "agent_sessions": agent_sessions,
         "runtime_attempts": runtime_attempts,

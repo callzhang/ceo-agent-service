@@ -2,6 +2,8 @@ from datetime import datetime
 
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.agent_orchestrator import OrchestrationResult
+from app.consumer_agent import _prepare_outgoing_dingtalk_messages
+from app.system_executor import SystemExecutor
 from app.channel_gate import ChannelGateResult, ChannelGateState
 from app.dingtalk_models import DingTalkMessage
 from app.store import AgentRole, AutoReplyStore
@@ -115,6 +117,14 @@ class FakeMeetingDws:
     def search_user_profiles(self, query):
         return []
 
+    def search_conversations(self, query):
+        from app.dingtalk_models import DingTalkConversation
+
+        return [DingTalkConversation(
+            conversation_id="cid-first", open_conversation_id="cid-first",
+            title="项目群", single_chat=False, unread_point=0,
+        )]
+
     def read_recent_messages(self, conversation, limit=50):
         return []
 
@@ -195,7 +205,7 @@ def test_meeting_alignment_pipeline_sends_once_and_appears_in_history(tmp_path):
 
     job = store.get_meeting_alignment_job_by_meeting_id("minutes-e2e-1")
     assert job is not None
-    assert job.status == "sent"
+    assert job.status == "sent", job.error
     assert len(store.list_meeting_alignment_runs(job.id)) == 1
     assert len(dws.sent) == 1
     assert dws.sent[0]["conversation_id"] == "cid-first"
@@ -225,12 +235,20 @@ class ContextOnlyDws:
 
     def __init__(self, trigger: DingTalkMessage) -> None:
         self.trigger = trigger
+        self.sent = []
 
     def read_recent_messages(self, _conversation):
         return [self.trigger]
 
     def read_unread_messages(self, _conversation):
         return [self.trigger]
+
+    def send_message(self, conversation_id, text, **kwargs):
+        self.sent.append((conversation_id, text, kwargs))
+        return {"success": True, "message_id": "sent-1"}
+
+    def verify_message_send_result(self, result):
+        return {"state": "sent", "message_id": result["message_id"]}
 
     def __getattr__(self, name: str):
         if name.startswith(("send", "reply", "ding", "add_message")):
@@ -239,12 +257,16 @@ class ContextOnlyDws:
 
 
 class LocalPipelineOrchestrator:
-    def __init__(self, store: AutoReplyStore, *, no_action: bool = False) -> None:
+    def __init__(self, store: AutoReplyStore, dws: ContextOnlyDws, *, no_action: bool = False) -> None:
         self.store = store
         self.no_action = no_action
+        self.system_executor = SystemExecutor(store, dws=dws)
+
+    def persisted_terminal_result(self, task) -> OrchestrationResult | None:
+        return None
 
     def process(self, task, context, *, refresh_context) -> OrchestrationResult:
-        del context, refresh_context
+        del refresh_context
         consumer_claim = self.store.claim_agent_run(
             task.id,
             task.execution_generation,
@@ -273,10 +295,10 @@ class LocalPipelineOrchestrator:
                         {
                             "description": "Send the reply.",
                             "action_identity": "send-pipeline-reply",
-                            "capability": "agent_cli.dws",
-                            "operation": "chat message send",
+                            "capability": "dingtalk-chat",
+                            "operation": "send_group_message",
                             "target": {"conversation_id": task.conversation_id},
-                            "payload": {"text": "Confirmed."},
+                            "payload": {"content": "Confirmed."},
                         }
                     ],
                     "sourced_facts": [],
@@ -285,6 +307,11 @@ class LocalPipelineOrchestrator:
                 "error": {},
             }
         )
+        if not self.no_action:
+            consumer = _prepare_outgoing_dingtalk_messages(
+                consumer, store=self.store, task=task, context=context,
+                proposal_revision=0,
+            )
         self.store.set_agent_run_session(
             consumer_claim.run.id,
             "local-consumer-session",
@@ -307,6 +334,7 @@ class LocalPipelineOrchestrator:
             )
 
         operation_id = f"agent-task:{task.id}:{task.execution_generation}:proposal:0"
+        candidate = self.store.persist_review_candidate(task, consumer_run, consumer)
         audit_claim = self.store.claim_agent_run(
             task.id,
             task.execution_generation,
@@ -324,18 +352,15 @@ class LocalPipelineOrchestrator:
         )
         audit = AuditAgentResult.model_validate(
             {
-                "outcome": "executed",
+                "outcome": "approve",
                 "risk": "low",
                 "confidence": 1.0,
                 "rule_coverage": 1.0,
                 "information_completeness": 1.0,
-                "summary": "Reply sent and verified.",
+                "summary": "Reply candidate reviewed.",
                 "proposal_revision": 0,
+                "candidate_digest": candidate["candidate_digest"],
                 "feedback": None,
-                "external_result": {
-                    "operation_id": operation_id,
-                    "live_result_reference": {"message_id": "sent-1"},
-                },
                 "error": {},
             }
         )
@@ -344,14 +369,19 @@ class LocalPipelineOrchestrator:
             audit.model_dump(mode="json"),
             owner="local-pipeline",
         )
+        review = self.store.record_candidate_review(candidate["id"], audit_run.id, audit)
+        execution = self.system_executor.execute(
+            task, candidate["id"], review["id"], context=context,
+        )
         return OrchestrationResult(
-            status="executed",
+            status=execution.outcome,
             final_run_id=audit_run.id,
             final_role=AgentRole.AUDIT,
-            summary=audit.summary,
-            error=audit.error,
+            summary=execution.summary,
+            error=execution.error,
             feedback_cycles=0,
             audit_result=audit,
+            execution_result=execution,
         )
 
 
@@ -382,10 +412,11 @@ def _audit_pipeline(
         trigger_message_json=trigger.model_dump_json(),
         execution_generation="g1",
     )
-    orchestrator = LocalPipelineOrchestrator(store, no_action=no_action)
+    dws = ContextOnlyDws(trigger)
+    orchestrator = LocalPipelineOrchestrator(store, dws, no_action=no_action)
     worker = DingTalkAutoReplyWorker(
         store=store,
-        dws=ContextOnlyDws(trigger),
+        dws=dws,
         codex=object(),
         agent_orchestrator=orchestrator,
         channel_gates={
@@ -394,11 +425,11 @@ def _audit_pipeline(
         },
         now_provider=lambda: datetime.fromisoformat("2026-07-29T16:01:00+08:00"),
     )
-    return worker, store
+    return worker, store, dws
 
 
 def test_audit_local_pipeline_send_uses_codex_session_audit(tmp_path):
-    worker, store = _audit_pipeline(tmp_path)
+    worker, store, dws = _audit_pipeline(tmp_path)
 
     assert worker.consume_once(max_tasks=1) == 1
 
@@ -407,12 +438,18 @@ def test_audit_local_pipeline_send_uses_codex_session_audit(tmp_path):
     assert task.status == "done"
     assert not hasattr(store, "list_agent_execution_receipts")
     assert run.codex_session_id
+    assert len(dws.sent) == 1
+    assert dws.sent[0][0] == "cid-1"
+    assert dws.sent[0][1].startswith("Confirmed.")
+    assert store.get_candidate_execution(
+        store.current_reviewed_candidate(task.id, task.execution_generation)["id"]
+    )["status"] == "done"
 
 
 def test_audit_local_pipeline_handoff_uses_codex_session_audit(
     tmp_path,
 ):
-    worker, store = _audit_pipeline(tmp_path, no_action=True)
+    worker, store, dws = _audit_pipeline(tmp_path, no_action=True)
 
     assert worker.consume_once(max_tasks=1) == 1
 
@@ -427,3 +464,4 @@ def test_audit_local_pipeline_handoff_uses_codex_session_audit(
     assert task.status == "done"
     assert not hasattr(store, "list_agent_execution_receipts")
     assert run.codex_session_id
+    assert dws.sent == []

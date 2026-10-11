@@ -1,15 +1,1 @@
-{{style_lines}}
----
-{{current_message}}
----
-{{sender_org}}
----
-{{known_people}}
----
-{{context_messages}}
----
-{{material_references}}
----
-{{linked_documents}}
----
-{{image_download_status}}
+{{task_context}}

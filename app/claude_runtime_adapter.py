@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -63,12 +64,24 @@ class ClaudeCommandPolicy:
     """Choose a normal runtime turn or an isolated no-tool health probe."""
 
     tools_enabled: bool
+    role: str = ""
+    task_id: int = 0
+    db_path: str = ""
+    execution_generation: str = ""
     _seal: object
 
-    def __init__(self, *, tools_enabled: bool, seal: object) -> None:
+    def __init__(
+        self, *, tools_enabled: bool, seal: object,
+        role: str = "", task_id: int = 0, db_path: str = "",
+        execution_generation: str = "",
+    ) -> None:
         if seal is not _POLICY_SEAL:
             raise ValueError("Claude command policies use named constructors")
         object.__setattr__(self, "tools_enabled", tools_enabled)
+        object.__setattr__(self, "role", role)
+        object.__setattr__(self, "task_id", task_id)
+        object.__setattr__(self, "db_path", db_path)
+        object.__setattr__(self, "execution_generation", execution_generation)
         object.__setattr__(self, "_seal", seal)
 
     @classmethod
@@ -78,6 +91,20 @@ class ClaudeCommandPolicy:
     @classmethod
     def normal(cls) -> ClaudeCommandPolicy:
         return cls(tools_enabled=True, seal=_POLICY_SEAL)
+
+    @classmethod
+    def consumer(cls, *, task_id: int, db_path: str, execution_generation: str) -> ClaudeCommandPolicy:
+        return cls(
+            tools_enabled=True, role="consumer", task_id=task_id,
+            db_path=db_path, execution_generation=execution_generation, seal=_POLICY_SEAL,
+        )
+
+    @classmethod
+    def audit(cls, *, task_id: int, db_path: str, execution_generation: str) -> ClaudeCommandPolicy:
+        return cls(
+            tools_enabled=True, role="audit", task_id=task_id,
+            db_path=db_path, execution_generation=execution_generation, seal=_POLICY_SEAL,
+        )
 
 
 CLAUDE_INPUT_MAX_BYTES = 1024 * 1024
@@ -243,6 +270,8 @@ class ClaudeRuntimeAdapter:
         )
         if not selected_policy.tools_enabled:
             command.extend(["--tools", ""])
+        elif selected_policy.role:
+            command.extend(["--restricted", "--tools", "Read,Glob,Grep"])
         if session_id is not None:
             command.extend(["--resume", session_id])
         return command
@@ -436,7 +465,17 @@ class ClaudeRuntimeAdapter:
         The CLI takes both as JSON strings, so nothing is written to disk and
         nothing has to be cleaned up after the turn.
         """
-        transports = self._mcp_transports() if policy.tools_enabled else {}
+        if policy.role:
+            transports = {"agent_cli": {
+                "type": "stdio", "command": sys.executable,
+                "args": [
+                    "-m", "app.agent_cli", "--role", policy.role,
+                    "--task-id", str(policy.task_id), "--db", policy.db_path,
+                    "--execution-generation", policy.execution_generation,
+                ],
+            }}
+        else:
+            transports = self._mcp_transports() if policy.tools_enabled else {}
         settings_json = json.dumps(
             {
                 "enableAllProjectMcpServers": policy.tools_enabled,

@@ -7,7 +7,10 @@ repository updater the console's upgrade uses: wait until no work is in flight,
 back up the database, fast-forward to ``origin/main``, build the console,
 check the imports, restart and wait for health, rolling back on failure.
 
-Usage: ``python -m app.deploy`` from any checkout. Two sessions deploying at
+Usage: ``python -m app.deploy`` from any checkout. An explicitly requested
+``--skip-quiet-wait`` bypasses only the in-flight-work wait; the service is
+still stopped through the normal updater before backup or checkout changes.
+Two sessions deploying at
 once are serialized by the repository lock; the second finds the checkout
 already moved and stops.
 """
@@ -15,12 +18,18 @@ already moved and stops.
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
+import plistlib
 import stat
 from uuid import uuid4
 
-from app.config import PRODUCTION_CHECKOUT_MESSAGE, service_root, worker_db_path
+from app.config import PRODUCTION_CHECKOUT_MESSAGE, read_env_file, service_root, worker_db_path
+from app.consumer_system_release import prepare_consumer_system_contracts
+from app.prompt_template_release import prepare_prompt_templates
+from app.deploy_maintenance import check_maintenance, prepare_maintenance, stop_for_maintenance
 from app.repository_updater import (
+    ExistingSchemaUpgradeStateStore,
     RepositoryUpdater,
     UpgradePreconditionError,
     UpgradeOperation,
@@ -112,18 +121,79 @@ def unlock_source_tree(root: Path) -> None:
         _chmod_tree(root / relative, writable=True)
 
 
-def deploy(root: Path, database_path: Path) -> str:
-    from app.store import AutoReplyStore
+def _production_audit_rules_path(root: Path) -> Path:
+    """Resolve the worker's Audit rules path from its own environment."""
+    configured = read_env_file(root / ".env").get("CEO_AUDIT_RULES_TEMPLATE_PATH", "")
+    plist = Path.home() / "Library/LaunchAgents/com.ceo-agent-service.main.plist"
+    if plist.exists():
+        launch_environment = plistlib.loads(plist.read_bytes()).get("EnvironmentVariables", {})
+        configured = launch_environment.get("CEO_AUDIT_RULES_TEMPLATE_PATH", configured)
+    path = Path(os.path.expandvars(configured)).expanduser() if configured else root / "data/prompts/audit_rules.md"
+    return path if path.is_absolute() else root / path
 
+
+def _production_prompt_template_paths(root: Path) -> tuple[Path, Path]:
+    """Resolve Developer/User files using the installed worker environment."""
+    environment = read_env_file(root / ".env")
+    plist = Path.home() / "Library/LaunchAgents/com.ceo-agent-service.main.plist"
+    if plist.exists():
+        environment.update(plistlib.loads(plist.read_bytes()).get("EnvironmentVariables", {}))
+    paths = []
+    for name in ("developer_prompt", "user_prompt"):
+        configured = environment.get(f"CEO_{name.upper()}_TEMPLATE_PATH", "")
+        path = Path(os.path.expandvars(configured)).expanduser() if configured else root / f"data/prompts/{name}.md"
+        paths.append(path if path.is_absolute() else root / path)
+    return paths[0], paths[1]
+
+
+def _target_matching_doc_changes(
+    repository: GitRepository, records, target: str
+) -> tuple[str, ...] | None:
+    """Recognize docs left at the exact target bytes by an interrupted checkout.
+
+    Only unstaged tracked docs can be recovered, and only when every working
+    file byte-for-byte matches the already-fetched target commit. The deploy
+    restores these files to HEAD after stopping the service; the normal
+    fast-forward then installs the target version.
+    """
+    if not records or any(record.code != " M" for record in records):
+        return None
+    paths = tuple(record.path for record in records)
+    for path in paths:
+        parts = Path(path).parts
+        if not parts or parts[0] != "docs" or ".." in parts:
+            return None
+        working_path = repository.root / path
+        try:
+            working = working_path.read_bytes()
+        except OSError:
+            return None
+        target_bytes = repository._run(
+            ["show", f"{target}:{path}"], category="deploy_target_doc_recovery"
+        ).stdout
+        if working != target_bytes:
+            return None
+    return paths
+
+
+def deploy(
+    root: Path, database_path: Path, *, publish_contracts: bool = False,
+    publish_prompt_templates: bool = False,
+    maintenance_tasks: tuple[int, ...] = (),
+    skip_quiet_wait: bool = False,
+) -> str:
+    if publish_contracts and publish_prompt_templates:
+        raise SystemExit("Consumer/Audit contracts and prompt templates require separate deployments")
     ensure_production_guards(root)
     repository = GitRepository(root)
     repository.fetch(REMOTE)
     current = repository.resolve_ref(f"refs/heads/{BRANCH}")
     target = repository.resolve_ref(f"refs/remotes/{REMOTE}/{BRANCH}")
-    if current == target:
+    if current == target and not publish_contracts and not publish_prompt_templates:
         return f"already current at {current[:8]}"
     records = repository.status_records()
-    if records:
+    target_doc_changes = _target_matching_doc_changes(repository, records, target)
+    if records and target_doc_changes is None:
         # Nobody edits the production checkout; a change there is the fault to
         # look at, not something to preserve and deploy over.
         raise SystemExit(f"{root} has local changes; nothing was deployed")
@@ -149,37 +219,107 @@ def deploy(root: Path, database_path: Path) -> str:
     changed = repository._run(
         ["diff", "--name-only", current, target], category="deploy_changed_paths"
     ).stdout.decode().split()
+    stopped = False
+
+    def stop_once() -> None:
+        nonlocal stopped
+        if not stopped:
+            _default_stop()
+            stopped = True
+
+    def start() -> None:
+        nonlocal stopped
+        _default_start()
+        stopped = False
+
+    def quiet() -> None:
+        if skip_quiet_wait:
+            return
+        if maintenance_tasks:
+            processes = check_maintenance(database_path, maintenance_tasks)
+            processes = stop_for_maintenance(processes, stop_once)
+            try:
+                prepare_maintenance(database_path, maintenance_tasks, operation.operation_id, processes)
+                wait_until_quiet(database_path)
+            except Exception:
+                start()
+                raise
+        else:
+            wait_until_quiet(database_path)
+
+    publication = None
+    if publish_contracts:
+        def publication():
+            return prepare_consumer_system_contracts(
+                root=root,
+                database_path=database_path,
+                operation_id=operation.operation_id,
+                audit_rules_path=_production_audit_rules_path(root),
+            )
+    elif publish_prompt_templates:
+        def publication():
+            developer_path, user_path = _production_prompt_template_paths(root)
+            return prepare_prompt_templates(
+                root=root,
+                database_path=database_path,
+                operation_id=operation.operation_id,
+                developer_prompt_path=developer_path,
+                user_prompt_path=user_path,
+            )
+
+    def restore_interrupted_target_docs() -> None:
+        if target_doc_changes:
+            repository._run(
+                ["restore", "--source", current, "--worktree", "--", *target_doc_changes],
+                category="deploy_target_doc_recovery",
+            )
+
     updater = RepositoryUpdater(
         root,
-        AutoReplyStore(database_path),
+        ExistingSchemaUpgradeStateStore(database_path),
         remote=REMOTE,
         branch=BRANCH,
         database_path=database_path,
-        wait_for_quiet=lambda: wait_until_quiet(database_path),
-        stop=_default_stop,
-        restart=_default_start,
+        wait_for_quiet=quiet,
+        stop=stop_once,
+        restart=start,
         dependency_sync=lambda: build_frontend(root, changed),
         verification=lambda: verify_imports(root),
         health=wait_for_health,
+        publication=publication,
+        pre_checkout_cleanup=restore_interrupted_target_docs if target_doc_changes else None,
     )
     # Unlocked for exactly the checkout + build + verify window; the source
     # tree is locked again in `finally` whether this succeeds, rolls back, or
     # raises, so a deploy that dies mid-way never leaves it writable.
-    unlock_source_tree(root)
-    try:
-        result = updater.execute(operation)
-    except UpgradePreconditionError as exc:
-        moved = repository.resolve_ref(f"refs/heads/{BRANCH}")
-        if moved != current:
-            # Another session deployed while this one waited for the lock.
-            return f"another deploy got there first; production is at {moved[:8]}"
-        raise SystemExit(f"nothing was deployed: {exc}") from None
-    finally:
-        lock_source_tree(root)
-    return f"deployed {current[:8]} -> {result.installed_commit[:8]}"
+    with repository.mutex():
+        unlock_source_tree(root)
+        try:
+            try:
+                execute_locked = getattr(updater, "execute_locked", None)
+                result = (
+                    execute_locked(operation)
+                    if execute_locked is not None
+                    else updater.execute(operation)
+                )
+            except UpgradePreconditionError as exc:
+                moved = repository.resolve_ref(f"refs/heads/{BRANCH}")
+                if moved != current:
+                    # Another session deployed while this one waited for the lock.
+                    return f"another deploy got there first; production is at {moved[:8]}"
+                raise SystemExit(f"nothing was deployed: {exc}") from None
+        finally:
+            lock_source_tree(root)
+    message = f"deployed {current[:8]} -> {result.installed_commit[:8]}"
+    return f"{message}; {result.error}" if result.error else message
 
 
-def restart_only(database_path: Path, *, restart=_default_restart) -> str:
+def restart_only(
+    database_path: Path,
+    *,
+    restart=_default_restart,
+    skip_quiet_wait: bool = False,
+) -> str:
     """Restart the service on its current code, when only its settings changed.
 
     Some settings (an email account's, for one) are read when a worker starts,
@@ -187,10 +327,12 @@ def restart_only(database_path: Path, *, restart=_default_restart) -> str:
     as a deploy: wait until no work is in flight, restart through launchd,
     wait for health.
     """
-    wait_until_quiet(database_path)
-    restart()
-    if not wait_for_health():
-        raise SystemExit("restarted, but the service did not become healthy")
+    with GitRepository(service_root()).mutex():
+        if not skip_quiet_wait:
+            wait_until_quiet(database_path)
+        restart()
+        if not wait_for_health():
+            raise SystemExit("restarted, but the service did not become healthy")
     return "restarted"
 
 
@@ -203,11 +345,44 @@ def main() -> int:
         action="store_true",
         help="restart on the current code (a setting changed), instead of deploying a commit",
     )
+    parser.add_argument(
+        "--skip-quiet-wait",
+        action="store_true",
+        help="deploy immediately without waiting for active work to drain; the updater still stops the service before backup and checkout changes",
+    )
+    parser.add_argument(
+        "--publish-consumer-system-contracts",
+        action="store_true",
+        help="publish the reviewed Consumer/Audit Skill and Audit-rule files in the quiet deploy window",
+    )
+    parser.add_argument(
+        "--publish-prompt-templates",
+        action="store_true",
+        help="migrate the approved Developer/User default files in the stopped deploy window",
+    )
+    parser.add_argument("--maintenance-task", type=int, action="append", default=[],
+                        help="explicitly authorized recoverable reply task interrupted for maintenance; repeat per task")
     args = parser.parse_args()
+    if args.restart and args.maintenance_task:
+        parser.error("maintenance requires a commit deployment")
+    if args.restart and args.publish_consumer_system_contracts:
+        parser.error("--restart cannot publish Consumer/Audit contracts")
+    if args.restart and args.publish_prompt_templates:
+        parser.error("--restart cannot publish prompt templates")
+    if args.publish_consumer_system_contracts and args.publish_prompt_templates:
+        parser.error("Consumer/Audit contracts and prompt templates require separate deployments")
     if args.restart:
-        print(restart_only(args.db or worker_db_path()), flush=True)
+        print(restart_only(
+            args.db or worker_db_path(), skip_quiet_wait=args.skip_quiet_wait
+        ), flush=True)
         return 0
-    print(deploy(args.root or service_root(), args.db or worker_db_path()), flush=True)
+    print(deploy(
+        args.root or service_root(), args.db or worker_db_path(),
+        publish_contracts=args.publish_consumer_system_contracts,
+        publish_prompt_templates=args.publish_prompt_templates,
+        maintenance_tasks=tuple(args.maintenance_task),
+        skip_quiet_wait=args.skip_quiet_wait,
+    ), flush=True)
     return 0
 
 

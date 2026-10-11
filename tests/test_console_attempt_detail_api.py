@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import quote
 
 import pytest
@@ -11,6 +12,7 @@ from app.store import AgentRole, AutoReplyStore
 from app.web_api.attempts import (
     _consumer_result_payload as build_consumer_result_payload,
     _linked_consumer_run,
+    _runtime_payload,
     build_attempt_detail,
 )
 
@@ -36,6 +38,109 @@ AUDIT_EVENTS = [
 ]
 
 
+@pytest.mark.parametrize("run_status", ["completed", "failed", "running"])
+def test_runtime_payload_preserves_business_status_separately(
+    tmp_path: Path, run_status: str
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="audit-result-status",
+        owner="audit-status-test",
+    ).run
+    runtime = store.claim_agent_runtime_attempt(
+        run.id, "codex_oauth", "codex_cli", "local_oauth", "test-model"
+    )
+    store.complete_agent_runtime_attempt(runtime.id, "", "", 0, 0)
+    if run_status == "failed":
+        run = store.fail_agent_run(
+            run.id, {"code": "provider_risk_rejected"}, owner="audit-status-test"
+        )
+    elif run_status == "completed":
+        run = store.complete_agent_run(
+            run.id, {"outcome": "returned"}, owner="audit-status-test"
+        )
+    before = store.list_agent_runtime_attempts(run.id)
+
+    payload = _runtime_payload([run], store)
+
+    assert payload[0]["status"] == "completed"
+    assert payload[0]["run_status"] == run_status
+    assert store.get_agent_run(run.id) == run
+    assert store.list_agent_runtime_attempts(run.id) == before
+
+
+def test_claude_native_range_is_readable_without_a_codex_viewer_link(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from app import native_trajectory
+
+    native = tmp_path / "claude.jsonl"
+    native.write_text('{"type":"assistant","message":{"content":[]}}\n')
+    monkeypatch.setattr(native_trajectory, "claude_session_path", lambda *_: native)
+    run = SimpleNamespace(
+        id=1, role=AgentRole.CONSUMER, execution_generation="initial",
+        proposal_revision=0, turn_attempt=0, status="completed",
+    )
+    attempt = SimpleNamespace(
+        runtime_kind="claude_cli", session_id="claude-session",
+        transcript_start=0, transcript_end=1, attempt_number=1,
+        route_name="claude", credential_mode="local_oauth", model="test",
+        status="completed", failure_code="", failover_permitted=False,
+        first_effect_started_at="", created_at="", finished_at="",
+    )
+    store = SimpleNamespace(
+        list_agent_runtime_attempts_for_runs=lambda _ids: {1: [attempt]}
+    )
+
+    [entry] = _runtime_payload([run], store)
+    assert entry["session_available"] is True
+    assert entry["session_url"] == ""
+    assert entry["native_reason"] == ""
+
+
+def test_runtime_payload_uses_batch_runtime_attempt_lookup(tmp_path: Path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "runtime-payload-batch.sqlite3")
+    task = _consumer_result_task(store)
+    run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="runtime-batch",
+        owner="audit-runtime-batch",
+    ).run
+    runtime = store.claim_agent_runtime_attempt(
+        run.id, "codex_oauth", "codex_cli", "local_oauth", "test-model"
+    )
+    batch_calls = []
+    original_batch = store.list_agent_runtime_attempts_for_runs
+
+    def record_batch(run_ids):
+        batch_calls.append(run_ids)
+        return original_batch(run_ids)
+
+    monkeypatch.setattr(store, "list_agent_runtime_attempts_for_runs", record_batch)
+    monkeypatch.setattr(
+        store,
+        "list_agent_runtime_attempts",
+        lambda _run_id: pytest.fail("per-run runtime attempt query was used"),
+    )
+
+    payload = _runtime_payload([run], store)
+
+    assert [item["attempt_number"] for item in payload] == [runtime.attempt_number]
+    assert batch_calls == [[run.id]]
+
+
 def test_linked_consumer_run_falls_back_to_latest_consumer_sibling():
     audit = type("Run", (), {"id": 3, "role": "audit", "parent_agent_run_id": None})()
     old = type("Run", (), {"id": 1, "role": "consumer", "turn_attempt": 0, "proposal_revision": 0})()
@@ -54,6 +159,7 @@ def test_consumer_result_prefers_current_generation_when_attempt_has_no_run_id()
             "turn_attempt": 4,
             "proposal_revision": 0,
             "final_result_json": "",
+                "adopted_result_json": "",
             "structured_error_json": '{"code":"service_restart_before_effect"}',
         },
     )()
@@ -69,7 +175,7 @@ def test_consumer_result_prefers_current_generation_when_attempt_has_no_run_id()
             "status": "completed",
             "turn_attempt": 0,
             "proposal_revision": 0,
-            "final_result_json": json.dumps(partial_result),
+                "adopted_result_json": json.dumps(partial_result),
             "structured_error_json": "",
         },
     )()
@@ -94,14 +200,21 @@ def test_attempt_detail_loads_task_runs_when_attempt_has_no_run_id(tmp_path: Pat
 
 
 TRIGGER_PAYLOAD = {
+    "schema": "email_agent_action.v1",
+    "lifecycle_version": "email_unsubscribe_audited_v2",
     "account_id": "mailbox",
     "action_identity": TRIGGER,
     "action_type": "unsubscribe",
     "category": "junk",
     "classification_id": 42,
     "action_plan_id": "email-action-plan:plan-digest",
+    "action_plan_version": 1,
     "stable_message_identity": "mailbox:message-id:<msg@host>",
-    "action_parameters": {"candidate_source": "body_html_https"},
+    "thread_identity": "thread-digest",
+    "action_parameters": {
+        "candidate_source": "body_html_https",
+        "instruction": "Private execution detail that must not remain in completed input",
+    },
 }
 
 
@@ -195,6 +308,8 @@ def _complete_consumer_run(
 
 
 def _complete_audit_run(store: AutoReplyStore, task, consumer, *, owner: str):
+    candidate = store.adopted_candidate_for_consumer_run(consumer.id)
+    assert candidate is not None
     run = store.claim_agent_run(
         task.id,
         task.execution_generation,
@@ -208,8 +323,12 @@ def _complete_audit_run(store: AutoReplyStore, task, consumer, *, owner: str):
     return store.complete_agent_run(
         run.id,
         {
-            "outcome": "executed",
+            "outcome": "approve",
             "summary": "The reviewed update was published.",
+            "proposal_revision": 0,
+            "candidate_digest": candidate["candidate_digest"],
+            "feedback": None,
+            "error": {"code": "", "retryable": False, "authorization_required": False},
             "risk": "low",
             "confidence": 1.0,
             "rule_coverage": 1.0,
@@ -242,6 +361,87 @@ def _finalize_consumer_result_attempt(store: AutoReplyStore, task, terminal_run)
         send_error="",
         channel="dingtalk",
     )
+
+
+def _failed_provider_risk_attempt(
+    store: AutoReplyStore, *, error: dict[str, object]
+):
+    task = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, task, owner="risk-guard-consumer")
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="audit-risk-guard",
+        owner="risk-guard-audit",
+    ).run
+    audit = store.fail_agent_run(audit.id, error, owner="risk-guard-audit")
+    attempt_id = store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=audit.id,
+        task_status="failed",
+        task_error="provider_risk_rejected",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="The runtime refused this outbound action.",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="The runtime refused this outbound action.",
+        send_status="failed",
+        send_error="agent_reported_failure",
+        channel="dingtalk",
+    )
+    return task, audit, attempt_id
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        {"code": "provider_risk_rejected"},
+        {"code": "agent_reported_failure", "source_code": "provider_risk_rejected"},
+    ],
+)
+def test_provider_risk_rejection_disables_history_rerun_and_explains_why(
+    tmp_path: Path, error: dict[str, object]
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    _task, _run, attempt_id = _failed_provider_risk_attempt(store, error=error)
+
+    status, item = build_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert item is not None
+    assert item["actions"]["can_rerun"] is False
+    assert "此入口不能重放历史候选" in item["actions"]["rerun_block_reason"]
+    assert "此入口不能重放历史候选" in item["status"]["message"]
+    assert "提交新候选并重新审核" in item["failure_reason"]
+
+
+def test_provider_risk_rejection_is_blocked_at_the_rerun_handler(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task, _run, attempt_id = _failed_provider_risk_attempt(
+        store,
+        error={"code": "agent_reported_failure", "source_code": "provider_risk_rejected"},
+    )
+
+    status, _headers, body = handle_rerun_attempt_post(store, attempt_id)
+
+    unchanged_task = store.get_reply_task(task.id)
+    assert status == 409
+    assert "此入口不能重放历史候选" in body
+    assert unchanged_task is not None
+    assert unchanged_task.status == "failed"
+    assert unchanged_task.manual_rerun_attempt_id == 0
 
 
 class _FakeEmailStore:
@@ -441,7 +641,7 @@ def test_attempt_detail_reaches_every_role_transcript(
     assert item["tool_uses"] == []
 
 
-def test_recorded_calls_survive_an_attempt_whose_transcript_is_gone(
+def test_missing_transcript_does_not_resurrect_copied_attempt_calls(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -455,14 +655,14 @@ def test_recorded_calls_survive_an_attempt_whose_transcript_is_gone(
 
     assert item is not None
     assert item["agent_sessions"] == []
-    assert [use["tool"] for use in item["tool_uses"]] == ["unsubscribe_email"]
+    assert item["tool_uses"] == []
 
 
 def test_email_attempt_carries_its_message_and_unsubscribe_receipt(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = _seed_email_attempt(store, with_agent_runs=False)
 
-    _, item = build_attempt_detail(store, attempt_id, email_store=_FakeEmailStore())
+    _, item = build_attempt_detail(store, attempt_id, email_store_factory=_FakeEmailStore)
 
     assert item is not None
     email = item["email"]
@@ -484,6 +684,42 @@ def test_email_attempt_carries_its_message_and_unsubscribe_receipt(tmp_path: Pat
     ]
 
 
+def test_completed_email_attempt_keeps_adopted_metadata_after_input_compaction(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = _seed_email_attempt(store, with_agent_runs=False)
+    _, before = build_attempt_detail(
+        store, attempt_id, email_store_factory=_FakeEmailStore,
+    )
+    assert before is not None
+    original_email = before["email"]
+    assert original_email["category"] == "junk"
+    assert original_email["candidate_source"] == "body_html_https"
+
+    task = store.get_reply_task_for_message(CONVERSATION, TRIGGER, channel="email")
+    assert task is not None
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+    store.complete_reply_task(
+        task.id, expected_execution_generation=claimed.execution_generation,
+    )
+    compacted = store.get_reply_task(task.id)
+    assert compacted is not None and compacted.input_compacted
+    assert compacted.trigger_text == ""
+    projection = json.loads(compacted.trigger_message_json)
+    assert projection["category"] == "junk"
+    assert projection["action_parameters"] == {
+        "candidate_source": "body_html_https"
+    }
+
+    _, after = build_attempt_detail(
+        store, attempt_id, email_store_factory=_FakeEmailStore,
+    )
+    assert after is not None
+    assert after["email"] == original_email
+
+
 def test_non_email_attempt_has_no_email_context(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
@@ -497,10 +733,97 @@ def test_non_email_attempt_has_no_email_context(tmp_path: Path):
         send_status="sent",
     )
 
-    _, item = build_attempt_detail(store, attempt_id, email_store=_FakeEmailStore())
+    _, item = build_attempt_detail(store, attempt_id, email_store_factory=_FakeEmailStore)
 
     assert item is not None
     assert item["email"] is None
+
+
+@pytest.mark.parametrize("channel", ["dingtalk", "wechat", None])
+def test_history_detail_does_not_initialize_unrelated_email_store(
+    tmp_path: Path, monkeypatch, channel
+):
+    from tests.test_console_web_api import _client
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = 999999
+    if channel is not None:
+        attempt_id = store.record_reply_attempt(
+            channel=channel,
+            conversation_id="context-test",
+            conversation_title="Context test",
+            trigger_message_id="message-test",
+            trigger_sender="Sender",
+            trigger_text="Status request",
+            action="send_reply",
+            sensitivity_kind="general",
+            send_status="failed",
+        )
+
+    def unrelated_email_store(_path):
+        raise AssertionError("non-email history must not scan email durable state")
+
+    with _client(tmp_path) as client:
+        monkeypatch.setattr("app.audit_web.EmailStore", unrelated_email_store)
+        response = client.get(f"/api/console/history/{attempt_id}")
+
+    assert response.status_code == (404 if channel is None else 200)
+    if channel is not None:
+        assert response.json()["item"]["email"] is None
+
+
+def test_email_history_detail_reuses_initialized_store_and_reads_fresh_context(
+    tmp_path: Path, monkeypatch
+):
+    from tests.test_console_web_api import _client
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = _seed_email_attempt(store, with_agent_runs=False)
+    initializations = []
+    reads = []
+
+    class FreshEmailStore(_FakeEmailStore):
+        def get_classification(self, classification_id):
+            reads.append(classification_id)
+            result = super().get_classification(classification_id)
+            return {**result, "subject": f"Revision {len(reads)}"}
+
+    def email_store_factory(path, **kwargs):
+        initializations.append((path, kwargs))
+        return FreshEmailStore()
+
+    monkeypatch.setattr("app.audit_web.EmailStore", email_store_factory)
+    with _client(tmp_path) as client:
+        assert len(initializations) == 1
+        first = client.get(f"/api/console/history/{attempt_id}")
+        second = client.get(f"/api/console/history/{attempt_id}")
+
+    assert first.status_code == second.status_code == 200
+    assert len(initializations) == 1
+    assert initializations[0][1]["validate_rows"] is False
+    assert len(reads) == 2
+    assert first.json()["item"]["email"]["subject"] == "Revision 1"
+    assert second.json()["item"]["email"]["subject"] == "Revision 2"
+    assert second.json()["item"]["email"]["unsubscribe"]["evidence"] == "page-not-operable"
+
+
+def test_email_store_validation_failure_does_not_block_unrelated_web_routes(
+    tmp_path: Path, monkeypatch
+):
+    from app.email_store import EmailPersistenceCorruption
+    from tests.test_console_web_api import _client
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = _seed_email_attempt(store, with_agent_runs=False)
+
+    def invalid_email_store(_path, **_kwargs):
+        raise EmailPersistenceCorruption("test-invalid-email-state")
+
+    monkeypatch.setattr("app.audit_web.EmailStore", invalid_email_store)
+    with _client(tmp_path) as client:
+        assert client.get("/healthz").status_code == 200
+        with pytest.raises(EmailPersistenceCorruption, match="test-invalid-email-state"):
+            client.get(f"/api/console/history/{attempt_id}")
 
 
 def test_codex_session_roles_resolve_both_transcripts_of_one_attempt(tmp_path: Path):
@@ -613,9 +936,12 @@ def test_attempt_detail_names_a_recorded_delivery_when_the_task_is_done(
     assert item["status"]["message"] == "已向 Consumer API result 发送回复，并已记录投递回执。"
 
 
-def test_attempt_detail_labels_a_manual_rerun_as_not_audit_feedback(tmp_path: Path):
+def test_attempt_detail_labels_a_manual_rerun_as_not_audit_feedback(tmp_path: Path, monkeypatch):
+    from app.dws_client import DingTalkMessage, DwsClient
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = _consumer_result_task(store)
+    monkeypatch.setattr(DwsClient, "read_message_by_id",
+                        lambda *_: DingTalkMessage.model_validate_json(task.trigger_message_json))
     consumer = _complete_consumer_run(store, task, owner="manual-rerun-api")
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
 
@@ -647,7 +973,7 @@ def test_attempt_detail_api_marks_unavailable_consumer_result_per_field(
         consumer = _complete_consumer_run(store, task, owner="malformed-api")
         with store._immediate_write_transaction() as db:
             db.execute(
-                "update agent_runs set final_result_json=? where id=?",
+                    "update review_candidates set candidate_json=? where consumer_run_id=?",
                 (json.dumps(stored_result), consumer.id),
             )
     else:
@@ -688,7 +1014,7 @@ def test_attempt_detail_api_preserves_valid_metrics_from_partial_consumer_result
     partial.pop("rule_coverage")
     with store._immediate_write_transaction() as db:
         db.execute(
-            "update agent_runs set final_result_json=? where id=?",
+                "update review_candidates set candidate_json=? where consumer_run_id=?",
             (json.dumps(partial), consumer.id),
         )
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
@@ -715,7 +1041,7 @@ def test_attempt_detail_api_marks_completed_consumer_without_result_unavailable(
     task = _consumer_result_task(store)
     consumer = _complete_consumer_run(store, task, owner="missing-result-api")
     with store._immediate_write_transaction() as db:
-        db.execute("update agent_runs set final_result_json='' where id=?", (consumer.id,))
+            db.execute("update review_candidates set candidate_json='' where consumer_run_id=?", (consumer.id,))
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
 
     _, item = build_attempt_detail(store, attempt_id)
@@ -726,7 +1052,7 @@ def test_attempt_detail_api_marks_completed_consumer_without_result_unavailable(
         "information_completeness": "—",
         "rule_coverage": "—",
         "risk": "—",
-        "error_reason": "Consumer 未保存最终结果",
+            "error_reason": "Consumer 已采用业务结果不可用",
         "current_run": None,
     }
 
@@ -771,9 +1097,13 @@ def test_attempt_detail_api_recovers_consumer_when_audit_parent_is_invalid(
 
 def test_attempt_detail_api_keeps_old_metrics_while_current_generation_is_pending_then_running(
     tmp_path: Path,
+    monkeypatch,
 ):
+    from app.dws_client import DingTalkMessage, DwsClient
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = _consumer_result_task(store)
+    monkeypatch.setattr(DwsClient, "read_message_by_id",
+                        lambda *_: DingTalkMessage.model_validate_json(task.trigger_message_json))
     consumer = _complete_consumer_run(store, task, owner="completed-api")
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
 
@@ -817,3 +1147,76 @@ def test_attempt_detail_api_keeps_old_metrics_while_current_generation_is_pendin
         "current_run": {"id": running.id, "status": "running"},
         "from_run_id": consumer.id,
     }
+
+
+@pytest.mark.parametrize('error,refused', [
+    ({'code': 'provider_risk_rejected', 'retryable': False}, True),
+    ({'code': 'agent_reported_failure', 'source_code': 'provider_risk_rejected'}, True),
+    ({'code': 'source_read_failed', 'detail': 'provider_risk_rejected'}, False),
+    ({'code': 'source_read_failed', 'nested': {'code': 'provider_risk_rejected'}}, False),
+    (['provider_risk_rejected'], False),
+    ('malformed-json', False),
+])
+def test_failed_attempt_rerun_presentation_uses_structured_historical_refusal(
+    tmp_path: Path, error, refused: bool,
+):
+    from app.audit_web import render_attempt_detail
+    store = AutoReplyStore(tmp_path / 'worker.sqlite3')
+    task = _consumer_result_task(store)
+    run = store.claim_agent_run(task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id='refusal-display', owner='test').run
+    # A later failed generation must still describe the original refusal.
+    raw = error if error == 'malformed-json' else json.dumps(error)
+    with store._connect() as db:
+        db.execute("update agent_runs set status='failed', execution_generation='old-generation', "
+                   "structured_error_json=? where id=?", (raw, run.id))
+        db.execute("update reply_tasks set status='failed', error='agent_reported_failure' where id=?", (task.id,))
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id, conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text, action='send_reply', sensitivity_kind='normal',
+        send_status='failed', channel='dingtalk',
+    )
+    with store._connect() as db:
+        db.execute('update reply_attempts set agent_run_id=? where id=?', (run.id, attempt_id))
+    before = store.get_agent_run(run.id)
+    _, item = build_attempt_detail(store, attempt_id)
+    assert item['actions']['can_rerun'] is (not refused)
+    assert item['actions']['rerun_url'] == f'/api/console/history/{attempt_id}/rerun'
+    expected_label = '重新评估候选' if refused else '重新处理'
+    assert item['actions']['rerun_label'] == expected_label
+    assert item['actions']['rerun_confirmation'] == (
+        '确认重新评估候选？不会重放历史被拒执行。' if refused else '确认重新处理这条 Attempt？'
+    )
+    if refused:
+        assert '此入口不能重放历史候选' in item['status']['message']
+        assert item['actions']['rerun_block_reason'] == item['status']['message']
+    else:
+        assert item['status']['message'] == '这次处理没有完成，可重新处理当前事项。'
+    status, html = render_attempt_detail(store, attempt_id)
+    assert status == 200
+    assert (f'>{expected_label}</button>' in html) is (not refused)
+    assert ('此入口不能重放历史候选' in html) is refused
+    assert ('历史候选不可重放' in html) is refused
+    assert store.get_agent_run(run.id) == before
+    assert store.get_reply_task(task.id).status == 'failed'
+    with store._connect() as db:
+        assert db.execute('select count(*) from candidate_executions').fetchone()[0] == 0
+
+
+def test_failed_attempt_does_not_inherit_another_business_objects_refusal(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / 'worker.sqlite3')
+    task = _consumer_result_task(store)
+    run = store.claim_agent_run(task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id='other-object', owner='test').run
+    store.fail_agent_run(run.id, {'code': 'provider_risk_rejected'}, owner='test')
+    # Create an unrelated failed Attempt with no risk-bearing business object.
+    other = store.record_reply_attempt(conversation_id='other', conversation_title='Other',
+        trigger_message_id='other-message', trigger_sender='Avery', trigger_text='provider_risk_rejected',
+        action='send_reply', sensitivity_kind='normal', send_status='failed', channel='dingtalk')
+    _, item = build_attempt_detail(store, other)
+    assert item['actions']['rerun_label'] == '重新处理'
+    assert item['actions']['can_rerun'] is True
+    assert '不重放历史被拒执行' not in item['status']['message']

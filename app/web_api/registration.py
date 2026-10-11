@@ -25,7 +25,9 @@ from app.web_api.tasks import (
     ConsoleBusinessAttentionDetailEnvelope,
     ConsoleBusinessAttentionListEnvelope,
     ConsoleBusinessProjectDetailEnvelope,
+    ConsoleBusinessProjectEvidenceListEnvelope,
     ConsoleBusinessProjectListEnvelope,
+    ConsoleBusinessTaskSignalDetailEnvelope,
     ConsoleBusinessTaskDetailEnvelope,
     ConsoleBusinessTaskListEnvelope,
     ConsoleTaskDetail,
@@ -35,6 +37,7 @@ from app.web_api.tasks import (
     business_attention_detail,
     business_attention_list_response,
     business_project_detail,
+    business_project_evidence_response,
     business_project_list_response,
     business_task_detail,
     business_task_list_response,
@@ -389,12 +392,14 @@ def register_console_routes(
     def console_business_projects(
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, ge=1, le=100), q: str = "",
+        group_by_customer: bool = False,
         candidate_page: int = Query(default=1, ge=1),
         candidate_page_size: int = Query(default=20, ge=1, le=100),
     ):
         return business_project_list_response(
             store_factory(), page=page, page_size=page_size, query=q,
             candidate_page=candidate_page, candidate_page_size=candidate_page_size,
+            group_by_customer=group_by_customer,
         )
 
     @app.get("/api/console/tasks/sent-todos", response_model=ConsoleSentTodoListEnvelope)
@@ -531,6 +536,119 @@ def register_console_routes(
         if item is None:
             raise HTTPException(status_code=404, detail="Business project not found")
         return ConsoleBusinessProjectDetailEnvelope(item=item, meta=ApiMeta(snapshot_at=snapshot_at()))
+
+    @app.get(
+        "/api/console/tasks/projects/{project_id}/evidence",
+        response_model=ConsoleBusinessProjectEvidenceListEnvelope,
+    )
+    def console_business_project_evidence(
+        project_id: int,
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=20, ge=1, le=100),
+    ):
+        store = store_factory()
+        with store.read_snapshot():
+            response = business_project_evidence_response(
+                store,
+                project_id,
+                page=page,
+                page_size=page_size,
+            )
+        if response is None:
+            raise HTTPException(status_code=404, detail="Business project not found")
+        return response
+
+    @app.get(
+        "/api/console/tasks/signals/{signal_id}",
+        response_model=ConsoleBusinessTaskSignalDetailEnvelope,
+    )
+    def console_business_task_signal_detail(signal_id: int):
+        store = store_factory()
+        with store.read_snapshot():
+            item = store.get_business_task_signal(signal_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Business task signal not found")
+        return ConsoleBusinessTaskSignalDetailEnvelope(
+            item=item,
+            meta=ApiMeta(snapshot_at=snapshot_at()),
+        )
+
+    @app.post("/api/console/tasks/projects/{project_id}/crm-customer-search")
+    async def console_business_project_crm_customer_search(project_id: int, request: Request):
+        from app.fxiaoke_customer_lookup import lookup_account_customers
+
+        payload = await json_object(request)
+        label = str(payload.get("customer_label") or "").strip()
+        if not label:
+            return JSONResponse(
+                {"ok": False, "code": "customer_label_required", "message": "请输入 CRM 客户名称", "details": {}},
+                status_code=400,
+            )
+        store = store_factory()
+        if store.get_business_project(project_id) is None:
+            return JSONResponse(
+                {"ok": False, "code": "not_found", "message": "正式项目不存在", "details": {}},
+                status_code=404,
+            )
+        lookup = lookup_account_customers(label)
+        status = "needs_confirmation" if lookup.status == "matched" else lookup.status
+        candidates = [
+            {
+                "customer_id": item.customer_id,
+                "name": item.name,
+                "alias": item.alias,
+                "registered_name": item.registered_name,
+                "matched_fields": list(item.matched_fields),
+            }
+            for item in lookup.candidates
+        ]
+        with store._connect() as db:
+            store.update_business_project_crm_customer_lookup_in_transaction(
+                project_id=project_id,
+                label=label,
+                evidence=None,
+                lookup_status=status,
+                candidates=candidates,
+                _db=db,
+            )
+        detail = business_project_detail(store, project_id)
+        assert detail is not None
+        return command_result(
+            item=detail.summary.model_dump(mode="json"),
+            message="CRM 查询完成；客户关联仍需人工确认" if status == "needs_confirmation" else "CRM 查询完成",
+        )
+
+    @app.post("/api/console/tasks/projects/{project_id}/crm-customer")
+    async def console_business_project_crm_customer_confirm(project_id: int, request: Request):
+        payload = await json_object(request)
+        customer_id = str(payload.get("customer_id") or "").strip()
+        if not customer_id:
+            return JSONResponse(
+                {"ok": False, "code": "customer_id_required", "message": "请选择一个 CRM 客户", "details": {}},
+                status_code=400,
+            )
+        store = store_factory()
+        if store.get_business_project(project_id) is None:
+            return JSONResponse(
+                {"ok": False, "code": "not_found", "message": "正式项目不存在", "details": {}},
+                status_code=404,
+            )
+        if not store.confirm_business_project_crm_customer(project_id=project_id, customer_id=customer_id):
+            return JSONResponse(
+                {"ok": False, "code": "customer_not_in_search_results", "message": "只能确认本项目最近一次查询返回的客户", "details": {}},
+                status_code=409,
+            )
+        return command_result(item={"project_id": project_id, "customer_id": customer_id}, message="项目客户关联已确认")
+
+    @app.delete("/api/console/tasks/projects/{project_id}/crm-customer")
+    def console_business_project_crm_customer_clear(project_id: int):
+        store = store_factory()
+        if not store.clear_business_project_crm_customer(project_id=project_id):
+            return JSONResponse(
+                {"ok": False, "code": "not_found", "message": "正式项目不存在", "details": {}},
+                status_code=404,
+            )
+        return command_result(item={"project_id": project_id}, message="项目客户关联已解除")
 
     @app.get("/api/console/tasks/legacy-projects/{project_id}", response_model=ConsoleTaskDetailEnvelope)
     def console_legacy_project_detail(project_id: int):
@@ -709,7 +827,7 @@ def register_console_routes(
         status, payload = build_attempt_detail(
             store_factory(),
             attempt_id,
-            email_store=email_store_factory() if email_store_factory else None,
+            email_store_factory=email_store_factory,
         )
         if payload is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Attempt not found", "details": {}}, status_code=404)
@@ -783,15 +901,17 @@ def register_console_routes(
     @app.post("/api/console/history/{attempt_id}/human-decision")
     async def console_history_human_decision(attempt_id: int, request: Request):
         payload = await json_object(request)
-        instruction = str(payload.get("instruction") or "").strip()
-        feedback_scope = str(payload.get("feedback_scope") or "one_time").strip()
-        skill_update_requested = bool(payload.get("skill_update_requested", False))
+        kind = payload.get("kind")
+        allowed = (
+            {"kind", "candidate_id", "review_id", "candidate_digest", "option_key"}
+            if kind == "select" else
+            {"kind", "candidate_id", "review_id", "candidate_digest", "instruction"}
+            if kind == "supplement" else set()
+        )
+        if not allowed or not set(payload).issubset(allowed):
+            return JSONResponse({"ok": False, "code": "decision_invalid", "message": "人工决策请求字段无效", "details": {}}, status_code=400)
         from app.audit_web import handle_needs_human_decision_post
-        form = urlencode({
-            "instruction": instruction,
-            "feedback_scope": feedback_scope,
-            "skill_update_requested": "1" if skill_update_requested else "",
-        }).encode("utf-8")
+        form = urlencode({key: str(value) for key, value in payload.items()}).encode("utf-8")
         status, _headers, body = handle_needs_human_decision_post(
             store_factory(), attempt_id, form, return_to="/history"
         )
@@ -874,16 +994,9 @@ def register_console_routes(
             if conversation_id
             else ""
         )
-        try:
-            # Reuse the legacy trace normalizer so the React DTO preserves the
-            # readable title/metadata/args/output structure and call pairing.
-            from app.audit_web import _audit_event_uses_for_attempt
+        from app.audit_web import _audit_event_uses_for_attempt
 
-            tool_uses = _audit_event_uses_for_attempt(run)
-        except Exception:
-            # Old or partially persisted runs may not have a readable Codex
-            # transcript. Their stored event payload is still useful evidence.
-            tool_uses = stored_json(run.audit_tool_events_json, [])
+        tool_uses = _audit_event_uses_for_attempt(run)
         return item_envelope({
             "id": run.id,
             "title": job.title,
@@ -918,6 +1031,10 @@ def register_console_routes(
             "generated_reply": {"title": "生成回复", "text": job.final_message or "No generated reply recorded."},
             "audit_summary": run.audit_summary,
             "tool_uses": tool_uses,
+            "native_available": run.native_available,
+            "native_reason": run.native_reason,
+            "tool_events_available": run.tool_events_available,
+            "tool_events_reason": run.tool_events_reason,
             "runtime": {
                 "run_status": run.status,
                 "job_status": job.status,
@@ -1819,6 +1936,41 @@ def register_console_routes(
             )
         return command_result(item=mcp_settings_payload(), message="MCP 清单已保存")
 
+    @app.get("/api/console/settings/prompt-preview")
+    def console_prompt_preview(
+        role: str | None = None, route_name: str = "",
+        task_id: int | None = Query(default=None, gt=0),
+        run_id: int | None = Query(default=None, gt=0),
+        runtime_attempt_id: int | None = Query(default=None, gt=0),
+    ):
+        import os
+        from app.agent_runtime_config import load_runtime_config
+        from app.prompt_preview import current_prompt_preview, historical_prompt_preview
+
+        if role is not None and role not in ("consumer", "audit"):
+            raise HTTPException(status_code=422, detail="角色必须为 Consumer 或 Audit")
+        try:
+            if run_id is not None:
+                payload = historical_prompt_preview(store_factory(), run_id=run_id, runtime_attempt_id=runtime_attempt_id)
+                if role is not None and payload["role"] != role:
+                    raise ValueError("所选角色与历史 run 不匹配")
+                if task_id is not None and payload["task_id"] != task_id:
+                    raise ValueError("所选任务与历史 run 不匹配")
+                if route_name and payload["route_name"] != route_name:
+                    raise ValueError("所选路线与历史 run 不匹配")
+                if payload["route_name"]:
+                    payload["routes"] = [{"name": payload["route_name"], "runtime_kind": payload["runtime_kind"], "model": payload["model"]}]
+            else:
+                if runtime_attempt_id is not None:
+                    raise ValueError("运行尝试必须与历史 run 一起选择")
+                payload = current_prompt_preview(store_factory(), role=role or "consumer",
+                    config=load_runtime_config(os.environ), route_name=route_name, task_id=task_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return item_envelope(payload)
+
     @app.get("/api/console/settings/{section}")
     def console_settings(section: str):
         payload: Any = None
@@ -1884,30 +2036,40 @@ def register_console_routes(
                     ],
                 }
             elif section == "prompts":
-                from app.developer_prompt import (
-                    read_developer_prompt_template,
-                    read_user_prompt_template,
-                    render_developer_prompt_template,
-                    render_user_prompt_template,
-                )
-                from app.prompt import work_profile_instruction, work_profile_path
+                from app.developer_prompt import DeveloperPromptTemplateError, render_developer_prompt_template
+                from app.prompt import work_profile_instruction
+                from app.prompt_composition import example_consumer_task, read_prompt_configuration_raw
 
-                developer_template = read_developer_prompt_template()
-                user_template = read_user_prompt_template()
-                profile_path = work_profile_path()
-                profile_instruction = work_profile_instruction()
+                raw = read_prompt_configuration_raw(create_missing=False)
+                preview_errors: dict[str, str] = {}
+                try:
+                    developer_preview = render_developer_prompt_template(raw.developer_template)
+                except Exception as exc:
+                    # A saved code/file tag can stop rendering after its module
+                    # or dependency changes. Keep the raw text editable here;
+                    # invocation still receives the original exception.
+                    developer_preview = ""
+                    preview_errors["developer"] = str(exc) or type(exc).__name__
+                try:
+                    user_preview = example_consumer_task(raw)
+                except DeveloperPromptTemplateError as exc:
+                    user_preview = ""
+                    preview_errors["user"] = str(exc)
                 fields = {
-                    "developer_template": developer_template,
-                    "user_template": user_template,
-                    "profile": profile_path.read_text(encoding="utf-8").strip(),
+                    "developer_template": raw.developer_template,
+                    "user_template": raw.user_template,
+                    "profile": raw.work_profile_text,
                 }
                 payload = {
                     "section": section,
                     "fields": fields,
+                    "preview_kind": "example",
+                    "preview_errors": preview_errors,
+                    "consumers": {"developer": ["consumer", "audit"], "user": ["consumer"], "profile": ["consumer", "audit"]},
                     "preview": {
-                        "developer": render_developer_prompt_template(developer_template),
-                        "user": render_user_prompt_template(user_template, {}),
-                        "profile": profile_instruction,
+                        "developer": developer_preview,
+                        "user": user_preview,
+                        "profile": work_profile_instruction(profile_text=raw.work_profile_text),
                     },
                 }
             elif section == "audit-rules":
@@ -1924,7 +2086,6 @@ def register_console_routes(
                     "fields": fields,
                     "preview": {
                         "template": _render_audit_variables(template),
-                        "consumer": render_audit_rules(AgentRole.CONSUMER),
                         "audit": render_audit_rules(AgentRole.AUDIT),
                     },
                 }

@@ -1,0 +1,59 @@
+{
+  "candidate_ref": "1cedebf12a261905abb9e646a13cf22b86dac7e9",
+  "rollback_source_ref": "c505accce22e9fcca0cd564f328b9fc45fd98d17",
+  "copy_path": "/Users/derek/Documents/memory/ceo-consumer-audit-system-execution-20261004/offline-migration/rollback-store-copy.sqlite3",
+  "old_store_initialization": "old-store-initialized",
+  "before": {
+    "counts": {
+      "reply_tasks": 7045,
+      "reply_attempts": 14423,
+      "agent_runs": 18195,
+      "external_action_results": 218,
+      "sent_replies": 2240
+    },
+    "integrity": "ok",
+    "canonical_tables": [
+      "candidate_action_attempts",
+      "candidate_executions",
+      "candidate_reviews",
+      "candidate_selections",
+      "review_candidates"
+    ]
+  },
+  "after_forward": {
+    "counts": {
+      "reply_tasks": 7045,
+      "reply_attempts": 14423,
+      "agent_runs": 18195,
+      "external_action_results": 218,
+      "sent_replies": 2240
+    },
+    "integrity": "ok",
+    "canonical_tables": [
+      "candidate_action_attempts",
+      "candidate_executions",
+      "candidate_reviews",
+      "candidate_selections",
+      "review_candidates"
+    ]
+  },
+  "after_old_store": {
+    "counts": {
+      "reply_tasks": 7045,
+      "reply_attempts": 14423,
+      "agent_runs": 18195,
+      "external_action_results": 218,
+      "sent_replies": 2240
+    },
+    "integrity": "ok",
+    "canonical_tables": [
+      "candidate_action_attempts",
+      "candidate_executions",
+      "candidate_reviews",
+      "candidate_selections",
+      "review_candidates"
+    ]
+  },
+  "historical_counts_unchanged": true,
+  "canonical_tables_preserved": true
+}

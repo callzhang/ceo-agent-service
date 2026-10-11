@@ -1,0 +1,157 @@
+{
+  "run": {
+    "conclusion": "success",
+    "headSha": "73030d173f0a78ee0d75687959bc0e73ab536f6f",
+    "jobs": [
+      {
+        "completedAt": "2026-10-04T14:51:22Z",
+        "conclusion": "success",
+        "databaseId": 111458211449,
+        "name": "test",
+        "startedAt": "2026-10-04T14:33:41Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-04T14:33:42Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-04T14:33:42Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-04T14:33:44Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v7",
+            "number": 2,
+            "startedAt": "2026-10-04T14:33:42Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-04T14:33:47Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-python@v7",
+            "number": 3,
+            "startedAt": "2026-10-04T14:33:44Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-04T14:33:49Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@v7",
+            "number": 4,
+            "startedAt": "2026-10-04T14:33:47Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-04T14:33:59Z",
+            "conclusion": "success",
+            "name": "Run sudo apt-get update && sudo apt-get install -y zsh",
+            "number": 5,
+            "startedAt": "2026-10-04T14:33:49Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-04T14:34:18Z",
+            "conclusion": "success",
+            "name": "Run python -m pip install '.[dev]'",
+            "number": 6,
+            "startedAt": "2026-10-04T14:33:59Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-04T14:34:19Z",
+            "conclusion": "success",
+            "name": "Run npm ci",
+            "number": 7,
+            "startedAt": "2026-10-04T14:34:18Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-04T14:34:22Z",
+            "conclusion": "success",
+            "name": "Run npm ci --prefix frontend",
+            "number": 8,
+            "startedAt": "2026-10-04T14:34:19Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-04T14:51:00Z",
+            "conclusion": "success",
+            "name": "Run npm test",
+            "number": 9,
+            "startedAt": "2026-10-04T14:34:22Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-04T14:51:01Z",
+            "conclusion": "success",
+            "name": "Run npm run build:workbench",
+            "number": 10,
+            "startedAt": "2026-10-04T14:51:00Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-04T14:51:13Z",
+            "conclusion": "success",
+            "name": "Run python -m playwright install --with-deps chromium",
+            "number": 11,
+            "startedAt": "2026-10-04T14:51:01Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-04T14:51:20Z",
+            "conclusion": "success",
+            "name": "Run WORKBENCH_BROWSER_TESTS=1 python -m pytest -q tests/test_workbench_browser.py",
+            "number": 12,
+            "startedAt": "2026-10-04T14:51:13Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-04T14:51:20Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@v7",
+            "number": 22,
+            "startedAt": "2026-10-04T14:51:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-04T14:51:20Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-python@v7",
+            "number": 23,
+            "startedAt": "2026-10-04T14:51:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-04T14:51:20Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v7",
+            "number": 24,
+            "startedAt": "2026-10-04T14:51:20Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-04T14:51:21Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 25,
+            "startedAt": "2026-10-04T14:51:20Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/callzhang/ceo-agent-service/actions/runs/37209710259/job/111458211449"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/callzhang/ceo-agent-service/actions/runs/37209710259"
+  },
+  "reported_test_counts": {
+    "backend_passed": 9838,
+    "backend_skipped": 88,
+    "backend_deselected": 44,
+    "frontend_passed": 634,
+    "frontend_skipped": 2
+  },
+  "covers_subsequent_semantic_fixes": false
+}

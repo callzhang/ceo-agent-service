@@ -1,4 +1,4 @@
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import (
     BaseModel,
@@ -12,15 +12,14 @@ from pydantic import (
 
 from app.agent_contracts import (
     AuditAgentResult,
-    AuditExternalResult,
     AuditFeedback,
-    AuthorizationPlan,
     ConsumerAgentResult,
     ConsumerProposal,
     DecisionBasis,
     DecisionOption,
     DurableMemory,
     RiskLevel,
+    _consumer_result_json_schema,
 )
 from app.agent_reported_error import agent_error_payload
 from app.agent_result import ResultParseError, parse_typed_agent_result
@@ -78,58 +77,24 @@ class _ConsumerWireBase(_WireBase):
     )
 
 
-class _ConsumerProposalWire(_ConsumerWireBase):
-    outcome: Literal["proposal"]
-    proposal: ConsumerProposal
-    # Empty, or an independent question for Derek that the proposed action
-    # does not settle: 2-4 options with needs_human_reason and decision_basis.
-    decision_options: list[DecisionOption] = Field(
-        default_factory=list, max_length=4
+class _ConsumerWire(_ConsumerWireBase):
+    model_config = ConfigDict(
+        extra="forbid", strict=True,
+        json_schema_extra=_consumer_result_json_schema,
     )
+    outcome: Literal["proposal", "needs_human", "no_action", "failed"]
+    proposal: ConsumerProposal | None
+    decision_options: list[DecisionOption] = Field(default_factory=list, max_length=4)
+    requested_input: str | None = None
     needs_human_reason: str | None = None
     decision_basis: DecisionBasis | None = None
+    stage_index: int = Field(default=0, ge=0)
+    predecessor_review_id: int | None = Field(default=None, ge=1)
+    continue_after_execution: bool = False
 
 
-class _ConsumerNeedsHumanWire(_ConsumerWireBase):
-    outcome: Literal["needs_human"]
-    proposal: None
-    decision_options: list[DecisionOption] = Field(
-        min_length=2,
-        max_length=4,
-        json_schema_extra={"uniqueItems": True},
-    )
-    needs_human_reason: str = Field(min_length=1)
-    decision_basis: DecisionBasis
-    authorization_plan: AuthorizationPlan | None = None
-
-
-class _ConsumerNoActionWire(_ConsumerWireBase):
-    outcome: Literal["no_action"]
-    proposal: None
-    decision_options: list[DecisionOption] = Field(
-        default_factory=list, max_length=0
-    )
-
-
-class _ConsumerFailedWire(_ConsumerWireBase):
-    outcome: Literal["failed"]
-    proposal: None
-    decision_options: list[DecisionOption] = Field(
-        default_factory=list, max_length=0
-    )
-
-
-ConsumerWirePayload = Annotated[
-    _ConsumerProposalWire
-    | _ConsumerNeedsHumanWire
-    | _ConsumerNoActionWire
-    | _ConsumerFailedWire,
-    Field(discriminator="outcome"),
-]
-
-
-class ConsumerAgentWireResult(RootModel[ConsumerWirePayload]):
-    """Strict discriminated transport contract for Consumer Agent A."""
+class ConsumerAgentWireResult(RootModel[_ConsumerWire]):
+    """Strict transport contract for Consumer Agent A."""
 
     @model_validator(mode="after")
     def validate_result_conversion(self) -> "ConsumerAgentWireResult":
@@ -138,87 +103,36 @@ class ConsumerAgentWireResult(RootModel[ConsumerWirePayload]):
 
     def to_result(self) -> ConsumerAgentResult:
         payload = self.root
-        return ConsumerAgentResult.model_validate(
-            {
-                "outcome": payload.outcome,
-                "summary": payload.summary,
-                "proposal": payload.proposal,
-                "decision_options": payload.decision_options,
-                "risk": payload.risk,
-                "confidence": payload.confidence,
-                "rule_coverage": payload.rule_coverage,
-                "information_completeness": payload.information_completeness,
-                "error": payload.error_payload(),
-                "needs_human_reason": getattr(payload, "needs_human_reason", None),
-                "decision_basis": getattr(payload, "decision_basis", None),
-                "authorization_plan": getattr(payload, "authorization_plan", None),
-                "durable_memories": tuple(payload.durable_memories),
-            }
-        )
+        return ConsumerAgentResult.model_validate({
+            "outcome": payload.outcome,
+            "summary": payload.summary,
+            "proposal": payload.proposal,
+            "decision_options": payload.decision_options,
+            "requested_input": payload.requested_input,
+            "needs_human_reason": payload.needs_human_reason,
+            "decision_basis": payload.decision_basis,
+            "stage_index": payload.stage_index,
+            "predecessor_review_id": payload.predecessor_review_id,
+            "continue_after_execution": payload.continue_after_execution,
+            "risk": payload.risk,
+            "confidence": payload.confidence,
+            "rule_coverage": payload.rule_coverage,
+            "information_completeness": payload.information_completeness,
+            "error": payload.error_payload(),
+            "durable_memories": tuple(payload.durable_memories),
+        })
 
 
-class _AuditWireBase(_WireBase):
+class _AuditWire(_WireBase):
+    outcome: Literal["approve", "return", "reject", "failed"]
     proposal_revision: int = Field(ge=0)
+    candidate_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    evidence_refs: list[str] = Field(default_factory=list)
+    feedback: AuditFeedback | None
 
 
-class _AuditExecutedWire(_AuditWireBase):
-    outcome: Literal["executed"]
-    feedback: None
-    external_result: AuditExternalResult
-    decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
-
-
-class _AuditFeedbackProvidedWire(_AuditWireBase):
-    # ``revision_required`` is the legacy wire spelling.  Keep accepting it
-    # at the transport boundary; AuditAgentResult normalizes it to the
-    # canonical ``feedback_provided`` outcome.
-    outcome: Literal["feedback_provided", "revision_required"]
-    feedback: AuditFeedback
-    external_result: None
-    decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
-
-
-class _AuditNeedsHumanWire(_AuditWireBase):
-    outcome: Literal["needs_human"]
-    feedback: None
-    external_result: None
-    decision_options: list[DecisionOption] = Field(
-        min_length=2,
-        max_length=4,
-        json_schema_extra={"uniqueItems": True},
-    )
-    needs_human_reason: str = Field(min_length=1)
-    decision_basis: DecisionBasis
-    authorization_plan: AuthorizationPlan | None = None
-
-
-class _AuditDryRunWire(_AuditWireBase):
-    outcome: Literal["dry_run"]
-    feedback: None
-    external_result: None
-    decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
-
-
-class _AuditFailedWire(_AuditWireBase):
-    outcome: Literal["failed"]
-    feedback: None
-    external_result: None
-    decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
-
-
-AuditWirePayload = Annotated[
-    _AuditExecutedWire
-    | _AuditFeedbackProvidedWire
-    | _AuditNeedsHumanWire
-    | _AuditDryRunWire
-    | _AuditFailedWire
-    ,
-    Field(discriminator="outcome"),
-]
-
-
-class AuditAgentWireResult(RootModel[AuditWirePayload]):
-    """Strict discriminated transport contract for Audit Agent B."""
+class AuditAgentWireResult(RootModel[_AuditWire]):
+    """Strict read-only transport contract for Audit Agent B."""
 
     @model_validator(mode="after")
     def validate_result_conversion(self) -> "AuditAgentWireResult":
@@ -227,24 +141,19 @@ class AuditAgentWireResult(RootModel[AuditWirePayload]):
 
     def to_result(self) -> AuditAgentResult:
         payload = self.root
-        return AuditAgentResult.model_validate(
-            {
-                "outcome": payload.outcome,
-                "summary": payload.summary,
-                "proposal_revision": payload.proposal_revision,
-                "feedback": payload.feedback,
-                "external_result": payload.external_result,
-                "decision_options": payload.decision_options,
-                "risk": payload.risk,
-                "confidence": payload.confidence,
-                "rule_coverage": payload.rule_coverage,
-                "information_completeness": payload.information_completeness,
-                "error": payload.error_payload(),
-                "needs_human_reason": getattr(payload, "needs_human_reason", None),
-                "decision_basis": getattr(payload, "decision_basis", None),
-                "authorization_plan": getattr(payload, "authorization_plan", None),
-            }
-        )
+        return AuditAgentResult.model_validate({
+            "outcome": payload.outcome,
+            "summary": payload.summary,
+            "proposal_revision": payload.proposal_revision,
+            "candidate_digest": payload.candidate_digest,
+            "evidence_refs": payload.evidence_refs,
+            "feedback": payload.feedback,
+            "risk": payload.risk,
+            "confidence": payload.confidence,
+            "rule_coverage": payload.rule_coverage,
+            "information_completeness": payload.information_completeness,
+            "error": payload.error_payload(),
+        })
 
 
 def parse_consumer_agent_wire_result(raw: str) -> ConsumerAgentResult:
@@ -253,9 +162,7 @@ def parse_consumer_agent_wire_result(raw: str) -> ConsumerAgentResult:
     except ResultParseError:
         raise
     except (ValidationError, ValueError) as exc:
-        raise ResultParseError(
-            "consumer wire result does not match the strict schema"
-        ) from exc
+        raise ResultParseError("consumer wire result does not match the strict schema") from exc
 
 
 def parse_audit_agent_wire_result(raw: str) -> AuditAgentResult:
@@ -264,6 +171,4 @@ def parse_audit_agent_wire_result(raw: str) -> AuditAgentResult:
     except ResultParseError:
         raise
     except (ValidationError, ValueError) as exc:
-        raise ResultParseError(
-            "audit wire result does not match the strict schema"
-        ) from exc
+        raise ResultParseError("audit wire result does not match the strict schema") from exc

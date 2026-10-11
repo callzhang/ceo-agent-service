@@ -1,49 +1,24 @@
-from pathlib import Path
+"""Content feedback is bounded independently of technical execution attempts."""
 
-import pytest
-
-from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
-from app.store import AutoReplyStore
-
-from tests.test_agent_orchestrator import (
+from test_agent_orchestrator import (
     ScriptedAudit,
     ScriptedConsumer,
-    _audit_result,
-    _consumer_result,
-    _process,
-    _task,
+    candidate,
+    orchestrator,
+    task_and_context,
 )
 
 
-@pytest.fixture
-def store(tmp_path: Path) -> AutoReplyStore:
-    return AutoReplyStore(tmp_path / "orchestrator.sqlite3")
-
-
-def test_fourth_feedback_is_a_terminal_technical_failure(store):
-    task = _task(store)
+def test_fourth_audit_return_is_terminal_without_fifth_consumer(tmp_path):
+    store, task, context = task_and_context(tmp_path)
     consumer = ScriptedConsumer(
-        store,
-        _consumer_result("proposal", "candidate-0"),
-        _consumer_result("proposal", "candidate-1"),
-        _consumer_result("proposal", "candidate-2"),
-        _consumer_result("proposal", "candidate-3"),
+        store, candidate("first"), candidate("second"),
+        candidate("third"), candidate("fourth"),
     )
-    audit = ScriptedAudit(
-        store,
-        _audit_result("feedback_provided", 0),
-        _audit_result("feedback_provided", 1),
-        _audit_result("feedback_provided", 2),
-        _audit_result("feedback_provided", 3),
-    )
-
-    result = _process(
-        AgentOrchestrator(store=store, consumer=consumer, audit=audit), task
-    )
-
-    assert isinstance(result, OrchestrationResult)
+    audit = ScriptedAudit(store, "return", "return", "return", "return")
+    driver, handler = orchestrator(store, consumer, audit)
+    result = driver.process(task, context, refresh_context=lambda: context)
     assert result.status == "failed_terminal"
-    assert result.feedback_cycles == 4
     assert result.error.code == "audit_revision_exhausted"
-    assert result.audit_result is not None
-    assert result.audit_result.outcome.value == "failed"
+    assert len(consumer.calls) == len(audit.calls) == 4
+    assert handler.calls == []

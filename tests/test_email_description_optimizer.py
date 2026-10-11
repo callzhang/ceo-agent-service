@@ -502,8 +502,8 @@ def test_production_proposal_evaluation_starts_bound_overlay_without_config_muta
 
         def latest_training_snapshot_state(self):
             return {
-                "snapshot_id": "newer-snapshot",
-                "snapshot_sha": "b" * 64,
+                "snapshot_id": "snapshot-1",
+                "snapshot_sha": "a" * 64,
                 "folder_label_watermark": 10,
                 "important_label_watermark": 5,
             }
@@ -556,6 +556,64 @@ def test_production_proposal_evaluation_starts_bound_overlay_without_config_muta
         == proposal.proposed
     )
     assert tuple(config_rows) == before
+
+
+def test_deferred_proposal_with_retired_source_is_marked_unavailable(tmp_path) -> None:
+    proposal = propose_description_update(
+        category="legal",
+        current=CURRENT,
+        current_pair=ACTIVE_DESCRIPTIONS,
+        source_snapshot_id="snapshot-a",
+        source_snapshot_sha="a" * 64,
+        conflicts=_examples(5),
+        agent=lambda payload: {
+            "core": "External contracts and disputes.",
+            "include": ["External legal notices."],
+            "exclude": ["Routine delivery."],
+            "cited_sample_ids": [item["sample_id"] for item in payload["examples"]],
+            "reason": "Repeated independent conflicts.",
+        },
+    )
+    assert proposal is not None
+    registry = EmailModelRegistry(tmp_path / "registry")
+    repository = DescriptionProposalRepository(registry.root)
+    repository.persist(proposal)
+
+    class Store:
+        def list_category_configs(self):
+            return [
+                {
+                    "category_key": category,
+                    "core_description": description.core,
+                    "include": list(description.include),
+                    "exclude": list(description.exclude),
+                    "description_version": description.version,
+                    "enabled": True,
+                }
+                for category, description in ACTIVE_DESCRIPTIONS.items()
+            ]
+
+        def latest_training_snapshot_state(self):
+            return {"snapshot_id": "snapshot-b", "snapshot_sha": "b" * 64}
+
+        def get_training_snapshot(self, snapshot_id):
+            raise RuntimeError("historical training snapshot data is unavailable")
+
+    class Controller:
+        def start(self, **kwargs):
+            raise AssertionError("stale proposal must not start training")
+
+    service = EmailClassifierLearningService(
+        Store(), registry=registry,
+        retrain_state_path=registry.root / "retrain-state.json",
+        controller=Controller(),
+    )
+    result = service.request_description_proposal_evaluation(proposal.proposal_id)
+    assert result.decision.reason == "description_proposal_source_unavailable"
+    assert result.training_run is None
+    assert repository.get(proposal.proposal_id).status == "unavailable"
+    again = service.poll_retrain()
+    assert again.training_run is None
 
 
 def test_production_optimizer_combines_frozen_errors_and_folder_corrections_once(

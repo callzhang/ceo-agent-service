@@ -7,12 +7,15 @@ from pydantic import BaseModel, ConfigDict
 
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.dws_client import DwsError, DwsUserProfile
+from app.feedback_spike import extract_feedback_link_context, prepare_outgoing_reply_text
+from app.outbound_postfix import PreparedOutboundMessage
 from app.meeting_alignment_models import (
     DeliveryTarget,
     MeetingAlignmentDecision,
     MeetingParticipant,
     MeetingSource,
     SensitivePrivateMessage,
+    meeting_business_direct_recipient,
 )
 from app.service_message_sender import ServiceMessageSender
 
@@ -105,47 +108,23 @@ def resolve_meeting_creator_identity(
     source: MeetingSource,
     dws: MeetingDeliveryDws,
 ) -> MeetingSource:
-    """Resolve a named calendar organizer before the agent chooses recipients."""
+    """Resolve a calendar organizer only from stable identities in the source."""
     organizer = source.creator
-    if organizer is None or not organizer.name.strip():
+    if organizer is None or source.attendee_evidence != "calendar":
         return source
-    if organizer.user_id.strip() or organizer.open_dingtalk_id.strip():
+    if organizer.user_id.strip() or not organizer.open_dingtalk_id.strip():
         return source
-
-    profile = _resolve_profile(organizer.name, organizer, dws, [])
-    if profile is None:
-        return source
-    user_id = profile.user_id.strip()
-    open_dingtalk_id = (profile.open_dingtalk_id or "").strip()
-    if not user_id and not open_dingtalk_id:
-        return source
-
-    resolved_organizer = organizer.model_copy(
-        update={
-            "user_id": user_id,
-            "open_dingtalk_id": open_dingtalk_id,
-        }
-    )
-    matching_indexes = [
-        index
-        for index, participant in enumerate(source.participants)
-        if _canonical(participant.name) == _canonical(organizer.name)
+    matches = [
+        participant for participant in source.participants
+        if participant.open_dingtalk_id.strip() == organizer.open_dingtalk_id.strip()
     ]
-    participants = list(source.participants)
-    if len(matching_indexes) == 1:
-        index = matching_indexes[0]
-        participant = participants[index]
-        if not participant.user_id.strip() and not participant.open_dingtalk_id.strip():
-            participants[index] = participant.model_copy(
-                update={
-                    "user_id": user_id,
-                    "open_dingtalk_id": open_dingtalk_id,
-                }
-            )
+    if len(matches) != 1 or not matches[0].user_id.strip():
+        return source
     return source.model_copy(
         update={
-            "creator": resolved_organizer,
-            "participants": participants,
+            "creator": organizer.model_copy(
+                update={"user_id": matches[0].user_id.strip()}
+            ),
         }
     )
 
@@ -171,10 +150,22 @@ def deliver_meeting_alignment(
     target_title = source.title
     if target is None:
         raise MeetingDeliveryError("meeting delivery requires an explicit target")
+    private_message = decision.sensitive_private_message
+    if private_message is not None:
+        try:
+            meeting_business_direct_recipient(
+                source, private_message.target, participant_only=True
+            )
+        except ValueError as exc:
+            raise MeetingDeliveryError(str(exc)) from exc
+        if not private_message.recipient_evidence or any(
+            not evidence.strip() for evidence in private_message.recipient_evidence
+        ):
+            raise MeetingDeliveryError("sensitive private target requires recipient evidence")
     if decision.audience_scope == "business":
         if target.kind not in {"group", "direct"}:
             raise MeetingDeliveryError(
-                "business delivery requires a group target or meeting organizer fallback"
+                "business delivery requires an explicit verified audience"
             )
     else:
         if target.kind != "direct":
@@ -200,11 +191,9 @@ def deliver_meeting_alignment(
         info = dws.get_conversation_info(target.conversation_id)
         group_state = _group_delivery_state(info, target.conversation_id)
         if group_state != "sendable":
-            direct_user_id, direct_open_dingtalk_id, target_title = (
-                _stable_organizer_identity(source, dws)
+            raise MeetingDeliveryError(
+                "planned group is unavailable; audience must be reviewed, not redirected"
             )
-            target_kind = "direct"
-            target_id = direct_user_id or direct_open_dingtalk_id
         else:
             conversation = DingTalkConversation(
                 open_conversation_id=target.conversation_id,
@@ -218,13 +207,21 @@ def deliver_meeting_alignment(
             target_title = target.title
     else:
         if decision.audience_scope == "business":
-            direct_user_id, direct_open_dingtalk_id, target_title = (
-                _direct_target_organizer(source, target, dws)
-            )
+            try:
+                recipient = meeting_business_direct_recipient(source, target)
+            except ValueError as exc:
+                raise MeetingDeliveryError(str(exc)) from exc
+            if not decision.audit_summary.strip():
+                raise MeetingDeliveryError(
+                    "business direct requires audience evidence in audit_summary"
+                )
+            direct_user_id = recipient.user_id.strip()
+            target_title = recipient.name
             target_kind = "direct"
             target_id = direct_user_id or direct_open_dingtalk_id
         else:
             counterpart = _direct_target_participant(source, target)
+            direct_open_dingtalk_id = counterpart.open_dingtalk_id.strip()
             if counterpart.user_id:
                 if target.direct_user_id != counterpart.user_id:
                     raise MeetingDeliveryError(
@@ -243,8 +240,24 @@ def deliver_meeting_alignment(
                     if profile is None or not profile.user_id.strip():
                         raise MeetingDeliveryRetry("1:1 target identity is unresolved")
                     direct_user_id = profile.user_id.strip()
+                    direct_open_dingtalk_id = (profile.open_dingtalk_id or "").strip()
             target_kind = "direct"
             target_id = direct_user_id or direct_open_dingtalk_id
+
+    if target_kind == "direct":
+        principal_id = source.current_user_id.strip()
+        principal_open_ids = {
+            participant.open_dingtalk_id.strip()
+            for participant in source.participants
+            if participant.user_id.strip() == principal_id
+            and participant.open_dingtalk_id.strip()
+        }
+        if (
+            not principal_id
+            or direct_user_id == principal_id
+            or direct_open_dingtalk_id in principal_open_ids
+        ):
+            raise MeetingDeliveryError("private target must not be the principal or a verified alias")
 
     resolved_mentions, unresolved_names = _resolve_mentions(
         decision.mention_names,
@@ -261,10 +274,10 @@ def deliver_meeting_alignment(
     for mention in resolved_mentions:
         embedded_name = _embedded_mention_name(final_message, mention)
         mention_display_names.append(embedded_name or mention.display_name)
-    hr_primary = _is_hr_primary_recipient(
-        dws,
-        target_kind=target_kind,
-        direct_user_id=direct_user_id,
+    same_private_audience = (
+        private_message is not None
+        and target_kind == "direct"
+        and direct_user_id == private_message.target.direct_user_id.strip()
     )
     message_text = meeting_followup_message(
         decision,
@@ -272,22 +285,51 @@ def deliver_meeting_alignment(
         final_message=_primary_message_content(
             final_message,
             decision.sensitive_private_message,
-            is_hr_primary=hr_primary,
+            same_private_audience=same_private_audience,
         ),
     )
     if not delivery_key.strip():
         raise ValueError("meeting delivery key is required")
-    prepared = message_sender.prepare(
-        channel="dingtalk",
-        delivery_key=delivery_key,
-        body=message_text,
-        original_text=source.summary,
-    )
+    try:
+        prepared = message_sender.prepare_meeting_alignment(
+            delivery_key=delivery_key, body=message_text, original_text=source.summary,
+            target_kind="group" if target_kind == "group" else "user" if direct_user_id else "open_user",
+            target_id=target_id,
+        )
+    except ValueError as exc:
+        raise MeetingDeliveryError(str(exc)) from exc
+    if not _prepared_content_matches(prepared, message_text):
+        # Old split deliveries retain their immutable primary body and action key.
+        ordinary_body = meeting_followup_message(
+            decision, source, final_message=final_message
+        )
+        if not same_private_audience or not _prepared_content_matches(prepared, ordinary_body):
+            raise MeetingDeliveryError("prepared meeting body does not match the original split or merged content")
+        same_private_audience = False
+    if same_private_audience and message_sender.store.get_outbound_postfix(
+        "dingtalk", f"{delivery_key}:sensitive"
+    ) is not None:
+        raise MeetingDeliveryError("merged primary conflicts with a prepared sensitive action")
+    sensitive_prepared = None
+    if private_message is not None and not same_private_audience:
+        sensitive_body = meeting_followup_message(
+            decision, source, final_message=private_message.message
+        )
+        try:
+            sensitive_prepared = message_sender.prepare_meeting_alignment(
+                delivery_key=f"{delivery_key}:sensitive",
+                body=sensitive_body, original_text=source.summary,
+                target_kind="user", target_id=private_message.target.direct_user_id,
+            )
+        except ValueError as exc:
+            raise MeetingDeliveryError(str(exc)) from exc
+        if not _prepared_content_matches(sensitive_prepared, sensitive_body):
+            raise MeetingDeliveryError("prepared meeting body does not match sensitive content")
     message_text = prepared.final_body
     message_title = f"会议跟进｜{source.title}"
     try:
         if target_kind == "group":
-            send_result = message_sender.send_dingtalk_prepared(
+            send_result = message_sender.send_meeting_alignment_prepared(
                 prepared,
                 conversation_id=target_id,
                 at_open_dingtalk_ids=mention_ids,
@@ -300,7 +342,7 @@ def deliver_meeting_alignment(
                 if direct_user_id
                 else {"open_dingtalk_id": direct_open_dingtalk_id}
             )
-            send_result = message_sender.send_dingtalk_prepared(
+            send_result = message_sender.send_meeting_alignment_prepared(
                 prepared,
                 conversation_id=None,
                 **direct_target,
@@ -308,15 +350,17 @@ def deliver_meeting_alignment(
             ).provider_result
     except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
         raise MeetingDeliveryRetry(f"meeting send failed: {exc}") from exc
+    if send_result.get("success") is False:
+        raise MeetingDeliveryError("provider rejected primary meeting message")
     sensitive_delivery = None
     sensitive_private_merged = False
-    if decision.sensitive_private_message is not None and not hr_primary:
+    if decision.sensitive_private_message is not None and not same_private_audience:
         sensitive_delivery = _deliver_sensitive_private_message(
             decision.sensitive_private_message,
             decision,
             source,
             message_sender=message_sender,
-            delivery_key=f"{delivery_key}:sensitive",
+            prepared=sensitive_prepared,
         )
     elif decision.sensitive_private_message is not None:
         sensitive_private_merged = True
@@ -333,27 +377,23 @@ def deliver_meeting_alignment(
     )
 
 
-def _is_hr_primary_recipient(
-    dws: MeetingDeliveryDws,
-    *,
-    target_kind: str,
-    direct_user_id: str,
-) -> bool:
-    if target_kind != "direct" or not direct_user_id.strip():
-        return False
-    try:
-        return bool(dws.is_hr_user(direct_user_id.strip()))
-    except DwsError as exc:
-        raise MeetingDeliveryRetry("primary recipient HR identity check failed") from exc
+def _prepared_content_matches(prepared: PreparedOutboundMessage, body: str) -> bool:
+    context = extract_feedback_link_context(prepared.final_body)
+    expected = prepare_outgoing_reply_text(
+        reply_text=body,
+        feedback_base_url=context.vercel_base_url if context is not None else "",
+        feedback_token=prepared.feedback_token,
+    )
+    return prepared.final_body == expected.text
 
 
 def _primary_message_content(
     final_message: str,
     private_message: SensitivePrivateMessage | None,
     *,
-    is_hr_primary: bool,
+    same_private_audience: bool,
 ) -> str:
-    if not is_hr_primary or private_message is None:
+    if not same_private_audience or private_message is None:
         return final_message
     return f"{final_message.strip()}\n\n{private_message.message.strip()}"
 
@@ -364,41 +404,30 @@ def _deliver_sensitive_private_message(
     source: MeetingSource,
     *,
     message_sender: ServiceMessageSender,
-    delivery_key: str,
+    prepared: PreparedOutboundMessage | None,
 ) -> SensitivePrivateDeliveryResult | None:
     if private_message is None:
         return None
     target = private_message.target
-    matches = [
-        participant
-        for participant in source.participants
-        if participant.user_id == target.direct_user_id
-    ]
-    if len(matches) != 1:
-        raise MeetingDeliveryError(
-            "sensitive private target must be one stable meeting participant"
-        )
-    recipient = matches[0]
-    message_text = meeting_followup_message(
-        decision,
-        source,
-        final_message=private_message.message,
-    )
-    prepared = message_sender.prepare(
-        channel="dingtalk",
-        delivery_key=delivery_key,
-        body=message_text,
-        original_text=source.summary,
-    )
     try:
-        send_result = message_sender.send_dingtalk_prepared(
+        recipient = meeting_business_direct_recipient(
+            source, target, participant_only=True
+        )
+    except ValueError as exc:
+        raise MeetingDeliveryError(str(exc)) from exc
+    if prepared is None:
+        raise MeetingDeliveryError("sensitive message requires verified preparation")
+    try:
+        send_result = message_sender.send_meeting_alignment_prepared(
             prepared,
             conversation_id=None,
-            user_id=recipient.user_id,
+            user_id=recipient.user_id.strip(),
             title=f"会议跟进｜{source.title}",
         ).provider_result
     except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
         raise MeetingDeliveryRetry("sensitive meeting message send failed") from exc
+    if send_result.get("success") is False:
+        raise MeetingDeliveryError("provider rejected sensitive meeting message")
     return SensitivePrivateDeliveryResult(
         target_id=recipient.user_id,
         target_title=recipient.name,
@@ -425,51 +454,6 @@ def _group_delivery_state(
     if member_count > 0:
         return "sendable"
     return "incomplete"
-
-
-def _stable_organizer_identity(
-    source: MeetingSource,
-    dws: MeetingDeliveryDws,
-) -> tuple[str, str, str]:
-    organizer = source.creator
-    if organizer is None or not organizer.name.strip():
-        raise MeetingDeliveryRetry("meeting organizer identity is unresolved")
-    if organizer.user_id.strip():
-        return organizer.user_id.strip(), "", organizer.name.strip()
-    if organizer.open_dingtalk_id.strip():
-        return "", organizer.open_dingtalk_id.strip(), organizer.name.strip()
-    profile = _resolve_profile(organizer.name, organizer, dws, [])
-    if profile is not None:
-        if profile.user_id.strip():
-            return profile.user_id.strip(), "", organizer.name.strip()
-        if profile.open_dingtalk_id.strip():
-            return "", profile.open_dingtalk_id.strip(), organizer.name.strip()
-    raise MeetingDeliveryRetry("meeting organizer identity is unresolved")
-
-
-def _direct_target_organizer(
-    source: MeetingSource,
-    target: DeliveryTarget,
-    dws: MeetingDeliveryDws,
-) -> tuple[str, str, str]:
-    direct_user_id, direct_open_dingtalk_id, organizer_name = (
-        _stable_organizer_identity(source, dws)
-    )
-    if _canonical(target.title) != _canonical(organizer_name):
-        raise MeetingDeliveryError(
-            "business direct fallback must target the meeting organizer"
-        )
-    if direct_user_id:
-        if target.direct_user_id and target.direct_user_id != direct_user_id:
-            raise MeetingDeliveryError(
-                "business direct fallback must use the meeting organizer user id"
-            )
-        return direct_user_id, "", organizer_name
-    if target.direct_user_id:
-        raise MeetingDeliveryError(
-            "business direct fallback with organizer open id cannot supply a guessed user id"
-        )
-    return "", direct_open_dingtalk_id, organizer_name
 
 
 def _direct_target_participant(

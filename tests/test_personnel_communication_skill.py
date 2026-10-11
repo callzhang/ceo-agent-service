@@ -1,6 +1,11 @@
 from pathlib import Path
 
-from app.consumer_agent import CORE_DYNAMIC_SKILL_BODY
+from app.consumer_agent import (
+    AUDIT_DYNAMIC_SKILL_BODY,
+    CONSUMER_DYNAMIC_SKILL_BODY,
+    audit_developer_instructions,
+    consumer_developer_instructions,
+)
 
 import pytest
 
@@ -11,7 +16,6 @@ SKILLS_ROOT = bundled_business_skills_root()
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_PATH = SKILLS_ROOT / "ceo-personnel-communication" / "SKILL.md"
-DEFAULT_PROMPT_PATH = ROOT / "app" / "defaults" / "developer_prompt.md"
 
 
 def _skill_text() -> str:
@@ -97,7 +101,7 @@ def test_personnel_skill_reuses_specialist_skills_without_copying_workflows():
 
 
 def test_canonical_prompt_delegates_personnel_and_candidate_policy_to_skill():
-    text = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
+    text = consumer_developer_instructions(runtime_context="", work_profile="")
 
     for removed in (
         "必须输出 user_response.sensitivity_kind",
@@ -107,9 +111,10 @@ def test_canonical_prompt_delegates_personnel_and_candidate_policy_to_skill():
         "回答外部候选人是否匹配、是否推进、是否降级评估前",
     ):
         assert removed not in text
-    assert CORE_DYNAMIC_SKILL_BODY in text
+    assert CONSUMER_DYNAMIC_SKILL_BODY in text
+    assert AUDIT_DYNAMIC_SKILL_BODY in audit_developer_instructions("audit only", runtime_context="", work_profile="")
     assert "independently selects and reads every applicable" in text
     assert "没有列出的字段不要编造" not in text
-    assert "do not invent facts, targets, or receipts" in text
+    assert "[supported_facts] Supported Facts: use only supported facts." in text
     assert "External Secrecy" in text
     assert "只有明确需要 <var: principal> 处理时才回复" not in text

@@ -1,0 +1,99 @@
+{
+  "completed": true,
+  "refs": {
+    "candidate": "e741f80a1d0ae8a5805082e35ec4f03acea4edd8"
+  },
+  "settings": {
+    "route_name": "codex_oauth",
+    "runtime_kind": "codex_cli",
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "medium",
+    "concurrency": 1,
+    "timeout_seconds": 300,
+    "repetitions": 1,
+    "fixed_time": "2026-10-06T09:00:00-07:00",
+    "tools": "none",
+    "profile": "identical-synthetic-short"
+  },
+  "cases_sha256": "2433049a74ad6206af93adba5e488e10271eef95bc1cb3f8354fc174672f9658",
+  "arms": {
+    "candidate": {
+      "size_summary": {
+        "consumer": {
+          "static_developer_chars": {
+            "min": 39141,
+            "mean": 39141.0,
+            "max": 39141
+          },
+          "developer_chars": {
+            "min": 39955,
+            "mean": 39959.25,
+            "max": 39962
+          },
+          "task_chars": {
+            "min": 5997,
+            "mean": 6484.5,
+            "max": 7146
+          },
+          "total_chars": {
+            "min": 45956,
+            "mean": 46443.75,
+            "max": 47101
+          }
+        },
+        "audit": {
+          "static_developer_chars": {
+            "min": 25089,
+            "mean": 25089.0,
+            "max": 25089
+          },
+          "developer_chars": {
+            "min": 25827,
+            "mean": 25831.25,
+            "max": 25834
+          },
+          "task_chars": {
+            "min": 10169,
+            "mean": 10553.75,
+            "max": 11071
+          },
+          "total_chars": {
+            "min": 36000,
+            "mean": 36385.0,
+            "max": 36905
+          }
+        }
+      },
+      "roles": {
+        "consumer": {
+          "invocations": 4,
+          "native_json_valid": 4,
+          "strict_schema_valid": 4,
+          "outcome_and_binding_screen_passed": 4,
+          "tool_events": 0,
+          "screen_failures": [],
+          "provider_usage_events": 4,
+          "provider_input_tokens_total": 93792,
+          "provider_output_tokens_total": 3134,
+          "elapsed_seconds_total": 71.67717858299966,
+          "elapsed_seconds_mean": 17.919294645749915,
+          "semantic_quality": "pending independent exact-output review"
+        },
+        "audit": {
+          "invocations": 4,
+          "native_json_valid": 4,
+          "strict_schema_valid": 4,
+          "outcome_and_binding_screen_passed": 4,
+          "tool_events": 0,
+          "screen_failures": [],
+          "provider_usage_events": 4,
+          "provider_input_tokens_total": 84417,
+          "provider_output_tokens_total": 1975,
+          "elapsed_seconds_total": 42.32224353999936,
+          "elapsed_seconds_mean": 10.58056088499984,
+          "semantic_quality": "pending independent exact-output review"
+        }
+      }
+    }
+  }
+}

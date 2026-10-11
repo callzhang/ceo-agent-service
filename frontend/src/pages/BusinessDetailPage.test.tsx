@@ -31,7 +31,7 @@ describe("BusinessDetailPage", () => {
         metadata: [], trigger: { title: "Trigger", text: "" },
         audit_explanation: { title: "Codex reason", text: "" },
         generated_reply: { title: "生成回复", text: "" }, audit_summary: "",
-        tool_uses: [], actions: { agent_url: "" }, id: 1,
+        tool_uses: [], native_available: false, tool_events_available: false, actions: { agent_url: "" }, id: 1,
       },
       meta: { snapshot_at: "2026-08-30T08:00:00Z" },
     });
@@ -74,6 +74,8 @@ describe("BusinessDetailPage", () => {
         generated_reply: { title: "生成回复", text: "今天发布 Beta。" },
         audit_summary: "会议存在未决验收问题。",
         tool_uses: [{ title: "读取会议记忆", tool: "memory_recall", call_id: "call-1", relevance: "确认历史判断", source: "memory.md", format: "mcp/json", args: { query: "上线范围" }, output: "{\"summary\":\"风险预算需要确认\"}" }],
+        tool_events_available: true,
+        native_available: true,
         runtime: { run_status: "ready_to_send", job_status: "sent" },
         actions: { agent_url: "", dingtalk_url: "/open-dingtalk-popup?conversation_id=cid-meeting" },
       },
@@ -97,5 +99,13 @@ describe("BusinessDetailPage", () => {
     expect(screen.getByText("上线范围")).toBeInTheDocument();
     expect(screen.getByText("output")).toBeInTheDocument();
     expect(screen.queryByText("input")).not.toBeInTheDocument();
+  });
+
+  it("shows unavailable native tool history without implying zero calls", async () => {
+    renderDetail("Meeting Attempt", "/api/console/meeting-attempts/:id", "/meeting-attempts/:runId", "/meeting-attempts/1");
+    expect(await screen.findByText("原生工具过程不可用，无法确认调用次数。")).toBeInTheDocument();
+    expect(screen.getByText("原生 Agent 过程不可用，无法查看审计说明。")).toBeInTheDocument();
+    expect(screen.getByText("原生 Agent 过程不可用，无法查看审计摘要。")).toBeInTheDocument();
+    expect(screen.queryByText("没有工具调用记录。")).not.toBeInTheDocument();
   });
 });

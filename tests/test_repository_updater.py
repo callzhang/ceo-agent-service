@@ -23,7 +23,7 @@ def git(cwd: Path, *args: str) -> str:
 def fixture_repo(tmp_path: Path) -> tuple[Path, Path]:
     remote = tmp_path / "remote.git"
     local = tmp_path / "local"
-    git(tmp_path, "init", "--bare", str(remote))
+    git(tmp_path, "init", "--bare", "--initial-branch=main", str(remote))
     git(tmp_path, "init", "--initial-branch=main", str(local))
     git(local, "config", "user.name", "Test User")
     git(local, "config", "user.email", "test@example.com")
@@ -70,6 +70,19 @@ def operation(local: Path) -> UpgradeOperation:
     )
 
 
+@pytest.mark.parametrize("default_branch", ["master", "main"])
+def test_fixture_repo_does_not_depend_on_git_default_branch(tmp_path, monkeypatch, default_branch):
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "init.defaultBranch")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", default_branch)
+
+    local, remote = fixture_repo(tmp_path)
+
+    assert git(remote, "symbolic-ref", "HEAD") == "refs/heads/main"
+    assert git(local, "branch", "--show-current") == "main"
+    assert git(tmp_path / "updater", "branch", "--show-current") == "main"
+
+
 def test_clean_upgrade_fast_forwards_and_verifies(tmp_path: Path):
     local, _ = fixture_repo(tmp_path)
     op = operation(local)
@@ -107,6 +120,34 @@ def test_upgrade_stops_service_after_quiet_before_backup_and_restart(tmp_path: P
     result = updater.execute(op)
 
     assert result.status == "succeeded"
+    assert calls == ["quiet", "stop", "restart", "health"]
+
+
+def test_failed_fast_forward_restarts_original_service(tmp_path: Path):
+    local, _ = fixture_repo(tmp_path)
+    op = operation(local)
+    calls: list[str] = []
+    updater = RepositoryUpdater(
+        local,
+        StateStore(),
+        database_path=tmp_path / "missing.sqlite3",
+        wait_for_quiet=lambda: calls.append("quiet"),
+        stop=lambda: calls.append("stop"),
+        restart=lambda: calls.append("restart"),
+        health=lambda: calls.append("health") or True,
+    )
+    original_run = updater.repository._run
+
+    def fail_merge(args, *, category, **kwargs):
+        if category == "upgrade_merge":
+            raise RuntimeError("simulated fast-forward refusal")
+        return original_run(args, category=category, **kwargs)
+
+    updater.repository._run = fail_merge
+
+    with pytest.raises(UpgradeFailed):
+        updater.execute(op)
+
     assert calls == ["quiet", "stop", "restart", "health"]
 
 
@@ -252,6 +293,65 @@ def test_quiet_wait_returns_once_work_drains():
     )
 
 
+@pytest.mark.parametrize("status,locked_at,expected", [
+    ("processing", "2026-01-01 00:00:00", 1),
+    ("ready_to_send", "2026-01-01 00:00:00", 1),
+    ("ready_to_send", None, 0),
+    ("retry", None, 0),
+    ("sent", None, 0),
+])
+def test_quiet_counts_meeting_preparation_and_claimed_delivery(tmp_path, status, locked_at, expected):
+    from app.repository_updater import in_flight_work
+    from app.store import AutoReplyStore
+
+    path = tmp_path / "meeting-quiet.sqlite3"
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        cursor = db.execute(
+            "insert into meeting_alignment_jobs(meeting_id,status,locked_at) values (?,?,?)",
+            ("meeting", status, locked_at),
+        )
+        if status == "processing":
+            db.execute(
+                "insert into meeting_alignment_runs(job_id,status) values (?, 'running')",
+                (cursor.lastrowid,),
+            )
+    assert in_flight_work(path) == expected
+
+
+def test_quiet_does_not_count_unclaimed_historical_meeting_processing(tmp_path):
+    from app.repository_updater import in_flight_work
+    from app.store import AutoReplyStore
+
+    path = tmp_path / "historical-meeting.sqlite3"
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "insert into meeting_alignment_jobs(meeting_id,status,locked_at) "
+            "values ('historical','processing','2026-01-01 00:00:00')"
+        )
+    assert in_flight_work(path) == 0
+
+
+@pytest.mark.parametrize("lease,terminal,expected", [
+    ("2999-01-01T00:00:00+08:00", "", 1),
+    ("2000-01-01T00:00:00+00:00", "", 0),
+    ("2999-01-01T00:00:00+00:00", "completed", 0),
+])
+def test_quiet_counts_live_dispatcher_claim_before_runtime_exists(tmp_path, lease, terminal, expected):
+    from app.repository_updater import in_flight_work
+    from app.store import AutoReplyStore
+
+    path = tmp_path / "claim-quiet.sqlite3"
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "insert into dispatcher_claim_leases(adapter_name,source_id,lease_expires_at,terminal_at) "
+            "values ('meeting','42',?,?)", (lease, terminal),
+        )
+    assert in_flight_work(path) == expected
+
+
 def test_health_waits_for_a_slow_start_instead_of_rolling_back():
     from app.repository_updater import wait_for_health
 
@@ -359,7 +459,7 @@ def fixture_repo_with_protected_source(tmp_path: Path) -> tuple[Path, list[Path]
     """
     remote = tmp_path / "remote.git"
     local = tmp_path / "local"
-    git(tmp_path, "init", "--bare", str(remote))
+    git(tmp_path, "init", "--bare", "--initial-branch=main", str(remote))
     git(tmp_path, "init", "--initial-branch=main", str(local))
     git(local, "config", "user.name", "Test User")
     git(local, "config", "user.email", "test@example.com")
@@ -441,6 +541,40 @@ def test_deploy_locks_the_source_tree_after_a_successful_deploy(tmp_path: Path, 
         assert path.stat().st_mode & stat_module.S_IWUSR == 0
 
 
+def test_deploy_can_explicitly_skip_only_the_quiet_wait(tmp_path: Path, monkeypatch):
+    import app.deploy as deploy_module
+    from app.repository_updater import UpgradeResult
+
+    local, _files = fixture_repo_with_protected_source(tmp_path)
+    events: list[str] = []
+
+    class CapturingUpdater:
+        def __init__(self, *args, **kwargs):
+            self.wait_for_quiet = kwargs["wait_for_quiet"]
+            self.stop = kwargs["stop"]
+
+        def execute(self, operation):
+            self.wait_for_quiet()
+            self.stop()
+            events.append("service-stopped")
+            events.append("updater-continued")
+            return UpgradeResult(
+                operation_id=operation.operation_id,
+                status="succeeded",
+                installed_commit=git(local, "rev-parse", "origin/main"),
+            )
+
+    monkeypatch.setattr(deploy_module, "RepositoryUpdater", CapturingUpdater)
+    monkeypatch.setattr("app.store.AutoReplyStore", lambda _path: StateStore())
+    monkeypatch.setattr(deploy_module, "_default_stop", lambda: events.append("stop"))
+
+    deploy_module.deploy(
+        local, tmp_path / "db.sqlite3", skip_quiet_wait=True
+    )
+
+    assert events == ["stop", "service-stopped", "updater-continued"]
+
+
 def test_deploy_relocks_the_source_tree_even_when_the_race_is_lost(tmp_path: Path, monkeypatch):
     import stat as stat_module
 
@@ -500,6 +634,8 @@ def test_tests_refuse_to_run_in_the_production_checkout(tmp_path: Path, monkeypa
 def test_restart_only_waits_for_quiet_then_restarts_and_checks_health(tmp_path: Path, monkeypatch):
     import app.deploy as deploy_module
 
+    root, _remote = fixture_repo(tmp_path)
+    monkeypatch.setattr(deploy_module, "service_root", lambda: root)
     events: list[str] = []
     monkeypatch.setattr(deploy_module, "wait_until_quiet", lambda _db: events.append("quiet"))
     monkeypatch.setattr(deploy_module, "wait_for_health", lambda: events.append("health") or True)
@@ -507,6 +643,36 @@ def test_restart_only_waits_for_quiet_then_restarts_and_checks_health(tmp_path: 
     assert deploy_module.restart_only(tmp_path / "db", restart=lambda: events.append("restart")) == "restarted"
     assert events == ["quiet", "restart", "health"]
 
+    events.clear()
+    assert deploy_module.restart_only(
+        tmp_path / "db", restart=lambda: events.append("restart"),
+        skip_quiet_wait=True,
+    ) == "restarted"
+    assert events == ["restart", "health"]
+
     monkeypatch.setattr(deploy_module, "wait_for_health", lambda: False)
     with pytest.raises(SystemExit, match="did not become healthy"):
         deploy_module.restart_only(tmp_path / "db", restart=lambda: None)
+
+
+def test_default_restart_bootstraps_when_launchd_label_is_unloaded(monkeypatch):
+    from types import SimpleNamespace
+
+    import app.repository_updater as updater_module
+
+    calls: list[list[str]] = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        if args[1] == "kickstart":
+            return SimpleNamespace(returncode=113, stdout="", stderr="service not found")
+        if args[1] == "print":
+            return SimpleNamespace(
+                returncode=113, stdout="", stderr='Could not find service "x"'
+            )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(updater_module.subprocess, "run", run)
+    updater_module._default_restart()
+
+    assert [call[1] for call in calls] == ["kickstart", "print", "bootstrap"]

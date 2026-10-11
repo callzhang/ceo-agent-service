@@ -250,8 +250,8 @@ def test_active_consumer_boundary_uses_configured_principal(monkeypatch):
     # paragraph happens to be filled.
     flowed = " ".join(instructions.split())
 
-    assert "ask Alex how to finish" in flowed
-    assert "ask Derek how to finish" not in flowed
+    assert "Explain a needs_human reason for Alex" in flowed
+    assert "Explain a needs_human reason for Derek" not in flowed
 
 
 def test_configuration_post_persists_system_and_prompt_values_to_same_env_file(

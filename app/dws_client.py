@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -1981,6 +1982,29 @@ class DwsClient:
             raise DwsError("conversation-info response is missing conversationInfo")
         return info
 
+    def read_group_members(self, open_conversation_id: str) -> dict[str, Any]:
+        """Read the native users/bots roster with bounded complete pagination.
+
+        Preserve completeness, remaining cursors and provider failures so an
+        incomplete page cannot be mistaken for the full audience.
+        """
+        if not open_conversation_id.strip():
+            raise ValueError("conversation ID is required")
+        return self.run_json([
+            self.dws_bin, "chat", "+chat-members-list", "--conversation-id",
+            open_conversation_id, "--format", "json",
+        ])
+
+    def read_user_profiles(self, user_ids: list[str]) -> dict[str, Any]:
+        """Read exact organization user IDs without fuzzy identity enrichment."""
+        if not user_ids or any(
+            not isinstance(user_id, str) or not user_id.strip()
+            or user_id != user_id.strip() or "," in user_id
+            for user_id in user_ids
+        ):
+            raise ValueError("exact organization user IDs are required")
+        return self.run_json(self.build_get_user_profiles_command(user_ids))
+
     def list_group_member_open_dingtalk_ids(
         self, open_conversation_id: str
     ) -> set[str]:
@@ -2119,6 +2143,41 @@ class DwsClient:
             conversation_title="",
             single_chat=False,
         )
+
+    def read_message_by_id(
+        self, conversation: DingTalkConversation, message_id: str,
+    ) -> DingTalkMessage | None:
+        payload = self.run_json([
+            self.dws_bin, "chat", "+messages-mget", "--msg-ids", message_id,
+            "--no-reactions", "--no-threads", "--format", "json",
+        ])
+        if (not isinstance(payload, dict)
+                or payload.get("contractVersion") != "im.message-list.v1"
+                or payload.get("complete") is not True
+                or payload.get("messagesComplete") is not True
+                or payload.get("hasMore") is not False
+                or payload.get("failures") != []):
+            return None
+        rows = payload.get("messages")
+        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+            return None
+        row = rows[0]
+        if (any(not isinstance(row.get(key), str) for key in (
+                "conversationId", "messageId", "sender", "createTime"))
+                or "text" not in row
+                or (row["text"] is not None and not isinstance(row["text"], str))):
+            return None
+        messages = self.parse_messages(
+            payload, conversation_title=conversation.title,
+            single_chat=conversation.single_chat,
+        )
+        if len(messages) != 1:
+            return None
+        message = messages[0]
+        if (message.open_message_id != message_id
+                or message.open_conversation_id != conversation.open_conversation_id):
+            return None
+        return message
 
     def read_mentioned_messages(
         self,
@@ -2381,6 +2440,24 @@ class DwsClient:
             raise DwsError("invalid OA revert activities response")
         return payload
 
+    def redirect_oa_approval_task(
+        self, task_id: str, to_actioner_id: str, remark: str = ""
+    ) -> dict[str, Any]:
+        """Transfer one exact OA task to a resolved DingTalk user ID."""
+        if not task_id.strip() or not to_actioner_id.strip():
+            raise ValueError("OA redirect needs an exact task and recipient user ID")
+        command = [
+            self.dws_bin, "oa", "approval", "redirect-task", "--task-id", task_id,
+            "--to-actioner-id", to_actioner_id,
+        ]
+        if remark.strip():
+            command.extend(["--remark", remark])
+        command.extend(["--format", "json", "--yes"])
+        payload = self.run_json(command)
+        if not isinstance(payload, dict):
+            raise DwsError("invalid OA redirect response")
+        return payload
+
     def revert_oa_approval_task(
         self,
         *,
@@ -2583,6 +2660,39 @@ class DwsClient:
             raise DwsError("invalid doc read response")
         return payload
 
+    def read_message_resource_digest(self, reference: dict[str, str]) -> dict[str, object]:
+        from app.message_resource_source import MessageResourceReference
+
+        ref = MessageResourceReference.model_validate(reference)
+        with tempfile.TemporaryDirectory(prefix="ceo-reviewed-resource-") as directory:
+            root = Path(directory).resolve()
+            payload = self.run_json([
+                self.dws_bin, "chat", "+messages-resource-download",
+                "--resource-id", ref.resource_id, "--type", ref.resource_id_type,
+                "--message-id", ref.message_id,
+                "--open-conversation-id", ref.conversation_id,
+                "--output", "resource", "--format", "json",
+            ], cwd=root)
+            if (not isinstance(payload, dict)
+                    or payload.get("messageVerified") is not True
+                    or payload.get("messageId") != ref.message_id
+                    or payload.get("resourceId") != ref.resource_id
+                    or not isinstance(payload.get("localPath"), str)):
+                raise ValueError("message resource download identity unverified")
+            path = Path(payload["localPath"])
+            path = path if path.is_absolute() else root / path
+            path.resolve().relative_to(root)
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("message resource download is not a regular file")
+            size = path.stat().st_size
+            if type(payload.get("sizeBytes")) is not int or payload["sizeBytes"] != size or size <= 0:
+                raise ValueError("message resource download size unverified")
+            digest = hashlib.sha256()
+            with path.open("rb") as source:
+                for chunk in iter(lambda: source.read(65536), b""):
+                    digest.update(chunk)
+            return {**ref.model_dump(), "size_bytes": size, "sha256": digest.hexdigest()}
+
     def read_sheet(self, node: str) -> dict[str, Any]:
         payload = self.run_json(self.build_read_sheet_command(node))
         if not isinstance(payload, dict):
@@ -2616,6 +2726,82 @@ class DwsClient:
         payload = self.run_json(self.build_create_markdown_doc_command(name, content))
         if not isinstance(payload, dict):
             raise DwsError("invalid doc create response")
+        return payload
+
+    def create_report_document(
+        self, *, name: str, content: str, doc_format: str, folder_id: str,
+    ) -> dict[str, Any]:
+        """Create one report document in a service-resolved folder."""
+        if not name.strip() or not content.strip() or not folder_id.strip():
+            raise ValueError("report document target and content are required")
+        if doc_format not in {"markdown", "jsonml"}:
+            raise ValueError("unsupported report document format")
+        payload = self.run_json([
+            self.dws_bin, "doc", "+create", "--name", name,
+            "--content", content, "--doc-format", doc_format,
+            "--folder", folder_id, "--format", "json",
+        ])
+        if not isinstance(payload, dict):
+            raise DwsError("invalid report document create response")
+        return payload
+
+    def fetch_report_document_full(self, node_id: str) -> dict[str, Any]:
+        """Read the complete JSONML, including the editing revision."""
+        if not node_id.strip():
+            raise ValueError("report document node is required")
+        payload = self.run_json([
+            self.dws_bin, "doc", "+fetch", "--node", node_id,
+            "--detail", "full", "--scope", "full", "--format", "json",
+        ])
+        if not isinstance(payload, dict):
+            raise DwsError("invalid full report document response")
+        return payload
+
+    def validate_report_jsonml(self, content: str) -> dict[str, Any]:
+        """Ask the native document parser to validate one rendered JSONML body."""
+        if not content.strip():
+            raise ValueError("report document content is required")
+        payload = self.run_json([
+            self.dws_bin, "doc", "+script", "--command", "parse",
+            "--doc-format", "jsonml", "--content", content, "--format", "json",
+        ])
+        if not isinstance(payload, dict):
+            raise DwsError("invalid report document parse response")
+        return payload
+
+    def save_report_document_version(self, node_id: str) -> dict[str, Any]:
+        """Save a recoverable version of the task-resolved weekly document."""
+        if not node_id.strip():
+            raise ValueError("report document node is required")
+        payload = self.run_json([
+            self.dws_bin, "doc", "+version-save", "--node", node_id,
+            "--format", "json", "--yes",
+        ])
+        if not isinstance(payload, dict):
+            raise DwsError("invalid report document version response")
+        return payload
+
+    def overwrite_report_document(
+        self, *, node_id: str, content: str, doc_format: str,
+        expected_revision: int | None = None,
+    ) -> dict[str, Any]:
+        """Overwrite one service-resolved report document at its known revision."""
+        if not node_id.strip() or not content.strip():
+            raise ValueError("report document target and content are required")
+        if doc_format not in {"markdown", "jsonml"}:
+            raise ValueError("unsupported report document format")
+        command = [
+            self.dws_bin, "doc", "+update", "--node", node_id,
+            "--command", "overwrite", "--content", content,
+            "--doc-format", doc_format,
+        ]
+        if doc_format == "jsonml":
+            if type(expected_revision) is not int or expected_revision < 0:
+                raise ValueError("JSONML overwrite requires an expected revision")
+            command += ["--expected-revision", str(expected_revision)]
+        payload = self.run_json(command + ["--yes", "--format", "json"])
+        if not isinstance(payload, dict):
+            raise DwsError("invalid report document update response")
         return payload
 
     def add_doc_editor_permission(
@@ -2890,6 +3076,12 @@ class DwsClient:
         if not isinstance(payload, dict):
             raise DwsError("invalid doc comment response")
         return payload
+
+    def read_doc_comments(self, node_id: str) -> Any:
+        return self.run_json([
+            self.dws_bin, "doc", "+comment-list", "--node", node_id,
+            "--limit", "50", "--format", "json",
+        ])
 
     def get_resource_download_url(
         self,
@@ -3189,6 +3381,29 @@ class DwsClient:
             "readback": message.model_dump(mode="json"),
         }
 
+    def reconcile_message_send(
+        self, conversation: DingTalkConversation, text: str, *, not_before: datetime,
+    ) -> dict[str, Any] | None:
+        """Positive original-target readback; an empty page never permits resend."""
+        boundary_ms = int(not_before.timestamp() * 1000)
+        matches = [
+            message for message in self.read_recent_messages(conversation)
+            if (not conversation.open_conversation_id
+                or message.open_conversation_id == conversation.open_conversation_id)
+            and message.content == text
+            and self._datetime_string_to_epoch_ms(message.create_time) >= boundary_ms
+            and not message.is_recalled()
+            and self.is_current_user_message(message)
+        ]
+        if len(matches) != 1:
+            return None
+        message = matches[0]
+        return {
+            "success": True,
+            "result": {"openMessageId": message.open_message_id},
+            "readback": message.model_dump(mode="json"),
+        }
+
     def verify_message_send_result(
         self, send_result: dict[str, Any]
     ) -> dict[str, Any]:
@@ -3269,6 +3484,18 @@ class DwsClient:
             self.build_add_message_emoji_command(conversation_id, message_id, emoji)
         )
 
+    def list_message_emotion_replies(self, message_id: str) -> dict[str, Any]:
+        """Read the native reaction list for one exact DingTalk message ID."""
+        if not message_id.strip():
+            raise ValueError("message id is required for reaction readback")
+        payload = self.run_json([
+            self.dws_bin, "chat", "message", "list-emotion-replies",
+            "--msg-ids", message_id, "--format", "json",
+        ])
+        if not isinstance(payload, dict):
+            raise DwsError("invalid message emotion reply response")
+        return payload
+
     def add_message_text_emotion(
         self,
         conversation_id: str,
@@ -3289,6 +3516,18 @@ class DwsClient:
                 background_id=background_id,
             )
         )
+
+    def remove_message_text_emotion(
+        self, conversation_id: str, message_id: str, *, text: str,
+        emotion_id: str, emotion_name: str, background_id: str,
+    ) -> dict[str, Any]:
+        return self.run_json([
+            self.dws_bin, "chat", "+messages-remove-text-emotion",
+            "--conversation-id", conversation_id, "--msg-id", message_id,
+            "--text", text, "--emotion-id", emotion_id,
+            "--emotion-name", emotion_name, "--background-id", background_id,
+            "--format", "json", "--yes",
+        ])
 
     def create_message_text_emotion(
         self,
@@ -3544,6 +3783,10 @@ class DwsClient:
                 for profile in profiles
                 if profile.open_dingtalk_id == message.sender_open_dingtalk_id
             ]
+        elif message.raw_payload.get("senderId"):
+            stable_id = message.raw_payload["senderId"]
+            matches = [profile for profile in profiles
+                       if stable_id == profile.user_id or stable_id == profile.open_dingtalk_id]
         else:
             matches = [profile for profile in profiles if profile.name == message.sender_name]
         if len(matches) != 1:
@@ -3555,7 +3798,7 @@ class DwsClient:
     def is_current_user_message(self, message: DingTalkMessage) -> bool:
         if message.sender_user_id:
             return message.sender_user_id == self.get_current_user_id()
-        if not message.sender_open_dingtalk_id:
+        if not message.sender_open_dingtalk_id and not message.raw_payload.get("senderId"):
             return False
         return self.resolve_message_sender(message) == self.get_current_user_id()
 
@@ -3611,6 +3854,7 @@ class DwsClient:
         *,
         timeout_seconds: int | None = None,
         isolate_process_group: bool = False,
+        cwd: Path | None = None,
     ) -> Any:
         command_timeout_seconds = timeout_seconds or self.timeout_seconds
         remaining_retries = self.transient_retry_attempts
@@ -3619,11 +3863,13 @@ class DwsClient:
         while True:
             payload: Any | None = None
             try:
+                process_options = {"cwd": cwd} if cwd is not None else {}
                 result = self._run_cli_process(
                     command,
                     timeout=command_timeout_seconds,
                     env=self._cli_environment(),
                     isolate_process_group=isolate_process_group,
+                    **process_options,
                 )
             except subprocess.TimeoutExpired as exc:
                 if automatic_retry_allowed and remaining_retries > 0:
@@ -3835,8 +4081,10 @@ class DwsClient:
         timeout: int,
         env: dict[str, str],
         isolate_process_group: bool = False,
+        cwd: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         global _DWS_LAST_PROCESS_START_MONOTONIC
+        process_options = {"cwd": cwd} if cwd is not None else {}
         with _DWS_PROCESS_GATE:
             min_interval_seconds = _dws_process_min_interval_seconds()
             if min_interval_seconds > 0:
@@ -3858,6 +4106,7 @@ class DwsClient:
                     check=False,
                     timeout=timeout,
                     env=env,
+                    **process_options,
                 )
 
             # The headless OKR source can spawn Chrome.  Give this one local
@@ -3868,6 +4117,7 @@ class DwsClient:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=True,
+                **process_options,
                 env=env,
             )
             try:
@@ -4022,7 +4272,9 @@ class DwsClient:
         compact = " ".join(value.strip().split())
         if len(compact) <= limit:
             return compact
-        return f"{compact[:limit]}..."
+        head_length = limit // 2
+        tail_length = limit - head_length
+        return f"{compact[:head_length]}...{compact[-tail_length:]}"
 
     @classmethod
     def _safe_output_preview(cls, value: str) -> str:
@@ -4490,6 +4742,25 @@ class DwsClient:
     def parse_messages(
         payload: dict[str, Any], conversation_title: str, single_chat: bool
     ) -> list[DingTalkMessage]:
+        if payload.get("contractVersion") == "im.message-list.v1":
+            parsed = []
+            for row in payload["messages"]:
+                if not isinstance(row, dict) or any(key not in row for key in (
+                    "conversationId", "messageId", "sender", "createTime", "text",
+                )):
+                    continue
+                parsed.append(DingTalkMessage(
+                    open_conversation_id=row["conversationId"],
+                    open_message_id=row["messageId"],
+                    conversation_title=conversation_title, single_chat=single_chat,
+                    sender_name=row["sender"], sender_user_id=row.get("senderUserId"),
+                    sender_open_dingtalk_id=row.get("senderOpenDingTalkId"),
+                    create_time=row["createTime"],
+                    content="" if row["text"] is None else row["text"],
+                    message_type=DwsClient._message_type(row),
+                    mentioned_user_ids=DwsClient._mentioned_user_ids(row), raw_payload=row,
+                ))
+            return parsed
         result = payload.get("result", {})
         messages = result.get("messages", [])
         if not messages and isinstance(result.get("conversationMessagesList"), list):
