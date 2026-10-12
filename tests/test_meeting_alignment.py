@@ -1524,11 +1524,15 @@ def test_consumer_indexes_completed_meeting_codex_session(tmp_path):
     assert results[0].source_type == "meeting_alignment"
     assert results[0].source_id == "1"
     with store._connect() as db:
+        columns = {row[1] for row in db.execute("pragma table_info(codex_session_search_index)")}
         row = db.execute(
-            "select summary_text, fts_text, embedding_json from codex_session_search_index "
-            "where session_id='meeting-session-1'"
+            "select session_id, source_type, source_id, title, created_at, updated_at "
+            "from codex_session_search_index where session_id='meeting-session-1'"
         ).fetchone()
-    assert tuple(row) == ("", "", "")
+    assert columns == {"id", "session_id", "source_type", "source_id", "title", "created_at", "updated_at"}
+    assert tuple(row)[:3] == ("meeting-session-1", "meeting_alignment", "1")
+    assert row["title"] == results[0].title
+    assert row["created_at"] and row["updated_at"]
 
 
 def test_consumer_retries_invalid_model_decision(tmp_path):

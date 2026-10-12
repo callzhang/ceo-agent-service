@@ -3,6 +3,7 @@ from contextlib import contextmanager
 
 import pytest
 
+from app.task_storage import WORKBENCH_TURN_SQL
 from app.workbench.store import WorkbenchStore
 
 
@@ -56,7 +57,7 @@ def test_preflight_keeps_expired_running_turn_recovery(tmp_path):
     with store._connect() as db:
         assert (
             db.execute(
-                "select lease_owner from workbench_turns where id=?", (turn.id,)
+                f"select lease_owner from ({WORKBENCH_TURN_SQL}) as workbench_turns where id=?", (turn.id,)
             ).fetchone()[0]
             == "replacement"
         )
@@ -92,7 +93,7 @@ def test_positive_preflight_rechecks_another_workers_claim(
     with other._connect() as db:
         assert (
             db.execute(
-                "select lease_owner from workbench_turns where id=?", (turn.id,)
+                f"select lease_owner from ({WORKBENCH_TURN_SQL}) as workbench_turns where id=?", (turn.id,)
             ).fetchone()[0]
             == "winner"
         )

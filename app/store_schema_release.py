@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from app.run_schema_release import RunSchemaRelease
     from app.task_schema_release import TaskSchemaRelease
+    from app.workbench_schema_release import WorkbenchSchemaRelease
 
 VERSION_KEY = "store_schema_version"
 
@@ -57,7 +58,7 @@ def _migrate_store(root: Path, path: Path) -> None:
 
 def prepare_store_schema_release(
     root: Path, path: Path
-) -> RunSchemaRelease | TaskSchemaRelease | None:
+) -> RunSchemaRelease | TaskSchemaRelease | WorkbenchSchemaRelease | None:
     root, path = root.resolve(), path.resolve()
     target = _target_store_version(root)
     if target is None or not path.exists():
@@ -79,6 +80,10 @@ def prepare_store_schema_release(
         from app.task_schema_release import OLD_TASK_VERSION, TASK_VERSION, prepare_task_schema_release
         if (version[0], target) == (OLD_TASK_VERSION, TASK_VERSION):
             return prepare_task_schema_release(root, path, version)
+        from app.workbench_storage import SOURCE_VERSION, WORKBENCH_VERSION
+        if (version[0], target) == (SOURCE_VERSION, WORKBENCH_VERSION):
+            from app.workbench_schema_release import prepare_workbench_schema_release
+            return prepare_workbench_schema_release(root, path, version)
         raise ValueError(
             "Store schema release needs a verified inverse for this transition"
         )

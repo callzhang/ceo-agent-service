@@ -54,7 +54,7 @@
 - [x] RED覆盖同request多个OKR精确session/range、旧request prompt/native ID不变、原items逐列相等；weekly缓存及owner-expiry CAS不变。
 - [x] 同时切换queue/dispatcher、恢复、raw SQL脚本、领域DAO/native定位；取消9个领域退休cache列及finish比较占位，保留状态/session/error及业务结果。
 - [x] 根据真实source CHECK/FK/unique迁移，不把fresh模板附带新历史限制。
-- [ ] focused tests/Ruff/docs完成后按Task4验证并独立复核，再正常部署4B。
+- [x] focused tests/Ruff/docs完成后按Task4验证并独立复核，再正常部署4B。
 
 ## Task 3: 4C scheduled and Workbench
 
@@ -62,7 +62,7 @@
 
 **Tests:** test_agent_cron_scheduler.py、test_agent_cron_dispatcher_health.py、scheduled store/recovery与dispatcher测试、test_workbench_store.py、test_workbench_api.py、test_workbench_native_events.py、test_workbench_service_runtime.py、test_workbench_executor.py、test_store.py native search cases、test_meeting_alignment.py、frontend/src/pages/CodexPages.test.tsx及实际History/Attention测试。
 
-- [ ] 定义trigger独立record_type，保留event_id、scheduled/manual partial unique、snapshot_id现存FK、execution_kind/key；不能给service command制造任务。
+- [ ] 定义trigger独立record_type，保留event_id、scheduled/manual partial unique、snapshot_id现存FK、execution_kind/execution_id；不能给service command制造任务。
 - [ ] RED覆盖overlap first/last/count聚合、schedule版本与candidate双CAS、contention重试不丢trigger、dispatch原子task+lease关闭、业务终态不反写触发。
 - [ ] 迁Workbench task/turn/event，保留public UUID、全局client_request唯一、准确输入比较、task_sequence、single-active及claim UUID。
 - [ ] RED覆盖stop/completion竞态、late write、service event cursor/sequence/native ordinal、工具start/completion配对、跨页、missing native、Claude/Friday以及终态RAM释放/回滚。
@@ -112,3 +112,19 @@ Read-only C caller preflight at582fccfe identifies coordinated runtime changes b
 
 
 Latest B release gate: c73039cb safely integrates production2bb2809c. All142 original CI failures now have separately SPEC/QUALITY-approved fixture repairs; combined31-file971 checks, whole Ruff/diff and11 offline publication/factory/updater checks pass. A fresh actual2bb source completed baseline inverse, new-fact inverse, actual321-file old-code startup/claim/watermarks and full re-forward; final independent critical review passed. Exact evidence is in the B validation document. New complete Quality and normal production deploy/readback are still required. C implementation must wait for actual B release and refresh its source13 snapshot.
+
+
+B live release completed: PR58/44a1a4e3, complete Quality38248135583 passed, PID68292/Store13/Email51/public IDs/115 receipts/manifests/health/queues/Attention/History read back. Details and physical-page limits in B validation. C now starts on isolated codex/database-redesign-phase4c-20261012 from actual deployed44a1a4e3; refresh exact source13 DDL and current counts before core implementation. Pending old daily backup deletion requires explicit answer to the asynchronous question; no automatic assumption.
+
+4C core unit: source13 exact49-field map, typed primitive/paired inverse/bootstrap/search cache coupling implemented. Core writer207 focused passes; two SPEC P2 source-boundary gaps fixed with8-failure RED/12-case GREEN; independent re-SPEC201 and QUALITY141 focused checks pass. Source constraints/UUID/raw values/children/rowids/FTS state verified within this core scope. Outer scheduled and Workbench DAO/readers/current14 source-quiet, real consistent production-copy/actual old-code, publication failures, complete CI and deployment remain pending. See C validation document; no C production application claimed.
+
+4C scheduled/outer-quiet unit implemented and SPEC/QUALITY approved. Writer254 focused primary passes; original mixed-quiet P2 repaired with8-case RED and source-schema-only refusal. Independent re-SPEC23 passed; QUALITY227 scoped+14 quiet passed, AST/comment retention and config upgrade idempotence verified. Historical12/13 and typed14 quiet contracts retained, public scheduled IDs/History/frozen snapshots/atomic lease-dispatch unchanged. WB CRUD/native/API next; final source-copy/inverse/actual old-code/publication/CI/deployment still pending.
+
+4C WBcallerunit ready tocommit afterSPEC342 andQUALITY342 focusedpasses; own345primarypasses. PublicTEXT/numericcursor/physicalparent isolation, childDTO/FK, nativebounds/realhydration/stop/CAS/recovery,50k-event original20kbudget verified. Rootexplicitretirement ofpre-.7/.8/.9補列compat documented; actualsource13preservation,currentincomplete nonmutation/currentindexrepair fixtures retained. Nextsinglewriter fixes six residualcurrentfixture files beforewholeCactualcopy/oldcode/publication/CI/deploy.
+
+4C residualfixtures+one AttentionlocatorSQLunit SPEC/QUALITY each899focusedchecks passed. Query5khistoryregression repairedexistingevent/public-IDindexedUNION ALLprobes withoriginalsame-schedulelaterrecovery/identity/output/no-mutation semantics;sampled55,100→200(original2kbudget). AllCcore/scheduled/WB/residualunitreviewsdone. Nextactualsource6b consistentcopy/normalconstructor/fullinverse/newfact/realoldcode/re-forward/fivestageofflinepublication,thencompleteCI+normaldeploy/liveevidence.
+
+
+4C完整实现和四单元独立SPEC/QUALITY已完成。冻结6b实际来源正迁/基线逆迁/新事实/真实旧代码/再次正迁、五阶段离线发布失败已通过；完整原字段映射与验收见C文档。最新生产8d增量合入f2b88a85，124相关测试通过。PR61草稿已创建；最新8d来源绑定、完整远端Quality、正常部署和线上读回仍待完成，不以旧来源验收代替。
+
+4C完整Quality38273620795出现6失败/3fixture准备错误、12084通过。九项均本地复现，三处授权查询修正与完整独立source13 fixture/缓存列断言修正后600相关测试通过。新增字段/索引/schema/政策为零；原性能/业务断言保持。最新8d源闭环已通过，修正后的独立复核、补充源绑定、完整CI及上线仍待完成。详见C验收。
