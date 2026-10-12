@@ -27,8 +27,9 @@
       "attention_categories": [],
       "task_titles": [],
       "suggested_owners": [],
-      "complete_skill_in_completed_read": false,
-      "completed_mcp": []
+      "completed_mcp": [],
+      "raw_command_capture_contains_full_skill": false,
+      "model_visible_complete_skill_read": false
     },
     {
       "variant": "baseline",
@@ -55,8 +56,9 @@
       "suggested_owners": [
         "陈明"
       ],
-      "complete_skill_in_completed_read": false,
-      "completed_mcp": []
+      "completed_mcp": [],
+      "raw_command_capture_contains_full_skill": false,
+      "model_visible_complete_skill_read": false
     },
     {
       "variant": "candidate",
@@ -77,8 +79,9 @@
       "attention_categories": [],
       "task_titles": [],
       "suggested_owners": [],
-      "complete_skill_in_completed_read": true,
-      "completed_mcp": []
+      "completed_mcp": [],
+      "raw_command_capture_contains_full_skill": true,
+      "model_visible_complete_skill_read": false
     },
     {
       "variant": "candidate",
@@ -105,14 +108,15 @@
       "suggested_owners": [
         "陈明"
       ],
-      "complete_skill_in_completed_read": true,
       "completed_mcp": [
         {
           "server": "memory_fixture",
           "tool": "memory_write",
           "error": null
         }
-      ]
+      ],
+      "raw_command_capture_contains_full_skill": true,
+      "model_visible_complete_skill_read": true
     }
   ],
   "application_summary": [
@@ -150,5 +154,6 @@
     "Claude and Friday delivery verified by regressions, not provider runtime.",
     "Risk attention category differs: baseline push, candidate watch. Not evidence of identical judgments.",
     "Native Skill read moves instructions into tool results; service prompt reduction is not total-token savings."
-  ]
+  ],
+  "model_visible_correction": "Native rollout drilldown found candidate cold outer custom_tool_call_output truncated although raw aggregated_output was full; candidate risk actual tool output contains full exact Skill."
 }

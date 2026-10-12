@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "qwen_evidence_root": "/private/tmp/ceo-task-qwen-jm0dquj8",
+  "qwen_runs": [
+    {
+      "variant": "baseline",
+      "phase": "cold",
+      "route": "qwen_gpu4",
+      "model": "qwen3.8-27b",
+      "session_id": "01a12f9f-53f7-7722-8aca-692dabba81a1",
+      "native_turn_completed": true,
+      "business_model_valid": true,
+      "validation_error": "",
+      "accepted_business_run": false,
+      "reason": "Required fixture tools rejected; candidate additionally invalid business fields. No resume acceptance.",
+      "failed_tools": [
+        {
+          "tool": "memory_recall",
+          "status": "failed",
+          "reason": "Automatic approval reviewer requested unsupported codex-auto-review model; HTTP404"
+        },
+        {
+          "tool": "memory_write",
+          "status": "failed",
+          "reason": "Automatic approval reviewer requested unsupported codex-auto-review model; HTTP404"
+        }
+      ],
+      "project_context_present": true,
+      "invented_owner_ids": true,
+      "prompt_chars": 32096,
+      "prompt_sha256": "b5fc1372b8522deed2c58e2c9d0b815dc40d5e441cb8cf942fabe30656020f4b",
+      "events_sha256": "994a14080bf2e02e21c70a07e0831c0f4a9efe6b6452286504fe64d0db9c75ad",
+      "overall_owner_present": false,
+      "unverified_person_ids": [
+        "陈明",
+        "赵华"
+      ]
+    },
+    {
+      "variant": "candidate",
+      "phase": "cold",
+      "route": "qwen_gpu4",
+      "model": "qwen3.8-27b",
+      "session_id": "01a12fa0-c653-7f22-b753-8e5954ae8862",
+      "native_turn_completed": true,
+      "business_model_valid": false,
+      "validation_error": "TaskAgentDecision JSON does not satisfy the schema: project_decisions.0: Value error, CRM customer label and source evidence must be provided together; project_assessments.0: Value error, unknown Project may only have an insufficient_evidence outcome",
+      "accepted_business_run": false,
+      "reason": "Required fixture tools rejected; candidate additionally invalid business fields. No resume acceptance.",
+      "failed_tools": [
+        {
+          "tool": "memory_recall",
+          "status": "failed",
+          "reason": "Automatic approval reviewer requested unsupported codex-auto-review model; HTTP404"
+        },
+        {
+          "tool": "memory_write",
+          "status": "failed",
+          "reason": "Automatic approval reviewer requested unsupported codex-auto-review model; HTTP404"
+        }
+      ],
+      "project_context_present": true,
+      "invented_owner_ids": true,
+      "prompt_chars": 8898,
+      "prompt_sha256": "77de94da68d059bddd9b0089e993768ae178434d9e12c5cb700d2064b8b1565e",
+      "events_sha256": "bc987d65f3ede1ecf197665f72c883e039f5f153017b845be4aee1df2d0bdf4d",
+      "overall_owner_present": true,
+      "unverified_person_ids": [
+        "chenming",
+        "zhaohua"
+      ]
+    }
+  ],
+  "qwen_resume": "not run: no accepted candidate cold",
+  "openai_api_evidence_root": "/private/tmp/ceo-task-openai-api-ib0ia39w",
+  "openai_api": {
+    "route": "codex_api",
+    "model": "gpt-5.6-luna",
+    "cold": {
+      "variant": "candidate",
+      "phase": "cold",
+      "returncode": 1,
+      "timed_out": false,
+      "session_id": "01a12fa0-0f67-7751-bbb6-336e55477a1d",
+      "prompt_sha256": "77de94da68d059bddd9b0089e993768ae178434d9e12c5cb700d2064b8b1565e",
+      "skill_config_selected": true,
+      "route": "codex_api",
+      "model": "gpt-5.6-luna"
+    },
+    "accepted": false,
+    "terminal_error": "exceeded retry limit, last status: 429 Too Many Requests"
+  },
+  "production_changes": false
+}
