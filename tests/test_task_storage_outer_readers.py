@@ -25,8 +25,6 @@ def test_publication_quiet_sources_read_exact_source_and_target(tmp_path, row_fa
         db.row_factory = row_factory
         db.executescript("""
             create table dispatcher_claim_leases(adapter_name text,source_id text,terminal_at text,lease_expires_at text);
-            create table meeting_alignment_jobs(id integer,status text,locked_at text);
-            create table meeting_alignment_runs(job_id integer,status text);
             create table scheduled_task_runs(dispatch_status text,lease_owner text,lease_expires_at text);
             update work_summary_inputs set status='processing' where id=2;
         """)
