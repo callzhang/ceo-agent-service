@@ -2784,7 +2784,7 @@ def test_stale_worker_recovers_completed_consumer_turn_without_legacy_parsing(
     store.record_candidate_review(candidate["id"], audit_run.id, review)
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set locked_at=datetime('now', '-31 minutes') where id=?",
+            "update tasks set locked_at=datetime('now', '-31 minutes') where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (task.id,),
         )
     worker = DingTalkAutoReplyWorker(
@@ -3145,7 +3145,7 @@ def test_worker_stops_retryable_orchestration_at_attempt_limit(tmp_path: Path):
     assert [run.turn_attempt for run in audit_runs] == [0, 1]
     with worker.store._connect() as db:
         db.execute(
-            "update reply_tasks set available_at='' where id=?",
+            "update tasks set available_at='' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (task_id,),
         )
 
@@ -3488,7 +3488,7 @@ def test_retryable_failure_reuses_generation_and_session_with_new_turn_then_succ
     assert first is not None and first.status == "pending"
     with worker.store._connect() as db:
         db.execute(
-            "update reply_tasks set available_at='' where id=?",
+            "update tasks set available_at='' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (task_id,),
         )
 
@@ -3539,7 +3539,7 @@ def test_retryable_failure_becomes_terminal_at_worker_attempt_limit(tmp_path: Pa
 
     worker.consume_once(max_tasks=1)
     with worker.store._connect() as db:
-        db.execute("update reply_tasks set available_at='' where id=?", (task_id,))
+        db.execute("update tasks set available_at='' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task_id,))
     worker.consume_once(max_tasks=1)
 
     assert len(runner.calls) == 2
@@ -3718,8 +3718,8 @@ def test_manual_rerun_rotates_generation_and_allows_changed_work(tmp_path: Path)
 
     with worker.store._connect() as db:
         db.execute(
-            "update reply_tasks set status='pending', available_at='', locked_at='' "
-            "where id=?",
+            "update tasks set status='pending', available_at='', locked_at='' "
+            "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (first_id,),
         )
     assert worker.consume_once(max_tasks=1) == 1
@@ -3900,8 +3900,8 @@ def test_completed_generation_is_not_executed_again(tmp_path: Path):
     assert worker.consume_once(max_tasks=1) == 1
     with worker.store._connect() as db:
         db.execute(
-            "update reply_tasks set status='pending', available_at='', locked_at='' "
-            "where id=?",
+            "update tasks set status='pending', available_at='', locked_at='' "
+            "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (task_id,),
         )
 
@@ -3944,7 +3944,7 @@ def test_stale_processing_resumes_same_generation_and_session(tmp_path: Path):
     )
     with worker.store._connect() as db:
         db.execute(
-            "update reply_tasks set locked_at='2026-07-28 07:00:00' where id=?",
+            "update tasks set locked_at='2026-07-28 07:00:00' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (task.id,),
         )
 
@@ -4052,7 +4052,7 @@ def test_stale_retryable_failed_run_resumes_same_generation_and_session(
     )
     with worker.store._connect() as db:
         db.execute(
-            "update reply_tasks set locked_at='2026-07-28 07:00:00' where id=?",
+            "update tasks set locked_at='2026-07-28 07:00:00' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (task.id,),
         )
 
@@ -4119,7 +4119,7 @@ def test_stale_recovery_keeps_turn_history_for_orchestrator_at_task_limit(
     )
     with worker.store._connect() as db:
         db.execute(
-            "update reply_tasks set locked_at='2026-07-28 07:00:00' where id=?",
+            "update tasks set locked_at='2026-07-28 07:00:00' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (task_id,),
         )
 
@@ -4132,7 +4132,7 @@ def test_stale_recovery_keeps_turn_history_for_orchestrator_at_task_limit(
     notifications.clear()
     with worker.store._connect() as db:
         db.execute(
-            "update reply_tasks set available_at='' where id=?",
+            "update tasks set available_at='' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (task_id,),
         )
 
@@ -4159,7 +4159,7 @@ def test_stale_recovery_keeps_turn_history_for_orchestrator_at_task_limit(
     )
     with worker.store._connect() as db:
         db.execute(
-            "update reply_tasks set locked_at='2026-07-28 07:00:00' where id=?",
+            "update tasks set locked_at='2026-07-28 07:00:00' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
             (task_id,),
         )
 

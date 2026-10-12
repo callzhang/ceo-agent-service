@@ -49,7 +49,7 @@ OA 操作使用从当前源对象核实的字符串 `process_instance_id`、`tas
    dws drive +download --space-id <spaceId> --node <fileId> --output <工作目录内的相对路径> --format json
    ```
 
-   授权之前 `drive +info` 会报 `forbidden.accessDenied`，授权之后同一 `fileId` 就能读元数据并下载正文；xlsx 用表格库读全表，pdf/docx 用文档读取，不得只看截图或文件名下结论。服务中的 Consumer/Audit 只有具名只读工具，`authorize-preview` 是会改变授权状态的写操作，当前没有提供给这两个角色；不得通过 shell、任意 DWS 命令或界面代为调用。若此附件是决定性材料且没有其他已授权的只读正文来源，按技术能力不可用如实报告并保留待办，不能声称已经读完，也不能把技术阻塞伪装成申请人未交材料或请 Derek 作业务判断。
+   授权之前 `drive +info` 会报 `forbidden.accessDenied`，授权之后同一 `fileId` 就能读元数据并下载正文；xlsx 用表格库读全表，pdf/docx 用文档读取，不得只看截图或文件名下结论。服务中的 Consumer/Audit 只有具名只读工具，`authorize-preview` 是会改变授权状态的写操作，当前没有提供给这两个角色；不得通过 shell、任意 DWS 命令或界面代为调用。服务角色对已授权且可读取的钉盘节点使用 `read_dingtalk_drive_file(node_id, space_id, file_name)` 获取受限正文和任务运行期间的临时文件路径。PDF 无可提取文本时返回 `ocr_required` 和临时路径；只有当前审批材料已获准发送至配置的 OCR 服务时才调用 OCR Skill，否则如实报告技术能力不可用并保留待办。任何工具或 OCR 失败都不能被伪装成申请人未交材料或业务规则缺口。
    2026-09-17 长沙银行 POC 的 checklist 曾被两次判为“读不到”，实际按此路径 10,549 字节正常下载读全。
 
 5. **缺材料和读不到是两回事，处理完全不同（Derek, 2026-09-23）。** 两者都不得通过，不得用“同意后补”替代审批前审阅。
@@ -91,7 +91,7 @@ OA 审阅下载的附件、OCR 中间文件和转换结果只能放在本次运�
 
 ## 工具顺序
 
-服务中的 Consumer/Audit 没有 shell 或任意 DWS 命令执行器，只调用角色目录中具名的只读 `agent_cli` 工具。Consumer 提议审批动作，Audit 只审核；System Executor 才通过固定的具名操作执行和回读。下列命令是交互式会话的操作参考，不能在服务角色里当作工具替代品。所需只读接口或附件正文读取能力不在目录中时，报告具体技术能力不可用。
+服务中的 Consumer/Audit 没有 shell 或任意 DWS 命令执行器，只调用角色目录中具名的只读 `agent_cli` 工具。Consumer 提议审批动作，Audit 只审核；System Executor 才通过固定的具名操作执行和回读。下列命令是交互式会话的操作参考，不能在服务角色里当作工具替代品。附件正文通过 `read_dingtalk_drive_file` 读取；若 PDF 需 OCR，只有当前审批材料已获准发送至配置的 OCR 服务时才调用 OCR Skill。返回路径只在当前 Agent CLI 进程存活期间有效。所需读取/OCR 能力不可用时，报告技术阻塞，不能当作申请人漏交材料。
 
 交互式会话优先使用 `dws`，所有命令加 `--format json`。
 

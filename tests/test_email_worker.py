@@ -7657,7 +7657,8 @@ def test_generation_replacement_after_inventory_is_not_failed_and_blocks_agent(
                 return
             with sqlite3.connect(database) as db:
                 db.execute(
-                    "update reply_tasks set execution_generation=? where id=?",
+                    "update tasks set execution_generation=? "
+                    "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
                     ("replacement-generation", legacy.id),
                 )
             self.rotated = True
@@ -8474,11 +8475,13 @@ def test_final_empty_inventory_clears_bootstrap_unresolved_after_safe_replacemen
         payload = json.loads(legacy.trigger_message_json)
         payload["lifecycle_version"] = "email_unsubscribe_audited_v2"
         with sqlite3.connect(database) as db:
-            db.execute(
-                "update reply_task_inputs set trigger_message_json=? "
-                "where id=(select current_input_id from reply_tasks where id=?)",
+            changed = db.execute(
+                "update tasks set trigger_message_json=? "
+                "where record_type='reply_task_inputs' and id=(select current_input_id "
+                "from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
                 (json.dumps(payload), legacy.id),
             )
+            assert changed.rowcount == 1
         return ready_dependencies
 
     bootstrap = SimpleNamespace(
@@ -8571,30 +8574,35 @@ def test_safe_replacement_after_inventory_is_unchanged_and_does_not_block_agent(
             with sqlite3.connect(database) as db:
                 if replacement == "terminal":
                     db.execute(
-                        "update reply_tasks set status='done' where id=?",
+                        "update tasks set status='done' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
                         (legacy.id,),
                     )
                 elif replacement == "audited-v2":
                     payload = json.loads(legacy.trigger_message_json)
                     payload["lifecycle_version"] = "email_unsubscribe_audited_v2"
                     db.execute(
-                        "update reply_task_inputs set trigger_message_json=? "
-                        "where id=(select current_input_id from reply_tasks where id=?)",
+                        "update tasks set trigger_message_json=? "
+                        "where record_type='reply_task_inputs' and id=(select current_input_id "
+                        "from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
                         (json.dumps(payload), legacy.id),
                     )
                 elif replacement == "non-email":
                     db.execute(
-                        "update reply_tasks set channel='dingtalk' where id=?",
+                        "update tasks set channel='dingtalk' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
                         (legacy.id,),
                     )
                 elif replacement == "malformed":
                     db.execute(
-                        "update reply_task_inputs set trigger_message_json='{malformed' "
-                        "where id=(select current_input_id from reply_tasks where id=?)",
+                        "update tasks set trigger_message_json='{malformed' "
+                        "where record_type='reply_task_inputs' and id=(select current_input_id "
+                        "from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
                         (legacy.id,),
                     )
                 else:
-                    db.execute("delete from reply_tasks where id=?", (legacy.id,))
+                    db.execute(
+                        "delete from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?",
+                        (legacy.id,),
+                    )
             self.replaced = True
 
         def list_nonterminal_legacy_unsubscribe_task_attempts(self):

@@ -1448,8 +1448,8 @@ def test_accepted_entry_can_be_one_of_multiple_projected_entries(
     )
     with sqlite3.connect(fixture.email_store.path) as db:
         db.execute(
-            "update reply_task_inputs set trigger_message_json=? "
-            "where id=(select current_input_id from reply_tasks where id=?)",
+            "update tasks set trigger_message_json=? "
+            "where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
             (json.dumps(payload, sort_keys=True), fixture.task.id),
         )
 
@@ -1748,8 +1748,8 @@ def test_identity_tampering_is_rejected_before_browser_execution(
             payload["action_plan_id"] = "email-action-plan:tampered"
         with sqlite3.connect(fixture.email_store.path) as db:
             db.execute(
-                "update reply_task_inputs set trigger_message_json=? "
-                "where id=(select current_input_id from reply_tasks where id=?)",
+                "update tasks set trigger_message_json=? "
+                "where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
                 (json.dumps(payload, sort_keys=True), fixture.task.id),
             )
     else:

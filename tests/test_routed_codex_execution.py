@@ -31,6 +31,7 @@ from app.claude_runtime_adapter import CLAUDE_MAX_TURNS_PER_INVOCATION
 from app.friday_runtime_adapter import FridayExecutionResult, FridayRuntimeError
 from app.process_runner import ProcessRunResult
 from app.store import MAX_RUNTIME_RESULT_ENVELOPE_BYTES, AgentRole, AutoReplyStore
+from app.task_storage import insert_task, task_id_expression
 from tests.runtime_route_env import claude_api_env, codex_api_env, set_env
 from tests.support.native_protocol import install_protocol_native_trajectories
 
@@ -149,56 +150,42 @@ class FakeAdapter:
 
 def seed_structured_parent(store: AutoReplyStore, request_id: int = 12) -> str:
     with store._connect() as db:
-        db.execute(
-            """
-            insert into okr_review_requests (
-                id, conversation_id, conversation_title, trigger_message_id,
-                trigger_sender, trigger_text, period_label, period_start,
-                period_end, status
-            ) values (?, ?, 'title', ?, 'sender', 'text', 'period',
-                      'start', 'end', 'processing')
-            """,
-            (request_id, f"cid-{request_id}", f"msg-{request_id}"),
-        )
+        insert_task(db, "okr_review_requests", {
+            "legacy_key": request_id, "conversation_id": f"cid-{request_id}",
+            "conversation_title": "title", "trigger_message_id": f"msg-{request_id}",
+            "trigger_sender": "sender", "trigger_text": "text", "period_label": "period",
+            "period_start": "start", "period_end": "end", "status": "processing",
+        })
     return str(request_id)
 
 
 def seed_agent_run_parent(store: AutoReplyStore, task_id: int = 901) -> int:
     generation = f"generation-{task_id}"
     with store._connect() as db:
-        db.execute(
-            """
-            insert into reply_tasks (
-                id, conversation_id, conversation_title, single_chat,
-                trigger_message_id, trigger_create_time, trigger_sender,
-                execution_generation, input_version, claimed_input_version, status
-            ) values (?, ?, 'WeChat', 1, ?, '2026-08-20 10:00:00',
-                      'sender', ?, 1, 1, 'processing')
-            """,
-            (task_id, f"wechat-{task_id}", f"message-{task_id}", generation),
-        )
+        parent_id = insert_task(db, "reply_tasks", {
+            "id": task_id, "legacy_key": task_id,
+            "conversation_id": f"wechat-{task_id}",
+            "conversation_title": "WeChat", "single_chat": 1,
+            "trigger_message_id": f"message-{task_id}",
+            "trigger_create_time": "2026-08-20 10:00:00", "trigger_sender": "sender",
+            "execution_generation": generation, "input_version": 1,
+            "claimed_input_version": 1, "status": "processing",
+        }).lastrowid
         provenance = store._reply_input_provenance("hello", "{}")
-        cursor = db.execute(
-            """
-            insert into reply_task_inputs (
-                reply_task_id, channel, conversation_id, conversation_title,
-                single_chat, trigger_message_id, trigger_create_time,
-                trigger_sender, trigger_text, trigger_message_json, oa_url,
-                business_object_key, input_revision_key,
-                input_provenance_json, input_compacted
-            )
-            select id, channel, conversation_id, conversation_title,
-                   single_chat, trigger_message_id, trigger_create_time,
-                   trigger_sender, 'hello', '{}', oa_url,
-                   business_object_key, ?, ?, 0
-            from reply_tasks where id=?
-            """,
-            (f"fixture-{task_id}", provenance, task_id),
-        )
+        cursor = insert_task(db, "reply_task_inputs", {
+            "parent_id": parent_id, "channel": "dingtalk",
+            "conversation_id": f"wechat-{task_id}", "conversation_title": "WeChat",
+            "single_chat": 1, "trigger_message_id": f"message-{task_id}",
+            "trigger_create_time": "2026-08-20 10:00:00", "trigger_sender": "sender",
+            "trigger_text": "hello", "trigger_message_json": "{}",
+            "business_object_key": "",
+            "input_revision_key": f"fixture-{task_id}",
+            "input_provenance_json": provenance, "input_compacted": 0,
+        })
         input_id = int(cursor.lastrowid)
         db.execute(
-            "update reply_tasks set current_input_id=?, claimed_input_id=? where id=?",
-            (input_id, input_id, task_id),
+            "update tasks set current_input_id=?, claimed_input_id=? where record_type='reply_tasks' and id=?",
+            (input_id, input_id, parent_id),
         )
     claim = store.claim_agent_run(
         task_id,
@@ -1893,7 +1880,10 @@ def test_no_eligible_route_or_terminal_parent_never_starts_process(store, config
         )
 
     with store._connect() as db:
-        db.execute("update okr_review_requests set status='failed' where id=12")
+        db.execute(
+            f"update tasks set status='failed' where record_type='okr_review_requests' and id={task_id_expression('okr_review_requests', '?')}",
+            (12,),
+        )
     with pytest.raises(ValueError, match="parent"):
         RoutedCodexExecution(
             store=store,

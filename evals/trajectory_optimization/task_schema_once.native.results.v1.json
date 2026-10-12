@@ -1,0 +1,168 @@
+{
+  "version": 1,
+  "baseline_ref": "ad7a6506",
+  "candidate_ref": "3e5a88f2",
+  "route": "codex_oauth",
+  "model": "gpt-5.6-luna",
+  "reasoning": "medium",
+  "raw_evidence": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-schema-only-e_1rtlvw",
+  "skill_sha256": "1cd05b1a3589437d795001723ec5bfb332456db16f21ff79b7f23bce6af5b101",
+  "cases_source": "task_schema_once.native.cases.v1.json",
+  "callbacks": "local fake Memory only; no real business actions",
+  "scope": "real native factory and CLI; isolated apply; not full scheduler or production",
+  "risk_database": "same fixed seeded project state in both arms, not separately generated cold database",
+  "cases": [
+    {
+      "variant": "baseline",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12ff9-87cd-75e2-a3ed-a55283d3d59d",
+      "prompt_sha256": "fb82fbd0f750588e330b9ef125466e03ae137a1391ec2ec171f832f3ef436ec7",
+      "skill_config_selected": false,
+      "prompt_chars": 76409,
+      "events_sha256": "97c8a2810c367a2e98a44554844b8bd0d80863b9f2d3057b129ab58c85a1f460",
+      "decision_sha256": "3d8a992480bf849b8ae9d59d2417539568cb9226a007d9a560bcc21ecae19ae6",
+      "same_session": true,
+      "turn_completed": true,
+      "model_valid": true,
+      "applied": true,
+      "projects": 1,
+      "tasks": 0,
+      "attention_count": 0,
+      "assessment_outcomes": [
+        "not_needed"
+      ],
+      "attention_categories": [],
+      "error_items": [
+        "Under-development features enabled: chronicle. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/derek/.codex/config.toml.",
+        "Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest."
+      ]
+    },
+    {
+      "variant": "baseline",
+      "phase": "risk",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12ff9-87cd-75e2-a3ed-a55283d3d59d",
+      "prompt_sha256": "8e62130700f014bb5a413d4053ac16d9506b2f68cd258c015b7baca7f33a38f9",
+      "skill_config_selected": false,
+      "prompt_chars": 79913,
+      "events_sha256": "202da4a5bce9ece89894ab81e9c7e950af025fb3ac0278679c8103f30cbaf1aa",
+      "decision_sha256": "c4a3b917f551d76539433317b72de0869debd084e3627cc0318aaebb88170881",
+      "same_session": true,
+      "turn_completed": true,
+      "model_valid": true,
+      "applied": true,
+      "projects": 1,
+      "tasks": 1,
+      "attention_count": 1,
+      "assessment_outcomes": [
+        "needs_attention"
+      ],
+      "attention_categories": [
+        "decision"
+      ],
+      "error_items": [
+        "Under-development features enabled: chronicle. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/derek/.codex/config.toml.",
+        "Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest."
+      ]
+    },
+    {
+      "variant": "candidate",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12ff9-b5b2-73e3-83f7-1d3a78b9893a",
+      "prompt_sha256": "cce645de3f086861a72fd74160c19d7b5ee49b48abf903b5400fd0f5e123c789",
+      "skill_config_selected": false,
+      "prompt_chars": 47648,
+      "events_sha256": "abbb470ff3f2d4edb8f8e6e42a242c47b3de31a0fa322123e34b086e164d7bcd",
+      "decision_sha256": "2031a8065d5461c49d676ad4b8baffdc064ee614ac6cad1238e3d1441f944e6e",
+      "same_session": true,
+      "turn_completed": true,
+      "model_valid": true,
+      "applied": true,
+      "projects": 1,
+      "tasks": 0,
+      "attention_count": 0,
+      "assessment_outcomes": [
+        "not_needed"
+      ],
+      "attention_categories": [],
+      "error_items": [
+        "Under-development features enabled: chronicle. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/derek/.codex/config.toml.",
+        "Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest."
+      ]
+    },
+    {
+      "variant": "candidate",
+      "phase": "risk",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12ff9-b5b2-73e3-83f7-1d3a78b9893a",
+      "prompt_sha256": "f9ed30b083115e7221605331dd813b846d795c6c03d24a76d38a08443d7f04fb",
+      "skill_config_selected": false,
+      "prompt_chars": 51152,
+      "events_sha256": "873e273e50d4804f2c0b33e5b30c3fe71d499cffd30be1da35a1e5bc5a3ce023",
+      "decision_sha256": "b9e78e089367ed4bc139c1eb38ddc4e630e2d3c3558077e61288113349312874",
+      "same_session": true,
+      "turn_completed": true,
+      "model_valid": true,
+      "applied": true,
+      "projects": 1,
+      "tasks": 1,
+      "attention_count": 1,
+      "assessment_outcomes": [
+        "needs_attention"
+      ],
+      "attention_categories": [
+        "watch"
+      ],
+      "error_items": [
+        "Under-development features enabled: chronicle. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/derek/.codex/config.toml."
+      ]
+    }
+  ],
+  "input_comparison": [
+    {
+      "phase": "cold",
+      "removed_chars": 28761,
+      "single_deletion_only": true,
+      "removed_json_equals_full_schema": true
+    },
+    {
+      "phase": "risk",
+      "removed_chars": 28761,
+      "single_deletion_only": true,
+      "removed_json_equals_full_schema": true
+    }
+  ],
+  "all_four_applied": true,
+  "native_saved_input_readback": [
+    {
+      "variant": "baseline",
+      "phase": "cold",
+      "native_saved_user_exact": true,
+      "native_task_sha256": "fb82fbd0f750588e330b9ef125466e03ae137a1391ec2ec171f832f3ef436ec7"
+    },
+    {
+      "variant": "baseline",
+      "phase": "risk",
+      "native_saved_user_exact": true,
+      "native_task_sha256": "8e62130700f014bb5a413d4053ac16d9506b2f68cd258c015b7baca7f33a38f9"
+    },
+    {
+      "variant": "candidate",
+      "phase": "cold",
+      "native_saved_user_exact": true,
+      "native_task_sha256": "cce645de3f086861a72fd74160c19d7b5ee49b48abf903b5400fd0f5e123c789"
+    },
+    {
+      "variant": "candidate",
+      "phase": "risk",
+      "native_saved_user_exact": true,
+      "native_task_sha256": "f9ed30b083115e7221605331dd813b846d795c6c03d24a76d38a08443d7f04fb"
+    }
+  ]
+}

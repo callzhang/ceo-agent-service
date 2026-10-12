@@ -51,7 +51,7 @@ def test_partial_execution_exposes_only_verified_canonical_receipt(tmp_path, mon
         {"summary": "Notification unverified", "error": {"code": "external_action_uncertain"}})
     store.record_sent_reply(task.conversation_id, task.trigger_message_id, "Earlier material request")
     with store._connect() as db:
-        db.execute("update reply_tasks set status='failed' where id=?", (task.id,))
+        db.execute("update tasks set status='failed' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,))
     _, detail = build_attempt_detail(store, attempt_id)
     execution = detail["system_execution"]
     assert execution["status"] == "uncertain"

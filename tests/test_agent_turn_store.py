@@ -1887,9 +1887,13 @@ def test_failed_run_without_native_does_not_fabricate_effect_event_fact(tmp_path
 
 
 def _create_previous_run_database(path: Path) -> Path:
-    from tests.run_schema_fixtures import previous_run_schema_store
+    from tests.run_schema_fixtures import (
+        add_source_agent_execution_receipts,
+        previous_run_schema_store,
+    )
     previous_run_schema_store(path,task_args=dict(conversation_id='cid-old',conversation_title='Old',single_chat=False,trigger_message_id='msg-old',trigger_create_time='2026-08-05 10:00:00',trigger_sender='Derek',trigger_text='old task',execution_generation='old-gen'))
     with sqlite3.connect(path) as db:
+        add_source_agent_execution_receipts(db)
         db.execute("update reply_tasks set status='done' where id=1")
         db.execute("""insert into agent_runs(id,reply_task_id,execution_generation,role,status,codex_session_id,completed_at,created_at,updated_at) values(7,1,'old-gen','audit','completed','session-old','2026-08-05 10:02:00','2026-08-05 10:00:00','2026-08-05 10:02:00')""")
         db.execute("""insert into agent_run_state_events(id,agent_run_id,phase,structured_error_json,created_at) values(8,7,'historical_state','{}','2026-08-06 15:00:00')""")
@@ -1898,9 +1902,22 @@ def _create_previous_run_database(path: Path) -> Path:
 
 
 def test_agent_run_migration_preserves_receipts_without_exposing_legacy_events(tmp_path):
-    db_path = _create_previous_run_database(tmp_path / "old.sqlite3")
+    from tests.run_schema_fixtures import (
+        current_store_with_migrated_core,
+        migrate_previous_run_schema,
+    )
 
-    store = AutoReplyStore(db_path)
+    db_path = _create_previous_run_database(tmp_path / "old.sqlite3")
+    with sqlite3.connect(db_path) as db:
+        source_receipt = db.execute(
+            "select id,agent_run_id,created_at,effect_counted "
+            "from agent_execution_receipts"
+        ).fetchone()
+    migrate_previous_run_schema(db_path)
+
+    store = current_store_with_migrated_core(
+        tmp_path, db_path, include_receipts=True
+    )
     run = store.get_agent_run(7)
 
     assert run is not None
@@ -1911,7 +1928,7 @@ def test_agent_run_migration_preserves_receipts_without_exposing_legacy_events(t
     assert run.operation_id == ""
     assert run.tool_events == []
     assert store.foreign_key_violations() == []
-    with sqlite3.connect(db_path) as db:
+    with sqlite3.connect(store.path) as db:
         event = db.execute(
             f"select id, created_at from ({RUN_STATE_EVENT_SQL}) where agent_run_id=7"
         ).fetchone()
@@ -1921,8 +1938,9 @@ def test_agent_run_migration_preserves_receipts_without_exposing_legacy_events(t
         ).fetchone()
     assert event == (8, "2026-08-06 15:00:00")
     assert receipt == (9, "2026-08-06 15:01:00", 0)
+    assert source_receipt == (9, 7, "2026-08-06 15:01:00", 0)
     assert not hasattr(store, "list_agent_execution_receipts")
-    with sqlite3.connect(db_path) as db:
+    with sqlite3.connect(store.path) as db:
         columns = {
             row[1] for row in db.execute("pragma table_info(runs)").fetchall()
         }
@@ -1934,6 +1952,11 @@ def test_agent_run_migration_preserves_receipts_without_exposing_legacy_events(t
 def test_agent_run_migration_preserves_failed_projection_and_legacy_state_history(
     tmp_path,
 ):
+    from tests.run_schema_fixtures import (
+        current_store_with_migrated_core,
+        migrate_previous_run_schema,
+    )
+
     db_path = _create_previous_run_database(tmp_path / "legacy-unknown.sqlite3")
     with sqlite3.connect(db_path) as db:
         db.execute(
@@ -1942,7 +1965,10 @@ def test_agent_run_migration_preserves_failed_projection_and_legacy_state_histor
 
         db.execute("update agent_run_state_events set phase='legacy_unknown_migrated',structured_error_json='{\"code\":\"legacy_unknown\",\"retryable\":true}' where agent_run_id=7")
 
-    store = AutoReplyStore(db_path)
+    migrate_previous_run_schema(db_path)
+    store = current_store_with_migrated_core(
+        tmp_path, db_path, include_receipts=True
+    )
     run = store.get_agent_run(7)
 
     assert run is not None
@@ -1951,7 +1977,7 @@ def test_agent_run_migration_preserves_failed_projection_and_legacy_state_histor
         "code": "legacy_unknown",
         "retryable": True,
     }
-    with sqlite3.connect(db_path) as db:
+    with sqlite3.connect(store.path) as db:
         event = db.execute(
             f"select phase, structured_error_json from ({RUN_STATE_EVENT_SQL}) "
             "where agent_run_id=7 order by id desc limit 1"
@@ -1963,6 +1989,11 @@ def test_agent_run_migration_preserves_failed_projection_and_legacy_state_histor
 
 
 def test_agent_run_migration_preserves_existing_turn_identity(tmp_path):
+    from tests.run_schema_fixtures import (
+        current_store_with_migrated_core,
+        migrate_previous_run_schema,
+    )
+
     db_path = _create_previous_run_database(tmp_path / "partial.sqlite3")
     with sqlite3.connect(db_path) as db:
         db.executescript(
@@ -1972,7 +2003,10 @@ def test_agent_run_migration_preserves_existing_turn_identity(tmp_path):
             """
         )
 
-    run = AutoReplyStore(db_path).get_agent_run(7)
+    migrate_previous_run_schema(db_path)
+    run = current_store_with_migrated_core(
+        tmp_path, db_path, include_receipts=True
+    ).get_agent_run(7)
 
     assert run is not None
     assert run.role is AgentRole.CONSUMER
@@ -1983,6 +2017,8 @@ def test_agent_run_migration_preserves_existing_turn_identity(tmp_path):
 def test_agent_run_migration_preserves_source_before_nonempty_native_event_failure(
     tmp_path,
 ):
+    from app.run_storage import migrate_run_schema
+
     db_path = _create_previous_run_database(tmp_path / "broken.sqlite3")
     with sqlite3.connect(db_path) as db:
         db.execute("pragma foreign_keys=off")
@@ -1993,11 +2029,39 @@ def test_agent_run_migration_preserves_source_before_nonempty_native_event_failu
             ) values (10, 999, 1, '{}', 'item.completed')
             """
         )
-
-    with pytest.raises(ValueError, match="agent_run_events contains native events"):
-        AutoReplyStore(db_path)
+        db.commit()
+        before_schema = db.execute(
+            "select type,name,tbl_name,sql from sqlite_master order by type,name"
+        ).fetchall()
+        tables = [
+            row[0]
+            for row in db.execute(
+                "select name from sqlite_master where type='table' order by name"
+            )
+        ]
+        before_rows = {
+            table: db.execute(f'select * from "{table}"').fetchall()
+            for table in tables
+        }
 
     with sqlite3.connect(db_path) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        with pytest.raises(ValueError, match="agent_run_events contains native events"):
+            migrate_run_schema(db)
+        db.rollback()
+
+    with sqlite3.connect(db_path) as db:
+        assert db.execute(
+            "select type,name,tbl_name,sql from sqlite_master order by type,name"
+        ).fetchall() == before_schema
+        assert {
+            table: db.execute(f'select * from "{table}"').fetchall()
+            for table in tables
+        } == before_rows
+        assert db.execute(
+            "select value from service_state where key='store_schema_version'"
+        ).fetchone()[0] == "2026-10-11.1"
         columns = {
             row[1] for row in db.execute("pragma table_info(agent_runs)").fetchall()
         }
