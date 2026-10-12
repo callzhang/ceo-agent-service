@@ -54,7 +54,7 @@
 - [x] RED覆盖同request多个OKR精确session/range、旧request prompt/native ID不变、原items逐列相等；weekly缓存及owner-expiry CAS不变。
 - [x] 同时切换queue/dispatcher、恢复、raw SQL脚本、领域DAO/native定位；取消9个领域退休cache列及finish比较占位，保留状态/session/error及业务结果。
 - [x] 根据真实source CHECK/FK/unique迁移，不把fresh模板附带新历史限制。
-- [ ] focused tests/Ruff/docs完成后按Task4验证并独立复核，再正常部署4B。
+- [x] focused tests/Ruff/docs完成后按Task4验证并独立复核，再正常部署4B。
 
 ## Task 3: 4C scheduled and Workbench
 
@@ -112,3 +112,8 @@ Read-only C caller preflight at582fccfe identifies coordinated runtime changes b
 
 
 Latest B release gate: c73039cb safely integrates production2bb2809c. All142 original CI failures now have separately SPEC/QUALITY-approved fixture repairs; combined31-file971 checks, whole Ruff/diff and11 offline publication/factory/updater checks pass. A fresh actual2bb source completed baseline inverse, new-fact inverse, actual321-file old-code startup/claim/watermarks and full re-forward; final independent critical review passed. Exact evidence is in the B validation document. New complete Quality and normal production deploy/readback are still required. C implementation must wait for actual B release and refresh its source13 snapshot.
+
+
+B live release completed: PR58/44a1a4e3, complete Quality38248135583 passed, PID68292/Store13/Email51/public IDs/115 receipts/manifests/health/queues/Attention/History read back. Details and physical-page limits in B validation. C now starts on isolated codex/database-redesign-phase4c-20261012 from actual deployed44a1a4e3; refresh exact source13 DDL and current counts before core implementation. Pending old daily backup deletion requires explicit answer to the asynchronous question; no automatic assumption.
+
+4C core unit: source13 exact49-field map, typed primitive/paired inverse/bootstrap/search cache coupling implemented. Core writer207 focused passes; two SPEC P2 source-boundary gaps fixed with8-failure RED/12-case GREEN; independent re-SPEC201 and QUALITY141 focused checks pass. Source constraints/UUID/raw values/children/rowids/FTS state verified within this core scope. Outer scheduled and Workbench DAO/readers/current14 source-quiet, real consistent production-copy/actual old-code, publication failures, complete CI and deployment remain pending. See C validation document; no C production application claimed.
