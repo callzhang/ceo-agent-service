@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import argparse
 import hashlib
 import errno
@@ -464,6 +465,45 @@ def _read_pdf_material(material_file, material_path: Path) -> dict[str, object]:
         "path": str(material_path),
         "sha256": digest,
     }
+
+
+def _download_dingtalk_drive_file(
+    *,
+    dws,
+    node_id: str,
+    space_id: str,
+    file_name: str,
+    material_root: Path,
+) -> dict[str, object]:
+    """Download one named DingTalk Drive node and extract its bounded contents."""
+    if not node_id.strip() or not space_id.strip():
+        raise AgentReadOnlyViolationError("drive_file_identity_required")
+    if not _task_file_component(file_name) or len(file_name) > 255:
+        raise AgentReadOnlyViolationError("drive_file_name_invalid")
+    material_root.mkdir(parents=True, exist_ok=True)
+    contents = dws.download_drive_file(
+        node_id, file_name=file_name, space_id=space_id
+    )
+    if len(contents) > MAX_SPREADSHEET_BYTES:
+        raise AgentReadOnlyViolationError("drive_file_too_large")
+    extension = Path(file_name).suffix
+    suffix = extension if extension[1:].isalnum() and len(extension) <= 16 else ""
+    prefix = hashlib.sha256(node_id.encode()).hexdigest()[:12] + "-"
+    with tempfile.NamedTemporaryFile(
+        mode="wb", prefix=prefix, suffix=suffix, dir=material_root, delete=False
+    ) as material_file:
+        material_file.write(contents)
+        material_path = Path(material_file.name)
+    extracted = read_text_file(str(material_path))
+    result = {
+        "node_id": node_id,
+        "space_id": space_id,
+        "file_name": file_name,
+        **extracted,
+    }
+    if extracted.get("format") == "pdf" and not extracted.get("content", "").strip():
+        result["ocr_required"] = True
+    return result
 
 
 def _read_xlsx_workbook(
@@ -1240,6 +1280,36 @@ def build_role_server(
     bound.add_tool(read_skill_tool, name="read_skill", annotations=read)
     bound.add_tool(read_text_file_tool, name="read_text_file", annotations=read)
     bound.add_tool(read_spreadsheet_tool, name="read_spreadsheet", annotations=read)
+    drive_material_directory: tempfile.TemporaryDirectory[str] | None = None
+
+    def read_dingtalk_drive_file(
+        node_id: str, space_id: str, file_name: str
+    ) -> dict[str, object]:
+        """Download and read one exact DingTalk Drive attachment node.
+
+        The file is retained only in this Agent CLI process's temporary directory
+        so the selected OCR Skill can read scanned PDFs by the returned path.
+        """
+        nonlocal drive_material_directory
+        from app.dws_client import DwsClient
+        if drive_material_directory is None:
+            drive_material_directory = tempfile.TemporaryDirectory(
+                prefix="oa-review-"
+            )
+            atexit.register(drive_material_directory.cleanup)
+        return _download_dingtalk_drive_file(
+            dws=DwsClient(),
+            node_id=node_id,
+            space_id=space_id,
+            file_name=file_name,
+            material_root=Path(drive_material_directory.name),
+        )
+
+    bound.add_tool(
+        read_dingtalk_drive_file,
+        name="read_dingtalk_drive_file",
+        annotations=read,
+    )
 
     def read_system_action_contract(
         capability: str,
@@ -1609,6 +1679,7 @@ def build_role_server(
         ("read_dingtalk_document_info", read_dingtalk_document_info),
         ("read_dingtalk_document_permissions", read_dingtalk_document_permissions),
         ("read_dingtalk_drive_info", read_dingtalk_drive_info),
+        ("read_dingtalk_drive_file", read_dingtalk_drive_file),
         ("list_dingtalk_sheets", list_dingtalk_sheets),
         ("read_dingtalk_sheet_info", read_dingtalk_sheet_info),
         ("read_dingtalk_sheet_range", read_dingtalk_sheet_range),
