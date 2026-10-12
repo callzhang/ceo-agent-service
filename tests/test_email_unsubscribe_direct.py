@@ -1191,7 +1191,7 @@ def test_current_schema_cli_preview_reads_without_constructing_execution_context
     database = tmp_path / "direct-unsubscribe.sqlite3"
     with sqlite3.connect(database) as db:
         before = db.execute("select type,name,sql from sqlite_master order by name").fetchall()
-        original_task = db.execute("select * from reply_tasks where id=?", (task.id,)).fetchone()
+        original_task = db.execute("select * from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,)).fetchone()
     def forbidden(_settings):
         raise AssertionError("preview constructed writable execution stores")
     monkeypatch.setattr(email_worker, "_build_email_unsubscribe_context", forbidden)
@@ -1207,7 +1207,7 @@ def test_current_schema_cli_preview_reads_without_constructing_execution_context
     }
     with sqlite3.connect(database) as db:
         assert db.execute("select type,name,sql from sqlite_master order by name").fetchall() == before
-        assert db.execute("select * from reply_tasks where id=?", (task.id,)).fetchone() == original_task
+        assert db.execute("select * from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,)).fetchone() == original_task
     assert email_store.get_email_unsubscribe_cancellation(ACTION_IDENTITY) is None
 
 
