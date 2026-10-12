@@ -1,0 +1,807 @@
+{
+  "version": 1,
+  "instruction_base_commit": "71ddb535",
+  "scope_candidate_commit": "a88d6e4f",
+  "manifest": {
+    "version": 1,
+    "source_manifest": "task-scoped-prompts-fixed-v1",
+    "selected_cases": [
+      "calendar-cross-midnight",
+      "mail-already-handled",
+      "document-material-conflicts",
+      "work-tracking-existing-remediation"
+    ],
+    "model_route": "configured codex_oauth",
+    "reasoning_effort": "medium",
+    "fixed_clock": "2026-10-11T12:00:00-07:00",
+    "corrections": [
+      "Future calendar dates shifted four days with intervals unchanged",
+      "Actual DwsCalendarEvent/DingTalkMessage output shapes",
+      "Separate document node IDs",
+      "Synthetic minimal Skills, empty Profile",
+      "Actual Consumer and Audit runner lifecycle; no external business action"
+    ]
+  },
+  "runs": [
+    {
+      "variant": "baseline",
+      "case": "calendar-cross-midnight",
+      "phase": "cold",
+      "role": "consumer",
+      "run_id": 1,
+      "status": "completed",
+      "session_id": "01a12ed5-e33f-77f0-9c62-75e2f70f786b",
+      "outcome": "proposal",
+      "preview_task_exact": true,
+      "route": "codex_oauth",
+      "model": "gpt-5.6-luna",
+      "attempts": [
+        {
+          "id": 2,
+          "status": "completed",
+          "session_id": "01a12ed5-e33f-77f0-9c62-75e2f70f786b",
+          "transcript_start": 0,
+          "transcript_end": 58
+        }
+      ],
+      "calls": [
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract"
+      ],
+      "hashes": {
+        "submitted-task.txt": "61619752c54af73b0d31762284a728a4d8c34d668cb3e75403c6c5ecb1826cac",
+        "developer-option.txt": "186426b34d3e6ab9a4ef67356fb7005870c9e9ee38d290c4c32a546abce2d71b",
+        "events.jsonl": "6d7ce518dd4b9f4bf2daea28dbad4b697398eec75069ec0ad0fde8cb608c6bd5",
+        "calls.json": "48f84ea2e20df7c3df86ea2c782c6f34ac27e953814df2a294ab246490b74117"
+      },
+      "business_review": "requested substantive behavior supported; source fixture limits apply"
+    },
+    {
+      "variant": "baseline",
+      "case": "calendar-cross-midnight",
+      "phase": "cold",
+      "role": "audit",
+      "run_id": 3,
+      "status": "completed",
+      "session_id": "01a12ed6-48e0-7b23-b0e0-3be79fb5a5ca",
+      "outcome": "approve",
+      "preview_task_exact": true,
+      "route": "codex_oauth",
+      "model": "gpt-5.6-luna",
+      "attempts": [
+        {
+          "id": 4,
+          "status": "completed",
+          "session_id": "01a12ed6-48e0-7b23-b0e0-3be79fb5a5ca",
+          "transcript_start": 0,
+          "transcript_end": 58
+        }
+      ],
+      "calls": [
+        "read_skill",
+        "read_system_action_contract",
+        "read_text_file",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events"
+      ],
+      "hashes": {
+        "submitted-task.txt": "93713b07f6be71732663501c5fb65c7afa110b9a9c0545349963466c9121304b",
+        "developer-option.txt": "93edabbeddee32a181855f066f6e14ec26784b63abd4020999a25f72630b3d0a",
+        "events.jsonl": "dea78a018bbce9ecbd84151306aba6695ce9d716fe3fbb6ec4e6f5ea2c29066a",
+        "calls.json": "3d232b34c707355953a37bb2ddebfa5026bc5702c7be64622872237d3dbd6252"
+      },
+      "business_review": "approval binding supported; source fixture limits apply"
+    },
+    {
+      "variant": "baseline",
+      "case": "calendar-cross-midnight",
+      "phase": "resume",
+      "role": "consumer",
+      "run_id": 5,
+      "status": "completed",
+      "session_id": "01a12ed5-e33f-77f0-9c62-75e2f70f786b",
+      "outcome": "no_action",
+      "preview_task_exact": true,
+      "route": "codex_oauth",
+      "model": "gpt-5.6-luna",
+      "attempts": [
+        {
+          "id": 6,
+          "status": "completed",
+          "session_id": "01a12ed5-e33f-77f0-9c62-75e2f70f786b",
+          "transcript_start": 58,
+          "transcript_end": 98
+        }
+      ],
+      "calls": [
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract"
+      ],
+      "hashes": {
+        "submitted-task.txt": "61619752c54af73b0d31762284a728a4d8c34d668cb3e75403c6c5ecb1826cac",
+        "developer-option.txt": "186426b34d3e6ab9a4ef67356fb7005870c9e9ee38d290c4c32a546abce2d71b",
+        "events.jsonl": "59fd0de046fdea65e71aafc8fd44d55772c66c4a558579dacded4151ce7d8bd4",
+        "calls.json": "48f84ea2e20df7c3df86ea2c782c6f34ac27e953814df2a294ab246490b74117"
+      },
+      "business_review": "requested substantive behavior supported; source fixture limits apply"
+    },
+    {
+      "variant": "baseline",
+      "case": "calendar-cross-midnight",
+      "phase": "resume",
+      "role": "audit",
+      "run_id": 7,
+      "status": "completed",
+      "session_id": "01a12ed6-48e0-7b23-b0e0-3be79fb5a5ca",
+      "outcome": "approve",
+      "preview_task_exact": true,
+      "route": "codex_oauth",
+      "model": "gpt-5.6-luna",
+      "attempts": [
+        {
+          "id": 8,
+          "status": "completed",
+          "session_id": "01a12ed6-48e0-7b23-b0e0-3be79fb5a5ca",
+          "transcript_start": 58,
+          "transcript_end": 92
+        }
+      ],
+      "calls": [
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events"
+      ],
+      "hashes": {
+        "submitted-task.txt": "a3972df5a63ec0257182126e0d1081be9214000debc1f8441f6fd08baf29afd5",
+        "developer-option.txt": "44f8920776a52eb7c1a25671cda7590463a3efee277a235cce16e83eecf9ce19",
+        "events.jsonl": "31851a0617aca5e7d8167da4546a3229efbda47b3e8545688e251d644ea33f3c",
+        "calls.json": "6d36f96585c13112e9f4bc4555634cc4bb9db528f9b5885df60ac19ed25acaed"
+      },
+      "business_review": "approval binding supported; source fixture limits apply"
+    },
+    {
+      "variant": "baseline",
+      "case": "mail-already-handled",
+      "phase": "cold",
+      "role": "consumer",
+      "run_id": 1,
+      "status": "completed",
+      "session_id": "01a12ed7-c34c-7120-bbd8-81ac19bce5b0",
+      "outcome": "no_action",
+      "preview_task_exact": true,
+      "route": "codex_oauth",
+      "model": "gpt-5.6-luna",
+      "attempts": [
+        {
+          "id": 2,
+          "status": "completed",
+          "session_id": "01a12ed7-c34c-7120-bbd8-81ac19bce5b0",
+          "transcript_start": 0,
+          "transcript_end": 49
+        }
+      ],
+      "calls": [
+        "read_skill",
+        "read_dingtalk_messages",
+        "read_dingtalk_thread_replies"
+      ],
+      "hashes": {
+        "submitted-task.txt": "d9a7704976762e68f9686748a794f0ef563c130c601ce53df20a2407fdff00b4",
+        "developer-option.txt": "f5e7cdd12a994e3137a3ffce9b204c365863798fb5bd6c0f5223d564e4d8ffd3",
+        "events.jsonl": "8a3cda28c2f1f00de4d8fc11d5226cecbc237de6bbe6e21928f7fdbf61a32df2",
+        "calls.json": "465c114f4a0fac12863fa2da5ce2c1c6cd9fbb64f0dbb7680a3b98826d6e2787"
+      },
+      "business_review": "requested substantive behavior supported; source fixture limits apply"
+    },
+    {
+      "variant": "baseline",
+      "case": "mail-already-handled",
+      "phase": "cold",
+      "role": "audit",
+      "run_id": 3,
+      "status": "completed",
+      "session_id": "01a12ed8-3d58-7163-a54b-6f1d8e12bf5f",
+      "outcome": "approve",
+      "preview_task_exact": true,
+      "route": "codex_oauth",
+      "model": "gpt-5.6-luna",
+      "attempts": [
+        {
+          "id": 4,
+          "status": "completed",
+          "session_id": "01a12ed8-3d58-7163-a54b-6f1d8e12bf5f",
+          "transcript_start": 0,
+          "transcript_end": 31
+        }
+      ],
+      "calls": [
+        "read_skill",
+        "read_dingtalk_messages"
+      ],
+      "hashes": {
+        "submitted-task.txt": "d02ff9211976069c3cf3a3b26876e0f1a9f14110ec9f1f10073305737a147694",
+        "developer-option.txt": "beed6692cf650ddce52e1c102810678312b823e2035eeb470eb330b936dde808",
+        "events.jsonl": "0db027dd77cd531e46ff7346d1d7501f4cb5e8a1ddec25d2eb8481a7ddbbd46c",
+        "calls.json": "01e373e67dd1b5cac9c84a577b8b7c22c3b788a9e2374b146d2ab12254562ac3"
+      },
+      "business_review": "approval binding supported; source fixture limits apply"
+    },
+    {
+      "variant": "baseline",
+      "case": "document-material-conflicts",
+      "phase": "cold",
+      "role": "consumer",
+      "run_id": 1,
+      "status": "completed",
+      "session_id": "01a12ed8-975b-78b0-a141-ee4174a864c0",
+      "outcome": "proposal",
+      "preview_task_exact": true,
+      "route": "codex_oauth",
+      "model": "gpt-5.6-luna",
+      "attempts": [
+        {
+          "id": 2,
+          "status": "completed",
+          "session_id": "01a12ed8-975b-78b0-a141-ee4174a864c0",
+          "transcript_start": 0,
+          "transcript_end": 55
+        }
+      ],
+      "calls": [
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "hashes": {
+        "submitted-task.txt": "7046fcdd0ea8d56c6007f9a2e254fa8785d0efcb630365d338d0b93d3d3139a0",
+        "developer-option.txt": "4bca89d085b867d6cf439fc348000605a110495c80d0e75cefaf715f873f5042",
+        "events.jsonl": "563be60d2b3c9c1df0fe78caa141d9fe3814f3054236b2c7be721ab9914d4444",
+        "calls.json": "9ecdb77fdcd9b397c09d898a4c60b1500aefe101dbdaa502bd192cfa59133f92"
+      },
+      "business_review": "requested substantive behavior supported; source fixture limits apply"
+    },
+    {
+      "variant": "baseline",
+      "case": "document-material-conflicts",
+      "phase": "cold",
+      "role": "audit",
+      "run_id": 3,
+      "status": "completed",
+      "session_id": "01a12ed9-5e89-74c0-bd92-165c98000d0c",
+      "outcome": "approve",
+      "preview_task_exact": false,
+      "route": "codex_oauth",
+      "model": "gpt-5.6-luna",
+      "attempts": [
+        {
+          "id": 4,
+          "status": "completed",
+          "session_id": "01a12ed9-5e89-74c0-bd92-165c98000d0c",
+          "transcript_start": 0,
+          "transcript_end": 36
+        }
+      ],
+      "calls": [
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_document"
+      ],
+      "hashes": {
+        "submitted-task.txt": "d2e9ed46569ef3f2d7cca74fe513d0320fe38dce60ad9bdd3a63afba283a5492",
+        "developer-option.txt": "d6de3e0361ec44461e38d471d7da70b71853a7efe81504d0034286087860cfa5",
+        "events.jsonl": "1d38fdc90af251bf797215ca1019311841b23758ac1b87d1cc74ce789b88267d",
+        "calls.json": "a41b4c5c0dd5dc8891dab752f80a2d1fa0c94add33d333ef679a23e0b1edc55d"
+      },
+      "business_review": "approve business content, Settings masks callback reference"
+    },
+    {
+      "variant": "baseline",
+      "case": "work-tracking-existing-remediation",
+      "phase": "cold",
+      "role": "consumer",
+      "run_id": 1,
+      "status": "completed",
+      "session_id": "01a12ed9-a83d-70b3-8637-e2d0c3517233",
+      "outcome": "proposal",
+      "preview_task_exact": true,
+      "route": "codex_oauth",
+      "model": "gpt-5.6-luna",
+      "attempts": [
+        {
+          "id": 2,
+          "status": "completed",
+          "session_id": "01a12ed9-a83d-70b3-8637-e2d0c3517233",
+          "transcript_start": 0,
+          "transcript_end": 55
+        }
+      ],
+      "calls": [
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "hashes": {
+        "submitted-task.txt": "e761ebc487a959eb240e4094cefa42c28d2ed2c39ed80fbfaea16d333cbfb642",
+        "developer-option.txt": "42a5d5d0171aca6e0c549bbbbb5be411c78023ba79c035c2377c74afc975ab63",
+        "events.jsonl": "6fbfbe365410e480cbf68d3f792d1366dd90db223f9379d7543b9d9b37386770",
+        "calls.json": "d93b63ecd3e9b901d2db8d4c5e8819eac5867397629c6397c783c37782b464b4"
+      },
+      "business_review": "requested substantive behavior supported; source fixture limits apply"
+    },
+    {
+      "variant": "baseline",
+      "case": "work-tracking-existing-remediation",
+      "phase": "cold",
+      "role": "audit",
+      "error_type": "ResultParseError",
+      "detail": "agent_result_contains_sensitive_value",
+      "run_id": 3,
+      "status": "failed",
+      "attempts": [
+        {
+          "id": 4,
+          "status": "failed",
+          "session_id": "01a12eda-2389-7081-8a1c-8717270024af",
+          "transcript_start": 0,
+          "transcript_end": 34
+        }
+      ],
+      "calls": [
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_document"
+      ],
+      "hashes": {
+        "submitted-task.txt": "81b435b7badf6eb6314bfbc74826c132a7ec28e7b80cd3afd3fd542d3d52abc2",
+        "developer-option.txt": "7bb36dde929f2856d6b15463191d9552c7f22e08be3ca1d105f289dada1f7918",
+        "events.jsonl": "caea3db780d41322c424915ff92461b380dc06e7198f337f307b310c459af93d",
+        "calls.json": "3d2de1c2db3b072649ea54f640fd6221a05206e932ca86de7943740f0918a21b"
+      },
+      "business_review": "failed: service preparation reference treated as secret/removal request"
+    },
+    {
+      "variant": "scoped",
+      "case": "calendar-cross-midnight",
+      "phase": "cold",
+      "role": "consumer",
+      "run_id": 1,
+      "status": "completed",
+      "session_id": "01a12ee2-aa0b-72f1-95cd-e4c16e1d5ace",
+      "outcome": "proposal",
+      "preview_task_exact": true,
+      "route": "codex_oauth",
+      "model": "gpt-5.6-luna",
+      "attempts": [
+        {
+          "id": 2,
+          "status": "completed",
+          "session_id": "01a12ee2-aa0b-72f1-95cd-e4c16e1d5ace",
+          "transcript_start": 0,
+          "transcript_end": 54
+        }
+      ],
+      "calls": [
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract"
+      ],
+      "hashes": {
+        "submitted-task.txt": "61619752c54af73b0d31762284a728a4d8c34d668cb3e75403c6c5ecb1826cac",
+        "developer-option.txt": "186426b34d3e6ab9a4ef67356fb7005870c9e9ee38d290c4c32a546abce2d71b",
+        "events.jsonl": "95f7c7022e4b96e38f2c448494c79ff8a9b29fd7ee0b6c79ce645395fb3f3382",
+        "calls.json": "293c02fc15240b1796444eaab11ca35302e644efef615321ec4bff7d0fdc8f15"
+      },
+      "business_review": "requested substantive behavior supported; source fixture limits apply"
+    },
+    {
+      "variant": "scoped",
+      "case": "calendar-cross-midnight",
+      "phase": "cold",
+      "role": "audit",
+      "run_id": 3,
+      "status": "completed",
+      "session_id": "01a12ee3-0c88-7181-a4d1-d079abb65b47",
+      "outcome": "approve",
+      "preview_task_exact": true,
+      "route": "codex_oauth",
+      "model": "gpt-5.6-luna",
+      "attempts": [
+        {
+          "id": 4,
+          "status": "completed",
+          "session_id": "01a12ee3-0c88-7181-a4d1-d079abb65b47",
+          "transcript_start": 0,
+          "transcript_end": 41
+        }
+      ],
+      "calls": [
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events"
+      ],
+      "hashes": {
+        "submitted-task.txt": "a68a59ee1f76992e928d6dfdee2e552e78b93d04f52b1a280e1a513a4e2e7612",
+        "developer-option.txt": "93edabbeddee32a181855f066f6e14ec26784b63abd4020999a25f72630b3d0a",
+        "events.jsonl": "36f8e578c0ee1739ad8490629d66a5f6f12eeeb2a51df9727b154614b0067638",
+        "calls.json": "6261f858687ebbe213fbd37d3977f7846b35e995fe13ab6ffc61fe42c2dc06b0"
+      },
+      "business_review": "approval binding supported; source fixture limits apply"
+    },
+    {
+      "variant": "scoped",
+      "case": "calendar-cross-midnight",
+      "phase": "resume",
+      "role": "consumer",
+      "run_id": 5,
+      "status": "completed",
+      "session_id": "01a12ee2-aa0b-72f1-95cd-e4c16e1d5ace",
+      "outcome": "no_action",
+      "preview_task_exact": true,
+      "route": "codex_oauth",
+      "model": "gpt-5.6-luna",
+      "attempts": [
+        {
+          "id": 6,
+          "status": "completed",
+          "session_id": "01a12ee2-aa0b-72f1-95cd-e4c16e1d5ace",
+          "transcript_start": 54,
+          "transcript_end": 103
+        }
+      ],
+      "calls": [
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract"
+      ],
+      "hashes": {
+        "submitted-task.txt": "61619752c54af73b0d31762284a728a4d8c34d668cb3e75403c6c5ecb1826cac",
+        "developer-option.txt": "186426b34d3e6ab9a4ef67356fb7005870c9e9ee38d290c4c32a546abce2d71b",
+        "events.jsonl": "e0126b2295ec1c4c29797cf9a4fd4df40e6f667b70c215aaf06c46f7ebcabfe2",
+        "calls.json": "293c02fc15240b1796444eaab11ca35302e644efef615321ec4bff7d0fdc8f15"
+      },
+      "business_review": "requested substantive behavior supported; source fixture limits apply"
+    },
+    {
+      "variant": "scoped",
+      "case": "calendar-cross-midnight",
+      "phase": "resume",
+      "role": "audit",
+      "run_id": 7,
+      "status": "completed",
+      "session_id": "01a12ee3-0c88-7181-a4d1-d079abb65b47",
+      "outcome": "approve",
+      "preview_task_exact": true,
+      "route": "codex_oauth",
+      "model": "gpt-5.6-luna",
+      "attempts": [
+        {
+          "id": 8,
+          "status": "completed",
+          "session_id": "01a12ee3-0c88-7181-a4d1-d079abb65b47",
+          "transcript_start": 41,
+          "transcript_end": 82
+        }
+      ],
+      "calls": [
+        "read_skill",
+        "read_dingtalk_calendar_event",
+        "list_dingtalk_calendar_events",
+        "read_system_action_contract"
+      ],
+      "hashes": {
+        "submitted-task.txt": "56b06cd9ea4c2ff862df33c39051680fd6d9b2d344b30c8278459d4cc1ea2fca",
+        "developer-option.txt": "44f8920776a52eb7c1a25671cda7590463a3efee277a235cce16e83eecf9ce19",
+        "events.jsonl": "0d4f44adf65755c658087669e071e77c494c9701a7b158e2ada9f2291c61651b",
+        "calls.json": "293c02fc15240b1796444eaab11ca35302e644efef615321ec4bff7d0fdc8f15"
+      },
+      "business_review": "approval binding supported; source fixture limits apply"
+    },
+    {
+      "variant": "scoped",
+      "case": "mail-already-handled",
+      "phase": "cold",
+      "role": "consumer",
+      "run_id": 1,
+      "status": "completed",
+      "session_id": "01a12ee3-e359-7b01-945d-ced74cc07114",
+      "outcome": "no_action",
+      "preview_task_exact": true,
+      "route": "codex_oauth",
+      "model": "gpt-5.6-luna",
+      "attempts": [
+        {
+          "id": 2,
+          "status": "completed",
+          "session_id": "01a12ee3-e359-7b01-945d-ced74cc07114",
+          "transcript_start": 0,
+          "transcript_end": 47
+        }
+      ],
+      "calls": [
+        "read_skill",
+        "read_dingtalk_messages",
+        "read_dingtalk_thread_replies"
+      ],
+      "hashes": {
+        "submitted-task.txt": "d9a7704976762e68f9686748a794f0ef563c130c601ce53df20a2407fdff00b4",
+        "developer-option.txt": "f5e7cdd12a994e3137a3ffce9b204c365863798fb5bd6c0f5223d564e4d8ffd3",
+        "events.jsonl": "a6b50e76703110b28908ab9c515486f10daf03f87303db04f0f822feb7c4995d",
+        "calls.json": "35b41689c19f2ea95c91c512c2529e423b9c22a876b7321d326787f1a5986ce3"
+      },
+      "business_review": "requested substantive behavior supported; source fixture limits apply"
+    },
+    {
+      "variant": "scoped",
+      "case": "mail-already-handled",
+      "phase": "cold",
+      "role": "audit",
+      "run_id": 3,
+      "status": "completed",
+      "session_id": "01a12ee4-2a78-7eb1-8757-9736cc24f42f",
+      "outcome": "approve",
+      "preview_task_exact": true,
+      "route": "codex_oauth",
+      "model": "gpt-5.6-luna",
+      "attempts": [
+        {
+          "id": 4,
+          "status": "completed",
+          "session_id": "01a12ee4-2a78-7eb1-8757-9736cc24f42f",
+          "transcript_start": 0,
+          "transcript_end": 40
+        }
+      ],
+      "calls": [
+        "read_text_file",
+        "read_skill",
+        "read_dingtalk_messages"
+      ],
+      "hashes": {
+        "submitted-task.txt": "3689ec54d2397e7013883701b99b95d6ba474ca0baaeb62f8083b52c32843c3e",
+        "developer-option.txt": "beed6692cf650ddce52e1c102810678312b823e2035eeb470eb330b936dde808",
+        "events.jsonl": "6a2caa6eac2f6f0a1821d6db91034ca6af2651d992e8f7f1c65404f197b36103",
+        "calls.json": "f93d0107c880fa6ad29d56991647261d0f5e0ff0adab840dffe7615d28e79641"
+      },
+      "business_review": "approval binding supported; source fixture limits apply"
+    },
+    {
+      "variant": "scoped",
+      "case": "document-material-conflicts",
+      "phase": "cold",
+      "role": "consumer",
+      "run_id": 1,
+      "status": "completed",
+      "session_id": "01a12ee4-a98f-7011-8cad-be11762e1555",
+      "outcome": "proposal",
+      "preview_task_exact": true,
+      "route": "codex_oauth",
+      "model": "gpt-5.6-luna",
+      "attempts": [
+        {
+          "id": 2,
+          "status": "completed",
+          "session_id": "01a12ee4-a98f-7011-8cad-be11762e1555",
+          "transcript_start": 0,
+          "transcript_end": 55
+        }
+      ],
+      "calls": [
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "hashes": {
+        "submitted-task.txt": "7046fcdd0ea8d56c6007f9a2e254fa8785d0efcb630365d338d0b93d3d3139a0",
+        "developer-option.txt": "4bca89d085b867d6cf439fc348000605a110495c80d0e75cefaf715f873f5042",
+        "events.jsonl": "ef9641498b8f1a834fe7326930dc1c221656ddd95a43ff15d8804a7c16898ab3",
+        "calls.json": "9ecdb77fdcd9b397c09d898a4c60b1500aefe101dbdaa502bd192cfa59133f92"
+      },
+      "business_review": "requested substantive behavior supported; source fixture limits apply"
+    },
+    {
+      "variant": "scoped",
+      "case": "document-material-conflicts",
+      "phase": "cold",
+      "role": "audit",
+      "error_type": "ResultParseError",
+      "detail": "agent_result_contains_sensitive_value",
+      "run_id": 3,
+      "status": "failed",
+      "attempts": [
+        {
+          "id": 4,
+          "status": "failed",
+          "session_id": "01a12ee5-2431-7070-af6a-0f271b89e970",
+          "transcript_start": 0,
+          "transcript_end": 60
+        }
+      ],
+      "calls": [
+        "read_skill",
+        "read_text_file",
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_document"
+      ],
+      "hashes": {
+        "submitted-task.txt": "3eeae34bc79b19d05e0ad69226b267730a0c83c15c17ce922ae18f3422255097",
+        "developer-option.txt": "d6de3e0361ec44461e38d471d7da70b71853a7efe81504d0034286087860cfa5",
+        "events.jsonl": "54a536fbb092810155ac6cf58850342666675807b3be74dd01a7c4bfa6e84edf",
+        "calls.json": "8611bca05196233eff6d416bb29e4e14243b154a6539e19b18901e0538011179"
+      },
+      "business_review": "failed: service preparation reference treated as secret/removal request"
+    },
+    {
+      "variant": "scoped",
+      "case": "work-tracking-existing-remediation",
+      "phase": "cold",
+      "role": "consumer",
+      "run_id": 1,
+      "status": "completed",
+      "session_id": "01a12ee5-9ea9-71a0-978f-d06ec056ed0b",
+      "outcome": "proposal",
+      "preview_task_exact": true,
+      "route": "codex_oauth",
+      "model": "gpt-5.6-luna",
+      "attempts": [
+        {
+          "id": 2,
+          "status": "completed",
+          "session_id": "01a12ee5-9ea9-71a0-978f-d06ec056ed0b",
+          "transcript_start": 0,
+          "transcript_end": 47
+        }
+      ],
+      "calls": [
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "hashes": {
+        "submitted-task.txt": "e761ebc487a959eb240e4094cefa42c28d2ed2c39ed80fbfaea16d333cbfb642",
+        "developer-option.txt": "42a5d5d0171aca6e0c549bbbbb5be411c78023ba79c035c2377c74afc975ab63",
+        "events.jsonl": "325c88b0c431d10e3e88a3089e006cacdc7339307220010799da04dcc99227d5",
+        "calls.json": "d93b63ecd3e9b901d2db8d4c5e8819eac5867397629c6397c783c37782b464b4"
+      },
+      "business_review": "requested substantive behavior supported; source fixture limits apply"
+    },
+    {
+      "variant": "scoped",
+      "case": "work-tracking-existing-remediation",
+      "phase": "cold",
+      "role": "audit",
+      "run_id": 3,
+      "status": "completed",
+      "session_id": "01a12ee5-eab6-7e93-88c3-55800bd61a6d",
+      "outcome": "return",
+      "preview_task_exact": false,
+      "route": "codex_oauth",
+      "model": "gpt-5.6-luna",
+      "attempts": [
+        {
+          "id": 4,
+          "status": "completed",
+          "session_id": "01a12ee5-eab6-7e93-88c3-55800bd61a6d",
+          "transcript_start": 0,
+          "transcript_end": 66
+        }
+      ],
+      "calls": [
+        "read_skill",
+        "read_text_file",
+        "read_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "hashes": {
+        "submitted-task.txt": "b372919f3086c4cb5bf5312abded6467338c2a5151a5f8fd9b831a68fa5389b7",
+        "developer-option.txt": "7bb36dde929f2856d6b15463191d9552c7f22e08be3ca1d105f289dada1f7918",
+        "events.jsonl": "4638253f9257e47ee7ccd423729f971929a5cc92ef989bdad8ad4d56846f642d",
+        "calls.json": "93f5e61f8e55c7f0c56891bebf822bdc85b8ec9a7f67339822212aae1b593dbf"
+      },
+      "business_review": "failed: service preparation reference treated as secret/removal request"
+    }
+  ],
+  "input_checks": [
+    {
+      "case": "calendar-cross-midnight",
+      "phase": "cold",
+      "role": "consumer",
+      "task_equal": true,
+      "developer_equal": true
+    },
+    {
+      "case": "calendar-cross-midnight",
+      "phase": "cold",
+      "role": "audit",
+      "task_equal": false,
+      "developer_equal": true
+    },
+    {
+      "case": "calendar-cross-midnight",
+      "phase": "resume",
+      "role": "consumer",
+      "task_equal": true,
+      "developer_equal": true
+    },
+    {
+      "case": "calendar-cross-midnight",
+      "phase": "resume",
+      "role": "audit",
+      "task_equal": false,
+      "developer_equal": true
+    },
+    {
+      "case": "mail-already-handled",
+      "phase": "cold",
+      "role": "consumer",
+      "task_equal": true,
+      "developer_equal": true
+    },
+    {
+      "case": "mail-already-handled",
+      "phase": "cold",
+      "role": "audit",
+      "task_equal": false,
+      "developer_equal": true
+    },
+    {
+      "case": "document-material-conflicts",
+      "phase": "cold",
+      "role": "consumer",
+      "task_equal": true,
+      "developer_equal": true
+    },
+    {
+      "case": "document-material-conflicts",
+      "phase": "cold",
+      "role": "audit",
+      "task_equal": false,
+      "developer_equal": true
+    },
+    {
+      "case": "work-tracking-existing-remediation",
+      "phase": "cold",
+      "role": "consumer",
+      "task_equal": true,
+      "developer_equal": true
+    },
+    {
+      "case": "work-tracking-existing-remediation",
+      "phase": "cold",
+      "role": "audit",
+      "task_equal": false,
+      "developer_equal": true
+    }
+  ],
+  "all_business_gates_passed": false,
+  "production_acceptance": false,
+  "independent_review": "Full Consumer/Audit input/output/source, candidate binding, postfixed body identity and failed finals independently reviewed.",
+  "confirmed_mechanisms": [
+    "Prepared candidate chat bodies match persisted service final_body exactly.",
+    "Document Settings task equals generic credential-redacted input; raw equality fails on feedback references.",
+    "Audit asks to remove service-created message feedback references; quoting the identifier can also trigger generic sensitive-value rejection."
+  ],
+  "limitations": [
+    "Calendar list fixture returns all events without respecting queried range; edge semantics of actual provider not verified.",
+    "Mail is a synthetic DingTalk mail-card/thread scene; optional thread replies callback unsupported.",
+    "Work tracking scene is Consumer project-risk reply, not complete Project/Task extraction agent validation.",
+    "Anonymous minimal Skills and empty Profile; not private production business acceptance.",
+    "Same-case Consumer inputs identical; Audit candidates differ due generated Consumer wording and preparation refs.",
+    "No external business action; no change to audit or safety policies."
+  ],
+  "artifact_root": "/private/tmp/ceo-contract-four-domains-r5p6nz42",
+  "generation_hashes": {
+    "cases.json": "9f48cadd6c20d452038822a6121e30751f00799cde676dd73d02379554354c01",
+    "manifest.json": "cf7882917403781f8e55efa76b9c59657265ed90ec54bd2789a352ff92a82f71",
+    "run.py": "65c20228c4f0b72698784c1f28975409c90f05d894a6b898c27c8206075c28fc",
+    "server.py": "255289c098172b69e4a2f3f05dd04013bd507079bb60a2b6f89ecd0f17aa0c93"
+  }
+}
