@@ -47,6 +47,7 @@ def snapshot(path):
 def legacy_v47(path):
     seed_provider(path)
     with sqlite3.connect(path) as db:
+        db.execute("drop table email_direct_retry_requests")
         restore_action_plan_snapshot_column(db)
         db.execute(
             f"create index if not exists {LOOKUP} on email_provider_observations"
@@ -78,7 +79,8 @@ def test_v47_migration_preserves_business_rows_and_reopens_idempotently(tmp_path
         assert FOLDER in index_names(db)
         assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == EMAIL_SCHEMA_VERSION
         versions = db.execute("select * from email_schema_migrations order by version").fetchall()
-        assert [row[0] for row in versions] == [47, 48, 49, 50]
+        assert [row[0] for row in versions] == [47, 48, 49, 50, 51]
+        assert db.execute("select count(*) from email_direct_retry_requests").fetchone()[0] == 0
         assert db.execute("pragma foreign_key_check").fetchall() == []
         assert db.execute("pragma quick_check").fetchone()[0] == "ok"
     assert snapshot(path) == before

@@ -1073,6 +1073,7 @@ def test_cancellation_storage_migrates_schema49_without_changing_plan_or_receipt
     store = _seed(database)
     original = store.get_classification(CLASSIFICATION_ID)
     with sqlite3.connect(database) as db:
+        db.execute("drop table email_direct_retry_requests")
         db.execute("drop table email_unsubscribe_cancellations")
         db.execute("delete from email_schema_migrations where version>=50")
         db.execute("insert into email_schema_migrations(version,applied_at) values (49,'2026-10-11T00:00:00Z')")
@@ -1081,7 +1082,8 @@ def test_cancellation_storage_migrates_schema49_without_changing_plan_or_receipt
     assert migrated.get_email_unsubscribe_cancellation(ACTION_IDENTITY) is None
     assert migrated.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
     with sqlite3.connect(database) as db:
-        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == 50
+        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == 51
+        assert db.execute("select count(*) from email_direct_retry_requests").fetchone()[0] == 0
         assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
 
 
@@ -1189,7 +1191,7 @@ def test_current_schema_cli_preview_reads_without_constructing_execution_context
     database = tmp_path / "direct-unsubscribe.sqlite3"
     with sqlite3.connect(database) as db:
         before = db.execute("select type,name,sql from sqlite_master order by name").fetchall()
-        original_task = db.execute("select * from reply_tasks where id=?", (task.id,)).fetchone()
+        original_task = db.execute("select * from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,)).fetchone()
     def forbidden(_settings):
         raise AssertionError("preview constructed writable execution stores")
     monkeypatch.setattr(email_worker, "_build_email_unsubscribe_context", forbidden)
@@ -1205,7 +1207,7 @@ def test_current_schema_cli_preview_reads_without_constructing_execution_context
     }
     with sqlite3.connect(database) as db:
         assert db.execute("select type,name,sql from sqlite_master order by name").fetchall() == before
-        assert db.execute("select * from reply_tasks where id=?", (task.id,)).fetchone() == original_task
+        assert db.execute("select * from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,)).fetchone() == original_task
     assert email_store.get_email_unsubscribe_cancellation(ACTION_IDENTITY) is None
 
 

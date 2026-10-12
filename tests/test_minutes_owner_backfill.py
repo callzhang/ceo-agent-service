@@ -4,6 +4,7 @@ import pytest
 
 from app.minutes_owner_backfill import backfill_minutes_owners, ownerless_candidate_meetings
 from app.store import AutoReplyStore
+from app.task_storage import WORK_SUMMARY_INPUT_SQL
 from app.task_semantic_service import RecordCandidate, SourceSignal, TaskSemanticService, UpdateBusinessTask
 from app.task_semantic_models import BusinessTaskStatus
 
@@ -44,7 +45,7 @@ def _candidate(store, *, minutes_id="minutes-1", title="整理访谈问题清单
 
 def _queued(store):
     with store._connect() as db:
-        return [row[0] for row in db.execute("select source_ref from work_summary_inputs")]
+        return [row[0] for row in db.execute(f"select source_ref from ({WORK_SUMMARY_INPUT_SQL})")]
 
 
 def test_a_meeting_with_an_ownerless_candidate_is_queued_once_with_the_conversation_attached(tmp_path):

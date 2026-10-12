@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.task_storage import REPLY_TASK_SQL
 
 from datetime import datetime, timezone
 
@@ -46,7 +47,7 @@ def close_superseded_scheduled_reply_tasks(
                 run.scheduled_task_id as scheduled_task_id,
                 current_task.version as current_version,
                 latest_attempt.id as attempt_id
-            from reply_tasks as task
+            from ({REPLY_TASK_SQL}) as task
             join scheduled_task_runs as run
               on run.event_id=task.trigger_message_id
              and run.execution_kind='reply_task'
@@ -117,14 +118,14 @@ def close_superseded_scheduled_reply_tasks(
         for row in rows:
             task_cursor = db.execute(
                 """
-                update reply_tasks
+                update tasks
                    set status='done',
                        error='',
                        available_at='',
                        locked_at=null,
                        recovery_code='superseded_by_service_command',
                        updated_at=?
-                 where id=? and status='failed'
+                 where record_type='reply_tasks' and id=? and status='failed'
                 """,
                 (now_text, int(row["task_id"])),
             )

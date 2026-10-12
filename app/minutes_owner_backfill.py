@@ -15,6 +15,7 @@ transcript excerpts and the meeting summary), so running this twice queues nothi
 the second time.
 """
 from __future__ import annotations
+from app.task_storage import WORK_SUMMARY_INPUT_SQL
 
 import json
 from dataclasses import dataclass, field
@@ -107,7 +108,7 @@ def backfill_minutes_owners(
             continue
         with store._connect() as db:
             already = db.execute(
-                "select 1 from work_summary_inputs where source_type = ? and source_ref = ?",
+                f"select 1 from ({WORK_SUMMARY_INPUT_SQL}) where source_type = ? and source_ref = ?",
                 (item.source.type.value, item.source.ref),
             ).fetchone() is not None
         if already:

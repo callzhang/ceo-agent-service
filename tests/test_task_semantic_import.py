@@ -8,6 +8,7 @@ import pytest
 
 import app.task_semantic_import as semantic_import
 from app.store import AutoReplyStore
+from app.task_storage import WORK_SUMMARY_INPUT_SQL, create_task_schema, task_physical_id
 from app.task_business_resolution import BusinessResolutionService
 from app.task_semantic_import import (
     apply_task_semantic_import_manifest,
@@ -171,7 +172,7 @@ def test_agent_written_evidence_without_source_input_stays_unresolved(tmp_path):
         author_user_id="assigner",
     )
     with sqlite3.connect(store.path) as db:
-        db.execute("delete from work_summary_inputs")
+        db.execute("delete from tasks where record_type='work_summary_inputs'")
     manifest = build_task_semantic_import_manifest(store.path)
     item = next(item for item in manifest.items if item.legacy_kind == "work_todos")
     assert item.legacy_row_id == todo_id
@@ -188,7 +189,7 @@ def test_compacted_source_is_explicitly_unavailable_for_semantic_import(tmp_path
     assert next(item for item in before.items if item.legacy_row_id == todo_id
                 and item.legacy_kind == "work_todos").disposition == "formal_task"
     with store._connect() as db:
-        input_id = db.execute("select id from work_summary_inputs").fetchone()["id"]
+        input_id = db.execute(f"select id from ({WORK_SUMMARY_INPUT_SQL})").fetchone()["id"]
     store.mark_work_summary_input_done(input_id)
     after = build_task_semantic_import_manifest(store.path)
     item = next(item for item in after.items if item.legacy_row_id == todo_id
@@ -381,7 +382,8 @@ def test_per_item_transaction_rechecks_supporting_source_before_write(
                 db.execute("update work_updates set summary='changed' where id=1")
             else:
                 db.execute(
-                    "update work_summary_inputs set payload_json='{}' where id=1"
+                    "update tasks set payload_json='{}' where id=?",
+                    (task_physical_id(db, "work_summary_inputs", 1),),
                 )
 
     monkeypatch.setattr(semantic_import, "_check_manifest", change_source_after_preflight)
@@ -418,16 +420,18 @@ def test_plan_reads_pre_cutover_database_without_semantic_tables(tmp_path):
                 id integer primary key, project_id integer, source_type text,
                 source_ref text, summary text, changes_json text, created_at text
             );
-            create table work_summary_inputs (
-                id integer primary key, source_type text, source_ref text,
-                payload_json text
-            );
             insert into work_projects values (1, '旧项目', '{}', '2026-01-01');
         """)
+        create_task_schema(db)
+        before = tuple(db.iterdump())
     manifest = build_task_semantic_import_manifest(db_path, limit=100)
     assert len(manifest.items) == 1
     assert manifest.items[0].disposition == "history_only"
     with sqlite3.connect(db_path) as db:
+        assert tuple(db.iterdump()) == before
         assert db.execute(
             "select count(*) from sqlite_master where name='business_projects'"
+        ).fetchone()[0] == 0
+        assert db.execute(
+            "select count(*) from sqlite_master where type='table' and name glob 'business_*'"
         ).fetchone()[0] == 0

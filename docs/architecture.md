@@ -1183,7 +1183,7 @@ transport，还用 `disabled_servers` 列出后台 Agent 不得使用的个人�
 整表 `enabled = false` 覆盖（Codex 不接受单字段覆盖，占位 transport 不会被启动）。Settings → MCP
 读取 `codex mcp list --json` 展示全局服务器与清单服务器，保存即写回清单，从下一个 Agent turn 生效。
 
-后台 Agent 使用安装用户的原生 CLI home 和已安装 skills，MCP 直接连接；不复制 OAuth header、token，也不添加本地 credential proxy。Codex 每轮按角色发出显式工具 allowlist：Consumer 的 agent_cli 普通材料读写与原生工作区代码执行可用；Audit 仅保留只读审核能力。Codex 清单中的第三方 Memory、Xiaoqing 等工具只开放已列出的读取能力，不能把个人安装的全部 MCP 写能力视为后台授权。Claude 的本轮 MCP 配置只连接 agent_cli，沿用其原生 home 和 inline 配置。
+后台 Agent 使用安装用户的原生 CLI home 和已安装 skills，MCP 直接连接；不复制 OAuth header、token，也不添加本地 credential proxy。Codex 每轮按角色发出显式工具 allowlist：Consumer 的 agent_cli 普通材料读写与原生工作区代码执行可用；Audit 仅保留只读审核能力。两角色可用具名只读工具 `read_dingtalk_drive_file` 下载单个已授权钉盘节点并提取 PDF、文本或表格内容；下载文件仅保留在该 Agent CLI 进程的 `oa-review-*` 临时目录中，扫描 PDF 返回 OCR 所需路径，进程退出时清理。Codex 清单中的第三方 Memory、Xiaoqing 等工具只开放已列出的读取能力，不能把个人安装的全部 MCP 写能力视为后台授权。Claude 的本轮 MCP 配置只连接 agent_cli，沿用其原生 home 和 inline 配置。
 
 Codex 后台角色固定 `features.plugins=false`；`codex exec` 固定带 `--disable hooks`（Derek 2026-09-24）。插件 Stop hook 曾使结构化结果重复；长期记忆由 Consumer 在 `durable_memories` 提出、系统写入，见「任务长期记忆」。Consumer 生成候选并按共享 Audit Rules 自检；Audit 只读独立审核；System Executor 执行已持久化审核通过的受控动作。普通工具工作不因产生材料而自动注册为系统受控动作。个人对话中的小青面试或上传没有对应后台系统任务，不设置服务审核项。
 
@@ -1807,3 +1807,45 @@ Task 的 command factory 将当前 `ceo-work-tracking` 选择传到既有 Codex 
 ### Task Skill 按需读取
 
 Task 每轮服务输入保留 `ceo-work-tracking` 极简用途及当前 `WORK_TRACKING_SKILL_PATH` 的确切文件入口，本机 Codex/Claude 通过原生文件工具按需读取全文，服务不再内嵌正文。既有文件加载 preflight 保留。command factory 保存同一源路径：Codex 从父目录名生成原生目录选择；Friday 无本机文件读取入口，其既有单消息桥从该确切路径读取并内联全文一次，不按名称重新解析另一根目录。历史 scheduled Skill 快照仍不作为当前协议。任务专属动态事实和当前入口每轮提交，复用既有 session。结果 schema、业务校验、路由、工具权限不变。服务输入长度下降不代表总上下文/token 等量下降：按需读取的全文进入原生工具结果。验证与路线证据边界见 `docs/task-skill-on-demand-validation.md`。
+
+## Unified reply and work-input storage (Store 2026-10-11.3)
+
+第四期4B首单元将回复任务、输入版本与工作汇总输入存入物理 `tasks`，Task Agent 运行存入 `runs`。
+逻辑类型使用准确原表名；公共 ID 保留原整数命名空间，`legacy_key` 记录旧 ID。reply task 的公共 ID
+等于物理 ID；输入和工作输入通过类型与公共 ID 查找物理记录。`current_input_id`、`claimed_input_id`
+与输入的父引用使用物理外键，DTO 继续返回准确原公共输入 ID。Task run 的 `summary_input_id`
+仍是原公共工作输入 ID，原来源没有该外键，不新增外键。
+
+保留的输入 TEXT、BLOB 与 WSI1 编码保持原字节。终态正文精简规则、状态与尝试次数、执行代、领取 CAS、
+业务结果、原生运行定位和执行回执保持原语义。Task run 的三项已退休空过程缓存不再物理保存；历史正文
+依然从原生 trajectory 读取，缺失明确报告不可用。没有新增业务字段、旧表视图或长期双写。
+
+此单元配对发布使用已验证的 `2026-10-11.2→2026-10-11.3`。副本正迁和逆迁比较原记录、源 DDL、
+索引、触发器、序列及版本；逆迁保留 replacement 期间的新输入、结果与回执，以及已分配后删除的 ID
+水位。部署静默检查明确读取旧12或新13布局，并支持普通元组与 sqlite3.Row 连接。
+Meeting、OKR与weekly结构由下面的同版本内部子单元处理；scheduled/Workbench仍待4C。
+
+这是当前开发分支的行为说明，生产上线状态和验收边界见 `docs/database-redesign-phase4b-validation.md`。
+
+旧 `2026-10-10.2→2026-10-11.1` 输入 publication 与其无运行调用的迁移／inverse helper 已退休；当前二次启动不运行旧全局补造逻辑。损坏或混合的当前 typed schema 明确拒绝，既有修复缺失辅助索引的入口保持原边界。回退使用本次捕获的准确源布局和对应旧代码，保留 replacement 新事实。
+
+
+## Unified Meeting storage (Store 2026-10-11.3)
+
+4B会议子单元将原meeting_alignment_jobs的23项源字段保存为tasks[meeting_alignment_jobs]的准确scalar；会议运行使用runs[meeting_alignment_runs]，只退休三项已为空的过程缓存。已采用的决定、最终消息、发送结果与日历结果仍是业务状态；原生trajectory继续提供过程正文，缺失时明确不可用。源run.updated_at默认空字符串，正常begin/record入口仍显式写SQLite当前时间。
+
+DAO、Dispatcher、runtime父定位与恢复、History、搜索、Console及静默检查保留原公共job/run ID和排序。投递key、Dispatcher source_id、generation、owner/expiry和claim token的原谓词不变；Memory event、delivery claim和run的父FK指向物理tasks ID，DTO回投原公共ID。ready_to_send仍不代表sent；已有发送结果与后续calendar状态保持原业务语义。
+
+已知历史run2298的job4908不存在，迁移保留这一真实缺失关系并消耗保留物理ID水位，不创建业务父记录、不指向其他类型巧合同号行。正常run只保存物理父FK，公共父ID由typed parent还原；只有历史孤儿保留实际source job_id。配对逆迁还原原公共身份与同一FK发现，保留replacement新事实。当前开发代码已完成会议调用切换与独立复核；全B的最终生产源副本、旧代码回退验证、CI和发布仍以B验收文档为准。
+
+
+## Unified OKR and weekly analysis storage (Store 2026-10-11.3)
+
+4B的完整存储核心将九张源表合入tasks/runs。OKR request保留16个原scalar字段、conversation/trigger自然唯一键和原无枚举CHECK的status。失败请求的重复输入只刷新原允许的source JSON、pending状态、错误、session和更新时间，不改写其原标题或trigger正文。领取、恢复、Dispatcher租约与Console使用原公共request ID；对应任务的物理ID可不同。
+
+OKR run保留原公共request_id、session、transcript range与created_at，只退休三个空过程缓存。源没有request外键或run状态、错误、完成/更新时间；共享列保持NULL，task_id不补成FK。items的request_id同样没有声明FK，保留原public scalar；多个run及原允许的缺失request关系均不合并或补造父行。精确native读取继续使用structured workload的公共request ID和原session/range。
+
+weekly analysis job的11个原字段、running/completed/failed CHECK和week_end/manager/source_digest自然键保持。cache hit与cache miss复用同一公共job ID，owner/expiry CAS及superseded错误和时间保持；runtime workload包含原公共job ID。周报全局lease及last_success/last_attempt仍在service_state。逆迁保留原序列水位和replacement新写入/删除后的分配水位。当前代码处于隔离分支；完整B验收与生产状态以验收文档为准。
+
+
+Email task visibility in Store13: unsubscribe classification lists, classification detail/in-flight progress, verified entry URL lineage and summary queue counts detect the physical tasks/runs tables. They read public task/run IDs through the typed projections and resolve canonical inputs through the physical current_input_id reference. A standalone EmailStore without the shared task tables retains its existing behavior. Existing receipt/lineage/URL validation and redaction rules remain; this change fixes the physical-table presence check and adds no policy.

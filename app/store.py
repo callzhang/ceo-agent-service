@@ -36,9 +36,15 @@ from app.reviewed_candidate_store import (
 )
 from app.sqlite_schema_lock import schema_initialize_lock
 from app.run_storage import (
-    AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES,
-    create_run_schema, migrate_run_schema, install_run_child_guards, insert_run, run_schema_is_current,
+    AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES, TASK_AGENT_RUN_SQL, MEETING_RUN_SQL, OKR_RUN_SQL,
+    create_run_schema, install_run_child_guards, insert_run, run_schema_is_current,
 )
+from app.task_storage import (
+    REPLY_TASK_SQL, REPLY_TASK_INPUT_SQL, WORK_SUMMARY_INPUT_SQL, MEETING_JOB_SQL, OKR_REQUEST_SQL, WEEKLY_JOB_SQL, SOURCE_COLUMNS, task_id_expression,
+    RETIRED_TASK_TABLES, create_task_schema, migrate_task_schema,
+    task_schema_is_current, insert_task, install_task_child_guards,
+)
+
 from app.agent_cron.models import (
     ScheduledTask,
     ScheduledTaskRun,
@@ -243,28 +249,28 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 # Current source facts are projected directly from their canonical input row.
-REPLY_TASK_CURRENT_SQL = """select parent.*, canonical.trigger_text,
+REPLY_TASK_CURRENT_SQL = f"""select parent.*, canonical.trigger_text,
     case when canonical.input_compacted=1
          then json_extract(canonical.input_provenance_json, '$.source')
          else canonical.trigger_message_json end as trigger_message_json,
     canonical.input_provenance_json, canonical.input_compacted
-    from reply_tasks as parent
-    join reply_task_inputs as canonical
+    from ({REPLY_TASK_SQL}) as parent
+    join ({REPLY_TASK_INPUT_SQL}) as canonical
       on canonical.id=parent.current_input_id and canonical.reply_task_id=parent.id"""
 
 # Queue-claim source headers and bytes belong to the claimed snapshot.
-REPLY_TASK_CLAIMED_SQL = """select canonical.channel, canonical.conversation_id,
+REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id,
                        canonical.conversation_title, canonical.single_chat,
                        canonical.trigger_message_id, canonical.trigger_create_time,
                        canonical.trigger_sender, canonical.oa_url, canonical.business_object_key,
                        parent.*, canonical.trigger_text,
                        canonical.trigger_message_json, canonical.input_provenance_json,
-                       canonical.input_compacted from reply_tasks parent
-                join reply_task_inputs canonical on canonical.id=parent.claimed_input_id
+                       canonical.input_compacted from ({REPLY_TASK_SQL}) parent
+                join ({REPLY_TASK_INPUT_SQL}) canonical on canonical.id=parent.claimed_input_id
                   and canonical.reply_task_id=parent.id"""
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-11.2"
+STORE_SCHEMA_VERSION = "2026-10-11.3"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -288,7 +294,7 @@ create table if not exists task_memory_write_events (
     created_at text not null default current_timestamp,
     updated_at text not null default current_timestamp,
     unique(reply_task_id, execution_generation),
-    foreign key(reply_task_id) references reply_tasks(id)
+    foreign key(reply_task_id) references tasks(id)
 );
 create index if not exists idx_task_memory_write_events_due
     on task_memory_write_events(status, available_at, id);
@@ -307,14 +313,13 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "task_todo_sync_outbox",
     "runs",
     "conversation_runtime_sessions",
-    "weekly_okr_analysis_jobs",
     "wechat_memory_import_jobs",
     "meeting_memory_write_events",
     "agent_effect_intents",
     "external_action_results",
     "sent_reply_observers",
     "business_object_tasks",
-    "reply_task_inputs",
+    "tasks",
     "oa_notification_events",
     "follow_up_send_attempts",
     "todo_evidence_candidates",
@@ -453,19 +458,27 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_business_legacy_links_task",
 )
 STORE_SCHEMA_REMOVED_TABLES = (
+    *RETIRED_TASK_TABLES,
     "agent_runs", "agent_runtime_attempts", "agent_run_state_events", "agent_run_events",
     "universal_plan_executions",
     "universal_action_executions",
 )
 STORE_SCHEMA_REMOVED_COLUMNS = {
-    "reply_tasks": ("trigger_text", "trigger_message_json", "input_provenance_json", "input_compacted"),
-    "runs": ("final_result_json", "result_envelope_json", "tool_events_json"),
+    "runs": ("final_result_json", "result_envelope_json", "tool_events_json",
+             "decision_json", "envelope_json", "audit_tool_events_json", "audit_summary"),
     "business_task_signals": ("evidence_text",),
 }
 STORE_SCHEMA_REQUIRED_COLUMNS = {
-    "work_summary_inputs": (
+    "tasks": (
         "id", "source_type", "source_ref", "payload_json", "source_created_at",
         "body_sha256", "body_bytes", "body_compacted", "status",
+        "record_type", "legacy_key", "parent_id", "business_object_key",
+        "input_version", "claimed_input_version", "current_input_id", "claimed_input_id",
+        "input_provenance_json", "input_compacted",
+        "meeting_id", "calendar_summary_status", "calendar_summary_result_json",
+        "trigger_sender_user_id", "period_label", "period_start", "period_end",
+        "okr_source_json", "codex_session_id", "week_end", "manager_user_id",
+        "source_digest", "lease_owner", "lease_expires_at", "finished_at",
     ),
     "business_source_documents": ("id", "identity_key", "body", "created_at"),
     "meeting_alignment_delivery_claims": ("job_id", "claim_token"),
@@ -605,18 +618,11 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "skill_update_receipts_json",
         "trigger_text_provenance_json",
     ),
-    "reply_tasks": (
-        "business_object_key",
-        "input_version",
-        "claimed_input_version",
-        "current_input_id",
-        "claimed_input_id",
-    ),
-    "reply_task_inputs": ("input_provenance_json", "input_compacted"),
     "agent_effect_intents": ("external_action_key",),
     "sent_replies": ("agent_run_id", "external_action_key"),
     "runs": (
         "record_type", "legacy_key", "task_id", "parent_id",
+        "summary_input_id", "error", "projection_json", "job_id", "request_id",
         "session_mode",
         "source_session_id",
         "attempt_purpose",
@@ -627,23 +633,6 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "result_schema_id",
     ),
     "conversation_runtime_sessions": ("contract_hash",),
-    "task_agent_runs": ("status", "error", "finished_at", "updated_at", "projection_json"),
-    "meeting_alignment_jobs": (
-        "calendar_summary_status",
-        "calendar_summary_result_json",
-    ),
-    "meeting_alignment_runs": ("finished_at", "updated_at"),
-    "weekly_okr_analysis_jobs": (
-        "week_end",
-        "manager_user_id",
-        "source_digest",
-        "status",
-        "lease_owner",
-        "lease_expires_at",
-        "error",
-        "finished_at",
-        "updated_at",
-    ),
     "wechat_memory_import_jobs": (
         "import_run_id",
         "account_id",
@@ -1027,9 +1016,6 @@ def _parse_optional_datetime(value: object) -> datetime | None:
 
 MEETING_ALIGNMENT_RUN_TERMINAL_STATUSES = frozenset(
     {"failed", "retry", "no_action", "ready_to_send"}
-)
-MEETING_ALIGNMENT_DUPLICATE_RUNNING_MIGRATION_ERROR = (
-    "schema_migration_duplicate_running_meeting_run"
 )
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 
@@ -1958,7 +1944,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     self._reconcile_feedback_processing_round_backfill()
                     _INITIALIZED_STORE_PATHS.add(path_key)
                     return
-                if self._migrate_known_run_schema():
+                if self._migrate_known_task_schema():
                     _INITIALIZED_STORE_PATHS.add(path_key)
                     return
                 self._require_supported_store_bootstrap_source()
@@ -2547,11 +2533,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         )
         reply_input_foreign_keys = {
             (row["from"], row["table"], row["to"])
-            for row in db.execute("pragma foreign_key_list(reply_tasks)")
+            for row in db.execute("pragma foreign_key_list(tasks)")
         }
         reply_input_foreign_keys_present = {
-            ("current_input_id", "reply_task_inputs", "id"),
-            ("claimed_input_id", "reply_task_inputs", "id"),
+            ("current_input_id", "tasks", "id"),
+            ("claimed_input_id", "tasks", "id"),
         }.issubset(reply_input_foreign_keys)
         removed_columns_present = any(
             set(removed_columns).intersection(
@@ -2569,7 +2555,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             and required_trigger_definitions_present
             and feedback_processing_round_storage_valid
             and required_columns_present
-            and run_schema_is_current(db)
+            and run_schema_is_current(db, include_task_runs=True)
+            and task_schema_is_current(db)
             and reply_input_foreign_keys_present
             and not removed_columns_present
             and (
@@ -2788,7 +2775,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
     def _initialize(self) -> None:
         with self._connect() as db:
-            create_run_schema(db)
+            create_task_schema(db)
+            create_run_schema(db, include_task_runs=True)
             self._migrate_business_task_source_documents(db)
             db.executescript(
                 """
@@ -3004,7 +2992,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     primary key(sent_reply_id, agent_run_id),
                     foreign key(sent_reply_id) references sent_replies(id),
                     foreign key(agent_run_id) references runs(id),
-                    foreign key(reply_task_id) references reply_tasks(id)
+                    foreign key(reply_task_id) references tasks(id)
                 );
                 create table if not exists feedback_events (
                     key text primary key,
@@ -3268,76 +3256,17 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     started_at text not null default '',
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp,
-                    foreign key(meeting_job_id) references meeting_alignment_jobs(id)
+                    foreign key(meeting_job_id) references tasks(id)
                 );
                 create index if not exists idx_meeting_memory_write_events_due
                     on meeting_memory_write_events(status, available_at, id);
-                create table if not exists reply_tasks (
-                    id integer primary key autoincrement,
-                    channel text not null default 'dingtalk',
-                    conversation_id text not null,
-                    conversation_title text not null,
-                    single_chat integer not null,
-                    trigger_message_id text not null,
-                    trigger_create_time text not null,
-                    trigger_sender text not null,
-                    trigger_text text not null,
-                    trigger_message_json text not null default '{}',
-                    available_at text not null default '',
-                    force_new_decision integer not null default 0,
-                    oa_url text not null default '',
-                    manual_rerun_attempt_id integer not null default 0,
-                    manual_rerun_revision_key text not null default '',
-                    execution_generation text not null default 'initial',
-                    recovery_code text not null default '',
-                    business_object_key text not null default '',
-                    input_version integer not null default 1,
-                    claimed_input_version integer not null default 0,
-                    input_provenance_json text not null default '{}',
-                    input_compacted integer not null default 0,
-                    status text not null default 'pending',
-                    attempts integer not null default 0,
-                    locked_at text,
-                    error text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    unique(channel, conversation_id, trigger_message_id)
-                );
-                create index if not exists idx_reply_tasks_status
-                    on reply_tasks(status, id);
                 create table if not exists business_object_tasks (
                     business_object_key text primary key,
                     reply_task_id integer not null,
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp,
-                    foreign key(reply_task_id) references reply_tasks(id)
+                    foreign key(reply_task_id) references tasks(id)
                 );
-                create table if not exists reply_task_inputs (
-                    id integer primary key autoincrement,
-                    reply_task_id integer not null,
-                    channel text not null,
-                    conversation_id text not null,
-                    conversation_title text not null,
-                    single_chat integer not null,
-                    trigger_message_id text not null,
-                    trigger_create_time text not null,
-                    trigger_sender text not null,
-                    trigger_text text not null,
-                    trigger_message_json text not null default '{}',
-                    oa_url text not null default '',
-                    business_object_key text not null,
-                    input_revision_key text not null default '',
-                    input_provenance_json text not null default '{}',
-                    input_compacted integer not null default 0,
-                    created_at text not null default current_timestamp,
-                    unique(
-                        channel, conversation_id, trigger_message_id,
-                        input_revision_key
-                    ),
-                    foreign key(reply_task_id) references reply_tasks(id)
-                );
-                create index if not exists idx_reply_task_inputs_task
-                    on reply_task_inputs(reply_task_id, id);
                 create table if not exists conversation_runtime_sessions (
                     conversation_id text not null,
                     route_name text not null,
@@ -3458,7 +3387,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     error text not null default '',
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp,
-                    foreign key(reply_task_id) references reply_tasks(id)
+                    foreign key(reply_task_id) references tasks(id)
                 );
                 create index if not exists idx_wechat_deliveries_status
                     on wechat_deliveries(status, id);
@@ -3500,58 +3429,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     updated_at text not null default current_timestamp,
                     unique(import_run_id, statement)
                 );
-                create table if not exists meeting_alignment_jobs (
-                    id integer primary key autoincrement,
-                    meeting_id text not null unique,
-                    title text not null default '',
-                    source_json text not null default '{}',
-                    participants_json text not null default '[]',
-                    ended_at text not null default '',
-                    eligible_at text not null default '',
-                    status text not null default 'waiting',
-                    attempts integer not null default 0,
-                    locked_at text,
-                    available_at text not null default '',
-                    error text not null default '',
-                    decision_json text not null default '{}',
-                    target_kind text not null default '',
-                    target_id text not null default '',
-                    target_title text not null default '',
-                    mentions_json text not null default '[]',
-                    final_message text not null default '',
-                    send_result_json text not null default '{}',
-                    calendar_summary_status text not null default 'not_started',
-                    calendar_summary_result_json text not null default '{}',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp
-                );
-                create index if not exists idx_meeting_alignment_jobs_claim
-                    on meeting_alignment_jobs(status, available_at, eligible_at, id);
                 create table if not exists meeting_alignment_delivery_claims (
                     job_id integer primary key,
                     claim_token text not null,
-                    foreign key(job_id) references meeting_alignment_jobs(id) on delete cascade
+                    foreign key(job_id) references tasks(id) on delete cascade
                 );
-                create table if not exists meeting_alignment_runs (
-                    id integer primary key autoincrement,
-                    job_id integer not null,
-                    codex_session_id text not null default '',
-                    codex_transcript_start_line integer not null default 0,
-                    codex_transcript_end_line integer not null default 0,
-                    decision_json text not null default '{}',
-                    audit_tool_events_json text not null default '[]',
-                    audit_summary text not null default '',
-                    status text not null,
-                    error text not null default '',
-                    created_at text not null default current_timestamp,
-                    finished_at text not null default '',
-                    updated_at text not null default current_timestamp,
-                    foreign key(job_id) references meeting_alignment_jobs(id)
-                );
-                create index if not exists idx_meeting_alignment_runs_job
-                    on meeting_alignment_runs(job_id, id);
-                create index if not exists idx_meeting_alignment_runs_created
-                    on meeting_alignment_runs(created_at, id);
                 create table if not exists codex_session_search_index (
                     id integer primary key autoincrement,
                     session_id text not null unique,
@@ -3638,38 +3520,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     conversation_id text primary key,
                     owner text not null,
                     locked_at text not null default current_timestamp
-                );
-                create table if not exists okr_review_requests (
-                    id integer primary key autoincrement,
-                    conversation_id text not null,
-                    conversation_title text not null,
-                    trigger_message_id text not null,
-                    trigger_sender text not null,
-                    trigger_sender_user_id text not null default '',
-                    trigger_text text not null,
-                    period_label text not null,
-                    period_start text not null,
-                    period_end text not null,
-                    okr_source_json text not null default '{}',
-                    status text not null default 'pending',
-                    error text not null default '',
-                    codex_session_id text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    unique(conversation_id, trigger_message_id)
-                );
-                create index if not exists idx_okr_review_requests_status
-                    on okr_review_requests(status, id);
-                create table if not exists okr_review_runs (
-                    id integer primary key autoincrement,
-                    request_id integer not null,
-                    codex_session_id text not null default '',
-                    codex_transcript_start_line integer not null default 0,
-                    codex_transcript_end_line integer not null default 0,
-                    envelope_json text not null default '{}',
-                    audit_tool_events_json text not null default '[]',
-                    audit_summary text not null default '',
-                    created_at text not null default current_timestamp
                 );
                 create table if not exists okr_review_items (
                     id integer primary key autoincrement,
@@ -4251,60 +4101,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     on todo_evidence_candidates(work_summary_input_id);
                 create index if not exists idx_todo_evidence_candidates_project
                     on todo_evidence_candidates(project_id, id desc);
-                create table if not exists work_summary_inputs (
-                    id integer primary key autoincrement,
-                    source_type text not null,
-                    source_ref text not null,
-                    payload_json text not null,
-                    source_created_at text not null default '',
-                    body_sha256 text not null default '',
-                    body_bytes integer not null default 0,
-                    body_compacted integer not null default 0,
-                    status text not null default 'pending',
-                    attempts integer not null default 0,
-                    error text not null default '',
-                    available_at text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    unique(source_type, source_ref)
-                );
-                create index if not exists idx_work_summary_inputs_status
-                    on work_summary_inputs(status, id);
-                create table if not exists task_agent_runs (
-                    id integer primary key autoincrement,
-                    summary_input_id integer not null,
-                    codex_session_id text not null default '',
-                    decision_json text not null default '{}',
-                    projection_json text not null default '{}',
-                    audit_summary text not null default '',
-                    memory_recall_used integer not null default 0,
-                    status text not null default 'completed'
-                        check(status in ('running', 'completed', 'failed')),
-                    error text not null default '',
-                    created_at text not null default current_timestamp,
-                    finished_at text not null default '',
-                    updated_at text not null default current_timestamp
-                );
-                create index if not exists idx_task_agent_runs_input
-                    on task_agent_runs(summary_input_id, id);
-                create table if not exists weekly_okr_analysis_jobs (
-                    id integer primary key autoincrement,
-                    week_end text not null,
-                    manager_user_id text not null,
-                    source_digest text not null,
-                    status text not null default 'running'
-                        check(status in ('running', 'completed', 'failed')),
-                    lease_owner text not null default '',
-                    lease_expires_at text not null default '',
-                    error text not null default '',
-                    created_at text not null default current_timestamp,
-                    finished_at text not null default '',
-                    updated_at text not null default current_timestamp
-                );
-                create unique index if not exists idx_weekly_okr_analysis_jobs_identity
-                    on weekly_okr_analysis_jobs(
-                        week_end, manager_user_id, source_digest
-                    );
                 create table if not exists follow_up_drafts (
                     id integer primary key autoincrement,
                     project_id integer not null,
@@ -4671,7 +4467,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         error text not null default '',
                         created_at text not null default current_timestamp,
                         updated_at text not null default current_timestamp,
-                        foreign key(reply_task_id) references reply_tasks(id),
+                        foreign key(reply_task_id) references tasks(id),
                         unique(reply_task_id, execution_generation)
                     )
                     """
@@ -4927,25 +4723,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 """
             )
             self._reconcile_legacy_workbench_confirmations(db)
-            reply_task_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(reply_tasks)").fetchall()
-            }
-            meeting_alignment_columns = {
-                row["name"]
-                for row in db.execute(
-                    "pragma table_info(meeting_alignment_jobs)"
-                ).fetchall()
-            }
-            for column, definition in (
-                ("calendar_summary_status", "text not null default 'not_started'"),
-                ("calendar_summary_result_json", "text not null default '{}'"),
-            ):
-                if column not in meeting_alignment_columns:
-                    db.execute(
-                        "alter table meeting_alignment_jobs add column "
-                        f"{column} {definition}"
-                    )
             meeting_memory_write_columns = {
                 row["name"]
                 for row in db.execute(
@@ -4998,22 +4775,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "update meeting_memory_write_events set payload_json='{}' "
                 "where payload_json<>'{}'"
             )
-            for column, definition in (
-                ("trigger_message_json", "text not null default '{}'"),
-                ("available_at", "text not null default ''"),
-                ("force_new_decision", "integer not null default 0"),
-                ("oa_url", "text not null default ''"),
-                ("manual_rerun_attempt_id", "integer not null default 0"),
-                ("manual_rerun_revision_key", "text not null default ''"),
-                ("channel", "text not null default 'dingtalk'"),
-                ("recovery_code", "text not null default ''"),
-            ):
-                if column not in reply_task_columns and not (
-                    column == "trigger_message_json" and "current_input_id" in reply_task_columns
-                ):
-                    db.execute(
-                        f"alter table reply_tasks add column {column} {definition}"
-                    )
             receipt_columns = {
                 row["name"]
                 for row in db.execute(
@@ -5036,19 +4797,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "alter table agent_effect_intents add column "
                     "external_action_key text not null default ''"
                 )
-            self._migrate_reply_task_channel_identity(db)
-            if "current_input_id" not in reply_task_columns:
-                self._migrate_reply_task_business_objects(db)
             db.executescript(REVIEWED_CANDIDATE_DDL)
-            self._migrate_reply_task_input_revisions(db)
-            self._migrate_reply_input_provenance(db)
             self._migrate_oa_notification_events(db)
-            db.execute(
-                """
-                create index if not exists idx_reply_tasks_channel_status_id
-                    on reply_tasks(channel, status, id)
-                """
-            )
             sent_reply_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(sent_replies)").fetchall()
@@ -5272,27 +5022,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 where send_status='needs_authorization'
                 """
             )
-            reply_task_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(reply_tasks)").fetchall()
-            }
-            for column, definition in (
-                ("trigger_message_json", "text not null default '{}'"),
-                ("available_at", "text not null default ''"),
-                ("force_new_decision", "integer not null default 0"),
-                ("oa_url", "text not null default ''"),
-                ("manual_rerun_attempt_id", "integer not null default 0"),
-                ("manual_rerun_revision_key", "text not null default ''"),
-                ("channel", "text not null default 'dingtalk'"),
-                ("execution_generation", "text not null default 'initial'"),
-                ("recovery_code", "text not null default ''"),
-            ):
-                if column not in reply_task_columns and not (
-                    column == "trigger_message_json" and "current_input_id" in reply_task_columns
-                ):
-                    db.execute(
-                        f"alter table reply_tasks add column {column} {definition}"
-                    )
             for table_name in ("reply_attempts", "sent_replies"):
                 existing = {
                     row["name"]
@@ -5302,21 +5031,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     db.execute(
                         f"alter table {table_name} add column channel "
                         f"text not null default 'dingtalk'"
-                    )
-            work_summary_input_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(work_summary_inputs)").fetchall()
-            }
-            for column, definition in (
-                ("available_at", "text not null default ''"),
-                ("source_created_at", "text not null default ''"),
-                ("body_sha256", "text not null default ''"),
-                ("body_bytes", "integer not null default 0"),
-                ("body_compacted", "integer not null default 0"),
-            ):
-                if column not in work_summary_input_columns:
-                    db.execute(
-                        f"alter table work_summary_inputs add column {column} {definition}"
                     )
             dispatcher_lease_columns = {
                 row["name"]
@@ -5522,138 +5236,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             db.execute(
                 """
-                create index if not exists idx_meeting_alignment_runs_created
-                    on meeting_alignment_runs(created_at, id)
-                """
-            )
-            meeting_run_columns = {
-                row["name"]
-                for row in db.execute(
-                    "pragma table_info(meeting_alignment_runs)"
-                ).fetchall()
-            }
-            for column, definition in (
-                ("finished_at", "text not null default ''"),
-                ("updated_at", "text not null default ''"),
-            ):
-                if column not in meeting_run_columns:
-                    db.execute(
-                        "alter table meeting_alignment_runs "
-                        f"add column {column} {definition}"
-                    )
-            db.execute(
-                "update meeting_alignment_runs set updated_at=created_at "
-                "where updated_at=''"
-            )
-            db.execute(
-                "update meeting_alignment_runs set finished_at=created_at "
-                "where status<>'running' and finished_at=''"
-            )
-            running_rows = db.execute(
-                "select id, job_id from meeting_alignment_runs "
-                "where status='running' "
-                "order by job_id, datetime(created_at) desc, id desc"
-            ).fetchall()
-            newest_running_job_ids: set[int] = set()
-            for row in running_rows:
-                job_id = int(row["job_id"])
-                if job_id not in newest_running_job_ids:
-                    newest_running_job_ids.add(job_id)
-                    continue
-                db.execute(
-                    "update meeting_alignment_runs set status='failed', error=?, "
-                    "finished_at=case when created_at<>'' then created_at "
-                    "else current_timestamp end, "
-                    "updated_at=case when created_at<>'' then created_at "
-                    "else current_timestamp end "
-                    "where id=? and status='running'",
-                    (
-                        MEETING_ALIGNMENT_DUPLICATE_RUNNING_MIGRATION_ERROR,
-                        int(row["id"]),
-                    ),
-                )
-            db.execute(
-                "create unique index if not exists "
-                "idx_meeting_alignment_runs_active_job "
-                "on meeting_alignment_runs(job_id) where status='running'"
-            )
-            db.execute(
-                """
                 create index if not exists idx_work_updates_created
                     on work_updates(created_at, id)
                 """
             )
-            db.execute(
-                """
-                create index if not exists idx_work_summary_inputs_updated
-                    on work_summary_inputs(updated_at desc, id desc)
-                """
-            )
-            task_run_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(task_agent_runs)").fetchall()
-            }
-            for column, definition in (
-                ("status", "text not null default 'completed'"),
-                ("projection_json", "text not null default '{}'"),
-                ("error", "text not null default ''"),
-                ("finished_at", "text not null default ''"),
-                ("updated_at", "text not null default ''"),
-            ):
-                if column not in task_run_columns:
-                    db.execute(
-                        f"alter table task_agent_runs add column {column} {definition}"
-                    )
-            db.execute(
-                "update task_agent_runs set status='completed' "
-                "where status is null or status=''"
-            )
-            db.execute(
-                "update task_agent_runs set finished_at=created_at "
-                "where status<>'running' and finished_at=''"
-            )
-            db.execute(
-                "update task_agent_runs set updated_at=created_at where updated_at=''"
-            )
-            db.execute(
-                "create unique index if not exists idx_task_agent_runs_active_input "
-                "on task_agent_runs(summary_input_id) where status='running'"
-            )
-            db.execute(
-                """
-                create table if not exists weekly_okr_analysis_jobs (
-                    id integer primary key autoincrement,
-                    week_end text not null,
-                    manager_user_id text not null,
-                    source_digest text not null,
-                    status text not null default 'running'
-                        check(status in ('running', 'completed', 'failed')),
-                    lease_owner text not null default '',
-                    lease_expires_at text not null default '',
-                    error text not null default '',
-                    created_at text not null default current_timestamp,
-                    finished_at text not null default '',
-                    updated_at text not null default current_timestamp
-                )
-                """
-            )
-            db.execute(
-                "create unique index if not exists "
-                "idx_weekly_okr_analysis_jobs_identity "
-                "on weekly_okr_analysis_jobs(week_end, manager_user_id, source_digest)"
-            )
-            weekly_job_columns = {
-                row["name"]
-                for row in db.execute(
-                    "pragma table_info(weekly_okr_analysis_jobs)"
-                ).fetchall()
-            }
-            for column in ("lease_owner", "lease_expires_at"):
-                if column not in weekly_job_columns:
-                    db.execute(
-                        f"alter table weekly_okr_analysis_jobs add column {column} "
-                        "text not null default ''"
-                    )
             outbox_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(task_todo_sync_outbox)").fetchall()
@@ -5894,7 +5480,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         references outbound_postfixes(channel, delivery_key)
                 )"""
             )
-            reply_source = f"({REPLY_TASK_CURRENT_SQL})" if "current_input_id" in reply_task_columns else "reply_tasks"
+            reply_source = f"({REPLY_TASK_CURRENT_SQL})"
             legacy_ready_deliveries = db.execute(
                 f"""
                 select deliveries.id, deliveries.reply_text, tasks.trigger_text
@@ -5928,8 +5514,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     (prepared.final_body, delivery["id"]),
                 )
             self._migrate_project_attention_evidence(db)
-            self._migrate_reply_task_input_references(db)
             install_run_child_guards(db)
+            install_task_child_guards(db)
 
     @staticmethod
     def _migrate_project_attention_evidence(db: sqlite3.Connection) -> None:
@@ -9476,7 +9062,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                            as scheduled_task_run_id,
                        attempts.id as attempt_id,
                        attempts.send_status as attempt_status
-                  from reply_task_inputs as inputs
+                  from ({REPLY_TASK_INPUT_SQL}) as inputs
                   join reply_attempts as attempts
                     on attempts.channel=inputs.channel
                    and attempts.conversation_id=inputs.conversation_id
@@ -9508,7 +9094,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             row = db.execute(
                 f"""
                 select run.*, config.snapshot_json
-                  from reply_task_inputs as inputs
+                  from ({REPLY_TASK_INPUT_SQL}) as inputs
                   join scheduled_task_runs as run
                     on run.id=cast(
                         {_SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL} as integer
@@ -10217,7 +9803,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "universal_plan_executions",
                 "universal_action_executions",
             }.issubset(tables):
-                reply_source = f"({REPLY_TASK_CURRENT_SQL})" if "current_input_id" in {row[1] for row in db.execute("pragma table_info(reply_tasks)")} else "reply_tasks"
                 rows = db.execute(
                     f"""
                     select actions.*, tasks.conversation_id, tasks.conversation_title,
@@ -10226,7 +9811,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     from universal_action_executions as actions
                     join universal_plan_executions as plans
                       on plans.execution_scope_id=actions.execution_scope_id
-                    join {reply_source} as tasks on tasks.id=plans.reply_task_id
+                    join ({REPLY_TASK_CURRENT_SQL}) as tasks on tasks.id=plans.reply_task_id
                     left join reply_attempts as attempts
                       on attempts.id=actions.attempt_id
                     where attempts.id is null
@@ -10435,221 +10020,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
 
 
-    @staticmethod
-    def _migrate_reply_task_channel_identity(db: sqlite3.Connection) -> None:
-        """Replace the legacy cross-channel UNIQUE constraint in place."""
-        columns = {
-            row["name"] for row in db.execute("pragma table_info(reply_tasks)").fetchall()
-        }
-        if "channel" not in columns:
-            db.execute(
-                "alter table reply_tasks add column channel "
-                "text not null default 'dingtalk'"
-            )
-        unique_columns = {
-            tuple(
-                row["name"]
-                for row in db.execute(
-                    "select name from pragma_index_info(?) order by seqno",
-                    (index["name"],),
-                ).fetchall()
-            )
-            for index in db.execute("pragma index_list(reply_tasks)").fetchall()
-            if index["unique"]
-        }
-        if ("conversation_id", "trigger_message_id") not in unique_columns:
-            return
 
-        generation_select = (
-            "execution_generation"
-            if "execution_generation" in columns
-            else "'initial'"
-        )
-        with AutoReplyStore._foreign_key_rebuild(
-            db,
-            migration_name="reply_tasks",
-        ):
-            db.executescript(
-                f"""
-                begin immediate;
-                create table reply_tasks_channel_migration (
-                    id integer primary key autoincrement,
-                    channel text not null default 'dingtalk',
-                    conversation_id text not null,
-                    conversation_title text not null,
-                    single_chat integer not null,
-                    trigger_message_id text not null,
-                    trigger_create_time text not null,
-                    trigger_sender text not null,
-                    trigger_text text not null,
-                    trigger_message_json text not null default '{{}}',
-                    available_at text not null default '',
-                    force_new_decision integer not null default 0,
-                    oa_url text not null default '',
-                    manual_rerun_attempt_id integer not null default 0,
-                    manual_rerun_revision_key text not null default '',
-                    execution_generation text not null default 'initial',
-                    status text not null default 'pending',
-                    attempts integer not null default 0,
-                    locked_at text,
-                    error text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    unique(channel, conversation_id, trigger_message_id)
-                );
-                insert into reply_tasks_channel_migration (
-                    id, channel, conversation_id, conversation_title, single_chat,
-                    trigger_message_id, trigger_create_time, trigger_sender,
-                    trigger_text, trigger_message_json, available_at,
-                    force_new_decision, oa_url, manual_rerun_attempt_id,
-                    manual_rerun_revision_key, execution_generation, status,
-                    attempts, locked_at, error, created_at, updated_at
-                )
-                select
-                    id, channel, conversation_id, conversation_title, single_chat,
-                    trigger_message_id, trigger_create_time, trigger_sender,
-                    trigger_text, trigger_message_json, available_at,
-                    force_new_decision, oa_url, manual_rerun_attempt_id,
-                    manual_rerun_revision_key, {generation_select}, status,
-                    attempts, locked_at, error, created_at, updated_at
-                from reply_tasks;
-                drop table reply_tasks;
-                alter table reply_tasks_channel_migration rename to reply_tasks;
-                create index idx_reply_tasks_status on reply_tasks(status, id);
-                """
-            )
-
-    @staticmethod
-    def _migrate_reply_task_business_objects(db: sqlite3.Connection) -> None:
-        columns = {
-            row["name"] for row in db.execute("pragma table_info(reply_tasks)").fetchall()
-        }
-        for column, definition in (
-            ("business_object_key", "text not null default ''"),
-            ("input_version", "integer not null default 1"),
-            ("claimed_input_version", "integer not null default 0"),
-        ):
-            if column not in columns:
-                db.execute(f"alter table reply_tasks add column {column} {definition}")
-        db.executescript(
-            """
-            create table if not exists business_object_tasks (
-                business_object_key text primary key,
-                reply_task_id integer not null,
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp,
-                foreign key(reply_task_id) references reply_tasks(id)
-            );
-            create table if not exists reply_task_inputs (
-                id integer primary key autoincrement,
-                reply_task_id integer not null,
-                channel text not null,
-                conversation_id text not null,
-                conversation_title text not null,
-                single_chat integer not null,
-                trigger_message_id text not null,
-                trigger_create_time text not null,
-                trigger_sender text not null,
-                trigger_text text not null,
-                trigger_message_json text not null default '{}',
-                oa_url text not null default '',
-                business_object_key text not null,
-                input_revision_key text not null default '',
-                created_at text not null default current_timestamp,
-                unique(
-                    channel, conversation_id, trigger_message_id,
-                    input_revision_key
-                ),
-                foreign key(reply_task_id) references reply_tasks(id)
-            );
-            create index if not exists idx_reply_task_inputs_task
-                on reply_task_inputs(reply_task_id, id);
-            """
-        )
-        tasks = db.execute("select * from reply_tasks order by id").fetchall()
-        task_keys: dict[int, str] = {}
-        discovered_oa_nodes: dict[str, set[str]] = {}
-        derived_keys: dict[int, str] = {}
-        for task in tasks:
-            derived = reply_business_object_key(
-                channel=str(task["channel"]),
-                conversation_id=str(task["conversation_id"]),
-                trigger_message_id=str(task["trigger_message_id"]),
-                oa_url=str(task["oa_url"] or ""),
-                trigger_text=str(task["trigger_text"] or ""),
-            )
-            derived_keys[int(task["id"])] = derived
-            if derived.startswith("oa:") and not derived.endswith(":"):
-                process_id, task_id = derived[3:].rsplit(":", 1)
-                discovered_oa_nodes.setdefault(process_id, set()).add(task_id)
-        for task in tasks:
-            key = str(task["business_object_key"] or "").strip()
-            derived = derived_keys[int(task["id"])]
-            if derived.startswith("oa:"):
-                key = derived
-                if key.endswith(":"):
-                    process_id = key[3:-1]
-                    nodes = discovered_oa_nodes.get(process_id, set())
-                    if len(nodes) == 1:
-                        key = f"oa:{process_id}:{next(iter(nodes))}"
-            elif not key:
-                key = derived
-            if key != str(task["business_object_key"] or "").strip():
-                db.execute(
-                    "update reply_tasks set business_object_key=? where id=?",
-                    (key, int(task["id"])),
-                )
-            task_keys[int(task["id"])] = key
-            db.execute(
-                """
-                insert or ignore into reply_task_inputs (
-                    reply_task_id, channel, conversation_id, conversation_title,
-                    single_chat, trigger_message_id, trigger_create_time,
-                    trigger_sender, trigger_text, trigger_message_json, oa_url,
-                    business_object_key
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    int(task["id"]), str(task["channel"]),
-                    str(task["conversation_id"]), str(task["conversation_title"]),
-                    int(task["single_chat"]), str(task["trigger_message_id"]),
-                    str(task["trigger_create_time"]), str(task["trigger_sender"]),
-                    str(task["trigger_text"]), str(task["trigger_message_json"]),
-                    str(task["oa_url"] or ""), key,
-                ),
-            )
-            db.execute(
-                "update reply_task_inputs set business_object_key=? "
-                "where reply_task_id=?",
-                (key, int(task["id"])),
-            )
-        desired_bindings: dict[str, int] = {}
-        for task in reversed(tasks):
-            desired_bindings.setdefault(task_keys[int(task["id"])], int(task["id"]))
-        existing_bindings = {
-            str(row["business_object_key"]): int(row["reply_task_id"])
-            for row in db.execute(
-                "select business_object_key, reply_task_id from business_object_tasks"
-            ).fetchall()
-        }
-        for key in existing_bindings.keys() - desired_bindings.keys():
-            db.execute(
-                "delete from business_object_tasks where business_object_key=?",
-                (key,),
-            )
-        for key, task_id in desired_bindings.items():
-            if key not in existing_bindings:
-                db.execute(
-                    "insert into business_object_tasks "
-                    "(business_object_key, reply_task_id) values (?, ?)",
-                    (key, task_id),
-                )
-            elif existing_bindings[key] != task_id:
-                db.execute(
-                    "update business_object_tasks set reply_task_id=?, "
-                    "updated_at=current_timestamp where business_object_key=?",
-                    (task_id, key),
-                )
 
     @staticmethod
     def _migrate_oa_notification_events(db: sqlite3.Connection) -> None:
@@ -10692,90 +10063,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             """
         )
 
-    @staticmethod
-    def _migrate_reply_task_input_revisions(db: sqlite3.Connection) -> None:
-        columns = {
-            row["name"]
-            for row in db.execute("pragma table_info(reply_task_inputs)").fetchall()
-        }
-        if "input_revision_key" in columns:
-            return
-        with AutoReplyStore._foreign_key_rebuild(
-            db,
-            migration_name="reply_task_inputs_revision",
-        ):
-            db.executescript(
-                """
-                begin immediate;
-                create table reply_task_inputs_revision_migration (
-                    id integer primary key autoincrement,
-                    reply_task_id integer not null,
-                    channel text not null,
-                    conversation_id text not null,
-                    conversation_title text not null,
-                    single_chat integer not null,
-                    trigger_message_id text not null,
-                    trigger_create_time text not null,
-                    trigger_sender text not null,
-                    trigger_text text not null,
-                    trigger_message_json text not null default '{}',
-                    oa_url text not null default '',
-                    business_object_key text not null,
-                    input_revision_key text not null default '',
-                    created_at text not null default current_timestamp,
-                    unique(
-                        channel, conversation_id, trigger_message_id,
-                        input_revision_key
-                    ),
-                    foreign key(reply_task_id) references reply_tasks(id)
-                );
-                insert into reply_task_inputs_revision_migration (
-                    id, reply_task_id, channel, conversation_id,
-                    conversation_title, single_chat, trigger_message_id,
-                    trigger_create_time, trigger_sender, trigger_text,
-                    trigger_message_json, oa_url, business_object_key,
-                    input_revision_key, created_at
-                )
-                select
-                    id, reply_task_id, channel, conversation_id,
-                    conversation_title, single_chat, trigger_message_id,
-                    trigger_create_time, trigger_sender, trigger_text,
-                    trigger_message_json, oa_url, business_object_key,
-                    '', created_at
-                from reply_task_inputs;
-                drop table reply_task_inputs;
-                alter table reply_task_inputs_revision_migration
-                    rename to reply_task_inputs;
-                create index idx_reply_task_inputs_task
-                    on reply_task_inputs(reply_task_id, id);
-                """
-            )
 
-    @staticmethod
-    def _migrate_reply_input_provenance(db: sqlite3.Connection) -> None:
-        tables = ("reply_task_inputs",) if "current_input_id" in {
-            row["name"] for row in db.execute("pragma table_info(reply_tasks)")
-        } else ("reply_tasks", "reply_task_inputs")
-        for table in tables:
-            columns = {row["name"] for row in db.execute(f"pragma table_info({table})")}
-            if "input_provenance_json" not in columns:
-                db.execute(
-                    f"alter table {table} add column input_provenance_json "
-                    "text not null default '{}'"
-                )
-            if "input_compacted" not in columns:
-                db.execute(
-                    f"alter table {table} add column input_compacted "
-                    "integer not null default 0"
-                )
-        attempt_columns = {
-            row["name"] for row in db.execute("pragma table_info(reply_attempts)")
-        }
-        if "trigger_text_provenance_json" not in attempt_columns:
-            db.execute(
-                "alter table reply_attempts add column "
-                "trigger_text_provenance_json text not null default '{}'"
-            )
 
     def _require_supported_store_bootstrap_source(self) -> None:
         """Allow fresh bootstrap or the existing repair path for a valid current core."""
@@ -10786,31 +10074,31 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 db.execute("select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
                 if "service_state" in tables else None
             )
-            store_tables = {"reply_tasks", "reply_task_inputs", "runs", *RETIRED_RUN_TABLES}
-            if marker is not None and marker[0] == STORE_SCHEMA_VERSION and run_schema_is_current(db, allow_missing_objects=True):
+            store_tables = {"tasks", "runs", *RETIRED_TASK_TABLES, *RETIRED_RUN_TABLES}
+            if marker is not None and marker[0] == STORE_SCHEMA_VERSION and run_schema_is_current(db, allow_missing_objects=True, include_task_runs=True) and task_schema_is_current(db, allow_missing_objects=True):
                 return
             if marker is not None or tables.intersection(store_tables):
                 raise sqlite3.IntegrityError(
                     "unsupported or malformed Store source schema; expected a fresh Store, "
-                    "the exact 2026-10-11.1 source, or the current 2026-10-11.2 schema"
+                    "the exact 2026-10-11.2 source, or the current 2026-10-11.3 schema"
                 )
         finally:
             db.close()
 
-    def _migrate_known_run_schema(self) -> bool:
+    def _migrate_known_task_schema(self) -> bool:
         """Migrate the explicit preceding release before fresh schema bootstrap."""
         db = self._open_connection()
         try:
             if db.execute("select 1 from sqlite_master where name='service_state'").fetchone() is None:
                 return False
             marker = db.execute("select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
-            if marker is None or marker[0] != "2026-10-11.1":
+            if marker is None or marker[0] != "2026-10-11.2":
                 return False
             db.execute("pragma foreign_keys=off")
             db.execute("begin immediate")
-            migrate_run_schema(db)
+            migrate_task_schema(db)
             if not self._schema_manifest_is_current_in_connection(db, include_run_snapshots=True):
-                raise RuntimeError("core run migration manifest differs")
+                raise RuntimeError("typed task migration manifest differs")
             db.execute("update service_state set value=? where key=?", (STORE_SCHEMA_VERSION, STORE_SCHEMA_VERSION_KEY))
             db.commit()
             return True
@@ -10818,161 +10106,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             db.close()
 
 
-    @classmethod
-    def _migrate_reply_task_input_references(cls, db: sqlite3.Connection) -> None:
-        columns = {row[1] for row in db.execute("pragma table_info(reply_tasks)")}
-        if "current_input_id" in columns:
-            cls._validate_reply_input_references(db)
-            return
-        if db.execute(
-            "select 1 from reply_tasks where status='processing' limit 1"
-        ).fetchone():
-            raise RuntimeError(
-                "legacy reply input migration requires quiet processing claims"
-            )
-        fields = (
-            "channel",
-            "conversation_id",
-            "conversation_title",
-            "single_chat",
-            "trigger_message_id",
-            "trigger_create_time",
-            "trigger_sender",
-            "trigger_text",
-            "trigger_message_json",
-            "oa_url",
-            "business_object_key",
-            "input_provenance_json",
-            "input_compacted",
-        )
-        # Verify retired representations before deleting their redundant JSON.
-        for row in db.execute("select * from reply_task_inputs where input_compacted=1"):
-            if str(row["trigger_text"]) != "" or str(
-                row["trigger_message_json"]
-            ) != cls._compact_reply_input_json(row["input_provenance_json"]):
-                raise RuntimeError(
-                    "retired reply input compact projection is not derivable"
-                )
-        tasks = db.execute("select * from reply_tasks order by id").fetchall()
-        for task in tasks:
-            if task["input_compacted"] and (
-                str(task["trigger_text"]) != ""
-                or str(task["trigger_message_json"])
-                != cls._compact_reply_input_json(task["input_provenance_json"])
-            ):
-                raise RuntimeError("retired current reply projection is not derivable")
-        db.execute(
-            "alter table reply_tasks add column current_input_id integer references reply_task_inputs(id)"
-        )
-        db.execute(
-            "alter table reply_tasks add column claimed_input_id integer references reply_task_inputs(id)"
-        )
-        for task in tasks:
-            matching = next(
-                (
-                    row
-                    for row in db.execute(
-                        "select * from reply_task_inputs where reply_task_id=? order by id",
-                        (task["id"],),
-                    )
-                    if all(row[field] == task[field] for field in fields)
-                ),
-                None,
-            )
-            if matching is None:
-                digest = hashlib.sha256(
-                    json.dumps(
-                        [task["id"], *[task[field] for field in fields]],
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    ).encode()
-                ).hexdigest()
-                revision = f"canonical-migration:{task['id']}:{digest}"
-                cursor = db.execute(
-                    f"insert into reply_task_inputs (reply_task_id, {', '.join(fields)}, input_revision_key, created_at) values ({','.join('?' for _ in range(len(fields) + 3))})",
-                    (
-                        task["id"],
-                        *[task[field] for field in fields],
-                        revision,
-                        task["updated_at"],
-                    ),
-                )
-                input_id = cursor.lastrowid
-            else:
-                input_id = matching["id"]
-            db.execute(
-                "update reply_tasks set current_input_id=? where id=?",
-                (input_id, task["id"]),
-            )
-        cls._validate_reply_input_references(db)
-        db.execute(
-            "update reply_task_inputs set trigger_message_json='' where input_compacted=1"
-        )
-        db.execute("drop index if exists idx_reply_tasks_email_unsubscribe_status")
-        for field in (
-            "trigger_text",
-            "trigger_message_json",
-            "input_provenance_json",
-            "input_compacted",
-        ):
-            db.execute(f"alter table reply_tasks drop column {field}")
 
-    @staticmethod
-    def _validate_reply_input_references(db: sqlite3.Connection) -> None:
-        invalid = db.execute("""select tasks.id from reply_tasks tasks
-            left join reply_task_inputs current on current.id=tasks.current_input_id
-            left join reply_task_inputs claimed on claimed.id=tasks.claimed_input_id
-            where current.id is null or current.reply_task_id<>tasks.id
-               or (tasks.claimed_input_id is not null and
-                   (claimed.id is null or claimed.reply_task_id<>tasks.id)) limit 1""").fetchone()
-        if invalid is not None:
-            raise RuntimeError("reply input reference does not belong to its task")
 
-    @classmethod
-    def restore_reply_task_input_schema(
-        cls,
-        db: sqlite3.Connection,
-        *,
-        original_tasks_sql: str,
-        original_indexes: Sequence[str],
-    ) -> None:
-        """Restore the captured parent DDL from latest canonical rows; caller owns transaction."""
-        if db.execute("pragma foreign_keys").fetchone()[0]:
-            raise ValueError("reply schema inverse requires caller foreign_keys=OFF")
-        cls._validate_reply_input_references(db)
-        tasks = db.execute(
-            f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks order by id"
-        ).fetchall()
-        seq = db.execute(
-            "select seq from sqlite_sequence where name='reply_tasks'"
-        ).fetchone()
-        db.execute("drop table reply_tasks")
-        db.execute(original_tasks_sql)
-        columns = [row[1] for row in db.execute("pragma table_info(reply_tasks)")]
-        for task in tasks:
-            values = dict(task)
-            if values["input_compacted"]:
-                values["trigger_message_json"] = cls._compact_reply_input_json(
-                    values["input_provenance_json"]
-                )
-            db.execute(
-                f"insert into reply_tasks ({','.join(columns)}) values ({','.join('?' for _ in columns)})",
-                [values[name] for name in columns],
-            )
-        for row in db.execute(
-            "select id,input_provenance_json from reply_task_inputs where input_compacted=1"
-        ).fetchall():
-            db.execute(
-                "update reply_task_inputs set trigger_message_json=? where id=?",
-                (cls._compact_reply_input_json(row["input_provenance_json"]), row["id"]),
-            )
-        for statement in original_indexes:
-            db.execute(statement)
-        if seq is not None:
-            db.execute("delete from sqlite_sequence where name='reply_tasks'")
-            db.execute(
-                "insert into sqlite_sequence(name,seq) values ('reply_tasks',?)", (seq[0],)
-            )
 
     @classmethod
     def _append_reply_input_snapshot(
@@ -10996,12 +10131,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             "oa_url",
             "business_object_key",
         )
-        db.execute(
-            f"insert or ignore into reply_task_inputs (reply_task_id,{','.join(fields)},input_revision_key) values ({','.join('?' for _ in range(len(fields) + 2))})",
-            (task_id, *[snapshot[field] for field in fields], revision_key),
-        )
+        insert_task(db, "reply_task_inputs", {
+            "parent_id": task_id, "input_revision_key": revision_key,
+            **{field: snapshot[field] for field in fields},
+        }, ignore=True)
         row = db.execute(
-            "select * from reply_task_inputs where channel=? and conversation_id=? and trigger_message_id=? and input_revision_key=?",
+            f'select * from ({REPLY_TASK_INPUT_SQL}) where channel=? and conversation_id=? and trigger_message_id=? and input_revision_key=?',
             (
                 snapshot["channel"],
                 snapshot["conversation_id"],
@@ -11244,7 +10379,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             and not str(latest_attempt["resolved_at"] or "").strip()):
             return False
         inputs = db.execute(
-            "select * from reply_task_inputs where reply_task_id=? and input_compacted=0",
+            f'select * from ({REPLY_TASK_INPUT_SQL}) where reply_task_id=? and input_compacted=0',
             (task_id,),
         ).fetchall()
         for item in inputs:
@@ -11252,8 +10387,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 str(item["trigger_text"]), str(item["trigger_message_json"])
             )
             db.execute(
-                "update reply_task_inputs set trigger_text='', trigger_message_json='', "
-                "input_provenance_json=?, input_compacted=1 where id=? and input_compacted=0",
+                "update tasks set trigger_text='', trigger_message_json='', input_provenance_json=?, input_compacted=1 where record_type='reply_task_inputs' and cast(legacy_key as integer)=? and input_compacted=0",
                 (provenance, item["id"]),
             )
         identities = {
@@ -11261,13 +10395,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
              str(task["trigger_message_id"])),
             *((str(item["channel"]), str(item["conversation_id"]),
                str(item["trigger_message_id"])) for item in db.execute(
-                   "select channel, conversation_id, trigger_message_id "
-                   "from reply_task_inputs where reply_task_id=?", (task_id,)
+                   f'select channel, conversation_id, trigger_message_id from ({REPLY_TASK_INPUT_SQL}) where reply_task_id=?', (task_id,)
                ).fetchall()),
         }
         for channel, conversation_id, message_id in identities:
             other_active = db.execute(
-                """select 1 from reply_tasks where channel=? and conversation_id=?
+                f"""select 1 from ({REPLY_TASK_SQL}) where channel=? and conversation_id=?
                    and trigger_message_id=? and id<>?
                    and status in ('pending','processing','failed','needs_human')
                    limit 1""",
@@ -11280,9 +10413,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     (channel, conversation_id, message_id),
                 ).fetchall()
                 input_refs = db.execute(
-                    "select id, input_provenance_json from reply_task_inputs "
-                    "where reply_task_id=? and channel=? and conversation_id=? "
-                    "and trigger_message_id=?",
+                    f'select id, input_provenance_json from ({REPLY_TASK_INPUT_SQL}) where reply_task_id=? and channel=? and conversation_id=? and trigger_message_id=?',
                     (task_id, channel, conversation_id, message_id),
                 ).fetchall()
                 for attempt in attempts:
@@ -11524,8 +10655,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             trigger_text=spec.trigger_text,
         )
         existing_input = db.execute(
-            """
-            select reply_task_id from reply_task_inputs
+            f"""
+            select reply_task_id from ({REPLY_TASK_INPUT_SQL})
             where channel=? and conversation_id=? and trigger_message_id=?
             """,
             (spec.channel, spec.conversation_id, spec.trigger_message_id),
@@ -11564,12 +10695,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 if provisional is not None:
                     task_id = int(provisional["reply_task_id"])
                     db.execute(
-                        "update reply_tasks set business_object_key=? where id=?",
+                        "update tasks set business_object_key=? where record_type='reply_tasks' and id=?",
                         (key, task_id),
                     )
                     db.execute(
-                        "update reply_task_inputs set business_object_key=? "
-                        "where reply_task_id=?",
+                        "update tasks set business_object_key=? where record_type='reply_task_inputs' and parent_id=?",
                         (key, task_id),
                     )
                     db.execute(
@@ -11585,14 +10715,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if mapping is None:
             cursor = db.execute(
                 """
-                insert into reply_tasks (
-                    channel, conversation_id, conversation_title, single_chat,
+                insert into tasks (
+                    record_type, channel, conversation_id, conversation_title, single_chat,
                     trigger_message_id, trigger_create_time, trigger_sender,
                     available_at,
                     force_new_decision, oa_url, manual_rerun_attempt_id,
                     execution_generation, error, business_object_key,
-                    input_version, claimed_input_version
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
+                    input_version, claimed_input_version, status, attempts, created_at, updated_at, manual_rerun_revision_key, recovery_code
+                ) values ('reply_tasks', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 'pending', 0, current_timestamp, current_timestamp, '', '')
                 """,
                 (
                     spec.channel, spec.conversation_id, spec.conversation_title,
@@ -11614,12 +10744,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
         inserted = db.execute(
             """
-            insert or ignore into reply_task_inputs (
-                reply_task_id, channel, conversation_id, conversation_title,
+            insert or ignore into tasks (
+                record_type, parent_id, channel, conversation_id, conversation_title,
                 single_chat, trigger_message_id, trigger_create_time,
                 trigger_sender, trigger_text, trigger_message_json, oa_url,
-                business_object_key
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                business_object_key, input_revision_key, created_at, input_provenance_json, input_compacted
+            ) values ('reply_task_inputs', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', current_timestamp, '{}', 0)
             """,
             (
                 task_id, spec.channel, spec.conversation_id,
@@ -11631,7 +10761,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         ).rowcount == 1
         if inserted:
             current = db.execute(
-                "select * from reply_tasks where id=?", (task_id,)
+                f'select * from ({REPLY_TASK_SQL}) where id=?', (task_id,)
             ).fetchone()
             if current is None:
                 raise RuntimeError("business reply task was not persisted")
@@ -11640,7 +10770,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 generation = uuid4().hex if terminal else str(current["execution_generation"])
                 db.execute(
                     """
-                    update reply_tasks set
+                    update tasks set
                         channel=?, conversation_id=?, conversation_title=?,
                         single_chat=?, trigger_message_id=?, trigger_create_time=?,
                         trigger_sender=?,
@@ -11651,7 +10781,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         error=case when status in ('done','failed') then '' else error end,
                         available_at=case when status in ('done','failed') then '' else available_at end,
                         updated_at=current_timestamp
-                    where id=?
+                    where record_type='reply_tasks' and id=?
                     """,
                     (
                         spec.channel, spec.conversation_id, spec.conversation_title,
@@ -11662,13 +10792,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     ),
                 )
         input_row = db.execute(
-            "select id from reply_task_inputs where reply_task_id=? and channel=? "
-            "and conversation_id=? and trigger_message_id=? and input_revision_key=''",
+            f"select id from ({REPLY_TASK_INPUT_SQL}) where reply_task_id=? and channel=? and conversation_id=? and trigger_message_id=? and input_revision_key=''",
             (task_id, spec.channel, spec.conversation_id, spec.trigger_message_id),
         ).fetchone()
         if input_row is None:
             raise RuntimeError("canonical reply input was not persisted")
-        db.execute("update reply_tasks set current_input_id=? where id=?", (input_row["id"], task_id))
+        db.execute("update tasks set current_input_id=(select id from tasks where record_type='reply_task_inputs' and cast(legacy_key as integer)=?) where record_type='reply_tasks' and id=?", (input_row["id"], task_id))
         row = db.execute(f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where id=?", (task_id,)).fetchone()
         if row is None:
             raise RuntimeError("reply task was not persisted")
@@ -11677,7 +10806,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def list_reply_task_inputs(self, task_id: int) -> list[dict[str, object]]:
         with self._connect() as db:
             result = [dict(row) for row in db.execute(
-                "select * from reply_task_inputs where reply_task_id=? order by id", (task_id,)
+                f'select * from ({REPLY_TASK_INPUT_SQL}) where reply_task_id=? order by id', (task_id,)
             )]
         for row in result:
             if row["input_compacted"]:
@@ -11931,8 +11060,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         for spec in specs:
             task, _ = self._ensure_business_reply_task(db, spec)
             input_row = db.execute(
-                """
-                select * from reply_task_inputs
+                f"""
+                select * from ({REPLY_TASK_INPUT_SQL})
                 where channel=? and conversation_id=? and trigger_message_id=?
                 """,
                 (spec.channel, spec.conversation_id, spec.trigger_message_id),
@@ -11989,7 +11118,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
 
                 current = db.execute(
-                    "select id,execution_generation,error from reply_tasks "
+                    f"select id,execution_generation,error from ({REPLY_TASK_SQL}) as reply_tasks "
                     "where channel=? and conversation_id=? and trigger_message_id=?",
                     (channel, conversation_id, trigger_message_id),
                 ).fetchone()
@@ -12140,23 +11269,23 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
         db.execute(
             """
-            insert into reply_tasks (
-                channel, conversation_id, conversation_title, single_chat,
+            insert into tasks (
+                record_type, channel, conversation_id, conversation_title, single_chat,
                 trigger_message_id, trigger_create_time, trigger_sender,
                 available_at,
                 force_new_decision, oa_url, manual_rerun_attempt_id,
                 manual_rerun_revision_key, execution_generation, status,
-                locked_at, error
-            ) values (?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?, ?, ?,
-                      'pending', null, ?)
-            on conflict(channel, conversation_id, trigger_message_id) do update set
+                locked_at, error, attempts, business_object_key, input_version, claimed_input_version, recovery_code, created_at, updated_at
+            ) values ('reply_tasks', ?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?, ?, ?,
+                      'pending', null, ?, 0, '', 1, 0, '', current_timestamp, current_timestamp)
+            on conflict(channel, conversation_id, trigger_message_id) where record_type='reply_tasks' do update set
                 conversation_title=excluded.conversation_title,
                 single_chat=excluded.single_chat,
                 trigger_create_time=excluded.trigger_create_time,
                 trigger_sender=excluded.trigger_sender,
                 current_input_id=null,
                 claimed_input_id=null,
-                input_version=reply_tasks.input_version+1,
+                input_version=tasks.input_version+1,
                 available_at='',
                 attempts=0,
                 force_new_decision=1,
@@ -12184,16 +11313,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 f"manual_rerun_from_attempt:{attempt_id}",
             ),
         )
-        parent = db.execute("select * from reply_tasks where channel=? and conversation_id=? and trigger_message_id=?", (channel, conversation_id, trigger_message_id)).fetchone()
+        parent = db.execute(f'select * from ({REPLY_TASK_SQL}) where channel=? and conversation_id=? and trigger_message_id=?', (channel, conversation_id, trigger_message_id)).fetchone()
         if parent is None:
             raise RuntimeError("manual rerun parent was not persisted")
         snapshot = dict(parent)
         snapshot.update(trigger_text=trigger_text, trigger_message_json=trigger_message_json)
         if not snapshot["business_object_key"]:
             snapshot["business_object_key"] = reply_business_object_key(channel=channel, conversation_id=conversation_id, trigger_message_id=trigger_message_id, oa_url=oa_url, trigger_text=trigger_text)
-            db.execute("update reply_tasks set business_object_key=? where id=?", (snapshot["business_object_key"], parent["id"]))
+            db.execute("update tasks set business_object_key=? where record_type='reply_tasks' and id=?", (snapshot["business_object_key"], parent["id"]))
         input_id = cls._append_reply_input_snapshot(db, parent["id"], snapshot, revision_key=f"manual:{execution_generation}:{revision_key}")
-        db.execute("update reply_tasks set current_input_id=? where id=?", (input_id, parent["id"]))
+        db.execute("update tasks set current_input_id=(select id from tasks where record_type='reply_task_inputs' and cast(legacy_key as integer)=?) where record_type='reply_tasks' and id=?", (input_id, parent["id"]))
         row = db.execute(
             f"""
             select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
@@ -12676,20 +11805,22 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             parts = workload_key.split(":")
             week_end, manager_user_id, source_digest = parts[:3]
             query = (
-                "select 1 from weekly_okr_analysis_jobs "
-                "where week_end=? and manager_user_id=? and source_digest=? "
+                "select 1 from tasks where record_type='weekly_okr_analysis_jobs' "
+                "and week_end=? and manager_user_id=? and source_digest=? "
                 "and status='running'"
             )
             args: tuple[object, ...] = (week_end, manager_user_id, source_digest)
             if len(parts) == 5:
-                query += " and id=? and lease_owner=?"
+                query += " and cast(legacy_key as integer)=? and lease_owner=?"
                 args += (int(parts[3]), parts[4])
             return db.execute(query, args).fetchone() is not None
         if workload_kind == "structured":
-            query = "select 1 from okr_review_requests where id=? and status='processing'"
+            query = ("select 1 from tasks where record_type='okr_review_requests' "
+                     "and cast(legacy_key as integer)=? and status='processing'")
             args = (int(workload_key),)
         elif workload_kind == "meeting":
-            query = "select 1 from meeting_alignment_runs where id=? and status='running'"
+            query = ("select 1 from runs where record_type='meeting_alignment_runs' "
+                     "and cast(legacy_key as integer)=? and status='running'")
             args = (int(workload_key),)
         elif workload_kind == "task":
             row_id, separator, suffix = workload_key.partition(":")
@@ -12707,7 +11838,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "and status in ('active', 'waiting', 'done', 'archived')"
                 )
             else:
-                query = "select 1 from task_agent_runs where id=? and status='running'"
+                query = f"select 1 from ({TASK_AGENT_RUN_SQL}) where id=? and status='running'"
             args = (int(row_id),)
         elif workload_kind == "email_classification":
             query = (
@@ -12720,8 +11851,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "email-unsubscribe-page:"
             ).rpartition(":")
             parent = db.execute(
-                "select status from reply_tasks where channel='email' "
-                "and trigger_message_id=?",
+                f"select status from ({REPLY_TASK_SQL}) where channel='email' and trigger_message_id=?",
                 (action_identity,),
             ).fetchone()
             if parent is None:
@@ -13419,7 +12549,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Close read-only task attempts abandoned after their task run ended."""
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             cursor = db.execute(
-                """
+                f"""
                 update runs as attempt
                 set status='failed', failure_class='process',
                     failure_code='runtime_lease_expired', failover_permitted=1,
@@ -13434,7 +12564,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and attempt.lease_expires_at<=?
                   and exists (
                       select 1
-                      from task_agent_runs as task_run
+                      from ({TASK_AGENT_RUN_SQL}) as task_run
                       where task_run.id=cast(attempt.workload_key as integer)
                         and task_run.status in ('completed', 'failed')
                   )
@@ -13473,8 +12603,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and attempt.parent_id is null
                   and attempt.workload_kind='meeting'
                   and exists (
-                    select 1 from meeting_alignment_runs parent
-                    where cast(parent.id as text)=attempt.workload_key
+                    select 1 from runs parent
+                    where parent.record_type='meeting_alignment_runs'
+                      and parent.legacy_key=attempt.workload_key
                       and parent.status<>'running'
                   )
                 """,
@@ -13482,11 +12613,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             weekly_okr_cursor = db.execute(
                 f"""
-                update weekly_okr_analysis_jobs as job
+                update tasks as job
                 set status='failed', error='runtime_lease_expired',
                     lease_owner='', lease_expires_at='',
                     finished_at=?, updated_at=?
-                where job.status='running'
+                where job.record_type='weekly_okr_analysis_jobs'
+                  and job.status='running'
                   and job.lease_expires_at!=''
                   and job.lease_expires_at<=?
                   and exists (
@@ -13495,7 +12627,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       and attempt.workload_kind='weekly_okr'
                       and attempt.workload_key like (
                         job.week_end || ':' || job.manager_user_id || ':' ||
-                        job.source_digest || ':' || cast(job.id as text) || ':%'
+                        job.source_digest || ':' || job.legacy_key || ':%'
                       )
                       and attempt.status='failed'
                       and attempt.failure_code='runtime_lease_expired'
@@ -14047,7 +13179,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 now_value + timedelta(seconds=lease_seconds)
             ).strftime("%Y-%m-%d %H:%M:%S")
             task = db.execute(
-                "select execution_generation from reply_tasks where id=?",
+                f"select execution_generation from ({REPLY_TASK_SQL}) as reply_tasks where id=?",
                 (reply_task_id,),
             ).fetchone()
             if task is None:
@@ -14337,7 +13469,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         normalized_event = json.loads(event_text)
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             status_row = db.execute(
-                f'select agent_runs.status, agent_runs.execution_generation, reply_tasks.execution_generation as task_execution_generation from ({AGENT_RUN_SQL}) as agent_runs join reply_tasks on reply_tasks.id=agent_runs.reply_task_id where agent_runs.id=?',
+                f'select agent_runs.status, agent_runs.execution_generation, reply_tasks.execution_generation as task_execution_generation from ({AGENT_RUN_SQL}) as agent_runs join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.id=agent_runs.reply_task_id where agent_runs.id=?',
                 (run_id,),
             ).fetchone()
             if (
@@ -14688,7 +13820,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         error_json = _json_object_text(structured_error, field="structured_error")
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             cursor = db.execute(
-                """
+                f"""
                 update runs as agent_runs
                 set status='failed',
                     structured_error_json=?,
@@ -14700,7 +13832,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and execution_generation=?
                   and lease_expires_at<=?
                   and exists (
-                      select 1 from reply_tasks
+                      select 1 from ({REPLY_TASK_SQL}) as reply_tasks
                       where reply_tasks.id=agent_runs.task_id
                         and reply_tasks.status='processing'
                         and reply_tasks.execution_generation=?
@@ -14788,7 +13920,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             row = db.execute(
                 f"""
                 select max(id) as max_id
-                from reply_tasks
+                from ({REPLY_TASK_SQL})
                 where {' and '.join(clauses)}
                 """,
                 args,
@@ -14813,7 +13945,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 args.append(now)
             cursor = db.execute(
                 f"""
-                update reply_tasks
+                update tasks
                 set status='processing',
                     attempts=attempts + 1,
                     claimed_input_version=input_version,
@@ -14821,7 +13953,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     locked_at=current_timestamp,
                     available_at='',
                     updated_at=current_timestamp
-                where id=?
+                where record_type='reply_tasks' and id=?
                   and status='pending'
                   and (available_at='' or datetime(available_at) <= datetime({now_expression}))
                 """,
@@ -14868,7 +14000,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             placeholders = ",".join("?" for _ in task_ids)
             db.execute(
                 f"""
-                update reply_tasks
+                update tasks
                 set status='processing',
                     attempts=attempts + 1,
                     claimed_input_version=input_version,
@@ -14876,7 +14008,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     locked_at=current_timestamp,
                     available_at='',
                     updated_at=current_timestamp
-                where id in ({placeholders})
+                where record_type='reply_tasks' and id in ({placeholders})
                 """,
                 task_ids,
             )
@@ -14989,10 +14121,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             for row in rows:
                 cursor = db.execute(
                     """
-                    update reply_tasks
+                    update tasks as reply_tasks
                     set status='pending', locked_at=null, available_at='',
                         error='stale_lease_recovered', updated_at=current_timestamp
-                    where id=? and status='processing'
+                    where reply_tasks.record_type='reply_tasks' and id=? and status='processing'
                       and execution_generation=?
                     """,
                     (int(row["id"]), str(row["execution_generation"])),
@@ -15044,12 +14176,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     recovery_error = "interrupted_read_only_decision"
                 cursor = db.execute(
                     f"""
-                    update reply_tasks
+                    update tasks as reply_tasks
                     set status='pending', attempts=max(attempts - 1, 0),
                         locked_at=null, available_at='',
                         error=?,
                         updated_at=current_timestamp
-                    where id=? and status='processing' and execution_generation=?
+                    where reply_tasks.record_type='reply_tasks' and id=? and status='processing' and execution_generation=?
                       and not exists (
                           select 1
                           from ({AGENT_RUN_SQL}) as agent_runs
@@ -15153,12 +14285,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
                 cursor = db.execute(
                     """
-                    update reply_tasks
+                    update tasks as reply_tasks
                     set force_new_decision=0, status='pending',
                         locked_at=null, available_at='',
                         error='service_restart_interrupted',
                         updated_at=current_timestamp
-                    where id=? and status='processing' and execution_generation=?
+                    where reply_tasks.record_type='reply_tasks' and id=? and status='processing' and execution_generation=?
                     """,
                     (task_id, generation),
                 )
@@ -15195,7 +14327,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 f"""
                 select runs.id
                 from ({AGENT_RUN_SQL}) as runs
-                join reply_tasks as tasks on tasks.id=runs.reply_task_id
+                join ({REPLY_TASK_SQL}) as tasks on tasks.id=runs.reply_task_id
                 where runs.status='running'
                   and tasks.status<>'processing'
                 order by runs.id
@@ -15308,10 +14440,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
                 db.execute(
                     """
-                    update reply_tasks
+                    update tasks as reply_tasks
                     set status='done', locked_at=null, available_at='', error=?,
                         updated_at=?
-                    where id=? and execution_generation=?
+                    where reply_tasks.record_type='reply_tasks' and id=? and execution_generation=?
                       and status in ('pending', 'processing', 'failed')
                     """,
                     (reason.strip(), now_text, task_id, generation),
@@ -15371,11 +14503,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             for row in rows:
                 cursor = db.execute(
                     f"""
-                    update reply_tasks
+                    update tasks as reply_tasks
                     set status='pending', locked_at=null, available_at='',
                         error='service_restart_after_completed_turn',
                         updated_at=current_timestamp
-                    where id=? and status='processing' and execution_generation=?
+                    where reply_tasks.record_type='reply_tasks' and id=? and status='processing' and execution_generation=?
                       and not exists (
                           select 1
                           from ({AGENT_RUN_SQL}) as runs
@@ -15409,10 +14541,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             cursor = db.execute(
                 """
-                update reply_tasks
+                update tasks as reply_tasks
                 set error='wechat_read_only_decision_running',
                     updated_at=current_timestamp
-                where id=? and channel='wechat' and status='processing'
+                where reply_tasks.record_type='reply_tasks' and id=? and channel='wechat' and status='processing'
                   and execution_generation=?
                 """,
                 (task_id, expected_execution_generation),
@@ -15562,10 +14694,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 ):
                     cursor = db.execute(
                         """
-                        update reply_tasks
+                        update tasks as reply_tasks
                         set status='pending', locked_at=null, available_at=?,
                             error=?, updated_at=current_timestamp
-                        where id=? and status='processing'
+                        where record_type='reply_tasks' and id=? and status='processing'
                           and execution_generation=?
                         """,
                         (
@@ -15584,10 +14716,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     return
                 cursor = db.execute(
                     """
-                    update reply_tasks
+                    update tasks as reply_tasks
                     set status=?, locked_at=null, available_at='', error=?,
                         updated_at=current_timestamp
-                    where id=? and status='processing' and execution_generation=?
+                    where record_type='reply_tasks' and id=? and status='processing' and execution_generation=?
                     """,
                     (
                         "failed",
@@ -15604,12 +14736,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             next_generation = uuid4().hex if has_new_input else expected_execution_generation
             cursor = db.execute(
                 """
-                update reply_tasks
+                update tasks as reply_tasks
                 set status=?, execution_generation=?,
                     locked_at=null, error='', available_at='',
                     attempts=case when ?='pending' then 0 else attempts end,
                     updated_at=current_timestamp
-                where id=? and status='processing' and execution_generation=?
+                where record_type='reply_tasks' and id=? and status='processing' and execution_generation=?
                 """,
                 (
                     next_status, next_generation, next_status,
@@ -15644,12 +14776,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             has_new_input = int(row["input_version"]) > int(row["claimed_input_version"])
             cursor = db.execute(
                 """
-                update reply_tasks
+                update tasks as reply_tasks
                 set status=?, execution_generation=?,
                     locked_at=null, error=?, available_at='',
                     attempts=case when ?='pending' then 0 else attempts end,
                     updated_at=current_timestamp
-                where id=? and status='processing' and execution_generation=?
+                where record_type='reply_tasks' and id=? and status='processing' and execution_generation=?
                 """,
                 (
                     "pending" if has_new_input else "failed",
@@ -15681,13 +14813,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             cursor = db.execute(
                 f"""
-                update reply_tasks
+                update tasks as reply_tasks
                 set status='failed',
                     locked_at=null,
                     error='legacy_email_unsubscribe_lifecycle',
                     available_at='',
                     updated_at=current_timestamp
-                where id=?
+                where reply_tasks.record_type='reply_tasks' and id=?
                   and execution_generation=?
                   and channel='email'
                   and status=?
@@ -15763,13 +14895,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             for row in rows:
                 updated = db.execute(
                     """
-                    update reply_tasks
+                    update tasks as reply_tasks
                     set status='skipped',
                         locked_at=null,
                         error='legacy_email_unsubscribe_recovery_skipped:' || error,
                         available_at='',
                         updated_at=current_timestamp
-                    where id=?
+                    where reply_tasks.record_type='reply_tasks' and id=?
                       and status='failed'
                       and error='email_consumer_runtime_error:EmailPersistenceCorruption'
                     """,
@@ -15823,12 +14955,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 generation = uuid4().hex
                 updated = db.execute(
                     """
-                    update reply_tasks
+                    update tasks as reply_tasks
                     set status='pending', attempts=0, locked_at=null,
                         available_at='', error='explicit_effect_free_unsubscribe_retry',
                         recovery_code='effect_free_unsubscribe_retry',
                         force_new_decision=1, execution_generation=?, updated_at=current_timestamp
-                    where id=? and status='failed' and execution_generation=?
+                    where reply_tasks.record_type='reply_tasks' and id=? and status='failed' and execution_generation=?
                     """,
                     (generation, int(row['id']), str(row['execution_generation'])),
                 ).rowcount
@@ -15858,9 +14990,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         )
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select id
-                from reply_tasks
+                from ({REPLY_TASK_SQL}) as reply_tasks
                 where status='pending' and attempts>=?
                   and (error like ? or error=? or error=?)
                 order by id
@@ -15873,9 +15005,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return []
             placeholders = ",".join("?" for _ in ids)
             db.execute(
-                f"update reply_tasks set status='failed', available_at='', "
+                f"update tasks as reply_tasks set status='failed', available_at='', "
                 f"locked_at=null, error=error || '; retry_deadline_exhausted', "
-                f"updated_at=current_timestamp where status='pending' and id in ({placeholders})",
+                f"updated_at=current_timestamp where reply_tasks.record_type='reply_tasks' and status='pending' and id in ({placeholders})",
                 ids,
             )
             return ids
@@ -15951,14 +15083,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             cursor = db.execute(
                 """
-                update reply_tasks
+                update tasks as reply_tasks
                 set status='pending',
                     locked_at=null,
                     available_at=?,
                     error=?,
                     force_new_decision=1,
                     updated_at=?
-                where id=? and status in ('processing', 'pending')
+                where record_type='reply_tasks' and id=? and status in ('processing', 'pending')
                   and execution_generation=?
                 """,
                 (
@@ -15996,7 +15128,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 f"""
                 select tasks.execution_generation, tasks.status as task_status,
                        runs.role as run_role, runs.status as run_status
-                from reply_tasks as tasks
+                from ({REPLY_TASK_SQL}) as tasks
                 join ({AGENT_RUN_SQL}) as runs on runs.reply_task_id=tasks.id
                 where tasks.id=? and runs.id=?
                   and runs.execution_generation=tasks.execution_generation
@@ -16022,11 +15154,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             next_generation = uuid4().hex
             cursor = db.execute(
                 """
-                update reply_tasks
+                update tasks as reply_tasks
                 set status='pending', attempts=0,
                     locked_at=null, available_at='', error=?, recovery_code=?,
                     force_new_decision=1, execution_generation=?, updated_at=?
-                where id=? and status='failed' and execution_generation=?
+                where reply_tasks.record_type='reply_tasks' and id=? and status='failed' and execution_generation=?
                 """,
                 (
                     reason,
@@ -16105,9 +15237,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("retry reason must be non-empty")
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             task = db.execute(
-                """
+                f"""
                 select id, execution_generation, conversation_id, trigger_message_id
-                from reply_tasks
+                from ({REPLY_TASK_SQL}) as reply_tasks
                 where id=? and status='failed'
                 """,
                 (task_id,),
@@ -16136,10 +15268,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise ValueError("failed reply task already has a sent reply")
             cursor = db.execute(
                 """
-                update reply_tasks
+                update tasks as reply_tasks
                 set status='pending', attempts=0, locked_at=null,
                     available_at='', error=?, updated_at=?
-                where id=? and status='failed' and execution_generation=?
+                where reply_tasks.record_type='reply_tasks' and id=? and status='failed' and execution_generation=?
                 """,
                 (reason, now_text, task_id, task["execution_generation"]),
             )
@@ -16155,9 +15287,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def has_failed_native_codex_auth_tasks(self, *, channel: str) -> bool:
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select tasks.error, tasks.recovery_code, attempts.send_error
-                from reply_tasks as tasks
+                from ({REPLY_TASK_SQL}) as tasks
                 left join reply_attempts as attempts
                   on attempts.id=(
                       select latest.id from reply_attempts as latest
@@ -16197,7 +15329,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 select tasks.id, tasks.status, tasks.locked_at,
                        tasks.execution_generation, tasks.error,
                        tasks.recovery_code, attempts.send_error
-                from reply_tasks as tasks
+                from ({REPLY_TASK_SQL}) as tasks
                 left join reply_attempts as attempts
                   on attempts.id=(
                       select latest.id from reply_attempts as latest
@@ -16246,11 +15378,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 next_generation = uuid4().hex
                 cursor = db.execute(
                     """
-                    update reply_tasks
+                    update tasks as reply_tasks
                     set status='pending', attempts=0, locked_at=null,
                         available_at='', execution_generation=?, error=?,
                         recovery_code='', updated_at=?
-                    where id=? and execution_generation=? and (
+                    where reply_tasks.record_type='reply_tasks' and id=? and execution_generation=? and (
                         status='failed'
                         or (
                             status='processing' and error='codex_auth_recovered'
@@ -16291,7 +15423,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         execution_generation = uuid4().hex
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             task = db.execute(
-                "select execution_generation from reply_tasks where id=? "
+                f"select execution_generation from ({REPLY_TASK_SQL}) as reply_tasks where id=? "
                 "and status in ('processing', 'pending')",
                 (task_id,),
             ).fetchone()
@@ -16324,7 +15456,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             cursor = db.execute(
                 """
-                update reply_tasks
+                update tasks as reply_tasks
                 set force_new_decision=1,
                     execution_generation=?,
                     status='pending',
@@ -16332,7 +15464,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     available_at='',
                     error='execution_generation_rotated',
                     updated_at=current_timestamp
-                where id=? and status in ('processing', 'pending')
+                where reply_tasks.record_type='reply_tasks' and id=? and status in ('processing', 'pending')
                   and execution_generation=?
                 """,
                 (execution_generation, task_id, current_generation),
@@ -16355,14 +15487,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             cursor = db.execute(
                 """
-                update reply_tasks
+                update tasks as reply_tasks
                 set status='pending',
                     attempts=max(attempts - ?, 0),
                     locked_at=null,
                     available_at=?,
                     error=?,
                     updated_at=current_timestamp
-                where id=? and status='processing' and execution_generation=?
+                where record_type='reply_tasks' and id=? and status='processing' and execution_generation=?
                 """,
                 (int(refund_attempt), available_at, error, task_id, expected_execution_generation),
             )
@@ -16419,8 +15551,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 ),
             )
             db.execute(
-                "update reply_tasks set status='done', locked_at=null, error='', "
-                "updated_at=current_timestamp where id=? and status='processing' "
+                "update tasks as reply_tasks set status='done', locked_at=null, error='', "
+                "updated_at=current_timestamp where reply_tasks.record_type='reply_tasks' and id=? and status='processing' "
                 "and execution_generation=?",
                 (task_id, expected_execution_generation),
             )
@@ -16452,13 +15584,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             cursor = db.execute(
                 """
-                update reply_tasks
+                update tasks as reply_tasks
                 set status='pending',
                     locked_at=null,
                     available_at=?,
                     error=?,
                     updated_at=current_timestamp
-                where id=? and status='processing' and execution_generation=?
+                where reply_tasks.record_type='reply_tasks' and id=? and status='processing' and execution_generation=?
                 """,
                 (available_at, error, task_id, expected_execution_generation),
             )
@@ -16479,7 +15611,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         where = f" where {' and '.join(clauses)}" if clauses else ""
         with self._connect() as db:
             row = db.execute(
-                f"select count(*) as count from reply_tasks{where}", args
+                f"select count(*) as count from ({REPLY_TASK_SQL}) as reply_tasks{where}", args
             ).fetchone()
             return int(row["count"])
 
@@ -16949,11 +16081,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     )
             task_cursor = db.execute(
                 """
-                update reply_tasks
+                update tasks as reply_tasks
                 set status=?, locked_at=null, available_at=?, error=?,
                     recovery_code=?,
                     updated_at=current_timestamp
-                where id=? and status='processing' and execution_generation=?
+                where reply_tasks.record_type='reply_tasks' and id=? and status='processing' and execution_generation=?
                 """,
                 (
                     task_status,
@@ -17113,7 +16245,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     reply_tasks.trigger_message_id,
                     wechat_deliveries.id as delivery_id
                 from wechat_deliveries
-                join reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
+                join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
                 where wechat_deliveries.status='ready_to_send'
                   and wechat_deliveries.execution_generation=
                       reply_tasks.execution_generation
@@ -17142,7 +16274,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("retry_delay_seconds must not be negative")
         with self._immediate_write_transaction() as db:
             rows = db.execute(
-                """
+                f"""
                 select deliveries.id as delivery_id, (
                     select attempts.id
                     from reply_attempts as attempts
@@ -17153,7 +16285,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     limit 1
                 ) as attempt_id
                 from wechat_deliveries as deliveries
-                join reply_tasks as tasks on tasks.id=deliveries.reply_task_id
+                join ({REPLY_TASK_SQL}) as tasks on tasks.id=deliveries.reply_task_id
                 where deliveries.status='failed'
                   and deliveries.pre_action_failure=1
                   and deliveries.action_started_at<>''
@@ -17176,7 +16308,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             for row in rows:
                 delivery_id = int(row["delivery_id"])
                 cursor = db.execute(
-                    """
+                    f"""
                     update wechat_deliveries
                     set status='ready_to_send', error='', pre_action_failure=0,
                         updated_at=current_timestamp
@@ -17184,7 +16316,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       and status='failed'
                       and pre_action_failure=1
                       and exists (
-                      select 1 from reply_tasks
+                      select 1 from ({REPLY_TASK_SQL}) as reply_tasks
                       where reply_tasks.id=wechat_deliveries.reply_task_id
                         and reply_tasks.execution_generation=
                             wechat_deliveries.execution_generation
@@ -17254,10 +16386,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """
         with self._immediate_write_transaction() as db:
             rows = db.execute(
-                """
+                f"""
                 select deliveries.id as delivery_id
                 from wechat_deliveries as deliveries
-                join reply_tasks as tasks on tasks.id=deliveries.reply_task_id
+                join ({REPLY_TASK_SQL}) as tasks on tasks.id=deliveries.reply_task_id
                 where deliveries.status='failed'
                   and deliveries.error='accessibility_not_trusted'
                   and deliveries.pre_action_failure=1
@@ -17269,7 +16401,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             for row in rows:
                 delivery_id = int(row["delivery_id"])
                 cursor = db.execute(
-                    """
+                    f"""
                     update wechat_deliveries
                     set status='ready_to_send', error='', pre_action_failure=0,
                         updated_at=current_timestamp
@@ -17277,7 +16409,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       and error='accessibility_not_trusted'
                       and pre_action_failure=1
                       and exists (
-                          select 1 from reply_tasks
+                          select 1 from ({REPLY_TASK_SQL}) as reply_tasks
                           where reply_tasks.id=wechat_deliveries.reply_task_id
                             and reply_tasks.execution_generation=
                                 wechat_deliveries.execution_generation
@@ -17314,7 +16446,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if closed is not None and principal_reply_supersession(closed["error"]):
                 raise AgentRunLeaseLostError(f"WeChat delivery superseded by principal reply: {delivery_id}")
             cursor = db.execute(
-                """
+                f"""
                 update wechat_deliveries
                 set status='ready_to_send', error='', pre_action_failure=0,
                     updated_at=current_timestamp
@@ -17322,7 +16454,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and status='skipped'
                   and trim(action_started_at)<>''
                   and exists (
-                      select 1 from reply_tasks as tasks
+                      select 1 from ({REPLY_TASK_SQL}) as tasks
                       where tasks.id=wechat_deliveries.reply_task_id
                         and tasks.execution_generation=
                             wechat_deliveries.execution_generation
@@ -17367,7 +16499,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("delivery_id must be positive")
         with self._immediate_write_transaction() as db:
             cursor = db.execute(
-                """
+                f"""
                 update wechat_deliveries
                 set status='ready_to_send', error='', pre_action_failure=0,
                     updated_at=current_timestamp
@@ -17376,7 +16508,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and error='read_only_reconciliation_inconclusive'
                   and trim(action_started_at)<>''
                   and exists (
-                      select 1 from reply_tasks as tasks
+                      select 1 from ({REPLY_TASK_SQL}) as tasks
                       where tasks.id=wechat_deliveries.reply_task_id
                         and tasks.execution_generation=
                             wechat_deliveries.execution_generation
@@ -17419,7 +16551,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
         with self._immediate_write_transaction() as db:
             cursor = db.execute(
-                """
+                f"""
                 update wechat_deliveries
                 set status='sending',
                     action_started_at=case
@@ -17430,7 +16562,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 where id=? and status='ready_to_send'
                   and execution_generation=?
                   and exists (
-                      select 1 from reply_tasks
+                      select 1 from ({REPLY_TASK_SQL}) as reply_tasks
                       where reply_tasks.id=wechat_deliveries.reply_task_id
                         and reply_tasks.execution_generation=?
                   )
@@ -17503,7 +16635,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         expected_statuses = self._wechat_delivery_source_statuses(status, error)
         placeholders = ",".join("?" for _ in expected_statuses)
         generation_guard = (
-            "and exists (select 1 from reply_tasks "
+            f"and exists (select 1 from ({REPLY_TASK_SQL}) as reply_tasks "
             "where reply_tasks.id=wechat_deliveries.reply_task_id "
             "and reply_tasks.execution_generation="
             "wechat_deliveries.execution_generation)"
@@ -17573,7 +16705,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("inactive_before must be non-empty")
         with self._connect() as db:
             cursor = db.execute(
-                """
+                f"""
                 update wechat_deliveries
                 set status='superseded', error=?, updated_at=current_timestamp
                 where id=? and status='send_unknown'
@@ -17582,7 +16714,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     coalesce(nullif(action_started_at, ''), created_at)
                   ) <= datetime(?)
                   and exists (
-                    select 1 from reply_tasks
+                    select 1 from ({REPLY_TASK_SQL}) as reply_tasks
                     where reply_tasks.id=wechat_deliveries.reply_task_id
                       and reply_tasks.execution_generation=?
                   )
@@ -17630,7 +16762,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("max_retries must be positive")
         with self._immediate_write_transaction() as db:
             updated = db.execute(
-                """
+                f"""
                 update wechat_deliveries
                 set status='skipped', error=?, pre_action_failure=0,
                     updated_at=current_timestamp
@@ -17642,7 +16774,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and execution_generation=?
                   and exists (
                       select 1
-                      from reply_tasks as tasks
+                      from ({REPLY_TASK_SQL}) as tasks
                       where tasks.id=wechat_deliveries.reply_task_id
                         and tasks.execution_generation=?
                         and (
@@ -17697,7 +16829,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("inactive_before must be non-empty")
         with self._connect() as db:
             cursor = db.execute(
-                """
+                f"""
                 update wechat_deliveries
                 set status='superseded', error=?, updated_at=current_timestamp
                 where id=? and status='ready_to_send'
@@ -17705,7 +16837,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and coalesce(action_started_at, '')=''
                   and datetime(created_at) <= datetime(?)
                   and exists (
-                    select 1 from reply_tasks
+                    select 1 from ({REPLY_TASK_SQL}) as reply_tasks
                     where reply_tasks.id=wechat_deliveries.reply_task_id
                       and reply_tasks.execution_generation=?
                   )
@@ -17898,10 +17030,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return
         send_status, send_error = next_status
         row = db.execute(
-            """
+            f"""
             select tasks.conversation_id, tasks.trigger_message_id
             from wechat_deliveries as deliveries
-            join reply_tasks as tasks on tasks.id=deliveries.reply_task_id
+            join ({REPLY_TASK_SQL}) as tasks on tasks.id=deliveries.reply_task_id
             where deliveries.id=?
             """,
             (delivery_id,),
@@ -18160,7 +17292,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def _meeting_alignment_job_from_row(
         row: sqlite3.Row,
     ) -> MeetingAlignmentJob:
-        return MeetingAlignmentJob.model_validate(dict(row))
+        values = dict(row)
+        if "legacy_key" in values:
+            values["id"] = int(values["legacy_key"])
+        return MeetingAlignmentJob.model_validate({
+            name: values[name] for name in SOURCE_COLUMNS["meeting_alignment_jobs"]
+        })
 
     @staticmethod
     def _meeting_alignment_run_from_row(
@@ -18205,7 +17342,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """
         with self._connect() as db:
             row = db.execute(
-                "select source_json from meeting_alignment_jobs where id=?",
+                "select source_json from tasks where record_type='meeting_alignment_jobs' "
+                "and cast(legacy_key as integer)=?",
                 (job_id,),
             ).fetchone()
             if row is None:
@@ -18221,9 +17359,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             segments.append(segment_id)
             source["extra_segment_ids"] = segments
             db.execute(
-                "update meeting_alignment_jobs set source_json=?, status=?, eligible_at=?,"
+                "update tasks set source_json=?, status=?, eligible_at=?,"
                 " attempts=0, locked_at=null, available_at='', error='',"
-                " updated_at=current_timestamp where id=?",
+                " updated_at=current_timestamp where record_type='meeting_alignment_jobs' "
+                "and cast(legacy_key as integer)=?",
                 (
                     json.dumps(source, ensure_ascii=False, sort_keys=True),
                     status,
@@ -18246,48 +17385,24 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> int:
         validated_status = self._validate_meeting_alignment_status(status)
         with self._connect() as db:
-            db.execute(
-                """
-                insert into meeting_alignment_jobs (
-                    meeting_id,
-                    title,
-                    source_json,
-                    participants_json,
-                    ended_at,
-                    eligible_at,
-                    status
+            inserted = insert_task(db, "meeting_alignment_jobs", {
+                "meeting_id": meeting_id, "title": title,
+                "source_json": source_json, "participants_json": participants_json,
+                "ended_at": ended_at, "eligible_at": eligible_at,
+                "status": validated_status,
+            }, ignore=True)
+            if inserted.rowcount == 0:
+                db.execute(
+                    "update tasks set title=?, source_json=?, participants_json=?, "
+                    "ended_at=?, eligible_at=?, status=?, updated_at=current_timestamp "
+                    "where record_type='meeting_alignment_jobs' and meeting_id=? "
+                    "and status='waiting'",
+                    (title, source_json, participants_json, ended_at, eligible_at,
+                     validated_status, meeting_id),
                 )
-                values (?, ?, ?, ?, ?, ?, ?)
-                on conflict(meeting_id) do update set
-                    title=excluded.title,
-                    source_json=excluded.source_json,
-                    participants_json=excluded.participants_json,
-                    ended_at=excluded.ended_at,
-                    eligible_at=excluded.eligible_at,
-                    status=case
-                        when meeting_alignment_jobs.status='waiting'
-                            then excluded.status
-                        else meeting_alignment_jobs.status
-                    end,
-                    updated_at=current_timestamp
-                where meeting_alignment_jobs.status='waiting'
-                """,
-                (
-                    meeting_id,
-                    title,
-                    source_json,
-                    participants_json,
-                    ended_at,
-                    eligible_at,
-                    validated_status,
-                ),
-            )
             row = db.execute(
-                """
-                select id
-                from meeting_alignment_jobs
-                where meeting_id=?
-                """,
+                "select cast(legacy_key as integer) as id from tasks "
+                "where record_type='meeting_alignment_jobs' and meeting_id=?",
                 (meeting_id,),
             ).fetchone()
             if row is None:
@@ -18297,7 +17412,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def get_meeting_alignment_job(self, job_id: int) -> MeetingAlignmentJob:
         with self._connect() as db:
             row = db.execute(
-                "select * from meeting_alignment_jobs where id=?",
+                f"select * from ({MEETING_JOB_SQL}) where id=?",
                 (job_id,),
             ).fetchone()
             if row is None:
@@ -18323,7 +17438,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         segment_end = datetime.fromisoformat(ended_at)
         with self._connect() as db:
             rows = db.execute(
-                "select * from meeting_alignment_jobs where title=? order by ended_at desc limit 50",
+                f"select * from ({MEETING_JOB_SQL}) where title=? order by ended_at desc limit 50",
                 (title,),
             ).fetchall()
         for row in rows:
@@ -18341,7 +17456,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     ) -> MeetingAlignmentJob | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from meeting_alignment_jobs where meeting_id=?",
+                f"select * from ({MEETING_JOB_SQL}) where meeting_id=?",
                 (meeting_id,),
             ).fetchone()
             if row is None:
@@ -18352,9 +17467,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Return delivered meeting conclusions in stable chronological order."""
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select *
-                from meeting_alignment_jobs
+                from ({MEETING_JOB_SQL})
                 where status='sent'
                   and trim(final_message) <> ''
                 order by datetime(ended_at), id
@@ -18368,9 +17483,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Every discovered meeting that ended in [start, end), oldest first."""
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select *
-                from meeting_alignment_jobs
+                from ({MEETING_JOB_SQL})
                 where datetime(ended_at) >= datetime(?)
                   and datetime(ended_at) < datetime(?)
                 order by datetime(ended_at), id
@@ -18382,10 +17497,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def recurring_meeting_group_targets(self, title: str) -> list[tuple[str, str, int]]:
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select target_id, max(target_title) as target_title,
                        count(*) as sent_count
-                from meeting_alignment_jobs
+                from ({MEETING_JOB_SQL})
                 where title=? and status='sent' and target_kind='group'
                   and trim(target_id)<>'' and trim(final_message)<>''
                 group by target_id
@@ -18404,7 +17519,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def _meeting_memory_write_event_from_row(
         row: sqlite3.Row,
     ) -> MeetingMemoryWriteEvent:
-        return MeetingMemoryWriteEvent.model_validate(dict(row))
+        values = dict(row)
+        values["meeting_job_id"] = values.pop("public_meeting_job_id")
+        return MeetingMemoryWriteEvent.model_validate(values)
 
     def create_meeting_memory_write_event(
         self,
@@ -18419,8 +17536,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             parent = db.execute(
                 """
                 select 1
-                from meeting_alignment_jobs
-                where id=? and status='sent' and trim(final_message)<>''
+                from tasks
+                where record_type='meeting_alignment_jobs'
+                  and cast(legacy_key as integer)=?
+                  and status='sent' and trim(final_message)<>''
                 """,
                 (meeting_job_id,),
             ).fetchone()
@@ -18429,14 +17548,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "meeting Memory write requires a sent conclusion"
                 )
             cursor = db.execute(
-                """
+                f"""
                 insert into meeting_memory_write_events (
                     meeting_job_id, execution_generation, payload_json
                 )
-                select ?, ?, ?
+                select {task_id_expression('meeting_alignment_jobs', '?')}, ?, ?
                 where not exists (
                     select 1 from meeting_memory_write_events
-                    where meeting_job_id=?
+                    where meeting_job_id={task_id_expression('meeting_alignment_jobs', '?')}
                 )
                 """,
                 (meeting_job_id, uuid4().hex, "{}", meeting_job_id),
@@ -18594,17 +17713,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 for row in db.execute(
                     """
                     with missing as materialized (
-                        select jobs.id
-                        from meeting_alignment_jobs as jobs
-                        where jobs.status='sent'
+                        select cast(jobs.legacy_key as integer) as id
+                        from tasks as jobs
+                        where jobs.record_type='meeting_alignment_jobs'
+                          and jobs.status='sent'
                           and not exists (
                               select 1 from meeting_memory_write_events as events
                               where events.meeting_job_id=jobs.id
                           )
                     )
-                    select jobs.id
+                    select cast(jobs.legacy_key as integer) as id
                     from missing
-                    join meeting_alignment_jobs as jobs on jobs.id=missing.id
+                    join tasks as jobs on jobs.record_type='meeting_alignment_jobs'
+                      and cast(jobs.legacy_key as integer)=missing.id
                     where trim(jobs.final_message)<>''
                     """
                 )
@@ -18619,8 +17740,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     meeting_job_id, execution_generation, payload_json
                 )
                 select jobs.id, lower(hex(randomblob(16))), '{{}}'
-                from meeting_alignment_jobs as jobs
-                where jobs.id in ({placeholders})
+                from tasks as jobs
+                where jobs.record_type='meeting_alignment_jobs'
+                  and cast(jobs.legacy_key as integer) in ({placeholders})
                   and jobs.status='sent'
                   and trim(jobs.final_message)<>''
                   and not exists (
@@ -18644,11 +17766,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             rows = db.execute(
                 """
-                select *
-                from meeting_memory_write_events
-                where status='pending'
-                  and (available_at='' or datetime(available_at)<=datetime(?))
-                order by id
+                select events.*, cast(jobs.legacy_key as integer) as public_meeting_job_id
+                from meeting_memory_write_events events
+                join tasks jobs on jobs.id=events.meeting_job_id
+                  and jobs.record_type='meeting_alignment_jobs'
+                where events.status='pending'
+                  and (events.available_at='' or datetime(events.available_at)<=datetime(?))
+                order by events.id
                 limit ?
                 """,
                 (now, limit),
@@ -18827,11 +17951,22 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     order by id
                     limit ?
                 )
-                returning *
+                returning id
                 """,
                 (owner, lease_expires_at, now, now, now, limit),
             ).fetchall()
-        return [self._meeting_memory_write_event_from_row(row) for row in rows]
+            if not rows:
+                return []
+            placeholders = ",".join("?" for _ in rows)
+            events = db.execute(
+                f"select events.*, cast(jobs.legacy_key as integer) as public_meeting_job_id "
+                f"from meeting_memory_write_events events "
+                f"join tasks jobs on jobs.id=events.meeting_job_id "
+                f"and jobs.record_type='meeting_alignment_jobs' "
+                f"where events.id in ({placeholders})",
+                [row["id"] for row in rows],
+            ).fetchall()
+        return [self._meeting_memory_write_event_from_row(row) for row in events]
 
     def complete_meeting_memory_write_event(
         self,
@@ -18967,8 +18102,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 where events.id=? and events.status='failed'
                   and exists (
                     select 1
-                    from meeting_alignment_jobs as jobs
-                    where jobs.id=events.meeting_job_id
+                    from tasks as jobs
+                    where jobs.record_type='meeting_alignment_jobs'
+                      and jobs.id=events.meeting_job_id
                       and jobs.status='sent'
                       and trim(jobs.final_message)<>''
                   )
@@ -19003,8 +18139,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 where events.id=? and events.status in ('pending', 'failed')
                   and exists (
                     select 1
-                    from meeting_alignment_jobs as jobs
-                    where jobs.id=events.meeting_job_id
+                    from tasks as jobs
+                    where jobs.record_type='meeting_alignment_jobs'
+                      and jobs.id=events.meeting_job_id
                       and jobs.status='sent'
                       and trim(jobs.final_message)<>''
                   )
@@ -19025,23 +18162,24 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 """
                 with candidates as (
                     select id
-                    from meeting_alignment_jobs
-                    where status in ('waiting', 'pending', 'retry')
+                    from tasks
+                    where record_type='meeting_alignment_jobs'
+                      and status in ('waiting', 'pending', 'retry')
                       and datetime(eligible_at) <= datetime(?)
                       and (
                           available_at=''
                           or datetime(available_at) <= datetime(?)
                       )
                     order by max(datetime(eligible_at),
-                        coalesce(datetime(nullif(available_at,'')), datetime(eligible_at))), id
+                        coalesce(datetime(nullif(available_at,'')), datetime(eligible_at))), cast(legacy_key as integer)
                     limit ?
                 )
-                update meeting_alignment_jobs
+                update tasks
                 set status='processing',
                     attempts=attempts + 1,
                     locked_at=current_timestamp,
                     updated_at=current_timestamp
-                where id in (select id from candidates)
+                where record_type='meeting_alignment_jobs' and id in (select id from candidates)
                   and status in ('waiting', 'pending', 'retry')
                 returning *
                 """,
@@ -19112,9 +18250,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             db.execute(
                 f"""
-                update meeting_alignment_jobs
+                update tasks
                 set {', '.join(assignments)}, updated_at=current_timestamp
-                where id=?
+                where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?
                 """,
                 args,
             )
@@ -19145,8 +18283,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         # the transactional claim below rechecks the same eligibility.
         with self._connect() as db:
             candidate = db.execute(
-                """select 1 from meeting_alignment_jobs
-                   where status='ready_to_send' and locked_at is null
+                """select 1 from tasks
+                   where record_type='meeting_alignment_jobs'
+                     and status='ready_to_send' and locked_at is null
                      and (available_at='' or datetime(available_at)<=datetime(?))
                    limit 1""",
                 (now,),
@@ -19158,20 +18297,20 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 """
                 with candidates as (
                     select id
-                    from meeting_alignment_jobs
-                    where status='ready_to_send'
+                    from tasks
+                    where record_type='meeting_alignment_jobs' and status='ready_to_send'
                       and locked_at is null
                       and (
                           available_at=''
                           or datetime(available_at) <= datetime(?)
                       )
-                    order by id
+                    order by cast(legacy_key as integer)
                     limit ?
                 )
-                update meeting_alignment_jobs
+                update tasks
                 set locked_at=current_timestamp,
                     updated_at=current_timestamp
-                where id in (select id from candidates)
+                where record_type='meeting_alignment_jobs' and id in (select id from candidates)
                   and status='ready_to_send'
                   and locked_at is null
                 returning *
@@ -19187,7 +18326,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             db.executemany(
                 """insert into meeting_alignment_delivery_claims(job_id, claim_token)
                    values (?, ?) on conflict(job_id) do update set claim_token=excluded.claim_token""",
-                [(job.id, token) for job in jobs],
+                [(row["id"], token) for row in rows],
             )
             return sorted(jobs, key=lambda job: job.id)
 
@@ -19198,9 +18337,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("meeting alignment job id must be positive")
         with self._immediate_write_transaction() as db:
             row = db.execute(
-                """update meeting_alignment_jobs
+                """update tasks
                    set locked_at=current_timestamp, updated_at=current_timestamp
-                   where id=? and status='ready_to_send' and locked_at is null
+                   where record_type='meeting_alignment_jobs'
+                     and cast(legacy_key as integer)=?
+                     and status='ready_to_send' and locked_at is null
                      and (available_at='' or datetime(available_at)<=datetime(?))
                    returning *""",
                 (job_id, now),
@@ -19211,7 +18352,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             db.execute(
                 """insert into meeting_alignment_delivery_claims(job_id, claim_token)
                    values (?, ?) on conflict(job_id) do update set claim_token=excluded.claim_token""",
-                (job_id, token),
+                (row["id"], token),
             )
             return self._meeting_alignment_job_from_row(row).model_copy(
                 update={"delivery_claim_token": token}
@@ -19224,18 +18365,22 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return
         with self._immediate_write_transaction() as db:
             db.executemany(
-                """update meeting_alignment_jobs
+                """update tasks
                    set locked_at=null
-                   where id=? and status='ready_to_send' and locked_at=?
+                   where record_type='meeting_alignment_jobs'
+                     and cast(legacy_key as integer)=?
+                     and status='ready_to_send' and locked_at=?
                      and exists (
                          select 1 from meeting_alignment_delivery_claims claim
-                         where claim.job_id=meeting_alignment_jobs.id
+                         where claim.job_id=tasks.id
                            and claim.claim_token=? and claim.claim_token!=''
                      )""",
                 [(job.id, job.locked_at, job.delivery_claim_token) for job in jobs],
             )
             db.executemany(
-                "delete from meeting_alignment_delivery_claims where job_id=? and claim_token=?",
+                "delete from meeting_alignment_delivery_claims where job_id="
+                + task_id_expression("meeting_alignment_jobs", "?")
+                + " and claim_token=?",
                 [(job.id, job.delivery_claim_token) for job in jobs],
             )
 
@@ -19249,13 +18394,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             row = db.execute(
                 """
-                update meeting_alignment_jobs
+                update tasks
                 set attempts=attempts + 1,
                     available_at=?,
                     error=?,
                     locked_at=null,
                     updated_at=current_timestamp
-                where id=?
+                where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?
                   and status='ready_to_send'
                   and locked_at is not null
                 returning *
@@ -19274,10 +18419,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             rows = db.execute(
                 """
-                update meeting_alignment_jobs
+                update tasks
                 set locked_at=null,
                     updated_at=current_timestamp
-                where status='ready_to_send'
+                where record_type='meeting_alignment_jobs' and status='ready_to_send'
                   and locked_at is not null
                 returning *
                 """
@@ -19292,12 +18437,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             rows = db.execute(
                 """
-                update meeting_alignment_jobs
+                update tasks
                 set status='retry',
                     attempts=max(attempts - 1, 0),
                     locked_at=null,
                     updated_at=current_timestamp
-                where status='processing'
+                where record_type='meeting_alignment_jobs' and status='processing'
                 returning *
                 """
             ).fetchall()
@@ -19314,7 +18459,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     [now_text, *[str(job_id) for job_id in job_ids]],
                 )
                 run_rows = db.execute(
-                    f"select id from meeting_alignment_runs "
+                    f"select id from ({MEETING_RUN_SQL}) "
                     f"where status='running' and job_id in ({placeholders})",
                     job_ids,
                 ).fetchall()
@@ -19330,12 +18475,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     )
                     db.execute(
                         f"""
-                        update meeting_alignment_runs
-                        set status='retry', error=?, audit_summary=?,
+                        update runs
+                        set status='retry', error=?,
                             finished_at=?, updated_at=?
-                        where status='running' and id in ({run_placeholders})
+                        where record_type='meeting_alignment_runs' and status='running'
+                          and cast(legacy_key as integer) in ({run_placeholders})
                         """,
-                        [error, error, now_text, now_text, *run_ids],
+                        [error, now_text, now_text, *run_ids],
                     )
                     db.execute(
                         f"""
@@ -19366,20 +18512,22 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         placeholders = ",".join("?" for _ in ids)
         with self._immediate_write_transaction() as db:
             rows = db.execute(
-                f"""update meeting_alignment_jobs
+                f"""update tasks as meeting_alignment_jobs
                     set status='retry', attempts=0, locked_at=null,
                         available_at='', error='', decision_json='{{}}',
                         target_kind='', target_id='', target_title='',
                         mentions_json='[]', final_message='',
                         send_result_json='{{}}', updated_at=current_timestamp
-                    where id in ({placeholders}) and status in ('failed', 'no_action')
+                    where meeting_alignment_jobs.record_type='meeting_alignment_jobs'
+                      and cast(meeting_alignment_jobs.legacy_key as integer) in ({placeholders})
+                      and status in ('failed', 'no_action')
                       and coalesce(locked_at,'')=''
                       and send_result_json='{{}}'
                       and not exists (
                         select 1 from outbound_postfixes outbound
                         where outbound.channel='dingtalk' and outbound.delivery_key in (
-                          'meeting-alignment:' || meeting_alignment_jobs.id || ':' || meeting_alignment_jobs.meeting_id,
-                          'meeting-alignment:' || meeting_alignment_jobs.id || ':' || meeting_alignment_jobs.meeting_id || ':sensitive'
+                          'meeting-alignment:' || meeting_alignment_jobs.legacy_key || ':' || meeting_alignment_jobs.meeting_id,
+                          'meeting-alignment:' || meeting_alignment_jobs.legacy_key || ':' || meeting_alignment_jobs.meeting_id || ':sensitive'
                         )
                       )
                       and not exists (
@@ -19389,22 +18537,24 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       and not exists (
                         select 1 from dispatcher_claim_leases claim
                         where claim.adapter_name='meeting'
-                          and claim.source_id=cast(meeting_alignment_jobs.id as text)
+                          and claim.source_id=meeting_alignment_jobs.legacy_key
                           and coalesce(claim.terminal_at,'')=''
                           and julianday(claim.lease_expires_at)>julianday('now')
                       )
                       and not exists (
-                        select 1 from meeting_alignment_runs run
-                        where run.job_id=meeting_alignment_jobs.id and run.status='running'
+                        select 1 from runs run
+                        where run.record_type='meeting_alignment_runs'
+                          and run.task_id=meeting_alignment_jobs.id and run.status='running'
                       )
                       and not exists (
                         select 1 from ({RUNTIME_ATTEMPT_SQL}) runtime
-                        join meeting_alignment_runs run on runtime.workload_key=cast(run.id as text)
+                        join runs run on runtime.workload_key=run.legacy_key
                         where runtime.workload_kind='meeting'
-                          and run.job_id=meeting_alignment_jobs.id
+                          and run.record_type='meeting_alignment_runs'
+                          and run.task_id=meeting_alignment_jobs.id
                           and runtime.status in ('starting','running')
                       )
-                    returning id""",
+                    returning cast(legacy_key as integer) as id""",
                 ids,
             ).fetchall()
             return [int(row["id"]) for row in rows]
@@ -19416,7 +18566,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             rows = db.execute(
                 """
-                update meeting_alignment_jobs
+                update tasks
                 set status='no_action',
                     locked_at=null,
                     available_at='',
@@ -19429,7 +18579,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     final_message='',
                     send_result_json='{}',
                     updated_at=current_timestamp
-                where datetime(ended_at) < datetime(?)
+                where record_type='meeting_alignment_jobs'
+                  and datetime(ended_at) < datetime(?)
                   and status in (
                       'waiting',
                       'pending',
@@ -19459,7 +18610,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             row = db.execute(
                 """
-                update meeting_alignment_jobs
+                update tasks
                 set title=?,
                     source_json=?,
                     participants_json=?,
@@ -19478,7 +18629,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     final_message='',
                     send_result_json='{}',
                     updated_at=current_timestamp
-                where id=?
+                where record_type='meeting_alignment_jobs'
+                  and cast(legacy_key as integer)=?
                   and status in ('no_action', 'failed')
                   and send_result_json='{}'
                 returning *
@@ -19500,17 +18652,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Resume a reviewed unsent delivery after independent provider readback."""
         with self._connect() as db:
             row = db.execute(
-                """update meeting_alignment_jobs
+                """update tasks as meeting_alignment_jobs
                    set status='ready_to_send', locked_at=null,
                        available_at='', error='', updated_at=current_timestamp
-                   where id=? and status='failed' and locked_at is null
+                   where meeting_alignment_jobs.record_type='meeting_alignment_jobs'
+                     and cast(meeting_alignment_jobs.legacy_key as integer)=?
+                     and status='failed' and locked_at is null
                      and decision_json!='{}' and target_id!=''
                      and send_result_json='{}'
                      and not exists (
                        select 1 from outbound_postfix_receipts
                        where channel='dingtalk'
                          and delivery_key=('meeting-alignment:' ||
-                           meeting_alignment_jobs.id || ':' ||
+                           meeting_alignment_jobs.legacy_key || ':' ||
                            meeting_alignment_jobs.meeting_id)
                      )
                    returning *""",
@@ -19523,26 +18677,31 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("meeting alignment job id must be positive")
         with self._agent_run_write_transaction(None) as (db, _):
             parent = db.execute(
-                "select 1 from meeting_alignment_jobs "
-                "where id=? and status='processing'",
+                "select 1 from tasks where record_type='meeting_alignment_jobs' "
+                "and cast(legacy_key as integer)=? and status='processing'",
                 (job_id,),
             ).fetchone()
             if parent is None:
                 raise ValueError("meeting alignment job is not processing")
             active = db.execute(
-                "select id from meeting_alignment_runs "
-                "where job_id=? and status='running'",
+                "select cast(legacy_key as integer) as id from runs "
+                "where record_type='meeting_alignment_runs' "
+                "and task_id=" + task_id_expression("meeting_alignment_jobs", "?")
+                + " and status='running'",
                 (job_id,),
             ).fetchone()
             if active is not None:
                 return int(active["id"])
-            cursor = db.execute(
-                "insert into meeting_alignment_runs "
-                "(job_id, status, finished_at, updated_at) "
-                "values (?, 'running', '', current_timestamp)",
-                (job_id,),
-            )
-            return int(cursor.lastrowid)
+            cursor = insert_run(db, "meeting_alignment_runs", {
+                "task_id": db.execute(
+                    "select " + task_id_expression("meeting_alignment_jobs", "?"),
+                    (job_id,),
+                ).fetchone()[0],
+                "status": "running", "finished_at": "",
+                "updated_at": db.execute("select current_timestamp").fetchone()[0],
+            })
+            row = db.execute("select cast(legacy_key as integer) from runs where id=?", (cursor.lastrowid,)).fetchone()
+            return int(row[0])
 
     def finish_meeting_alignment_run(
         self,
@@ -19571,7 +18730,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         )
         with self._agent_run_write_transaction(None) as (db, _):
             row = db.execute(
-                "select * from meeting_alignment_runs where id=?", (run_id,)
+                f"select * from ({MEETING_RUN_SQL}) where id=?", (run_id,)
             ).fetchone()
             if row is None:
                 raise ValueError("meeting alignment run does not exist")
@@ -19593,12 +18752,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     return
                 raise ValueError("conflicting meeting alignment run terminal rewrite")
             db.execute(
-                "update meeting_alignment_runs set status=?, codex_session_id=?, "
-                "codex_transcript_start_line=?, codex_transcript_end_line=?, "
-                "decision_json=?, audit_tool_events_json=?, audit_summary=?, error=?, "
+                "update runs set status=?, session_id=?, "
+                "transcript_start=?, transcript_end=?, error=?, "
                 "finished_at=current_timestamp, updated_at=current_timestamp "
-                "where id=? and status='running'",
-                (*values, run_id),
+                "where record_type='meeting_alignment_runs' and cast(legacy_key as integer)=? "
+                "and status='running'",
+                (status, codex_session_id, codex_transcript_start_line,
+                 codex_transcript_end_line, error, run_id),
             )
 
     def record_meeting_alignment_run(
@@ -19615,39 +18775,21 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         audit_tool_events_json: str = "[]",
     ) -> int:
         with self._connect() as db:
-            cursor = db.execute(
-                """
-                insert into meeting_alignment_runs (
-                    job_id,
-                    codex_session_id,
-                    codex_transcript_start_line,
-                    codex_transcript_end_line,
-                    decision_json,
-                    audit_tool_events_json,
-                    audit_summary,
-                    status,
-                    error,
-                    finished_at,
-                    updated_at
-                )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?,
-                        case when ?='running' then '' else current_timestamp end,
-                        current_timestamp)
-                """,
-                (
-                    job_id,
-                    codex_session_id,
-                    codex_transcript_start_line,
-                    codex_transcript_end_line,
-                    "{}",
-                    "[]",
-                    "",
-                    status,
-                    error,
-                    status,
-                ),
-            )
-            return int(cursor.lastrowid)
+            parent = db.execute(
+                "select " + task_id_expression("meeting_alignment_jobs", "?"),
+                (job_id,),
+            ).fetchone()[0]
+            inserted_at = db.execute("select current_timestamp").fetchone()[0]
+            cursor = insert_run(db, "meeting_alignment_runs", {
+                "task_id": parent, "session_id": codex_session_id,
+                "transcript_start": codex_transcript_start_line,
+                "transcript_end": codex_transcript_end_line,
+                "status": status, "error": error,
+                "finished_at": "" if status == "running" else inserted_at,
+                "updated_at": inserted_at,
+            })
+            row = db.execute("select cast(legacy_key as integer) from runs where id=?", (cursor.lastrowid,)).fetchone()
+            return int(row[0])
 
     def list_meeting_alignment_runs(
         self,
@@ -19657,13 +18799,20 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select *
-                from meeting_alignment_runs
-                where job_id=?
+                from ({MEETING_RUN_SQL})
+                where id in (
+                    select cast(legacy_key as integer) from runs
+                    where record_type='meeting_alignment_runs'
+                      and task_id={task_id_expression('meeting_alignment_jobs', '?')}
+                    union all
+                    select cast(legacy_key as integer) from runs
+                    where record_type='meeting_alignment_runs' and job_id=?
+                )
                 order by id desc
                 """,
-                (job_id,),
+                (job_id, job_id),
             ).fetchall()
             runs = [
                 (row, latest_standalone_ref(
@@ -19681,7 +18830,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
         with self._connect() as db:
             row = db.execute(
-                "select * from meeting_alignment_runs where id=?",
+                f"select * from ({MEETING_RUN_SQL}) where id=?",
                 (run_id,),
             ).fetchone()
             ref = (latest_standalone_ref(
@@ -19696,7 +18845,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Read status and job linkage without opening a native trajectory."""
         with self._connect() as db:
             row = db.execute(
-                "select * from meeting_alignment_runs where id=?", (run_id,)
+                f"select * from ({MEETING_RUN_SQL}) where id=?", (run_id,)
             ).fetchone()
         if row is None:
             return None
@@ -19711,16 +18860,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Return retry runs superseded by a completed meeting outcome."""
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select earlier.id
-                from meeting_alignment_runs as earlier
-                join meeting_alignment_jobs as jobs on jobs.id=earlier.job_id
+                from ({MEETING_RUN_SQL}) as earlier
+                join ({MEETING_JOB_SQL}) as jobs on jobs.id=earlier.job_id
                 where earlier.created_at>=?
                   and earlier.status in ('retry', 'failed')
                   and jobs.status in ('sent', 'no_action')
                   and exists (
                       select 1
-                      from meeting_alignment_runs as later
+                      from ({MEETING_RUN_SQL}) as later
                       where later.job_id=earlier.job_id
                         and later.id>earlier.id
                         and later.status in ('ready_to_send', 'sent', 'no_action')
@@ -19733,13 +18882,21 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def has_later_meeting_alignment_run(self, job_id: int, run_id: int) -> bool:
         with self._connect() as db:
             row = db.execute(
-                """
-                select 1 from meeting_alignment_runs
-                where job_id=? and id>?
+                f"""
+                select 1 from runs
+                where record_type='meeting_alignment_runs'
+                  and task_id={task_id_expression('meeting_alignment_jobs', '?')}
+                  and cast(legacy_key as integer)>?
                 limit 1
                 """,
                 (job_id, run_id),
             ).fetchone()
+            if row is None:
+                row = db.execute(
+                    "select 1 from runs where record_type='meeting_alignment_runs' "
+                    "and job_id=? and cast(legacy_key as integer)>? limit 1",
+                    (job_id, run_id),
+                ).fetchone()
         return row is not None
 
     def list_meeting_alignment_runs_for_codex_session(
@@ -19750,8 +18907,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
         with self._connect() as db:
             rows = db.execute(
-                """
-                select * from meeting_alignment_runs
+                f"""
+                select * from ({MEETING_RUN_SQL})
                 where codex_session_id=?
                 order by id desc
                 """,
@@ -19782,7 +18939,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             db.execute(
                 """
-                insert into okr_review_requests (
+                insert into tasks (
+                    record_type,
                     conversation_id,
                     conversation_title,
                     trigger_message_id,
@@ -19792,16 +18950,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     period_label,
                     period_start,
                     period_end,
-                    okr_source_json
+                    okr_source_json, status, error, codex_session_id,
+                    created_at, updated_at
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                on conflict(conversation_id, trigger_message_id) do update set
+                values ('okr_review_requests', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        'pending', '', '', current_timestamp, current_timestamp)
+                on conflict(conversation_id, trigger_message_id)
+                    where record_type='okr_review_requests' do update set
                     okr_source_json=excluded.okr_source_json,
                     status='pending',
                     error='',
                     codex_session_id='',
                     updated_at=current_timestamp
-                where okr_review_requests.status='failed'
+                where tasks.status='failed'
                 """,
                 (
                     conversation_id,
@@ -19818,8 +18979,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             row = db.execute(
                 """
-                select id from okr_review_requests
-                where conversation_id=? and trigger_message_id=?
+                select cast(legacy_key as integer) as id from tasks
+                where record_type='okr_review_requests'
+                  and conversation_id=? and trigger_message_id=?
                 """,
                 (conversation_id, trigger_message_id),
             ).fetchone()
@@ -19830,9 +18992,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return []
         with self._immediate_write_transaction() as db:
             rows = db.execute(
-                """
+                f"""
                 select *
-                from okr_review_requests
+                from ({OKR_REQUEST_SQL})
                 where status='pending'
                 order by id
                 limit ?
@@ -19845,18 +19007,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             placeholders = ",".join("?" for _ in ids)
             db.execute(
                 f"""
-                update okr_review_requests
+                update tasks
                 set status='processing',
                     error='',
                     updated_at=current_timestamp
-                where id in ({placeholders})
+                where record_type='okr_review_requests'
+                  and cast(legacy_key as integer) in ({placeholders})
                 """,
                 ids,
             )
             claimed = db.execute(
                 f"""
                 select *
-                from okr_review_requests
+                from ({OKR_REQUEST_SQL})
                 where id in ({placeholders})
                 order by id
                 """,
@@ -19870,10 +19033,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             params: list[object] = []
             processing_clause = (
-                "status='processing' and not exists ("
+                "request.status='processing' and not exists ("
                 "select 1 from dispatcher_claim_leases claim "
                 "where claim.adapter_name='okr_review' "
-                "and claim.source_id=cast(okr_review_requests.id as text) "
+                "and claim.source_id=cast(request.id as text) "
                 "and claim.owner<>'' and claim.terminal_at='' "
                 "and claim.lease_expires_at>current_timestamp)"
             )
@@ -19882,27 +19045,27 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     return []
                 processing_clause = (
                     processing_clause + " "
-                    "and datetime(updated_at) <= datetime('now', ?)"
+                    "and datetime(request.updated_at) <= datetime('now', ?)"
                 )
                 params.append(f"-{int(processing_max_age_seconds)} seconds")
             rows = db.execute(
                 f"""
                 select *
-                from okr_review_requests
+                from ({OKR_REQUEST_SQL}) as request
                 where ({processing_clause})
                    or (
-                       status='failed'
-                       and error like 'codex session locked:%'
+                       request.status='failed'
+                       and request.error like 'codex session locked:%'
                        and not exists (
                            select 1
                            from codex_session_locks
                            where codex_session_locks.conversation_id =
-                                 okr_review_requests.conversation_id
+                                 request.conversation_id
                              and datetime(codex_session_locks.locked_at) >
                                  datetime('now', ?)
                        )
                    )
-                order by updated_at, id
+                order by request.updated_at, request.id
                 """,
                 (*params, f"-{CODEX_SESSION_LOCK_STALE_SECONDS} seconds"),
             ).fetchall()
@@ -19921,12 +19084,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             request_placeholders = ",".join("?" for _ in request_ids)
             db.execute(
                 f"""
-                update okr_review_requests
+                update tasks
                 set status='pending',
                     error='',
                     codex_session_id='',
                     updated_at=current_timestamp
-                where id in ({request_placeholders})
+                where record_type='okr_review_requests'
+                  and cast(legacy_key as integer) in ({request_placeholders})
                 """,
                 request_ids,
             )
@@ -19935,9 +19099,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def get_okr_review_request(self, request_id: int) -> OkrReviewRequest:
         with self._connect() as db:
             row = db.execute(
-                """
+                f"""
                 select *
-                from okr_review_requests
+                from ({OKR_REQUEST_SQL})
                 where id=?
                 """,
                 (request_id,),
@@ -19952,12 +19116,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             db.execute(
                 """
-                update okr_review_requests
+                update tasks
                 set status='done',
                     error='',
                     codex_session_id=?,
                     updated_at=current_timestamp
-                where id=?
+                where record_type='okr_review_requests'
+                  and cast(legacy_key as integer)=?
                 """,
                 (codex_session_id, request_id),
             )
@@ -19966,11 +19131,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             db.execute(
                 """
-                update okr_review_requests
+                update tasks
                 set status='failed',
                     error=?,
                     updated_at=current_timestamp
-                where id=?
+                where record_type='okr_review_requests'
+                  and cast(legacy_key as integer)=?
                 """,
                 (error, request_id),
             )
@@ -19987,29 +19153,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         audit_summary: str,
     ) -> int:
         with self._connect() as db:
-            cursor = db.execute(
-                """
-                insert into okr_review_runs (
-                    request_id,
-                    codex_session_id,
-                    codex_transcript_start_line,
-                    codex_transcript_end_line,
-                    envelope_json,
-                    audit_tool_events_json,
-                    audit_summary
-                )
-                values (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    request_id,
-                    codex_session_id,
-                    codex_transcript_start_line,
-                    codex_transcript_end_line,
-                    "{}",
-                    "[]",
-                    "",
-                ),
-            )
+            cursor = insert_run(db, "okr_review_runs", {
+                "request_id": request_id,
+                "session_id": codex_session_id,
+                "transcript_start": codex_transcript_start_line,
+                "transcript_end": codex_transcript_end_line,
+            })
             return int(cursor.lastrowid)
 
     def get_okr_review_run(self, run_id: int) -> dict[str, object] | None:
@@ -20020,7 +19169,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
         with self._connect() as db:
             row = db.execute(
-                "select * from okr_review_runs where id=?", (run_id,)
+                f"select * from ({OKR_RUN_SQL}) where id=?", (run_id,)
             ).fetchone()
             ref = (exact_standalone_ref(
                 db, workload_kind="structured", workload_key=str(row["request_id"]),
@@ -20640,7 +19789,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             revision_key=f"refresh:{row['input_version'] + 1}:{digest}",
         )
         db.execute(
-            "update reply_tasks set current_input_id=?, input_version=input_version+1, updated_at=current_timestamp where id=?",
+            "update tasks set current_input_id=(select id from tasks where record_type='reply_task_inputs' and cast(legacy_key as integer)=?), input_version=input_version+1, updated_at=current_timestamp where record_type='reply_tasks' and id=?",
             (input_id, row["id"]),
         )
         return input_id
@@ -20722,12 +19871,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             input_revision_key = f"v{next_input_version}:{revision_digest}"
             inserted = db.execute(
                 """
-                insert or ignore into reply_task_inputs (
-                    reply_task_id, channel, conversation_id, conversation_title,
+                insert or ignore into tasks (
+                    record_type, parent_id, channel, conversation_id, conversation_title,
                     single_chat, trigger_message_id, trigger_create_time,
                     trigger_sender, trigger_text, trigger_message_json, oa_url,
-                    business_object_key, input_revision_key
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    business_object_key, input_revision_key, created_at, input_provenance_json, input_compacted
+                ) values ('reply_task_inputs', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp, '{}', 0)
                 """,
                 (
                     int(row["id"]),
@@ -20747,13 +19896,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).rowcount
             if inserted != 1:
                 raise RuntimeError("revised reply task input was not persisted")
-            input_id = db.execute("select id from reply_task_inputs where reply_task_id=? and input_revision_key=?", (row["id"], input_revision_key)).fetchone()[0]
+            input_id = db.execute(f'select id from ({REPLY_TASK_INPUT_SQL}) where reply_task_id=? and input_revision_key=?', (row["id"], input_revision_key)).fetchone()[0]
             execution_generation = uuid4().hex
             cursor = db.execute(
                 """
-                update reply_tasks
+                update tasks
                 set conversation_title=?, single_chat=?,
-                    trigger_create_time=?, trigger_sender=?, current_input_id=?,
+                    trigger_create_time=?, trigger_sender=?, current_input_id=(select id from tasks where record_type='reply_task_inputs' and cast(legacy_key as integer)=?),
                     input_version=?,
                     execution_generation=?, status='pending', attempts=0,
                     claimed_input_version=input_version,
@@ -20762,7 +19911,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     manual_rerun_revision_key='', locked_at=null,
                     available_at='', error='', recovery_code='',
                     updated_at=current_timestamp
-                where id=? and execution_generation=?
+                where record_type='reply_tasks' and id=? and execution_generation=?
                   and status in ('done', 'failed')
                 """,
                 (
@@ -20835,7 +19984,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             execution_generation = uuid4().hex
             cursor = db.execute(
                 """
-                update reply_tasks
+                update tasks
                 set trigger_message_id=?,
                     trigger_create_time=?,
                     trigger_sender=?,
@@ -20843,7 +19992,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     available_at=?,
                     error=?,
                     updated_at=?
-                where id=?
+                where record_type='reply_tasks' and id=?
                   and execution_generation=?
                 """,
                 (
@@ -20859,8 +20008,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 ),
             )
             duplicate_rows = db.execute(
-                """
-                select id from reply_tasks
+                f"""
+                select id from ({REPLY_TASK_SQL})
                 where channel=?
                   and conversation_id=?
                   and single_chat=1
@@ -20874,8 +20023,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if duplicate_ids:
                 placeholders = ",".join("?" for _ in duplicate_ids)
                 db.execute(
-                    f"update reply_task_inputs set reply_task_id=? "
-                    f"where reply_task_id in ({placeholders})",
+                    f"update tasks set parent_id=? where record_type='reply_task_inputs' and parent_id in ({placeholders})",
                     (task_id, *duplicate_ids),
                 )
                 db.execute(
@@ -20891,13 +20039,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     trigger_message_id=str(target["trigger_message_id"]),
                 )
                 db.execute(
-                    "update reply_tasks set business_object_key=? where id=?",
+                    "update tasks set business_object_key=? where record_type='reply_tasks' and id=?",
                     (target_key, task_id),
                 )
-            parent = dict(db.execute("select * from reply_tasks where id=?", (task_id,)).fetchone())
+            parent = dict(db.execute(f'select * from ({REPLY_TASK_SQL}) where id=?', (task_id,)).fetchone())
             parent.update(trigger_text=trigger_text, trigger_message_json=trigger_message_json)
             input_id = self._append_reply_input_snapshot(db, task_id, parent, revision_key=f"merge:{execution_generation}")
-            db.execute("update reply_tasks set current_input_id=? where id=?", (input_id, task_id))
+            db.execute("update tasks set current_input_id=(select id from tasks where record_type='reply_task_inputs' and cast(legacy_key as integer)=?) where record_type='reply_tasks' and id=?", (input_id, task_id))
             db.execute(
                 "insert or ignore into business_object_tasks "
                 "(business_object_key, reply_task_id) values (?, ?)",
@@ -20912,8 +20060,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             db.execute(
                 """
-                delete from reply_tasks
-                where channel=?
+                delete from tasks
+                where record_type='reply_tasks' and channel=?
                   and conversation_id=?
                   and single_chat=1
                   and status='pending'
@@ -20923,8 +20071,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 (channel, conversation_id, task_id),
             )
             db.execute(
-                "update reply_tasks set input_version=(select count(*) "
-                "from reply_task_inputs where reply_task_id=?) where id=?",
+                f"update tasks set input_version=(select count(*) from ({REPLY_TASK_INPUT_SQL}) where reply_task_id=?) where record_type='reply_tasks' and id=?",
                 (task_id, task_id),
             )
             return cursor.rowcount
@@ -21329,7 +20476,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             # the receipt.  Who is allowed to deliver is enforced before the
             # call, not by declining to remember a delivery that happened.
             run = db.execute(
-                f"select agent_runs.reply_task_id, reply_tasks.business_object_key from ({AGENT_RUN_SQL}) as agent_runs join reply_tasks on reply_tasks.id=agent_runs.reply_task_id where agent_runs.id=? and agent_runs.role in ('audit', 'consumer') and agent_runs.status='completed'",
+                f"select agent_runs.reply_task_id, reply_tasks.business_object_key from ({AGENT_RUN_SQL}) as agent_runs join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.id=agent_runs.reply_task_id where agent_runs.id=? and agent_runs.role in ('audit', 'consumer') and agent_runs.status='completed'",
                 (agent_run_id,),
             ).fetchone()
             if run is None or run["business_object_key"] != business_object_key:
@@ -21409,7 +20556,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("external_action_key must be non-empty")
         with self._immediate_write_transaction() as db:
             task = db.execute(
-                "select business_object_key from reply_tasks "
+                f"select business_object_key from ({REPLY_TASK_SQL}) as reply_tasks "
                 "where id=? and status='failed'",
                 (task_id,),
             ).fetchone()
@@ -21430,9 +20577,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if recorded is None or projected is None:
                 raise ValueError("reconciled delivery is not recorded for this task")
             cursor = db.execute(
-                "update reply_tasks set status='done', error='', available_at='', "
+                "update tasks as reply_tasks set status='done', error='', available_at='', "
                 "locked_at=null, updated_at=current_timestamp "
-                "where id=? and status='failed'",
+                "where reply_tasks.record_type='reply_tasks' and id=? and status='failed'",
                 (task_id,),
             )
             if cursor.rowcount == 1:
@@ -21650,8 +20797,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 ),
             )
             db.execute(
-                "update reply_tasks set status='done', error='', available_at='', "
-                "locked_at=null, updated_at=current_timestamp where id=?",
+                "update tasks as reply_tasks set status='done', error='', available_at='', "
+                "locked_at=null, updated_at=current_timestamp where reply_tasks.record_type='reply_tasks' and id=?",
                 (send_run.reply_task_id,),
             )
             self._compact_settled_reply_task_input(db, send_run.reply_task_id)
@@ -21729,9 +20876,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
             cursor = db.execute(
                 f"""
-                update reply_tasks set status='done', error='', available_at='',
+                update tasks as reply_tasks set status='done', error='', available_at='',
                     locked_at=null, updated_at=current_timestamp
-                where id=? and status='failed' and error='codex_result_invalid'
+                where reply_tasks.record_type='reply_tasks' and id=? and status='failed' and error='codex_result_invalid'
                   and execution_generation=? and ?=(
                     select max(id) from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=?
                       and execution_generation=?
@@ -21756,10 +20903,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             compact_ids = db.execute(
                 """
-                update reply_tasks as tasks
+                update tasks as tasks
                 set status='done', error='', available_at='', locked_at=null,
                     updated_at=current_timestamp
-                where tasks.status in ('failed', 'needs_human')
+                where tasks.record_type='reply_tasks' and tasks.status in ('failed', 'needs_human')
                   and exists (
                       select 1
                       from external_action_results as actions
@@ -21824,7 +20971,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return 0
             compact_ids = db.execute(
                 f"""
-                update reply_tasks as tasks
+                update tasks as tasks
                 set status=case
                         when receipts.outcome in ({done_placeholders}) then 'done'
                         else 'skipped'
@@ -21832,9 +20979,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     error='', available_at='', locked_at=null,
                     updated_at=current_timestamp
                 from email_unsubscribe_receipts as receipts
-                where tasks.id in (
+                where tasks.record_type='reply_tasks' and tasks.id in (
                     select current_tasks.id
-                    from reply_tasks as current_tasks
+                    from ({REPLY_TASK_SQL}) as current_tasks
                     join email_unsubscribe_receipts as current_receipts
                       on current_receipts.action_identity=current_tasks.trigger_message_id
                     where current_tasks.channel='email'
@@ -21940,10 +21087,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return False
             db.execute(
                 """
-                update reply_tasks
+                update tasks as reply_tasks
                 set status='done', error='', available_at='', locked_at=null,
                     updated_at=current_timestamp
-                where channel=? and conversation_id=? and trigger_message_id=?
+                where reply_tasks.record_type='reply_tasks' and channel=? and conversation_id=? and trigger_message_id=?
                   and status in ('needs_human', 'failed')
                 """,
                 (
@@ -21953,7 +21100,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 ),
             )
             task = db.execute(
-                "select id from reply_tasks where channel=? and conversation_id=? "
+                f"select id from ({REPLY_TASK_SQL}) as reply_tasks where channel=? and conversation_id=? "
                 "and trigger_message_id=?",
                 (attempt["channel"], attempt["conversation_id"], attempt["trigger_message_id"]),
             ).fetchone()
@@ -21982,7 +21129,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("settled evidence must be non-empty")
         with self._immediate_write_transaction() as db:
             task = db.execute(
-                "select conversation_id, trigger_message_id from reply_tasks "
+                f"select conversation_id, trigger_message_id from ({REPLY_TASK_SQL}) as reply_tasks "
                 "where id=? and status in ('failed', 'needs_human')",
                 (task_id,),
             ).fetchone()
@@ -22001,9 +21148,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 ),
             )
             cursor = db.execute(
-                "update reply_tasks set status='done', error='', available_at='', "
+                "update tasks as reply_tasks set status='done', error='', available_at='', "
                 "locked_at=null, updated_at=current_timestamp "
-                "where id=? and status in ('failed', 'needs_human')",
+                "where reply_tasks.record_type='reply_tasks' and id=? and status in ('failed', 'needs_human')",
                 (task_id,),
             )
             if cursor.rowcount == 1:
@@ -22015,10 +21162,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             compact_ids = db.execute(
                 """
-                update reply_tasks as tasks
+                update tasks as tasks
                 set status='done', error='', available_at='', locked_at=null,
                     updated_at=current_timestamp
-                where tasks.status in ('failed', 'needs_human')
+                where tasks.record_type='reply_tasks' and tasks.status in ('failed', 'needs_human')
                   and exists (
                       select 1
                       from errors as settled
@@ -25391,7 +24538,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                        reply_tasks.execution_generation as task_generation,
                        reply_tasks.oa_url as task_oa_url
                 from ({AGENT_RUN_SQL}) as agent_runs
-                join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
+                join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.id=agent_runs.reply_task_id
                 where agent_runs.id=? and reply_tasks.id=?
                 """,
                 (run_id, task_id),
@@ -25442,7 +24589,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       runs.reply_task_id=?
                       or attempts.id=(
                           select manual_rerun_attempt_id
-                          from reply_tasks where id=?
+                          from ({REPLY_TASK_SQL}) as reply_tasks where id=?
                       )
                       or attempts.id=(
                           select max(latest.id)
@@ -25546,11 +24693,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if task_status != "unchanged":
                 cursor = db.execute(
                     """
-                    update reply_tasks
+                    update tasks as reply_tasks
                     set status=?, attempts=case when ? then max(attempts - 1, 0) else attempts end,
                         locked_at=null, available_at=?, error=?,
                         updated_at=current_timestamp
-                    where id=? and execution_generation=?
+                    where reply_tasks.record_type='reply_tasks' and id=? and execution_generation=?
                       and status in ('processing', 'pending')
                     """,
                     (
@@ -25642,7 +24789,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select tasks.id, tasks.execution_generation, runs.structured_error_json
-                from reply_tasks as tasks
+                from ({REPLY_TASK_SQL}) as tasks
                 join ({AGENT_RUN_SQL}) as runs on runs.id=(
                     select latest.id
                     from ({AGENT_RUN_SQL}) as latest
@@ -25677,10 +24824,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             for row in rows:
                 cursor = db.execute(
                     """
-                    update reply_tasks
+                    update tasks as reply_tasks
                     set status='failed', error=?, available_at='', locked_at=null,
                         updated_at=current_timestamp
-                    where id=? and status='done' and execution_generation=?
+                    where reply_tasks.record_type='reply_tasks' and id=? and status='done' and execution_generation=?
                     """,
                     (
                         self._agent_run_failure_code(row["structured_error_json"]),
@@ -25703,7 +24850,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 f"""
                 select tasks.id, tasks.execution_generation, runs.id as run_id,
                        runs.structured_error_json
-                from reply_tasks as tasks
+                from ({REPLY_TASK_SQL}) as tasks
                 join ({AGENT_RUN_SQL}) as runs on runs.id=(
                     select latest.id
                     from ({AGENT_RUN_SQL}) as latest
@@ -25742,10 +24889,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 reconciled += cursor.rowcount
                 db.execute(
                     """
-                    update reply_tasks
+                    update tasks as reply_tasks
                     set status='failed', error='confirmation_required',
                         available_at='', locked_at=null, updated_at=current_timestamp
-                    where id=? and execution_generation=? and status<>'failed'
+                    where reply_tasks.record_type='reply_tasks' and id=? and execution_generation=? and status<>'failed'
                     """,
                     (row["id"], row["execution_generation"]),
                 )
@@ -25767,12 +24914,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         generations and previously resolved attempts are left untouched.
         """
         with self._immediate_write_transaction() as db:
-            rows = db.execute("""
+            rows = db.execute(f"""
                 select t.id as task_id, t.execution_generation, t.status as task_status,
                        a.id as attempt_id, a.send_status, a.agent_run_id,
                        c.id as candidate_id, c.candidate_json, c.candidate_digest,
                        r.id as review_id, r.audit_run_id
-                from reply_tasks t
+                from ({REPLY_TASK_SQL}) t
                 join review_candidates c on c.task_id=t.id
                   and c.execution_generation=t.execution_generation
                   and c.invalidated_at=''
@@ -25813,9 +24960,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     send_error='', updated_at=current_timestamp where id=?
                     and agent_run_id=? and send_status='failed'""",
                     (row["attempt_id"], row["audit_run_id"]))
-                db.execute("""update reply_tasks set status='needs_human', error='',
+                db.execute("""update tasks as reply_tasks set status='needs_human', error='',
                     available_at='', locked_at=null, updated_at=current_timestamp
-                    where id=? and execution_generation=? and status='failed'""",
+                    where reply_tasks.record_type='reply_tasks' and id=? and execution_generation=? and status='failed'""",
                     (row["task_id"], row["execution_generation"]))
                 reconciled += 1
             return reconciled
@@ -25877,16 +25024,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         )
         with self._immediate_write_transaction() as db:
             skipped_tasks = db.execute(
-                """
-                update reply_tasks as historical
+                f"""
+                update tasks as historical
                 set status='skipped',
                     error='superseded_by_terminal_business_object_task',
                     available_at='', locked_at=null, updated_at=current_timestamp
-                where historical.status='failed'
+                where historical.record_type='reply_tasks' and historical.status='failed'
                   and exists (
                       select 1
                       from business_object_tasks as current_mapping
-                      join reply_tasks as current_task
+                      join ({REPLY_TASK_SQL}) as current_task
                         on current_task.id=current_mapping.reply_task_id
                       where current_mapping.business_object_key=
                               historical.business_object_key
@@ -25909,12 +25056,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and exists (
                       select 1
                       from ({AGENT_RUN_SQL}) as source_run
-                      join reply_tasks as source_task
+                      join ({REPLY_TASK_SQL}) as source_task
                         on source_task.id=source_run.reply_task_id
                       join business_object_tasks as current_mapping
                         on current_mapping.business_object_key=
                            source_task.business_object_key
-                      join reply_tasks as current_task
+                      join ({REPLY_TASK_SQL}) as current_task
                         on current_task.id=current_mapping.reply_task_id
                       where source_run.id=historical_attempt.agent_run_id
                         and source_run.status in ('completed', 'failed')
@@ -25985,7 +25132,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 f"""
                 select tasks.id, tasks.status, tasks.execution_generation,
                        attempts.send_status, attempts.resolved_at
-                from reply_tasks as tasks
+                from ({REPLY_TASK_SQL}) as tasks
                 join reply_attempts as attempts on attempts.id=(
                     select latest.id
                     from reply_attempts as latest
@@ -26026,7 +25173,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 # anyone whether it settled the way it should have.
                 cursor = db.execute(
                     """
-                    update reply_tasks
+                    update tasks as reply_tasks
                     set status=?, available_at='', locked_at=null,
                         error=case
                             when trim(coalesce(error, ''))=''
@@ -26034,7 +25181,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                             else ? || error
                         end,
                         updated_at=current_timestamp
-                    where id=? and status=? and execution_generation=?
+                    where reply_tasks.record_type='reply_tasks' and id=? and status=? and execution_generation=?
                     """,
                     (
                         task_status,
@@ -26055,7 +25202,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select tasks.id, tasks.execution_generation, runs.structured_error_json
-                from reply_tasks as tasks
+                from ({REPLY_TASK_SQL}) as tasks
                 join ({AGENT_RUN_SQL}) as runs on runs.id=(
                     select latest.id
                     from ({AGENT_RUN_SQL}) as latest
@@ -26075,10 +25222,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     continue
                 cursor = db.execute(
                     """
-                    update reply_tasks
+                    update tasks as reply_tasks
                     set status='skipped', error=?, available_at='', locked_at=null,
                         updated_at=current_timestamp
-                    where id=? and status='failed' and execution_generation=?
+                    where reply_tasks.record_type='reply_tasks' and id=? and status='failed' and execution_generation=?
                     """,
                     (
                         f"skipped_terminal_no_action:{code}",
@@ -26117,9 +25264,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("expected_execution_generation must be non-empty")
         with self._immediate_write_transaction() as db:
             task = db.execute(
-                """
+                f"""
                 select execution_generation, status, oa_url
-                from reply_tasks
+                from ({REPLY_TASK_SQL}) as reply_tasks
                 where id=?
                 """,
                 (task_id,),
@@ -26192,10 +25339,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
             task_cursor = db.execute(
                 """
-                update reply_tasks
+                update tasks as reply_tasks
                 set status=?, locked_at=null, available_at=?, error=?,
                     updated_at=current_timestamp
-                where id=? and status='processing' and execution_generation=?
+                where reply_tasks.record_type='reply_tasks' and id=? and status='processing' and execution_generation=?
                 """,
                 (
                     task_status,
@@ -26212,7 +25359,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def reply_task_is_done(self, task_id: int) -> bool:
         with self._connect() as db:
             row = db.execute(
-                "select status from reply_tasks where id=?",
+                f"select status from ({REPLY_TASK_SQL}) as reply_tasks where id=?",
                 (task_id,),
             ).fetchone()
         return bool(row and row["status"] == "done")
@@ -26519,10 +25666,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             cursor = db.execute(
                 """
-                update reply_tasks
+                update tasks as reply_tasks
                 set status='done', error=?, available_at='', locked_at=null,
                     updated_at=current_timestamp
-                where id=? and status='needs_human'
+                where reply_tasks.record_type='reply_tasks' and id=? and status='needs_human'
                 """,
                 (f"human_decision:{decision}"[:500], task_id),
             )
@@ -26891,7 +26038,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         from app.external_failures import external_task_error_sql
 
         return (
-            "not exists (select 1 from reply_tasks as external_task "
+            f"not exists (select 1 from ({REPLY_TASK_SQL}) as external_task "
             "where external_task.channel=attempts.channel "
             "and external_task.conversation_id=attempts.conversation_id "
             "and external_task.trigger_message_id=attempts.trigger_message_id "
@@ -27002,7 +26149,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 attempt = ReplyAttempt.model_validate(values)
                 if (
                     attempt.send_status == "needs_human"
-                    and not db.execute("""select 1 from reply_tasks t
+                    and not db.execute(f"""select 1 from ({REPLY_TASK_SQL}) t
                         join review_candidates c on c.task_id=t.id
                           and c.execution_generation=t.execution_generation and c.invalidated_at=''
                         join candidate_reviews r on r.candidate_id=c.id
@@ -27147,14 +26294,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and __NOT_EXTERNAL__
                   and not exists (
                       select 1 from ({AGENT_RUN_SQL}) as attempt_run
-                      join reply_tasks as current_task
+                      join ({REPLY_TASK_SQL}) as current_task
                         on current_task.id=attempt_run.reply_task_id
                       where attempt_run.id=attempts.agent_run_id
                         and attempt_run.execution_generation<>current_task.execution_generation
                   )
                   and not exists (
                       select 1
-                      from reply_tasks as historical_task
+                      from ({REPLY_TASK_SQL}) as historical_task
                       join business_object_tasks as current_business_object
                         on current_business_object.business_object_key=historical_task.business_object_key
                       where historical_task.channel=attempts.channel
@@ -27165,7 +26312,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and not exists (
                       select 1
                       from business_object_tasks as current_business_object
-                      join reply_tasks as current_task
+                      join ({REPLY_TASK_SQL}) as current_task
                         on current_task.id=current_business_object.reply_task_id
                       where current_business_object.business_object_key=(
                           'message:' || attempts.channel || ':' ||
@@ -27182,7 +26329,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                           and attempts.reviewed_at is null
                           and not exists (
                               select 1
-                              from reply_tasks as tasks
+                              from ({REPLY_TASK_SQL}) as tasks
                               where tasks.channel=attempts.channel
                                 and tasks.conversation_id=attempts.conversation_id
                                 and tasks.trigger_message_id=attempts.trigger_message_id
@@ -27192,7 +26339,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       or (
                           attempts.send_status != 'needs_human'
                           and not exists (
-                              select 1 from reply_tasks as pending_task
+                              select 1 from ({REPLY_TASK_SQL}) as pending_task
                               where pending_task.channel=attempts.channel
                                 and pending_task.conversation_id=attempts.conversation_id
                                 and pending_task.trigger_message_id=attempts.trigger_message_id
@@ -27207,7 +26354,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                           )
                           and not exists (
                               select 1
-                              from reply_tasks as tasks
+                              from ({REPLY_TASK_SQL}) as tasks
                               where tasks.channel=attempts.channel
                                 and tasks.conversation_id=attempts.conversation_id
                                 and tasks.trigger_message_id=attempts.trigger_message_id
@@ -27502,7 +26649,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         when runs.status in ('retry', 'failed') then 'failed'
                         when runs.status='ready_to_send' and jobs.status='sent' then 'sent'
                         when runs.status='ready_to_send' and exists (
-                            select 1 from meeting_alignment_runs as later_runs
+                            select 1 from ({MEETING_RUN_SQL}) as later_runs
                             where later_runs.job_id=runs.job_id and later_runs.id>runs.id
                         ) then 'skipped'
                         when runs.status='ready_to_send' and jobs.status in ('retry', 'failed') then 'failed'
@@ -27523,8 +26670,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     runs.decision_json || ' ' || runs.audit_summary || ' ' || runs.error || ' ' ||
                     runs.codex_session_id || ' ' || runs.status
                     , '') as search_text
-                from meeting_alignment_runs as runs
-                join meeting_alignment_jobs as jobs on jobs.id=runs.job_id
+                from ({MEETING_RUN_SQL}) as runs
+                join ({MEETING_JOB_SQL}) as jobs on jobs.id=runs.job_id
                 union all
                 select
                     'task' as kind,
@@ -27830,11 +26977,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Recover OA identity for historical agent attempts by exact task key."""
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select reply_attempts.id, reply_tasks.oa_url,
                        reply_tasks.business_object_key
                 from reply_attempts
-                join reply_tasks on reply_tasks.conversation_id=reply_attempts.conversation_id
+                join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.conversation_id=reply_attempts.conversation_id
                     and reply_tasks.trigger_message_id=reply_attempts.trigger_message_id
                 where reply_attempts.action='agent_run'
                     and reply_attempts.oa_process_instance_id=''
@@ -28039,10 +27186,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if source_ids:
                 placeholders = ",".join("?" for _ in source_ids)
                 runs = {str(run["id"]): run for run in db.execute(
-                    "select run.id, run.codex_session_id, run.codex_transcript_start_line, "
+                    f"select run.id, run.codex_session_id, run.codex_transcript_start_line, "
                     "run.codex_transcript_end_line, job.meeting_id, job.title "
-                    "from meeting_alignment_runs run "
-                    "join meeting_alignment_jobs job on job.id=run.job_id "
+                    f"from ({MEETING_RUN_SQL}) run "
+                    f"join ({MEETING_JOB_SQL}) job on job.id=run.job_id "
                     f"where run.id in ({placeholders})", source_ids,
                 ).fetchall()}
             references = {
@@ -28307,16 +27454,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             db.execute(
                 """
-                insert into work_summary_inputs
-                    (source_type, source_ref, payload_json, source_created_at, body_sha256, body_bytes)
-                values (?, ?, ?, ?, ?, ?)
-                on conflict(source_type, source_ref) do update set
+                insert into tasks
+                    (record_type, source_type, source_ref, payload_json, source_created_at, body_sha256, body_bytes, body_compacted, status, attempts, error, available_at, created_at, updated_at)
+                values ('work_summary_inputs', ?, ?, ?, ?, ?, ?, 0, 'pending', 0, '', '', current_timestamp, current_timestamp)
+                on conflict(source_type, source_ref) where record_type='work_summary_inputs' do update set
                     payload_json=excluded.payload_json,
                     source_created_at=excluded.source_created_at,
                     body_sha256=excluded.body_sha256,
                     body_bytes=excluded.body_bytes,
                     updated_at=current_timestamp
-                where work_summary_inputs.status not in ('processing', 'done', 'skipped')
+                where tasks.status not in ('processing', 'done', 'skipped')
                 """,
                 (
                     source_type,
@@ -28328,8 +27475,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 ),
             )
             row = db.execute(
-                """
-                select id from work_summary_inputs
+                f"""
+                select id from ({WORK_SUMMARY_INPUT_SQL})
                 where source_type=? and source_ref=?
                 """,
                 (source_type, source_ref),
@@ -28353,18 +27500,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         cls, db: sqlite3.Connection, input_id: int, *, status: str, error: str
     ) -> None:
         row = db.execute(
-            "select payload_json from work_summary_inputs where id=? and status not in ('done', 'skipped')",
+            f"select payload_json from ({WORK_SUMMARY_INPUT_SQL}) where id=? and status not in ('done', 'skipped')",
             (input_id,),
         ).fetchone()
         if row is None:
             return
         source_created_at, body_sha256, body_bytes = cls._work_summary_input_provenance(row["payload_json"])
         db.execute(
-            """update work_summary_inputs
+            """update tasks
                set status=?, error=?, payload_json='{}',
                    source_created_at=?, body_sha256=?, body_bytes=?, body_compacted=1,
                    updated_at=current_timestamp
-               where id=? and status not in ('done', 'skipped')""",
+               where record_type='work_summary_inputs' and cast(legacy_key as integer)=? and status not in ('done', 'skipped')""",
             (status, error, source_created_at, body_sha256, body_bytes, input_id),
         )
 
@@ -28383,7 +27530,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select *
-                from work_summary_inputs
+                from ({WORK_SUMMARY_INPUT_SQL})
                 where status='pending'
                   and (available_at='' or datetime(available_at) <= datetime({now_expression}))
                 order by id
@@ -28397,20 +27544,20 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             placeholders = ",".join("?" for _ in ids)
             db.execute(
                 f"""
-                update work_summary_inputs
+                update tasks
                 set status='processing',
                     attempts=attempts + 1,
                     error='',
                     available_at='',
                     updated_at=current_timestamp
-                where id in ({placeholders})
+                where record_type='work_summary_inputs' and cast(legacy_key as integer) in ({placeholders})
                 """,
                 ids,
             )
             claimed = db.execute(
                 f"""
                 select *
-                from work_summary_inputs
+                from ({WORK_SUMMARY_INPUT_SQL})
                 where id in ({placeholders})
                 order by id
                 """,
@@ -28421,7 +27568,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def get_work_summary_input(self, input_id: int) -> WorkSummaryInput | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from work_summary_inputs where id=?", (input_id,)
+                f'select * from ({WORK_SUMMARY_INPUT_SQL}) where id=?', (input_id,)
             ).fetchone()
         return WorkSummaryInput.model_validate(dict(row)) if row is not None else None
 
@@ -28448,7 +27595,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         placeholders = ",".join("?" for _ in input_ids)
         run_rows = db.execute(
             f"""
-            select id from task_agent_runs
+            select id from ({TASK_AGENT_RUN_SQL})
             where status='running' and summary_input_id in ({placeholders})
             """,
             list(input_ids),
@@ -28459,11 +27606,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         run_placeholders = ",".join("?" for _ in run_ids)
         db.execute(
             f"""
-            update task_agent_runs
+            update runs
             set status='failed',
                 error='orphaned_task_agent_run_parent_not_processing',
                 finished_at=current_timestamp, updated_at=current_timestamp
-            where status='running' and id in ({run_placeholders})
+            where record_type='task_agent_runs' and status='running' and cast(legacy_key as integer) in ({run_placeholders})
             """,
             run_ids,
         )
@@ -28493,8 +27640,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             stale = [
                 int(row["id"])
                 for row in db.execute(
-                    """
-                    select id from work_summary_inputs
+                    f"""
+                    select id from ({WORK_SUMMARY_INPUT_SQL})
                     where status='processing'
                       and datetime(updated_at) <= datetime('now', ?)
                     """,
@@ -28506,12 +27653,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             placeholders = ",".join("?" for _ in stale)
             cursor = db.execute(
                 f"""
-                update work_summary_inputs
+                update tasks
                 set status='pending',
                     attempts=max(attempts - 1, 0),
                     error='',
                     updated_at=current_timestamp
-                where id in ({placeholders})
+                where record_type='work_summary_inputs' and cast(legacy_key as integer) in ({placeholders})
                 """,
                 stale,
             )
@@ -28521,9 +27668,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def reset_processing_work_summary_inputs(self) -> list[WorkSummaryInput]:
         with self._immediate_write_transaction() as db:
             rows = db.execute(
-                """
+                f"""
                 select *
-                from work_summary_inputs
+                from ({WORK_SUMMARY_INPUT_SQL})
                 where status='processing'
                 order by updated_at, id
                 """
@@ -28534,12 +27681,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             placeholders = ",".join("?" for _ in input_ids)
             db.execute(
                 f"""
-                update work_summary_inputs
+                update tasks
                 set status='pending',
                     attempts=max(attempts - 1, 0),
                     error='',
                     updated_at=current_timestamp
-                where id in ({placeholders})
+                where record_type='work_summary_inputs' and cast(legacy_key as integer) in ({placeholders})
                 """,
                 input_ids,
             )
@@ -28566,9 +27713,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             db.execute(
                 """
-                update work_summary_inputs
+                update tasks
                 set status='failed', error=?, updated_at=current_timestamp
-                where id=? and status not in ('done', 'skipped')
+                where record_type='work_summary_inputs' and cast(legacy_key as integer)=? and status not in ('done', 'skipped')
                   and body_compacted=0
                 """,
                 (error, input_id),
@@ -28579,12 +27726,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             cursor = db.execute(
                 """
-                update work_summary_inputs
+                update tasks
                 set status='pending',
                     error=?,
                     available_at='',
                     updated_at=current_timestamp
-                where id=? and status='failed' and body_compacted=0
+                where record_type='work_summary_inputs' and cast(legacy_key as integer)=? and status='failed' and body_compacted=0
                 """,
                 (reason.strip(), input_id),
             )
@@ -28596,12 +27743,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             cursor = db.execute(
                 """
-                update work_summary_inputs
+                update tasks
                 set status='pending',
                     error=?,
                     available_at=?,
                     updated_at=current_timestamp
-                where id=? and status not in ('done', 'skipped')
+                where record_type='work_summary_inputs' and cast(legacy_key as integer)=? and status not in ('done', 'skipped')
                   and body_compacted=0
                 """,
                 (error, available_at, input_id),
@@ -28615,13 +27762,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             cursor = db.execute(
                 """
-                update work_summary_inputs
+                update tasks
                 set status='pending',
                     attempts=max(attempts - 1, 0),
                     error=?,
                     available_at=?,
                     updated_at=current_timestamp
-                where id=? and status in ('processing', 'failed')
+                where record_type='work_summary_inputs' and cast(legacy_key as integer)=? and status in ('processing', 'failed')
                   and body_compacted=0
                 """,
                 (error, available_at, input_id),
@@ -28635,14 +27782,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             db.execute(
                 """
-                update meeting_alignment_jobs
+                update tasks
                 set status='retry',
                     attempts=max(attempts - 1, 0),
                     locked_at=null,
                     available_at=?,
                     error=?,
                     updated_at=current_timestamp
-                where id=? and status='processing'
+                where record_type='meeting_alignment_jobs'
+                  and cast(legacy_key as integer)=? and status='processing'
                 """,
                 (available_at, error, job_id),
             )
@@ -30164,28 +29312,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         memory_recall_used: bool = False,
     ) -> int:
         with self._connect() as db:
-            cursor = db.execute(
-                """
-                insert into task_agent_runs (
-                    summary_input_id,
-                    codex_session_id,
-                    decision_json,
-                    audit_summary,
-                    memory_recall_used,
-                    status,
-                    finished_at,
-                    updated_at
-                )
-                values (?, ?, ?, ?, ?, 'completed', current_timestamp, current_timestamp)
-                """,
-                (
-                    summary_input_id,
-                    codex_session_id,
-                    "{}",
-                    "",
-                    0,
-                ),
-            )
+            now_text = db.execute("select current_timestamp").fetchone()[0]
+            cursor = insert_run(db, "task_agent_runs", {
+                "summary_input_id": summary_input_id,
+                "session_id": codex_session_id,
+                "status": "completed", "finished_at": now_text, "updated_at": now_text,
+            })
             return int(cursor.lastrowid)
 
     def begin_weekly_okr_analysis_job(
@@ -30215,21 +29347,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
                 "%Y-%m-%d %H:%M:%S"
             )
-            inserted = db.execute(
-                "insert or ignore into weekly_okr_analysis_jobs "
-                "(week_end, manager_user_id, source_digest, status, lease_owner, "
-                "lease_expires_at, updated_at) values (?, ?, ?, 'running', ?, ?, ?)",
-                (
-                    normalized_week_end,
-                    normalized_manager,
-                    normalized_digest,
-                    owner,
-                    lease_expires_at,
-                    now_text,
-                ),
-            )
+            inserted = insert_task(db, "weekly_okr_analysis_jobs", {
+                "week_end": normalized_week_end,
+                "manager_user_id": normalized_manager,
+                "source_digest": normalized_digest,
+                "lease_owner": owner,
+                "lease_expires_at": lease_expires_at,
+                "updated_at": now_text,
+            }, ignore=True)
             row = db.execute(
-                "select id, status, lease_expires_at from weekly_okr_analysis_jobs "
+                f"select id, status, lease_expires_at from ({WEEKLY_JOB_SQL}) "
                 "where week_end=? and manager_user_id=? and source_digest=?",
                 (normalized_week_end, normalized_manager, normalized_digest),
             ).fetchone()
@@ -30241,10 +29368,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
             if row["status"] == "failed":
                 changed = db.execute(
-                    "update weekly_okr_analysis_jobs set status='running', "
+                    "update tasks set status='running', "
                     "error='', finished_at='', lease_owner=?, lease_expires_at=?, "
                     "updated_at=? "
-                    "where id=? and status='failed'",
+                    "where record_type='weekly_okr_analysis_jobs' "
+                    "and cast(legacy_key as integer)=? and status='failed'",
                     (owner, lease_expires_at, now_text, job_id),
                 )
                 if changed.rowcount != 1:
@@ -30262,9 +29390,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise RuntimeError("weekly OKR analysis job has invalid status")
             if not row["lease_expires_at"] or row["lease_expires_at"] <= now_text:
                 changed = db.execute(
-                    "update weekly_okr_analysis_jobs set lease_owner=?, "
+                    "update tasks set lease_owner=?, "
                     "lease_expires_at=?, error='', finished_at='', updated_at=? "
-                    "where id=? and status='running' and "
+                    "where record_type='weekly_okr_analysis_jobs' "
+                    "and cast(legacy_key as integer)=? and status='running' and "
                     "(lease_expires_at='' or lease_expires_at<=?)",
                     (owner, lease_expires_at, now_text, job_id, now_text),
                 )
@@ -30289,17 +29418,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             cursor = db.execute(
                 """
-                update weekly_okr_analysis_jobs as stale
+                update tasks as stale
                 set status='completed', error='superseded_by_later_completed_week',
                     lease_owner='', lease_expires_at='',
                     finished_at=?, updated_at=?
-                where stale.status='running'
+                where stale.record_type='weekly_okr_analysis_jobs'
+                  and stale.status='running'
                   and stale.lease_expires_at!=''
                   and stale.lease_expires_at<=?
                   and exists (
                     select 1
-                    from weekly_okr_analysis_jobs as completed
-                    where completed.manager_user_id=stale.manager_user_id
+                    from tasks as completed
+                    where completed.record_type='weekly_okr_analysis_jobs'
+                      and completed.manager_user_id=stale.manager_user_id
                       and completed.status='completed'
                       and completed.week_end>stale.week_end
                   )
@@ -30324,11 +29455,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             cursor = db.execute(
                 """
-                update weekly_okr_analysis_jobs as stale
+                update tasks as stale
                 set status='completed', error='superseded_by_later_completed_week',
                     lease_owner='', lease_expires_at='',
                     finished_at=?, updated_at=?
-                where stale.status='failed'
+                where stale.record_type='weekly_okr_analysis_jobs'
+                  and stale.status='failed'
                   and stale.error in (
                     'runtime_route_unavailable',
                     'runtime_lease_expired',
@@ -30336,8 +29468,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   )
                   and exists (
                     select 1
-                    from weekly_okr_analysis_jobs as completed
-                    where completed.manager_user_id=stale.manager_user_id
+                    from tasks as completed
+                    where completed.record_type='weekly_okr_analysis_jobs'
+                      and completed.manager_user_id=stale.manager_user_id
                       and completed.status='completed'
                       and completed.error=''
                       and (
@@ -30366,7 +29499,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             _, now_text = clock
             row = db.execute(
                 "select status, error, lease_owner, lease_expires_at "
-                "from weekly_okr_analysis_jobs where id=?",
+                f"from ({WEEKLY_JOB_SQL}) where id=?",
                 (job_id,),
             ).fetchone()
             if row is None:
@@ -30378,9 +29511,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
                 raise ValueError("weekly OKR analysis lease ownership lost")
             changed = db.execute(
-                "update weekly_okr_analysis_jobs set status=?, error=?, "
+                "update tasks set status=?, error=?, "
                 "lease_owner='', lease_expires_at='', finished_at=?, updated_at=? "
-                "where id=? and status='running' and lease_owner=? "
+                "where record_type='weekly_okr_analysis_jobs' "
+                "and cast(legacy_key as integer)=? and status='running' and lease_owner=? "
                 "and lease_expires_at>?",
                 (status, error, now_text, now_text, job_id, owner, now_text),
             )
@@ -30417,7 +29551,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             row = db.execute(
                 "select week_end, manager_user_id, source_digest, status "
-                "from weekly_okr_analysis_jobs where id=?",
+                f"from ({WEEKLY_JOB_SQL}) where id=?",
                 (job_id,),
             ).fetchone()
             if (
@@ -30431,10 +29565,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise ValueError("weekly OKR analysis job natural key mismatch")
             if row["status"] == "completed":
                 changed = db.execute(
-                    "update weekly_okr_analysis_jobs set status='running', "
+                    "update tasks set status='running', "
                     "error='', finished_at='', lease_owner=?, lease_expires_at=?, "
                     "updated_at=? "
-                    "where id=? and status='completed'",
+                    "where record_type='weekly_okr_analysis_jobs' "
+                    "and cast(legacy_key as integer)=? and status='completed'",
                     (owner, lease_expires_at, now_text, job_id),
                 )
                 if changed.rowcount != 1:
@@ -30497,25 +29632,22 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("summary_input_id must be positive")
         with self._agent_run_write_transaction(None) as (db, _):
             parent = db.execute(
-                "select 1 from work_summary_inputs "
-                "where id=? and status='processing'",
+                f"select 1 from ({WORK_SUMMARY_INPUT_SQL}) where id=? and status='processing'",
                 (summary_input_id,),
             ).fetchone()
             if parent is None:
                 raise ValueError("task agent run parent is not processing")
             active = db.execute(
-                "select id from task_agent_runs "
-                "where summary_input_id=? and status='running'",
+                f"select id from ({TASK_AGENT_RUN_SQL}) where summary_input_id=? and status='running'",
                 (summary_input_id,),
             ).fetchone()
             if active is not None:
                 return int(active["id"])
-            cursor = db.execute(
-                "insert into task_agent_runs "
-                "(summary_input_id, status, finished_at, updated_at) "
-                "values (?, 'running', '', current_timestamp)",
-                (summary_input_id,),
-            )
+            now_text = db.execute("select current_timestamp").fetchone()[0]
+            cursor = insert_run(db, "task_agent_runs", {
+                "summary_input_id": summary_input_id,
+                "status": "running", "finished_at": "", "updated_at": now_text,
+            })
             return int(cursor.lastrowid)
 
     def finish_task_agent_run(
@@ -30551,7 +29683,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
         with self._connect() as db:
             row = db.execute(
-                "select * from task_agent_runs where id=?", (run_id,)
+                f'select * from ({TASK_AGENT_RUN_SQL}) where id=?', (run_id,)
             ).fetchone()
             if row is None:
                 return None
@@ -30575,7 +29707,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
         def record(db: sqlite3.Connection) -> None:
             cursor = db.execute(
-                "update task_agent_runs set projection_json=? where id=?",
+                "update runs set projection_json=? where record_type='task_agent_runs' and cast(legacy_key as integer)=?",
                 (projection_json, run_id),
             )
             if cursor.rowcount != 1:
@@ -30591,10 +29723,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Close task runs whose parent input is no longer processing."""
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             rows = db.execute(
-                """
+                f"""
                 select run.id
-                from task_agent_runs as run
-                join work_summary_inputs as input
+                from ({TASK_AGENT_RUN_SQL}) as run
+                join ({WORK_SUMMARY_INPUT_SQL}) as input
                   on input.id=run.summary_input_id
                 where run.status='running'
                   and input.status<>'processing'
@@ -30606,10 +29738,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             placeholders = ",".join("?" for _ in run_ids)
             db.execute(
                 f"""
-                update task_agent_runs
+                update runs
                 set status='failed', error='orphaned_task_agent_run_parent_not_processing',
                     finished_at=?, updated_at=?
-                where status='running' and id in ({placeholders})
+                where record_type='task_agent_runs' and status='running' and cast(legacy_key as integer) in ({placeholders})
                 """,
                 [now_text, now_text, *run_ids],
             )
@@ -30638,7 +29770,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         expected: tuple[str, str, str, str, int, str],
     ) -> None:
         row = db.execute(
-            "select * from task_agent_runs where id=?", (run_id,)
+            f'select * from ({TASK_AGENT_RUN_SQL}) where id=?', (run_id,)
         ).fetchone()
         if row is None:
             raise ValueError("task agent run does not exist")
@@ -30658,11 +29790,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return
             raise ValueError("conflicting task agent run terminal rewrite")
         db.execute(
-            "update task_agent_runs set status=?, codex_session_id=?, "
-            "decision_json=?, audit_summary=?, memory_recall_used=?, error=?, "
-            "finished_at=current_timestamp, updated_at=current_timestamp "
-            "where id=? and status='running'",
-            (*expected, run_id),
+            "update runs set status=?, session_id=?, error=?, finished_at=current_timestamp, updated_at=current_timestamp where record_type='task_agent_runs' and cast(legacy_key as integer)=? and status='running'",
+            (expected[0], expected[1], expected[5], run_id),
         )
 
     @contextmanager
@@ -31527,7 +30656,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Close scheduled Agent incidents after their reply task completes."""
         with self._connect() as db:
             cursor = db.execute(
-                """
+                f"""
                 update errors as error_event
                 set resolved_at=current_timestamp,
                     resolution='recovered by later successful scheduled reply task'
@@ -31537,7 +30666,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and exists (
                       select 1
                       from scheduled_task_runs as run
-                      join reply_tasks as task
+                      join ({REPLY_TASK_SQL}) as task
                         on run.execution_kind='reply_task'
                        and cast(run.execution_id as integer)=task.id
                       where error_event.conversation_id =
@@ -31725,7 +30854,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """
         with self._connect() as db:
             cursor = db.execute(
-                """
+                f"""
                 update errors as error_event
                 set resolved_at=current_timestamp,
                     resolution='recovered by completed reply task'
@@ -31734,7 +30863,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and coalesce(error_event.message_id, '')<>''
                   and exists (
                     select 1
-                    from reply_tasks task
+                    from ({REPLY_TASK_SQL}) task
                     where task.conversation_id=error_event.conversation_id
                       and task.trigger_message_id=error_event.message_id
                       and lower(task.status)='done'
@@ -31748,7 +30877,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Close a work-item incident only after that exact input is terminal."""
         with self._connect() as db:
             cursor = db.execute(
-                """
+                f"""
                 update errors as incident
                 set resolved_at=current_timestamp,
                     resolution='recovered by terminal work summary input'
@@ -31757,7 +30886,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and incident.conversation_id='work_summary_input'
                   and exists (
                       select 1
-                      from work_summary_inputs as work_input
+                      from ({WORK_SUMMARY_INPUT_SQL}) as work_input
                       where cast(work_input.id as text)=incident.message_id
                         and lower(work_input.status) in ('done', 'skipped')
                         and datetime(work_input.updated_at) >=
@@ -31776,7 +30905,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """
         with self._connect() as db:
             cursor = db.execute(
-                """
+                f"""
                 update reply_attempts as attempt
                 set send_status='skipped',
                     send_error='',
@@ -31794,7 +30923,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   )
                   and exists (
                     select 1
-                    from reply_tasks task
+                    from ({REPLY_TASK_SQL}) task
                     where task.channel=attempt.channel
                       and task.conversation_id=attempt.conversation_id
                       and task.trigger_message_id=attempt.trigger_message_id
@@ -32284,7 +31413,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     if reply_attempt_ids is not None else ''
                 )}not exists (
                     select 1 from ({AGENT_RUN_SQL}) as attempt_run
-                    join reply_tasks as current_task
+                    join ({REPLY_TASK_SQL}) as current_task
                       on current_task.id=attempt_run.reply_task_id
                     where attempt_run.id=reply_attempts.agent_run_id
                       and attempt_run.execution_generation<>current_task.execution_generation
@@ -32332,8 +31461,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id
-                from meeting_alignment_runs as runs
-                join meeting_alignment_jobs as jobs on jobs.id=runs.job_id
+                from ({MEETING_RUN_SQL}) as runs
+                join ({MEETING_JOB_SQL}) as jobs on jobs.id=runs.job_id
                 union all
                 select
                     'task-input:' || id as id,
@@ -32355,7 +31484,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id
-                from work_summary_inputs
+                from ({WORK_SUMMARY_INPUT_SQL}) as work_summary_inputs
                 union all
                 select
                     'task-update:' || updates.id as id,

@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from app.run_storage import create_run_schema, insert_run
+from app.task_storage import TASK_AGENT_RUN_SQL, create_task_schema, insert_task
 
 from tests.support.task_native import read_task_fixture_decision
 
@@ -37,15 +38,23 @@ def _database(path, monkeypatch):
         {"type": "event_msg", "payload": {"type": "task_complete"}},
     ]), encoding="utf-8")
     with sqlite3.connect(path) as db:
-        db.executescript(
-            "create table work_summary_inputs (id integer, source_type text, status text, payload_json text);"
-            "create table task_agent_runs (id integer, summary_input_id integer, status text, projection_json text, audit_summary text, decision_json text);"
-            "insert into work_summary_inputs values (7, 'management_weekly_report', 'completed', 'private payload');"
-            "insert into task_agent_runs values (10, 7, 'completed', '{}', 'historical private audit', '{}');"
-            "insert into task_agent_runs values (11, 7, 'completed', '{\"status\":\"pending\",\"proposal_count\":2,\"applied_count\":0,\"project_assessments\":[]}', 'current private audit', '{\"project_assessments\":[],\"private\":\"decision\"}');"
-            "insert into task_agent_runs values (12, 8, 'failed', '{}', 'other input', '{}');"
-        )
-        create_run_schema(db)
+        create_task_schema(db)
+        create_run_schema(db, include_task_runs=True)
+        insert_task(db, "work_summary_inputs", {
+            "id": 107, "legacy_key": "7", "source_type": "management_weekly_report",
+            "source_ref": "report:fixture", "status": "completed", "payload_json": "private payload",
+        })
+        for physical_id, public_id, input_id, status, projection in (
+            (1010, 10, 7, "completed", {}),
+            (1009, 11, 7, "completed", {"status": "pending", "proposal_count": 2,
+                                     "applied_count": 0, "project_assessments": []}),
+            (1008, 12, 8, "failed", {}),
+        ):
+            insert_run(db, "task_agent_runs", {
+                "id": physical_id, "legacy_key": str(public_id),
+                "summary_input_id": input_id, "status": status,
+                "projection_json": json.dumps(projection),
+            })
         insert_run(db, 'agent_runtime_attempts', {
             'id': 1, 'workload_kind': 'task', 'workload_key': '11',
             'status': 'completed', 'runtime_kind': 'codex_cli',
@@ -112,7 +121,7 @@ def test_inspector_does_not_replace_unavailable_native_decision_with_sql_body(tm
         native.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
     else:
         with sqlite3.connect(path) as db:
-            db.execute('update runs set transcript_end=99')
+            db.execute("update runs set transcript_end=99 where record_type='agent_runtime_attempts'")
     before = path.read_bytes()
     result = _inspect(path, 7)
     assert result.returncode == 0, result.stderr
@@ -239,14 +248,14 @@ def test_inspector_reads_actual_zero_task_project_revision_without_rewriting_old
     ).model_dump(mode="json")
     store.record_task_agent_projection(run_id, json.dumps(projection))
     with sqlite3.connect(path) as db:
-        original = db.execute("select id, decision_json, projection_json from task_agent_runs order by id").fetchall()
+        original = db.execute(f"select id, decision_json, projection_json from ({TASK_AGENT_RUN_SQL}) order by id").fetchall()
     assert [row[1] for row in original] == ["{}", "{}"]
     inspected = _inspect(path, input_id)
     assert inspected.returncode == 0, inspected.stderr
     assert "private" not in inspected.stdout
     assert store.list_business_tasks() == ()
     with sqlite3.connect(path) as db:
-        assert db.execute("select id, decision_json, projection_json from task_agent_runs order by id").fetchall() == original
+        assert db.execute(f"select id, decision_json, projection_json from ({TASK_AGENT_RUN_SQL}) order by id").fetchall() == original
     runs = json.loads(inspected.stdout)["runs"]
     assert runs[0]["run_id"] == old_id
     assert "project_decisions" not in runs[0]

@@ -4,6 +4,7 @@ import pytest
 
 from app.audit_web import _queue_attention_rows
 from app.store import AutoReplyStore
+from app.task_storage import REPLY_TASK_SQL, task_physical_id
 
 
 @pytest.mark.parametrize("source", ["reply", "error"])
@@ -31,14 +32,14 @@ def test_attention_recovery_does_not_search_unrelated_successes_first(
         channel="scheduled",
     )
     with store._connect() as db:
-        db.execute("update reply_tasks set status='done' where id=?", (completed.id,))
+        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task_physical_id(db, "reply_tasks", completed.id),))
         if source == "reply":
             db.execute(
-                "update reply_tasks set status='failed', error='failed' where id=?",
-                (failed.id,),
+                "update tasks set status='failed', error='failed' where record_type='reply_tasks' and id=?",
+                (task_physical_id(db, "reply_tasks", failed.id),),
             )
         else:
-            db.execute("update reply_tasks set status='done' where id=?", (failed.id,))
+            db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task_physical_id(db, "reply_tasks", failed.id),))
             db.execute(
                 "insert into errors(conversation_id,message_id,kind,detail) values ('unrelated-chat','message','read','failed')"
             )
@@ -103,10 +104,10 @@ def test_attention_recovery_keeps_same_schedule_terminal_evidence(
     ]
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status=? where id=?",
-            ("failed" if source == "reply" else "done", tasks[0].id),
+            "update tasks set status=? where record_type='reply_tasks' and id=?",
+            ("failed" if source == "reply" else "done", task_physical_id(db, "reply_tasks", tasks[0].id)),
         )
-        db.execute("update reply_tasks set status=? where id=?", (status, tasks[1].id))
+        db.execute("update tasks set status=? where record_type='reply_tasks' and id=?", (status, task_physical_id(db, "reply_tasks", tasks[1].id)))
         if source == "error":
             db.execute(
                 "insert into errors(conversation_id,message_id,kind,detail) values ('scheduled-task-run:10','event-10','read','failed')"
@@ -141,7 +142,7 @@ def test_attention_recovery_keeps_same_schedule_terminal_evidence(
     assert bool(matches) is not covered
     with store._connect() as db:
         assert db.execute(
-            "select status from reply_tasks where id=?", (tasks[0].id,)
+            f"select status from ({REPLY_TASK_SQL}) where id=?", (tasks[0].id,)
         ).fetchone()[0] == ("failed" if source == "reply" else "done")
         if source == "error":
             assert db.execute("select resolved_at from errors").fetchone()[0] == ""

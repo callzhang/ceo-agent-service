@@ -5,6 +5,7 @@ import pytest
 from app.dws_client import DwsUserProfile
 from app.follow_up import FollowUpNotSendable, send_business_task_follow_up
 from app.store import AutoReplyStore
+from app.task_storage import WORK_SUMMARY_INPUT_SQL
 
 
 class FakeDws:
@@ -132,7 +133,7 @@ def test_clicked_follow_up_failure_stays_failed_and_resends_as_new_revision(tmp_
     assert draft["status"] == "failed"
     with store._connect() as db:
         assert db.execute(
-            "select count(*) from work_summary_inputs where source_type='follow_up_completion_check'"
+            f"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) where source_type='follow_up_completion_check'"
         ).fetchone()[0] == 0
 
     dws = FakeDws()
@@ -236,7 +237,7 @@ def test_business_task_follow_up_uncertain_send_does_not_replay(tmp_path):
     assert store.list_business_task_follow_ups(business_task_id=task_id)[0]["status"] == "failed"
     with store._connect() as db:
         assert db.execute(
-            "select count(*) from work_summary_inputs where source_type='follow_up_completion_check'"
+            f"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) where source_type='follow_up_completion_check'"
         ).fetchone()[0] == 0
 
 
@@ -282,7 +283,7 @@ def test_expired_sending_follow_up_is_unknown_and_a_new_click_sends_a_new_revisi
     assert store.list_business_task_follow_ups(business_task_id=task_id)[0]["status"] == "failed"
     with store._connect() as db:
         assert db.execute(
-            "select count(*) from work_summary_inputs where source_type='follow_up_completion_check'"
+            f"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) where source_type='follow_up_completion_check'"
         ).fetchone()[0] == 0
 
     dws = FakeDws()

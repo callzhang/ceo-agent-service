@@ -1,0 +1,357 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "phase": "cold",
+      "work_item": {
+        "source": {
+          "type": "ai_minutes",
+          "ref": "meeting:synthetic-catalog-project",
+          "title": "匿名项目周会",
+          "conversation_id": "",
+          "conversation_title": "",
+          "created_at": "2026-10-12T09:00:00Z"
+        },
+        "summary": "会议决定启动星桥交付项目，目标是完成客户验收和回款。陈明总负责交付，赵华负责客户回款排期。当前验收按计划推进，未报告风险，没有新的独立行动项。",
+        "context": {
+          "sender": "",
+          "sender_user_id": "",
+          "owner_identity": {},
+          "assignment_authorized": false,
+          "external_task_id": "",
+          "reply_to_source_ref": "",
+          "participants": [],
+          "source_conversation_kind": "minutes",
+          "source_conversation_title": ""
+        },
+        "task_signals": {
+          "possible_task_update": false,
+          "mentions_follow_up": false,
+          "progress_claim": false,
+          "owner_correction": false,
+          "complaint_about_followup": false,
+          "signal_reason": ""
+        },
+        "scheduled_consumer": {}
+      },
+      "context": {
+        "notice": "Similarity rank is context only; never authority or confirmation for identity, acceptance, anchor match, or official Project creation. Legacy formal rows without source-backed owner evidence are unverified, not owner commitments.",
+        "official_project_registry": [],
+        "project_contexts": [],
+        "project_evidence": [],
+        "task_candidates": [],
+        "existing_formal_tasks": [],
+        "unverified_formal_tasks": [],
+        "task_evidence": [],
+        "source_documents": [
+          {
+            "document_id": "current:f3ffa906caaf7b4d62f8cd0d3753c771681fe42bad9c5d7b12674473df6c31ac",
+            "full_length": 71,
+            "truncated": false,
+            "visible_ranges": [
+              {
+                "start": 0,
+                "end": 71,
+                "text": "会议决定启动星桥交付项目，目标是完成客户验收和回款。陈明总负责交付，赵华负责客户回款排期。当前验收按计划推进，未报告风险，没有新的独立行动项。"
+              }
+            ],
+            "decoded_excerpts": [],
+            "citation_budget_exceeded": false
+          }
+        ],
+        "source_signals": [],
+        "current_work_item": {
+          "source": {
+            "type": "ai_minutes",
+            "ref": "meeting:synthetic-catalog-project",
+            "title": "匿名项目周会",
+            "conversation_id": "",
+            "conversation_title": "",
+            "created_at": "2026-10-12T09:00:00Z"
+          },
+          "context": {
+            "sender": "",
+            "sender_user_id": "",
+            "owner_identity": {},
+            "assignment_authorized": false,
+            "external_task_id": "",
+            "reply_to_source_ref": "",
+            "participants": [],
+            "source_conversation_kind": "minutes",
+            "source_conversation_title": ""
+          },
+          "task_signals": {
+            "possible_task_update": false,
+            "mentions_follow_up": false,
+            "progress_claim": false,
+            "owner_correction": false,
+            "complaint_about_followup": false,
+            "signal_reason": ""
+          },
+          "scheduled_consumer": {},
+          "document_id": "current:f3ffa906caaf7b4d62f8cd0d3753c771681fe42bad9c5d7b12674473df6c31ac"
+        },
+        "source_metrics": {
+          "signal_count": 0,
+          "document_count": 1,
+          "body_chars_before_sharing": 71,
+          "unique_body_chars": 71,
+          "visible_body_chars": 71
+        },
+        "task_relations": [],
+        "task_anchor_links": [],
+        "work_clusters": [],
+        "cluster_memberships": [],
+        "registered_anchors": [],
+        "current_project_attention": []
+      },
+      "clock": "2026-10-12T10:00:00Z",
+      "expected": {
+        "projects": 1,
+        "tasks": 0,
+        "attention": 0,
+        "original_owner_evidence_required": true
+      }
+    },
+    {
+      "phase": "risk",
+      "work_item": {
+        "source": {
+          "type": "ai_minutes",
+          "ref": "meeting:synthetic-catalog-risk",
+          "title": "匿名项目风险续会",
+          "conversation_id": "",
+          "conversation_title": "",
+          "created_at": "2026-10-13T09:00:00Z"
+        },
+        "summary": "星桥交付项目的客户验收材料未齐，客户要求先完成验收材料确认才安排付款日期，导致本项目回款时间无法落实。",
+        "context": {
+          "sender": "",
+          "sender_user_id": "",
+          "owner_identity": {},
+          "assignment_authorized": false,
+          "external_task_id": "",
+          "reply_to_source_ref": "",
+          "participants": [],
+          "source_conversation_kind": "minutes",
+          "source_conversation_title": ""
+        },
+        "task_signals": {
+          "possible_task_update": false,
+          "mentions_follow_up": false,
+          "progress_claim": false,
+          "owner_correction": false,
+          "complaint_about_followup": false,
+          "signal_reason": ""
+        },
+        "scheduled_consumer": {}
+      },
+      "context": {
+        "notice": "Similarity rank is context only; never authority or confirmation for identity, acceptance, anchor match, or official Project creation. Legacy formal rows without source-backed owner evidence are unverified, not owner commitments.",
+        "official_project_registry": [
+          {
+            "id": 1,
+            "canonical_anchor_id": 1,
+            "anchor_type": "project",
+            "title": "星桥交付项目",
+            "registry_source": "meeting_decision:meeting:synthetic-catalog-project",
+            "created_at": "2026-10-12 09:09:59",
+            "crm_customer_id": "",
+            "crm_customer_name": "",
+            "crm_customer_lookup_status": "not_requested",
+            "crm_customer_candidates": [],
+            "crm_customer_label": "",
+            "crm_customer_evidence": null
+          }
+        ],
+        "project_contexts": [
+          {
+            "id": 1,
+            "project_id": 1,
+            "context": {
+              "goal": "完成客户验收和回款",
+              "scope": "客户交付验收与回款排期",
+              "overall_owner": {
+                "person_user_id": "",
+                "person_name": "陈明",
+                "responsibility": "总体负责交付",
+                "evidence": [
+                  {
+                    "signal_id": 1,
+                    "source_ref": "meeting:synthetic-catalog-project",
+                    "source_excerpt": "陈明总负责交付"
+                  }
+                ]
+              },
+              "responsibilities": [
+                {
+                  "person_user_id": "",
+                  "person_name": "赵华",
+                  "responsibility": "负责客户回款排期",
+                  "evidence": [
+                    {
+                      "signal_id": 1,
+                      "source_ref": "meeting:synthetic-catalog-project",
+                      "source_excerpt": "赵华负责客户回款排期"
+                    }
+                  ]
+                }
+              ],
+              "facts": [
+                {
+                  "key": "project_goal",
+                  "text": "项目目标是完成客户验收和回款。",
+                  "evidence": [
+                    {
+                      "signal_id": 1,
+                      "source_ref": "meeting:synthetic-catalog-project",
+                      "source_excerpt": "目标是完成客户验收和回款。"
+                    }
+                  ],
+                  "date_type": "",
+                  "date_value": ""
+                },
+                {
+                  "key": "current_status",
+                  "text": "当前验收按计划推进，未报告风险，没有新的独立行动项。",
+                  "evidence": [
+                    {
+                      "signal_id": 1,
+                      "source_ref": "meeting:synthetic-catalog-project",
+                      "source_excerpt": "当前验收按计划推进，未报告风险，没有新的独立行动项。"
+                    }
+                  ],
+                  "date_type": "",
+                  "date_value": ""
+                }
+              ]
+            },
+            "evidence_signal_ids": [
+              1
+            ],
+            "created_at": "2026-10-12 09:09:59"
+          }
+        ],
+        "project_evidence": [
+          {
+            "project_id": 1,
+            "signal_id": 1,
+            "created_at": "2026-10-12 09:09:59"
+          }
+        ],
+        "task_candidates": [],
+        "existing_formal_tasks": [],
+        "unverified_formal_tasks": [],
+        "task_evidence": [],
+        "source_documents": [
+          {
+            "document_id": 1,
+            "full_length": 71,
+            "truncated": false,
+            "visible_ranges": [
+              {
+                "start": 0,
+                "end": 71,
+                "text": "会议决定启动星桥交付项目，目标是完成客户验收和回款。陈明总负责交付，赵华负责客户回款排期。当前验收按计划推进，未报告风险，没有新的独立行动项。"
+              }
+            ],
+            "decoded_excerpts": [],
+            "citation_budget_exceeded": false
+          },
+          {
+            "document_id": "current:6de1011d5fb2bd97e61e90d397dc165e7413fdb239f0bfb4c622d5bdde910e75",
+            "full_length": 51,
+            "truncated": false,
+            "visible_ranges": [
+              {
+                "start": 0,
+                "end": 51,
+                "text": "星桥交付项目的客户验收材料未齐，客户要求先完成验收材料确认才安排付款日期，导致本项目回款时间无法落实。"
+              }
+            ],
+            "decoded_excerpts": [],
+            "citation_budget_exceeded": false
+          }
+        ],
+        "source_signals": [
+          {
+            "id": 1,
+            "source_document_id": 1,
+            "source_type": "ai_minutes",
+            "source_ref": "meeting:synthetic-catalog-project",
+            "source_time": "2026-10-12T09:00:00Z",
+            "conversation_id": "",
+            "conversation_title": "",
+            "author_user_id": "",
+            "author_name": "",
+            "author_kind": "unknown",
+            "context_json": "{\"work_item_title\": \"匿名项目周会\"}",
+            "dedupe_key": "project-source:f3ffa906caaf7b4d62f8cd0d3753c771681fe42bad9c5d7b12674473df6c31ac",
+            "created_at": "2026-10-12T09:09:59+00:00",
+            "document_id": 1
+          }
+        ],
+        "current_work_item": {
+          "source": {
+            "type": "ai_minutes",
+            "ref": "meeting:synthetic-catalog-risk",
+            "title": "匿名项目风险续会",
+            "conversation_id": "",
+            "conversation_title": "",
+            "created_at": "2026-10-13T09:00:00Z"
+          },
+          "context": {
+            "sender": "",
+            "sender_user_id": "",
+            "owner_identity": {},
+            "assignment_authorized": false,
+            "external_task_id": "",
+            "reply_to_source_ref": "",
+            "participants": [],
+            "source_conversation_kind": "minutes",
+            "source_conversation_title": ""
+          },
+          "task_signals": {
+            "possible_task_update": false,
+            "mentions_follow_up": false,
+            "progress_claim": false,
+            "owner_correction": false,
+            "complaint_about_followup": false,
+            "signal_reason": ""
+          },
+          "scheduled_consumer": {},
+          "document_id": "current:6de1011d5fb2bd97e61e90d397dc165e7413fdb239f0bfb4c622d5bdde910e75"
+        },
+        "source_metrics": {
+          "signal_count": 1,
+          "document_count": 2,
+          "body_chars_before_sharing": 122,
+          "unique_body_chars": 122,
+          "visible_body_chars": 122
+        },
+        "task_relations": [],
+        "task_anchor_links": [],
+        "work_clusters": [],
+        "cluster_memberships": [],
+        "registered_anchors": [
+          {
+            "id": 1,
+            "anchor_type": "project",
+            "anchor_ref": "task-agent-project:3c9b45de491b2eb59c2f9c0ad21f31ba54aa1ca5d1a06af5c74c59e41db542d6",
+            "title": "星桥交付项目",
+            "active": true,
+            "created_at": "2026-10-12 09:09:59"
+          }
+        ],
+        "current_project_attention": []
+      },
+      "clock": "2026-10-13T10:00:00Z",
+      "expected": {
+        "projects": 1,
+        "tasks": 1,
+        "attention": 1,
+        "original_owner_evidence_required": true
+      }
+    }
+  ]
+}

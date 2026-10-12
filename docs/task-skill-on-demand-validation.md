@@ -1,5 +1,7 @@
 # Task Skill on-demand delivery validation
 
+2026-10-12 同步目录父分支 `3eaa2e31`（含当前 typed storage）后，schema delivery、runtime router、routed execution、既有 Task repair 和 Project registration 五文件共154 passed；另四个 Skill delivery、guidance dedup、Task business application 与 business Skills 文件275 passed，合计429项不重叠的受影响测试。三份文档冲突保留双方追加内容及父分支准确扩展；Task 全文内嵌目录说明由本草稿的按需交付说明替代。此回归不补齐原生 cold 全文读取或 API business gates，草稿仍不发布。
+
 ## Current API readback (2026-10-12)
 
 One additional configured `codex_api` candidate cold probe used the same anonymous facts/context, unchanged approval setting and local fake Memory only. It ended with `exceeded retry limit, last status: 429 Too Many Requests`, exit1 and no decision. Native SID `01a1305b-609d-7140-bcb9-d5616d7be19a` is not a valid cold session; no resume was attempted. The models-list decode warning is retained in raw stderr but is not established as the terminal cause. This is route-readiness evidence, not schema/Skill incompatibility or provider capacity-root-cause proof. Metadata: `evals/trajectory_optimization/task_skill_api_capacity.current.results.v1.json`; raw files `/private/tmp/ceo-task-openai-api-current-ot1u89tn`. No production, approval-policy or prompt change.

@@ -1302,7 +1302,7 @@ def test_codex_agent_claims_exact_weekly_job_before_routed_execution(tmp_path):
             calls.append(kwargs)
             with store._connect() as db:
                 parent = db.execute(
-                    "select status from weekly_okr_analysis_jobs where "
+                    "select status from tasks where record_type='weekly_okr_analysis_jobs' and "
                     "week_end=? and manager_user_id=? and source_digest=?",
                     tuple(kwargs["workload_key"].split(":", 3)[:3]),
                 ).fetchone()
@@ -1333,7 +1333,7 @@ def test_codex_agent_claims_exact_weekly_job_before_routed_execution(tmp_path):
         "local_schema_validation",
     }
     with store._connect() as db:
-        row = db.execute("select status from weekly_okr_analysis_jobs").fetchone()
+        row = db.execute("select status from tasks where record_type='weekly_okr_analysis_jobs'").fetchone()
     assert row["status"] == "completed"
 
 
@@ -1445,7 +1445,7 @@ def test_codex_agent_reclaims_completed_job_when_cache_artifact_is_missing(tmp_p
     assert recovered.manager_reviews[0].name == manager.name
     assert len(recovered_route.calls) == 1
     with store._connect() as db:
-        jobs = db.execute("select id, status from weekly_okr_analysis_jobs").fetchall()
+        jobs = db.execute("select cast(legacy_key as integer) as id, status from tasks where record_type='weekly_okr_analysis_jobs'").fetchall()
     assert len(jobs) == 1
     assert jobs[0]["status"] == "completed"
 
@@ -1528,7 +1528,7 @@ def test_codex_agent_in_progress_non_owner_never_spawns_or_terminalizes(tmp_path
     assert non_owner_routed.calls == 0
     with store._connect() as db:
         assert db.execute(
-            "select status from weekly_okr_analysis_jobs"
+            "select status from tasks where record_type='weekly_okr_analysis_jobs'"
         ).fetchone()["status"] == "running"
 
     release.set()
@@ -1539,7 +1539,7 @@ def test_codex_agent_in_progress_non_owner_never_spawns_or_terminalizes(tmp_path
     assert owner_routed.calls == 1
     with store._connect() as db:
         assert (
-            db.execute("select status from weekly_okr_analysis_jobs").fetchone()[
+            db.execute("select status from tasks where record_type='weekly_okr_analysis_jobs'").fetchone()[
                 "status"
             ]
             == "completed"
@@ -1585,9 +1585,9 @@ def test_codex_agent_recovers_expired_owner_from_durable_cache_without_child(
     first.analyze(**arguments)
     with store._connect() as db:
         db.execute(
-            "update weekly_okr_analysis_jobs set status='running', "
+            "update tasks set status='running', "
             "lease_owner='crashed-owner', lease_expires_at='2026-08-20 00:00:00', "
-            "finished_at=''"
+            "finished_at='' where record_type='weekly_okr_analysis_jobs'"
         )
 
     class NoChild:
@@ -1606,7 +1606,7 @@ def test_codex_agent_recovers_expired_owner_from_durable_cache_without_child(
     assert no_child.calls == 0
     with store._connect() as db:
         row = db.execute(
-            "select status, lease_owner, lease_expires_at from weekly_okr_analysis_jobs"
+            "select status, lease_owner, lease_expires_at from tasks where record_type='weekly_okr_analysis_jobs'"
         ).fetchone()
     assert tuple(row) == ("completed", "", "")
 

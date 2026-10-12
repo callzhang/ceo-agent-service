@@ -1,5 +1,50 @@
 # Current Runtime Mechanism
 
+The existing `read_dingtalk_drive_file` attachment reader limits downloaded bytes
+and OOXML aggregate uncompressed bytes to 20 MiB before parsing. Member parsing
+also uses bounded reads against one aggregate budget, with actual compressed
+stream termination checked instead of trusting the ZIP directory's size alone;
+only stored and deflated OOXML members are accepted. This termination check is
+covered with the configured Python 3.12 runtime and CI. Downloads open
+the resulting regular file once with `O_NOFOLLOW` and read from that validated
+descriptor; link replacement cannot redirect the read. Every attachment format
+returns a SHA-256 digest of the downloaded bytes. PDF and presentation previews
+report actual text/page truncation, and the complete serialized tool response
+must fit below the 1 MiB MCP text-block boundary using the same indented
+`pydantic_core.to_json` serialization as the pinned FastMCP SDK, including JSON
+escaping, structural whitespace and duplicated text. An oversized response fails rather than presenting partial
+business evidence as complete. Scanned PDF OCR paths and process-owned temporary
+directory cleanup remain unchanged; failed extraction/serialization removes the
+new material file. These limits do not grant shell access to DWS credentials.
+
+`retry-source-verified-email-action --account ... --action-id ...` examines one
+current failed move/trash action through the existing read-only IMAP wrapper.
+Preview opens SQLite read-only without schema initialization. Only an exact
+message still in its source can be released with `--apply`; missing, ambiguous,
+already moved or changed identities are not retried. The transaction checks the
+current plan, parameters, config version, failure snapshot, dependencies and
+active sibling claims. It schedules one attempt using `next_attempt_at`, keeps
+the failed status and immutable attempt history, and does not reset the counter.
+The normal worker consumes that schedule before calling the provider; another
+failure does not renew this explicit allowance. Dry-run refuses `--apply`.
+Schema 51 records the source-readback digest and exact next attempt number in
+the immutable `email_direct_retry_requests` relation. Provider-factory failures
+and interrupted-worker recovery also consume this one-attempt allowance rather
+than renewing it. Deployment requires a verified backup and the matched 50-to-51
+publication inverse; rollback removes only an empty request relation and refuses
+to discard any recorded recovery authorization. Readback exceptions close the
+session opened by the examination worker before propagating the error.
+Duplicate-key inserts, including SQLite `INSERT OR REPLACE`, are rejected by
+the authorization relation alongside updates and deletes.
+Authorization includes a canonical non-secret snapshot of the IMAP account identity,
+transport, credential reference and move mode captured by the read-only factory.
+The release transaction and both normal-worker claim paths compare it against
+the current account configuration; a changed configuration cannot consume that
+old authorization.
+Missing captured configuration evidence is rejected rather than inferred from
+the current database. A changed configuration is also shown and counted as
+blocked, not as automatically retriable; authorization and failure history remain.
+
 Audit field-error feedback must cite the exact JSON path, literal value and type
 from the current digest-bound candidate. Prior revision feedback is not evidence
 of the current field value. Quoted numeric identifiers remain strings; an
@@ -1012,7 +1057,7 @@ candidate_executions 保存租约，candidate_action_attempts 在 provider 调�
 参数、命令、工具输出和从原生记录提取的结果均按需读取。中断运行按原生 `task_started` / `task_complete`
 边界恢复证据，既有投递核对和恢复契约保持不变。
 
-Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 consumer-artifacts 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
+Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 consumer-artifacts 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。两角色的 `read_dingtalk_drive_file` 只下载调用方明确指定的已授权钉盘节点，返回受限正文和当前 MCP 进程临时目录路径；扫描 PDF 可交给选中的 OCR Skill，MCP 进程退出时清理目录。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
 
 Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`，并将任务绑定的 `mcp__agent_cli` 设为 `direct_only_tool_namespaces`。任务工具直接向模型声明；已验证的成功读取使用具名直接调用，但 Agent 仍可能尝试 CodeMode 并在调用错误后恢复，声明方式不保证没有额外步骤。其他工具继续使用 CodeMode；既有角色工具选择、functions 排除、沙箱、会话和路线不变。超长直接调用结果仍可能被原生运行时截断，不能以完整原始回执替代模型实际可见内容的验证。
 
@@ -2455,3 +2500,45 @@ Task 的 command factory 将当前 `ceo-work-tracking` 选择传到既有 Codex 
 ### Task Skill 按需读取
 
 Task 每轮服务输入保留 `ceo-work-tracking` 极简用途及当前 `WORK_TRACKING_SKILL_PATH` 的确切文件入口，本机 Codex/Claude 通过原生文件工具按需读取全文，服务不再内嵌正文。既有文件加载 preflight 保留。command factory 保存同一源路径：Codex 从父目录名生成原生目录选择；Friday 无本机文件读取入口，其既有单消息桥从该确切路径读取并内联全文一次，不按名称重新解析另一根目录。历史 scheduled Skill 快照仍不作为当前协议。任务专属动态事实和当前入口每轮提交，复用既有 session。结果 schema、业务校验、路由、工具权限不变。服务输入长度下降不代表总上下文/token 等量下降：按需读取的全文进入原生工具结果。验证与路线证据边界见 `docs/task-skill-on-demand-validation.md`。
+
+## Unified reply and work-input storage (Store 2026-10-11.3)
+
+第四期4B首单元将回复任务、输入版本与工作汇总输入存入物理 `tasks`，Task Agent 运行存入 `runs`。
+逻辑类型使用准确原表名；公共 ID 保留原整数命名空间，`legacy_key` 记录旧 ID。reply task 的公共 ID
+等于物理 ID；输入和工作输入通过类型与公共 ID 查找物理记录。`current_input_id`、`claimed_input_id`
+与输入的父引用使用物理外键，DTO 继续返回准确原公共输入 ID。Task run 的 `summary_input_id`
+仍是原公共工作输入 ID，原来源没有该外键，不新增外键。
+
+保留的输入 TEXT、BLOB 与 WSI1 编码保持原字节。终态正文精简规则、状态与尝试次数、执行代、领取 CAS、
+业务结果、原生运行定位和执行回执保持原语义。Task run 的三项已退休空过程缓存不再物理保存；历史正文
+依然从原生 trajectory 读取，缺失明确报告不可用。没有新增业务字段、旧表视图或长期双写。
+
+此单元配对发布使用已验证的 `2026-10-11.2→2026-10-11.3`。副本正迁和逆迁比较原记录、源 DDL、
+索引、触发器、序列及版本；逆迁保留 replacement 期间的新输入、结果与回执，以及已分配后删除的 ID
+水位。部署静默检查明确读取旧12或新13布局，并支持普通元组与 sqlite3.Row 连接。
+Meeting、OKR与weekly结构由下面的同版本内部子单元处理；scheduled/Workbench仍待4C。
+
+这是当前开发分支的行为说明，生产上线状态和验收边界见 `docs/database-redesign-phase4b-validation.md`。
+
+旧 `2026-10-10.2→2026-10-11.1` 输入 publication 与其无运行调用的迁移／inverse helper 已退休；当前二次启动不运行旧全局补造逻辑。损坏或混合的当前 typed schema 明确拒绝，既有修复缺失辅助索引的入口保持原边界。回退使用本次捕获的准确源布局和对应旧代码，保留 replacement 新事实。
+
+
+## Unified Meeting storage (Store 2026-10-11.3)
+
+4B会议子单元将原meeting_alignment_jobs的23项源字段保存为tasks[meeting_alignment_jobs]的准确scalar；会议运行使用runs[meeting_alignment_runs]，只退休三项已为空的过程缓存。已采用的决定、最终消息、发送结果与日历结果仍是业务状态；原生trajectory继续提供过程正文，缺失时明确不可用。源run.updated_at默认空字符串，正常begin/record入口仍显式写SQLite当前时间。
+
+DAO、Dispatcher、runtime父定位与恢复、History、搜索、Console及静默检查保留原公共job/run ID和排序。投递key、Dispatcher source_id、generation、owner/expiry和claim token的原谓词不变；Memory event、delivery claim和run的父FK指向物理tasks ID，DTO回投原公共ID。ready_to_send仍不代表sent；已有发送结果与后续calendar状态保持原业务语义。
+
+已知历史run2298的job4908不存在，迁移保留这一真实缺失关系并消耗保留物理ID水位，不创建业务父记录、不指向其他类型巧合同号行。正常run只保存物理父FK，公共父ID由typed parent还原；只有历史孤儿保留实际source job_id。配对逆迁还原原公共身份与同一FK发现，保留replacement新事实。当前开发代码已完成会议调用切换与独立复核；全B的最终生产源副本、旧代码回退验证、CI和发布仍以B验收文档为准。
+
+
+## Unified OKR and weekly analysis storage (Store 2026-10-11.3)
+
+4B的完整存储核心将九张源表合入tasks/runs。OKR request保留16个原scalar字段、conversation/trigger自然唯一键和原无枚举CHECK的status。失败请求的重复输入只刷新原允许的source JSON、pending状态、错误、session和更新时间，不改写其原标题或trigger正文。领取、恢复、Dispatcher租约与Console使用原公共request ID；对应任务的物理ID可不同。
+
+OKR run保留原公共request_id、session、transcript range与created_at，只退休三个空过程缓存。源没有request外键或run状态、错误、完成/更新时间；共享列保持NULL，task_id不补成FK。items的request_id同样没有声明FK，保留原public scalar；多个run及原允许的缺失request关系均不合并或补造父行。精确native读取继续使用structured workload的公共request ID和原session/range。
+
+weekly analysis job的11个原字段、running/completed/failed CHECK和week_end/manager/source_digest自然键保持。cache hit与cache miss复用同一公共job ID，owner/expiry CAS及superseded错误和时间保持；runtime workload包含原公共job ID。周报全局lease及last_success/last_attempt仍在service_state。逆迁保留原序列水位和replacement新写入/删除后的分配水位。当前代码处于隔离分支；完整B验收与生产状态以验收文档为准。
+
+
+Email task visibility in Store13: unsubscribe classification lists, classification detail/in-flight progress, verified entry URL lineage and summary queue counts detect the physical tasks/runs tables. They read public task/run IDs through the typed projections and resolve canonical inputs through the physical current_input_id reference. A standalone EmailStore without the shared task tables retains its existing behavior. Existing receipt/lineage/URL validation and redaction rules remain; this change fixes the physical-table presence check and adds no policy.
