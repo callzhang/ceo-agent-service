@@ -10,7 +10,7 @@ from app.store import REPLY_TASK_CURRENT_SQL
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from email.message import Message
 from email.parser import Parser
@@ -74,7 +74,7 @@ from app.sqlite_schema_lock import schema_initialize_lock
 from app.run_storage import AGENT_RUN_SQL
 
 
-EMAIL_SCHEMA_VERSION = 50
+EMAIL_SCHEMA_VERSION = 51
 _REQUIRED_WITHOUT_ROWID_TABLES = frozenset(
     {
         "email_model_promotion_configs",
@@ -86,6 +86,19 @@ MAX_CLASSIFIER_RUNTIME_SAMPLES = 2048
 _RUNTIME_LATENCY_FALLBACK_SAMPLES = 200
 HISTORICAL_DEFER_RETRY_SECONDS = 60
 DIRECT_ACTION_MAX_ATTEMPTS = 3
+DIRECT_RETRY_TABLE_SQL = """
+    create table if not exists email_direct_retry_requests (
+        action_id text not null check(trim(action_id) != ''),
+        attempt_number integer not null check(attempt_number > 0),
+        source_readback_digest text not null check(length(source_readback_digest) = 64),
+        account_configuration_snapshot text not null check(json_valid(account_configuration_snapshot))
+            check(json_type(account_configuration_snapshot) = 'array')
+            check(json_array_length(account_configuration_snapshot) = 9),
+        requested_at text not null check(trim(requested_at) != ''),
+        primary key(action_id, attempt_number),
+        foreign key(action_id) references email_actions(action_id) on delete restrict
+    )
+"""
 DIRECT_ACTION_EXHAUSTED_TRANSIENT_RETRY_SECONDS = 300
 # Cross-restart bound for one accepted unsubscribe effect lineage.  This is a
 # durable data limit, independent of any Agent process turn budget.
@@ -446,6 +459,13 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "action_identity": ("text", False, None),
         "decision_json": ("text", True, None),
     },
+    "email_direct_retry_requests": {
+        "action_id": ("text", True, None),
+        "attempt_number": ("integer", True, None),
+        "source_readback_digest": ("text", True, None),
+        "account_configuration_snapshot": ("text", True, None),
+        "requested_at": ("text", True, None),
+    },
     "email_unsubscribe_receipts": {
         "action_identity": ("text", False, None),
         "effect_digest": ("text", True, None),
@@ -707,6 +727,15 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "trim(action_identity) != ''",
         "json_valid(decision_json)",
     ),
+    "email_direct_retry_requests": (
+        "trim(action_id) != ''",
+        "attempt_number > 0",
+        "length(source_readback_digest) = 64",
+        "json_valid(account_configuration_snapshot)",
+        "json_type(account_configuration_snapshot) = 'array'",
+        "json_array_length(account_configuration_snapshot) = 9",
+        "trim(requested_at) != ''",
+    ),
     "email_unsubscribe_receipts": (
         "trim(action_identity) != ''",
         "trim(effect_digest) != ''",
@@ -827,6 +856,7 @@ _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
     "email_unsubscribe_steps": ("id",),
     "email_unsubscribe_receipts": ("action_identity",),
     "email_unsubscribe_cancellations": ("action_identity",),
+    "email_direct_retry_requests": ("action_id", "attempt_number"),
     "email_training_snapshots": ("snapshot_id",),
     "email_provider_observations": ("account_id", "stable_message_identity"),
     "email_provider_folder_observation_generations": (
@@ -881,6 +911,7 @@ _REQUIRED_FOREIGN_KEYS: Mapping[
         ("classification_id", "email_classifications", "id", "RESTRICT"),
     ),
     "email_action_attempts": (("action_id", "email_actions", "action_id", "RESTRICT"),),
+    "email_direct_retry_requests": (("action_id", "email_actions", "action_id", "RESTRICT"),),
     "email_feedback_requests": (
         ("classification_id", "email_classifications", "id", "RESTRICT"),
         (
@@ -1016,6 +1047,20 @@ _MODEL_CONTROL_IMMUTABLE_TRIGGER_SQL = {
 }
 _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
     **_MODEL_CONTROL_IMMUTABLE_TRIGGER_SQL,
+    **{
+        f"trg_email_direct_retry_immutable_{event}": f"""
+            create trigger trg_email_direct_retry_immutable_{event}
+            before {event} on email_direct_retry_requests
+            begin select raise(abort, 'email_direct_retry_request_immutable'); end
+        """ for event in ("update", "delete")
+    },
+    "trg_email_direct_retry_immutable_insert": """
+        create trigger trg_email_direct_retry_immutable_insert
+        before insert on email_direct_retry_requests
+        when exists (select 1 from email_direct_retry_requests
+                     where action_id=new.action_id and attempt_number=new.attempt_number)
+        begin select raise(abort, 'email_direct_retry_request_immutable'); end
+    """,
     "trg_email_training_snapshots_immutable_update": """
         create trigger trg_email_training_snapshots_immutable_update
         before update on email_training_snapshots
@@ -1311,6 +1356,9 @@ _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
 }
 _REQUIRED_TRIGGER_TABLES: Mapping[str, str] = {
     **_MODEL_CONTROL_IMMUTABLE_TRIGGER_TABLES,
+    "trg_email_direct_retry_immutable_update": "email_direct_retry_requests",
+    "trg_email_direct_retry_immutable_delete": "email_direct_retry_requests",
+    "trg_email_direct_retry_immutable_insert": "email_direct_retry_requests",
     "trg_email_training_snapshots_immutable_update": "email_training_snapshots",
     "trg_email_training_snapshots_immutable_delete": "email_training_snapshots",
     "trg_email_training_observations_immutable_update": (
@@ -1452,6 +1500,7 @@ class FailedDirectAction:
     action: StoredEmailAction
     provider_operation: str
     error: str
+    parameters_json: str = ""
 
 
 class EmailAccountConflict(RuntimeError):
@@ -1739,10 +1788,37 @@ def _retry_is_due(next_attempt_at: object, claimed_at: str) -> bool:
         ) from exc
 
 
-def _direct_action_failed_retryable(row: sqlite3.Row, *, claimed_at: str) -> bool:
+def _explicit_direct_retry_sql(alias: str, attempt_offset: int = 0) -> str:
+    return (
+        "exists(select 1 from email_direct_retry_requests retry_request "
+        f"where retry_request.action_id={alias}.action_id "
+        f"and retry_request.attempt_number={alias}.attempt_count+{attempt_offset})"
+    )
+
+
+def _direct_retry_configuration_sql(alias: str) -> str:
+    return (
+        f"(NOT {_explicit_direct_retry_sql(alias, 1)} OR EXISTS("
+        "select 1 from email_direct_retry_requests r join email_accounts cfg "
+        f"on cfg.account_id={alias}.account_id where r.action_id={alias}.action_id "
+        f"and r.attempt_number={alias}.attempt_count+1 "
+        "and r.account_configuration_snapshot=json_array(cfg.account_id,cfg.email_address,"
+        "cfg.imap_host,cfg.imap_port,cfg.imap_username,cfg.imap_secret_reference,"
+        "cfg.imap_move_mode,cfg.imap_tls,cfg.enabled)))"
+    )
+
+
+def _direct_action_failed_retryable(
+    row: sqlite3.Row, *, claimed_at: str,
+    explicit_retry_attempt: bool = False, explicit_retry_scheduled: bool = False,
+) -> bool:
     if row["status"] != "failed":
         return False
     attempt_count = int(row["attempt_count"])
+    if explicit_retry_scheduled:
+        return _retry_is_due(row["next_attempt_at"], claimed_at)
+    if explicit_retry_attempt:
+        return False
     if attempt_count < DIRECT_ACTION_MAX_ATTEMPTS:
         return _retry_is_due(row["next_attempt_at"], claimed_at)
     if not _exhausted_direct_action_is_service_transient(row):
@@ -1763,9 +1839,12 @@ def _failed_action_retriable_sql(alias: str) -> str:
     """
 
     return (
-        f"(({alias}.attempt_count < {DIRECT_ACTION_MAX_ATTEMPTS}"
-        f" AND {alias}.next_attempt_at != '')"
+        f"(({alias}.next_attempt_at != '' AND ("
+        f"{_explicit_direct_retry_sql(alias, 1)} OR ("
+        f"{alias}.attempt_count < {DIRECT_ACTION_MAX_ATTEMPTS} "
+        f"AND NOT {_explicit_direct_retry_sql(alias)})))"
         f" OR ({alias}.attempt_count >= {DIRECT_ACTION_MAX_ATTEMPTS}"
+        f" AND NOT {_explicit_direct_retry_sql(alias)}"
         f" AND (("
         f"{alias}.provider_operation='provider_factory'"
         f" AND {alias}.error LIKE 'provider_factory_failed:%')"
@@ -1773,11 +1852,15 @@ def _failed_action_retriable_sql(alias: str) -> str:
         f" AND {alias}.error='stale_processing_recovered')"
         f" OR ({alias}.action_type='trash' AND {alias}.provider_operation='READ'"
         f" AND {alias}.error='provider_read_failed:ImapMessageUnavailable')"
-        f")))"
+        f"))) AND {_direct_retry_configuration_sql(alias)}"
     )
 
 
-def _direct_action_retry_outlook(row: sqlite3.Row) -> dict[str, object]:
+def _direct_action_retry_outlook(
+    row: sqlite3.Row, *, explicit_retry_attempt: bool = False,
+    explicit_retry_scheduled: bool = False,
+    explicit_retry_configuration_matches: bool = True,
+) -> dict[str, object]:
     """Whether a failed direct action will be tried again, and why or why not.
 
     The same rules `_direct_action_failed_retryable` applies when it claims the
@@ -1785,6 +1868,12 @@ def _direct_action_retry_outlook(row: sqlite3.Row) -> dict[str, object]:
     """
 
     attempts = int(row["attempt_count"])
+    if explicit_retry_scheduled and not explicit_retry_configuration_matches:
+        return {"retriable": False, "retry_note": "账户配置已变化，原恢复授权不能执行"}
+    if explicit_retry_scheduled and row["next_attempt_at"]:
+        return {"retriable": True, "retry_note": "已安排一次明确恢复，不重置失败次数"}
+    if explicit_retry_attempt:
+        return {"retriable": False, "retry_note": "本次明确恢复已结束，不自动续试"}
     if attempts < DIRECT_ACTION_MAX_ATTEMPTS:
         if row["next_attempt_at"]:
             return {
@@ -2865,6 +2954,14 @@ def _direct_action_id(action_plan_id: str, action: EmailAction) -> str:
     return f"email-action:{digest}"
 
 
+def email_imap_configuration_snapshot(account: Mapping[str, object]) -> str:
+    fields = ("account_id", "email_address", "imap_host", "imap_port",
+              "imap_username", "imap_secret_reference", "imap_move_mode")
+    values = [account[key] for key in fields]
+    values.extend((int(bool(account["imap_tls"])), int(bool(account["enabled"]))))
+    return _json_dump(values)
+
+
 def _training_sample_digest(sample: Mapping[str, object]) -> str:
     stable_fields = (
         sample.get("message_id"),
@@ -3222,6 +3319,11 @@ class EmailStore:
             if latest_version == 49:
                 self._migrate_v49_to_v50(db, replace_version=is_prototype)
                 latest_version = 50
+            if latest_version == 50:
+                if is_prototype:
+                    db.execute("update email_schema_migrations set version=51,applied_at=? where version=50", (self._now(),))
+                else:
+                    db.execute("insert into email_schema_migrations(version,applied_at) values (51,?)", (self._now(),))
             self._validate_durable_state(db)
             return True
 
@@ -4153,6 +4255,24 @@ class EmailStore:
                 (self._now(),),
             )
 
+    @staticmethod
+    def _detach_direct_retry_requests(db: sqlite3.Connection) -> list[tuple]:
+        rows = [tuple(row) for row in db.execute(
+            "select action_id,attempt_number,source_readback_digest,account_configuration_snapshot,requested_at "
+            "from email_direct_retry_requests order by action_id,attempt_number"
+        )]
+        db.execute("drop table email_direct_retry_requests")
+        return rows
+
+    @staticmethod
+    def _restore_direct_retry_requests(db: sqlite3.Connection, rows: Sequence[tuple]) -> None:
+        db.execute(DIRECT_RETRY_TABLE_SQL)
+        db.executemany(
+            "insert into email_direct_retry_requests values (?,?,?,?,?)", rows,
+        )
+        for event in ("update", "delete", "insert"):
+            db.execute(_REQUIRED_TRIGGER_SQL[f"trg_email_direct_retry_immutable_{event}"])
+
     def _migrate_v21_to_v22(
         self,
         db: sqlite3.Connection,
@@ -4160,6 +4280,8 @@ class EmailStore:
         replace_version: bool = False,
     ) -> None:
         """Allow the provider-neutral deterministic important-flag action."""
+
+        retry_requests = self._detach_direct_retry_requests(db)
 
         for trigger in (
             "trg_email_direct_action_blocks_plan_switch",
@@ -4229,6 +4351,7 @@ class EmailStore:
         )
         for statement in statements:
             db.execute(statement)
+        self._restore_direct_retry_requests(db, retry_requests)
         self._create_indexes_and_triggers(db)
         if replace_version:
             db.execute(
@@ -5561,6 +5684,8 @@ class EmailStore:
         Derek asked for a gone message to count as skipped.
         """
 
+        retry_requests = self._detach_direct_retry_requests(db)
+
         for trigger in (
             "trg_email_direct_action_blocks_plan_switch",
             "trg_email_direct_action_blocks_account_update",
@@ -5635,6 +5760,7 @@ class EmailStore:
         )
         for statement in statements:
             db.execute(statement)
+        self._restore_direct_retry_requests(db, retry_requests)
         self._create_indexes_and_triggers(db)
         if replace_version:
             db.execute(
@@ -6325,6 +6451,7 @@ class EmailStore:
                 decision_json text not null check(json_valid(decision_json))
             )
             """,
+            DIRECT_RETRY_TABLE_SQL,
             """
             create table if not exists email_unsubscribe_receipts (
                 action_identity text primary key
@@ -6497,6 +6624,10 @@ class EmailStore:
         )
         for statement in statements:
             db.execute(statement)
+        for event in ("update", "delete", "insert"):
+            name = f"trg_email_direct_retry_immutable_{event}"
+            if db.execute("select 1 from sqlite_master where type='trigger' and name=?", (name,)).fetchone() is None:
+                db.execute(_REQUIRED_TRIGGER_SQL[name])
 
     @staticmethod
     def _create_indexes_and_triggers(db: sqlite3.Connection) -> None:
@@ -7134,6 +7265,13 @@ class EmailStore:
 
     def _validate_durable_state(self, db: sqlite3.Connection) -> None:
         self._validate_schema_shape(db)
+        for row in db.execute(
+            "select r.*, a.attempt_count from email_direct_retry_requests r "
+            "join email_actions a on a.action_id=r.action_id"
+        ):
+            if row["attempt_number"] > row["attempt_count"] + 1:
+                raise EmailPersistenceCorruption("retry request exceeds the next action attempt")
+            _required_utc_timestamp(row["requested_at"], field="requested_at")
         try:
             self._validate_durable_rows(db)
         except IndexError as exc:
@@ -13293,10 +13431,13 @@ class EmailStore:
         states: dict[int, list[dict[str, str]]] = {item: [] for item in ids}
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select actions.classification_id, actions.action_type,
                        actions.status, actions.error, actions.attempt_count,
-                       actions.next_attempt_at, actions.provider_operation
+                       actions.next_attempt_at, actions.provider_operation,
+                       exists(select 1 from email_direct_retry_requests r where r.action_id=actions.action_id and r.attempt_number=actions.attempt_count) as explicit_retry_attempt,
+                       exists(select 1 from email_direct_retry_requests r where r.action_id=actions.action_id and r.attempt_number=actions.attempt_count+1) as explicit_retry_scheduled,
+                       {_direct_retry_configuration_sql('actions')} as explicit_retry_configuration_matches
                 from email_actions as actions
                 join email_classifications as classifications
                   on classifications.id=actions.classification_id
@@ -13315,7 +13456,11 @@ class EmailStore:
                 "error": str(row["error"] or ""),
             }
             if state["status"] == "failed":
-                state.update(_direct_action_retry_outlook(row))
+                state.update(_direct_action_retry_outlook(
+                    row, explicit_retry_attempt=bool(row["explicit_retry_attempt"]),
+                    explicit_retry_scheduled=bool(row["explicit_retry_scheduled"]),
+                    explicit_retry_configuration_matches=bool(row["explicit_retry_configuration_matches"]),
+                ))
             states[int(row["classification_id"])].append(state)
         return states
 
@@ -16550,7 +16695,9 @@ class EmailStore:
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity,
                        c.current_action_plan_id, p.actions_json,
-                       p.action_plan_version
+                       p.action_plan_version,
+                       exists(select 1 from email_direct_retry_requests r where r.action_id=a.action_id and r.attempt_number=a.attempt_count) as explicit_retry_attempt,
+                       exists(select 1 from email_direct_retry_requests r where r.action_id=a.action_id and r.attempt_number=a.attempt_count+1) as explicit_retry_scheduled
                 from email_actions as a
                 join email_classifications as c on c.id=a.classification_id
                 join email_action_plans as p on p.action_plan_id=a.action_plan_id
@@ -16577,10 +16724,15 @@ class EmailStore:
                 for sibling in current_siblings
                 if (
                     sibling["status"] == "pending"
-                    or _direct_action_failed_retryable(sibling, claimed_at=claimed_at)
+                    or _direct_action_failed_retryable(
+                        sibling, claimed_at=claimed_at,
+                        explicit_retry_attempt=bool(sibling["explicit_retry_attempt"]),
+                        explicit_retry_scheduled=bool(sibling["explicit_retry_scheduled"]),
+                    )
                 )
                 and self._direct_action_predecessors_done(db, sibling)
                 and self._direct_action_dependency_satisfied(db, sibling)
+                and self._direct_retry_configuration_matches(db, sibling)
             ]
             if unfinished:
                 eligible.append(
@@ -16982,7 +17134,9 @@ class EmailStore:
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity,
                        c.current_action_plan_id, p.actions_json,
-                       p.action_plan_version
+                       p.action_plan_version,
+                       exists(select 1 from email_direct_retry_requests r where r.action_id=a.action_id and r.attempt_number=a.attempt_count) as explicit_retry_attempt,
+                       exists(select 1 from email_direct_retry_requests r where r.action_id=a.action_id and r.attempt_number=a.attempt_count+1) as explicit_retry_scheduled
                 from email_actions as a
                 join email_classifications as c on c.id=a.classification_id
                 join email_action_plans as p on p.action_plan_id=a.action_plan_id
@@ -16999,10 +17153,15 @@ class EmailStore:
             if any(item["status"] == "processing" for item in siblings):
                 return None
             retryable = row["status"] == "pending" or (
-                _direct_action_failed_retryable(row, claimed_at=claimed_at)
+                _direct_action_failed_retryable(
+                    row, claimed_at=claimed_at,
+                    explicit_retry_attempt=bool(row["explicit_retry_attempt"]),
+                    explicit_retry_scheduled=bool(row["explicit_retry_scheduled"]),
+                )
             )
             if (
                 not retryable
+                or not self._direct_retry_configuration_matches(db, row)
                 or not self._direct_action_predecessors_done(db, row)
                 or not self._direct_action_dependency_satisfied(db, row)
             ):
@@ -17033,6 +17192,7 @@ class EmailStore:
         action_types: Sequence[EmailAction],
         limit: int,
         after_action_id: str = "",
+        action_id: str | None = None,
     ) -> list[FailedDirectAction]:
         """List failed actions of the current plan, in `action_id` order.
 
@@ -17058,10 +17218,11 @@ class EmailStore:
                   and c.status='processed'
                   and a.action_plan_id=c.current_action_plan_id
                   and a.action_id>?
+                  and (? is null or a.action_id=?)
                 order by a.action_id
                 limit ?
                 """,
-                (account_id, *types, after_action_id, int(limit)),
+                (account_id, *types, after_action_id, action_id, action_id, int(limit)),
             ).fetchall()
         return [
             FailedDirectAction(
@@ -17072,9 +17233,85 @@ class EmailStore:
                 ),
                 provider_operation=str(row["provider_operation"]),
                 error=str(row["error"]),
+                parameters_json=str(row["parameters_json"]),
             )
             for row in rows
         ]
+
+    def release_source_verified_direct_action(
+        self, failed: FailedDirectAction, *, source_locator: StoredEmailLocator,
+        source_revision: str, requested_at: str, apply: bool,
+        account_configuration_snapshot: str,
+    ) -> bool:
+        """Release one unchanged failure after exact read-only source verification."""
+        requested_at = _required_utc_timestamp(requested_at, field="requested_at")
+        expected = failed.action
+        if (
+            expected.action_type not in (EmailAction.MOVE, EmailAction.TRASH)
+            or source_locator != expected.locator
+            or not source_revision.strip() or not failed.parameters_json
+        ):
+            raise ValueError("exact move/trash source verification is required")
+        with self._connect() as db:
+            db.execute("begin immediate" if apply else "begin")
+            account = db.execute("select * from email_accounts where account_id=?", (expected.account_id,)).fetchone()
+            if account is None:
+                return False
+            current_configuration_snapshot = email_imap_configuration_snapshot(dict(account))
+            if account_configuration_snapshot != current_configuration_snapshot:
+                return False
+            row = db.execute(
+                """
+                select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
+                       c.thread_id, c.stable_message_identity, p.actions_json,
+                       p.action_plan_version
+                from email_actions a join email_classifications c
+                  on c.id=a.classification_id
+                join email_action_plans p on p.action_plan_id=a.action_plan_id
+                where a.action_id=? and a.status='failed' and c.status='processed'
+                  and a.action_plan_id=c.current_action_plan_id
+                """, (expected.action_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            actual = self._claimed_direct_action(
+                row, attempt_number=int(row["attempt_count"]) + 1, claimed_at="",
+            )
+            if (
+                actual != expected or row["parameters_json"] != failed.parameters_json
+                or row["next_attempt_at"]
+                or db.execute(
+                    "select 1 from email_direct_retry_requests where action_id=? and attempt_number=?",
+                    (expected.action_id, expected.attempt_number),
+                ).fetchone() is not None
+                or row["error"] != failed.error
+                or row["provider_operation"] != failed.provider_operation
+                or db.execute(
+                    "select 1 from email_actions where action_plan_id=? and status='processing'",
+                    (expected.action_plan_id,),
+                ).fetchone() is not None
+                or not self._direct_action_predecessors_done(db, row)
+                or not self._direct_action_dependency_satisfied(db, row)
+            ):
+                return False
+            if apply:
+                proof = sha256(json.dumps({
+                    "locator": asdict(source_locator), "revision": source_revision,
+                    "plan": expected.action_plan_id, "config": expected.config_version,
+                    "parameters": failed.parameters_json,
+                }, sort_keys=True).encode("utf-8")).hexdigest()
+                db.execute(
+                    "insert into email_direct_retry_requests values (?,?,?,?,?)",
+                    (expected.action_id, expected.attempt_number, proof, current_configuration_snapshot, requested_at),
+                )
+                db.execute(
+                    """update email_actions set next_attempt_at=?,
+                       updated_at=? where action_id=? and status='failed'
+                       and attempt_count=?""",
+                    (requested_at, requested_at,
+                     expected.action_id, expected.attempt_number - 1),
+                )
+            return True
 
     def claim_failed_direct_action_for_reconciliation(
         self,
@@ -17189,6 +17426,18 @@ class EmailStore:
             status_by_type.get(action_type.value) == "done"
             for action_type in dependencies
         )
+
+    @staticmethod
+    def _direct_retry_configuration_matches(db: sqlite3.Connection, row: sqlite3.Row) -> bool:
+        request = db.execute(
+            "select account_configuration_snapshot from email_direct_retry_requests "
+            "where action_id=? and attempt_number=?",
+            (row["action_id"], int(row["attempt_count"]) + 1),
+        ).fetchone()
+        if request is None:
+            return True
+        account = db.execute("select * from email_accounts where account_id=?", (row["account_id"],)).fetchone()
+        return account is not None and request[0] == email_imap_configuration_snapshot(dict(account))
 
     @staticmethod
     def _direct_action_dependency_satisfied(
@@ -17328,6 +17577,11 @@ class EmailStore:
                 raise EmailActionAttemptConflict(
                     f"unknown direct email action {action.action_id}"
                 )
+            if db.execute(
+                "select 1 from email_direct_retry_requests where action_id=? and attempt_number=?",
+                (action.action_id, action.attempt_number),
+            ).fetchone() is not None:
+                next_attempt_at = ""
             expected = self._claimed_direct_action(
                 row,
                 attempt_number=action.attempt_number,
@@ -17498,6 +17752,10 @@ class EmailStore:
             ).fetchall()
             for row in rows:
                 attempt_number = int(row["attempt_count"]) + 1
+                explicit_retry = db.execute(
+                    "select 1 from email_direct_retry_requests where action_id=? and attempt_number=?",
+                    (row["action_id"], attempt_number),
+                ).fetchone() is not None
                 db.execute(
                     """
                     insert into email_action_attempts (
@@ -17532,7 +17790,7 @@ class EmailStore:
                         _next_attempt_at(
                             recovered_at,
                             attempt_number=attempt_number,
-                            retryable=True,
+                            retryable=not explicit_retry,
                         ),
                         row["stable_message_identity"],
                         recovered_at,

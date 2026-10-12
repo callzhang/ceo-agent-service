@@ -1,5 +1,11 @@
 # Changelog
 
+## Source-verified email recovery
+
+- Add exact, read-only-first recovery of terminal move/trash failures without
+  moving mail in the recovery command, resetting attempt counts or rewriting
+  historical results. Preserve durable failed-state invariants.
+
 ## Audit current-candidate field evidence
 
 - Ground Audit field-error observations in the current candidate JSON, rather

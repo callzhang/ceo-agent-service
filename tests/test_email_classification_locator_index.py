@@ -41,6 +41,7 @@ def legacy_v46(tmp_path):
             db.execute("update email_classifications set updated_at=? where id=?",
                        (f"2026-10-11T00:00:0{index}+00:00", item.classification_id))
     with sqlite3.connect(path) as db:
+        db.execute("drop table email_direct_retry_requests")
         restore_action_plan_snapshot_column(db)
         db.execute(f"drop index if exists {INDEX}")
         db.execute("delete from email_schema_migrations where version>46")
@@ -75,7 +76,8 @@ def test_locator_migration_preserves_business_rows_uid_metadata_and_existing_ord
     assert after == before
     assert business_rows(path) == original_rows
     with sqlite3.connect(path) as db:
-        assert db.execute("select version from email_schema_migrations order by version").fetchall() == [(46,), (47,), (48,), (49,), (50,)]
+        assert db.execute("select version from email_schema_migrations order by version").fetchall() == [(46,), (47,), (48,), (49,), (50,), (51,)]
+        assert db.execute("select count(*) from email_direct_retry_requests").fetchone()[0] == 0
         assert db.execute("pragma foreign_key_check").fetchall() == []
         indexed = db.execute(f"pragma index_xinfo({INDEX})").fetchall()
     assert [row[2] for row in indexed if row[5]] == [
@@ -84,7 +86,7 @@ def test_locator_migration_preserves_business_rows_uid_metadata_and_existing_ord
     assert indexed[4][3] == 1
     EmailStore(path)
     with sqlite3.connect(path) as db:
-        assert db.execute("select version from email_schema_migrations order by version").fetchall() == [(46,), (47,), (48,), (49,), (50,)]
+        assert db.execute("select version from email_schema_migrations order by version").fetchall() == [(46,), (47,), (48,), (49,), (50,), (51,)]
 
 
 def test_locator_migration_validation_failure_rolls_back_index_and_version(tmp_path, monkeypatch):
