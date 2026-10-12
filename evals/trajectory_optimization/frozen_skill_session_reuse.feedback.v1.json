@@ -1,0 +1,696 @@
+{
+  "version": 1,
+  "scope": "Synthetic immutable task-bound frozen Skill same-session feedback with production role defaults; no actual provider, persisted service run orchestration or compaction acceptance",
+  "source_root": "/private/tmp/ceo-frozen-feedback-controls-_4t303f7",
+  "source_bindings_unchanged": true,
+  "frozen_material_sha256": "c05f0e627ebc2f796020a97b33cb0b44b359958381f0497b038643f5084e86b6",
+  "frozen_material_chars": 456,
+  "task_bound_input_sha256": "8c7df7b12b5e242a62af314fbdd197395a210a083cffbf336b7f4fef2bed20d5",
+  "bad_digest": "8aaf770fcb6b7e96cba8a7c3fa3bdb8a68f2b9c6c32fbf9978ee54a98d61c008",
+  "corrected_digest": "e093e72e10bc65670cc2ac565c816addcaf71dfc486b6dd8700be0ea009bddf9",
+  "feedback_sha256": "9a37ccf8d8a2c5e8e6976e726c6b39553aa2530192dc3e10b8c50e46bab331d1",
+  "runs": [
+    {
+      "role": "consumer",
+      "arm": "baseline",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13214-9e5d-7351-a1f2-0803d428b467",
+      "source_sha256": "153cb68d27eb0762fcb8ca79c51dc906914e5294e6536ca1e731bbf1ab63d50c",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "no_action"
+      ],
+      "expected_digest": null,
+      "expected_revision": 0,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "no_action",
+        "summary": "文档标题所述总额为120 units；三条完整明细行合计为110 units（40 + 50 + 20）。两者相差10 units，且标题总额高于明细行合计。依据任务冻结的文档审查指引，保留 stated total 与计算所得 row sum 的区分；未改写源文档，也未声称任何更正已获批准。原始请求未要求外部变更，因此无需提出或执行外部操作。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-feedback-controls-_4t303f7"
+        }
+      ],
+      "initial_native_developer_sha256": "01c7cdf06e722517d131754f09fb29fb33ab097197402c6765a3ef05958fe06c",
+      "read_task_skill_calls": 1,
+      "read_task_skill_errors": 0,
+      "read_details": [
+        {
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "is_error": false,
+          "complete_source_body": true,
+          "model_sha256": "db84c2464d86a6549e9f45e5c9b401c0783722578deb411c53d7a137acb5cd22",
+          "model_chars": 581,
+          "error": null
+        }
+      ],
+      "custom_tool_inputs": [
+        {
+          "name": "exec",
+          "input": "const r = await tools.exec_command({cmd:\"sed -n '1,240p' /Users/derek/.agents/AGENTS.md\",workdir:\"/private/tmp/ceo-frozen-feedback-controls-_4t303f7\",yield_time_ms:10000,max_output_tokens:12000});\ntext(r.output);\n"
+        }
+      ],
+      "native_phase_sha256": "b9aa4db6dc66ccd56e3ac951bdfa35beb97226b125d88c5a691bf8db9a6b5ddb",
+      "native_cold_prefix_sha256": "b9aa4db6dc66ccd56e3ac951bdfa35beb97226b125d88c5a691bf8db9a6b5ddb",
+      "native_full_sha256": "3404a717ae190f45157c0eff871cd964c1bb683e50861b78c108a47c88142365",
+      "task_sha256": "13736866c944668fb4b8fb8f5e1a89110afdbf111f06305105a0ca9bb27cc720",
+      "developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+      "command_sha256": "4945a9b5f4726c56d634d52fcd19558ed3e3732ec74ceead84a2cd0369ebb97b",
+      "events_sha256": "95099a69abc5bb42b709e8cef8a8a680e3ec94f53192cd95153a325a7d171cfc",
+      "compaction_events": 0
+    },
+    {
+      "role": "consumer",
+      "arm": "baseline",
+      "phase": "resume",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13214-9e5d-7351-a1f2-0803d428b467",
+      "source_sha256": "153cb68d27eb0762fcb8ca79c51dc906914e5294e6536ca1e731bbf1ab63d50c",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "no_action"
+      ],
+      "expected_digest": null,
+      "expected_revision": 1,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "no_action",
+        "summary": "文档标题所述 stated total 为120 units；三条完整明细行合计为110 units（40 + 50 + 20）。因此，标题总额与明细行合计相差10 units，且标题总额高于明细行合计。依据任务冻结的文档审查指引，已将 stated total 与计算所得 row sum 分开比较并报告差异；未改写源文档，也未声称任何更正已获批准。原始请求未要求外部变更，因此无需提出或执行外部操作。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-feedback-controls-_4t303f7"
+        }
+      ],
+      "initial_native_developer_sha256": null,
+      "read_task_skill_calls": 1,
+      "read_task_skill_errors": 0,
+      "read_details": [
+        {
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "is_error": false,
+          "complete_source_body": true,
+          "model_sha256": "db84c2464d86a6549e9f45e5c9b401c0783722578deb411c53d7a137acb5cd22",
+          "model_chars": 581,
+          "error": null
+        }
+      ],
+      "custom_tool_inputs": [],
+      "native_phase_sha256": "c6afbe405c0213e57008aaf23ed94b32279d09fc0bc34fef5b2156b133377f38",
+      "native_cold_prefix_sha256": "b9aa4db6dc66ccd56e3ac951bdfa35beb97226b125d88c5a691bf8db9a6b5ddb",
+      "native_full_sha256": "3404a717ae190f45157c0eff871cd964c1bb683e50861b78c108a47c88142365",
+      "task_sha256": "78b313a765a764919f0150989114019de2d1ab1115c53f616b65a86ec7ae7f19",
+      "developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+      "command_sha256": "af4198ce8b852abb45281473b754e04a6a14a21b590c9ad4da5ef06499c684cc",
+      "events_sha256": "0211c49363905cfbeb15177824c49c6e5b79186d961025f517a24370f2736699",
+      "compaction_events": 0
+    },
+    {
+      "role": "consumer",
+      "arm": "candidate",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13214-be6d-7693-85c1-55ef4b5a3bc4",
+      "source_sha256": "153cb68d27eb0762fcb8ca79c51dc906914e5294e6536ca1e731bbf1ab63d50c",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "no_action"
+      ],
+      "expected_digest": null,
+      "expected_revision": 0,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "no_action",
+        "summary": "已按任务冻结的文档审查指导完成复核。文档标题中的 stated total 为 120 units；三个完整项目行分别为 40、50、20 units，实际行合计为 110 units。因此存在 10 units 的差异（标题总额比完整项目行合计高 10 units）。未改写源文档，也未声称任何更正已获批准；触发内容未请求外部变更。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-feedback-controls-_4t303f7"
+        }
+      ],
+      "initial_native_developer_sha256": "01c7cdf06e722517d131754f09fb29fb33ab097197402c6765a3ef05958fe06c",
+      "read_task_skill_calls": 1,
+      "read_task_skill_errors": 0,
+      "read_details": [
+        {
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "is_error": false,
+          "complete_source_body": true,
+          "model_sha256": "db84c2464d86a6549e9f45e5c9b401c0783722578deb411c53d7a137acb5cd22",
+          "model_chars": 581,
+          "error": null
+        }
+      ],
+      "custom_tool_inputs": [
+        {
+          "name": "exec",
+          "input": "const r = await tools.exec_command({cmd:\"sed -n '1,240p' /Users/derek/.agents/AGENTS.md\",workdir:\"/private/tmp/ceo-frozen-feedback-controls-_4t303f7\",yield_time_ms:10000,max_output_tokens:12000}); text(r.output);\n"
+        }
+      ],
+      "native_phase_sha256": "f5587fcf20dc7f51afe80da71fb5436ab79baf50e4992cd719d684ab47f024cb",
+      "native_cold_prefix_sha256": "f5587fcf20dc7f51afe80da71fb5436ab79baf50e4992cd719d684ab47f024cb",
+      "native_full_sha256": "bdab99331eb9aebbf96f3db667fc028ab9a5544e263df061e0ebd5f6170f232a",
+      "task_sha256": "34c6762cac5e83d36377f5212c0064201e64b5be5f4ec8beadff85580b847001",
+      "developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+      "command_sha256": "5597cb20155a3d63242a5e715256adcaf59cf3d96b8ecce7ef1dd77ca09a785b",
+      "events_sha256": "e052dc76112956573178b7ce342b35d0397bd5da37aeed67c810162a4c145cbf",
+      "compaction_events": 0
+    },
+    {
+      "role": "consumer",
+      "arm": "candidate",
+      "phase": "resume",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13214-be6d-7693-85c1-55ef4b5a3bc4",
+      "source_sha256": "153cb68d27eb0762fcb8ca79c51dc906914e5294e6536ca1e731bbf1ab63d50c",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "no_action"
+      ],
+      "expected_digest": null,
+      "expected_revision": 1,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "no_action",
+        "summary": "The document heading/stated total is 120 units, the three complete rows sum to 110 units (40 + 50 + 20), and the discrepancy is 10 units. The source remains unchanged, no correction is claimed as approved, and no external change is requested.",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-frozen-feedback-controls-_4t303f7"
+        }
+      ],
+      "initial_native_developer_sha256": null,
+      "read_task_skill_calls": 0,
+      "read_task_skill_errors": 0,
+      "read_details": [],
+      "custom_tool_inputs": [],
+      "native_phase_sha256": "c497ea3a8306b4a790f0d6706582fcd65ae3f2075eeb5eb7a9edfae2fb602452",
+      "native_cold_prefix_sha256": "f5587fcf20dc7f51afe80da71fb5436ab79baf50e4992cd719d684ab47f024cb",
+      "native_full_sha256": "bdab99331eb9aebbf96f3db667fc028ab9a5544e263df061e0ebd5f6170f232a",
+      "task_sha256": "12f235828ec956da2dd33b2246c8879e67bbaec47982a77ab2de35c088749dac",
+      "developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+      "command_sha256": "3ee2922f3f96e35cd643ee2be71695fb6071816ceeb900e62e0a2347e9e81478",
+      "events_sha256": "c794f1b6529f226d1bb983fd92be6881a50f330281ded5671a5b7432d0312a3a",
+      "compaction_events": 0
+    },
+    {
+      "role": "audit",
+      "arm": "baseline",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13215-08b4-7823-aef1-1351514c92a4",
+      "source_sha256": "153cb68d27eb0762fcb8ca79c51dc906914e5294e6536ca1e731bbf1ab63d50c",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "return",
+        "reject"
+      ],
+      "expected_digest": "8aaf770fcb6b7e96cba8a7c3fa3bdb8a68f2b9c6c32fbf9978ee54a98d61c008",
+      "expected_revision": 0,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "return",
+        "summary": "Return: the candidate misstates all three required document-review figures. The source states 120 units, the complete rows sum to 110 units, and the discrepancy is 10 units. The no-action outcome is consistent with the instruction not to edit the source or claim approval, but the summary must be corrected.",
+        "proposal_revision": 0,
+        "candidate_digest": "8aaf770fcb6b7e96cba8a7c3fa3bdb8a68f2b9c6c32fbf9978ee54a98d61c008",
+        "evidence_refs": [
+          "candidate.source_bindings[0].value.trigger_text",
+          "candidate.source_bindings[0].value.trigger_raw_payload.document",
+          "ceo-document-review revision 41"
+        ],
+        "feedback": {
+          "rule": "The document-review guidance requires keeping the stated total and computed row sum separate, comparing them, and reporting any discrepancy without editing the source.",
+          "observation": "At JSON path candidate.summary, the literal string value is \"The document heading is110 units, the three complete rows sum to110 units, and the discrepancy is0 units. No external change.\" The source at candidate.source_bindings[0].value.trigger_raw_payload.document contains stated_total with numeric value 120 and complete_rows with numeric values [40, 50, 20]. Those rows sum to 110, so the discrepancy is 10 units, not 0.",
+          "requested_revision": "Revise candidate.summary to state that the document heading/stated total is 120 units, the three complete rows sum to 110 units, and the discrepancy is 10 units. Preserve outcome as no_action and do not add a source edit or claim that a correction has been approved."
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          },
+          "cwd": "/private/tmp/ceo-frozen-feedback-controls-_4t303f7"
+        }
+      ],
+      "initial_native_developer_sha256": "f625de068378a73dd369b620c6f7fc07d4c151ad89bba6f5049f7378b5f0190a",
+      "read_task_skill_calls": 1,
+      "read_task_skill_errors": 0,
+      "read_details": [
+        {
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "is_error": false,
+          "complete_source_body": true,
+          "model_sha256": "db84c2464d86a6549e9f45e5c9b401c0783722578deb411c53d7a137acb5cd22",
+          "model_chars": 581,
+          "error": null
+        }
+      ],
+      "custom_tool_inputs": [],
+      "native_phase_sha256": "cb05ec18c969c2cd341dc364a009a124abe7b7a6ab4f73921d4d3f6bde3d8330",
+      "native_cold_prefix_sha256": "cb05ec18c969c2cd341dc364a009a124abe7b7a6ab4f73921d4d3f6bde3d8330",
+      "native_full_sha256": "ba29b55cdadaab90166a618ba377a1173039a4fa170cb47de2bcdaed6072147f",
+      "task_sha256": "2e2d61e18d7e9734cc712f732562cf248652e4dd9bf0e4681e356d554af5741b",
+      "developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+      "command_sha256": "29d85da9a70d6ce145f04f16e1c017c7dd54fa44cf936578febfb3537731034b",
+      "events_sha256": "b16e558ea249c9e30a33256fead17c155cbfb653abc6370ba4a98c9978f2da65",
+      "compaction_events": 0
+    },
+    {
+      "role": "audit",
+      "arm": "baseline",
+      "phase": "resume",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13215-08b4-7823-aef1-1351514c92a4",
+      "source_sha256": "153cb68d27eb0762fcb8ca79c51dc906914e5294e6536ca1e731bbf1ab63d50c",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "approve"
+      ],
+      "expected_digest": "e093e72e10bc65670cc2ac565c816addcaf71dfc486b6dd8700be0ea009bddf9",
+      "expected_revision": 1,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "approve",
+        "summary": "Approved. The revised candidate accurately reports the stated total of 120 units, the complete-row sum of 110 units (40 + 50 + 20), and the 10-unit discrepancy. It preserves the stated and computed figures separately, does not rewrite the draft source or claim approval of a correction, and correctly identifies that no external action was requested.",
+        "proposal_revision": 1,
+        "candidate_digest": "e093e72e10bc65670cc2ac565c816addcaf71dfc486b6dd8700be0ea009bddf9",
+        "evidence_refs": [
+          "candidate.summary",
+          "candidate.source_bindings[0].value.trigger_text",
+          "candidate.source_bindings[0].value.trigger_raw_payload.document",
+          "ceo-document-review revision 41"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          },
+          "cwd": "/private/tmp/ceo-frozen-feedback-controls-_4t303f7"
+        }
+      ],
+      "initial_native_developer_sha256": null,
+      "read_task_skill_calls": 1,
+      "read_task_skill_errors": 0,
+      "read_details": [
+        {
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "is_error": false,
+          "complete_source_body": true,
+          "model_sha256": "db84c2464d86a6549e9f45e5c9b401c0783722578deb411c53d7a137acb5cd22",
+          "model_chars": 581,
+          "error": null
+        }
+      ],
+      "custom_tool_inputs": [],
+      "native_phase_sha256": "f98e10959c4ffffe2a2264ae150ced3ae90f1bb8d0fb6632f17c5c970ae68abe",
+      "native_cold_prefix_sha256": "cb05ec18c969c2cd341dc364a009a124abe7b7a6ab4f73921d4d3f6bde3d8330",
+      "native_full_sha256": "ba29b55cdadaab90166a618ba377a1173039a4fa170cb47de2bcdaed6072147f",
+      "task_sha256": "aed8ddb95cbb6da48dff1221ced0790099ea73ee49c3637e7e51efc74519dda5",
+      "developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+      "command_sha256": "5ecd34e216efb03d407212d2c83cf347a68fd4e47ecbcbb76ce65443c55c0317",
+      "events_sha256": "372cf814e7727b4d472d370b069fb808c3845638e6bb8ee0d4257442f06d3c58",
+      "compaction_events": 0
+    },
+    {
+      "role": "audit",
+      "arm": "candidate",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13215-561d-75b3-9b29-d303eec475a4",
+      "source_sha256": "153cb68d27eb0762fcb8ca79c51dc906914e5294e6536ca1e731bbf1ab63d50c",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "return",
+        "reject"
+      ],
+      "expected_digest": "8aaf770fcb6b7e96cba8a7c3fa3bdb8a68f2b9c6c32fbf9978ee54a98d61c008",
+      "expected_revision": 0,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "return",
+        "summary": "Return: the candidate misstates the document total and therefore does not preserve the required separation between the stated figure, computed row sum, and discrepancy.",
+        "proposal_revision": 0,
+        "candidate_digest": "8aaf770fcb6b7e96cba8a7c3fa3bdb8a68f2b9c6c32fbf9978ee54a98d61c008",
+        "evidence_refs": [
+          "candidate.source_bindings[0].value.trigger_text",
+          "candidate.source_bindings[0].value.trigger_raw_payload.document",
+          "managed:ceo-document-review@revision-41"
+        ],
+        "feedback": {
+          "rule": "The task-frozen ceo-document-review guidance requires keeping the document's stated total and the computed sum of all supplied complete rows separate, then reporting any discrepancy without editing the source or claiming a correction.",
+          "observation": "At JSON path candidate.summary, the current string value is \"The document heading is110 units, the three complete rows sum to110 units, and the discrepancy is0 units. No external change.\" The bound source at candidate.source_bindings[0].value.trigger_raw_payload.document states stated_total=120 and complete_rows=[40,50,20]. The row sum is 110, so the discrepancy is 10 units, not 0. The candidate therefore reports the wrong stated total and discrepancy.",
+          "requested_revision": "Revise the candidate so its explanation states the heading total as 120 units, the actual sum of the three complete rows as 110 units, and the discrepancy as 10 units, while retaining that no external change is requested and no correction has been approved."
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          },
+          "cwd": "/private/tmp/ceo-frozen-feedback-controls-_4t303f7"
+        }
+      ],
+      "initial_native_developer_sha256": "f625de068378a73dd369b620c6f7fc07d4c151ad89bba6f5049f7378b5f0190a",
+      "read_task_skill_calls": 1,
+      "read_task_skill_errors": 0,
+      "read_details": [
+        {
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "is_error": false,
+          "complete_source_body": true,
+          "model_sha256": "db84c2464d86a6549e9f45e5c9b401c0783722578deb411c53d7a137acb5cd22",
+          "model_chars": 581,
+          "error": null
+        }
+      ],
+      "custom_tool_inputs": [],
+      "native_phase_sha256": "a58a19452fe8fd7b9dc81006cbca6f8bc1fa3e463245d5920c5cc0d221d78a61",
+      "native_cold_prefix_sha256": "a58a19452fe8fd7b9dc81006cbca6f8bc1fa3e463245d5920c5cc0d221d78a61",
+      "native_full_sha256": "d833efa8b26ae735a1985d7ffe4a43b36a5f98fd49e0214e07ad280ccb0c22f0",
+      "task_sha256": "dc48998653848f10593cd5e6615fbe709eabefa6f1a22bea4bcd0971c05772da",
+      "developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+      "command_sha256": "4284f6ce0403d23b20304d6311e5886f7ab586a26f557655346863527d168517",
+      "events_sha256": "a689a2b8a027752851f3743b165a8a517363df0af61a2a820f5f778a1d2dc611",
+      "compaction_events": 0
+    },
+    {
+      "role": "audit",
+      "arm": "candidate",
+      "phase": "resume",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13215-561d-75b3-9b29-d303eec475a4",
+      "source_sha256": "153cb68d27eb0762fcb8ca79c51dc906914e5294e6536ca1e731bbf1ab63d50c",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "approve"
+      ],
+      "expected_digest": "e093e72e10bc65670cc2ac565c816addcaf71dfc486b6dd8700be0ea009bddf9",
+      "expected_revision": 1,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "approve",
+        "summary": "Approved: the candidate correctly reports the stated total as 120 units, the sum of the three complete rows as 110 units, and the discrepancy as 10 units with the stated total higher. It preserves the source, does not claim an approved correction, and correctly identifies that no external change is requested.",
+        "proposal_revision": 1,
+        "candidate_digest": "e093e72e10bc65670cc2ac565c816addcaf71dfc486b6dd8700be0ea009bddf9",
+        "evidence_refs": [
+          "candidate.source_bindings[0].value.trigger_text",
+          "candidate.source_bindings[0].value.trigger_raw_payload.document",
+          "managed:ceo-document-review@revision-41"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          },
+          "cwd": "/private/tmp/ceo-frozen-feedback-controls-_4t303f7"
+        }
+      ],
+      "initial_native_developer_sha256": null,
+      "read_task_skill_calls": 0,
+      "read_task_skill_errors": 0,
+      "read_details": [],
+      "custom_tool_inputs": [],
+      "native_phase_sha256": "8f053df4efc2b723177c2a95894f1b13b89f0078c2bce9865e316ade10e21925",
+      "native_cold_prefix_sha256": "a58a19452fe8fd7b9dc81006cbca6f8bc1fa3e463245d5920c5cc0d221d78a61",
+      "native_full_sha256": "d833efa8b26ae735a1985d7ffe4a43b36a5f98fd49e0214e07ad280ccb0c22f0",
+      "task_sha256": "aff387e0ff565c83923abbd43d1929053fe4794dc94aca573cfc5f38b9fb5977",
+      "developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+      "command_sha256": "3dcd717aa29c4ff48b9b4b8593723ad4de1ef3fc80e60066205f1230a909f669",
+      "events_sha256": "f848606c46fd21734f6d3b5fe90fa22a396c720f785bc005b9cd63631c86111f",
+      "compaction_events": 0
+    }
+  ],
+  "initial_invalid_fixture_failure": {
+    "root": "/private/tmp/ceo-frozen-feedback-controls-57we_99p",
+    "result": {
+      "role": "consumer",
+      "arm": "baseline",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13213-ba3d-7d70-863b-f3b2e6c529b1",
+      "source_sha256": "153cb68d27eb0762fcb8ca79c51dc906914e5294e6536ca1e731bbf1ab63d50c",
+      "canonical_valid": true,
+      "expected_match": false,
+      "expected_outcomes": [
+        "no_action"
+      ],
+      "expected_digest": null,
+      "expected_revision": 0,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "failed",
+        "summary": "无法完成文档审查：按任务要求读取冻结的 ceo-document-review Skill 时，agent_cli 返回错误“scheduled consumer context is invalid”。因此无法验证并应用该任务的精确审查指导，也不能在缺少该指导的情况下安全地生成审查结论。已确认的输入事实是：文档标题总额为 120 units；三个完整行分别为 40、50、20 units；实际行合计为 110 units；差额为 10 units。未重写源文档，未声称任何更正已获批准，也未执行外部变更。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "dependency_read_unavailable",
+          "retryable": true,
+          "authorization_required": false,
+          "stage": "",
+          "source": "agent",
+          "source_code": "dependency_read_unavailable",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.98,
+        "rule_coverage": 0.0,
+        "information_completeness": 0.75,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      }
+    },
+    "cause": "Fixture scheduled_consumer.skill_protocol was empty; existing ServiceCommandConsumerContext.from_payload rejects it. Local tool surfaced scheduled consumer context is invalid. Native Consumer returned canonical failed; never resumed. Fixed only the fixture protocol and added local existing source-read preflight before a fresh run."
+  },
+  "verification_assertion_correction": {
+    "old_verifier_sha256": "1ef96107d603cf231cf545479e178d32fc2231c714b238ffb0ae206db01baecb",
+    "reason": "Initial verifier incorrectly required factual numbers in cold Audit.summary. Candidate cold Audit instead puts all precise120/110/10 facts and requested correction in its structured feedback. Check cold Audit feedback; all other summaries still checked. No original output edited or model retried."
+  },
+  "language_limit": "Baseline cold Audit summary overstates all three figures as wrong, although original candidate row sum110 was correct. Its concrete observation/requested revision identifies the wrong stated total and discrepancy; original phrasing retained.",
+  "limits": "Synthetic short source/profile/provider; existing original-input Task Skill binding and native feedback sessions verified, but full persisted service orchestration, saved live configuration, actual provider, changed-source under full role controls and compaction unverified. No total-token, universal reuse or production business gain claim.",
+  "independent_review": "native_catalog_review independently verified eight original native phases, intended one-line-only task discovery difference, identical service and initial native Developer, unchanged production role control observations, same-SID byte prefixes, exact claimed input/generation and source/MCP/model body, actual feedback and digest/revision. Confirms baseline1/1 versus candidate1/0 for both roles; no evidence blocker in this synthetic feedback scope. Initial failed business outcome and verifier correction preserved."
+}
