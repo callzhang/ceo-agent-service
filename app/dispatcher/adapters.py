@@ -164,7 +164,7 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
             lease,
             field="scheduled dispatcher claim expiry",
         )
-        with self.store._immediate_write_transaction() as db:
+        with self.store._connect() as db:
 
             def fetch_page(after: sqlite3.Row | None, limit: int):
                 keyset = ""
@@ -192,6 +192,14 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                     params,
                 ).fetchall()
 
+            candidate = _scan_scheduled_claimable_candidate(
+                fetch_page,
+                now=now_text,
+                owner_alive=self.owner_alive,
+            )
+            if candidate is None:
+                return None
+        with self.store._immediate_write_transaction() as db:
             candidate = _scan_scheduled_claimable_candidate(
                 fetch_page,
                 now=now_text,
@@ -468,7 +476,7 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
         _validate_claim(owner, lease)
         now_text = _sqlite_time(now)
         lease_text = _lease_expiry(now, lease)
-        with self.store._immediate_write_transaction() as db:
+        with self.store._connect() as db:
 
             def fetch_page(after: sqlite3.Row | None, limit: int):
                 after_id = 0 if after is None else int(after["id"])
@@ -489,6 +497,14 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
                     (self.name, now_text, now_text, now_text, after_id, limit),
                 ).fetchall()
 
+            row = _scan_claimable_candidate(
+                fetch_page,
+                now=now_text,
+                owner_alive=self.owner_alive,
+            )
+            if row is None:
+                return None
+        with self.store._immediate_write_transaction() as db:
             row = _scan_claimable_candidate(
                 fetch_page,
                 now=now_text,
@@ -698,7 +714,7 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
             "max(datetime(job.eligible_at), "
             "coalesce(datetime(nullif(job.available_at,'')), datetime(job.eligible_at)))"
         )
-        with self.store._immediate_write_transaction() as db:
+        with self.store._connect() as db:
 
             def fetch_page(after: sqlite3.Row | None, limit: int):
                 keyset = ""
@@ -739,6 +755,14 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                     params,
                 ).fetchall()
 
+            row = _scan_claimable_candidate(
+                fetch_page,
+                now=now_text,
+                owner_alive=self.owner_alive,
+            )
+            if row is None:
+                return None
+        with self.store._immediate_write_transaction() as db:
             row = _scan_claimable_candidate(
                 fetch_page,
                 now=now_text,
@@ -895,7 +919,7 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
         owner_pid = os.getpid() if owner_pid is None else owner_pid
         _validate_claim(owner, lease)
         now_text = _sqlite_time(now)
-        with self.store._immediate_write_transaction() as db:
+        with self.store._connect() as db:
 
             def fetch_page(after: sqlite3.Row | None, limit: int):
                 after_id = 0 if after is None else int(after["id"])
@@ -915,6 +939,14 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
                     (self.name, now_text, now_text, after_id, limit),
                 ).fetchall()
 
+            row = _scan_claimable_candidate(
+                fetch_page,
+                now=now_text,
+                owner_alive=self.owner_alive,
+            )
+            if row is None:
+                return None
+        with self.store._immediate_write_transaction() as db:
             row = _scan_claimable_candidate(
                 fetch_page,
                 now=now_text,
@@ -1070,7 +1102,7 @@ class WorkSummaryQueueAdapter(_LedgerClaimLifecycle):
         owner_pid = os.getpid() if owner_pid is None else owner_pid
         _validate_claim(owner, lease)
         now_text = _sqlite_time(now)
-        with self.store._immediate_write_transaction() as db:
+        with self.store._connect() as db:
 
             def fetch_page(after: sqlite3.Row | None, limit: int):
                 after_id = 0 if after is None else int(after["id"])
@@ -1092,6 +1124,14 @@ class WorkSummaryQueueAdapter(_LedgerClaimLifecycle):
                     (self.name, now_text, now_text, now_text, after_id, limit),
                 ).fetchall()
 
+            row = _scan_claimable_candidate(
+                fetch_page,
+                now=now_text,
+                owner_alive=self.owner_alive,
+            )
+            if row is None:
+                return None
+        with self.store._immediate_write_transaction() as db:
             row = _scan_claimable_candidate(
                 fetch_page,
                 now=now_text,
@@ -1251,6 +1291,15 @@ class TaskTodoSyncOutboxQueueAdapter(_LedgerClaimLifecycle):
         _validate_claim(owner, lease)
         now_text = _sqlite_time(now)
         lease_text = _lease_expiry(now, lease)
+        with self.store._connect() as db:
+            needs_write = db.execute(
+                "select 1 from task_todo_sync_outbox "
+                "where status='queued' or (status='failed' and attempt_count<3 "
+                "and next_attempt_at<=?) or (status='running' and lease_expires_at<=?) "
+                "limit 1", (now_text, now_text),
+            ).fetchone()
+        if needs_write is None:
+            return None
         with self.store._immediate_write_transaction() as db:
             expired = db.execute(
                 "select item.id, claim.owner as claim_owner, "
@@ -1509,15 +1558,18 @@ class TaskMemoryWriteQueueAdapter(_LedgerClaimLifecycle):
         _validate_claim(owner, lease)
         now_text = _sqlite_time(now)
         lease_text = _lease_expiry(now, lease)
+        candidate_sql = (
+            "select id, attempts from task_memory_write_events "
+            "where (status='pending' and (available_at='' "
+            "or datetime(available_at)<=datetime(?))) "
+            "or (status='processing' and datetime(lease_expires_at)<=datetime(?)) "
+            "order by id limit 1"
+        )
+        with self.store._connect() as db:
+            if db.execute(candidate_sql, (now_text, now_text)).fetchone() is None:
+                return None
         with self.store._immediate_write_transaction() as db:
-            row = db.execute(
-                "select id, attempts from task_memory_write_events "
-                "where (status='pending' and (available_at='' "
-                "or datetime(available_at)<=datetime(?))) "
-                "or (status='processing' and datetime(lease_expires_at)<=datetime(?)) "
-                "order by id limit 1",
-                (now_text, now_text),
-            ).fetchone()
+            row = db.execute(candidate_sql, (now_text, now_text)).fetchone()
             if row is None:
                 return None
             db.execute(
@@ -1618,6 +1670,15 @@ class BusinessTaskTodoSyncOutboxQueueAdapter(_LedgerClaimLifecycle):
         _validate_claim(owner, lease)
         now_text = _sqlite_time(now)
         lease_text = _lease_expiry(now, lease)
+        with self.store._connect() as db:
+            needs_write = db.execute(
+                "select 1 from business_task_todo_sync_outbox "
+                "where status='queued' or (status='failed' and attempt_count<3 "
+                "and next_attempt_at<=?) or (status='running' and lease_expires_at<=?) "
+                "limit 1", (now_text, now_text),
+            ).fetchone()
+        if needs_write is None:
+            return None
         with self.store._immediate_write_transaction() as db:
             db.execute(
                 "update business_task_todo_sync_outbox set status='unknown', lease_owner='', lease_expires_at='', "
