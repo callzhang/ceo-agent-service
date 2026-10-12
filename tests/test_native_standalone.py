@@ -3,6 +3,7 @@ import sqlite3
 
 import pytest
 
+from app.run_storage import insert_run
 from app import native_trajectory
 from app.agent_envelope import AgentEnvelope
 from app.store import AutoReplyStore
@@ -18,14 +19,22 @@ def _message(text):
 
 
 def _attempt(db, run_id, workload_key, session, start, end, number, *, kind="task", status="completed"):
-    db.execute(
-        "insert into agent_runtime_attempts "
-        "(workload_kind, workload_key, attempt_number, route_name, runtime_kind, "
-        "credential_mode, model, session_id, status, transcript_start, transcript_end, "
-        "lease_owner, lease_expires_at) "
-        "values (?, ?, ?, 'test', 'codex_cli', 'local_oauth', 'test', ?, "
-        "?, ?, ?, 'test', '2099-01-01 00:00:00')",
-        (kind, workload_key, number, session, status, start, end),
+    insert_run(
+        db, 'agent_runtime_attempts', {
+            'workload_kind': kind,
+            'workload_key': workload_key,
+            'attempt_number': number,
+            'route_name': 'test',
+            'runtime_kind': 'codex_cli',
+            'credential_mode': 'local_oauth',
+            'model': 'test',
+            'session_id': session,
+            'status': status,
+            'transcript_start': start,
+            'transcript_end': end,
+            'lease_owner': 'test',
+            'lease_expires_at': '2099-01-01 00:00:00',
+        },
     )
 
 
@@ -161,13 +170,18 @@ def test_friday_original_artifact_read_uses_existing_adapter_and_reports_unavail
         codex_transcript_start_line=0, codex_transcript_end_line=0,
     )
     with store._connect() as db:
-        db.execute(
-            "insert into agent_runtime_attempts "
-            "(workload_kind, workload_key, attempt_number, route_name, runtime_kind, "
-            "credential_mode, model, session_id, status) "
-            "values ('meeting', ?, 1, 'test', 'friday_runtime', 'local_oauth', "
-            "'test', 'friday_thread:native-thread', 'completed')",
-            (str(run),),
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'workload_kind': 'meeting',
+                'workload_key': str(run),
+                'attempt_number': 1,
+                'route_name': 'test',
+                'runtime_kind': 'friday_runtime',
+                'credential_mode': 'local_oauth',
+                'model': 'test',
+                'session_id': 'friday_thread:native-thread',
+                'status': 'completed',
+            },
         )
     loaded = store.get_meeting_alignment_run(run)
     assert loaded.native_available
@@ -356,8 +370,7 @@ def test_okr_run_keeps_business_items_and_reads_native_envelope(tmp_path, monkey
     assert loaded["audit_summary"] == "native audit"
     with store._connect() as db:
         db.execute(
-            "update agent_runtime_attempts set status='failed' "
-            "where workload_kind='structured' and workload_key='1'"
+            "update runs set status='failed' where record_type='agent_runtime_attempts' and workload_kind='structured' and workload_key='1'"
         )
     unavailable = store.get_okr_review_run(run)
     assert unavailable["native_available"] is False
@@ -435,12 +448,18 @@ def test_okr_run_uses_completed_friday_provider_reference(tmp_path, monkeypatch)
         envelope_json="{}", audit_tool_events_json="[]", audit_summary="",
     )
     with store._connect() as db:
-        db.execute(
-            "insert into agent_runtime_attempts "
-            "(workload_kind, workload_key, attempt_number, route_name, runtime_kind, "
-            "credential_mode, model, session_id, status) "
-            "values ('structured', '1', 1, 'test', 'friday_runtime', 'local_oauth', "
-            "'test', 'friday_thread:okr-thread', 'completed')"
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'workload_kind': 'structured',
+                'workload_key': '1',
+                'attempt_number': 1,
+                'route_name': 'test',
+                'runtime_kind': 'friday_runtime',
+                'credential_mode': 'local_oauth',
+                'model': 'test',
+                'session_id': 'friday_thread:okr-thread',
+                'status': 'completed',
+            },
         )
     loaded = store.get_okr_review_run(run)
     assert loaded["native_available"] is True

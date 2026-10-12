@@ -33,7 +33,7 @@ def native_fixture(tmp_path, monkeypatch, *, resume=False, kind="codex_cli"):
     monkeypatch.setattr("app.native_trajectory.find_codex_session_path", lambda *a, **k: path)
     monkeypatch.setattr("app.native_trajectory.claude_session_path", lambda *a, **k: path)
     with store._connect() as db:
-        db.execute("update agent_runtime_attempts set session_id=?,status='completed',transcript_start=?,transcript_end=? where id=?",
+        db.execute("update runs set session_id=?,status='completed',transcript_start=?,transcript_end=? where record_type='agent_runtime_attempts' and cast(legacy_key as integer)=?",
                    (SID, len(first) if resume else 0, len(records), attempt.id))
     return store, task, run, attempt, path
 
@@ -59,7 +59,7 @@ def test_historical_input_reads_exact_native_attempt_without_current_templates(t
 def test_cross_turn_reference_does_not_present_combined_input_as_one_attempt(tmp_path, monkeypatch):
     store, task, run, attempt, path = native_fixture(tmp_path, monkeypatch, resume=True)
     with store._connect() as db:
-        db.execute("update agent_runtime_attempts set transcript_start=0 where id=?", (attempt.id,))
+        db.execute("update runs set transcript_start=0 where record_type='agent_runtime_attempts' and cast(legacy_key as integer)=?", (attempt.id,))
     assert historical_prompt_preview(store, run_id=run.id)["status"] == "unavailable"
 
 
@@ -94,7 +94,7 @@ def test_claude_history_reads_original_combined_service_message(tmp_path, monkey
                 "message": {"role": "user", "content": text if as_string else [{"type": "text", "text": text}]}}]
     path.write_text(json.dumps(records[0])+"\n")
     with store._connect() as db:
-        db.execute("update agent_runtime_attempts set transcript_end=1 where id=?", (attempt.id,))
+        db.execute("update runs set transcript_end=1 where record_type='agent_runtime_attempts' and cast(legacy_key as integer)=?", (attempt.id,))
     result = historical_prompt_preview(store, run_id=run.id)
     assert result["status"] == "available"
     assert result["submitted_input"] == text
@@ -122,7 +122,7 @@ def test_missing_latest_attempt_does_not_show_earlier_available_input(tmp_path, 
     later = store.claim_agent_runtime_attempt(run.id, "later-route", "codex_cli", "local_oauth", "later-model")
     other_sid = "00000000-0000-7000-8000-000000000002"
     with store._connect() as db:
-        db.execute("update agent_runtime_attempts set session_id=?,status='completed',transcript_end=5 where id=?", (other_sid, later.id))
+        db.execute("update runs set session_id=?,status='completed',transcript_end=5 where record_type='agent_runtime_attempts' and cast(legacy_key as integer)=?", (other_sid, later.id))
     monkeypatch.setattr("app.native_trajectory.find_codex_session_path", lambda sid, **k: path if sid == SID else None)
     result = historical_prompt_preview(store, run_id=run.id, **({"runtime_attempt_id":later.id} if selected else {}))
     assert result["status"] == "unavailable"
@@ -141,7 +141,7 @@ def test_bound_current_missing_latest_attempt_does_not_use_earlier_task(tmp_path
     later = store.claim_agent_runtime_attempt(run.id, "later-route", "codex_cli", "local_oauth", "later-model")
     other_sid = "00000000-0000-7000-8000-000000000002"
     with store._connect() as db:
-        db.execute("update agent_runtime_attempts set session_id=?,status='completed',transcript_end=5 where id=?", (other_sid, later.id))
+        db.execute("update runs set session_id=?,status='completed',transcript_end=5 where record_type='agent_runtime_attempts' and cast(legacy_key as integer)=?", (other_sid, later.id))
     monkeypatch.setattr("app.native_trajectory.find_codex_session_path", lambda sid, **k: path if sid == SID else None)
     result = current_prompt_preview(store, role="consumer", config=load_runtime_config({}), task_id=task.id)
     assert result["status"] == "unavailable"
@@ -179,6 +179,6 @@ def test_claude_business_text_that_quotes_native_appendix_is_not_stripped(tmp_pa
     record = {'type':'user', 'sessionId':SID, 'message':{'role':'user', 'content':claude_input_contract(prompt=business, developer_instructions='Saved')}}
     path.write_text(json.dumps(record)+'\n')
     with store._connect() as db:
-        db.execute('update agent_runtime_attempts set transcript_end=1 where id=?', (attempt.id,))
+        db.execute("update runs set transcript_end=1 where record_type='agent_runtime_attempts' and cast(legacy_key as integer)=?", (attempt.id,))
     result = current_prompt_preview(store, role='consumer', config=load_runtime_config({'CEO_AGENT_RUNTIME_ROUTES':'codex_oauth,claude_oauth'}), route_name='claude_oauth', task_id=task.id)
     assert result['task_prompt'] == business

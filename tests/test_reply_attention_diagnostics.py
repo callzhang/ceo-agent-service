@@ -5,6 +5,7 @@ import json
 import pytest
 
 import app.audit_web as audit_web
+from app.run_storage import insert_run
 from app.store import AgentRole, AutoReplyStore
 
 
@@ -39,7 +40,7 @@ def test_reply_attention_shows_original_current_run_error_without_effect_claim(t
     with store._connect() as db:
         before = {
             table: [tuple(row) for row in db.execute(f"select * from {table}")]
-            for table in ("reply_tasks", "agent_runs", "reply_attempts", "sent_replies")
+            for table in ("reply_tasks", "runs", "reply_attempts", "sent_replies")
         }
     [row] = [row for row in audit_web._queue_attention_rows(store) if row["category"] == "Reply task"]
     assert row["id"] == str(task.id)
@@ -57,7 +58,7 @@ def test_reply_attention_shows_original_current_run_error_without_effect_claim(t
 def test_reply_attention_keeps_task_error_when_current_run_diagnostics_unusable(tmp_path, raw_error):
     store, _, run = _failed_task_and_run(tmp_path, {"code": "agent_reported_failure"})
     with store._connect() as db:
-        db.execute("update agent_runs set structured_error_json=? where id=?", (raw_error, run.id))
+        db.execute("update runs set structured_error_json=? where record_type='agent_runs' and cast(legacy_key as integer)=?", (raw_error, run.id))
     [row] = [row for row in audit_web._queue_attention_rows(store) if row["category"] == "Reply task"]
     assert row["error"] == "agent_reported_failure"
     assert row.get("error_code", "") in ("", "agent_reported_failure")
@@ -68,7 +69,7 @@ def test_reply_attention_does_not_use_another_generation_error(tmp_path):
         "code": "agent_reported_failure", "source_code": "old-provider-code", "retryable": False,
     })
     with store._connect() as db:
-        db.execute("update agent_runs set execution_generation='old' where id=?", (run.id,))
+        db.execute("update runs set execution_generation='old' where record_type='agent_runs' and cast(legacy_key as integer)=?", (run.id,))
     [row] = [row for row in audit_web._queue_attention_rows(store) if row["category"] == "Reply task"]
     assert row["error"] == "agent_reported_failure"
     assert "old-provider-code" not in str(row)
@@ -79,11 +80,15 @@ def test_reply_attention_uses_latest_run_in_current_generation(tmp_path):
         "code": "agent_reported_failure", "source_code": "earlier-code", "retryable": False,
     })
     with store._connect() as db:
-        db.execute(
-            "insert into agent_runs (reply_task_id, execution_generation, role, status, "
-            "operation_id, structured_error_json) values (?, ?, 'consumer', 'failed', ?, ?)",
-            (task.id, task.execution_generation, "latest-diagnostic",
-             json.dumps({"code": "latest-runtime-error", "source": "runtime"})),
+        insert_run(
+            db, 'agent_runs', {
+                'task_id': task.id,
+                'execution_generation': task.execution_generation,
+                'role': 'consumer',
+                'status': 'failed',
+                'operation_id': "latest-diagnostic",
+                'structured_error_json': json.dumps({"code": "latest-runtime-error", "source": "runtime"}),
+            },
         )
     [row] = [row for row in audit_web._queue_attention_rows(store) if row["category"] == "Reply task"]
     assert row["error_code"] == "latest-runtime-error"

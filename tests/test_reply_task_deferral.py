@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from app.run_storage import AGENT_RUN_SQL, insert_run
 from app.reply_task_deferral import apply_deferral, main, preview_deferral, resume_deferral
 from app.store import AgentRole, AutoReplyStore
 
@@ -47,7 +48,7 @@ def native_events(path, task_id, monkeypatch, item, *, missing=False):
         native.write_text('\n'.join(json.dumps(record) for record in records))
     monkeypatch.setattr(native_trajectory, 'find_codex_session_path', lambda *a, **k: native)
     with sqlite3.connect(path) as db:
-        db.execute("update agent_runs set codex_session_id='native-test',transcript_start_line=0,transcript_end_line=? where reply_task_id=?", (len(records), task_id))
+        db.execute("update runs set session_id='native-test',transcript_start=0,transcript_end=? where record_type='agent_runs' and task_id=?", (len(records), task_id))
     return len(records)
 
 
@@ -57,7 +58,7 @@ def test_native_tool_effect_blocks_deferral_without_event_copy(tmp_path, monkeyp
     native_events(path, task_id, monkeypatch, {'type': 'UnknownTool', 'metadata': {'effect': effect}})
     assert 'tool_effect_or_unknown_effect' in preview_deferral(path, task_id, now=NOW)['blockers']
     with sqlite3.connect(path) as db:
-        assert db.execute('select count(*) from agent_run_events').fetchone()[0] == 0
+        assert db.execute("select name from sqlite_master where name='agent_run_events'").fetchone() is None
 
 
 def test_missing_native_events_cannot_prove_deferral_eligible(tmp_path, monkeypatch):
@@ -82,8 +83,20 @@ def test_native_tool_without_effect_annotation_preserves_existing_deferral_predi
 def test_failed_attempt_before_native_session_remains_eligible(tmp_path, status):
     path, task_id, _ = ready(tmp_path)
     with sqlite3.connect(path) as db:
-        run_id = db.execute('select id from agent_runs where reply_task_id=?', (task_id,)).fetchone()[0]
-        db.execute("insert into agent_runtime_attempts(agent_run_id,workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status) values (?,'agent_run',?,1,'test','codex_cli','oauth','test',?)", (run_id, str(run_id), status))
+        run_id = db.execute(f'select id from ({AGENT_RUN_SQL}) where reply_task_id=?', (task_id,)).fetchone()[0]
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'parent_id': run_id,
+                'workload_kind': 'agent_run',
+                'workload_key': str(run_id),
+                'attempt_number': 1,
+                'route_name': 'test',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'oauth',
+                'model': 'test',
+                'status': status,
+            },
+        )
     assert preview_deferral(path, task_id, now=NOW)['eligible'] is True
 
 
@@ -94,7 +107,7 @@ def test_observed_session_without_attempt_or_bounds_is_unavailable(tmp_path):
     path, task_id, _ = ready(tmp_path)
     EmailStore(path)
     with sqlite3.connect(path) as db:
-        db.execute("update agent_runs set codex_session_id='observed-session' where reply_task_id=?", (task_id,))
+        db.execute("update runs set session_id='observed-session' where record_type='agent_runs' and task_id=?", (task_id,))
     assert 'native_event_source_unavailable' in preview_deferral(path, task_id, now=NOW)['blockers']
     with pytest.raises(UpgradePreconditionError, match='native event source unavailable'):
         check_maintenance(path, (task_id,))
@@ -124,8 +137,23 @@ def test_complete_native_metadata_preserves_operator_eligibility(tmp_path, monke
     monkeypatch.setattr(native_trajectory, 'claude_session_path', lambda *a, **k: native)
     monkeypatch.setattr(native_trajectory, 'find_codex_session_path', lambda *a, **k: native)
     with sqlite3.connect(path) as db:
-        run_id = db.execute('select id from agent_runs where reply_task_id=?', (task_id,)).fetchone()[0]
-        db.execute("insert into agent_runtime_attempts(agent_run_id,workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status,session_id,transcript_reference,transcript_end) values (?,'agent_run',?,1,'test',?,'oauth','test','failed','native-test','native-test',?)", (run_id, str(run_id), kind, len(records)))
+        run_id = db.execute(f'select id from ({AGENT_RUN_SQL}) where reply_task_id=?', (task_id,)).fetchone()[0]
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'parent_id': run_id,
+                'workload_kind': 'agent_run',
+                'workload_key': str(run_id),
+                'attempt_number': 1,
+                'route_name': 'test',
+                'runtime_kind': kind,
+                'credential_mode': 'oauth',
+                'model': 'test',
+                'status': 'failed',
+                'session_id': 'native-test',
+                'transcript_reference': 'native-test',
+                'transcript_end': len(records),
+            },
+        )
     assert preview_deferral(path, task_id, now=NOW)['eligible'] is True
     assert check_maintenance(path, (task_id,)).task_bindings[0][0] == task_id
 
@@ -147,7 +175,7 @@ def test_preview_read_only_and_apply_resume_preserve_task_and_run(tmp_path):
     path, task_id, backup = ready(tmp_path)
     with sqlite3.connect(path) as db:
         before = db.execute('select status, attempts, execution_generation, input_version, error from reply_tasks where id=?', (task_id,)).fetchone()
-        runs_before = db.execute('select id, final_result_json, structured_error_json from agent_runs where reply_task_id=?', (task_id,)).fetchall()
+        runs_before = db.execute(f'select id, final_result_json, structured_error_json from ({AGENT_RUN_SQL}) where reply_task_id=?', (task_id,)).fetchall()
         schema_before = db.execute("select name from sqlite_master where type='table'").fetchall()
     preview = preview_deferral(path, task_id, now=NOW)
     assert preview['eligible'] is True
@@ -161,7 +189,7 @@ def test_preview_read_only_and_apply_resume_preserve_task_and_run(tmp_path):
         task = db.execute('select status, attempts, execution_generation, input_version, error, available_at from reply_tasks where id=?', (task_id,)).fetchone()
         assert task[:5] == before
         assert task[5] > '2026-10-05 12:00:00'
-        assert db.execute('select id, final_result_json, structured_error_json from agent_runs where reply_task_id=?', (task_id,)).fetchall() == runs_before
+        assert db.execute(f'select id, final_result_json, structured_error_json from ({AGENT_RUN_SQL}) where reply_task_id=?', (task_id,)).fetchall() == runs_before
     restored = resume_deferral(path, task_id, receipt_id=receipt['id'], request_id='resume-one', now=NOW)
     assert restored['status'] == 'resumed'
     assert resume_deferral(path, task_id, receipt_id=receipt['id'], request_id='resume-one', now=NOW)['id'] == receipt['id']
@@ -229,8 +257,8 @@ def test_active_deferral_previews_blocked_and_distinct_apply_is_explicit_conflic
 @pytest.mark.parametrize('mutation', [
     "update reply_tasks set input_version=input_version+1",
     "update reply_tasks set execution_generation='new-gen'",
-    "update agent_runs set structured_error_json='changed'",
-    "update agent_runs set status='running'",
+    "update runs set structured_error_json='changed' where record_type='agent_runs'",
+    "update runs set status='running' where record_type='agent_runs'",
     "insert into candidate_selections(candidate_id,review_id,option_key,branch_json) values (1,1,'x','{}')",
 ])
 def test_apply_refuses_changed_identity_or_live_work(tmp_path, mutation):
@@ -238,9 +266,9 @@ def test_apply_refuses_changed_identity_or_live_work(tmp_path, mutation):
     preview = preview_deferral(path, task_id, now=NOW)
     with sqlite3.connect(path) as db:
         if mutation.startswith('insert into candidate'):
-            db.execute("insert into review_candidates(task_id,execution_generation,consumer_run_id,stage_index,proposal_revision,candidate_digest,candidate_json) select ?,execution_generation,id,0,0,?,? from agent_runs where reply_task_id=?", (task_id, 'd'*64, '{}', task_id))
+            db.execute(f'insert into review_candidates(task_id,execution_generation,consumer_run_id,stage_index,proposal_revision,candidate_digest,candidate_json) select ?,execution_generation,id,0,0,?,? from ({AGENT_RUN_SQL}) where reply_task_id=?', (task_id, 'd'*64, '{}', task_id))
             db.execute("insert into candidate_reviews(candidate_id,audit_run_id,decision,candidate_digest,result_json) values (1,1,'approve',?,'{}')", ('d'*64,))
-        db.execute(mutation + (' where id=?' if mutation.startswith('update reply_tasks') else (' where reply_task_id=?' if mutation.startswith('update agent_runs') else '')), ((task_id,) if mutation.startswith('update ') else ()))
+        db.execute(mutation + (' where id=?' if mutation.startswith('update reply_tasks') else (' and task_id=?' if mutation.startswith("update runs ") else '')), ((task_id,) if mutation.startswith('update ') else ()))
     with pytest.raises(ValueError):
         apply_deferral(path, task_id, expected_business_object_key=preview['business_object_key'],
             expected_generation=preview['execution_generation'],
@@ -250,11 +278,36 @@ def test_apply_refuses_changed_identity_or_live_work(tmp_path, mutation):
 
 
 @pytest.mark.parametrize(('statement', 'values'), [
-    ("update agent_runs set lease_owner='worker', lease_expires_at='2026-10-05 13:00:00'", ()),
-    ("update agent_runs set lease_owner='worker', lease_expires_at='2026-10-05T13:00:00Z'", ()),
+    ("update runs set lease_owner='worker', lease_expires_at='2026-10-05 13:00:00' where record_type='agent_runs'", ()),
+    ("update runs set lease_owner='worker', lease_expires_at='2026-10-05T13:00:00Z' where record_type='agent_runs'", ()),
     ("insert into dispatcher_claim_leases(adapter_name,source_id,owner,lease_expires_at) values ('reply',?,'worker','2026-10-05 13:00:00')", ('TASK',)),
-    ("insert into agent_runtime_attempts(agent_run_id,workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status) values (?,'agent_run',?,1,'r','cli','native','m','running')", ('RUN', 'RUN_TEXT')),
-    ("insert into agent_runtime_attempts(agent_run_id,workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status,first_effect_started_at) values (?,'agent_run',?,1,'r','cli','native','m','failed','2026-10-05 11:00:00')", ('RUN', 'RUN_TEXT')),
+    (lambda db, values=(): insert_run(
+        db, 'agent_runtime_attempts', {
+            'parent_id': values[0],
+            'workload_kind': 'agent_run',
+            'workload_key': values[1],
+            'attempt_number': 1,
+            'route_name': 'r',
+            'runtime_kind': 'cli',
+            'credential_mode': 'native',
+            'model': 'm',
+            'status': 'running',
+        },
+    ), ('RUN', 'RUN_TEXT')),
+    (lambda db, values=(): insert_run(
+        db, 'agent_runtime_attempts', {
+            'parent_id': values[0],
+            'workload_kind': 'agent_run',
+            'workload_key': values[1],
+            'attempt_number': 1,
+            'route_name': 'r',
+            'runtime_kind': 'cli',
+            'credential_mode': 'native',
+            'model': 'm',
+            'status': 'failed',
+            'first_effect_started_at': '2026-10-05 11:00:00',
+        },
+    ), ('RUN', 'RUN_TEXT')),
     ("insert into agent_effect_intents(agent_run_id,authorization_id,action_index,receipt_operation_id,capability,operation,operation_digest,arguments_digest,target_identifiers_json,state) values (?,'auth',0,'op','c','o','d','a','{}','dispatched')", ('RUN',)),
     ("insert into agent_effect_intents(agent_run_id,authorization_id,action_index,receipt_operation_id,capability,operation,operation_digest,arguments_digest,target_identifiers_json,state) values (?,'auth',0,'op','c','o','d','a','{}','prepared')", ('RUN',)),
     ("insert into agent_execution_receipts(agent_run_id,receipt_id,operation_id,cli,command_path,command_digest,exit_code,completed,persisted,safe_to_confirm) values (?,'r','op','cli','cmd','d',1,0,0,0)", ('RUN',)),
@@ -268,8 +321,11 @@ def test_preview_and_apply_refuse_live_or_possible_effect(tmp_path, statement, v
                     'RUN_TEXT': str(original['latest_failed_run_id']),
                     'BUSINESS': original['business_object_key']}.get(value, value) for value in values)
     with sqlite3.connect(path) as db:
-        db.execute(statement + (' where reply_task_id=?' if statement.startswith('update agent_runs') else ''),
-                   actual + ((task_id,) if statement.startswith('update agent_runs') else ()))
+        if callable(statement):
+            statement(db, actual)
+        else:
+            db.execute(statement + (' and task_id=?' if statement.startswith("update runs ") else ''),
+                       actual + ((task_id,) if statement.startswith("update runs ") else ()))
     assert not preview_deferral(path, task_id, now=NOW)['eligible']
     with pytest.raises(ValueError, match='deferral blocked'):
         apply_ready(path, task_id, backup)
@@ -293,7 +349,7 @@ def test_backup_must_be_separate_intact_and_exact(tmp_path):
 @pytest.mark.parametrize('change', [
     "update reply_tasks set input_version=input_version+1",
     "update reply_tasks set available_at='2026-10-05 15:00:00'",
-    "update agent_runs set structured_error_json='changed'",
+    "update runs set structured_error_json='changed' where record_type='agent_runs'",
     "insert into dispatcher_claim_leases(adapter_name,source_id,owner,lease_expires_at) values ('reply','TASK','worker','2026-10-05 13:00:00')",
 ])
 def test_resume_refuses_intervening_change(tmp_path, change):
@@ -302,7 +358,7 @@ def test_resume_refuses_intervening_change(tmp_path, change):
     statement = change.replace('TASK', str(task_id))
     with sqlite3.connect(path) as db:
         db.execute(statement + (' where id=?' if statement.startswith('update reply_tasks') else
-                                (' where reply_task_id=?' if statement.startswith('update agent_runs') else '')),
+                                (' and task_id=?' if statement.startswith("update runs ") else '')),
                    ((task_id,) if statement.startswith('update ') else ()))
     with pytest.raises(ValueError):
         resume_deferral(path, task_id, receipt_id=receipt['id'], request_id='resume-one', now=NOW)

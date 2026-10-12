@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 import app.consumer_agent as consumer_agent
+from app.run_storage import AGENT_RUN_SQL
 from app.agent_context import (
     _CONSUMER_AGENT_RULES,
     AgentContextMessage,
@@ -2509,7 +2510,7 @@ def test_consumer_preserves_provider_rendered_historical_feedback_sources(
     saved = store.get_agent_run(result.run_id)
     assert json.loads(saved.adopted_result_json)["source_bindings"][0]["value"] == binding.value
     with store._connect() as db:
-        assert db.execute("select final_result_json from agent_runs where id=?", (result.run_id,)).fetchone()[0] == ""
+        assert db.execute(f'select final_result_json from ({AGENT_RUN_SQL}) where id=?', (result.run_id,)).fetchone()[0] == ""
 
 
 def test_consumer_preserves_full_calendar_material_source(store, task, context):
@@ -2527,7 +2528,7 @@ def test_consumer_preserves_full_calendar_material_source(store, task, context):
     persisted = json.loads(store.get_agent_run(result.run_id).adopted_result_json)
     assert persisted["source_bindings"][0]["value"] == binding.value
     with store._connect() as db:
-        assert db.execute("select final_result_json from agent_runs where id=?", (result.run_id,)).fetchone()[0] == ""
+        assert db.execute(f'select final_result_json from ({AGENT_RUN_SQL}) where id=?', (result.run_id,)).fetchone()[0] == ""
     from app.reviewed_candidates import candidate_digest
     from app.reviewed_sources import capture_candidate_sources, changed_candidate_sources
 
@@ -3846,3 +3847,15 @@ def test_codex_snapshot_records_exact_native_input_and_reuses_conversation(store
     assert snapshot["sections"][-1]["name"] == "原生结果格式"
     from app.native_agent_output import native_output_instruction
     assert snapshot["sections"][-1]["characters"] == len(native_output_instruction("consumer"))
+
+
+def test_consumer_builds_native_role_skill_config_once(store, task, context, tmp_path, monkeypatch):
+    from tests.support.role_skill_scan import track_role_skill_build, assert_single_role_skill_build
+
+    calls, expected = track_role_skill_build(tmp_path, monkeypatch)
+    selected = replace(context, skill_names=("ceo-document-review",))
+    executor = CapturingExecutor(_result_jsonl())
+    ConsumerAgentRunner(store=store, workspace=Path("/workspace"), executor=executor).run(
+        task, selected, proposal_revision=0, parent_agent_run_id=None,
+    )
+    assert_single_role_skill_build(calls, expected, executor)

@@ -369,7 +369,8 @@ def test_project_attention_evidence_migration_preserves_original_history_once(tm
             )
         }
         db.execute("delete from service_state where key='business_project_attention_evidence_migrated'")
-        db.execute("update service_state set value='2026-10-04.3' where key=?", (store_module.STORE_SCHEMA_VERSION_KEY,))
+    with original.business_task_transaction() as db:
+        original._migrate_project_attention_evidence(db)
     store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
     upgraded = AutoReplyStore(path)
     assert [(proof.project_id, proof.signal_id) for proof in upgraded.list_business_project_evidence(1)] == (
@@ -385,7 +386,11 @@ def test_project_attention_evidence_migration_preserves_original_history_once(tm
         source_type="message", source_ref="later:task-only", evidence_text="任务自己的后续证据。", dedupe_key="later:task-only"
     )
     upgraded.link_business_task_evidence(task_id=1, signal_id=later_signal, evidence_role="discovery")
-    upgraded.set_service_state(store_module.STORE_SCHEMA_VERSION_KEY, "2026-10-04.3")
+    with upgraded.business_task_transaction() as db:
+        assert db.execute(
+            "select value from service_state where key='business_project_attention_evidence_migrated'"
+        ).fetchone()[0] == "1"
+        upgraded._migrate_project_attention_evidence(db)
     store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
     reopened = AutoReplyStore(path)
     assert [proof.signal_id for proof in reopened.list_business_project_evidence(1)] == ([1] if confirmed else [])
@@ -406,7 +411,8 @@ def test_project_attention_migration_does_not_invent_original_relationships(tmp_
         if case == "resolved_card":
             db.execute("update business_attention_items set status='resolved', resolution_signal_id=?, resolved_at=? where id=1", (signal_id, STAMP))
         db.execute("delete from service_state where key='business_project_attention_evidence_migrated'")
-        db.execute("update service_state set value='2026-10-04.3' where key=?", (store_module.STORE_SCHEMA_VERSION_KEY,))
+    with original.business_task_transaction() as db:
+        original._migrate_project_attention_evidence(db)
     store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
     upgraded = AutoReplyStore(path)
     assert upgraded.list_business_project_evidence(1) == ()
@@ -453,13 +459,15 @@ def test_project_attention_migration_isolates_projects_deduplicates_and_rolls_ba
         if fail_insert:
             db.execute(f"create trigger fixture_fail_project_proof before insert on business_project_evidence when new.project_id={projects[1]} begin select raise(abort, 'fixture migration failure'); end")
         db.execute("delete from service_state where key='business_project_attention_evidence_migrated'")
-        db.execute("update service_state set value='2026-10-04.3' where key=?", (store_module.STORE_SCHEMA_VERSION_KEY,))
     store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
     if fail_insert:
         with pytest.raises(sqlite3.IntegrityError, match="fixture migration failure"):
-            AutoReplyStore(path)
+            with original.business_task_transaction() as db:
+                original._migrate_project_attention_evidence(db)
     else:
-        AutoReplyStore(path)
+        with original.business_task_transaction() as db:
+            original._migrate_project_attention_evidence(db)
+    AutoReplyStore(path)
     with sqlite3.connect(path) as db:
         assert before == {table: db.execute(f"select * from {table} order by rowid").fetchall() for table in tables}
         proofs = db.execute("select project_id, signal_id, created_at from business_project_evidence order by project_id, signal_id").fetchall()
@@ -1120,7 +1128,7 @@ def test_list_indexes_are_present_and_in_the_required_manifest(store):
 
 def test_existing_pre_semantic_store_initializes_without_rewriting_legacy(tmp_path):
     path = tmp_path / "pre-semantic.sqlite3"
-    AutoReplyStore(path)
+    original = AutoReplyStore(path)
     # Build a pre-semantic fixture with actual legacy data before initialization.
     # The DROP statements operate only on this test's new temporary database.
     with sqlite3.connect(path) as db:
@@ -1128,15 +1136,12 @@ def test_existing_pre_semantic_store_initializes_without_rewriting_legacy(tmp_pa
             db.execute(f"drop table {table}")
         db.execute("drop table business_source_documents")
         db.execute(
-            "update service_state set value=? where key=?",
-            ("2026-09-21.1", store_module.STORE_SCHEMA_VERSION_KEY),
-        )
-        db.execute(
             "insert into work_projects (id, title) values (7, 'Pre-existing legacy source')"
         )
     # Emulate a fresh process opening the older schema, as the store's existing
     # migration tests do after changing a fixture behind its per-process cache.
     store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    original._initialize()
     store = AutoReplyStore(path)
     with store._connect() as db:
         seed_references(db)
@@ -1204,12 +1209,8 @@ def test_previous_semantic_schema_migrates_without_classifying_legacy_deadline(t
             "create index idx_business_task_events_task "
             "on business_task_events(task_id, created_at, id)"
         )
-        db.execute(
-            "update service_state set value='2026-09-22.1' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        )
     store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-
+    original._initialize()
     migrated = AutoReplyStore(path)
     assert migrated._schema_is_current() is True
     assert migrated.get_business_task(task_id).deadline_at == "2026-09-25T18:00:00+08:00"
@@ -1249,7 +1250,7 @@ def test_previous_semantic_schema_migrates_without_classifying_legacy_deadline(t
 
 def test_event_constraint_migration_rolls_back_when_copy_fails(tmp_path):
     path = tmp_path / "event-migration-failure.sqlite3"
-    AutoReplyStore(path)
+    original = AutoReplyStore(path)
     with sqlite3.connect(path) as db:
         event_sql = db.execute(
             "select sql from sqlite_master where type='table' and name='business_task_events'"
@@ -1262,12 +1263,10 @@ def test_event_constraint_migration_rolls_back_when_copy_fails(tmp_path):
                (id, task_id, event_type, signal_id, before_json, after_json, reason)
                values (7, 999, 'created', null, '{}', '{}', 'legacy orphan')"""
         )
-        db.execute("update service_state set value='2026-09-22.1' where key=?",
-                   (store_module.STORE_SCHEMA_VERSION_KEY,))
     store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
 
     with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
-        AutoReplyStore(path)
+        original._initialize()
 
     with sqlite3.connect(path) as db:
         names = {row[0] for row in db.execute(
@@ -1297,10 +1296,8 @@ def test_event_constraint_migration_recovers_stranded_rename(tmp_path):
         ).fetchone()[0]
         db.execute("alter table business_task_events rename to business_task_events_before_date_evidence")
         db.execute(event_sql)
-        db.execute("update service_state set value='2026-09-22.1' where key=?",
-                   (store_module.STORE_SCHEMA_VERSION_KEY,))
     store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-
+    original._initialize()
     recovered = AutoReplyStore(path)
     assert [event.reason for event in recovered.list_business_task_events(task_id)] == [
         "source event"
@@ -1463,7 +1460,6 @@ def legacy_source_store(path, *, include_author_kind=True):
         ))
         db.execute("insert into work_summary_inputs (id, source_type, source_ref, payload_json) values (5, 'message', 'message:42', ?)", ('{ "body": "原始输入" }',))
         db.execute("insert into task_agent_runs (id, summary_input_id, decision_json, projection_json, created_at, finished_at, updated_at) values (8, 5, ?, ?, ?, ?, ?)", ('{ "historical": "原始判断", "signal_id": 7 }', '{ "signal_id": 11 }', STAMP, STAMP, STAMP))
-        db.execute("update service_state set value='2026-09-25.1' where key=?", (store_module.STORE_SCHEMA_VERSION_KEY,))
         if not include_author_kind:
             db.execute("alter table business_task_signals drop column author_kind")
             for signal in legacy_signals:
@@ -1471,6 +1467,15 @@ def legacy_source_store(path, *, include_author_kind=True):
         assert db.execute("pragma foreign_key_check").fetchall() == []
     store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
     return legacy_signals
+
+
+def migrate_legacy_source_store(path):
+    """Apply the exact historical signal-body migration to current core."""
+    with sqlite3.connect(path) as db:
+        db.row_factory = sqlite3.Row
+        AutoReplyStore._migrate_business_task_source_documents(db)
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    return AutoReplyStore(path)
 
 
 def source_history_snapshot(db):
@@ -1486,7 +1491,7 @@ def test_legacy_signal_bodies_migrate_without_changing_evidence_identity_or_hist
     with sqlite3.connect(path) as db:
         db.row_factory = sqlite3.Row
         original_history = source_history_snapshot(db)
-    migrated = AutoReplyStore(path)
+    migrated = migrate_legacy_source_store(path)
     signals = migrated.list_business_task_signals()
     added_fields = {"source_document_id"}
     if not include_author_kind:
@@ -1536,7 +1541,7 @@ def test_source_body_migration_rolls_back_on_foreign_key_failure(tmp_path):
     AutoReplyStore._business_source_document_id = staticmethod(inject_new_violation)
     try:
         with pytest.raises(sqlite3.IntegrityError, match="changed foreign key violations"):
-            AutoReplyStore(path)
+            migrate_legacy_source_store(path)
     finally:
         AutoReplyStore._business_source_document_id = staticmethod(original_migration)
     with sqlite3.connect(path) as db:
@@ -1546,7 +1551,7 @@ def test_source_body_migration_rolls_back_on_foreign_key_failure(tmp_path):
         assert db.execute("select seq from sqlite_sequence where name='business_task_signals'").fetchone()[0] == 83
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
             db.execute("update business_task_signals set evidence_text='rewritten' where id=1")
-        assert db.execute("select value from service_state where key=?", (store_module.STORE_SCHEMA_VERSION_KEY,)).fetchone()[0] == "2026-09-25.1"
+        assert db.execute("select value from service_state where key=?", (store_module.STORE_SCHEMA_VERSION_KEY,)).fetchone()[0] == store_module.STORE_SCHEMA_VERSION
 
 
 def test_source_body_migration_preserves_exact_preexisting_foreign_key_violations(tmp_path):
@@ -1565,7 +1570,7 @@ def test_source_body_migration_preserves_exact_preexisting_foreign_key_violation
             "meeting_alignment_runs", "business_task_evidence",
         }
 
-    migrated = AutoReplyStore(path)
+    migrated = migrate_legacy_source_store(path)
     assert len(migrated.list_business_task_signals()) == 3
     with migrated._connect() as db:
         after = sorted(tuple(row) for row in db.execute("pragma foreign_key_check"))
@@ -1598,7 +1603,7 @@ def test_source_body_migration_rolls_back_if_it_adds_a_foreign_key_violation(tmp
     AutoReplyStore._business_source_document_id = staticmethod(inject_new_violation)
     try:
         with pytest.raises(sqlite3.IntegrityError, match="changed foreign key violations"):
-            AutoReplyStore(path)
+            migrate_legacy_source_store(path)
     finally:
         AutoReplyStore._business_source_document_id = staticmethod(original_migration)
     with sqlite3.connect(path) as db:
@@ -1632,6 +1637,7 @@ def test_source_document_schema_manifest_and_foreign_key_on_fresh_and_upgraded_s
     path = tmp_path / "source-schema.sqlite3"
     if upgrade:
         legacy_source_store(path)
+        migrate_legacy_source_store(path)
     store = AutoReplyStore(path)
     assert "business_source_documents" in store_module.STORE_SCHEMA_REQUIRED_TABLES
     assert set(store_module.STORE_SCHEMA_REQUIRED_COLUMNS["business_source_documents"]) == {
@@ -1693,8 +1699,7 @@ def test_empty_legacy_signal_table_keeps_its_autoincrement_high_water_mark(tmp_p
     with sqlite3.connect(path) as db:
         install_legacy_signals(db, [])
         db.execute("insert into sqlite_sequence (name, seq) values ('business_task_signals', 83)")
-        db.execute("update service_state set value='2026-09-25.1' where key=?", (store_module.STORE_SCHEMA_VERSION_KEY,))
     store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-    migrated = AutoReplyStore(path)
+    migrated = migrate_legacy_source_store(path)
     assert migrated.list_business_task_signals() == ()
     assert migrated.create_business_task_signal(**signal_input()) == 84

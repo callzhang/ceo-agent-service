@@ -1,8 +1,10 @@
 import json
 import sqlite3
 
+from app.run_storage import AGENT_RUN_SQL, insert_run
 from app.store import AutoReplyStore
 from tests.test_agent_turn_store import _task, _claim_consumer
+from tests.run_reader_fixtures import assert_no_core_native_storage
 
 
 def test_live_events_keep_payload_in_memory_only(tmp_path):
@@ -12,7 +14,7 @@ def test_live_events_keep_payload_in_memory_only(tmp_path):
     store.append_agent_run_event(run.id, event, owner="consumer")
     assert store.get_agent_run(run.id).tool_events == [event]
     with sqlite3.connect(store.path) as db:
-        assert db.execute("select count(*) from agent_run_events where agent_run_id=?", (run.id,)).fetchone()[0] == 0
+        assert_no_core_native_storage(db)
 
 
 def test_get_agent_run_reads_native_events_and_result_after_sqlite_closes(
@@ -26,8 +28,7 @@ def test_get_agent_run_reads_native_events_and_result_after_sqlite_closes(
     run = _claim_consumer(store, _task(store)).run
     with store._connect() as db:
         db.execute(
-            "update agent_runs set status='completed', codex_session_id=?, "
-            "transcript_start_line=0, transcript_end_line=1 where id=?",
+            "update runs set status='completed', session_id=?, transcript_start=0, transcript_end=1 where record_type='agent_runs' and cast(legacy_key as integer)=?",
             ("native-session", run.id),
         )
 
@@ -81,7 +82,7 @@ def test_oversized_event_uses_native_after_live_cache_limit(tmp_path, monkeypatc
     path.write_text("\n".join(json.dumps({"type": "event_msg", "payload": {"type": "item_completed", "item": {"type": "CommandExecution", "id": call_id, "exit_code": 0, "aggregated_output": output}}}) for call_id, output in (("A", "small"), ("B", "large" * 200))) + "\n")
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *a, **k: path)
     with store._connect() as db:
-        db.execute("update agent_runs set codex_session_id='native-session',transcript_end_line=2 where id=?", (run.id,))
+        db.execute("update runs set session_id='native-session',transcript_end=2 where record_type='agent_runs' and cast(legacy_key as integer)=?", (run.id,))
     assert [event["item"]["id"] for event in store.get_agent_run(run.id).tool_events] == ["A", "B"]
 
 
@@ -97,7 +98,7 @@ def test_restart_preserves_receipts_before_attempt_finishes(tmp_path, monkeypatc
     path.write_text(json.dumps({"type": "event_msg", "payload": {"type": "item_completed", "item": {**event["item"], "type": "CommandExecution"}}}) + "\n")
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *a, **k: path)
     with store._connect() as db:
-        db.execute("update agent_runs set codex_session_id='native-session',transcript_end_line=1 where id=?", (run.id,))
+        db.execute("update runs set session_id='native-session',transcript_end=1 where record_type='agent_runs' and cast(legacy_key as integer)=?", (run.id,))
     monkeypatch.setattr(native_trajectory, "_LIVE_EVENTS", OrderedDict())
     assert provider_receipts(store.get_agent_run(run.id).tool_events) == ("receipt-before-crash",)
     later = {"type": "item.completed", "item": {"type": "command_execution", "id": "call-2", "exit_code": 0, "aggregated_output": '{"result":{"openMessageId":"receipt-after-restart"}}'}}
@@ -106,7 +107,7 @@ def test_restart_preserves_receipts_before_attempt_finishes(tmp_path, monkeypatc
         stream.write(json.dumps({"type": "event_msg", "payload": {"type": "item_completed", "item": {**later["item"], "type": "CommandExecution"}}}) + "\n")
     assert provider_receipts(store.get_agent_run(run.id).tool_events) == ("receipt-before-crash", "receipt-after-restart")
     with sqlite3.connect(store.path) as db:
-        assert db.execute("select count(*) from agent_run_events").fetchone()[0] == 0
+        assert_no_core_native_storage(db)
 
 
 def test_generation_list_restores_prior_write_after_restart(tmp_path, monkeypatch):
@@ -120,7 +121,7 @@ def test_generation_list_restores_prior_write_after_restart(tmp_path, monkeypatc
     path = tmp_path / "native.jsonl"
     path.write_text(json.dumps({"type": "event_msg", "payload": {"type": "item_completed", "item": {**event["item"], "id": "native-1", "type": "CommandExecution"}}}))
     with store._connect() as db:
-        db.execute("update agent_runs set status='completed',codex_session_id='session',transcript_start_line=0,transcript_end_line=1 where id=?", (run.id,))
+        db.execute("update runs set status='completed',session_id='session',transcript_start=0,transcript_end=1 where record_type='agent_runs' and cast(legacy_key as integer)=?", (run.id,))
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *a, **kw: path)
     monkeypatch.setattr(native_trajectory, "_LIVE_EVENTS", OrderedDict())
     earlier = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)[0]
@@ -150,8 +151,8 @@ def test_zero_native_range_does_not_read_reused_session(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "runs.sqlite3")
     run = _claim_consumer(store, _task(store)).run
     with store._connect() as db:
-        db.execute("update agent_runs set codex_session_id='reused' where id=?", (run.id,))
-        row = db.execute("select * from agent_runs where id=?", (run.id,)).fetchone()
+        db.execute("update runs set session_id='reused' where record_type='agent_runs' and cast(legacy_key as integer)=?", (run.id,))
+        row = db.execute(f'select * from ({AGENT_RUN_SQL}) where id=?', (run.id,)).fetchone()
         monkeypatch.setattr(native_trajectory, "read_codex_events", lambda *a, **k: (_ for _ in ()).throw(AssertionError("read unrelated later turn")))
         assert native_trajectory.read_run_events(db, row) == []
 
@@ -218,7 +219,7 @@ def test_delivery_reconciliation_after_restart_reads_interrupted_native_turn(tmp
         }}) + "\n")
         paths[consumer_session] = consumer_path
         with store._connect() as db:
-            db.execute("update agent_runs set codex_session_id=?, transcript_end_line=1 where id=?", (consumer_session, consumer_id))
+            db.execute("update runs set session_id=?, transcript_end=1 where record_type='agent_runs' and cast(legacy_key as integer)=?", (consumer_session, consumer_id))
         for run_id in (arguments["send_run_id"], arguments["readback_run_id"]):
             events = captured_events.get(run_id, [])
             session_id = f"run-{run_id}"
@@ -236,7 +237,22 @@ def test_delivery_reconciliation_after_restart_reads_interrupted_native_turn(tmp
             path.write_text("\n".join(json.dumps(record) for record in records))
             paths[session_id] = path
             with store._connect() as db:
-                db.execute("insert into agent_runtime_attempts(agent_run_id,workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status,session_id,transcript_reference,transcript_end) values (?,'agent_run',?,1,'codex_oauth','codex_cli','oauth','test','failed',?,?,?)", (run_id, str(run_id), session_id, f"codex_session:{session_id}", native_end))
+                insert_run(
+                    db, 'agent_runtime_attempts', {
+                        'parent_id': run_id,
+                        'workload_kind': 'agent_run',
+                        'workload_key': str(run_id),
+                        'attempt_number': 1,
+                        'route_name': 'codex_oauth',
+                        'runtime_kind': 'codex_cli',
+                        'credential_mode': 'oauth',
+                        'model': 'test',
+                        'status': 'failed',
+                        'session_id': session_id,
+                        'transcript_reference': f"codex_session:{session_id}",
+                        'transcript_end': native_end,
+                    },
+                )
         monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda session_id, **kwargs: paths.get(session_id))
         monkeypatch.setattr(native_trajectory, "_LIVE_EVENTS", OrderedDict())
         for run_id in (arguments["send_run_id"], arguments["readback_run_id"]):

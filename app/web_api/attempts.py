@@ -10,6 +10,7 @@ from app.wechat.models import principal_reply_supersession
 from app.attempt_rerun_presentation import RerunPresentation, attempt_rerun_presentation
 from app.attempt_what_happened import build_what_happened
 from app.web_api.common import json_safe, normalize_display_value
+from app.run_storage import AGENT_RUN_SQL
 
 
 def _stored_json(value: str, fallback: Any) -> Any:
@@ -726,12 +727,12 @@ def build_attempt_detail(
     if reply_task is not None and not agent_runs and hasattr(store, "_connect"):
         with store._connect() as db:
             rows = db.execute(
-                """select agent_runs.*,
+                f"""select agent_runs.*,
                           case agent_runs.role
                             when 'consumer' then candidate.candidate_json
                             when 'audit' then review.result_json
                           end as adopted_result_json
-                   from agent_runs
+                   from ({AGENT_RUN_SQL}) as agent_runs
                    left join review_candidates candidate on candidate.consumer_run_id=agent_runs.id
                    left join candidate_reviews review on review.audit_run_id=agent_runs.id
                    where agent_runs.reply_task_id=? order by agent_runs.id""",

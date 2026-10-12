@@ -7,6 +7,7 @@ from urllib.parse import quote
 
 import pytest
 
+from app.run_storage import insert_run
 from app.audit_web import handle_rerun_attempt_post
 from app.store import AgentRole, AutoReplyStore
 from app.web_api.attempts import (
@@ -519,21 +520,16 @@ def _seed_email_attempt(store: AutoReplyStore, *, with_agent_runs: bool) -> int:
             "select id from reply_tasks where conversation_id=? and trigger_message_id=?",
             (CONVERSATION, TRIGGER),
         ).fetchone()[0]
-        consumer = db.execute(
-            """insert into agent_runs (
-                reply_task_id, execution_generation, role, status,
-                codex_session_id, transcript_start_line, transcript_end_line
-            ) values (?, 'initial', 'consumer', 'completed', 'session-consumer', 0, 42)""",
-            (task_id,),
-        ).lastrowid
-        audit = db.execute(
-            """insert into agent_runs (
-                reply_task_id, execution_generation, role, status,
-                parent_agent_run_id, codex_session_id,
-                transcript_start_line, transcript_end_line
-            ) values (?, 'initial', 'audit', 'completed', ?, 'session-audit', 0, 59)""",
-            (task_id, consumer),
-        ).lastrowid
+        consumer = insert_run(db, 'agent_runs', {
+            'task_id': task_id, 'execution_generation': 'initial',
+            'role': 'consumer', 'status': 'completed', 'session_id': 'session-consumer',
+            'transcript_start': 0, 'transcript_end': 42,
+        }).lastrowid
+        audit = insert_run(db, 'agent_runs', {
+            'task_id': task_id, 'execution_generation': 'initial',
+            'role': 'audit', 'status': 'completed', 'parent_id': consumer,
+            'session_id': 'session-audit', 'transcript_start': 0, 'transcript_end': 59,
+        }).lastrowid
         db.execute(
             "update reply_attempts set agent_run_id=? where id=?", (audit, attempt_id)
         )
@@ -1066,7 +1062,7 @@ def test_attempt_detail_api_recovers_consumer_when_audit_parent_link_is_missing(
     audit = _complete_audit_run(store, task, consumer, owner="missing-audit-api")
     attempt_id = _finalize_consumer_result_attempt(store, task, audit)
     with store._immediate_write_transaction() as db:
-        db.execute("update agent_runs set parent_agent_run_id=null where id=?", (audit.id,))
+        db.execute("update runs set parent_id=null where record_type='agent_runs' and cast(legacy_key as integer)=?", (audit.id,))
 
     _, item = build_attempt_detail(store, attempt_id)
 
@@ -1085,7 +1081,7 @@ def test_attempt_detail_api_recovers_consumer_when_audit_parent_is_invalid(
     audit = _complete_audit_run(store, task, consumer, owner="wrong-role-audit-api")
     attempt_id = _finalize_consumer_result_attempt(store, task, audit)
     with store._immediate_write_transaction() as db:
-        db.execute("update agent_runs set parent_agent_run_id=? where id=?", (audit.id, audit.id))
+        db.execute("update runs set parent_id=? where record_type='agent_runs' and cast(legacy_key as integer)=?", (audit.id, audit.id))
 
     _, item = build_attempt_detail(store, attempt_id)
 
@@ -1169,8 +1165,8 @@ def test_failed_attempt_rerun_presentation_uses_structured_historical_refusal(
     # A later failed generation must still describe the original refusal.
     raw = error if error == 'malformed-json' else json.dumps(error)
     with store._connect() as db:
-        db.execute("update agent_runs set status='failed', execution_generation='old-generation', "
-                   "structured_error_json=? where id=?", (raw, run.id))
+        db.execute("update runs set status='failed', execution_generation='old-generation', "
+                   "structured_error_json=? where record_type='agent_runs' and cast(legacy_key as integer)=?", (raw, run.id))
         db.execute("update reply_tasks set status='failed', error='agent_reported_failure' where id=?", (task.id,))
     attempt_id = store.record_reply_attempt(
         conversation_id=task.conversation_id, conversation_title=task.conversation_title,

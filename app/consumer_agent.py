@@ -582,7 +582,6 @@ class ConsumerAgentRunner:
         )
         result = process.execute(
                 run=claim.run,
-                skill_names=context.skill_names,
                 invocation_facts={
                     "stage_index": context.stage_index,
                     "skill_names": list(context.skill_names),

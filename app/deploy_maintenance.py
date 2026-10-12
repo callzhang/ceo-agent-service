@@ -13,6 +13,7 @@ import time
 from app.database_backup import create_database_backup
 from app.reply_task_deferral import _legacy_event_may_have_effect
 from app.repository_updater import UpgradePreconditionError
+from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
 
 
 @dataclass(frozen=True)
@@ -35,9 +36,7 @@ def check_maintenance(database_path: Path, task_ids: tuple[int, ...]) -> Mainten
             "select 1 from email_actions where status not in ('pending','done','skipped','failed','needs_human') limit 1",
             "select 1 from scheduled_task_runs where dispatch_status='pending' and lease_owner<>'' "
             "and julianday(lease_expires_at)>julianday('now') limit 1",
-            "select 1 from agent_runtime_attempts where status in ('starting','running') "
-            "and (agent_run_id is null or agent_run_id not in "
-            "(select id from agent_runs where reply_task_id in (" + ','.join('?' for _ in task_ids) + "))) limit 1",
+            f"select 1 from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where status in ('starting','running') and (agent_run_id is null or agent_run_id not in (select id from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id in (" + ','.join('?' for _ in task_ids) + "))) limit 1",
         ):
             args = task_ids if '?' in query else ()
             if db.execute(query, args).fetchone():
@@ -47,7 +46,7 @@ def check_maintenance(database_path: Path, task_ids: tuple[int, ...]) -> Mainten
             task = db.execute('select * from reply_tasks where id=?', (task_id,)).fetchone()
             if task is None or task['status'] not in ('pending','processing'):
                 raise UpgradePreconditionError('maintenance task is not recoverable')
-            latest = db.execute('select role,status from agent_runs where reply_task_id=? order by id desc limit 1', (task_id,)).fetchone()
+            latest = db.execute(f'select role,status from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=? order by id desc limit 1', (task_id,)).fetchone()
             if latest is None or latest['role'] != 'consumer' or latest['status'] not in ('running','failed'):
                 raise UpgradePreconditionError('maintenance needs a recoverable Consumer run')
             bindings.append((task_id, task['business_object_key'], task['execution_generation'], task['input_version']))
@@ -60,17 +59,15 @@ def check_maintenance(database_path: Path, task_ids: tuple[int, ...]) -> Mainten
                 if db.execute(f'select 1 from {table} where {column}=? limit 1', (value,)).fetchone():
                     raise UpgradePreconditionError('maintenance task has prepared or completed action')
             for table in ('agent_effect_intents', 'agent_execution_receipts'):
-                if db.execute(f'select 1 from {table} e join agent_runs r on r.id=e.agent_run_id '
-                              'where r.reply_task_id=? limit 1', (task_id,)).fetchone():
+                if db.execute(f'select 1 from {table} e join ({AGENT_RUN_SQL}) r on r.id=e.agent_run_id where r.reply_task_id=? limit 1', (task_id,)).fetchone():
                     raise UpgradePreconditionError('maintenance task has effect identity')
             if db.execute('select 1 from sent_replies where conversation_id=? and trigger_message_id=? limit 1',
                           (task['conversation_id'], task['trigger_message_id'])).fetchone():
                 raise UpgradePreconditionError('maintenance task has delivery receipt')
-            if db.execute('select 1 from agent_runtime_attempts a join agent_runs r on r.id=a.agent_run_id '
-                          "where r.reply_task_id=? and a.first_effect_started_at<>'' limit 1", (task_id,)).fetchone():
+            if db.execute(f"select 1 from ({RUNTIME_ATTEMPT_SQL}) a join ({AGENT_RUN_SQL}) r on r.id=a.agent_run_id where r.reply_task_id=? and a.first_effect_started_at<>'' limit 1", (task_id,)).fetchone():
                 raise UpgradePreconditionError('maintenance task has started effect')
             from app.native_trajectory import read_run_event_evidence
-            for run in db.execute('select * from agent_runs where reply_task_id=?', (task_id,)).fetchall():
+            for run in db.execute(f'select * from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=?', (task_id,)).fetchall():
                 events, available = read_run_event_evidence(db, run)
                 for event in events:
                     item = event.get('item', {})

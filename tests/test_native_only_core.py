@@ -2,12 +2,14 @@ import json
 import pytest
 import sqlite3
 
+from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
 from app import native_trajectory
 from app.agent_turn_runner import recover_completed_runtime_domain_result
 from app.agent_runtime_router import RoutedResultCodec, recover_completed_routed_result
 from app.agent_result import parse_agent_text_result
 from app.store import AutoReplyStore, _audit_event_metadata_json
 from tests.test_agent_turn_store import _claim_consumer, _task
+from tests.run_reader_fixtures import assert_no_core_native_storage
 
 
 def test_run_events_exist_only_in_memory_or_native_session(tmp_path, monkeypatch):
@@ -17,12 +19,12 @@ def test_run_events_exist_only_in_memory_or_native_session(tmp_path, monkeypatch
     store.append_agent_run_event(run.id, event, owner="consumer")
     assert store.get_agent_run(run.id).tool_events == [event]
     with sqlite3.connect(store.path) as db:
-        assert db.execute("select count(*) from agent_run_events where agent_run_id=?", (run.id,)).fetchone()[0] == 0
+        assert_no_core_native_storage(db)
 
     native_path = tmp_path / "session.jsonl"
     native_path.write_text(json.dumps({"type": "event_msg", "payload": {"type": "item_completed", "item": {"type": "CommandExecution", "id": "call-1", "command": "private command", "aggregated_output": "private output"}}}) + "\n")
     with store._connect() as db:
-        db.execute("update agent_runs set codex_session_id='native-session', transcript_end_line=1 where id=?", (run.id,))
+        db.execute("update runs set session_id='native-session', transcript_end=1 where record_type='agent_runs' and cast(legacy_key as integer)=?", (run.id,))
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *args, **kwargs: native_path)
     native_trajectory._LIVE_EVENTS.clear()
     assert store.get_agent_run(run.id).tool_events[0]["item"]["command"] == "private command"
@@ -44,7 +46,7 @@ def test_completed_run_result_is_read_from_native_without_sqlite_copy(tmp_path, 
     store.set_agent_run_session(run.id, "native-session", owner="consumer", transcript_start_line=0)
     store.complete_agent_run(run.id, {"outcome": "no_action", "summary": "Nothing to do."}, owner="consumer", transcript_end_line=1)
     with sqlite3.connect(store.path) as db:
-        assert db.execute("select final_result_json from agent_runs where id=?", (run.id,)).fetchone()[0] == ""
+        assert_no_core_native_storage(db)
     restored = store.get_agent_run(run.id)
     assert json.loads(restored.final_result_json) == wire
     native_path.unlink()
@@ -61,7 +63,7 @@ def test_completed_runtime_attempt_keeps_only_native_reference(tmp_path):
         result_envelope_json=json.dumps({"schema_id": "test.v1", "value": "private result"}),
     )
     with sqlite3.connect(store.path) as db:
-        row = db.execute("select result_schema_id, result_envelope_json, session_id, transcript_end from agent_runtime_attempts where id=?", (attempt.id,)).fetchone()
+        row = db.execute(f'select result_schema_id, result_envelope_json, session_id, transcript_end from ({RUNTIME_ATTEMPT_SQL}) where id=?', (attempt.id,)).fetchone()
     assert row == ("test.v1", "", "native-session", 1)
 
 
@@ -322,7 +324,7 @@ def test_terminal_run_releases_live_events_after_commit(tmp_path):
             store.fail_agent_run(run.id, {'code': 'failed'}, owner='consumer')
         else:
             with store._connect() as db:
-                db.execute("update agent_runs set lease_expires_at='2000-01-01' where id=?", (run.id,))
+                db.execute("update runs set lease_expires_at='2000-01-01' where record_type='agent_runs' and cast(legacy_key as integer)=?", (run.id,))
             store.fail_expired_agent_run(run.id, {'code': 'expired'}, expected_execution_generation=task.execution_generation)
         assert native_trajectory.live_events(str(store.path.resolve()), run.id) is None
 
@@ -362,7 +364,7 @@ def test_running_cache_keeps_observed_event_when_append_commit_fails(tmp_path, m
     run = _claim_consumer(store, _task(store)).run
     event = {'type': 'runtime.prompt', 'prompt': 'already observed'}
     with store._connect() as db:
-        db.execute('create table deferred_commit_failure (run_id integer references agent_runs(id) deferrable initially deferred)')
+        db.execute('create table deferred_commit_failure (run_id integer references runs(id) deferrable initially deferred)')
     terminal_ids = native_trajectory.terminal_cached_run_ids
 
     def fail_commit(db, path):
@@ -387,7 +389,7 @@ def test_completed_consumer_without_adopted_candidate_does_not_run_again(tmp_pat
     task = _task(store)
     run = _claim_consumer(store, task).run
     with store._connect() as db:
-        db.execute("update agent_runs set status='completed',lease_owner='',lease_expires_at='' where id=?", (run.id,))
+        db.execute("update runs set status='completed',lease_owner='',lease_expires_at='' where record_type='agent_runs' and cast(legacy_key as integer)=?", (run.id,))
     state = AgentOrchestrator(store=store, consumer=None, audit=None)._derive_state(task)
     assert state.status == 'failed_terminal'
     assert state.error.code == 'completed_consumer_candidate_unavailable'
@@ -402,7 +404,7 @@ def _native_final(tmp_path, monkeypatch, store, run_id, payload):
     monkeypatch.setattr(native_trajectory, 'find_codex_session_path',
                         lambda session_id, **kwargs: tmp_path / f'{session_id}.jsonl')
     with store._connect() as db:
-        db.execute('update agent_runs set codex_session_id=?,transcript_end_line=1 where id=?',
+        db.execute("update runs set session_id=?,transcript_end=1 where record_type='agent_runs' and cast(legacy_key as integer)=?",
                    (f'native-{run_id}', run_id))
     return path
 
@@ -510,7 +512,7 @@ def test_zero_length_runtime_attempt_does_not_read_a_reused_session(tmp_path, mo
         raise AssertionError('unbounded native session read')
     monkeypatch.setattr(native_trajectory, 'read_codex_events', unrelated)
     with store._connect() as db:
-        row = db.execute('select * from agent_runs where id=?', (run.id,)).fetchone()
+        row = db.execute(f'select * from ({AGENT_RUN_SQL}) where id=?', (run.id,)).fetchone()
         assert native_trajectory.read_run_events(db, row) == []
 
 
@@ -561,21 +563,24 @@ def test_retirement_reads_original_native_question_without_database_body(tmp_pat
     attempt_id, task_id, run_id, payload = seed(store, native_home=home)
     _native_final(tmp_path, monkeypatch, store, run_id, payload)
     with store._connect() as db:
-        db.execute("update agent_runs set final_result_json='', transcript_start_line=0 where id=?", (run_id,))
+        db.execute("update runs set transcript_start=0 where record_type='agent_runs' and cast(legacy_key as integer)=?", (run_id,))
     result = retire_rule_question(store, attempt_id, authority=AUTHORITY, apply=True)
     assert result['applied'] is True
     assert retire_rule_question(store, attempt_id, authority=AUTHORITY, apply=True) == result
 
 
-def test_reopening_legacy_event_column_does_not_repopulate_event_table(tmp_path):
+def test_reopening_current_schema_does_not_recreate_retired_native_storage(tmp_path):
     store = AutoReplyStore(tmp_path / 'runs.sqlite3')
     run = _claim_consumer(store, _task(store)).run
+    store.append_agent_run_event(run.id, {'type': 'item.completed', 'item': {'text': 'RAM only'}}, owner='consumer')
     with store._connect() as db:
-        db.execute("alter table agent_runs add column tool_events_json text not null default '[]'")
-        db.execute("update agent_runs set tool_events_json=? where id=?", (json.dumps([{'type': 'item.completed', 'item': {'text': 'legacy-only'}}]), run.id))
-        store._migrate_agent_run_events(db)
-        assert db.execute('select count(*) from agent_run_events').fetchone()[0] == 0
-        assert db.execute('select tool_events_json from agent_runs where id=?', (run.id,)).fetchone()[0] == '[]'
+        assert_no_core_native_storage(db)
+    reopened = AutoReplyStore(store.path)
+    with reopened._connect() as db:
+        assert_no_core_native_storage(db)
+    assert reopened.get_agent_run(run.id).tool_events == [
+        {'type': 'item.completed', 'item': {'text': 'RAM only'}}
+    ]
 
 
 def test_prepared_failure_does_not_adopt_native_proposed_success(tmp_path, monkeypatch):
@@ -638,7 +643,7 @@ def test_prepared_failure_transition_is_atomic_and_recoverable(tmp_path):
     error = {'code': 'preparation_failed', 'retryable': False,
              'reported_summary': 'The proposed plan could not be prepared.'}
     with store._connect() as db:
-        db.execute("create trigger fail_terminal before update of status on agent_runs when new.status='failed' begin select raise(abort, 'failure_write_failed'); end")
+        db.execute("create trigger fail_terminal before update of status on runs when new.record_type='agent_runs' and new.status='failed' begin select raise(abort, 'failure_write_failed'); end")
     with pytest.raises(sqlite3.IntegrityError, match='failure_write_failed'):
         store.fail_agent_runtime_attempt(attempt.id, 'result', 'runtime_business_result_failed', False,
             owner='consumer', agent_run_error=error, agent_run_transcript_end=2)

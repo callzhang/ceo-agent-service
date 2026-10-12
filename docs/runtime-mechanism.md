@@ -2221,6 +2221,8 @@ Consumer 和 Audit 每轮 Task 输入均传入当前任务已保存的专项指�
 
 后台 Consumer/Audit 使用原生 skills.config 禁用专项 Skill 的自动正文注入，避免原生加载、Developer inline 与工具读取三份重复。原生 project_doc_max_bytes=0 只关闭项目目录 AGENTS.md；全局 ~/.codex/AGENTS.md 仍由 CLI 加载，服务不修改原生 home 或全局规则文件。此设置仅适用于后台角色命令。
 
+角色命令只在最终角色构建器生成一次原生 Skill 配置。AgentTurnProcess 不再让适配器先按任务 Skill 生成随后被角色构建器丢弃的配置，避免重复扫描 Skill 目录和序列化。任务选择仍用于每轮 Task 的 Skill 入口及运行来源回执；最终原生配置、工具权限、会话和路由不变。独立直接使用 CodexRuntimeAdapter 的调用仍可传入自己的 task Skill 选择。
+
 Codex Consumer/Audit 对 `read_task_skill` 与 `read_skill` 均使用原生单工具 `output_token_limit=30000`，让冻结与已安装 Skill 的正文在 MCP 完整返回后完整进入模型历史。其他工具输出预算、角色、sandbox、审批方式和 session 绑定保持现有行为。该设置保障来源交付，不替代 Skill 精简或证明业务判断正确；验证及发布记录见 `docs/task-skill-native-output-validation.md`。
 
 System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；agent_cli.read_system_action_contract(capability, operation) 保留动作表外的全部原规范正文，只返回选定能力／操作的动作表行；只给 capability 时返回该能力的全部操作。原有角色、identity、payload、target、回执和完成条件保持完整，不返回其他操作的表行。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。Codex Consumer/Audit 使用固定的 app/schemas/consumer_agent_native_output.schema.json 与 audit_agent_native_output.schema.json 通过 --output-schema 约束原生结构。该投影展开顶层引用、要求全部固定字段并关闭额外属性；动态 JSON 对象以 entries(key,value) 表示，嵌套值保持递归 JSON 类型，服务按原 schema 定位无损还原并拒绝重复键。原生不支持的 oneOf/allOf/条件组合只从原生结构投影中省略，完整业务 Pydantic 模型及验证保持原样；动作目标、payload、审核 digest、执行和持久化结果仍是原有对象。原生字段顺序先提供已有来源事实和判断依据，再提供动作，最终摘要置后；字段含义与业务规则不变。Claude/Friday 保留原有输出格式。每轮 Codex Task 追加原生格式说明，因此已有 session 也能使用新格式，不重置会话。运行期间 runtime.prompt 记录实际提交 Task，原生格式作为独立分段记录来源与长度。Settings 当前预览仅对 Codex 来源分离精确的服务格式附录，并按所选路线追加一次当前格式；Claude 业务正文不剥离。已记录但无法确定的格式边界显示不可用；历史原文保持原记录，不按原文长度切脱敏正文。
@@ -2403,3 +2405,44 @@ current_action_plan_id 指向 email_action_plans 唯一读取；当前写入不�
 该逆迁仅适用于已验证的48→49发布，与47→48索引逆迁分别匹配。
 
 Attention 的失败回复任务查询先从 `reply_tasks` 状态覆盖索引筛选 ID，再按主键读取父任务及其 current 输入；筛选阶段不读取正文或连接输入表。现有失败条件、排序、限制和业务展示保持不变。
+
+
+## Unified core run storage (Store 2026-10-11.2)
+
+第四期4A将逻辑 Agent run、provider attempt、服务状态事件存入同一物理 `runs` 表，
+`record_type` 区分三个原有记录类型。原有公共ID、workload key、代际、revision、turn、
+父子关系和原生 session／transcript 范围保持准确；DAO仍返回原合同。逻辑 run 的物理ID
+等于公共ID，迁移后的 provider／状态事件以 `legacy_key` 返回原公共ID；新增记录从捕获
+的最大ID／序列以上分配。类型专有列只对所属类型应用原默认值和约束，其他类型为NULL。
+现有 Consumer／Audit 唯一性、provider session／lineage／lease 约束及外键的逻辑run
+类型范围保留。4A的 `task_id` 仍直接引用原 `reply_tasks`，后续4B才统一任务容器。
+
+旧 `agent_runs`、`agent_runtime_attempts`、`agent_run_state_events` 及已为空的
+`agent_run_events` 物理表删除，不创建旧表view或长期双写。`final_result_json`／
+`result_envelope_json` 不再作为物理列；准确过程及原生输出继续只从CLI trajectory／
+运行中RAM读取，缺少准确原生引用时仍返回不可用。必要服务错误状态、采用的业务结果、
+执行回执和外部动作结果继续按原合同保存。
+
+配对发布只支持已验证的Store `2026-10-11.1→2026-10-11.2` 和当前fresh初始化；
+发布前quiet读取显式支持本次旧／新源布局，运行中查询统一读取 `runs`。停止窗口捕获
+原DDL、索引、触发器、序列、schema marker和既有FK发现；逆迁恢复这些声明并保留
+replacement新增的记录、业务结果和回执，不用旧数据库文件覆盖。发布失败沿用
+停止replacement、逆迁、恢复旧代码、启动及health验证的既有顺序。Email schema50
+本单元不变，其他未验证的同时schema变化不能合并发布。
+正迁在第一次结构或行修改前核对实际11.1四张退休源表的19项显式table/index/trigger
+声明，保留SQL字面量与内部空白。未知或缺失声明、同列但约束不同的源均拒绝；捕获
+原DDL用于逆迁，不意味着接受任意历史变体。其他表既有回执外键及其索引／触发器按
+原声明重建，仍保留其数据和行为。
+
+当前Store版本且 `runs` 核心声明准确时，缺少已声明的索引／触发器或其他既有表
+仍走原初始化补齐路径，保留原修复行为和业务行。核心声明、索引或触发器定义不匹配，
+或旧／新核心表混存时，初始化拒绝该未验证布局；不把它当作fresh库部分建表。
+核心schema manifest核对本期实际表声明、索引与触发器，缺失对象不能被标记为current。
+声明比较保留SQL字符串字面量大小写，仅去掉两端空白；当前布局的预期声明由同一
+DDL helper在一次性内存库中生成。缺失对象可补齐，已有对象定义改变不能被补齐路径掩盖。
+
+4A三个整数源ID由唯一 `(CAST(legacy_key AS INTEGER), record_type)` 索引保留
+各自身份范围，显式新key写为原整数的规范字符串。索引先按数字ID排序，按parent或
+workload查provider引用时沿用范围索引并在范围内按原public ID排序；不扫描整个
+provider历史，不改成物理ID排序。取消重复TEXT唯一索引，没有增加覆盖索引。
+此规则限定本期三个实际整数ID类型，后续UUID类型需采用实际TEXT身份约束。

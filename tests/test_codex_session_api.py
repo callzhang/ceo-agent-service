@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.run_storage import insert_run
 from app.store import AutoReplyStore
 from app.web_api.attempts import _runtime_payload
 from app.web_api.registration import register_console_routes
@@ -42,34 +43,37 @@ def _seed_task_history(store: AutoReplyStore) -> tuple[int, int]:
             ).fetchone()[0]
         )
         historical_audit_run_id = int(
-            db.execute(
-                """
-                insert into agent_runs (
-                    reply_task_id, execution_generation, role, status, codex_session_id
-                ) values (?, 'historical-generation', 'audit', 'completed', 'historical-session')
-                """,
-                (task_id,),
+            insert_run(
+                db, 'agent_runs', {
+                    'task_id': task_id,
+                    'execution_generation': 'historical-generation',
+                    'role': 'audit',
+                    'status': 'completed',
+                    'session_id': 'historical-session',
+                },
             ).lastrowid
         )
         current_consumer_run_id = int(
-            db.execute(
-                """
-                insert into agent_runs (
-                    reply_task_id, execution_generation, role, status, codex_session_id
-                ) values (?, 'current-generation', 'consumer', 'completed', 'target-session')
-                """,
-                (task_id,),
+            insert_run(
+                db, 'agent_runs', {
+                    'task_id': task_id,
+                    'execution_generation': 'current-generation',
+                    'role': 'consumer',
+                    'status': 'completed',
+                    'session_id': 'target-session',
+                },
             ).lastrowid
         )
         current_audit_run_id = int(
-            db.execute(
-                """
-                insert into agent_runs (
-                    reply_task_id, execution_generation, role, status,
-                    parent_agent_run_id, codex_session_id
-                ) values (?, 'current-generation', 'audit', 'completed', ?, 'current-audit-session')
-                """,
-                (task_id, current_consumer_run_id),
+            insert_run(
+                db, 'agent_runs', {
+                    'task_id': task_id,
+                    'execution_generation': 'current-generation',
+                    'role': 'audit',
+                    'status': 'completed',
+                    'parent_id': current_consumer_run_id,
+                    'session_id': 'current-audit-session',
+                },
             ).lastrowid
         )
         historical_attempt_id = int(

@@ -11,6 +11,7 @@ from app.codex_history import (
     _mcp_tool_result_from_event_msg, _content_text,
 )
 from app.codex_runner import _codex_home
+from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
 
 
 # Stream payloads exist only for active invocations; terminal reads use native
@@ -135,7 +136,7 @@ def terminal_cached_run_ids(db, db_path: str) -> list[int]:
     if not ids:
         return []
     active = {row[0] for row in db.execute(
-        "select id from agent_runs where status='running' and id in ("
+        f"select id from ({AGENT_RUN_SQL}) as agent_runs where status='running' and id in ("
         + ','.join('?' for _ in ids) + ')', ids)}
     return [run_id for run_id in ids if run_id not in active]
 
@@ -279,8 +280,7 @@ def read_claude_events(session_id: str, *, start_line: int, end_line: int) -> li
 
 def read_run_events(db, row) -> list[dict]:
     attempts = db.execute(
-        "select runtime_kind, session_id, transcript_reference, transcript_start, transcript_end, started_at, finished_at "
-        "from agent_runtime_attempts where agent_run_id=? and session_id<>'' order by id",
+        f"select runtime_kind, session_id, transcript_reference, transcript_start, transcript_end, started_at, finished_at from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where agent_run_id=? and session_id<>'' order by id",
         (row["id"],),
     ).fetchall()
     return read_run_events_from_attempts(row, attempts)
@@ -312,9 +312,7 @@ def read_run_event_evidence(db, row) -> tuple[list[dict], bool]:
     the caller's existing event predicate.
     """
     attempts = db.execute(
-        "select runtime_kind,session_id,transcript_start,transcript_end,status,"
-        "transcript_reference,source_session_id,first_effect_started_at "
-        "from agent_runtime_attempts where agent_run_id=? order by id", (row['id'],),
+        f'select runtime_kind,session_id,transcript_start,transcript_end,status,transcript_reference,source_session_id,first_effect_started_at from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where agent_run_id=? order by id', (row['id'],),
     ).fetchall()
     database_path = next(record[2] for record in db.execute('pragma database_list') if record[1] == 'main')
     events = live_events(str(Path(database_path).resolve()), row['id']) or []
@@ -378,8 +376,7 @@ def read_run_event_evidence(db, row) -> tuple[list[dict], bool]:
 
 def hydrate_run_events(db, row, db_path: str) -> list[dict]:
     attempts = db.execute(
-        "select runtime_kind, session_id, transcript_reference, transcript_start, transcript_end, started_at, finished_at "
-        "from agent_runtime_attempts where agent_run_id=? and session_id<>'' order by id",
+        f"select runtime_kind, session_id, transcript_reference, transcript_start, transcript_end, started_at, finished_at from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where agent_run_id=? and session_id<>'' order by id",
         (row["id"],),
     ).fetchall()
     return hydrate_run_events_from_attempts(row, attempts, db_path)
@@ -409,9 +406,7 @@ def hydrate_run_events_from_attempts(row, attempts, db_path: str) -> list[dict]:
 def read_native_result_json(db, row) -> str:
     """Project the original native JSON object without runtime validation."""
     attempts = db.execute(
-        "select runtime_kind, session_id, transcript_start, transcript_end "
-        "from agent_runtime_attempts where agent_run_id=? and status='completed' "
-        "order by id desc limit 1", (row["id"],),
+        f"select runtime_kind, session_id, transcript_start, transcript_end from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where agent_run_id=? and status='completed' order by id desc limit 1", (row["id"],),
     ).fetchone()
     return read_native_result_json_from_attempt(row, attempts)
 
