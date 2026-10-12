@@ -47,13 +47,13 @@
 
 **Tests:** test_reply_input_reference.py、test_task_store.py、test_task_agent_runtime_repair.py、test_task_semantic_import.py、test_task_project_repair.py、test_work_summary_payload.py、test_meeting_alignment_store.py、test_meeting_recovery_safety.py、test_okr_review.py、test_weekly_okr_report.py、test_native_standalone.py、dispatcher/Attention/History/Email真实调用测试。
 
-- [ ] 再核对最新生产，捕获实际源约束和4A runs结构；完成本单元目标tasks DDL及legacy公共ID映射。
-- [ ] RED证明current/claimed不同、再次领取捕获current、原input身份/provenance/JSON字符串/WSI BLOB byte-exact、terminal input不可重建、缺准确来源报不可用。
-- [ ] RED覆盖Task普通/decision_repair.N/memory_backfill/deadline_backfill不同parent namespace；应用结果/receipt与输入精简同事务；Task projection后续更新仍允许。
-- [ ] RED覆盖Meeting ready_to_send≠sent、已有主消息后继续calendar、不重新发送、旧delivery key相等；保留meeting run孤儿而不指向新类型巧合同号row。
-- [ ] RED覆盖同request多个OKR精确session/range、旧request prompt/native ID不变、原items逐列相等；weekly缓存及owner-expiry CAS不变。
-- [ ] 同时切换queue/dispatcher、恢复、raw SQL脚本、领域DAO/native定位；取消9个领域退休cache列及finish比较占位，保留状态/session/error及业务结果。
-- [ ] 根据真实source CHECK/FK/unique迁移，不把fresh模板附带新历史限制。
+- [x] 再核对最新生产，捕获实际源约束和4A runs结构；完成本单元目标tasks DDL及legacy公共ID映射。
+- [x] RED证明current/claimed不同、再次领取捕获current、原input身份/provenance/JSON字符串/WSI BLOB byte-exact、terminal input不可重建、缺准确来源报不可用。
+- [x] RED覆盖Task普通/decision_repair.N/memory_backfill/deadline_backfill不同parent namespace；应用结果/receipt与输入精简同事务；Task projection后续更新仍允许。
+- [x] RED覆盖Meeting ready_to_send≠sent、已有主消息后继续calendar、不重新发送、旧delivery key相等；保留meeting run孤儿而不指向新类型巧合同号row。
+- [x] RED覆盖同request多个OKR精确session/range、旧request prompt/native ID不变、原items逐列相等；weekly缓存及owner-expiry CAS不变。
+- [x] 同时切换queue/dispatcher、恢复、raw SQL脚本、领域DAO/native定位；取消9个领域退休cache列及finish比较占位，保留状态/session/error及业务结果。
+- [x] 根据真实source CHECK/FK/unique迁移，不把fresh模板附带新历史限制。
 - [ ] focused tests/Ruff/docs完成后按Task4验证并独立复核，再正常部署4B。
 
 ## Task 3: 4C scheduled and Workbench
@@ -79,7 +79,7 @@
 - [ ] 副本正迁后新增synthetic input/run/provider attempt/receipt及本单元涉及事件；逆迁恢复捕获的源DDL/default/index/trigger/序列/version，保留新业务事实；禁止用旧DB文件覆盖。
 - [ ] 对应本次源commit的真实旧代码在逆迁副本启动/读取/领取/恢复，再次正迁和重开通过。下一单元的旧代码是上一单元实际已部署版本，不固定使用最初f59a41d7。
 - [ ] 扩展既有schema release factory支持本次明确旧→新版本，不泛化猜测未知版本。保持停止replacement→inverse→旧代码启动的现有机制；覆盖dependencies/verification/restart/health/loaded失败阶段。
-- [ ] 分开核对Store和Email版本；本期Email50不改，任何其他会话升级需先合入/重新验证，不把双schema变更偷偷打包。
+- [ ] 分开核对Store和Email版本；本期不改Email schema；当前主线已升级Email51并合入/重新验证，任何其他会话升级需先合入/重新验证，不把双schema变更偷偷打包。
 - [ ] 专项独立复核；focused tests与远端Quality CI按实际版本完成。不给本机活服务跑全套串行pytest。
 - [ ] 推送完整commit，使用python -m app.deploy正常quiet/mutex/backup，不skip quiet、不手动kill/kickstart、不编辑生产checkout。
 - [ ] 上线读回实际SHA/PID/schema/health/queues/Attention/History、原input/结果/回执保留、新失败/卡住、native缺失呈现；新增自然业务行单独比较，不能要求所有表永久行数不变。
@@ -95,4 +95,17 @@ Task0和4A已完成。PR50的完整Quality通过并正常部署为7baa1f0e，Sto
 
 599个相关Store/发布/辅助修复测试、71个新storage/reader/manifest用例、五个故障阶段、36个脚本用例、Attention专项及合并后的84个相关测试通过；这些有重叠，不作为完整CI总数。已逐项合入主线54e6c209及验收文档ad7a6506，保留A的19个源声明校验、单次元数据读取检查及typed Task布局；额外32个源声明与6个状态投影用例通过。
 
-Meeting23/13真实字段及已知run2298→缺失job4908已复核并在隔离分支实现。核心21项、DAO9项（含修复显式updated_at遗漏）、外围定向24项通过，并完成分阶段独立规格/质量复核；组合67项也通过，数量存在重叠。六张实际生产源DDL只读校验通过；这些不代替最终一致副本或上线。六个相关fixture文件284项通过，另四项读取ps的维护恢复/竞态用例在具备权限的隔离测试环境中通过；损坏源/current布局拒绝前后全逻辑dump及user_version一致。fixture最终独立规格/质量复核通过，没有剩余P1/P2；全B最终副本及发布验收仍待完成。Meeting与OKR/weekly的核心及运行调用已完成并分阶段独立复核；当前相关fixture和完整候选验收仍进行中，组合发布4B后再实施4C。完整B最终候选仍须最新源副本/回退、相关调用方测试、独立复核、远端Quality及正常deploy/live读回。当前B没有推送或生产迁移，没有第四期容量减少声明。当前详细证据见docs/database-redesign-phase4b-validation.md。
+Meeting23/13真实字段及已知run2298→缺失job4908已复核并在隔离分支实现。核心21项、DAO9项（含修复显式updated_at遗漏）、外围定向24项通过，并完成分阶段独立规格/质量复核；组合67项也通过，数量存在重叠。六张实际生产源DDL只读校验通过；这些不代替最终一致副本或上线。六个相关fixture文件284项通过，另四项读取ps的维护恢复/竞态用例在具备权限的隔离测试环境中通过；损坏源/current布局拒绝前后全逻辑dump及user_version一致。fixture最终独立规格/质量复核通过，没有剩余P1/P2；全B最终副本及发布验收仍待完成。Meeting与OKR/weekly的核心及运行调用已完成并分阶段独立复核；当前相关fixture和完整候选验收仍进行中，组合发布4B后再实施4C。完整B最终候选仍须最新源副本/回退、相关调用方测试、独立复核、远端Quality及正常deploy/live读回。当前B已推送并创建草稿PR58，最终运行代码582fccfe；完整Quality38237197124失败（142 failed/11,866 passed），相关fixture与WeChat身份假设正在逐项修复，尚未生产迁移，没有第四期容量减少声明。最新生产来源cac3b08d的四轮完整副本/逆迁/旧代码/再次正迁通过，670项主线整合及75项后续工具描述检查通过；待远端完整CI及正常deploy/live读回。当前详细证据见docs/database-redesign-phase4b-validation.md。
+
+
+## 4C post-B-base preparation (read-only)
+
+Read-only582fccfe/copy-Store13 check confirms the current shared insert/projection/index/NULL-key paths normalize legacy_key to integer. Workbench task/turn UUIDs collide under CAST (one task group, five turn groups); add exact text-key paths and uniqueness for those two source types, retain numeric ordering/allocation for other types, and scope NULL auto-fill to numeric types. Source TEXT PRIMARY KEY permits multipleNULL keys; no invented NOT NULL constraint. Parent ownership must distinguish reply inputs from Workbench turns.
+
+Actual scalar additions: tasks add Workbench runtime_kind/provider_session_ref/archived_at, and turn client_request_id/task_sequence/user_text/stop_requested/error_code/error_detail/resume_context/execution_run_id/runtime_quiesced_run_id/started_at/completed_at. Runs add scheduled event_id/scheduled_task_id/trigger_kind/scheduled_for/dispatch_status/skip_or_error_reason/execution_kind/execution_id/dispatched_at/first_scheduled_for/occurrence_count/result_summary/snapshot_id, plus Workbench event sequence/event_type/payload_json. Reuse existing title/times/parent/status/lease/task columns only where source meaning matches.
+
+The old creator text is not source DDL: scheduled source has snapshot_id FK and no occurrence_count positivity CHECK. Preserve source event uniqueness/partial schedule uniqueness/defaults/FKs/indexes and public trigger IDs. Search cache removal must also adjust the existing external-content FTS column definition, which currently names summary_text and fts_text; retain a readable content association and inverse without moving metadata or retiring all shadow tables (Phase8 scope).
+
+Preparation snapshot counts155723 scheduled runs/sequence155726; Workbench20 tasks/37 turns/810 events; search metadata671. All final_text and five search caches are empty in that copy. These counts and DDL must be refreshed after actual B deployment; they do not authorize C migration now. Source guards, populated confirmation/attachment/artifact inverse, nullable UUID cases, event sequence/native ordinal, stop races and native search ranking remain required RED cases.
+
+Read-only C caller preflight at582fccfe identifies coordinated runtime changes beyond the main DAOs: dispatcher/adapters.py scheduled metrics/claim/lease joins; repository_updater.py and deploy_maintenance.py quiet reads; scheduled_task_recovery.py reply lineage; audit_web.py superseded-run filtering; scheduled_config_storage.py initialization/reference rewrite; store.py scheduled Attempt/History/failure/recovery and runtime snapshot readers. Outward History source label scheduled_task_runs remains unchanged. Workbench native_events.py terminal/native event reads, store.py confirmation recovery/workload-active checks, workbench/store.py confirmation joins and storage_maintenance.py turn/event compaction also need typed projections. Required old-table/index/column manifests must change with current schema; no compatibility views. Existing child NO ACTION semantics stay in place. Source pointers were independently enumerated and representative dispatcher/quiet/native/FTS paths were checked by root. No C runtime edits or provider calls occurred.
