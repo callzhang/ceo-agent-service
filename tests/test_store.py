@@ -18,8 +18,8 @@ import pytest
 import app.store as store_module
 from tests.reply_schema_fixtures import assert_store_reopen_rejected_without_mutation
 from tests.run_reader_fixtures import assert_no_core_native_storage, insert_native_run_fixture
-from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RUN_STATE_EVENT_SQL, TASK_AGENT_RUN_SQL, insert_run
-from app.task_storage import WORK_SUMMARY_INPUT_SQL, create_task_schema, insert_task, task_id_expression
+from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RUN_STATE_EVENT_SQL, SCHEDULED_RUN_SQL, TASK_AGENT_RUN_SQL, insert_run
+from app.task_storage import WORK_SUMMARY_INPUT_SQL, create_task_schema, insert_task, task_id_expression, task_physical_id
 from app.store import (
     REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
     AgentRole,
@@ -632,17 +632,14 @@ def _seed_runtime_operation_parent(
             )
         elif workload_kind == "workbench":
             task_id = "00000000-0000-0000-0000-000000000001"
-            db.execute(
-                "insert into workbench_tasks (id, title, runtime_kind) "
-                "values (?, 'Workbench task', 'codex')",
-                (task_id,),
-            )
-            db.execute(
-                "insert into workbench_turns "
-                "(id, task_id, client_request_id, task_sequence, user_text, status) "
-                "values (?, ?, 'request-1', 1, 'Inspect sales', 'running')",
-                (workload_key, task_id),
-            )
+            parent = insert_task(db, 'workbench_tasks', {
+                'legacy_key': task_id, 'title': 'Workbench task', 'runtime_kind': 'codex',
+            }).lastrowid
+            insert_task(db, 'workbench_turns', {
+                'legacy_key': workload_key, 'parent_id': parent,
+                'client_request_id': 'request-1', 'task_sequence': 1,
+                'user_text': 'Inspect sales', 'status': 'running',
+            })
         elif workload_kind == "email_unsubscribe_page":
             action_identity, _, _ = workload_key.removeprefix(
                 "email-unsubscribe-page:"
@@ -3892,11 +3889,17 @@ def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
     assert by_session["session-risk-budget"].native_reason == "native_input_unavailable"
     assert by_session["session-risk-budget"].embedding_score == 0.0
     with store._connect() as db:
+        columns = {row["name"] for row in db.execute('pragma table_info(codex_session_search_index)')}
+        assert not columns.intersection({
+            'summary_text', 'fts_text', 'embedding_json', 'embedding_model', 'embedding_updated_at',
+        })
         rows = db.execute(
-            "select summary_text, fts_text, embedding_json, embedding_model "
-            "from codex_session_search_index"
+            "select session_id,title from codex_session_search_index order by session_id"
         ).fetchall()
-        assert all(tuple(row) == ("", "", "", "") for row in rows)
+        assert [tuple(row) for row in rows] == [
+            ('session-customer-script', '客服话术'),
+            ('session-risk-budget', '上线评审'),
+        ]
         assert db.execute(
             "select count(*) from codex_session_search_fts "
             "where codex_session_search_fts match 'private'"
@@ -4157,48 +4160,25 @@ def test_store_repairs_missing_required_table_despite_current_schema_version(
         ).fetchone() == (1,)
 
 
-def test_store_adds_legacy_workbench_lease_columns_before_recovery_index(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "legacy-workbench.sqlite3"
-    with sqlite3.connect(db_path) as db:
-        db.executescript(
-            """
-            create table workbench_turns (
-                id text primary key,
-                task_id text not null,
-                client_request_id text not null unique,
-                task_sequence integer not null default 0,
-                user_text text not null,
-                status text not null,
-                stop_requested integer not null default 0,
-                final_text text not null default '',
-                error_code text not null default '',
-                error_detail text not null default '',
-                resume_context text not null default '',
-                execution_run_id text not null default '',
-                runtime_quiesced_run_id text not null default '',
-                started_at text not null default '',
-                completed_at text not null default '',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp
-            );
-            """
-        )
+def test_source13_workbench_lease_values_survive_before_recovery_index(tmp_path: Path) -> None:
+    from tests.workbench_caller_fixtures import empty_source13
+    from app.task_storage import WORKBENCH_TURN_SQL
 
+    db_path = tmp_path / "source13-workbench.sqlite3"
+    with empty_source13(db_path) as db:
+        db.execute("insert into workbench_tasks(id,title,runtime_kind) values('parent','Leases','codex')")
+        db.execute("""insert into workbench_turns(id,task_id,client_request_id,task_sequence,user_text,status,lease_owner,lease_expires_at)
+            values('turn','parent','request',1,'kept','running','original-owner','2026-10-13 00:00:00')""")
     AutoReplyStore(db_path)
-
     with sqlite3.connect(db_path) as db:
-        columns = {
-            str(row[1]) for row in db.execute("pragma table_info(workbench_turns)")
-        }
+        columns = {str(row[1]) for row in db.execute("pragma table_info(tasks)")}
         recovery_index = db.execute(
-            "select 1 from sqlite_master "
-            "where type='index' and name='idx_workbench_turns_recovery'"
+            "select 1 from sqlite_master where type='index' and name='idx_workbench_turns_recovery'"
         ).fetchone()
-
+        lease = db.execute(f"select lease_owner,lease_expires_at from ({WORKBENCH_TURN_SQL}) where id='turn'").fetchone()
     assert {"lease_owner", "lease_expires_at"} <= columns
     assert recovery_index == (1,)
+    assert lease == ("original-owner", "2026-10-13 00:00:00")
 
 
 def test_store_rechecks_schema_after_transient_database_lock(tmp_path, monkeypatch):
@@ -9563,21 +9543,18 @@ def test_resolve_errors_recovered_by_scheduled_service_command(tmp_path: Path):
             where message_id='event-failed'
             """
         )
-        db.execute(
-            """
-                insert into scheduled_task_runs (
-                    event_id, scheduled_task_id, trigger_kind, scheduled_for, first_scheduled_for,
-                    dispatch_status, snapshot_id, execution_kind, execution_id,
-                    dispatched_at
-                ) values (
-                        'event-success', ?, 'scheduled', '2026-09-10T12:01:00+00:00',
-                        '2026-09-10T12:01:00+00:00',
-                        'dispatched', ?, 'service_command', 'scan-meetings-once',
-                    '2026-09-10 12:01:00'
-                )
-            """,
-            (task.id, snapshot_id),
-        )
+        insert_run(db, 'scheduled_task_runs', {
+            'event_id': 'event-success',
+            'scheduled_task_id': task.id,
+            'trigger_kind': 'scheduled',
+            'scheduled_for': '2026-09-10T12:01:00+00:00',
+            'first_scheduled_for': '2026-09-10T12:01:00+00:00',
+            'dispatch_status': 'dispatched',
+            'snapshot_id': snapshot_id,
+            'execution_kind': 'service_command',
+            'execution_id': 'scan-meetings-once',
+            'dispatched_at': '2026-09-10 12:01:00',
+        })
 
     assert store.resolve_errors_recovered_by_scheduled_service_command() == 1
 
@@ -9615,23 +9592,24 @@ def test_resolve_errors_recovered_by_scheduled_reply_task(tmp_path: Path):
     with store._connect() as db:
         snapshot_id = intern_scheduled_config(db, ScheduledTaskSnapshot.from_task(task).to_json())
         reply_task_id = db.execute(
-            "select id from tasks where record_type='reply_tasks' and trigger_message_id='event-success'"
+            "select cast(legacy_key as integer) from tasks where record_type='reply_tasks' and trigger_message_id='event-success'"
         ).fetchone()[0]
         db.execute(
             "update tasks set status='done', updated_at='2026-09-18 12:02:00' where record_type='reply_tasks' and id=?",
-            (reply_task_id,),
+            (task_physical_id(db, 'reply_tasks', reply_task_id),),
         )
-        db.execute(
-            """
-            insert into scheduled_task_runs (
-                event_id, scheduled_task_id, trigger_kind, scheduled_for, first_scheduled_for,
-                dispatch_status, snapshot_id, execution_kind, execution_id, dispatched_at
-            ) values ('event-success', ?, 'scheduled', '2026-09-18T12:00:00Z',
-                      '2026-09-18T12:00:00Z', 'dispatched', ?, 'reply_task', ?,
-                      '2026-09-18 12:00:32')
-            """,
-            (task.id, snapshot_id, str(reply_task_id)),
-        )
+        insert_run(db, 'scheduled_task_runs', {
+            'event_id': 'event-success',
+            'scheduled_task_id': task.id,
+            'trigger_kind': 'scheduled',
+            'scheduled_for': '2026-09-18T12:00:00Z',
+            'first_scheduled_for': '2026-09-18T12:00:00Z',
+            'dispatch_status': 'dispatched',
+            'snapshot_id': snapshot_id,
+            'execution_kind': 'reply_task',
+            'execution_id': str(reply_task_id),
+            'dispatched_at': '2026-09-18 12:00:32',
+        })
     store.record_error(
         f"scheduled-task:{task.id}",
         "event-success",
@@ -11823,50 +11801,45 @@ def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_p
     stale = json.dumps({"task_id": 2})
     with store._connect() as db:
         assert store._scheduled_task_run_snapshots_are_current(db) is True
-        cols = {row["name"] for row in db.execute("pragma table_info(scheduled_task_runs)")}
+        cols = {column[0] for column in db.execute(f"select * from ({SCHEDULED_RUN_SQL}) limit 0").description}
         assert "snapshot_id" in cols
         # A JSON null value for command is a present key, not an absent one.
         for index, payload in enumerate(
             (current, json.dumps({"command": None, "required_runtime_capabilities": None}))
         ):
-            db.execute(
-                "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind,"
-                " scheduled_for, first_scheduled_for, dispatch_status, snapshot_id) "
-                "values (?, ?, 'scheduled', ?, ?, 'pending', ?)",
-                (
-                    f"evt-{index}", task.id,
-                    f"2026-09-11T0{index}:00:00+00:00",
-                    f"2026-09-11T0{index}:00:00+00:00", intern_scheduled_config(db, payload),
-                ),
-            )
+            insert_run(db, 'scheduled_task_runs', {
+                'event_id': f"evt-{index}",
+                'scheduled_task_id': task.id,
+                'trigger_kind': 'scheduled',
+                'scheduled_for': f"2026-09-11T0{index}:00:00+00:00",
+                'first_scheduled_for': f"2026-09-11T0{index}:00:00+00:00",
+                'dispatch_status': 'pending',
+                'snapshot_id': intern_scheduled_config(db, payload),
+            })
         assert store._scheduled_task_run_snapshots_are_current(db) is True
 
         # Unparseable JSON is corrupt data, not a stale schema.
-        db.execute(
-            "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind,"
-            " scheduled_for, first_scheduled_for, dispatch_status, snapshot_id) "
-            "values ('evt-bad', ?, 'scheduled', ?, ?, 'pending', ?)",
-            (
-                task.id,
-                "2026-09-11T05:00:00+00:00",
-                "2026-09-11T05:00:00+00:00",
-                intern_scheduled_config(db, "{not json"),
-            ),
-        )
+        insert_run(db, 'scheduled_task_runs', {
+            'event_id': 'evt-bad',
+            'scheduled_task_id': task.id,
+            'trigger_kind': 'scheduled',
+            'scheduled_for': '2026-09-11T05:00:00+00:00',
+            'first_scheduled_for': '2026-09-11T05:00:00+00:00',
+            'dispatch_status': 'pending',
+            'snapshot_id': intern_scheduled_config(db, "{not json"),
+        })
         assert store._scheduled_task_run_snapshots_are_current(db) is True
 
         # A snapshot missing the command keys is what the check must catch.
-        db.execute(
-            "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind,"
-            " scheduled_for, first_scheduled_for, dispatch_status, snapshot_id) "
-            "values ('evt-stale', ?, 'scheduled', ?, ?, 'pending', ?)",
-            (
-                task.id,
-                "2026-09-11T06:00:00+00:00",
-                "2026-09-11T06:00:00+00:00",
-                intern_scheduled_config(db, stale),
-            ),
-        )
+        insert_run(db, 'scheduled_task_runs', {
+            'event_id': 'evt-stale',
+            'scheduled_task_id': task.id,
+            'trigger_kind': 'scheduled',
+            'scheduled_for': '2026-09-11T06:00:00+00:00',
+            'first_scheduled_for': '2026-09-11T06:00:00+00:00',
+            'dispatch_status': 'pending',
+            'snapshot_id': intern_scheduled_config(db, stale),
+        })
         assert store._scheduled_task_run_snapshots_are_current(db) is False
 
 
@@ -13175,18 +13148,22 @@ def test_scheduled_task_ids_for_reply_tasks_maps_only_reply_task_runs(tmp_path: 
     with store._connect() as db:
         from app.scheduled_config_storage import intern_scheduled_config
         snapshot_id = intern_scheduled_config(db, snapshot_json)
-        db.execute(
-            "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind, "
-            "scheduled_for, first_scheduled_for, dispatch_status, execution_kind, "
-            "execution_id, created_at, snapshot_id) values "
-            "('e1', 13, 'scheduled', '2026-10-01T12:00:00+00:00', "
-            "'2026-10-01T12:00:00+00:00', 'dispatched', 'reply_task', '9001', "
-            "'2026-10-01T12:00:00+00:00', ?), "
-            "('e2', 13, 'scheduled', '2026-10-01T13:00:00+00:00', "
-            "'2026-10-01T13:00:00+00:00', 'dispatched', 'service_command', 'produce-once', "
-            "'2026-10-01T13:00:00+00:00', ?)",
-            (snapshot_id, snapshot_id),
-        )
+        for event_id, scheduled_for, execution_kind, execution_id in (
+            ('e1', '2026-10-01T12:00:00+00:00', 'reply_task', '9001'),
+            ('e2', '2026-10-01T13:00:00+00:00', 'service_command', 'produce-once'),
+        ):
+            insert_run(db, 'scheduled_task_runs', {
+                'event_id': event_id,
+                'scheduled_task_id': 13,
+                'trigger_kind': 'scheduled',
+                'scheduled_for': scheduled_for,
+                'first_scheduled_for': scheduled_for,
+                'dispatch_status': 'dispatched',
+                'execution_kind': execution_kind,
+                'execution_id': execution_id,
+                'created_at': scheduled_for,
+                'snapshot_id': snapshot_id,
+            })
 
     mapped = store.scheduled_task_ids_for_reply_tasks((9001, 9002))
 

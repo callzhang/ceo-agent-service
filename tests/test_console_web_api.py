@@ -27,6 +27,7 @@ from app.email_store import EmailStore
 from app.email_classifier_learning import EmailClassifierLearningService
 from app.email_model_registry import EmailModelRegistry
 from app.store import AutoReplyStore
+from app.run_storage import insert_run
 from app.setup_wizard_models import SetupWizardEvent
 from app.wechat.models import WechatReplyScope
 from tests.test_audit_web import seed_attempt
@@ -953,14 +954,18 @@ def test_console_history_sends_a_running_scheduled_task_to_its_own_run_history(
         from app.scheduled_config_storage import intern_scheduled_config
 
         snapshot_id = intern_scheduled_config(db, '{}')
-        db.execute(
-            "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind, "
-            "scheduled_for, first_scheduled_for, dispatch_status, snapshot_id, "
-            "execution_kind, execution_id, created_at) values ('event-91606', 13, "
-            "'scheduled', '2026-09-26T19:00:00Z', '2026-09-26T19:00:00Z', 'dispatched', "
-            "?, 'reply_task', ?, '2026-09-26T19:00:00Z')",
-            (snapshot_id, str(task.id)),
-        )
+        insert_run(db, 'scheduled_task_runs', {
+            'event_id': 'event-91606',
+            'scheduled_task_id': 13,
+            'trigger_kind': 'scheduled',
+            'scheduled_for': '2026-09-26T19:00:00Z',
+            'first_scheduled_for': '2026-09-26T19:00:00Z',
+            'dispatch_status': 'dispatched',
+            'snapshot_id': snapshot_id,
+            'execution_kind': 'reply_task',
+            'execution_id': str(task.id),
+            'created_at': '2026-09-26T19:00:00Z',
+        })
 
     with _client(tmp_path) as client:
         rows = client.get("/api/console/history?object_type=queue").json()["items"]

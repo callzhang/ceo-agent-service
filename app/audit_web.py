@@ -1,3 +1,4 @@
+from app.run_storage import SCHEDULED_RUN_SQL
 
 from app.task_storage import MEETING_JOB_SQL, OKR_REQUEST_SQL, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
 from app.store import REPLY_TASK_CURRENT_SQL
@@ -3412,12 +3413,12 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                   -- authoritative recovery for an older scheduled reply task.
                   and not exists (
                       select 1
-                      from scheduled_task_runs as stale_run
+                      from ({SCHEDULED_RUN_SQL}) as stale_run
                      where stale_run.execution_kind='reply_task'
                        and cast(stale_run.execution_id as integer)=reply_tasks.id
                        and exists (
                            select 1
-                           from scheduled_task_runs as later_run
+                           from ({SCHEDULED_RUN_SQL}) as later_run
                            join ({REPLY_TASK_SQL}) as later_task
                              on later_run.execution_kind='reply_task'
                             and cast(later_run.execution_id as integer)=later_task.id
@@ -3476,14 +3477,21 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 current_generation_filter = (
                     f"and not {external_task_error_sql(error_column)}"
                 )
+            candidate_sql = (
+                f"select cast(legacy_key as integer) from tasks "
+                f"where record_type='work_summary_inputs' "
+                f"and lower({status_column}) in ({status_placeholders})"
+                if table == "work_summary_inputs"
+                else f"select id from {source_table} "
+                     f"where lower({status_column}) in ({status_placeholders})"
+            )
             sql = f"""
                 select id, {status_column} as status, {context_column} as context,
                        {summary_column} as summary, {updated_column} as updated_at,
                        {error_column} as error
                 from {source_table}
                 where id in (
-                    select id from {source_table}
-                    where lower({status_column}) in ({status_placeholders})
+                    {candidate_sql}
                 )
                   {current_generation_filter}
                 order by
@@ -3708,21 +3716,23 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                   )
                   and not exists (
                     select 1
-                    from scheduled_task_runs as stale_run
-                   where (
-                         stale_run.event_id=error_event.message_id
-                         or (
-                             stale_run.id=cast(substr(
-                                 error_event.conversation_id,
-                                 length('scheduled-task-run:') + 1
-                             ) as integer)
-                             and error_event.conversation_id=
-                                 'scheduled-task-run:' || cast(stale_run.id as text)
-                         )
-                   )
-                     and exists (
+                    from (
+                        select event_run.id, event_run.scheduled_task_id
+                        from ({SCHEDULED_RUN_SQL}) as event_run
+                        where event_run.event_id=error_event.message_id
+                        union all
+                        select identity_run.id, identity_run.scheduled_task_id
+                        from ({SCHEDULED_RUN_SQL}) as identity_run
+                        where identity_run.id=cast(substr(
+                            error_event.conversation_id,
+                            length('scheduled-task-run:') + 1
+                        ) as integer)
+                          and error_event.conversation_id=
+                              'scheduled-task-run:' || cast(identity_run.id as text)
+                    ) as stale_run
+                    where exists (
                          select 1
-                         from scheduled_task_runs as later_run
+                         from ({SCHEDULED_RUN_SQL}) as later_run
                          join ({REPLY_TASK_SQL}) as later_task
                            on later_run.execution_kind='reply_task'
                           and cast(later_run.execution_id as integer)=later_task.id

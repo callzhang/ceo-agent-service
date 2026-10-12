@@ -8,7 +8,8 @@ import pytest
 from app.run_storage import insert_run
 from app.store import AutoReplyStore
 from app.task_storage import insert_task, task_id_expression
-from tests.test_meeting_task_storage import forward, meeting_source
+from tests.test_meeting_task_storage import meeting_source
+from tests.test_task_storage_readers import original_rows_source13
 
 
 def _job(store: AutoReplyStore, *, legacy_key: int, status: str = "pending") -> int:
@@ -176,9 +177,7 @@ def test_meeting_run_public_id_can_differ_from_physical_and_wrong_type_is_exclud
 
 def test_historical_orphan_preserves_public_job_id_without_a_ghost_parent(tmp_path):
     path = tmp_path / "source.db"
-    db = meeting_source(path)
-    forward(db)
-    db.close()
+    original_rows_source13(path, meeting_source)
     store = AutoReplyStore(path)
 
     orphan = store.get_meeting_alignment_run_metadata(2298)

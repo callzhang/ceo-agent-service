@@ -237,26 +237,22 @@ def _scheduled_run(
     from app.scheduled_config_storage import intern_scheduled_config
 
     at = f"2026-09-25T08:{minute:02d}:00+00:00"
-    db.execute(
-        "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind, "
-        "scheduled_for, first_scheduled_for, dispatch_status, skip_or_error_reason, "
-        "snapshot_id, execution_kind, execution_id, created_at, dispatched_at, "
-        "result_summary) values (?, ?, 'scheduled', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            f"event-{task_id}-{minute}",
-            task_id,
-            at,
-            at,
-            status,
-            reason,
-            intern_scheduled_config(db, json.dumps({"name": name, "command": command}, ensure_ascii=False)),
-            "service_command" if status == "dispatched" else "",
-            command if status == "dispatched" else "",
-            at,
-            at if status != "pending" else None,
-            summary,
-        ),
-    )
+    from app.run_storage import insert_run
+    insert_run(db, "scheduled_task_runs", {
+        "event_id": f"event-{task_id}-{minute}",
+        "scheduled_task_id": task_id,
+        "trigger_kind": "scheduled",
+        "scheduled_for": at,
+        "first_scheduled_for": at,
+        "dispatch_status": status,
+        "skip_or_error_reason": reason,
+        "snapshot_id": intern_scheduled_config(db, json.dumps({"name": name, "command": command}, ensure_ascii=False)),
+        "execution_kind": "service_command" if status == "dispatched" else "",
+        "execution_id": command if status == "dispatched" else "",
+        "created_at": at,
+        "dispatched_at": at if status != "pending" else None,
+        "result_summary": summary,
+    })
 
 
 def test_service_command_runs_appear_with_their_result_and_recovery(tmp_path: Path):

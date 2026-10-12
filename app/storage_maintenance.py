@@ -145,16 +145,11 @@ def compact_native_duplicates(database: Path) -> dict[str, int]:
     counts = {"event_runs_cleared": 0, "payload_fields_cleared": 0, "payload_bytes_removed": 0}
     columns = {
         "reply_attempts": {"audit_tool_events_json": "[]"},
-        "workbench_turns": {"final_text": "", "error_detail": ""},
-        "codex_session_search_index": {
-            "summary_text": "", "fts_text": "", "embedding_json": "",
-            "embedding_model": "", "embedding_updated_at": "",
-        },
+        "tasks": {"error_detail": ""},
     }
     with closing(sqlite3.connect(database, timeout=60)) as db:
         db.execute("begin immediate")
         _clear_workbench_event_bodies(db, counts)
-        db.execute("insert into codex_session_search_fts(codex_session_search_fts) values('delete-all')")
         for table, fields in columns.items():
             for column, empty in fields.items():
                 counts["payload_bytes_removed"] += db.execute(
@@ -165,8 +160,7 @@ def compact_native_duplicates(database: Path) -> dict[str, int]:
                     f"update {table} set {column}=? where {column}<>?", (empty, empty)
                 ).rowcount
         db.execute(
-            "insert into codex_session_search_fts(rowid,title,summary_text,fts_text) "
-            "select id,title,summary_text,fts_text from codex_session_search_index"
+            "insert into codex_session_search_fts(codex_session_search_fts) values('rebuild')"
         )
         if db.execute("pragma quick_check").fetchone()[0] != "ok":
             raise RuntimeError("database integrity check failed")
@@ -183,8 +177,8 @@ def _clear_workbench_event_bodies(db: sqlite3.Connection, counts: dict[str, int]
     from app.workbench.native_events import AGENT_EVENTS
 
     rows = db.execute(
-        "select id,turn_id,event_type,payload_json from workbench_events "
-        "order by turn_id,sequence,id"
+        "select id,task_id,event_type,payload_json from runs where record_type='workbench_events' "
+        "order by task_id,sequence,id"
     ).fetchall()
     turn_id = None
     completed = 0
@@ -217,7 +211,7 @@ def _clear_workbench_event_bodies(db: sqlite3.Connection, counts: dict[str, int]
             continue
         counts["payload_fields_cleared"] += 1
         counts["payload_bytes_removed"] += max(0, len(raw.encode("utf-8")) - len(encoded.encode("utf-8")))
-        db.execute("update workbench_events set payload_json=? where id=?", (encoded, event_id))
+        db.execute("update runs set payload_json=? where record_type='workbench_events' and id=?", (encoded, event_id))
 
 
 def main() -> None:

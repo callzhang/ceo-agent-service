@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.run_storage import SCHEDULED_RUN_SQL
 
 from collections import deque
 from dataclasses import replace
@@ -397,7 +398,7 @@ def test_trigger_dispatches_once_and_generic_reply_adapter_excludes_it(tmp_path)
     with store._connect() as db:
         visible = db.execute(
             "select runs.dispatch_status from tasks "
-            "join scheduled_task_runs runs on runs.execution_kind='reply_task' "
+            f"join ({SCHEDULED_RUN_SQL}) runs on runs.execution_kind='reply_task' "
             "and runs.execution_id=tasks.legacy_key "
             "where tasks.record_type='reply_tasks' and tasks.channel='scheduled'"
         ).fetchall()
@@ -412,7 +413,7 @@ def test_atomic_dispatch_rolls_back_source_link_run_and_ledger_on_interrupt(tmp_
     with store._connect() as db:
         db.execute(
             "create trigger abort_scheduled_dispatch before update of dispatch_status "
-            "on scheduled_task_runs when new.dispatch_status='dispatched' "
+            "on runs when new.record_type='scheduled_task_runs' and new.dispatch_status='dispatched' "
             "begin select raise(abort, 'interrupted'); end"
         )
     with pytest.raises(Exception, match="interrupted"):

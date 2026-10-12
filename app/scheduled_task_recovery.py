@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.run_storage import SCHEDULED_RUN_SQL
 from app.task_storage import REPLY_TASK_SQL
 
 from datetime import datetime, timezone
@@ -48,7 +49,7 @@ def close_superseded_scheduled_reply_tasks(
                 current_task.version as current_version,
                 latest_attempt.id as attempt_id
             from ({REPLY_TASK_SQL}) as task
-            join scheduled_task_runs as run
+            join ({SCHEDULED_RUN_SQL}) as run
               on run.event_id=task.trigger_message_id
              and run.execution_kind='reply_task'
              and run.execution_id=cast(task.id as text)

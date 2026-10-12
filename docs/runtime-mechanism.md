@@ -2538,3 +2538,93 @@ weekly analysis job的11个原字段、running/completed/failed CHECK和week_end
 
 
 Email task visibility in Store13: unsubscribe classification lists, classification detail/in-flight progress, verified entry URL lineage and summary queue counts detect the physical tasks/runs tables. They read public task/run IDs through the typed projections and resolve canonical inputs through the physical current_input_id reference. A standalone EmailStore without the shared task tables retains its existing behavior. Existing receipt/lineage/URL validation and redaction rules remain; this change fixes the physical-table presence check and adds no policy.
+
+
+## Phase4C core storage (Store 2026-10-12.1)
+
+隔离候选的核心 schema 将 scheduled_task_runs 和 workbench_events 存入 runs，
+workbench_tasks 和 workbench_turns 存入 tasks；record_type 保留来源身份。Workbench
+公共 TEXT ID 按原值保留，内部父引用使用物理整数 ID；原任务/run ID 不重写。
+scheduled/Workbench CRUD 与 reader 切换已完成并通过独立规格及质量复核。
+生产是否启用本期结构，以本期验收文档中的实际部署读回为准。
+
+构造器支持精确已验证 source13 到本期候选的事务迁移；无标记/未知来源包含任一退休源表
+时，在初始化修改之前拒绝。C 源 tasks/runs 的完整对象清单也必须符合已捕获的声明，
+不能静默删除额外源触发器或索引。当前 schema 已有的缺失对象修复规则保持不变。
+
+本期只取消全空的 Workbench final_text 与搜索 summary_text、fts_text、embedding_json、
+embedding_model、embedding_updated_at；非空或 NULL 值在迁移修改之前拒绝。用户输入、
+恢复上下文、错误详情、原始事件 payload、附件/工件/confirmation 结果保留；三个子表仍在
+原表，父外键映射保留原 NO ACTION 语义。七列搜索元数据与 title-only external-content
+FTS 保留，native 检索排序算法不变。Workbench DTO/native/RAM 的呈现已通过相关调用测试。
+
+配对回退通过当前数据逆迁，保留迁移后业务事实，而非用旧数据库文件覆盖。原 DDL、
+marker/timestamp、分配水位、TEXT 源表与保留子表的 rowid，以及原 FTS shadow 状态由
+本次发布的临时内存证据准确恢复；新/变更/删除搜索元数据只调整相应差异。
+不持久保存另一份 trajectory 或索引快照。实际副本迁移、逆迁、新事实保留、旧代码
+启动及五种离线发布失败阶段已通过6b43a93b来源验证。最终验收还需绑定最新生产来源，
+通过完整CI、正常部署和线上读回；详见 database-redesign-phase4c-validation.md。
+
+
+## Phase4C scheduled callers
+
+候选的定时触发 DAO、dispatcher、恢复、Attempt/History、运行路由引用读取已切换到
+runs 中 record_type=scheduled_task_runs 的记录。查询返回原公共 scheduled ID；写入按
+record_type 和公共 legacy key 精确定位。execution_id 继续保留原 TEXT 值与 execution_kind
+含义，服务命令不会被制造为回复任务。History 对外的 source 标签仍是 scheduled_task_runs。
+
+原事件唯一、定时自然键、overlap 的 first/last/count、领取 CAS、租约、派发事务和
+回复关联规则不变。配置版本和冻结 snapshot_json 留在 scheduled_task_config_versions，
+snapshot_id 保留原 FK；当前初始化不再建立退休 scheduled 表，现有配置默认值修正使用
+typed 父引用。历史 Attempt 和 skipped 快照不因运行路由改名而重写。
+
+正常 deploy 等待读者明确支持已验证的2026-10-11.2 / 2026-10-11.3 来源
+和2026-10-12.1候选。来源判断读取实际 schema；旧标记同时含 C runs 声明与旧表时拒绝，
+包括没有 scheduled 行的混合库。真正历史来源和当前候选沿用原忙碌/租约谓词，
+只读检查不修改行、schema 或数据库 bytes。Workbench CRUD/native/API 仍是后续单元，
+本段不表示完整 C 已发布。
+
+
+Phase4C 的初始化修复边界：旧分散 Workbench0.7/0.8/0.9表缺列后自动补
+resume_context、task_sequence、turn控制和附件client_request_id/content_sha256的路径
+已退休。当前变更只支持准确source13正迁和完整current14声明；缺失必要列的库拒绝，
+不通过补默认值猜测原数据。已有缺失索引/触发器修复继续支持。源13迁移须保留
+原user_text、私有恢复上下文、task_sequence、控制状态、附件标识/hash/path/文件bytes；
+原本同时间戳但不同UUID的turn按原sequence排序。测试覆盖真实来源保留、当前不完整
+声明的非修改拒绝与并发索引修复，不以半旧半新的schema冒充来源。
+
+
+## Phase4C Workbench callers
+
+Workbench task/turn 的CRUD、全局client_request幂等、task_sequence、单active turn、
+claim/lease/stop/control/recovery保留原合同。读者从typed tasks投影公共TEXT ID，
+写者按record_type+legacy_key定位；附件/工件/确认表存储物理父整数，DTO仍返回公共
+task/turn ID。事件在runs中按公共numeric legacy cursor分页和配对，物理run ID、
+turn sequence及native ordinal各自保持原含义；先按物理父筛选再投影cursor以使用索引。
+
+不再写入物理final_text；已有native/RAM与Codex/Claude/Friday读取继续提供正文。
+本单元不改API/UI契约、工具权限、确认政策或新的保留期限。准确source13迁移保留
+pending confirmation，原有业务recovery是独立调用，不作为迁移副作用。
+相关停止/完成竞态、late write、quiescence和恢复行为仍由原机制管理。
+
+旧列补齐测试已换成真实source13值保留和当前不完整schema非修改拒绝；索引修复
+继续以两次并发构造、原外键及附件bytes验证。缺失辅助对象的既有初始化路径仍会
+执行conversation-session回填并更新schema marker时间；它不承诺所有业务行逐字不变。
+最终发布仍须最新来源绑定、完整CI、正常部署与线上读回；本段不表示已部署。
+
+
+Phase4C Attention 定时错误读取以原event_id或规范scheduled-task-run:<公共整数ID>
+分别定位候选，再应用原同日程较新dispatched且回复done/skipped的恢复谓词。
+两路以UNION ALL组合，事件身份和conversation身份互相矛盾时仍沿用原“任一路匹配”
+语义；不新增身份收紧政策。定位使用既有event/public-ID索引，不新增schema/index/helper。
+原2,000VM步预算和只读合同保留；采样进度回调数不表示精确总指令数。
+
+
+Phase4C 查询性能边界：数字ID投影显式包含已有部分索引的类型条件，SQLite可使用
+idx_tasks_public_id完成按公共ID查找；TEXT投影不加入此条件。Work Attention先从
+work_summary_inputs类型的scalar状态记录筛出公共ID，再读取所选输入正文；无关类型
+增长不扩大其候选扫描。会议Memory入队的missing候选、主键连接和事务复核使用
+现有物理任务ID；meeting_memory_write_events仍保存物理父FK，对外还原公共ID，
+已入队记录正文不参与候选检查。状态、排序、limit、去重与竞争复核规则不变。
+
+Phase4C已于2026-10-12通过PR61/05ca33b1正常上线，生产Store2026-10-12.1、Email51、PID43265及数据/队列读回已验证。具体来源、字段映射、回退、CI、容量和清理边界见docs/database-redesign-phase4c-validation.md；上文候选阶段的时间性验收说明以本条及验收文档最终回执为准。

@@ -6,6 +6,8 @@ import pytest
 
 from app.run_storage import insert_run
 from app.workbench import native_events
+from app.task_storage import WORKBENCH_TURN_SQL, task_id_expression
+from app.run_storage import WORKBENCH_EVENT_SQL
 from app.workbench.store import WorkbenchStore
 
 
@@ -39,7 +41,7 @@ def test_workbench_tool_rows_store_only_native_ordinal_and_replay_exact_native_r
     store, turn_id, first, second = _turn_with_tools(tmp_path)
     with store._connect() as db:
         rows = db.execute(
-            "select payload_json from workbench_events where id in (?,?) order by id",
+            f"select payload_json from ({WORKBENCH_EVENT_SQL}) as workbench_events where id in (?,?) order by id",
             (first.id, second.id),
         ).fetchall()
     assert all("/private/source" not in row["payload_json"] for row in rows)
@@ -140,8 +142,8 @@ def test_agent_event_rows_and_final_text_are_native_only(tmp_path: Path):
         store.append_event(turn.id, sequence=sequence, event_type=event_type, payload=payload, owner="worker")
     store.complete_turn(turn.id, status="completed", final_text="SECRET_FINAL", owner="worker")
     with store._connect() as db:
-        rows = db.execute("select payload_json from workbench_events where turn_id=?", (turn.id,)).fetchall()
-        final = db.execute("select final_text from workbench_turns where id=?", (turn.id,)).fetchone()[0]
+        rows = db.execute(f"select payload_json from ({WORKBENCH_EVENT_SQL}) as workbench_events where turn_id=?", (turn.id,)).fetchall()
+        final = db.execute(f"select final_text from ({WORKBENCH_TURN_SQL}) as workbench_turns where id=?", (turn.id,)).fetchone()[0]
     stored = " ".join(row[0] for row in rows)
     for secret in ("SECRET_TEXT", "SECRET_THINKING", "SECRET_FILE", "SECRET_PATH", "SECRET_NAME", "SECRET_NATIVE", "SECRET_ARGS", "SECRET_OUTPUT", "SECRET_META", "SECRET_FINAL"):
         assert secret not in stored
@@ -337,8 +339,7 @@ def test_native_messages_replay_as_completed_messages_with_stable_event_pages(tm
             "update runs set transcript_end=4 where record_type='agent_runtime_attempts' and workload_kind='workbench' and workload_key=?", (turn.id,)
         )
         db.execute(
-            "update workbench_events set payload_json='{}' "
-            "where turn_id=? and event_type='text_delta'", (turn.id,)
+            f"update runs set payload_json='{{}}' where record_type='workbench_events' and task_id={task_id_expression('workbench_turns', '?')} and event_type='text_delta'", (turn.id,)
         )
     legacy = WorkbenchStore(store.path).events_after(turn.id)
     assert [event.payload["text"] for event in legacy if event.event_type == "text_delta"] == [
@@ -466,7 +467,7 @@ def test_native_reasoning_and_file_change_recover_without_sqlite_copy(tmp_path: 
         "status": "completed", "path": "/private/new.txt", "filename": "new.txt", "change": "add",
     }
     with store._connect() as db:
-        rows = db.execute("select payload_json from workbench_events where turn_id=? and event_type in ('thinking_summary','file_changed') order by id", (turn.id,)).fetchall()
+        rows = db.execute(f"select payload_json from ({WORKBENCH_EVENT_SQL}) as workbench_events where turn_id=? and event_type in ('thinking_summary','file_changed') order by id", (turn.id,)).fetchall()
     assert [json.loads(row[0]) for row in rows] == [{"native_ordinal": 1}, {"native_ordinal": 1}]
 
 
@@ -483,7 +484,7 @@ def test_invalid_tool_completion_sequence_keeps_started_slot_for_retry(tmp_path:
     store.append_event(turn.id, sequence=3, event_type="tool_completed",
                        payload={"tool_call_id": "stdout-id", "output": "private"}, owner="worker")
     with store._connect() as db:
-        row = db.execute("select payload_json from workbench_events where id=?", (started.id,)).fetchone()
+        row = db.execute(f"select payload_json from ({WORKBENCH_EVENT_SQL}) as workbench_events where id=?", (started.id,)).fetchone()
     assert json.loads(row[0]) == {"native_ordinal": 1}
     store.request_stop(turn.id)
     assert not any(path == str(store.path.resolve()) for path, _ in native_events._live_payloads)
@@ -501,7 +502,7 @@ def test_terminal_cache_release_follows_commit_and_rollback_keeps_live_observati
     with pytest.raises(RuntimeError, match="rollback"):
         with store._connect() as db:
             db.execute("begin immediate")
-            db.execute("update workbench_turns set status='failed' where id=?", (turn.id,))
+            db.execute("update tasks set status='failed' where record_type='workbench_turns' and legacy_key=?", (turn.id,))
             raise RuntimeError("rollback")
     assert store.get_turn(turn.id).status.value == "running"
     assert store.events_after(turn.id)[1].payload["text"] == "observed"

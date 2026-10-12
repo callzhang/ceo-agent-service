@@ -10,6 +10,7 @@ from app.agent_cron.models import ScheduledTaskSnapshot
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.config import read_env_file
 from app.store import AgentRole, AutoReplyStore
+from app.run_storage import SCHEDULED_RUN_SQL
 from tests.test_console_web_api import _client
 
 
@@ -36,7 +37,7 @@ def _run(store: AutoReplyStore, task_id: int, minutes: int, status: str):
     )
     with store._connect() as db:
         db.execute(
-            "update scheduled_task_runs set dispatch_status=? where id=?",
+            "update runs set dispatch_status=? where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
             (status, run.id),
         )
     return run.id
@@ -45,7 +46,7 @@ def _run(store: AutoReplyStore, task_id: int, minutes: int, status: str):
 def _snapshot_runtime(store: AutoReplyStore, run_id: int) -> str:
     with store._connect() as db:
         row = db.execute(
-            "select snapshot_json from scheduled_task_config_versions where id=(select snapshot_id from scheduled_task_runs where id=?)", (run_id,)
+            f"select snapshot_json from scheduled_task_config_versions where id=(select snapshot_id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?)", (run_id,)
         ).fetchone()
     return ScheduledTaskSnapshot.from_json(str(row["snapshot_json"])).runtime_id
 

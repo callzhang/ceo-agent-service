@@ -98,8 +98,7 @@ def test_failed_agent_task_is_closed_after_service_command_migration(
             (scheduled_run.event_id,),
         ).fetchone()["id"]
         db.execute(
-            "update scheduled_task_runs set dispatch_status='dispatched', "
-            "execution_kind='reply_task', execution_id=? where id=?",
+            "update runs set dispatch_status='dispatched', execution_kind='reply_task', execution_id=? where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
             (str(task_id), scheduled_run.id),
         )
 
