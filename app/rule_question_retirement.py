@@ -1,5 +1,6 @@
 """Explicitly retire one obsolete task-class question; never decide its business."""
 
+from app.task_storage import REPLY_TASK_SQL
 import argparse
 import hashlib
 import json
@@ -55,7 +56,7 @@ def _retire_in_connection(db: sqlite3.Connection, attempt_id: int, *, authority:
                r.role, r.status as run_status,
                t.status as task_status, t.execution_generation as task_generation
         from reply_attempts a join ({AGENT_RUN_SQL}) r on r.id=a.agent_run_id
-        join reply_tasks t on t.id=r.reply_task_id
+        join ({REPLY_TASK_SQL}) t on t.id=r.reply_task_id
         join business_object_tasks current_object
           on current_object.business_object_key=t.business_object_key
          and current_object.reply_task_id=t.id

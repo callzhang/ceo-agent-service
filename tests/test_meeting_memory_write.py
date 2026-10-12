@@ -330,7 +330,7 @@ def test_sent_meetings_are_queued_once_and_written_to_memory(tmp_path: Path) -> 
             (event["id"],),
         ).fetchone()
         meeting = db.execute(
-            "select status from meeting_alignment_jobs where id=?", (job_id,)
+            "select status from tasks where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?", (job_id,)
         ).fetchone()
     assert dict(written) == {"status": "done", "memory_id": "meeting-memory-7"}
     assert meeting["status"] == "sent"

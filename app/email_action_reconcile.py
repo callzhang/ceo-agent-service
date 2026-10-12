@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import threading
 import time
+import sqlite3
+from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
 from app.email_classifier_contracts import EmailAction
@@ -26,7 +28,7 @@ from app.email_provider_actions import (
     ProviderMessageState,
     _changed_locator,
 )
-from app.email_store import EmailStore, FailedDirectAction
+from app.email_store import EmailStore, FailedDirectAction, email_imap_configuration_snapshot
 
 RECONCILED_OPERATION = "reconciled_readback"
 RECONCILED_RESULT_PREFIX = "reconciled:"
@@ -51,6 +53,22 @@ MAX_BACKOFF_SECONDS = 30.0
 # held a run for 30 minutes, so the wall clock is enforced here as well.
 DEFAULT_MESSAGE_TIMEOUT_SECONDS = 60.0
 PROGRESS_EVERY = 25
+
+
+class ExistingReadOnlyEmailStore(EmailStore):
+    """Open an existing validated database without schema initialization."""
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self.training_run_id = None
+        with self._connect() as db:
+            self._validate_durable_state(db)
+
+    def _open_connection(self) -> sqlite3.Connection:
+        db = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)
+        db.row_factory = sqlite3.Row
+        db.execute("pragma busy_timeout=30000")
+        return db
 
 _READ_ONLY_UID_COMMANDS = frozenset({"FETCH", "SEARCH"})
 _READ_ONLY_METHODS = frozenset(
@@ -232,6 +250,7 @@ def _examine_with_deadline(
         _force_close(box["provider"])
         raise MessageTimeout("message examination exceeded its deadline")
     if "error" in box:
+        _force_close(box["provider"])
         raise box["error"]
     return box["provider"], box["finding"]
 
@@ -313,6 +332,42 @@ def reconcile_email_actions(
     finally:
         _force_close(provider)
     return report
+
+
+def release_source_verified_retry(
+    store: EmailStore, *, account_id: str, action_id: str,
+    provider_factory: Callable[[], ReconcileMailbox], apply: bool,
+    message_timeout_seconds: float = DEFAULT_MESSAGE_TIMEOUT_SECONDS,
+) -> dict[str, object]:
+    """Read one exact source, then release its unchanged failure to the worker."""
+    rows = store.list_failed_direct_actions(
+        account_id=account_id, action_types=RECONCILE_ACTIONS, limit=1,
+        action_id=action_id,
+    )
+    if not rows:
+        return {"outcome": "not_current_failed", "eligible": False, "released": False}
+    account = store.get_account(account_id)
+    if account is None:
+        return {"outcome": "account_unavailable", "eligible": False, "released": False}
+    configuration_snapshot = getattr(provider_factory, "account_configuration_snapshot", None)
+    if configuration_snapshot is None:
+        return {"outcome": "configuration_evidence_missing", "eligible": False, "released": False}
+    provider: ReconcileMailbox | None = None
+    try:
+        provider, finding = _examine_with_deadline(
+            None, provider_factory, rows[0], message_timeout_seconds,
+        )
+        eligible = False
+        if finding.outcome == IN_SOURCE and finding.state is not None and finding.state.locator is not None:
+            eligible = store.release_source_verified_direct_action(
+                rows[0], source_locator=finding.state.locator,
+                source_revision=finding.state.revision, requested_at=_utc_now(),
+                apply=apply,
+                account_configuration_snapshot=configuration_snapshot,
+            )
+        return {"outcome": finding.outcome, "eligible": eligible, "released": eligible and apply}
+    finally:
+        _force_close(provider)
 
 
 def _record_done(
@@ -405,4 +460,5 @@ def build_gmail_read_only_provider_factory(
             )
         )
 
+    connect.account_configuration_snapshot = email_imap_configuration_snapshot(account)
     return connect

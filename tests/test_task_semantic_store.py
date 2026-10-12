@@ -10,6 +10,8 @@ import pytest
 from app import store as store_module
 from app import task_semantic_models as models
 from app.store import AutoReplyStore
+from app.run_storage import TASK_AGENT_RUN_SQL, insert_run
+from app.task_storage import WORK_SUMMARY_INPUT_SQL, insert_task
 from app.task_source_documents import source_document_key
 
 
@@ -1458,8 +1460,16 @@ def legacy_source_store(path, *, include_author_kind=True):
             ROWS["business_task_events"][1], id=9, task_id=2, signal_id=7,
             before_json='{ "text": "原来正文\\n" }', after_json='{ "signal_id": 7 }',
         ))
-        db.execute("insert into work_summary_inputs (id, source_type, source_ref, payload_json) values (5, 'message', 'message:42', ?)", ('{ "body": "原始输入" }',))
-        db.execute("insert into task_agent_runs (id, summary_input_id, decision_json, projection_json, created_at, finished_at, updated_at) values (8, 5, ?, ?, ?, ?, ?)", ('{ "historical": "原始判断", "signal_id": 7 }', '{ "signal_id": 11 }', STAMP, STAMP, STAMP))
+        insert_task(db, "work_summary_inputs", {
+            "id": 5, "legacy_key": 5, "source_type": "message",
+            "source_ref": "message:42", "payload_json": '{ "body": "原始输入" }',
+        })
+        insert_run(db, "task_agent_runs", {
+            "id": 8, "legacy_key": 8, "summary_input_id": 5,
+            "session_id": "historical-task-session", "status": "completed",
+            "projection_json": '{ "signal_id": 11 }',
+            "created_at": STAMP, "finished_at": STAMP, "updated_at": STAMP,
+        })
         if not include_author_kind:
             db.execute("alter table business_task_signals drop column author_kind")
             for signal in legacy_signals:
@@ -1480,8 +1490,17 @@ def migrate_legacy_source_store(path):
 
 def source_history_snapshot(db):
     tables = [table for table in ROWS if table != "business_task_signals"]
-    tables += ["work_summary_inputs", "task_agent_runs"]
-    return {table: [dict(row) for row in db.execute(f"select * from {table} order by rowid")] for table in tables}
+    history = {
+        table: [dict(row) for row in db.execute(f"select * from {table} order by rowid")]
+        for table in tables
+    }
+    history["work_summary_inputs"] = [
+        dict(row) for row in db.execute(f"select * from ({WORK_SUMMARY_INPUT_SQL}) order by id")
+    ]
+    history["task_agent_runs"] = [
+        dict(row) for row in db.execute(f"select * from ({TASK_AGENT_RUN_SQL}) order by id")
+    ]
+    return history
 
 
 @pytest.mark.parametrize("include_author_kind", [True, False])
@@ -1491,6 +1510,14 @@ def test_legacy_signal_bodies_migrate_without_changing_evidence_identity_or_hist
     with sqlite3.connect(path) as db:
         db.row_factory = sqlite3.Row
         original_history = source_history_snapshot(db)
+    assert original_history["work_summary_inputs"][0]["payload_json"] == '{ "body": "原始输入" }'
+    task_run = original_history["task_agent_runs"][0]
+    assert (
+        task_run["id"], task_run["summary_input_id"], task_run["codex_session_id"],
+    ) == (8, 5, "historical-task-session")
+    assert task_run["status"] == "completed"
+    assert task_run["projection_json"] == '{ "signal_id": 11 }'
+    assert task_run["decision_json"] == "{}"
     migrated = migrate_legacy_source_store(path)
     signals = migrated.list_business_task_signals()
     added_fields = {"source_document_id"}
@@ -1527,6 +1554,9 @@ def test_legacy_signal_bodies_migrate_without_changing_evidence_identity_or_hist
 def test_source_body_migration_rolls_back_on_foreign_key_failure(tmp_path):
     path = tmp_path / "legacy-source-failure.sqlite3"
     original_signals = legacy_source_store(path)
+    with sqlite3.connect(path) as db:
+        db.row_factory = sqlite3.Row
+        original_history = source_history_snapshot(db)
     original_migration = AutoReplyStore._business_source_document_id
 
     def inject_new_violation(db, source):
@@ -1547,6 +1577,7 @@ def test_source_body_migration_rolls_back_on_foreign_key_failure(tmp_path):
     with sqlite3.connect(path) as db:
         db.row_factory = sqlite3.Row
         assert [dict(r) for r in db.execute("select * from business_task_signals order by id")] == original_signals
+        assert source_history_snapshot(db) == original_history
         assert db.execute("select name from sqlite_master where name in ('business_source_documents', 'business_task_signals_source_migration')").fetchall() == []
         assert db.execute("select seq from sqlite_sequence where name='business_task_signals'").fetchone()[0] == 83
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
@@ -1554,20 +1585,35 @@ def test_source_body_migration_rolls_back_on_foreign_key_failure(tmp_path):
         assert db.execute("select value from service_state where key=?", (store_module.STORE_SCHEMA_VERSION_KEY,)).fetchone()[0] == store_module.STORE_SCHEMA_VERSION
 
 
+def insert_preexisting_orphan_meeting_run(db):
+    reserved_parent_id = 4909
+    assert db.execute("select max(id) from tasks").fetchone()[0] < reserved_parent_id
+    assert db.execute(
+        "select 1 from tasks where record_type='meeting_alignment_jobs' "
+        "and cast(legacy_key as integer)=4908"
+    ).fetchone() is None
+    assert db.execute(
+        "update sqlite_sequence set seq=? where name='tasks'",
+        (reserved_parent_id,),
+    ).rowcount == 1
+    insert_run(db, "meeting_alignment_runs", {
+        "id": 9, "legacy_key": 9, "task_id": reserved_parent_id,
+        "job_id": 4908, "status": "failed", "created_at": STAMP,
+    })
+
+
 def test_source_body_migration_preserves_exact_preexisting_foreign_key_violations(tmp_path):
     path = tmp_path / "legacy-source-with-existing-orphan.sqlite3"
     legacy_source_store(path)
     with sqlite3.connect(path) as db:
-        db.execute(
-            "insert into meeting_alignment_runs (job_id, status) values (4908, 'failed')"
-        )
+        insert_preexisting_orphan_meeting_run(db)
         db.execute(
             "insert into business_task_evidence (task_id, signal_id, evidence_role) "
             "values (2, 999, 'discovery')"
         )
         before = sorted(tuple(row) for row in db.execute("pragma foreign_key_check"))
         assert {row[0] for row in before} == {
-            "meeting_alignment_runs", "business_task_evidence",
+            "runs", "business_task_evidence",
         }
 
     migrated = migrate_legacy_source_store(path)
@@ -1585,10 +1631,10 @@ def test_source_body_migration_rolls_back_if_it_adds_a_foreign_key_violation(tmp
     path = tmp_path / "legacy-source-with-new-orphan.sqlite3"
     original_signals = legacy_source_store(path)
     with sqlite3.connect(path) as db:
-        db.execute(
-            "insert into meeting_alignment_runs (job_id, status) values (4908, 'failed')"
-        )
+        db.row_factory = sqlite3.Row
+        insert_preexisting_orphan_meeting_run(db)
         before = sorted(tuple(row) for row in db.execute("pragma foreign_key_check"))
+        original_history = source_history_snapshot(db)
     original_migration = AutoReplyStore._business_source_document_id
 
     def inject_new_violation(db, source):
@@ -1609,11 +1655,21 @@ def test_source_body_migration_rolls_back_if_it_adds_a_foreign_key_violation(tmp
     with sqlite3.connect(path) as db:
         db.row_factory = sqlite3.Row
         assert [dict(row) for row in db.execute("select * from business_task_signals order by id")] == original_signals
+        assert source_history_snapshot(db) == original_history
         assert sorted(tuple(row) for row in db.execute("pragma foreign_key_check")) == before
         assert db.execute(
             "select name from sqlite_master where name in "
             "('business_source_documents', 'business_task_signals_source_migration')"
         ).fetchall() == []
+        assert db.execute(
+            "select seq from sqlite_sequence where name='business_task_signals'"
+        ).fetchone()[0] == 83
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            db.execute("update business_task_signals set evidence_text='rewritten' where id=1")
+        assert db.execute(
+            "select value from service_state where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        ).fetchone()[0] == store_module.STORE_SCHEMA_VERSION
 
 
 @pytest.mark.parametrize("statement", [

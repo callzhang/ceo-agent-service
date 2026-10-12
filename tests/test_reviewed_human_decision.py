@@ -78,7 +78,7 @@ def _approved_question(path: Path):
     )
     with store._connect() as db:
         db.execute("update reply_attempts set agent_run_id=? where id=?", (audit.id, attempt_id))
-        db.execute("update reply_tasks set status='needs_human' where id=?", (task.id,))
+        db.execute("update tasks set status='needs_human' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,))
     return store, task, candidate, review, attempt_id
 
 
@@ -172,7 +172,7 @@ def test_unbound_legacy_task_class_choices_survive_restart_without_becoming_exec
     )
     with store._connect() as db:
         db.execute("update reply_attempts set agent_run_id=? where id=?", (run.id, attempt_id))
-        db.execute("update reply_tasks set status='needs_human' where id=?", (task.id,))
+        db.execute("update tasks set status='needs_human' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,))
     reopened = AutoReplyStore(path)
     assert reopened.reconcile_invalid_needs_human_projections() == 0
     assert reopened.reconcile_valid_needs_human_projections() == 0
@@ -195,7 +195,7 @@ def test_unbound_legacy_task_class_choices_survive_restart_without_becoming_exec
 def test_supplement_missing_execution_source_does_not_change_choice(tmp_path):
     store, task, candidate, review, attempt_id = _approved_question(tmp_path / "missing.sqlite3")
     with store._connect() as db:
-        db.execute("update reply_task_inputs set trigger_message_json='{}' where id=(select current_input_id from reply_tasks where id=?)", (task.id,))
+        db.execute("update tasks set trigger_message_json='{}' where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)", (task.id,))
     fields = dict(kind="supplement", candidate_id=candidate["id"],
                   review_id=review["id"], instruction="One new fact")
     assert _submit(store, attempt_id, **fields)[0] == 409
@@ -243,8 +243,8 @@ def test_scheduled_reviewed_question_accepts_exact_selection_and_new_facts(tmp_p
         "workspace": str(tmp_path), "reasoning_effort": "medium", "skill_protocol": "test",
     }
     with store._connect() as db:
-        db.execute("update reply_tasks set channel='scheduled' where id=?", (task.id,))
-        db.execute("update reply_task_inputs set channel='scheduled', trigger_message_json=? where id=(select current_input_id from reply_tasks where id=?)",
+        db.execute("update tasks set channel='scheduled' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,))
+        db.execute("update tasks set channel='scheduled', trigger_message_json=? where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
                    (json.dumps(saved_execution), task.id))
         db.execute("update reply_attempts set channel='scheduled' where id=?", (attempt_id,))
     scheduled_task = store.get_reply_task_for_message(task.conversation_id, task.trigger_message_id, channel="scheduled")
@@ -257,7 +257,7 @@ def test_scheduled_reviewed_question_accepts_exact_selection_and_new_facts(tmp_p
 
     second, _task, candidate, review, attempt_id = _approved_question(tmp_path / "scheduled-choice.sqlite3")
     with second._connect() as db:
-        db.execute("update reply_tasks set channel='scheduled' where id=?", (_task.id,))
+        db.execute("update tasks set channel='scheduled' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (_task.id,))
         db.execute("update reply_attempts set channel='scheduled' where id=?", (attempt_id,))
     assert _submit(second, attempt_id, kind="select", candidate_id=candidate["id"],
                    review_id=review["id"], option_key="stop")[0] == 303
@@ -275,7 +275,7 @@ def test_selected_execution_refusal_keeps_block_reason_in_status(tmp_path):
     store.record_candidate_action_outcome(execution["id"], "executor", 0, "failed", error)
     store.finish_candidate_execution(execution["id"], "executor", "failed", {"error": error})
     with store._connect() as db:
-        db.execute("update reply_tasks set status='failed',error=? where id=?", (error["code"], task.id))
+        db.execute("update tasks set status='failed',error=? where record_type='reply_tasks' and cast(legacy_key as integer)=?", (error["code"], task.id))
         db.execute("update reply_attempts set send_status='failed',send_error=? where id=?", (error["code"], attempt_id))
     original_task = store.get_reply_task(task.id)
     original_execution = store.get_candidate_execution(candidate["id"])

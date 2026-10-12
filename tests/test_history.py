@@ -1,6 +1,7 @@
 import sqlite3
 
 from app.run_storage import insert_run
+from app.task_storage import REPLY_TASK_SQL
 from app.history import HistoryItem, safe_observability_error
 from app.store import AutoReplyStore
 
@@ -85,7 +86,7 @@ def test_history_merges_reply_and_meeting_runs_by_time(tmp_path):
             (reply_id,),
         )
         db.execute(
-            "update meeting_alignment_runs set created_at='2026-07-14 10:01:00' where id=?",
+            "update runs set created_at='2026-07-14 10:01:00' where record_type='meeting_alignment_runs' and cast(legacy_key as integer)=?",
             (meeting_run_id,),
         )
 
@@ -137,7 +138,7 @@ def test_history_uses_current_run_while_failed_attempt_is_recovering(tmp_path):
     )
     with sqlite3.connect(store.path) as db:
         task_id, generation = db.execute(
-            "select id, execution_generation from reply_tasks where trigger_message_id='task-1'"
+            f"select id, execution_generation from ({REPLY_TASK_SQL}) where trigger_message_id='task-1'"
         ).fetchone()
         insert_run(
             db, 'agent_runs', {
@@ -161,7 +162,7 @@ def test_history_uses_current_run_while_failed_attempt_is_recovering(tmp_path):
                 'turn_attempt': 1,
             },
         )
-        db.execute("update reply_tasks set status='processing' where id=?", (task_id,))
+        db.execute("update tasks set status='processing' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task_id,))
 
     assert store.count_history_items(send_statuses=("failed",)) == 0
     [item] = store.list_history_items(limit=20, send_statuses=("processing",))
@@ -364,7 +365,7 @@ def test_history_tie_order_is_stable_across_kinds(tmp_path):
     meeting_run_id = _seed_meeting_run(store)
     with sqlite3.connect(store.path) as db:
         db.execute("update reply_attempts set created_at='2026-07-14 10:00:00'")
-        db.execute("update meeting_alignment_runs set created_at='2026-07-14 10:00:00'")
+        db.execute("update runs set created_at='2026-07-14 10:00:00' where record_type='meeting_alignment_runs'")
 
     first_page = store.list_history_items(limit=1, offset=0)
     second_page = store.list_history_items(limit=1, offset=1)

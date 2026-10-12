@@ -1,5 +1,18 @@
 # Changelog
 
+## Bounded attachment evidence
+
+- Bound downloaded and decompressed attachment material and serialized MCP
+  responses. Read download files through one no-follow descriptor, report PDF
+  and presentation truncation, and include a byte digest for every format while
+  retaining the existing scanned-PDF OCR path.
+
+## Source-verified email recovery
+
+- Add exact, read-only-first recovery of terminal move/trash failures without
+  moving mail in the recovery command, resetting attempt counts or rewriting
+  historical results. Preserve durable failed-state invariants.
+
 ## Audit current-candidate field evidence
 
 - Ground Audit field-error observations in the current candidate JSON, rather

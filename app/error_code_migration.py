@@ -11,6 +11,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from app.task_storage import MEETING_JOB_SQL, task_id_expression
+
 
 @dataclass(frozen=True)
 class ProjectionMigrationResult:
@@ -51,7 +53,7 @@ def migrate_legacy_meeting_projections(
 
     with store._connect() as db:
         rows = db.execute(
-            "select id, error from meeting_alignment_jobs where status='failed'"
+            f"select id, error from ({MEETING_JOB_SQL}) where status='failed'"
         ).fetchall()
         scanned = 0
         updates: list[tuple[str, int]] = []
@@ -81,7 +83,9 @@ def migrate_legacy_meeting_projections(
             updates.append((json.dumps(migrated, ensure_ascii=False), int(row["id"])))
         if not dry_run:
             db.executemany(
-                "update meeting_alignment_jobs set error=?, updated_at=current_timestamp where id=?",
+                "update tasks set error=?, updated_at=current_timestamp where id="
+                + task_id_expression("meeting_alignment_jobs", "?")
+                + " and record_type='meeting_alignment_jobs'",
                 updates,
             )
         return ProjectionMigrationResult(

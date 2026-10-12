@@ -49,7 +49,7 @@ def test_selected_question_with_changed_native_form_reopens_same_stage_and_keeps
     original_json = reviewed["candidate_json"]
     selection = store.select_candidate_option(reviewed["id"], reviewed["review_id"], "send")
     with store._connect() as db:
-        db.execute("update reply_tasks set status='needs_human' where id=?", (task.id,))
+        db.execute("update tasks set status='needs_human' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,))
     store.wake_selected_candidate_execution(reviewed["id"], reviewed["review_id"])
     source.amount = "900"
     reopened = AutoReplyStore(store.path)
@@ -85,7 +85,7 @@ def test_selected_question_after_restart_executes_exact_branch_without_new_agent
     ).process(task, context, refresh_context=lambda: context).status == "needs_human"
     reviewed = store.current_reviewed_candidate(task.id, task.execution_generation)
     with store._connect() as db:
-        db.execute("update reply_tasks set status='needs_human' where id=?", (task.id,))
+        db.execute("update tasks set status='needs_human' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,))
     store.select_candidate_option(reviewed["id"], reviewed["review_id"], "send")
     store.wake_selected_candidate_execution(reviewed["id"], reviewed["review_id"])
     reopened = AutoReplyStore(store.path)

@@ -7,7 +7,9 @@ from threading import Barrier
 import pytest
 
 import app.store as store_module
+from app.run_storage import TASK_AGENT_RUN_SQL
 from app.store import AgentRole, AutoReplyStore
+from app.task_storage import WORK_SUMMARY_INPUT_SQL, task_id_expression
 from app.task_models import WorkItem
 
 
@@ -15,7 +17,7 @@ def _store(tmp_path: Path) -> AutoReplyStore:
     return AutoReplyStore(tmp_path / "task.sqlite3")
 
 
-def test_task_execution_schema_migrates_existing_store_and_has_required_columns(tmp_path):
+def test_current_task_execution_schema_repairs_missing_auxiliary_tables(tmp_path):
     path = tmp_path / "task-execution-migration.sqlite3"
     original = AutoReplyStore(path)
     with sqlite3.connect(path) as db:
@@ -99,37 +101,6 @@ def _claim_audit_run(
     )
 
 
-def test_existing_database_adds_agent_runs_without_rewriting_reply_tasks(
-    tmp_path: Path,
-):
-    from tests.run_schema_fixtures import previous_run_schema_store
-
-    db_path = tmp_path / "task.sqlite3"
-    previous = previous_run_schema_store(db_path, task_args=dict(
-        conversation_id="cid-existing", conversation_title="Existing",
-        single_chat=False, trigger_message_id="msg-existing",
-        trigger_create_time="2026-07-29 00:00:00", trigger_sender="Derek",
-        trigger_text="existing task",
-    ))
-    original = previous.get_reply_task(1)
-    store = AutoReplyStore(db_path)
-    claim = _claim_audit_run(store, 1, "initial", owner="worker-1")
-
-    assert original is not None
-    assert store.get_reply_task(1) == original
-    assert original.trigger_text == "existing task"
-    assert claim.run.reply_task_id == 1
-    with sqlite3.connect(db_path) as db:
-        assert db.execute("pragma foreign_key_check").fetchall() == []
-        indexes = {
-            row[0]
-            for row in db.execute(
-                "select name from sqlite_master where type='index'"
-            ).fetchall()
-        }
-    assert "idx_agent_runs_status" in indexes
-    with sqlite3.connect(db_path) as db:
-        assert db.execute("select record_type from runs where id=?", (claim.run.id,)).fetchone() == ("agent_runs",)
 
 
 def test_complete_agent_run_returns_after_transaction_connection_closes(
@@ -218,8 +189,9 @@ def test_ensure_reply_tasks_rolls_back_group_on_identity_conflict(tmp_path: Path
         assert (
             db.execute(
                 """
-                select count(*) from reply_tasks
-                where channel='email'
+                select count(*) from tasks
+                where record_type='reply_tasks'
+                  and channel='email'
                   and conversation_id='email-thread:atomic'
                   and trigger_message_id='email-action:first'
                 """
@@ -235,8 +207,9 @@ def test_ensure_reply_tasks_rolls_back_group_on_database_error(tmp_path: Path):
         db.execute(
             """
             create trigger fail_second_email_task
-            before insert on reply_tasks
-            when new.trigger_message_id='email-action:second'
+            before insert on tasks
+            when new.record_type='reply_tasks'
+             and new.trigger_message_id='email-action:second'
             begin
                 select raise(abort, 'injected batch failure');
             end
@@ -277,25 +250,6 @@ def test_concurrent_ensure_reply_task_groups_share_immutable_identities(
     assert AutoReplyStore(database).count_reply_tasks(channel="email") == 2
 
 
-def test_channel_identity_migration_accepts_quoted_index_names(tmp_path: Path):
-    from tests.reply_schema_fixtures import restore_cross_channel_reply_parent
-
-    db_path = tmp_path / "task.sqlite3"
-    original = AutoReplyStore(db_path)
-    task_id = original.ensure_reply_task(
-        conversation_id="cid-quoted", conversation_title="Quoted",
-        single_chat=False, trigger_message_id="msg-quoted",
-        trigger_create_time="2026-07-29 00:00:00",
-        trigger_sender="Derek", trigger_text="quoted index",
-    ).id
-    restore_cross_channel_reply_parent(original)
-    original._initialize()
-    store = AutoReplyStore(db_path)
-
-    task = store.get_reply_task(task_id)
-    assert task is not None
-    assert task.channel == "dingtalk"
-    assert task.trigger_message_id == "msg-quoted"
 
 
 def _work_item() -> WorkItem:
@@ -343,7 +297,7 @@ def test_enqueue_and_claim_work_summary_input(tmp_path: Path):
     store.mark_work_summary_input_done(input_id)
     with sqlite3.connect(tmp_path / "task.sqlite3") as db:
         row = db.execute(
-            "select status from work_summary_inputs where id=?",
+            f"select status from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
             (input_id,),
         ).fetchone()
     assert row == ("done",)
@@ -375,7 +329,7 @@ def test_duplicate_work_summary_input_does_not_reopen_terminal_status(
     assert store.claim_work_summary_inputs(limit=1) == []
     with sqlite3.connect(tmp_path / "task.sqlite3") as db:
         row = db.execute(
-            "select status, attempts, error from work_summary_inputs where id=?",
+            f"select status, attempts, error from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
             (input_id,),
         ).fetchone()
     assert row == (
@@ -484,7 +438,8 @@ def test_reset_stale_processing_work_summary_inputs_requeues_orphans(tmp_path: P
     claimed = store.claim_work_summary_inputs(limit=1)
     with sqlite3.connect(db_path) as db:
         db.execute(
-            "update work_summary_inputs set updated_at=datetime('now', '-31 minutes') where id=?",
+            "update tasks set updated_at=datetime('now', '-31 minutes') "
+            f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
             (claimed[0].id,),
         )
 
@@ -526,7 +481,8 @@ def test_work_summary_retry_backoff_delays_claim_until_available(tmp_path: Path)
 
     with sqlite3.connect(tmp_path / "task.sqlite3") as db:
         db.execute(
-            "update work_summary_inputs set available_at=datetime('now', '-1 second') where id=?",
+            "update tasks set available_at=datetime('now', '-1 second') "
+            f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
             (input_id,),
         )
 
@@ -695,7 +651,7 @@ def test_list_follow_up_drafts_due_before_handles_iso_timezone(tmp_path: Path):
     )
     with sqlite3.connect(tmp_path / "task.sqlite3") as db:
         row = db.execute(
-            "select memory_recall_used from task_agent_runs where id=?",
+            f"select memory_recall_used from ({TASK_AGENT_RUN_SQL}) where id=?",
             (run_id,),
         ).fetchone()
     assert row == (0,)

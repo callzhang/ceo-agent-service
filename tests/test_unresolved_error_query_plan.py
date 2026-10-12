@@ -2,6 +2,7 @@ import pytest
 
 from app.audit_web import _queue_attention_rows
 from app.store import AutoReplyStore
+from app.task_storage import task_physical_id
 
 
 def _attention_error_query(store, monkeypatch):
@@ -146,7 +147,7 @@ def test_scheduled_error_locator_preserves_exact_identity_and_event_route(
         from app.scheduled_config_storage import intern_scheduled_config
 
         snapshot_id = intern_scheduled_config(db, "{}")
-        db.execute("update reply_tasks set status='done' where id=?", (reply.id,))
+        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task_physical_id(db, "reply_tasks", reply.id),))
         db.executemany(
             "insert into scheduled_task_runs "
             "(id,event_id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,dispatch_status,snapshot_id,execution_kind,execution_id) "

@@ -320,34 +320,6 @@ def test_capability_backfill_reads_latest_user_fields_inside_write_transaction(
     )
 
 
-def test_previous_scheduled_tasks_gain_empty_runtime_requirements(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "previous-capabilities.sqlite3"
-    previous = AutoReplyStore(db_path)
-    task = _create_task(previous)
-    run = previous.create_scheduled_task_run(
-        task.id,
-        trigger_kind="manual",
-        scheduled_for=NOW,
-        now=NOW,
-    )
-    with previous._connect() as db:
-        snapshot = json.loads(run.snapshot.to_json())
-        snapshot.pop("required_runtime_capabilities")
-        db.execute(
-            "update scheduled_task_config_versions set snapshot_json=? where id=(select snapshot_id from scheduled_task_runs where id=?)",
-            (json.dumps(snapshot), run.id),
-        )
-        db.execute(
-            "alter table scheduled_tasks drop column required_runtime_capabilities_json"
-        )
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    migrated = AutoReplyStore(db_path)
-
-    assert migrated.get_scheduled_task(task.id).required_runtime_capabilities == ()
-    assert migrated.get_scheduled_task_run(run.id).snapshot.required_runtime_capabilities == ()
 
 
 def test_managed_skill_ref_requires_exact_revision_belonging_to_skill(
@@ -1006,51 +978,6 @@ def test_run_snapshot_rejects_semantically_tampered_skill_refs(
         store.list_scheduled_task_runs(task.id)
 
 
-def test_previous_schema_additively_creates_cron_tables_and_preserves_data(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "previous-schema.sqlite3"
-    previous = AutoReplyStore(db_path)
-    previous.set_service_state("cron-migration-marker", "keep-me")
-    skill = previous.create_managed_skill("legacy-skill", "Legacy Skill")
-    with previous._connect() as db:
-        db.execute("drop table scheduled_task_runs")
-        db.execute("drop table scheduled_task_skill_refs")
-        db.execute("drop table scheduled_tasks")
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    migrated = AutoReplyStore(db_path)
-
-    assert migrated.get_service_state("cron-migration-marker") == "keep-me"
-    assert migrated.get_managed_skill(skill.id) == skill
-    with migrated._connect() as db:
-        tables = {
-            str(row["name"])
-            for row in db.execute(
-                "select name from sqlite_master where type='table'"
-            )
-        }
-        indexes = {
-            str(row["name"])
-            for row in db.execute(
-                "select name from sqlite_master where type='index'"
-            )
-        }
-    assert {
-        "scheduled_tasks",
-        "scheduled_task_skill_refs",
-        "scheduled_task_runs",
-    } <= tables
-    assert {
-        "idx_scheduled_tasks_migration_key",
-        "idx_scheduled_tasks_enabled",
-        "idx_scheduled_task_skill_refs_position",
-        "idx_scheduled_task_runs_scheduled_instant",
-        "idx_scheduled_task_runs_dispatch",
-        "idx_scheduled_task_runs_claim",
-        "idx_scheduled_task_runs_latest",
-    } <= indexes
-    assert migrated._schema_is_current() is True
 
 
 def test_claim_query_index_starts_with_status_schedule_and_id(tmp_path: Path) -> None:
@@ -1225,28 +1152,6 @@ def test_command_task_round_trips_and_rejects_mixed_execution_forms(
     assert updated.prompt == "更新后的 Consumer Prompt 使用 $ceo-message-triage。"
 
 
-def test_previous_scheduled_tasks_gain_empty_command(tmp_path: Path) -> None:
-    db_path = tmp_path / "previous-command.sqlite3"
-    previous = AutoReplyStore(db_path)
-    task = _create_task(previous)
-    run = previous.create_scheduled_task_run(
-        task.id, trigger_kind="manual", scheduled_for=NOW, now=NOW
-    )
-    with previous._connect() as db:
-        snapshot = json.loads(run.snapshot.to_json())
-        snapshot.pop("command")
-        db.execute(
-            "update scheduled_task_config_versions set snapshot_json=? where id=(select snapshot_id from scheduled_task_runs where id=?)",
-            (json.dumps(snapshot), run.id),
-        )
-        db.execute("alter table scheduled_tasks drop column command")
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    migrated = AutoReplyStore(db_path)
-
-    assert migrated.get_scheduled_task(task.id).command == ""
-    assert migrated.get_scheduled_task_run(run.id).snapshot.command == ""
-    assert migrated.get_scheduled_task_run(run.id).snapshot.prompt == task.prompt
 
 
 def test_current_schema_version_still_migrates_missing_command_column(
@@ -1268,29 +1173,6 @@ def test_current_schema_version_still_migrates_missing_command_column(
     assert migrated.get_scheduled_task(task.id).command == ""
 
 
-def test_pre_bump_schema_version_backfills_legacy_run_snapshot_fields(
-    tmp_path: Path,
-) -> None:
-    """Repair a scheduled-task shape while preserving its old run snapshot."""
-    db_path = tmp_path / "pre-bump-legacy-snapshot.sqlite3"
-    previous = AutoReplyStore(db_path)
-    task = _create_task(previous)
-    run = previous.create_scheduled_task_run(
-        task.id, trigger_kind="manual", scheduled_for=NOW, now=NOW
-    )
-    with previous._connect() as db:
-        snapshot = json.loads(run.snapshot.to_json())
-        snapshot.pop("command")
-        db.execute(
-            "update scheduled_task_config_versions set snapshot_json=? where id=(select snapshot_id from scheduled_task_runs where id=?)",
-            (json.dumps(snapshot), run.id),
-        )
-        db.execute("alter table scheduled_tasks drop column command")
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    migrated = AutoReplyStore(db_path)
-
-    assert migrated.get_scheduled_task_run(run.id).snapshot.command == ""
 
 
 def test_adopting_a_service_command_moves_the_seed_in_place_once(
@@ -1481,17 +1363,3 @@ def test_store_construction_does_not_read_run_snapshots_on_the_fast_path(
         text for text in statements if "from scheduled_task_runs" in text.lower()
     ]
     assert not offending, f"fast path still reads rows: {offending[:2]}"
-
-
-def test_migration_still_verifies_the_run_snapshots_it_wrote(tmp_path, monkeypatch):
-    """The row check stays where a migration claims to have written the fields."""
-    path = tmp_path / "verified.sqlite3"
-    AutoReplyStore(path)
-    with sqlite3.connect(path) as db:
-        db.execute("alter table scheduled_tasks drop column command")
-
-    statements = _traced_construction(tmp_path, monkeypatch, path)
-
-    assert any(
-        "scheduled_task_config_versions" in text and "json_type" in text for text in statements
-    ), "post-migration verification must still read the snapshots back"

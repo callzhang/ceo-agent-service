@@ -11,6 +11,7 @@ from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_router import RoutedCodexExecution, RoutedCodexExecutionError
 from app.process_runner import ProcessRunResult
 from app.store import AutoReplyStore
+from app.run_storage import TASK_AGENT_RUN_SQL
 from app.task_agent import (
     TASK_DECISION_REPAIR_ROUNDS,
     TASK_RUNTIME_CAPABILITIES,
@@ -116,7 +117,7 @@ def test_semantic_repair_executes_new_round_and_replays_only_matching_receipt(
     assert store.get_work_summary_input(input_id).status.value == "done"
     assert len(store.list_business_tasks()) == 1
     with store._connect() as db:
-        run_id = db.execute("select id from task_agent_runs").fetchone()[0]
+        run_id = db.execute(f"select id from ({TASK_AGENT_RUN_SQL})").fetchone()[0]
         keys = [row[0] for row in db.execute(
             f'select workload_key from ({RUNTIME_ATTEMPT_SQL}) order by id'
         )]

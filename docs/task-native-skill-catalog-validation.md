@@ -1,5 +1,7 @@
 # Task 原生 Skill 目录验证
 
+2026-10-12 同步父分支 `678df76e`（包含当前 main 的 typed storage 变更）后，目录、schema、指令去重和既有 runtime repair 五个受影响测试文件合计 118 passed；未执行本地全量测试。三个文档末尾追加冲突均保留两侧内容，既有并行材料读取说明也随正常三方合并保留。本条仅是合并后回归，不替代原生对照或生产验收。
+
 ## 原因与改动
 
 Task command factory 未传 native skill_names，最终适配器使用全量原生目录。另一个既有 helper 从 Skill 正文按名称/命令推断递归依赖，连“交由其他角色处理”的说明也被当成依赖。只选 ceo-work-tracking 会扩到48个业务名称，配置中启用52条。

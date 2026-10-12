@@ -8,6 +8,7 @@ table as a failed check rather than silently dropping a queue from coverage.
 """
 
 from __future__ import annotations
+from app.task_storage import MEETING_JOB_SQL, OKR_REQUEST_SQL, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
 
 import json
 import sqlite3
@@ -123,7 +124,7 @@ def scan_hourly_quality(
             str(row["name"])
             for row in db.execute("select name from sqlite_master where type='table'")
         }
-        physical_source = {"agent_runs": "runs"}
+        physical_source = {"agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks"}
         missing = tuple(source for source in REQUIRED_SOURCES if physical_source.get(source, source) not in existing)
         checked = (
             *(source for source in REQUIRED_SOURCES if physical_source.get(source, source) in existing),
@@ -308,18 +309,18 @@ def _check_reply_tasks(
     reply_channels = "channel in ('dingtalk','wechat','scheduled')"
     _add(violations, source="reply_tasks", code="failed", count=_count(
         db,
-        f"""select count(*) from reply_tasks
+        f"""select count(*) from ({REPLY_TASK_SQL})
            where {reply_channels}
              and lower(status)='failed' and trim(coalesce(error, ''))=''""",
     ), severity="error", detail="reply task has no concrete terminal failure")
     _add(violations, source="reply_tasks", code="processing_stale", count=_count(
         db,
-        f"select count(*) from reply_tasks where {reply_channels} and lower(status)='processing' and datetime(updated_at) < datetime(?)",
+        f"select count(*) from ({REPLY_TASK_SQL}) where {reply_channels} and lower(status)='processing' and datetime(updated_at) < datetime(?)",
         (_cutoff(now, REPLY_PROCESSING_STALE_SECONDS),),
     ), severity="error", detail="reply task exceeded the worker recovery lease")
     pending_overdue = _count(
         db,
-        f"""select count(*) from reply_tasks
+        f"""select count(*) from ({REPLY_TASK_SQL})
            where {reply_channels}
              and lower(status)='pending'
              and (available_at='' or datetime(available_at) <= datetime(?))
@@ -339,7 +340,7 @@ def _check_reply_tasks(
         ),
     )
     _add(attention, source="reply_tasks", code="active", count=_count(
-        db, "select count(*) from reply_tasks where lower(status) in ('pending','processing')"
+        db, f"select count(*) from ({REPLY_TASK_SQL}) where lower(status) in ('pending','processing')"
     ), severity="info", detail="reply work is currently queued or processing")
 
 
@@ -364,7 +365,7 @@ def _check_reply_attempts(
     """
     direct_terminal = _count(
         db,
-        latest + """
+        latest + f"""
             select count(*) from latest a
             where ordinal=1
               and lower(action) in ('send_reply','ask_clarifying_question')
@@ -375,7 +376,7 @@ def _check_reply_attempts(
                   and sr.trigger_message_id=a.trigger_message_id
               )
               and not exists (
-                select 1 from reply_tasks t
+                select 1 from ({REPLY_TASK_SQL}) t
                 where t.channel=a.channel
                   and t.conversation_id=a.conversation_id
                   and t.trigger_message_id=a.trigger_message_id
@@ -388,7 +389,7 @@ def _check_reply_attempts(
     # failed or blocked record without conflating it with a reply delivery.
     oa_terminal = _count(
         db,
-        """
+        f"""
             with oa_latest as (
                 select a.id, a.channel, a.conversation_id, a.trigger_message_id,
                        a.oa_process_instance_id, a.send_status, row_number() over (
@@ -421,7 +422,7 @@ def _check_reply_attempts(
                   ))='COMPLETED'
               )
               and not exists (
-                select 1 from reply_tasks t
+                select 1 from ({REPLY_TASK_SQL}) t
                 where t.channel=a.channel
                   and t.conversation_id=a.conversation_id
                   and t.trigger_message_id=a.trigger_message_id
@@ -434,12 +435,12 @@ def _check_reply_attempts(
          severity="error", detail="latest reply attempt has no active task recovery")
     dry_run = _count(
         db,
-        latest + """
+        latest + f"""
             select count(*) from latest a
             where ordinal=1 and lower(send_status)='dry_run'
               and datetime(updated_at) >= datetime(?)
               and not exists (
-                select 1 from reply_tasks t
+                select 1 from ({REPLY_TASK_SQL}) t
                 where t.channel=a.channel
                   and t.conversation_id=a.conversation_id
                   and t.trigger_message_id=a.trigger_message_id
@@ -452,11 +453,11 @@ def _check_reply_attempts(
          severity="error", detail="latest live trigger remains a dry-run result")
     recovering = _count(
         db,
-        latest + """
+        latest + f"""
             select count(*) from latest a
             where ordinal=1 and lower(send_status) in ('failed','blocked')
               and exists (
-                select 1 from reply_tasks t
+                select 1 from ({REPLY_TASK_SQL}) t
                 where t.channel=a.channel
                   and t.conversation_id=a.conversation_id
                   and t.trigger_message_id=a.trigger_message_id
@@ -483,7 +484,7 @@ def _check_structured_needs_human(
     """
     rows = db.execute(
         latest
-        + """
+        + f"""
             select c.candidate_json as reviewed_candidate_json,
                    choice.id as selection_id
             from latest a
@@ -493,7 +494,7 @@ def _check_structured_needs_human(
               and c.invalidated_at='' and c.candidate_digest=review.candidate_digest
               and c.id=(select max(newest.id) from review_candidates newest
                   where newest.task_id=c.task_id and newest.execution_generation=c.execution_generation)
-              and exists(select 1 from reply_tasks task where task.id=c.task_id
+              and exists(select 1 from ({REPLY_TASK_SQL}) task where task.id=c.task_id
                   and task.execution_generation=c.execution_generation
                   and task.status='needs_human')
             left join candidate_selections choice on choice.candidate_id=c.id
@@ -502,7 +503,7 @@ def _check_structured_needs_human(
               and trim(coalesce(a.resolved_at, ''))=''
               and not exists (
                   select 1
-                  from reply_tasks as historical_task
+                  from ({REPLY_TASK_SQL}) as historical_task
                   join business_object_tasks as current_business_object
                     on current_business_object.business_object_key=
                        historical_task.business_object_key
@@ -512,7 +513,7 @@ def _check_structured_needs_human(
                     and current_business_object.reply_task_id<>historical_task.id
               )
               and not exists (
-                  select 1 from reply_tasks t
+                  select 1 from ({REPLY_TASK_SQL}) t
                   where t.channel=a.channel
                     and t.conversation_id=a.conversation_id
                     and t.trigger_message_id=a.trigger_message_id
@@ -595,14 +596,14 @@ def _check_work_items(
     attention: list[QualityIssue],
 ) -> None:
     _add(violations, source="work_summary_inputs", code="failed", count=_count(
-        db, "select count(*) from work_summary_inputs where lower(status)='failed'"
+        db, f"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) where lower(status)='failed'"
     ), severity="error", detail="work item has no terminal handling")
     _add(violations, source="work_summary_inputs", code="processing_stale", count=_count(
-        db, "select count(*) from work_summary_inputs where lower(status)='processing' and datetime(updated_at) < datetime(?)",
+        db, f"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) where lower(status)='processing' and datetime(updated_at) < datetime(?)",
         (_cutoff(now, WORK_ITEM_PROCESSING_STALE_SECONDS),),
     ), severity="error", detail="work item exceeded the task agent timeout")
     _add(attention, source="work_summary_inputs", code="active", count=_count(
-        db, "select count(*) from work_summary_inputs where lower(status) in ('pending','processing')"
+        db, f"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) where lower(status) in ('pending','processing')"
     ), severity="info", detail="work item is queued or processing")
 
 
@@ -770,19 +771,19 @@ def _check_meetings(
 ) -> None:
     _add(violations, source="meeting_alignment_jobs", code="failed", count=_count(
         db,
-        """select count(*) from meeting_alignment_jobs
+        f"""select count(*) from ({MEETING_JOB_SQL})
            where lower(status)='failed' and trim(coalesce(error, ''))=''""",
     ), severity="error", detail="meeting delivery has no concrete terminal failure")
     _add(violations, source="meeting_alignment_jobs", code="active_stale", count=_count(
         db,
-        "select count(*) from meeting_alignment_jobs where lower(status) in ('pending','processing','ready_to_send','retry') and datetime(updated_at) < datetime(?)",
+        f"select count(*) from ({MEETING_JOB_SQL}) where lower(status) in ('pending','processing','ready_to_send','retry') and datetime(updated_at) < datetime(?)",
         (_cutoff(now, MEETING_PROCESSING_STALE_SECONDS),),
     ), severity="error", detail="meeting alignment job stopped progressing")
     _add(attention, source="meeting_alignment_jobs", code="active", count=_count(
-        db, "select count(*) from meeting_alignment_jobs where lower(status) in ('waiting','pending','processing','ready_to_send','retry')"
+        db, f"select count(*) from ({MEETING_JOB_SQL}) where lower(status) in ('waiting','pending','processing','ready_to_send','retry')"
     ), severity="info", detail="meeting alignment work is pending")
     _add(attention, source="meeting_alignment_jobs", code="quarantined", count=_count(
-        db, "select count(*) from meeting_alignment_jobs where lower(status)='quarantined'"
+        db, f"select count(*) from ({MEETING_JOB_SQL}) where lower(status)='quarantined'"
     ), severity="info", detail="meeting delivery outcome cannot be verified")
 
 
@@ -793,14 +794,14 @@ def _check_okr_reviews(
     attention: list[QualityIssue],
 ) -> None:
     _add(violations, source="okr_review_requests", code="failed", count=_count(
-        db, "select count(*) from okr_review_requests where lower(status)='failed'"
+        db, f"select count(*) from ({OKR_REQUEST_SQL}) where lower(status)='failed'"
     ), severity="error", detail="OKR review request has no terminal handling")
     _add(violations, source="okr_review_requests", code="processing_stale", count=_count(
-        db, "select count(*) from okr_review_requests where lower(status)='processing' and datetime(updated_at) < datetime(?)",
+        db, f"select count(*) from ({OKR_REQUEST_SQL}) where lower(status)='processing' and datetime(updated_at) < datetime(?)",
         (_cutoff(now, OKR_PROCESSING_STALE_SECONDS),),
     ), severity="error", detail="OKR review exceeded the Codex timeout")
     _add(attention, source="okr_review_requests", code="active", count=_count(
-        db, "select count(*) from okr_review_requests where lower(status) in ('pending','processing')"
+        db, f"select count(*) from ({OKR_REQUEST_SQL}) where lower(status) in ('pending','processing')"
     ), severity="info", detail="OKR review work is pending")
 
 
@@ -883,7 +884,7 @@ def _check_delivery_records(
     """
     from app.native_trajectory import read_native_result_json
     rows = db.execute(f"""select audit.* from ({AGENT_RUN_SQL}) audit
-        join reply_tasks task on task.id=audit.reply_task_id
+        join ({REPLY_TASK_SQL}) task on task.id=audit.reply_task_id
         where audit.role='audit' and audit.status='completed'
           and task.channel='dingtalk'
           and audit.completed_at >= datetime('now', '-7 days')
@@ -952,7 +953,7 @@ def _check_scan_health(
         "select count(*) from wechat_read_state where lower(capability_status) not in ('ready','')",
     )
     active_wechat = _count(
-        db, "select count(*) from reply_tasks where lower(channel)='wechat' and lower(status) in ('pending','processing')"
+        db, f"select count(*) from ({REPLY_TASK_SQL}) where lower(channel)='wechat' and lower(status) in ('pending','processing')"
     )
     if blocked_reader and active_wechat:
         _add(violations, source="wechat_read_state", code="reader_blocked_with_work", count=blocked_reader,
