@@ -1,5 +1,9 @@
 # Task Skill on-demand delivery validation
 
+## Current API readback (2026-10-12)
+
+One additional configured `codex_api` candidate cold probe used the same anonymous facts/context, unchanged approval setting and local fake Memory only. It ended with `exceeded retry limit, last status: 429 Too Many Requests`, exit1 and no decision. Native SID `01a1305b-609d-7140-bcb9-d5616d7be19a` is not a valid cold session; no resume was attempted. The models-list decode warning is retained in raw stderr but is not established as the terminal cause. This is route-readiness evidence, not schema/Skill incompatibility or provider capacity-root-cause proof. Metadata: `evals/trajectory_optimization/task_skill_api_capacity.current.results.v1.json`; raw files `/private/tmp/ceo-task-openai-api-current-ot1u89tn`. No production, approval-policy or prompt change.
+
 Task previously included the entire current work-tracking Skill in every service prompt. Local native CLIs can read that file; Friday's turn API cannot read the local path. The factory now carries the exact selected path. Local Task input includes its brief purpose and full-read entry; Friday's existing message bridge includes that exact file once. The existing source-file preflight remains. No routing, tool permission, result validation, session binding or audit policy changed.
 
 ## Regression evidence
