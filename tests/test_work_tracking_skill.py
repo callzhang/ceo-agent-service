@@ -60,7 +60,9 @@ def test_task_agent_prompt_builder_contains_transport_not_business_policy():
     source = inspect.getsource(build_task_agent_prompt)
 
     assert "load_skill_text" in source
-    assert "task_agent_output_schema" in source
+    # The full schema travels through the command factory, tested separately
+    # by test_task_prompt_schema_delivery; the Task body must not duplicate it.
+    assert "task_agent_output_schema" not in source
     for duplicated_policy in (
         "流程性内容默认忽略",
         "owner_user_id 不能靠猜",
