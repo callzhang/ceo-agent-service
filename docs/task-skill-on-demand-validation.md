@@ -86,3 +86,7 @@ Tagged upstream source matches this mechanism: [CodeMode result projection](http
 ## Parent main integration after native validation
 
 The native bridge evidence freezes feature commit `1a4dbe76`. Normal parent merge from `2a2204a0` preserves factory exact paths, catalog names and classifier inline exclusions. Name/path selections are composed without changing native path resolution; classifier exclusions remain separate. The extended forwarder regression first failed when extra names were lost, then passed with both retained; 429 affected tests pass. Task source SHA remains identical to the recorded Codex/Claude candidate; both Claude native submitted messages regenerate byte-for-byte from the merged factory and bridge. No model/business replay, new provider/permission configuration or deployment.
+
+## Later API readiness check
+
+One later same-fixture configured codex_api candidate cold, model gpt-5.6-luna, terminates turn.failed with HTTP429 and exit1. Native SID01a13194-91fb-7992-bda9-ca863b7f832a has no completed turn or final decision; it is not resumed or applied. No source, schema, route, approval setting or provider changed. Preserve the older records; this does not establish the provider capacity root cause or a Skill/schema defect. Metadata: task_skill_api_capacity.current.results.v2.json.

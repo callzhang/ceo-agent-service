@@ -1,0 +1,20 @@
+{
+  "variant": "candidate",
+  "phase": "cold",
+  "returncode": 1,
+  "timed_out": false,
+  "session_id": "01a13194-91fb-7992-bda9-ca863b7f832a",
+  "prompt_sha256": "3df83b9002c5ba099b5909bdd0278439bc5ea6d0f973a78e5f5c82ae084314cd",
+  "skill_config_selected": true,
+  "route": "codex_api",
+  "model": "gpt-5.6-luna",
+  "version": 2,
+  "scope": "Current configured API cold using unchanged on-demand Task and same synthetic fixtures; local fake Memory only. No valid cold means no continuation or business application.",
+  "terminal_turn_failed": true,
+  "terminal_http_429": true,
+  "completed_turn": false,
+  "valid_final_decision": false,
+  "resumed": false,
+  "events_sha256": "d0bda55272925a8121a316cf97f3daa85b3a1f5bbf34b8bd504234b2f0b49b37",
+  "provider_capacity_root_cause": "not established; HTTP429 is observed readiness failure, not schema/Skill defect evidence"
+}
