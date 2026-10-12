@@ -29,7 +29,14 @@
       ],
       "provider_readback_state": "unavailable",
       "task_sha256": "354c0a6b6570438656f395edc4cd708c4bb3a48b67044a13db814a9cbb2c75a7",
-      "output_sha256": "bfe64e809dc04d96a22c5ec3d7fbd1672d244a003bdfe05071bfc23b29fbb970"
+      "output_sha256": "bfe64e809dc04d96a22c5ec3d7fbd1672d244a003bdfe05071bfc23b29fbb970",
+      "native_selected_skill": {
+        "chars": 4343,
+        "sha256": "df3ce7ed9a2323939af4dbfa7476f1a1e15d81ce3c6b088168da3ba02181045c",
+        "same_contiguous_lines": 71,
+        "common_contiguous_chars": 4220,
+        "source_equivalence": "large shared body; full byte equality not established; managed/native provenance must be verified before deletion"
+      }
     },
     {
       "run_id": 176874,
@@ -59,7 +66,14 @@
       ],
       "provider_readback_state": "categorized",
       "task_sha256": "94fea1368993ad8163941ad9bfb2d8818521e7e04ced753a4225f0450a67c5dc",
-      "output_sha256": "64efac04f05a9a3fef8c8711835fb1ff65d6c1994a906bd960fb017c5568c855"
+      "output_sha256": "64efac04f05a9a3fef8c8711835fb1ff65d6c1994a906bd960fb017c5568c855",
+      "native_selected_skill": {
+        "chars": 4343,
+        "sha256": "df3ce7ed9a2323939af4dbfa7476f1a1e15d81ce3c6b088168da3ba02181045c",
+        "same_contiguous_lines": 71,
+        "common_contiguous_chars": 4220,
+        "source_equivalence": "large shared body; full byte equality not established; managed/native provenance must be verified before deletion"
+      }
     }
   ],
   "missing_native_samples": [
@@ -73,5 +87,21 @@
     }
   ],
   "business_accuracy": "not independently labelled; valid classification context and persisted equality do not prove semantic accuracy",
-  "mutation": "none"
+  "mutation": "none",
+  "noncompleted_metadata_only": [
+    {
+      "run_id": 174987,
+      "route": "codex_api",
+      "status": "superseded",
+      "stored_failure_code": "codex_transport_disconnected",
+      "native_file_present": false
+    },
+    {
+      "run_id": 174984,
+      "route": "codex_oauth",
+      "status": "superseded",
+      "stored_failure_code": "codex_provider_capacity_exhausted",
+      "native_file_present": false
+    }
+  ]
 }
