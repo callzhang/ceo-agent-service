@@ -356,6 +356,7 @@ def build_parser() -> argparse.ArgumentParser:
         "release-failed-email-unsubscribe",
         "cancel-failed-email-unsubscribe",
         "reconcile-email-actions",
+        "retry-source-verified-email-action",
         "reconcile-failed-agent-message",
         "skip-stale-wechat-delivery",
         "backfill-task-memory-context",
@@ -578,6 +579,10 @@ def build_parser() -> argparse.ArgumentParser:
                 default=60.0,
                 help="wall-clock allowance for one message, connect included",
             )
+        if command == "retry-source-verified-email-action":
+            subparser.add_argument("--account", type=_non_blank, required=True)
+            subparser.add_argument("--action-id", type=_non_blank, required=True)
+            subparser.add_argument("--apply", action="store_true")
         if command == "reconcile-failed-agent-message":
             subparser.add_argument("--send-run-id", type=_positive_int, required=True)
             subparser.add_argument("--readback-run-id", type=_positive_int, required=True)
@@ -4966,6 +4971,26 @@ def main() -> None:
         print(json.dumps({
             "task_id": decision["task_id"], "decision": decision["decision"], "applied": args.apply,
         }), flush=True)
+    elif args.command == "retry-source-verified-email-action":
+        if args.apply and settings.dry_run:
+            raise SystemExit("--apply refused: dry-run is on")
+        from app.email_action_reconcile import (
+            ExistingReadOnlyEmailStore,
+            build_gmail_read_only_provider_factory,
+            release_source_verified_retry,
+        )
+        from app.email_store import EmailStore
+
+        store = (
+            EmailStore(settings.db_path) if args.apply
+            else ExistingReadOnlyEmailStore(settings.db_path)
+        )
+        result = release_source_verified_retry(
+            store, account_id=args.account, action_id=args.action_id,
+            provider_factory=build_gmail_read_only_provider_factory(store, args.account, os.environ),
+            apply=args.apply,
+        )
+        print(json.dumps(result, ensure_ascii=False))
     elif args.command == "reconcile-email-actions":
         if args.apply and settings.dry_run:
             raise SystemExit(

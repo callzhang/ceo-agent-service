@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.run_storage import insert_run
 from app.native_standalone import latest_task_ref
 from app import native_trajectory
 from app.store import AutoReplyStore
@@ -69,13 +70,20 @@ def task_native_records(tmp_path, monkeypatch):
             path = root / f"{session}.jsonl"
             path.write_text(_message(json.loads(body)) + "\n")
             paths[session] = path
-            db.execute(
-                "insert into agent_runtime_attempts "
-                "(workload_kind,workload_key,attempt_number,route_name,runtime_kind,"
-                "credential_mode,model,session_id,status,transcript_start,transcript_end) "
-                "values ('task',?,1,'fixture','codex_cli','local_oauth','fixture',?,"
-                "'completed',0,1)",
-                (str(run_id), session),
+            insert_run(
+                db, 'agent_runtime_attempts', {
+                    'workload_kind': 'task',
+                    'workload_key': str(run_id),
+                    'attempt_number': 1,
+                    'route_name': 'fixture',
+                    'runtime_kind': 'codex_cli',
+                    'credential_mode': 'local_oauth',
+                    'model': 'fixture',
+                    'session_id': session,
+                    'status': 'completed',
+                    'transcript_start': 0,
+                    'transcript_end': 1,
+                },
             )
 
     def record(store, *args, **kwargs):

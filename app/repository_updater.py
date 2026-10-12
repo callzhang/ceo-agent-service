@@ -20,6 +20,7 @@ from app.database_backup import (
     prune_database_backups,
 )
 from app.repository_upgrade import GitRepository
+from app.run_schema_release import publication_run_sources
 
 
 UPGRADE_OPERATION_STATE_KEY = "repository_upgrade_operation:v1"
@@ -264,12 +265,13 @@ def in_flight_work(database_path: Path) -> int:
     with closing(sqlite3.connect(
         f"file:{database_path}?mode=ro", uri=True, timeout=30
     )) as db:
+        agent_source, runtime_source = publication_run_sources(db)
         return int(db.execute(
-            "select (select count(*) from agent_runtime_attempts "
+            f"select (select count(*) from ({runtime_source}) as agent_runtime_attempts "
             "        where status not in ('completed','failed','superseded'))"
             " + (select count(*) from reply_tasks as task "
             "    where task.status='processing' and ("
-            "      exists (select 1 from agent_runs as runs "
+            f"      exists (select 1 from ({agent_source}) as runs "
             "        where runs.reply_task_id=task.id "
             "          and runs.status in ('starting','running')) "
             "      or exists (select 1 from dispatcher_claim_leases as claim "

@@ -574,7 +574,7 @@ def test_router_uses_current_persisted_run_status(
     with store._connect() as db:
         assignments = ", ".join(f"{field}=?" for field in persisted_update)
         db.execute(
-            f"update agent_runs set {assignments} where id=?",
+            f"update runs set {assignments} where record_type='agent_runs' and cast(legacy_key as integer)=?",
             (*persisted_update.values(), stale_run.id),
         )
 

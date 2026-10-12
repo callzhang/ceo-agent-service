@@ -196,7 +196,47 @@ class EmailUnsubscribeCancellationSchemaRelease:
         self.verify_loaded()
 
 
-def prepare_email_schema_release(root: Path, database_path: Path) -> EmailSchemaRelease | EmailActionPlanSchemaRelease | EmailUnsubscribeCancellationSchemaRelease | None:
+@dataclass
+class EmailDirectRetrySchemaRelease:
+    root: Path
+    database_path: Path
+    versions: tuple[tuple[int, str], ...]
+    migrate: Callable[[Path, Path], None] = _migrate
+
+    def publish(self) -> None:
+        self.migrate(self.root, self.database_path)
+        self.verify_loaded()
+
+    def verify_loaded(self) -> None:
+        with closing(sqlite3.connect(self.database_path.as_uri() + "?mode=ro", uri=True)) as db:
+            versions = tuple(db.execute("select version,applied_at from email_schema_migrations order by version"))
+            columns = tuple(row[1] for row in db.execute("pragma table_info(email_direct_retry_requests)"))
+            if (not versions or versions[-1][0] != 51 or versions[:-1] != self.versions
+                    or columns != ("action_id", "attempt_number", "source_readback_digest", "account_configuration_snapshot", "requested_at")
+                    or db.execute("pragma foreign_key_check(email_direct_retry_requests)").fetchone() is not None):
+                raise ValueError("Email schema51 retry request readback mismatch")
+
+    def rollback(self) -> None:
+        with closing(sqlite3.connect(self.database_path)) as db, db:
+            db.execute("begin immediate")
+            versions = tuple(db.execute("select version,applied_at from email_schema_migrations order by version"))
+            table = db.execute("select 1 from sqlite_master where type='table' and name='email_direct_retry_requests'").fetchone()
+            if versions == self.versions and table is None:
+                return
+            if not versions or versions[-1][0] != 51 or versions[:-1] != self.versions or table is None:
+                raise ValueError("Email rollback requires the exact50-to-51 retry request transition")
+            if db.execute("select 1 from email_direct_retry_requests limit 1").fetchone():
+                raise ValueError("Email rollback would discard explicit retry authorization")
+            db.execute("drop table email_direct_retry_requests")
+            db.execute("delete from email_schema_migrations where version=51")
+            if tuple(db.execute("select version,applied_at from email_schema_migrations order by version")) != self.versions:
+                raise ValueError("Email retry rollback version readback mismatch")
+
+    def finalize(self) -> None:
+        self.verify_loaded()
+
+
+def prepare_email_schema_release(root: Path, database_path: Path) -> EmailSchemaRelease | EmailActionPlanSchemaRelease | EmailUnsubscribeCancellationSchemaRelease | EmailDirectRetrySchemaRelease | None:
     root = root.resolve()
     database_path = database_path.resolve()
     if not database_path.exists():
@@ -209,6 +249,10 @@ def prepare_email_schema_release(root: Path, database_path: Path) -> EmailSchema
         target = _target_schema_version(root)
         if current == target:
             return None
+        if (current, target) == (50, 51):
+            if db.execute("select 1 from sqlite_master where name='email_direct_retry_requests'").fetchone():
+                raise ValueError("Email schema50 unexpectedly contains retry request state")
+            return EmailDirectRetrySchemaRelease(root, database_path, versions)
         if (current, target) == (49, 50):
             if db.execute("select 1 from sqlite_master where type='table' and name='email_unsubscribe_cancellations'").fetchone():
                 raise ValueError("Email schema49 unexpectedly contains cancellation state")

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from app.store import AutoReplyStore
+from app.run_storage import AGENT_RUN_SQL
 
 
 _LEGACY_AGENT_FAILURES = (
@@ -79,7 +80,7 @@ def close_superseded_scheduled_reply_tasks(
               and trim(coalesce(latest_attempt.resolved_at, ''))=''
               and not exists (
                   select 1
-                  from agent_runs as active_run
+                  from ({AGENT_RUN_SQL}) as active_run
                   where active_run.reply_task_id=task.id
                     and active_run.execution_generation=task.execution_generation
                     and active_run.status in ('pending', 'running')

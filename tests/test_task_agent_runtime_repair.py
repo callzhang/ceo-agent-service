@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.run_storage import RUNTIME_ATTEMPT_SQL
 from app import native_trajectory
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
@@ -116,7 +117,7 @@ def test_semantic_repair_executes_new_round_and_replays_only_matching_receipt(
     with store._connect() as db:
         run_id = db.execute("select id from task_agent_runs").fetchone()[0]
         keys = [row[0] for row in db.execute(
-            "select workload_key from agent_runtime_attempts order by id"
+            f'select workload_key from ({RUNTIME_ATTEMPT_SQL}) order by id'
         )]
     repair_round = 0 if invalid_kind == "title" else 1
     assert keys == (
@@ -140,8 +141,7 @@ def test_semantic_repair_executes_new_round_and_replays_only_matching_receipt(
     assert new_calls == []
     with reopened._connect() as db:
         attempts = db.execute(
-            "select id, session_id, transcript_reference, transcript_start, transcript_end "
-            "from agent_runtime_attempts order by id"
+            f'select id, session_id, transcript_reference, transcript_start, transcript_end from ({RUNTIME_ATTEMPT_SQL}) order by id'
         ).fetchall()
         assert [(attempt["transcript_start"], attempt["transcript_end"])
                 for attempt in attempts] == [(0, 3), (3, 6)]
@@ -151,7 +151,7 @@ def test_semantic_repair_executes_new_round_and_replays_only_matching_receipt(
         latest = attempts[-1]
         # A range beyond the recorded native turn must not replay or call the provider.
         db.execute(
-            "update agent_runtime_attempts set transcript_end=? where id=?",
+            "update runs set transcript_end=? where record_type='agent_runtime_attempts' and cast(legacy_key as integer)=?",
             (latest["transcript_end"] + 1, latest["id"]),
         )
     with pytest.raises(RoutedCodexExecutionError, match="runtime_result_unavailable"):
@@ -274,7 +274,7 @@ def test_terminal_repair_recovery_preserves_nonrecoverable_attempts(tmp_path, bo
         )
     elif boundary == "backfill":
         with store._connect() as db:
-            db.execute("update agent_runtime_attempts set workload_key=? where id=?",
+            db.execute("update runs set workload_key=? where record_type='agent_runtime_attempts' and cast(legacy_key as integer)=?",
                        (f"{run_id}:memory_backfill", attempt.id))
     store.finish_task_agent_run(run_id, status="failed", error="Interrupted")
 

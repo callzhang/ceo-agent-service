@@ -20,6 +20,7 @@ def seed(path):
 
 def rewind48(path):
     with sqlite3.connect(path) as db:
+        db.execute('drop table email_direct_retry_requests')
         restore_action_plan_snapshot_column(db)
         db.execute('delete from email_schema_migrations where version>48')
         db.execute("insert or ignore into email_schema_migrations values(48, '2026-10-11T00:00:00Z')")
@@ -60,10 +61,11 @@ def test_v48_reference_migration_preserves_business_and_api(tmp_path):
     before = business_rows(path)
     rewind48(path)
     migrated = EmailStore(path)
-    assert EMAIL_SCHEMA_VERSION == 50
+    assert EMAIL_SCHEMA_VERSION == 51
     with sqlite3.connect(path) as db:
         assert 'action_plan_json' not in {row[1] for row in db.execute('pragma table_info(email_classifications)')}
         assert db.execute('select max(version) from email_schema_migrations').fetchone()[0] == EMAIL_SCHEMA_VERSION
+        assert db.execute('select count(*) from email_direct_retry_requests').fetchone()[0] == 0
         assert db.execute('pragma foreign_key_check').fetchall() == []
     assert business_rows(path) == before
     assert [migrated.get_classification(index) for index in (1, 2)] == before_api

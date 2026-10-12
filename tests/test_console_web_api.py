@@ -16,6 +16,7 @@ from pydantic import ValidationError
 import app.audit_web as audit_web_module
 import app.config as app_config_module
 import app.web_api.registration as registration_module
+from tests.run_reader_fixtures import insert_native_run_fixture
 from app.audit_web import create_audit_app
 from app.email_classifier_contracts import (
     EmailCategory,
@@ -2735,7 +2736,7 @@ def test_queue_attention_rows_renders_service_generated_needs_human_without_run(
     assert not any(row["id"] == str(attempt_id) for row in rows)
 
 
-def test_queue_attention_rows_excludes_legacy_audit_revision_needs_human(tmp_path: Path):
+def test_queue_attention_rows_excludes_legacy_audit_revision_needs_human(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
         conversation_id="audit-revision-conversation",
@@ -2783,21 +2784,21 @@ def test_queue_attention_rows_excludes_legacy_audit_revision_needs_human(tmp_pat
             ("audit-revision-conversation", "audit-revision-message"),
         ).fetchone()[0]
         db.execute("update reply_tasks set status='done' where id=?", (task_id,))
-        run = db.execute(
-            """insert into agent_runs (
-                reply_task_id, execution_generation, role, status, final_result_json
-            ) values (?, 'initial', 'audit', 'completed', ?)""",
-            (
-                task_id,
-                json.dumps(
+        run = insert_native_run_fixture(
+            db, {
+                'task_id': task_id,
+                'execution_generation': 'initial',
+                'role': 'audit',
+                'status': 'completed',
+            },
+                    result=json.dumps(
                     {
                         "outcome": "feedback_provided",
                         "risk": "low",
                         "confidence": 1.0,
                         "rule_coverage": 0.84,
                     }
-                ),
-            ),
+                ), tmp_path=tmp_path, monkeypatch=monkeypatch,
         )
         db.execute(
             "update reply_attempts set agent_run_id=? where id=?",
@@ -2809,7 +2810,7 @@ def test_queue_attention_rows_excludes_legacy_audit_revision_needs_human(tmp_pat
     assert not any(row["id"] == str(attempt_id) for row in rows)
 
 
-def test_queue_attention_rows_excludes_actionable_structured_needs_human_attempts(tmp_path: Path):
+def test_queue_attention_rows_excludes_actionable_structured_needs_human_attempts(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
         conversation_id="needs-human-conversation",
@@ -2849,11 +2850,14 @@ def test_queue_attention_rows_excludes_actionable_structured_needs_human_attempt
             ("needs-human-conversation", "needs-human-message"),
         ).fetchone()[0]
         db.execute("update reply_tasks set status='done' where id=?", (task_id,))
-        run = db.execute(
-            """insert into agent_runs (
-                reply_task_id, execution_generation, role, status, final_result_json
-            ) values (?, 'initial', 'consumer', 'completed', ?)""",
-            (task_id, json.dumps(result)),
+        run = insert_native_run_fixture(
+            db, {
+                'task_id': task_id,
+                'execution_generation': 'initial',
+                'role': 'consumer',
+                'status': 'completed',
+            },
+                    result=json.dumps(result), tmp_path=tmp_path, monkeypatch=monkeypatch,
         )
         db.execute("update reply_attempts set agent_run_id=? where id=?", (run.lastrowid, attempt_id))
 

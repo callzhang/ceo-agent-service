@@ -1,0 +1,470 @@
+{
+  "version": 1,
+  "deployed_commit": "a0be28d69e0d74596973b9c60587b92ee078c109",
+  "before_commit": "3195cd3bd24d2841f9f36d0f3063d10fb9614fea",
+  "before_pid": "34205",
+  "after_pid": "65054",
+  "production_checkout_updated_at": "2026-10-12T03:08:24+00:00",
+  "after_process_started_at": "2026-10-12T03:08:25+00:00",
+  "post_deploy_readback": {
+    "commit": "a0be28d69e0d74596973b9c60587b92ee078c109",
+    "health": {
+      "http": 200
+    },
+    "status": {
+      "http": 200,
+      "pid": "65054",
+      "service_ok": true,
+      "queues": [
+        {
+          "name": "Reply tasks",
+          "pending": 0,
+          "processing": 0,
+          "failed": 2,
+          "retryable": 0
+        },
+        {
+          "name": "Reply attempts",
+          "pending": 0,
+          "processing": 0,
+          "failed": 2,
+          "retryable": 0
+        },
+        {
+          "name": "Work items",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Email classifications",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Follow-ups",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Meeting jobs",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "OKR reviews",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Memory writes",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Meeting Memory writes",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "DingTalk Todos",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "WeChat deliveries",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Email provider actions",
+          "pending": 3,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Email unsubscribe tasks",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        }
+      ],
+      "dispatcher": [
+        {
+          "name": "scheduled",
+          "pending": 0,
+          "due": 0,
+          "running": 2
+        },
+        {
+          "name": "scheduled_execution",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "reply",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "meeting",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "work_summary",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "okr_review",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "task_todo_sync_outbox",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "business_task_todo_sync_outbox",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        },
+        {
+          "name": "task_memory_write",
+          "pending": 0,
+          "due": 0,
+          "running": 0
+        }
+      ]
+    },
+    "attention": {
+      "http": 200,
+      "item_count": 1,
+      "statuses": {
+        "unknown": 1
+      }
+    },
+    "history": {
+      "http": 200,
+      "item_count": 20,
+      "statuses": {
+        "failed": 2,
+        "done": 10,
+        "skipped": 5,
+        "completed": 3
+      }
+    }
+  },
+  "public_contract_mcp_readback": {
+    "scope": "Public canonical action contract reads through actual production-code MCP transport, from temporary cwd; no model or business dispatch.",
+    "source_sha256": "6645021e6ccacb4c620a9156b0ae7579fbeb48d168096788c74f2e556f4b5298",
+    "source_characters": 6094,
+    "checks": [
+      {
+        "role": "consumer",
+        "capability": "dingtalk-chat",
+        "operation": "reply_to_message",
+        "characters": 3997,
+        "sha256": "be4b982c250d0bdfda0ec673297f6e2b090ba20e4d01966b0c1d1d88df66ecb1"
+      },
+      {
+        "role": "consumer",
+        "capability": "dingtalk-chat",
+        "operation": "send_message",
+        "characters": 3997,
+        "sha256": "d80d8be4c3c0bc53d02e2b76298edd79223e0d7641ed38e9068e6a56f22be194"
+      },
+      {
+        "role": "consumer",
+        "capability": "dingtalk-chat",
+        "operation": "send_group_message",
+        "characters": 3927,
+        "sha256": "c02bc29e6dd7b597e5632b3630cc9d5256a3982e8d5d9fa4d938e5a1d10a569d"
+      },
+      {
+        "role": "consumer",
+        "capability": "dingtalk-chat",
+        "operation": "send_direct_message",
+        "characters": 4030,
+        "sha256": "3ee724122c0c1b7bb2ed0937c1336576355e52b39f2e24b7e093928934030a6d"
+      },
+      {
+        "role": "consumer",
+        "capability": "dingtalk-chat",
+        "operation": "add_message_emoji",
+        "characters": 3980,
+        "sha256": "f30b6d0bb26a9a2c59ee75651c604565be16b16a0c5a77858b7cef9a6e44854c"
+      },
+      {
+        "role": "consumer",
+        "capability": "dingtalk-chat",
+        "operation": "add_message_text_emotion",
+        "characters": 3985,
+        "sha256": "2ca896ec0382f35ba4d2ac96e8cc06d56d7cc761444f0019f9b9380715e31c94"
+      },
+      {
+        "role": "consumer",
+        "capability": "dingtalk-chat",
+        "operation": "create_message_text_emotion",
+        "characters": 3986,
+        "sha256": "91a56f825e81e640b411829530fc5616f601d4acf233a92bc8a17a20f51d345d"
+      },
+      {
+        "role": "consumer",
+        "capability": "dingtalk-calendar",
+        "operation": "respond_calendar_event",
+        "characters": 3947,
+        "sha256": "fe7c83cd383a7c5dedf4681cf05b0deb565b12533c09bf098a34824ab951955f"
+      },
+      {
+        "role": "consumer",
+        "capability": "dingtalk-oa",
+        "operation": "approve",
+        "characters": 3932,
+        "sha256": "8c60d5d9bb241f59799826df9a5f490be4b282354e5471429c802d55ce682837"
+      },
+      {
+        "role": "consumer",
+        "capability": "dingtalk-oa",
+        "operation": "reject",
+        "characters": 3931,
+        "sha256": "c756c3c2b6d063e51e038cb62ced22b2e4422ca91d242e3a0bc9e2e98bd4b5b9"
+      },
+      {
+        "role": "consumer",
+        "capability": "dingtalk-oa",
+        "operation": "revert_task",
+        "characters": 3974,
+        "sha256": "0c3719882f2f75a7ef79186cbb6e94932abff4a3a86b41676d27427ac4e54ed3"
+      },
+      {
+        "role": "consumer",
+        "capability": "dingtalk-oa",
+        "operation": "redirect_task",
+        "characters": 3993,
+        "sha256": "60e4f0eceb3668bd67bc64fd27cb7e0cfb7c0ce85ee9a9dccb6e4e4e751d4d12"
+      },
+      {
+        "role": "consumer",
+        "capability": "dingtalk-oa",
+        "operation": "comment",
+        "characters": 3911,
+        "sha256": "584bec64ffd499ff919ebe14fb120c02160e0ae663378bda68c557bf3c1bb847"
+      },
+      {
+        "role": "consumer",
+        "capability": "dingtalk-doc",
+        "operation": "create_document",
+        "characters": 3938,
+        "sha256": "aa01b7af3644f5150883b71085008e33bdbb943e13a0d18f05031bde413df2db"
+      },
+      {
+        "role": "consumer",
+        "capability": "dingtalk-doc",
+        "operation": "create_doc_comment",
+        "characters": 3913,
+        "sha256": "10d823367db2b185c1abe4b1e0a43d0dafae7d9b4334a13d8fa10d70b063aa8e"
+      },
+      {
+        "role": "audit",
+        "capability": "dingtalk-chat",
+        "operation": "reply_to_message",
+        "characters": 3997,
+        "sha256": "be4b982c250d0bdfda0ec673297f6e2b090ba20e4d01966b0c1d1d88df66ecb1"
+      },
+      {
+        "role": "audit",
+        "capability": "dingtalk-chat",
+        "operation": "send_message",
+        "characters": 3997,
+        "sha256": "d80d8be4c3c0bc53d02e2b76298edd79223e0d7641ed38e9068e6a56f22be194"
+      },
+      {
+        "role": "audit",
+        "capability": "dingtalk-chat",
+        "operation": "send_group_message",
+        "characters": 3927,
+        "sha256": "c02bc29e6dd7b597e5632b3630cc9d5256a3982e8d5d9fa4d938e5a1d10a569d"
+      },
+      {
+        "role": "audit",
+        "capability": "dingtalk-chat",
+        "operation": "send_direct_message",
+        "characters": 4030,
+        "sha256": "3ee724122c0c1b7bb2ed0937c1336576355e52b39f2e24b7e093928934030a6d"
+      },
+      {
+        "role": "audit",
+        "capability": "dingtalk-chat",
+        "operation": "add_message_emoji",
+        "characters": 3980,
+        "sha256": "f30b6d0bb26a9a2c59ee75651c604565be16b16a0c5a77858b7cef9a6e44854c"
+      },
+      {
+        "role": "audit",
+        "capability": "dingtalk-chat",
+        "operation": "add_message_text_emotion",
+        "characters": 3985,
+        "sha256": "2ca896ec0382f35ba4d2ac96e8cc06d56d7cc761444f0019f9b9380715e31c94"
+      },
+      {
+        "role": "audit",
+        "capability": "dingtalk-chat",
+        "operation": "create_message_text_emotion",
+        "characters": 3986,
+        "sha256": "91a56f825e81e640b411829530fc5616f601d4acf233a92bc8a17a20f51d345d"
+      },
+      {
+        "role": "audit",
+        "capability": "dingtalk-calendar",
+        "operation": "respond_calendar_event",
+        "characters": 3947,
+        "sha256": "fe7c83cd383a7c5dedf4681cf05b0deb565b12533c09bf098a34824ab951955f"
+      },
+      {
+        "role": "audit",
+        "capability": "dingtalk-oa",
+        "operation": "approve",
+        "characters": 3932,
+        "sha256": "8c60d5d9bb241f59799826df9a5f490be4b282354e5471429c802d55ce682837"
+      },
+      {
+        "role": "audit",
+        "capability": "dingtalk-oa",
+        "operation": "reject",
+        "characters": 3931,
+        "sha256": "c756c3c2b6d063e51e038cb62ced22b2e4422ca91d242e3a0bc9e2e98bd4b5b9"
+      },
+      {
+        "role": "audit",
+        "capability": "dingtalk-oa",
+        "operation": "revert_task",
+        "characters": 3974,
+        "sha256": "0c3719882f2f75a7ef79186cbb6e94932abff4a3a86b41676d27427ac4e54ed3"
+      },
+      {
+        "role": "audit",
+        "capability": "dingtalk-oa",
+        "operation": "redirect_task",
+        "characters": 3993,
+        "sha256": "60e4f0eceb3668bd67bc64fd27cb7e0cfb7c0ce85ee9a9dccb6e4e4e751d4d12"
+      },
+      {
+        "role": "audit",
+        "capability": "dingtalk-oa",
+        "operation": "comment",
+        "characters": 3911,
+        "sha256": "584bec64ffd499ff919ebe14fb120c02160e0ae663378bda68c557bf3c1bb847"
+      },
+      {
+        "role": "audit",
+        "capability": "dingtalk-doc",
+        "operation": "create_document",
+        "characters": 3938,
+        "sha256": "aa01b7af3644f5150883b71085008e33bdbb943e13a0d18f05031bde413df2db"
+      },
+      {
+        "role": "audit",
+        "capability": "dingtalk-doc",
+        "operation": "create_doc_comment",
+        "characters": 3913,
+        "sha256": "10d823367db2b185c1abe4b1e0a43d0dafae7d9b4334a13d8fa10d70b063aa8e"
+      }
+    ]
+  },
+  "pre_release_failures": [
+    {
+      "attempt_id": 15283,
+      "terminal_at": "2026-10-12T03:07:34+00:00",
+      "classification": "audit_revision_exhausted",
+      "scope": "Business revision loop; not rerun."
+    },
+    {
+      "attempt_id": 15284,
+      "terminal_at": "2026-10-12T03:08:11+00:00",
+      "classification": "audit_revision_exhausted",
+      "scope": "Audit requests task_id string conversion despite canonical-valid actual string target; not rerun."
+    }
+  ],
+  "derived_type_evidence": {
+    "scope": "Derived types and hashes only from immutable original native inputs; no business body copies or replay.",
+    "audit_inputs": [
+      {
+        "run_id": 25838,
+        "session_id": "01a12e12-ce86-79c1-9cd8-c9a971303d05",
+        "revision": 2,
+        "task_characters": 36704,
+        "candidate_digest": "ad6e1d0c39594e691ff1edd4b596b470cfc4ff324543efe0d64dd799ae855ab1",
+        "canonical_validation": true,
+        "target_types": [
+          {
+            "process_instance_id": "str",
+            "target_activity_id": "str",
+            "task_id": "str"
+          }
+        ]
+      },
+      {
+        "run_id": 25843,
+        "session_id": "01a12e14-9250-71d0-be71-704b62c2e1d2",
+        "revision": 3,
+        "task_characters": 36704,
+        "candidate_digest": "ad6e1d0c39594e691ff1edd4b596b470cfc4ff324543efe0d64dd799ae855ab1",
+        "canonical_validation": true,
+        "target_types": [
+          {
+            "process_instance_id": "str",
+            "target_activity_id": "str",
+            "task_id": "str"
+          }
+        ]
+      }
+    ]
+  },
+  "limitations": [
+    "No model/business acceptance inferred from MCP source readback.",
+    "Existing failed tasks and pending provider actions remain visible; no replay, reconciliation or audit-policy change.",
+    "Full trajectory optimization and native schema route gates remain incomplete."
+  ],
+  "settings_readback": {
+    "current_audit": {
+      "selected_lookup_description": true,
+      "old_description": false,
+      "developer_characters": 29207
+    },
+    "historical_run_25843": {
+      "selected_lookup_description": false,
+      "old_description": true,
+      "developer_characters": 28882
+    },
+    "scope": "Current preview reflects the changed catalog; original saved historical Developer remains unchanged."
+  }
+}

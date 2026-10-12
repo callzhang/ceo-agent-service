@@ -1,5 +1,6 @@
 import sqlite3
 
+from app.run_storage import insert_run
 from app.history import HistoryItem, safe_observability_error
 from app.store import AutoReplyStore
 
@@ -138,20 +139,27 @@ def test_history_uses_current_run_while_failed_attempt_is_recovering(tmp_path):
         task_id, generation = db.execute(
             "select id, execution_generation from reply_tasks where trigger_message_id='task-1'"
         ).fetchone()
-        db.execute(
-            "insert into agent_runs (reply_task_id, execution_generation, role, status) "
-            "values (?, ?, 'consumer', 'failed')",
-            (task_id, generation),
+        insert_run(
+            db, 'agent_runs', {
+                'task_id': task_id,
+                'execution_generation': generation,
+                'role': 'consumer',
+                'status': 'failed',
+            },
         )
         failed_run = db.execute("select last_insert_rowid()").fetchone()[0]
         db.execute(
             "update reply_attempts set agent_run_id=? where id=?",
             (failed_run, attempt_id),
         )
-        db.execute(
-            "insert into agent_runs (reply_task_id, execution_generation, role, status, turn_attempt) "
-            "values (?, ?, 'consumer', 'running', 1)",
-            (task_id, generation),
+        insert_run(
+            db, 'agent_runs', {
+                'task_id': task_id,
+                'execution_generation': generation,
+                'role': 'consumer',
+                'status': 'running',
+                'turn_attempt': 1,
+            },
         )
         db.execute("update reply_tasks set status='processing' where id=?", (task_id,))
 
@@ -160,8 +168,7 @@ def test_history_uses_current_run_while_failed_attempt_is_recovering(tmp_path):
     assert item.source_id == attempt_id
     with sqlite3.connect(store.path) as db:
         db.execute(
-            "update agent_runs set status='completed' "
-            "where reply_task_id=? and turn_attempt=1",
+            "update runs set status='completed' where record_type='agent_runs' and task_id=? and turn_attempt=1",
             (task_id,),
         )
     assert store.count_history_items(send_statuses=("failed",)) == 0

@@ -1,0 +1,163 @@
+{
+  "version": 1,
+  "commit": "54e6c209",
+  "tests": {
+    "red": 2,
+    "green": 2,
+    "affected_passed": 265,
+    "affected_skipped": 4
+  },
+  "counter": {
+    "before": [
+      [
+        "ceo-document-review"
+      ],
+      []
+    ],
+    "after": [
+      []
+    ]
+  },
+  "same_final_native_config_and_task_discovery": true,
+  "production_status": {
+    "http_status": 200,
+    "elapsed_seconds": 0.74,
+    "pid": "52040",
+    "service_ok": true,
+    "queues": [
+      {
+        "name": "Reply tasks",
+        "pending": 0,
+        "processing": 0,
+        "failed": 2
+      },
+      {
+        "name": "Reply attempts",
+        "pending": 0,
+        "processing": 0,
+        "failed": 2
+      },
+      {
+        "name": "Work items",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0
+      },
+      {
+        "name": "Email classifications",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0
+      },
+      {
+        "name": "Follow-ups",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0
+      },
+      {
+        "name": "Meeting jobs",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0
+      },
+      {
+        "name": "OKR reviews",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0
+      },
+      {
+        "name": "Memory writes",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0
+      },
+      {
+        "name": "Meeting Memory writes",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0
+      },
+      {
+        "name": "DingTalk Todos",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0
+      },
+      {
+        "name": "WeChat deliveries",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0
+      },
+      {
+        "name": "Email provider actions",
+        "pending": 3,
+        "processing": 0,
+        "failed": 1
+      },
+      {
+        "name": "Email unsubscribe tasks",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0
+      }
+    ]
+  },
+  "console": {
+    "attention": {
+      "http_status": 200,
+      "total": 3
+    },
+    "history": {
+      "http_status": 200,
+      "status_counts": {
+        "skipped": 2,
+        "sent": 2,
+        "done": 10,
+        "failed": 2,
+        "completed": 3,
+        "recovered": 1
+      }
+    },
+    "settings": {
+      "http_status": 200,
+      "item_keys": [
+        "mode",
+        "status",
+        "role",
+        "runtime_kind",
+        "route_name",
+        "model",
+        "rendered_at",
+        "task_id",
+        "run_id",
+        "runtime_attempt_id",
+        "execution_generation",
+        "proposal_revision",
+        "stage_index",
+        "submission_state",
+        "attempts",
+        "developer_instructions",
+        "task_prompt",
+        "submitted_input",
+        "runtime_context",
+        "reason",
+        "scope",
+        "routes",
+        "configuration_fingerprints",
+        "task_source_configuration_fingerprints",
+        "task_source_run_id",
+        "task_source_rendered_at",
+        "sections",
+        "invocation_facts",
+        "redacted"
+      ],
+      "payload_sha256": "7f2a729302f2e5e4b2818466dba23497380055689ef342fb73b1cd411d2e53bc"
+    }
+  },
+  "health_http_status": 200,
+  "initial_readback": "Timeouts observed, same supervisor verified; subsequent status0.74s. No extra restart; cause unconfirmed.",
+  "independent_review": "readonly_business_matrix_review found no blockers or other execute(skill_names=...) callers; direct adapter support retained."
+}

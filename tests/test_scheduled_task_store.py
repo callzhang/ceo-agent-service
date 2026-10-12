@@ -342,10 +342,6 @@ def test_previous_scheduled_tasks_gain_empty_runtime_requirements(
         db.execute(
             "alter table scheduled_tasks drop column required_runtime_capabilities_json"
         )
-        db.execute(
-            "update service_state set value='2026-09-08.5' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        )
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     migrated = AutoReplyStore(db_path)
@@ -1021,10 +1017,6 @@ def test_previous_schema_additively_creates_cron_tables_and_preserves_data(
         db.execute("drop table scheduled_task_runs")
         db.execute("drop table scheduled_task_skill_refs")
         db.execute("drop table scheduled_tasks")
-        db.execute(
-            "update service_state set value='2026-09-07.4' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        )
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     migrated = AutoReplyStore(db_path)
@@ -1248,13 +1240,6 @@ def test_previous_scheduled_tasks_gain_empty_command(tmp_path: Path) -> None:
             (json.dumps(snapshot), run.id),
         )
         db.execute("alter table scheduled_tasks drop column command")
-        # The version a database carried before the command column shipped:
-        # the schema gate must treat it as stale, or the column is never added.
-        db.execute(
-            "update service_state set value='2026-09-08.6' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        )
-    assert store_module.STORE_SCHEMA_VERSION > "2026-09-08.6"
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     migrated = AutoReplyStore(db_path)
@@ -1286,12 +1271,7 @@ def test_current_schema_version_still_migrates_missing_command_column(
 def test_pre_bump_schema_version_backfills_legacy_run_snapshot_fields(
     tmp_path: Path,
 ) -> None:
-    """A database written before the snapshot fields carries an older version.
-
-    The row check no longer runs on every store construction, so the version is
-    what drives the repair: any build that changes the persisted snapshot shape
-    must bump STORE_SCHEMA_VERSION, which is what makes this database migrate.
-    """
+    """Repair a scheduled-task shape while preserving its old run snapshot."""
     db_path = tmp_path / "pre-bump-legacy-snapshot.sqlite3"
     previous = AutoReplyStore(db_path)
     task = _create_task(previous)
@@ -1305,10 +1285,7 @@ def test_pre_bump_schema_version_backfills_legacy_run_snapshot_fields(
             "update scheduled_task_config_versions set snapshot_json=? where id=(select snapshot_id from scheduled_task_runs where id=?)",
             (json.dumps(snapshot), run.id),
         )
-        db.execute(
-            "update service_state set value=? where key=?",
-            ("2026-09-09.1", store_module.STORE_SCHEMA_VERSION_KEY),
-        )
+        db.execute("alter table scheduled_tasks drop column command")
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     migrated = AutoReplyStore(db_path)
@@ -1511,10 +1488,7 @@ def test_migration_still_verifies_the_run_snapshots_it_wrote(tmp_path, monkeypat
     path = tmp_path / "verified.sqlite3"
     AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        db.execute(
-            "update service_state set value='stale' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        )
+        db.execute("alter table scheduled_tasks drop column command")
 
     statements = _traced_construction(tmp_path, monkeypatch, path)
 

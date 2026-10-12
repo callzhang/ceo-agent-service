@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from app.run_storage import insert_run
 from app.workbench import native_events
 from app.workbench.store import WorkbenchStore
 
@@ -61,11 +62,20 @@ def test_workbench_tool_rows_store_only_native_ordinal_and_replay_exact_native_r
         }}},
     ]) + "\n")
     with store._connect() as db:
-        db.execute(
-            "insert into agent_runtime_attempts "
-            "(workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status,session_id,transcript_start,transcript_end) "
-            "values ('workbench',?,1,'primary','codex_cli','oauth','model','completed','session-id',0,2)",
-            (turn_id,),
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'workload_kind': 'workbench',
+                'workload_key': turn_id,
+                'attempt_number': 1,
+                'route_name': 'primary',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'oauth',
+                'model': 'model',
+                'status': 'completed',
+                'session_id': 'session-id',
+                'transcript_start': 0,
+                'transcript_end': 2,
+            },
         )
     monkeypatch.setattr(native_events, "find_codex_session_path", lambda *_args, **_kwargs: native_path)
     _forget_live(monkeypatch)
@@ -90,11 +100,20 @@ def test_workbench_replay_marks_missing_or_mismatched_native_detail(
         }}})
     native_path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
     with store._connect() as db:
-        db.execute(
-            "insert into agent_runtime_attempts "
-            "(workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status,session_id,transcript_start,transcript_end) "
-            "values ('workbench',?,1,'primary','codex_cli','oauth','model','completed','session-id',0,?)",
-            (turn_id, len(rows)),
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'workload_kind': 'workbench',
+                'workload_key': turn_id,
+                'attempt_number': 1,
+                'route_name': 'primary',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'oauth',
+                'model': 'model',
+                'status': 'completed',
+                'session_id': 'session-id',
+                'transcript_start': 0,
+                'transcript_end': len(rows),
+            },
         )
     monkeypatch.setattr(
         native_events, "find_codex_session_path",
@@ -157,7 +176,21 @@ def test_out_of_order_completed_tools_replay_from_native_completion_ordinals(tmp
         {"type": "event_msg", "payload": {"type": "task_complete"}},
     ]) + "\n")
     with store._connect() as db:
-        db.execute("insert into agent_runtime_attempts (workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status,session_id,transcript_start,transcript_end) values ('workbench',?,1,'primary','codex_cli','oauth','model','completed','session-id',0,4)", (turn.id,))
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'workload_kind': 'workbench',
+                'workload_key': turn.id,
+                'attempt_number': 1,
+                'route_name': 'primary',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'oauth',
+                'model': 'model',
+                'status': 'completed',
+                'session_id': 'session-id',
+                'transcript_start': 0,
+                'transcript_end': 4,
+            },
+        )
     monkeypatch.setattr(native_events, "find_codex_session_path", lambda *_args, **_kwargs: native_path)
     store.complete_turn(turn.id, status="completed", owner="worker")
     _forget_live(monkeypatch)
@@ -206,7 +239,21 @@ def test_native_tool_start_inputs_survive_completion_with_only_outputs(tmp_path:
     ]
     native_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
     with store._connect() as db:
-        db.execute("insert into agent_runtime_attempts (workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status,session_id,transcript_start,transcript_end) values ('workbench',?,1,'primary','codex_cli','oauth','model','completed','session-id',0,?)", (turn.id, len(records)))
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'workload_kind': 'workbench',
+                'workload_key': turn.id,
+                'attempt_number': 1,
+                'route_name': 'primary',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'oauth',
+                'model': 'model',
+                'status': 'completed',
+                'session_id': 'session-id',
+                'transcript_start': 0,
+                'transcript_end': len(records),
+            },
+        )
     monkeypatch.setattr(native_events, "find_codex_session_path", lambda *_args, **_kwargs: native_path)
     store.complete_turn(turn.id, status="completed", owner="worker")
     replay = WorkbenchStore(store.path).events_after(turn.id)
@@ -244,7 +291,21 @@ def test_native_messages_replay_as_completed_messages_with_stable_event_pages(tm
         {"type": "event_msg", "payload": {"type": "task_complete"}},
     ]) + "\n")
     with store._connect() as db:
-        db.execute("insert into agent_runtime_attempts (workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status,session_id,transcript_start,transcript_end) values ('workbench',?,1,'primary','codex_cli','oauth','model','completed','session-id',0,4)", (turn.id,))
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'workload_kind': 'workbench',
+                'workload_key': turn.id,
+                'attempt_number': 1,
+                'route_name': 'primary',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'oauth',
+                'model': 'model',
+                'status': 'completed',
+                'session_id': 'session-id',
+                'transcript_start': 0,
+                'transcript_end': 4,
+            },
+        )
     monkeypatch.setattr(native_events, "find_codex_session_path", lambda *_args, **_kwargs: native_path)
     from app import native_trajectory
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *_args, **_kwargs: native_path)
@@ -267,15 +328,13 @@ def test_native_messages_replay_as_completed_messages_with_stable_event_pages(tm
     assert "WRONG TURN" not in json.dumps([event.payload for event in pages])
     with replay_store._connect() as db:
         db.execute(
-            "update agent_runtime_attempts set transcript_end=7 "
-            "where workload_kind='workbench' and workload_key=?", (turn.id,)
+            "update runs set transcript_end=7 where record_type='agent_runtime_attempts' and workload_kind='workbench' and workload_key=?", (turn.id,)
         )
     assert "不可用" in replay_store.get_turn(turn.id).final_text
     assert "不可用" in replay_store.events_after(turn.id)[-2].payload["text"]
     with replay_store._connect() as db:
         db.execute(
-            "update agent_runtime_attempts set transcript_end=4 "
-            "where workload_kind='workbench' and workload_key=?", (turn.id,)
+            "update runs set transcript_end=4 where record_type='agent_runtime_attempts' and workload_kind='workbench' and workload_key=?", (turn.id,)
         )
         db.execute(
             "update workbench_events set payload_json='{}' "
@@ -302,7 +361,21 @@ def test_completed_turn_keeps_business_status_and_marks_native_unavailable(
                            json.dumps({"type": "event_msg", "payload": {"type": "task_started"}}) + "\n")
     end = 2 if source == "truncated" else 1
     with store._connect() as db:
-        db.execute("insert into agent_runtime_attempts (workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status,session_id,transcript_start,transcript_end) values ('workbench',?,1,'primary','codex_cli','oauth','model','completed','session-id',0,?)", (turn.id, end))
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'workload_kind': 'workbench',
+                'workload_key': turn.id,
+                'attempt_number': 1,
+                'route_name': 'primary',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'oauth',
+                'model': 'model',
+                'status': 'completed',
+                'session_id': 'session-id',
+                'transcript_start': 0,
+                'transcript_end': end,
+            },
+        )
     path = None if source == "missing" else native_path
     monkeypatch.setattr(native_events, "find_codex_session_path", lambda *_args, **_kwargs: path)
     from app import native_trajectory
@@ -321,7 +394,20 @@ def test_friday_final_artifact_is_read_after_sqlite_snapshot(tmp_path: Path, mon
     turn = store.create_turn(task.id, user_text="Inspect", client_request_id="r1")
     assert store.claim_next_turn(owner="worker") is not None
     with store._connect() as db:
-        db.execute("insert into agent_runtime_attempts (workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status,session_id,transcript_reference) values ('workbench',?,1,'primary','friday_runtime','oauth','model','completed','friday_thread:thread-1','friday_operation:op-1')", (turn.id,))
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'workload_kind': 'workbench',
+                'workload_key': turn.id,
+                'attempt_number': 1,
+                'route_name': 'primary',
+                'runtime_kind': 'friday_runtime',
+                'credential_mode': 'oauth',
+                'model': 'model',
+                'status': 'completed',
+                'session_id': 'friday_thread:thread-1',
+                'transcript_reference': 'friday_operation:op-1',
+            },
+        )
     store.complete_turn(turn.id, status="completed", final_text="PRIVATE FINAL", owner="worker")
     from app import agent_runtime_config, friday_runtime_adapter
     monkeypatch.setattr(agent_runtime_config, "load_runtime_config", lambda _env: object())
@@ -356,7 +442,21 @@ def test_native_reasoning_and_file_change_recover_without_sqlite_copy(tmp_path: 
         {"type": "event_msg", "payload": {"type": "task_complete"}},
     ]) + "\n")
     with store._connect() as db:
-        db.execute("insert into agent_runtime_attempts (workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status,session_id,transcript_start,transcript_end) values ('workbench',?,1,'primary','codex_cli','oauth','model','failed','session-id',0,4)", (turn.id,))
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'workload_kind': 'workbench',
+                'workload_key': turn.id,
+                'attempt_number': 1,
+                'route_name': 'primary',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'oauth',
+                'model': 'model',
+                'status': 'failed',
+                'session_id': 'session-id',
+                'transcript_start': 0,
+                'transcript_end': 4,
+            },
+        )
     monkeypatch.setattr(native_events, "find_codex_session_path", lambda *_args, **_kwargs: native_path)
     store.complete_turn(turn.id, status="failed", error_code="runtime_failure", owner="worker")
     _forget_live(monkeypatch)

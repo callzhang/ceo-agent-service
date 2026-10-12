@@ -1,5 +1,6 @@
 import pytest
 
+from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, insert_run
 from app.deploy import deploy
 
 
@@ -86,16 +87,30 @@ def test_real_interrupted_recovery_preserves_identity_and_verified_backup(tmp_pa
     native_end = native_events(path, task_id, monkeypatch, {'type': 'AgentMessage', 'text': 'preparing'})
     with sqlite3.connect(path) as db:
         db.execute("update reply_tasks set status='processing' where id=?", (task_id,))
-        db.execute("update agent_runs set status='running',completed_at='' where reply_task_id=?", (task_id,))
-        run_id = db.execute('select id from agent_runs where reply_task_id=?', (task_id,)).fetchone()[0]
-        db.execute("insert into agent_runtime_attempts(agent_run_id,workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status,session_id,transcript_end) values (?,'agent_run',?,1,'test','codex_cli','oauth','test','running','native-test',?)", (run_id,str(run_id),native_end))
+        db.execute("update runs set status='running',completed_at='' where record_type='agent_runs' and task_id=?", (task_id,))
+        run_id = db.execute(f'select id from ({AGENT_RUN_SQL}) where reply_task_id=?', (task_id,)).fetchone()[0]
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'parent_id': run_id,
+                'workload_kind': 'agent_run',
+                'workload_key': str(run_id),
+                'attempt_number': 1,
+                'route_name': 'test',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'oauth',
+                'model': 'test',
+                'status': 'running',
+                'session_id': 'native-test',
+                'transcript_end': native_end,
+            },
+        )
         before = db.execute('select execution_generation,input_version,business_object_key,attempts from reply_tasks where id=?', (task_id,)).fetchone()
     prepare_maintenance(path, (task_id,), 'test-maintenance', check_maintenance(path, (task_id,)))
     with sqlite3.connect(path) as db:
         assert db.execute('select execution_generation,input_version,business_object_key,attempts from reply_tasks where id=?', (task_id,)).fetchone() == before
         assert db.execute('select status from reply_tasks where id=?', (task_id,)).fetchone()[0] == 'pending'
-        assert db.execute('select status from agent_runs where id=?', (run_id,)).fetchone()[0] == 'failed'
-        assert db.execute('select failure_code from agent_runtime_attempts where agent_run_id=?', (run_id,)).fetchone()[0] == 'service_restart_interrupted'
+        assert db.execute(f'select status from ({AGENT_RUN_SQL}) where id=?', (run_id,)).fetchone()[0] == 'failed'
+        assert db.execute(f'select failure_code from ({RUNTIME_ATTEMPT_SQL}) where agent_run_id=?', (run_id,)).fetchone()[0] == 'service_restart_interrupted'
         receipt = json.loads(db.execute("select value from service_state where key='deployment_maintenance_receipt'").fetchone()[0])
     from pathlib import Path
     backup = Path(receipt['verified_backup'])

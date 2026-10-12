@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from urllib.parse import urlencode
 
+from app.run_storage import AGENT_RUN_SQL
 from app.agent_contracts import ConsumerAgentResult
 from app.audit_web import handle_needs_human_decision_post, _is_valid_rerun_trigger_json
 from app.audit_web import _human_decision_attention_rows
@@ -185,7 +186,7 @@ def test_unbound_legacy_task_class_choices_survive_restart_without_becoming_exec
     assert reopened.get_reply_task(task.id).status == "needs_human"
     assert json.loads(reopened.get_agent_run(run.id).adopted_result_json) == body
     with reopened._connect() as db:
-        assert db.execute("select final_result_json from agent_runs where id=?", (run.id,)).fetchone()[0] == ""
+        assert db.execute(f'select final_result_json from ({AGENT_RUN_SQL}) where id=?', (run.id,)).fetchone()[0] == ""
     with reopened._connect() as db:
         assert db.execute("select count(*) from candidate_selections").fetchone()[0] == 0
         assert db.execute("select count(*) from candidate_executions").fetchone()[0] == 0

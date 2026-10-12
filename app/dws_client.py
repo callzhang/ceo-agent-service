@@ -4,6 +4,7 @@ import json
 import os
 import re
 import signal
+import stat
 import subprocess
 import tempfile
 import threading
@@ -2860,7 +2861,10 @@ class DwsClient:
         *,
         file_name: str = "download",
         space_id: str = "",
+        max_bytes: int | None = None,
     ) -> bytes:
+        if max_bytes is not None and (type(max_bytes) is not int or max_bytes <= 0):
+            raise ValueError("drive download byte limit must be positive")
         safe_name = Path(file_name).name or "download"
         with tempfile.TemporaryDirectory(prefix="ceo-agent-dws-drive-") as temp_dir:
             output_path = Path(temp_dir) / safe_name
@@ -2876,7 +2880,14 @@ class DwsClient:
                 if len(matches) != 1:
                     raise DwsError("drive download did not create a file")
                 output_path = matches[0]
-            return output_path.read_bytes()
+            flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC
+            with os.fdopen(os.open(output_path, flags), "rb") as source:
+                if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                    raise DwsError("drive download is not a regular file")
+                content = source.read() if max_bytes is None else source.read(max_bytes + 1)
+                if max_bytes is not None and len(content) > max_bytes:
+                    raise DwsError("drive download exceeds byte limit")
+                return content
 
     def list_minutes(
         self,

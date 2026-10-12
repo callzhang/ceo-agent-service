@@ -756,7 +756,6 @@ class AgentTurnProcess(Generic[ResultT]):
         required_capabilities: frozenset[str] = frozenset(),
         conversation_contract_hash: str = "",
         force_new_session: bool = False,
-        skill_names: tuple[str, ...] = (),
         invocation_facts: dict[str, object] | None = None,
     ) -> AgentTurnRunResult[ResultT]:
         required_capabilities = required_capabilities | {ROLE_BOUND_AGENT_TOOLS}
@@ -1150,7 +1149,6 @@ class AgentTurnProcess(Generic[ResultT]):
                         developer_instructions=developer_instructions,
                         use_approval_bypass=True,
                         reasoning_effort=self.reasoning_effort or None,
-                        skill_names=skill_names,
                     )
                     configure_command(command)
                     if route.credential_mode is CredentialMode.SERVICE_API:

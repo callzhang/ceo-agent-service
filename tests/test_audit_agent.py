@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from app.run_storage import AGENT_RUN_SQL
 from app.agent_context import AgentTaskContext, AuditTurnContext
 from app.agent_cron.commands import (
     ServiceCommandConsumerContext,
@@ -137,7 +138,7 @@ def _runner(setup, executor):
         from app.native_trajectory import live_events
         def capture_active_events():
             with store._connect() as db:
-                run_id = db.execute("select id from agent_runs where status='running' order by id desc limit 1").fetchone()[0]
+                run_id = db.execute(f"select id from ({AGENT_RUN_SQL}) where status='running' order by id desc limit 1").fetchone()[0]
             return live_events(str(store.path.resolve()), run_id) or []
         executor.capture_active_events = capture_active_events
     return AuditAgentRunner(
@@ -453,10 +454,21 @@ def test_audit_reads_frozen_prepared_parent_when_native_proposal_differs(setup, 
         ]}}) + '\n')
     monkeypatch.setattr(native_trajectory, 'find_codex_session_path', lambda *a, **k: path)
     with store._connect() as db:
-        db.execute("update agent_runs set codex_session_id='native-consumer',transcript_end_line=1 where id=?", (parent.id,))
+        db.execute("update runs set session_id='native-consumer',transcript_end=1 where record_type='agent_runs' and cast(legacy_key as integer)=?", (parent.id,))
     assert json.loads(store.get_agent_run(parent.id).final_result_json) != context.candidate.model_dump(mode='json')
     captured = {}
     monkeypatch.setattr(AgentTurnProcess, 'execute', lambda _self, **kwargs: captured.update(kwargs))
     _runner(setup, None).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
     assert 'Exact prepared notice' in captured['prompt']
     assert 'Raw message before service preparation' not in captured['prompt']
+
+
+def test_audit_builds_native_role_skill_config_once(setup, tmp_path, monkeypatch):
+    from tests.support.role_skill_scan import track_role_skill_build, assert_single_role_skill_build
+
+    calls, expected = track_role_skill_build(tmp_path, monkeypatch)
+    _store, task, parent, context, _config, _router = setup
+    context = replace(context, task=replace(context.task, skill_names=("ceo-document-review",)))
+    executor = CapturingExecutor(_wire(context.candidate_digest))
+    _runner(setup, executor).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+    assert_single_role_skill_build(calls, expected, executor)
