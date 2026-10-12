@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.run_storage import SCHEDULED_RUN_SQL
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta, timezone
@@ -677,7 +678,7 @@ def test_scheduled_claim_ceil_preserves_full_lease_for_source_and_ledger(
     assert envelope is not None
     with store._connect() as db:
         source_expiry = db.execute(
-            "select lease_expires_at from scheduled_task_runs where id=?",
+            f"select lease_expires_at from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?",
             (run.id,),
         ).fetchone()[0]
         ledger_expiry = db.execute(
@@ -723,7 +724,7 @@ def test_scheduled_renew_ceil_updates_source_and_ledger_together(tmp_path: Path)
 
     with store._connect() as db:
         source_expiry = db.execute(
-            "select lease_expires_at from scheduled_task_runs where id=?",
+            f"select lease_expires_at from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?",
             (run.id,),
         ).fetchone()[0]
         ledger_expiry = db.execute(
@@ -1839,7 +1840,7 @@ def test_empty_dispatch_does_not_create_user_visible_runs(tmp_path: Path):
 
     assert dispatcher.dispatch_available(NOW, limit=5) == 0
     with store._connect() as db:
-        assert db.execute("select count(*) from scheduled_task_runs").fetchone()[0] == 0
+        assert db.execute(f"select count(*) from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs").fetchone()[0] == 0
     executor.shutdown()
 
 
@@ -1919,8 +1920,7 @@ def test_scheduled_metrics_exclude_terminal_source_failures_from_latest_error(
     run = _scheduled_run(store)
     with store._connect() as db:
         db.execute(
-            "update scheduled_task_runs set dispatch_status='failed', "
-            "skip_or_error_reason='real scheduler failure' where id=?",
+            "update runs set dispatch_status='failed', skip_or_error_reason='real scheduler failure' where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
             (run.id,),
         )
     task_id = run.scheduled_task_id
@@ -1932,9 +1932,7 @@ def test_scheduled_metrics_exclude_terminal_source_failures_from_latest_error(
     )
     with store._connect() as db:
         db.execute(
-            "update scheduled_task_runs set dispatch_status='skipped', "
-            "skip_or_error_reason='scheduled_task_previous_execution_active' "
-            "where id=?",
+            "update runs set dispatch_status='skipped', skip_or_error_reason='scheduled_task_previous_execution_active' where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
             (skipped.id,),
         )
 
@@ -2033,8 +2031,7 @@ def test_expired_live_owner_hides_dispatcher_error_until_owner_is_dead(
             "select id from tasks where record_type='reply_tasks' and channel='scheduled'"
         ).fetchone()[0]
         db.execute(
-            "update scheduled_task_runs set skip_or_error_reason='scheduled error' "
-            "where id=?",
+            "update runs set skip_or_error_reason='scheduled error' where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
             (scheduled_id,),
         )
         db.execute(
@@ -2190,8 +2187,7 @@ def test_dispatcher_metrics_only_report_errors_from_actionable_sources(
     with store._connect() as db:
         now_text = NOW.strftime("%Y-%m-%d %H:%M:%S")
         db.execute(
-            "update scheduled_task_runs set dispatch_status='failed', "
-            "skip_or_error_reason='terminal scheduled failure' where id=?",
+            "update runs set dispatch_status='failed', skip_or_error_reason='terminal scheduled failure' where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
             (scheduled.id,),
         )
         db.execute(
@@ -2290,20 +2286,15 @@ def test_scheduled_metrics_clear_latest_error_after_a_recovered_dispatch(
     )
     with store._connect() as db:
         db.execute(
-            "update scheduled_task_runs set dispatch_status='failed', "
-            "skip_or_error_reason='real scheduler failure' where id=?",
+            "update runs set dispatch_status='failed', skip_or_error_reason='real scheduler failure' where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
             (failed.id,),
         )
         db.execute(
-            "update scheduled_task_runs set dispatch_status='dispatched', "
-            "execution_kind='service_command', execution_id='produce-once' "
-            "where id=?",
+            "update runs set dispatch_status='dispatched', execution_kind='service_command', execution_id='produce-once' where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
             (recovered.id,),
         )
         db.execute(
-            "update scheduled_task_runs set dispatch_status='skipped', "
-            "skip_or_error_reason='scheduled_task_previous_execution_active' "
-            "where id=?",
+            "update runs set dispatch_status='skipped', skip_or_error_reason='scheduled_task_previous_execution_active' where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
             (overlap.id,),
         )
 

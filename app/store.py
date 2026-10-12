@@ -36,9 +36,10 @@ from app.reviewed_candidate_store import (
 )
 from app.sqlite_schema_lock import schema_initialize_lock
 from app.run_storage import (
-    AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES, TASK_AGENT_RUN_SQL, MEETING_RUN_SQL, OKR_RUN_SQL,
+    SCHEDULED_RUN_SQL, AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES, TASK_AGENT_RUN_SQL, MEETING_RUN_SQL, OKR_RUN_SQL,
     create_run_schema, install_run_child_guards, insert_run, run_schema_is_current,
 )
+
 from app.task_storage import (
     REPLY_TASK_SQL, REPLY_TASK_INPUT_SQL, WORK_SUMMARY_INPUT_SQL, MEETING_JOB_SQL, OKR_REQUEST_SQL, WEEKLY_JOB_SQL, SOURCE_COLUMNS, task_id_expression,
     RETIRED_TASK_TABLES, create_task_schema,
@@ -5963,7 +5964,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select execution_id, scheduled_task_id
-                from scheduled_task_runs
+                from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs
                 where execution_kind='reply_task' and execution_id in ({placeholders})
                 order by id
                 """,
@@ -8088,7 +8089,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
 
             overlap_row = db.execute(
-                "select id from scheduled_task_runs "
+                f"select id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs "
                 "where scheduled_task_id=? and (dispatch_status='pending' or "
                 "(execution_kind<>'' and execution_id<>'')) "
                 "order by id desc limit 1",
@@ -8111,7 +8112,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if reason == "scheduled_task_previous_execution_active":
                 duplicate = db.execute(
                     f"select {self._scheduled_task_run_columns()} "
-                    "from scheduled_task_runs where scheduled_task_id=? "
+                    f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where scheduled_task_id=? "
                     "and trigger_kind='scheduled' and scheduled_for=?",
                     (task_id, scheduled_for_text),
                 ).fetchone()
@@ -8121,14 +8122,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         self._scheduled_task_run_from_row(duplicate),
                     )
                 previous_skip = db.execute(
-                    "select id from scheduled_task_runs "
+                    f"select id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs "
                     "where scheduled_task_id=? and trigger_kind='scheduled' "
                     "and dispatch_status='skipped' "
                     "and skip_or_error_reason=? order by id desc limit 1",
                     (task_id, reason),
                 ).fetchone()
                 latest = db.execute(
-                    "select id from scheduled_task_runs where scheduled_task_id=? "
+                    f"select id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where scheduled_task_id=? "
                     "order by id desc limit 1",
                     (task_id,),
                 ).fetchone()
@@ -8138,14 +8139,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     and int(previous_skip["id"]) == int(latest["id"])
                 ):
                     db.execute(
-                        "update scheduled_task_runs set scheduled_for=?, "
+                        "update runs set scheduled_for=?, "
                         "occurrence_count=occurrence_count + 1, dispatched_at=? "
-                        "where id=?",
+                        "where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
                         (scheduled_for_text, now_text, int(previous_skip["id"])),
                     )
                     grouped = db.execute(
                         f"select {self._scheduled_task_run_columns()} "
-                        "from scheduled_task_runs where id=?",
+                        f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?",
                         (int(previous_skip["id"]),),
                     ).fetchone()
                     assert grouped is not None
@@ -8154,31 +8155,27 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         self._scheduled_task_run_from_row(grouped),
                     )
             try:
-                cursor = db.execute(
-                    """
-                    insert into scheduled_task_runs (
-                        event_id, scheduled_task_id, trigger_kind, scheduled_for,
-                        first_scheduled_for, occurrence_count,
-                        dispatch_status, skip_or_error_reason, snapshot_id,
-                        created_at, dispatched_at
-                    ) values (?, ?, 'scheduled', ?, ?, 1, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        event_id,
-                        task_id,
-                        scheduled_for_text,
-                        scheduled_for_text,
-                        dispatch_status,
-                        reason,
-                        snapshot_id,
-                        now_text,
-                        now_text if reason else None,
-                    ),
+                cursor = insert_run(
+                    db,
+                    "scheduled_task_runs",
+                    {
+                        "event_id": event_id,
+                        "scheduled_task_id": task_id,
+                        "trigger_kind": "scheduled",
+                        "scheduled_for": scheduled_for_text,
+                        "first_scheduled_for": scheduled_for_text,
+                        "occurrence_count": 1,
+                        "dispatch_status": dispatch_status,
+                        "skip_or_error_reason": reason,
+                        "snapshot_id": snapshot_id,
+                        "created_at": now_text,
+                        "dispatched_at": now_text if reason else None,
+                    },
                 )
             except sqlite3.IntegrityError:
                 existing = db.execute(
                     f"select {self._scheduled_task_run_columns()} "
-                    "from scheduled_task_runs "
+                    f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs "
                     "where scheduled_task_id=? and trigger_kind='scheduled' "
                     "and scheduled_for=?",
                     (task_id, scheduled_for_text),
@@ -8191,7 +8188,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
             row = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where id=?",
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?",
                 (cursor.lastrowid,),
             ).fetchone()
             assert row is not None
@@ -8248,34 +8245,31 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             from app.scheduled_config_storage import intern_scheduled_config
             snapshot_id = intern_scheduled_config(db, snapshot_json)
             try:
-                cursor = db.execute(
-                    """
-                    insert into scheduled_task_runs (
-                        event_id, scheduled_task_id, trigger_kind, scheduled_for,
-                        first_scheduled_for, occurrence_count,
-                        dispatch_status, skip_or_error_reason, snapshot_id,
-                        created_at, dispatched_at
-                    ) values (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        event_id,
-                        task_id,
-                        trigger_kind,
-                        scheduled_for_text,
-                        scheduled_for_text,
-                        dispatch_status,
-                        reason,
-                        snapshot_id,
-                        now_text,
-                        now_text if dispatch_status == "skipped" else None,
-                    ),
+                cursor = insert_run(
+                    db,
+                    "scheduled_task_runs",
+                    {
+                        "event_id": event_id,
+                        "scheduled_task_id": task_id,
+                        "trigger_kind": trigger_kind,
+                        "scheduled_for": scheduled_for_text,
+                        "first_scheduled_for": scheduled_for_text,
+                        "occurrence_count": 1,
+                        "dispatch_status": dispatch_status,
+                        "skip_or_error_reason": reason,
+                        "snapshot_id": snapshot_id,
+                        "created_at": now_text,
+                        "dispatched_at": now_text
+                        if dispatch_status == "skipped"
+                        else None,
+                    },
                 )
             except sqlite3.IntegrityError:
                 if trigger_kind != "scheduled":
                     raise
                 existing = db.execute(
                     f"select {self._scheduled_task_run_columns()} "
-                    "from scheduled_task_runs "
+                    f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs "
                     "where scheduled_task_id=? and trigger_kind='scheduled' "
                     "and scheduled_for=?",
                     (task_id, scheduled_for_text),
@@ -8285,7 +8279,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return self._scheduled_task_run_from_row(existing), False
             row = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where id=?",
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?",
                 (cursor.lastrowid,),
             ).fetchone()
             assert row is not None
@@ -8315,8 +8309,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             if run_id is None:
                 candidate = db.execute(
-                    """
-                    select id from scheduled_task_runs
+                    f"""
+                    select id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs
                      where dispatch_status='pending'
                        and scheduled_for <= ?
                        and (lease_owner='' or lease_expires_at <= ?)
@@ -8330,9 +8324,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 run_id = int(candidate["id"])
             cursor = db.execute(
                 """
-                update scheduled_task_runs
+                update runs
                    set lease_owner=?, lease_expires_at=?
-                 where id=? and dispatch_status='pending'
+                 where record_type='scheduled_task_runs' and cast(legacy_key as integer)=? and dispatch_status='pending'
                    and scheduled_for <= ?
                    and (lease_owner='' or lease_expires_at <= ?)
                 """,
@@ -8342,7 +8336,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return None
             row = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where id=?",
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?",
                 (run_id,),
             ).fetchone()
             assert row is not None
@@ -8375,9 +8369,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             cursor = db.execute(
                 """
-                update scheduled_task_runs
+                update runs
                    set execution_kind=?, execution_id=?, result_summary=?
-                 where id=? and dispatch_status='pending' and lease_owner=?
+                 where record_type='scheduled_task_runs' and cast(legacy_key as integer)=? and dispatch_status='pending' and lease_owner=?
                    and lease_expires_at > ?
                    and execution_kind='' and execution_id=''
                 """,
@@ -8389,7 +8383,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
             row = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where id=?",
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?",
                 (run_id,),
             ).fetchone()
             assert row is not None
@@ -8416,7 +8410,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         )
         with self._immediate_write_transaction() as db:
             row = db.execute(
-                f"select {self._scheduled_task_run_columns()} from scheduled_task_runs "
+                f"select {self._scheduled_task_run_columns()} from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs "
                 "where id=? and dispatch_status='pending' and lease_owner=? and lease_expires_at>?",
                 (run_id, owner, now_text),
             ).fetchone()
@@ -8443,9 +8437,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ):
                 raise ValueError("scheduled task execution link is invalid")
             cursor = db.execute(
-                "update scheduled_task_runs set execution_kind='reply_task', execution_id=?, "
+                "update runs set execution_kind='reply_task', execution_id=?, "
                 "dispatch_status='dispatched', skip_or_error_reason='', lease_owner='', "
-                "lease_expires_at=null, dispatched_at=? where id=? and dispatch_status='pending' "
+                "lease_expires_at=null, dispatched_at=? where record_type='scheduled_task_runs' and cast(legacy_key as integer)=? and dispatch_status='pending' "
                 "and lease_owner=? and lease_expires_at>?",
                 (str(task.id), now_text, run.id, owner, now_text),
             )
@@ -8461,7 +8455,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if ledger.rowcount != 1:
                 raise ValueError("scheduled dispatcher ledger claim changed")
             linked = db.execute(
-                f"select {self._scheduled_task_run_columns()} from scheduled_task_runs where id=?",
+                f"select {self._scheduled_task_run_columns()} from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?",
                 (run.id,),
             ).fetchone()
             assert linked is not None
@@ -8491,9 +8485,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         )
         with self._immediate_write_transaction() as db:
             row = db.execute(
-                """
+                f"""
                 select execution_kind, execution_id
-                 from scheduled_task_runs
+                 from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs
                  where id=? and dispatch_status='pending' and lease_owner=?
                    and lease_expires_at > ?
                 """,
@@ -8509,17 +8503,17 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise ValueError("dispatched scheduled task run requires execution link")
             db.execute(
                 """
-                update scheduled_task_runs
+                update runs
                    set dispatch_status=?, skip_or_error_reason=?,
                        lease_owner='', lease_expires_at=null, dispatched_at=?
-                 where id=? and dispatch_status='pending' and lease_owner=?
+                 where record_type='scheduled_task_runs' and cast(legacy_key as integer)=? and dispatch_status='pending' and lease_owner=?
                    and lease_expires_at > ?
                 """,
                 (status, reason.strip(), now_text, run_id, owner, now_text),
             )
             finished = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where id=?",
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?",
                 (run_id,),
             ).fetchone()
             assert finished is not None
@@ -8532,7 +8526,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             rows = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where scheduled_task_id=? order by id",
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where scheduled_task_id=? order by id",
                 (task_id,),
             ).fetchall()
         return tuple(self._scheduled_task_run_from_row(row) for row in rows)
@@ -8543,7 +8537,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             row = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where id=?", (run_id,),
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?", (run_id,),
             ).fetchone()
         return self._scheduled_task_run_from_row(row) if row is not None else None
 
@@ -8555,7 +8549,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             row = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where execution_kind='reply_task' "
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where execution_kind='reply_task' "
                 "and execution_id=? order by id desc limit 1",
                 (str(reply_task_id),),
             ).fetchone()
@@ -8569,7 +8563,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             row = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where scheduled_task_id=? and ("
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where scheduled_task_id=? and ("
                 "dispatch_status='pending' or "
                 "(execution_kind<>'' and execution_id<>'')) "
                 "order by id desc limit 1",
@@ -8591,11 +8585,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select {self._scheduled_task_run_columns("run")}
-                  from scheduled_task_runs as run
+                  from ({SCHEDULED_RUN_SQL}) as run
                  where run.scheduled_task_id in ({placeholders})
                    and run.id = (
                        select max(latest.id)
-                         from scheduled_task_runs as latest
+                         from ({SCHEDULED_RUN_SQL}) as latest
                         where latest.scheduled_task_id=run.scheduled_task_id
                    )
                  order by run.scheduled_task_id
@@ -8627,7 +8621,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             rows = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where scheduled_task_id=?"
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where scheduled_task_id=?"
                 f"{cursor_sql} order by id desc limit ?",
                 parameters,
             ).fetchall()
@@ -8686,7 +8680,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 f"""
                 select run.*, config.snapshot_json
                   from ({REPLY_TASK_INPUT_SQL}) as inputs
-                  join scheduled_task_runs as run
+                  join ({SCHEDULED_RUN_SQL}) as run
                     on run.id=cast(
                         {_SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL} as integer
                     )
@@ -19107,8 +19101,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).rowcount
             runs = 0
             for row in db.execute(
-                """
-                select runs.id, configs.snapshot_json from scheduled_task_runs as runs
+                f"""
+                select runs.id, configs.snapshot_json from ({SCHEDULED_RUN_SQL}) as runs
                  join scheduled_task_config_versions as configs on configs.id=runs.snapshot_id
                  where dispatch_status in ('pending', 'dispatched')
                    and json_valid(snapshot_json)
@@ -19118,7 +19112,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchall():
                 snapshot = ScheduledTaskSnapshot.from_json(str(row["snapshot_json"]))
                 db.execute(
-                    "update scheduled_task_runs set snapshot_id=? where id=?",
+                    "update runs set snapshot_id=? where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
                     (
                         intern_scheduled_config(db, dataclass_replace(snapshot, runtime_id=new_name).to_json()),
                         int(row["id"]),
@@ -29943,9 +29937,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select dispatch_status, created_at
-                from scheduled_task_runs
+                from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs
                 where scheduled_task_id=?
                   and dispatch_status in ('failed', 'dispatched')
                 order by id desc
@@ -30169,7 +30163,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Close scheduled command incidents after the same task succeeds later."""
         with self._connect() as db:
             cursor = db.execute(
-                """
+                f"""
                 update errors as error_event
                 set resolved_at=current_timestamp,
                     resolution='recovered by later successful scheduled service command'
@@ -30178,7 +30172,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and coalesce(error_event.conversation_id, '') like 'scheduled-task:%'
                   and exists (
                       select 1
-                      from scheduled_task_runs as run
+                      from ({SCHEDULED_RUN_SQL}) as run
                       where run.scheduled_task_id=cast(
                             substr(error_event.conversation_id, length('scheduled-task:') + 1)
                             as integer
@@ -30207,7 +30201,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and coalesce(error_event.conversation_id, '') like 'scheduled-task:%'
                   and exists (
                       select 1
-                      from scheduled_task_runs as run
+                      from ({SCHEDULED_RUN_SQL}) as run
                       join ({REPLY_TASK_SQL}) as task
                         on run.execution_kind='reply_task'
                        and cast(run.execution_id as integer)=task.id
@@ -30950,10 +30944,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     0 as todo_id,
                     0 as follow_up_id
                 from reply_attempts
-                where {(
-                    'id in (' + ', '.join(str(int(i)) for i in reply_attempt_ids) + ') and '
-                    if reply_attempt_ids is not None else ''
-                )}not exists (
+                where {
+            (
+                "id in (" + ", ".join(str(int(i)) for i in reply_attempt_ids) + ") and "
+                if reply_attempt_ids is not None
+                else ""
+            )
+        }not exists (
                     select 1 from ({AGENT_RUN_SQL}) as attempt_run
                     join ({REPLY_TASK_SQL}) as current_task
                       on current_task.id=attempt_run.reply_task_id
@@ -31134,7 +31131,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         -- recovery: the service resolves this failure's
                         -- Attention entry on that success.
                         when exists (
-                            select 1 from scheduled_task_runs as later_runs
+                            select 1 from ({SCHEDULED_RUN_SQL}) as later_runs
                             where later_runs.scheduled_task_id=runs.scheduled_task_id
                               and later_runs.id>runs.id
                               and later_runs.dispatch_status='dispatched'
@@ -31165,7 +31162,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id
-                from scheduled_task_runs as runs
+                from ({SCHEDULED_RUN_SQL}) as runs
                 join scheduled_task_config_versions as configs on configs.id=runs.snapshot_id
                 where {history_types.scheduled_run_filter_sql("runs")}
         """

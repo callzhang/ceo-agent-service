@@ -1,5 +1,6 @@
 """Explicit maintenance for authorized, effect-free interrupted reply work."""
 from __future__ import annotations
+from app.scheduled_config_storage import publication_scheduled_source
 
 from dataclasses import dataclass
 import json
@@ -29,6 +30,7 @@ def check_maintenance(database_path: Path, task_ids: tuple[int, ...]) -> Mainten
     with sqlite3.connect(database_path.resolve().as_uri() + '?mode=ro', uri=True) as db:
         db.row_factory = sqlite3.Row
         reply_source, work_source = publication_task_sources(db)
+        scheduled_source = publication_scheduled_source(db)
         meeting_jobs, _ = publication_meeting_sources(db)
         processing = {row[0] for row in db.execute(f"select id from ({reply_source}) where status='processing'")}
         if not processing.issubset(set(task_ids)):
@@ -37,7 +39,7 @@ def check_maintenance(database_path: Path, task_ids: tuple[int, ...]) -> Mainten
             f"select 1 from ({work_source}) where status='processing' limit 1",
             f"select 1 from ({meeting_jobs}) where status in ('processing','sending','summarizing') limit 1",
             "select 1 from email_actions where status not in ('pending','done','skipped','failed','needs_human') limit 1",
-            "select 1 from scheduled_task_runs where dispatch_status='pending' and lease_owner<>'' "
+            f"select 1 from ({scheduled_source}) where dispatch_status='pending' and lease_owner<>'' "
             "and julianday(lease_expires_at)>julianday('now') limit 1",
             f"select 1 from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where status in ('starting','running') and (agent_run_id is null or agent_run_id not in (select id from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id in (" + ','.join('?' for _ in task_ids) + "))) limit 1",
         ):

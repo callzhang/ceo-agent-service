@@ -1,3 +1,4 @@
+from app.run_storage import SCHEDULED_RUN_SQL
 
 from app.task_storage import MEETING_JOB_SQL, OKR_REQUEST_SQL, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
 from app.store import REPLY_TASK_CURRENT_SQL
@@ -3412,12 +3413,12 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                   -- authoritative recovery for an older scheduled reply task.
                   and not exists (
                       select 1
-                      from scheduled_task_runs as stale_run
+                      from ({SCHEDULED_RUN_SQL}) as stale_run
                      where stale_run.execution_kind='reply_task'
                        and cast(stale_run.execution_id as integer)=reply_tasks.id
                        and exists (
                            select 1
-                           from scheduled_task_runs as later_run
+                           from ({SCHEDULED_RUN_SQL}) as later_run
                            join ({REPLY_TASK_SQL}) as later_task
                              on later_run.execution_kind='reply_task'
                             and cast(later_run.execution_id as integer)=later_task.id
@@ -3708,7 +3709,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                   )
                   and not exists (
                     select 1
-                    from scheduled_task_runs as stale_run
+                    from ({SCHEDULED_RUN_SQL}) as stale_run
                    where (
                          stale_run.event_id=error_event.message_id
                          or (
@@ -3722,7 +3723,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                    )
                      and exists (
                          select 1
-                         from scheduled_task_runs as later_run
+                         from ({SCHEDULED_RUN_SQL}) as later_run
                          join ({REPLY_TASK_SQL}) as later_task
                            on later_run.execution_kind='reply_task'
                           and cast(later_run.execution_id as integer)=later_task.id

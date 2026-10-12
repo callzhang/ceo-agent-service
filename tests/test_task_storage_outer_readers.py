@@ -132,3 +132,131 @@ def test_public_work_id_keeps_codec_and_terminal_provenance(tmp_path):
         assert row["body_sha256"] == hashlib.sha256(payload.encode()).hexdigest()
         assert row["body_bytes"] == len(payload.encode())
         assert row["body_compacted"] == 1
+
+
+@pytest.mark.parametrize("row_factory", [None, sqlite3.Row])
+def test_current14_quiet_readers_are_read_only_and_preserve_busy(tmp_path, row_factory):
+    from app.task_schema_release import publication_meeting_sources
+    from app.scheduled_config_storage import publication_scheduled_source
+    from tests.test_scheduled_task_store import _create_task, NOW as CRON_NOW
+
+    store = AutoReplyStore(tmp_path / "quiet14.db")
+    task = _create_task(store)
+    run = store.create_scheduled_task_run(
+        task.id, trigger_kind="manual", scheduled_for=CRON_NOW
+    )
+    snapshot_before = store.path.read_bytes()
+    assert in_flight_work(store.path) == 0
+    assert store.path.read_bytes() == snapshot_before
+    with sqlite3.connect(store.path) as db:
+        db.row_factory = row_factory
+        before = db.total_changes
+        statements = []
+        db.set_trace_callback(statements.append)
+        reply_sql, _ = publication_task_sources(db)
+        publication_meeting_sources(db)
+        scheduled_sql = publication_scheduled_source(db)
+        assert reply_sql == REPLY_TASK_SQL
+        assert db.execute(f"select id from ({scheduled_sql})").fetchone()[0] == run.id
+        assert db.total_changes == before
+        assert not any(
+            sql.lower().startswith(("insert", "update", "delete", "begin"))
+            for sql in statements
+        )
+        db.execute(
+            "update runs set lease_owner='worker',lease_expires_at='2999-01-01T00:00:00+00:00' where record_type='scheduled_task_runs'"
+        )
+        db.commit()
+        snapshot_before = store.path.read_bytes()
+        assert in_flight_work(store.path) == 1
+        assert store.path.read_bytes() == snapshot_before
+        db.execute("create table scheduled_task_runs(id integer)")
+        for reader in (
+            publication_task_sources,
+            publication_meeting_sources,
+            publication_scheduled_source,
+        ):
+            with pytest.raises(ValueError, match="mixed"):
+                reader(db)
+
+@pytest.mark.parametrize("version", ["unknown", "2026-10-12.2"])
+def test_scheduled_quiet_rejects_unknown_marker(tmp_path, version):
+    from app.scheduled_config_storage import publication_scheduled_source
+
+    store = AutoReplyStore(tmp_path / "unknown.db")
+    with store._connect() as db:
+        db.execute(
+            "update service_state set value=? where key='store_schema_version'",
+            (version,),
+        )
+        with pytest.raises(ValueError, match="unknown"):
+            publication_scheduled_source(db)
+
+
+@pytest.mark.parametrize("version", ["2026-10-11.2", "2026-10-11.3"])
+@pytest.mark.parametrize("row_factory", [None, sqlite3.Row])
+@pytest.mark.parametrize("has_scheduled_row", [False, True])
+def test_source_marker_cannot_hide_typed_scheduled_layout(tmp_path, version, row_factory, has_scheduled_row):
+    from app.scheduled_config_storage import publication_scheduled_source
+    from tests.test_scheduled_task_store import _create_task, NOW as CRON_NOW
+
+    store = AutoReplyStore(tmp_path / "mixed-scheduled.db")
+    if has_scheduled_row:
+        task = _create_task(store)
+        store.create_scheduled_task_run(task.id, trigger_kind="manual", scheduled_for=CRON_NOW)
+        with store._connect() as db:
+            db.execute("update runs set lease_owner='worker',lease_expires_at='2999-01-01T00:00:00+00:00' where record_type='scheduled_task_runs'")
+        assert in_flight_work(store.path) == 1
+    with sqlite3.connect(store.path) as db:
+        db.row_factory = row_factory
+        db.execute("update service_state set value=? where key='store_schema_version'", (version,))
+        db.execute("create table scheduled_task_runs(dispatch_status text,lease_owner text,lease_expires_at text)")
+        db.commit()
+        before_changes = db.total_changes
+        before_dump = tuple(db.iterdump())
+        before_bytes = store.path.read_bytes()
+        statements = []
+        db.set_trace_callback(statements.append)
+        with pytest.raises(ValueError, match="mixed"):
+            publication_scheduled_source(db)
+        with pytest.raises(ValueError, match="mixed"):
+            in_flight_work(store.path)
+        assert db.total_changes == before_changes
+        assert tuple(db.iterdump()) == before_dump
+        assert store.path.read_bytes() == before_bytes
+        assert not any(sql.lower().startswith(("insert", "update", "delete", "begin")) for sql in statements)
+
+
+@pytest.mark.parametrize("version", ["2026-10-11.2", "2026-10-11.3"])
+@pytest.mark.parametrize("row_factory", [None, sqlite3.Row])
+def test_actual_scheduled_source_layout_remains_busy_and_read_only(tmp_path, version, row_factory):
+    from app.scheduled_config_storage import publication_scheduled_source
+    from tests.workbench_schema_fixtures import SOURCE, source_database as source13
+
+    path = tmp_path / "actual-source.db"
+    if version == "2026-10-11.3":
+        db = source13(path)
+    else:
+        db = source_database(path)
+        for table in ("scheduled_tasks", "scheduled_task_config_versions", "scheduled_task_runs"):
+            for kind, _, sql in SOURCE["tables"][table]["objects"]:
+                if kind == "table":
+                    db.execute(sql)
+            for kind, _, sql in SOURCE["tables"][table]["objects"]:
+                if kind != "table" and sql:
+                    db.execute(sql)
+    with db:
+        db.execute("insert into scheduled_task_runs(event_id,scheduled_task_id,trigger_kind,scheduled_for,lease_owner,lease_expires_at) values('live',7,'manual','2026-10-12T00:00:00+00:00','worker','2999-01-01T00:00:00+00:00')")
+    db.row_factory = row_factory
+    before_dump = tuple(db.iterdump())
+    before_bytes = path.read_bytes()
+    before_changes = db.total_changes
+    statements = []
+    db.set_trace_callback(statements.append)
+    sql = publication_scheduled_source(db)
+    assert db.execute(f"select count(*) from ({sql}) where dispatch_status='pending' and lease_owner<>'' and julianday(lease_expires_at)>julianday('now')").fetchone()[0] == 1
+    assert db.total_changes == before_changes
+    assert tuple(db.iterdump()) == before_dump
+    assert path.read_bytes() == before_bytes
+    assert not any(sql.lower().startswith(("insert", "update", "delete", "begin")) for sql in statements)
+    db.close()

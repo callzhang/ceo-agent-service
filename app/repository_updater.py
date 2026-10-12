@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.scheduled_config_storage import publication_scheduled_source
 
 from contextlib import closing, nullcontext
 from dataclasses import dataclass
@@ -268,6 +269,7 @@ def in_flight_work(database_path: Path) -> int:
     )) as db:
         agent_source, runtime_source = publication_run_sources(db)
         reply_source, work_source = publication_task_sources(db)
+        scheduled_source = publication_scheduled_source(db)
         meeting_jobs, meeting_runs = publication_meeting_sources(db)
         return int(db.execute(
             f"select (select count(*) from ({runtime_source}) as agent_runtime_attempts "
@@ -297,7 +299,7 @@ def in_flight_work(database_path: Path) -> int:
             " + (select count(*) from dispatcher_claim_leases"
             "    where coalesce(terminal_at,'')=''"
             "    and julianday(lease_expires_at)>julianday('now'))"
-            " + (select count(*) from scheduled_task_runs where dispatch_status='pending'"
+            f" + (select count(*) from ({scheduled_source}) where dispatch_status='pending'"
             "    and lease_owner<>'' and lease_expires_at>strftime('%Y-%m-%dT%H:%M:%S+00:00','now'))"
         ).fetchone()[0])
 

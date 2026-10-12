@@ -1865,3 +1865,22 @@ marker/timestamp、分配水位、TEXT 源表与保留子表的 rowid，以及�
 本次发布的临时内存证据准确恢复；新/变更/删除搜索元数据只调整相应差异。
 不持久保存另一份 trajectory 或索引快照。完整实际副本、当前生产旧代码启动、
 发布失败阶段、CI、部署和线上读回仍须另行通过，详见 database-redesign-phase4c-validation.md。
+
+
+## Phase4C scheduled caller candidate
+
+候选的定时触发 DAO、dispatcher、恢复、Attempt/History、运行路由引用读取已切换到
+runs 中 record_type=scheduled_task_runs 的记录。查询返回原公共 scheduled ID；写入按
+record_type 和公共 legacy key 精确定位。execution_id 继续保留原 TEXT 值与 execution_kind
+含义，服务命令不会被制造为回复任务。History 对外的 source 标签仍是 scheduled_task_runs。
+
+原事件唯一、定时自然键、overlap 的 first/last/count、领取 CAS、租约、派发事务和
+回复关联规则不变。配置版本和冻结 snapshot_json 留在 scheduled_task_config_versions，
+snapshot_id 保留原 FK；当前初始化不再建立退休 scheduled 表，现有配置默认值修正使用
+typed 父引用。历史 Attempt 和 skipped 快照不因运行路由改名而重写。
+
+正常 deploy 等待读者明确支持已验证的2026-10-11.2 / 2026-10-11.3 来源
+和2026-10-12.1候选。来源判断读取实际 schema；旧标记同时含 C runs 声明与旧表时拒绝，
+包括没有 scheduled 行的混合库。真正历史来源和当前候选沿用原忙碌/租约谓词，
+只读检查不修改行、schema 或数据库 bytes。Workbench CRUD/native/API 仍是后续单元，
+本段不表示完整 C 已发布。
