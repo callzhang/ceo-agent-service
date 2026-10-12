@@ -251,4 +251,18 @@ describe("prompt preview request", () => {
       expect(options?.body).toBeUndefined();
     } finally { fetchRequest.mockRestore(); }
   });
+  it("marks a missing native attempt input without claiming prepared or submitted content", async () => {
+    render(<RuntimePromptPreview />);
+    await screen.findByText(item.task_prompt);
+    fireEvent.change(screen.getByLabelText("预览来源"), { target: { value: "historical" } });
+    fireEvent.change(screen.getByLabelText("运行 ID"), { target: { value: "9" } });
+    getPromptPreview.mockResolvedValueOnce(response({ mode: "historical", status: "unavailable", run_id: 9,
+      runtime_attempt_id: 72, developer_instructions: "", task_prompt: "", reason: "选定原生输入不可读取",
+      attempts: [{ runtime_attempt_id: 72, route_name: "primary", rendered_at: "", submission_state: null, input_status: "unavailable" }] }));
+    fireEvent.click(screen.getByRole("button", { name: "查看 / 刷新" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("选定原生输入不可读取"));
+    expect(screen.getByRole("option", { name: /输入不可用/ })).toBeInTheDocument();
+    expect(screen.queryByText("已准备的服务输入")).not.toBeInTheDocument();
+    expect(screen.queryByText("已提交的服务输入")).not.toBeInTheDocument();
+  });
 });
