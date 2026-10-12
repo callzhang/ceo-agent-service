@@ -12,12 +12,12 @@ The three source PK domains are INTEGER. One UNIQUE(CAST(legacy_key AS INTEGER),
 
 ## Latest consistent-copy evidence
 
-Source production commit: 29e0156775b8bb697b2c55484d879193011931cf. Source Store11.1/Email50. SQLite backup API copied to a task-specific temporary directory; production was only read.
+Source production commit: 3195cd3bd24d2841f9f36d0f3063d10fb9614fea. Source Store11.1/Email50. SQLite backup API copied to a task-specific temporary directory; production was only read.
 
 | Check | Result |
 |---|---|
-| Original logical runs | 21,647 complete projected-row fingerprints equal |
-| Original provider attempts | 22,775 complete projected-row fingerprints equal |
+| Original logical runs | 21,684 complete projected-row fingerprints equal |
+| Original provider attempts | 22,814 complete projected-row fingerprints equal |
 | Original service state events | 1,151 complete projected-row fingerprints equal |
 | Other original tables | 145 original row counts and full-value fingerprints equal |
 | Physical table count | 151 ->148 |
@@ -30,7 +30,7 @@ Source production commit: 29e0156775b8bb697b2c55484d879193011931cf. Source Store
 | Repeated forward | Original row fingerprints/FK/integrity still equal after real old-code read/write and new forward |
 | Provider calls / production writes | Zero |
 
-Old-code verification uses the actual29e source tree, not an earlier rollout or a changed report label. Original projected values are compared by public identity. Explicit synthetic copy-only rows are excluded from original-subset comparisons and validated separately.
+Old-code verification uses the actual3195 source tree, not an earlier rollout or a changed report label. Original projected values are compared by public identity. Explicit synthetic copy-only rows are excluded from original-subset comparisons and validated separately.
 
 ## Regression and query cost
 
@@ -48,12 +48,14 @@ Consistent-copy page measurements after repeated forward/inverse:
 
 | Bytes | Source | Target |
 |---|---:|---:|
-| File pages | 414,822,400 | 419,573,760 |
-| Free pages | 15,728,640 | 16,936,960 |
-| Used pages | 399,093,760 | 402,636,800 |
+| File pages | 414,822,400 | 420,450,304 |
+| Free pages | 14,880,768 | 16,965,632 |
+| Used pages | 399,941,632 | 403,484,672 |
 
 Used-page change is +3,543,040 B, about0.89%. The target includes explicitly declared synthetic rows and repeated migration cycles; this is not a production disk-reclamation claim. The core mapping and identity indexes add storage while reducing table fragmentation in the design. The duplicate TEXT index was eliminated; numeric public index occupies1,400,832 B in this copy. No production VACUUM or new retention policy was introduced. Final Phase4 size must be measured after4B/4C.
 
 Disposable databases, copied old code and full test logs remain temporary until the release gates close, then are removed. Only regression code and concise acceptance evidence belong in the repository. Latest verified production backup follows the existing deploy retention workflow.
 
 Independent final review: 114 additional focused tests passed against the same runtime code. Actual-copy old/new result values and ordering match; populated parent, batch and workload lookups use their range indexes. No open P1/P2 finding.
+
+Latest main integration: 3195cd3b rerun metadata-only lookup retained unchanged; targeted rerun/query-plan/status tests17 passed. A fresh3195 consistent copy repeated full projection/other-table checks, exact baseline-only inverse and replacement-write inverse;302 old source Python files matched Git blobs, actual old code startup/claim and repeated forward passed. Baseline-only sequence identity compares name/seq, not sqlite_sequence insertion rowid; all151 table declarations and values match. Independent review remains applicable to unchanged core storage; the only newer app diff is the main-line metadata read above. Remote full CI runs on the merged final candidate before deployment.
