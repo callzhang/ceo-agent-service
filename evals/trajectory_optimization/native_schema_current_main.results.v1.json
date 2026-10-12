@@ -1,0 +1,130 @@
+{
+  "scope": "anonymous synthetic native transport; business dispatch stubbed; no private Skill or source",
+  "baseline": "b451cfe7",
+  "pr31": "3a4942a8",
+  "tests": {
+    "affected_before_final_source_boundary": {
+      "passed": 215,
+      "skipped": 4
+    },
+    "final_codec_preview_source_boundary": {
+      "passed": 44
+    }
+  },
+  "cases": [
+    {
+      "route": "qwen_gpu4",
+      "role": "consumer",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12db1-c4c7-75f1-ae0d-c8151ac23a18",
+      "same_session": true,
+      "canonical_valid": true,
+      "payload_exact": false,
+      "summary_matches_nonce": true,
+      "native_schema_valid": true,
+      "turn_completed": true,
+      "parse_error": "TypeError",
+      "passed": false,
+      "source_calls": 1,
+      "tool_arguments_exact": false,
+      "terminal_errors": [],
+      "artifact_directory": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-native-nonempty-qwen-mirf_1rf/consumer-cold",
+      "events_sha256": "c360b77380333c3dbe53afd9f12a795df92fb352f6546bac4e91766b207c7999",
+      "harness_error": false
+    },
+    {
+      "route": "qwen_gpu4",
+      "role": "audit",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": true,
+      "session_id": "01a12db2-8532-7011-8b9d-7501adf84b6a",
+      "same_session": true,
+      "canonical_valid": false,
+      "payload_exact": false,
+      "summary_matches_nonce": false,
+      "native_schema_valid": false,
+      "turn_completed": false,
+      "parse_error": "ResultParseError",
+      "passed": false,
+      "source_calls": 48,
+      "tool_arguments_exact": true,
+      "terminal_errors": [],
+      "artifact_directory": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-native-nonempty-qwen-mirf_1rf/audit-cold",
+      "events_sha256": "508649b0375634a103a3526a7bad7c58dbc00ca8695d9f3a410cab3516b2ada7",
+      "harness_error": false
+    },
+    {
+      "route": "codex_api",
+      "role": "consumer",
+      "phase": "cold",
+      "exit_code": 2,
+      "timed_out": false,
+      "session_id": null,
+      "same_session": true,
+      "canonical_valid": false,
+      "payload_exact": false,
+      "summary_matches_nonce": false,
+      "native_schema_valid": false,
+      "turn_completed": false,
+      "parse_error": "ResultParseError",
+      "passed": false,
+      "source_calls": 0,
+      "tool_arguments_exact": false,
+      "terminal_errors": [],
+      "artifact_directory": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-native-nonempty-route-ukliyf50/consumer-cold",
+      "events_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "harness_error": true
+    },
+    {
+      "route": "codex_api",
+      "role": "audit",
+      "phase": "cold",
+      "exit_code": 1,
+      "timed_out": false,
+      "session_id": "01a12db0-fc52-7680-8574-1e0640b58815",
+      "same_session": true,
+      "canonical_valid": false,
+      "payload_exact": false,
+      "summary_matches_nonce": false,
+      "native_schema_valid": false,
+      "turn_completed": false,
+      "parse_error": "ResultParseError",
+      "passed": false,
+      "source_calls": 0,
+      "tool_arguments_exact": false,
+      "terminal_errors": [
+        "exceeded retry limit, last status: 429 Too Many Requests"
+      ],
+      "artifact_directory": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-native-nonempty-route-ukliyf50/audit-cold",
+      "events_sha256": "bca46a2a216d5c14614cb3eb4d42ee0481d05e4fb82d85c7ccf91765438d3bd0",
+      "harness_error": false
+    },
+    {
+      "route": "codex_api",
+      "role": "consumer",
+      "phase": "cold",
+      "exit_code": 1,
+      "timed_out": false,
+      "session_id": "01a12db7-18f2-77a3-b8b3-6421200be174",
+      "same_session": true,
+      "canonical_valid": false,
+      "payload_exact": false,
+      "summary_matches_nonce": false,
+      "native_schema_valid": false,
+      "turn_completed": false,
+      "parse_error": "ResultParseError",
+      "passed": false,
+      "source_calls": 0,
+      "tool_arguments_exact": false,
+      "terminal_errors": [
+        "exceeded retry limit, last status: 429 Too Many Requests"
+      ],
+      "artifact_directory": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-native-api-consumer-fixed-atww8hah/consumer-cold",
+      "events_sha256": "a3b2cee1b3e38b3854c70e7586319f872b01b18ffc170ecf72081d302ffb6902",
+      "harness_error": false
+    }
+  ]
+}

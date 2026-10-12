@@ -1,0 +1,218 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "error_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error_retryable": {
+      "type": "boolean"
+    },
+    "error_authorization_required": {
+      "type": "boolean"
+    },
+    "risk": {
+      "$ref": "#/$defs/RiskLevel"
+    },
+    "confidence": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "type": "number"
+    },
+    "rule_coverage": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "type": "number"
+    },
+    "information_completeness": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "type": "number"
+    },
+    "outcome": {
+      "enum": [
+        "approve",
+        "return",
+        "reject",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "proposal_revision": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "candidate_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "evidence_refs": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "feedback": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AuditFeedback"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "summary": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "error_code",
+    "error_retryable",
+    "error_authorization_required",
+    "risk",
+    "confidence",
+    "rule_coverage",
+    "information_completeness",
+    "outcome",
+    "proposal_revision",
+    "candidate_digest",
+    "evidence_refs",
+    "feedback",
+    "summary"
+  ],
+  "type": "object",
+  "$defs": {
+    "AuditFeedback": {
+      "additionalProperties": false,
+      "properties": {
+        "rule": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "observation": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "requested_revision": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule",
+        "observation",
+        "requested_revision"
+      ],
+      "type": "object"
+    },
+    "RiskLevel": {
+      "description": "Estimated consequence if the proposed result is acted on incorrectly.",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "type": "string"
+    },
+    "_AuditWire": {
+      "additionalProperties": false,
+      "properties": {
+        "error_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error_retryable": {
+          "type": "boolean"
+        },
+        "error_authorization_required": {
+          "type": "boolean"
+        },
+        "risk": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "rule_coverage": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "information_completeness": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "outcome": {
+          "enum": [
+            "approve",
+            "return",
+            "reject",
+            "failed"
+          ],
+          "type": "string"
+        },
+        "proposal_revision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "candidate_digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "evidence_refs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "feedback": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AuditFeedback"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summary": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_code",
+        "error_retryable",
+        "error_authorization_required",
+        "risk",
+        "confidence",
+        "rule_coverage",
+        "information_completeness",
+        "outcome",
+        "proposal_revision",
+        "candidate_digest",
+        "evidence_refs",
+        "feedback",
+        "summary"
+      ],
+      "type": "object"
+    }
+  }
+}

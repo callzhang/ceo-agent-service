@@ -14,6 +14,7 @@ from app.prompt_composition import (PromptSection, append_runtime_context, load_
     prompt_section_facts, render_prompt_sections)
 from app.runtime_prompt_context import render_runtime_context, runtime_prompt_snapshot
 from app.store import AgentRole, AutoReplyStore
+from app.native_agent_output import native_output_schema_path, native_task_prompt, native_business_task_prompt, native_output_section
 
 
 PROMPT_SCOPE = "服务提交的 Developer 与 Task 输入；不包含 CLI 自行生成的系统提示、工具 schema 或会话历史。凭据脱敏处标记 [REDACTED]。"
@@ -159,11 +160,21 @@ def current_prompt_preview(
         developer_sections = audit_developer_sections(rules, runtime_context="", work_profile=profile, prompt_configuration=configuration)
     developer = render_prompt_sections(developer_sections, placement="developer", omit_empty=role == "consumer")
     prompt = source_snapshot["task_prompt"] if source_snapshot else "未绑定任务和候选：仅预览当前角色公共指令与环境。"
+    source_format = facts.get("native_output_format")
+    source_kind = source_snapshot.get("runtime_kind") if source_snapshot else None
+    if source_snapshot and (source_kind == RuntimeKind.CODEX_CLI.value or (not source_kind and source_format)):
+        business_prompt = native_business_task_prompt(prompt, role)
+        if source_format and business_prompt == prompt:
+            result.update(status="unavailable", reason="所选 Codex 输入的原生格式无法按当前格式边界分离；请查看历史输入原文。")
+            prompt = ""
+        else:
+            prompt = business_prompt
+    business_length = len(prompt)
     if task and source_snapshot is None:
         result.update(status="unavailable", reason="该任务最新角色运行/尝试的完整输入不可读取；不使用较早输入或原触发拼装结果冒充完整 prompt，也不重跑补齐。")
         prompt = ""
     task_sections = ()
-    if source_snapshot and not source_snapshot.get("sections"):
+    if source_snapshot and result["status"] == "available" and not source_snapshot.get("sections"):
         # A saved legacy Task has no section receipts. Preserve its whole body;
         # current task guidance is a separately identified prefix, not a rewrite
         # or a reconstruction of what the historic Agent received.
@@ -178,11 +189,15 @@ def current_prompt_preview(
                          PromptSection("已保存任务正文", "历史输入快照", "task", prompt))
         prompt = render_prompt_sections(task_sections, placement="task")
     workspace = workspace_path()
+    format_sections = ()
     cwd = workspace / "consumer-artifacts" / str(task.id) / task.execution_generation if task and role == "consumer" else workspace
     if route.runtime_kind is RuntimeKind.CODEX_CLI:
+        if result["status"] == "available":
+            prompt = native_task_prompt(prompt, role)
+            format_sections = (native_output_section(role),)
         command = CodexRuntimeAdapter(workspace=workspace, config=config).build_command(
-            route=route, prompt=prompt, session_id=None, image_paths=None, output_schema_path=None,
-            use_output_schema=False, approval_policy="on-failure", developer_instructions=developer, use_approval_bypass=False)
+            route=route, prompt=prompt, session_id=None, image_paths=None, output_schema_path=native_output_schema_path(role),
+            use_output_schema=True, approval_policy="on-failure", developer_instructions=developer, use_approval_bypass=False)
         make_role_agent_command(command, role=role, task_workspace=str(cwd) if role == "consumer" else None,
             controlled_cli=ControlledCliConfig(command=sys.executable, args=("-m", "app.agent_cli", "--role", role), cwd=str(Path(__file__).resolve().parent.parent)))
     else:
@@ -196,11 +211,15 @@ def current_prompt_preview(
     result.update(runtime_prompt_snapshot(role=role, route=route, runtime_attempt_id=0, task=task,
         developer_instructions=developer, task_prompt=prompt, runtime_context=runtime_context, current_time=rendered_at,
         invocation_facts={"prompt_configuration": fingerprints,
-                          "prompt_sections": prompt_section_facts(developer_sections, task_sections)}))
+                          "prompt_sections": prompt_section_facts(developer_sections, task_sections + format_sections)}))
     result.pop("type")
     if source_snapshot and source_snapshot.get("sections"):
-        result["sections"] = [section for section in result["sections"] if section["placement"] == "developer"] + [
-            section for section in source_snapshot["sections"] if section["placement"] == "task"]
+        source_sections = [dict(section) for section in source_snapshot["sections"] if section["placement"] == "task" and section["source"] != native_output_section(role).source] if result["status"] == "available" else []
+        if source_snapshot.get("native_recorded") and source_sections:
+            source_sections[0]["characters"] = business_length
+            source_sections[0]["source"] = "原生保存的 Task 业务正文；当前路线格式独立列出"
+        rendered_format_sections = result["sections"][-len(format_sections):] if format_sections else []
+        result["sections"] = [section for section in result["sections"] if section["placement"] == "developer"] + source_sections + rendered_format_sections
     result["configuration_fingerprints"] = fingerprints
     result["task_source_configuration_fingerprints"] = _saved_configuration_fingerprints(source_snapshot)
     result["task_source_run_id"] = source_run.id if source_run else None

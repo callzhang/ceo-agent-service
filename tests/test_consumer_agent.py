@@ -788,6 +788,14 @@ def test_consumer_persists_native_mcp_reads_from_codex_session(
     assert result.result.outcome.value == "no_action"
 
 
+def _native_json_object(value):
+    if isinstance(value, dict):
+        return {"entries": [{"key": key, "value": _native_json_object(item)} for key, item in value.items()]}
+    if isinstance(value, list):
+        return [_native_json_object(item) for item in value]
+    return value
+
+
 def _proposal_jsonl(
     payload: dict[str, object],
     *,
@@ -815,6 +823,9 @@ def _proposal_jsonl(
         },
         "error": {"code": "", "retryable": False, "authorization_required": False},
     }
+    for action in result["proposal"]["actions"]:
+        action["target"] = _native_json_object(action["target"])
+        action["payload"] = _native_json_object(action["payload"])
     return "\n".join(
         (
             json.dumps({"type": "thread.started", "thread_id": "session-a"}),
@@ -1237,9 +1248,8 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
     assert 'sandbox_mode="read-only"' not in command
     assert "--dangerously-bypass-approvals-and-sandbox" in command
     assert "tools.enabled_tools=[]" in command
-    # Result parsing remains strict in the service, but output-schema is not
-    # sent to Codex because it conflicts with dynamically loaded MCP tools.
-    assert "--output-schema" not in command
+    # Native structural output coexists with dynamically loaded MCP tools.
+    assert "--output-schema" in command
     assert 'approval_policy="never"' in command
     assert command.count("--disable") == 8
     assert command[command.index("--disable") + 1] == "plugins"
@@ -2378,7 +2388,7 @@ def test_consumer_rejects_malformed_nested_output_locally(
             executor=executor,
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert "--output-schema" not in executor.commands[0]
+    assert "--output-schema" in executor.commands[0]
 
 
 def test_consumer_accepts_valid_nested_output_locally(store, task, context):
@@ -2395,7 +2405,7 @@ def test_consumer_accepts_valid_nested_output_locally(store, task, context):
     assert result.result.proposal.actions[0].payload == {
         "text": "Verified notice."
     }
-    assert "--output-schema" not in executor.commands[0]
+    assert "--output-schema" in executor.commands[0]
 
 
 @pytest.mark.parametrize(
@@ -3808,3 +3818,31 @@ def test_saved_prompt_changes_update_input_and_hash_without_replacing_route_sess
     assert snapshot['task_prompt'] == executor.prompts[0]
     from app.prompt_composition import load_prompt_configuration
     assert snapshot['invocation_facts']['prompt_configuration'] == load_prompt_configuration().fingerprints()
+
+
+def test_codex_snapshot_records_exact_native_input_and_reuses_conversation(store, task, context):
+    from app.native_agent_output import native_output_schema_path
+    store.upsert_conversation(task.conversation_id, "Group", False, "session-a")
+    store.set_codex_session_contract_hash(task.conversation_id, "previous-wire-contract")
+    snapshots = []
+    class LiveInputExecutor(CapturingExecutor):
+        def __call__(self, command, **kwargs):
+            active = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
+            snapshots.extend(event for event in active[0].tool_events if event.get("type") == "runtime.prompt")
+            return super().__call__(command, **kwargs)
+    executor = LiveInputExecutor(_result_jsonl())
+    ConsumerAgentRunner(store=store, workspace=Path("/workspace"), executor=executor,
+                        codex_session_exists=lambda _: True).run(
+        task, context, proposal_revision=0, parent_agent_run_id=None)
+    command = executor.commands[0]
+    assert "resume" in command and command[-2] == "session-a"
+    assert command[command.index("--output-schema") + 1] == str(native_output_schema_path("consumer"))
+    assert len(snapshots) == 1
+    snapshot = snapshots[0]
+    assert snapshot["task_prompt"] == executor.prompts[0]
+    assert snapshot["task_prompt"].count("## Native structured output") == 1
+    length = snapshot["invocation_facts"]["native_output_format"]["business_task_length"]
+    assert len(snapshot["task_prompt"]) > length
+    assert snapshot["sections"][-1]["name"] == "原生结果格式"
+    from app.native_agent_output import native_output_instruction
+    assert snapshot["sections"][-1]["characters"] == len(native_output_instruction("consumer"))

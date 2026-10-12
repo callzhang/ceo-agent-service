@@ -109,7 +109,8 @@ def test_bound_current_preview_keeps_actual_native_task_and_current_developer(tm
     monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(tmp_path / "missing-profile"))
     result = current_prompt_preview(store, role="consumer", config=load_runtime_config({}), task_id=task.id)
     assert result["status"] == "available"
-    assert result["task_prompt"] == "Resumed Task"
+    from app.native_agent_output import native_task_prompt
+    assert result["task_prompt"] == native_task_prompt("Resumed Task", "consumer")
     assert "Original developer" not in result["developer_instructions"]
     assert result["task_source_run_id"] == run.id
     assert result["task_source_configuration_fingerprints"]["developer_template"] is None
@@ -146,3 +147,38 @@ def test_bound_current_missing_latest_attempt_does_not_use_earlier_task(tmp_path
     assert result["status"] == "unavailable"
     assert result["task_prompt"] == ""
     assert "Original Task" not in result["submitted_input"]
+
+@pytest.mark.parametrize('route_name', ['codex_oauth', 'claude_oauth'])
+def test_native_history_current_route_has_one_correct_format_and_accurate_lengths(tmp_path, monkeypatch, route_name):
+    from app.prompt_preview import current_prompt_preview
+    from app.agent_runtime_config import load_runtime_config
+    from app.native_agent_output import native_task_prompt, native_output_instruction
+    store, task, run, attempt, path = native_fixture(tmp_path, monkeypatch)
+    business = 'Original task facts and literal entries key must stay intact.'
+    saved = native_task_prompt(business, 'consumer')
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    records[3] = message('user', saved, 'user.text')
+    path.write_text('\n'.join(json.dumps(record) for record in records)+'\n')
+    config = load_runtime_config({'CEO_AGENT_RUNTIME_ROUTES': 'codex_oauth,claude_oauth'})
+    result = current_prompt_preview(store, role='consumer', config=config, route_name=route_name, task_id=task.id)
+    assert result['task_prompt'] == (saved if route_name == 'codex_oauth' else business)
+    task_sections = [section for section in result['sections'] if section['placement'] == 'task']
+    assert task_sections[0]['characters'] == len(business)
+    if route_name == 'codex_oauth':
+        assert task_sections[-1]['characters'] == len(native_output_instruction('consumer'))
+    assert historical_prompt_preview(store, run_id=run.id)['task_prompt'] == saved
+
+
+def test_claude_business_text_that_quotes_native_appendix_is_not_stripped(tmp_path, monkeypatch):
+    from app.prompt_preview import current_prompt_preview
+    from app.agent_runtime_config import load_runtime_config
+    from app.native_agent_output import native_task_prompt
+    from app.claude_runtime_adapter import claude_input_contract
+    store, task, run, attempt, path = native_fixture(tmp_path, monkeypatch, kind='claude_cli')
+    business = native_task_prompt('Document discussing the format verbatim:', 'consumer')
+    record = {'type':'user', 'sessionId':SID, 'message':{'role':'user', 'content':claude_input_contract(prompt=business, developer_instructions='Saved')}}
+    path.write_text(json.dumps(record)+'\n')
+    with store._connect() as db:
+        db.execute('update agent_runtime_attempts set transcript_end=1 where id=?', (attempt.id,))
+    result = current_prompt_preview(store, role='consumer', config=load_runtime_config({'CEO_AGENT_RUNTIME_ROUTES':'codex_oauth,claude_oauth'}), route_name='claude_oauth', task_id=task.id)
+    assert result['task_prompt'] == business

@@ -26,6 +26,7 @@ from app.agent_effects import (
     _is_signed_url,
 )
 from app.agent_result import ResultParseError
+from app.native_agent_output import native_output_schema_path, native_task_prompt, native_result_jsonl, native_output_section
 from app.reviewed_sources import ReviewedSourceReadError
 from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
 from app.agent_runtime_contracts import (
@@ -918,6 +919,11 @@ class AgentTurnProcess(Generic[ResultT]):
                 )
             )
 
+        def parse_route_result(raw: str) -> ResultT:
+            if active_route is not None and active_route.runtime_kind is RuntimeKind.CODEX_CLI:
+                raw = native_result_jsonl(raw, run.role.value)
+            return parse_result(raw)
+
         required_capabilities = _required_runtime_capabilities(
             run=run,
             expected_actions=expected_actions,
@@ -1144,8 +1150,8 @@ class AgentTurnProcess(Generic[ResultT]):
                         prompt=prompt,
                         session_id=route_session_id,
                         image_paths=image_paths,
-                        output_schema_path=None,
-                        use_output_schema=False,
+                        output_schema_path=native_output_schema_path(run.role.value),
+                        use_output_schema=True,
                         approval_policy="on-failure",
                         developer_instructions=developer_instructions,
                         use_approval_bypass=True,
@@ -1165,6 +1171,19 @@ class AgentTurnProcess(Generic[ResultT]):
 
                 rendered_at = datetime.now().astimezone().isoformat()
                 context_facts = {**(invocation_facts or {}), "proposal_revision": run.proposal_revision}
+                submitted_task_prompt = prompt
+                if route.runtime_kind is RuntimeKind.CODEX_CLI:
+                    submitted_task_prompt = native_task_prompt(prompt, run.role.value)
+                    from app.prompt_composition import PromptSection, prompt_section_facts
+                    business_sections = context_facts.get("prompt_sections") or prompt_section_facts((
+                        PromptSection("Developer 指令", "服务角色装配", "developer", developer_instructions),
+                        PromptSection("任务输入", "当前任务正文", "task", prompt),
+                    ))
+                    context_facts["prompt_sections"] = list(business_sections) + prompt_section_facts((native_output_section(run.role.value),))
+                    context_facts["native_output_format"] = {
+                        "name": "json-entries-v1",
+                        "business_task_length": len(prompt),
+                    }
                 runtime_context = render_runtime_context(
                     role=run.role.value, route=route, command=command, task=self.task,
                     current_time=rendered_at, invocation_facts=context_facts,
@@ -1178,12 +1197,12 @@ class AgentTurnProcess(Generic[ResultT]):
                     ]
                 executor_prompt = (
                     _claude_input_contract(prompt=prompt, developer_instructions=submitted_developer_instructions)
-                    if route.runtime_kind is RuntimeKind.CLAUDE_CLI else prompt
+                    if route.runtime_kind is RuntimeKind.CLAUDE_CLI else submitted_task_prompt
                 )
                 snapshot = runtime_prompt_snapshot(
                     role=run.role.value, route=route, runtime_attempt_id=active_attempt.id,
                     task=self.task, developer_instructions=submitted_developer_instructions,
-                    task_prompt=prompt, runtime_context=runtime_context, current_time=rendered_at,
+                    task_prompt=submitted_task_prompt, runtime_context=runtime_context, current_time=rendered_at,
                     invocation_facts=context_facts,
                 )
                 snapshot["proposal_revision"] = run.proposal_revision
@@ -1265,7 +1284,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         pending_claude_session_id = trusted_session_id
                     else:
                         try:
-                            result = parse_result(process.stdout)
+                            result = parse_route_result(process.stdout)
                         except ResultParseError:
                             session_id_for_result = (
                                 observed_session_id or route_session_id
@@ -1284,7 +1303,7 @@ class AgentTurnProcess(Generic[ResultT]):
                             )
                             if not session_result:
                                 raise
-                            result = parse_result(session_result)
+                            result = parse_route_result(session_result)
                     break
                 if friday_failure is not None:
                     failure = friday_failure
