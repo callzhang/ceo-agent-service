@@ -2664,32 +2664,25 @@ def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """
     rows = db.execute(
         f"""
-        select lower(coalesce(tasks.status, '')) as status, count(*) as count
-        {current_projection}
-        group by lower(coalesce(tasks.status, ''))
-        order by status
+        with current as materialized (
+            select tasks.id, lower(coalesce(tasks.status, '')) as status,
+                   tasks.updated_at, tasks.error
+            {current_projection}
+        ), counts as (
+            select status, count(*) as count from current group by status
+        ), latest as (
+            select updated_at from current order by updated_at desc, id desc limit 1
+        ), latest_error as (
+            select error from current where status in ('failed', 'error')
+            order by updated_at desc, id desc limit 1
+        )
+        select counts.status, counts.count, latest.updated_at, latest_error.error
+        from counts cross join latest left join latest_error on 1=1
+        order by counts.status
         """
     ).fetchall()
     counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
-    latest_row = db.execute(
-        f"""
-        select tasks.updated_at, tasks.error
-        {current_projection}
-        order by tasks.updated_at desc, tasks.id desc
-        limit 1
-        """
-    ).fetchone()
-    latest_error_row = db.execute(
-        f"""
-        select tasks.error
-        {current_projection}
-          and tasks.id in (
-              select id from reply_tasks where lower(status) in ('failed', 'error')
-          )
-        order by tasks.updated_at desc, tasks.id desc
-        limit 1
-        """
-    ).fetchone()
+    latest_row = rows[0] if rows else None
     return {
         "name": "Reply tasks",
         "table": "reply_tasks (current business-object projection)",
@@ -2703,8 +2696,8 @@ def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
         ),
         "latest_error": (
             ""
-            if latest_error_row is None
-            else str(latest_error_row["error"] or "")
+            if latest_row is None
+            else str(latest_row["error"] or "")
         ),
     }
 
@@ -2720,33 +2713,29 @@ def _email_action_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """
     rows = db.execute(
         f"""
-        select lower(coalesce(a.status, '')) as status, count(*) as count
-        {current_plan}
-        group by lower(coalesce(a.status, ''))
-        order by status
-        """
-    ).fetchall()
-    counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
-    retryable_row = db.execute(
-        f"""
-        select count(*) as count
-        {current_plan}
-          and lower(a.status)='failed'
-          and a.attempt_count < ?
-          and trim(a.next_attempt_at) != ''
-          and datetime(a.next_attempt_at) is not null
+        with current as materialized (
+            select lower(coalesce(a.status, '')) as status, a.attempt_count,
+                   a.next_attempt_at, a.updated_at, a.error, a.action_id
+            {current_plan}
+        ), counts as (
+            select status, count(*) as count,
+                   sum(case when status='failed' and attempt_count < ?
+                        and trim(next_attempt_at) != ''
+                        and datetime(next_attempt_at) is not null
+                       then 1 else 0 end) as retryable
+            from current group by status
+        ), latest as (
+            select updated_at, error from current
+            order by updated_at desc, action_id desc limit 1
+        )
+        select counts.status, counts.count, counts.retryable, latest.updated_at, latest.error
+        from counts cross join latest order by counts.status
         """,
         (DIRECT_ACTION_MAX_ATTEMPTS,),
-    ).fetchone()
-    retryable = int(retryable_row["count"] or 0)
-    latest = db.execute(
-        f"""
-        select a.updated_at, a.error
-        {current_plan}
-        order by a.updated_at desc, a.action_id desc
-        limit 1
-        """
-    ).fetchone()
+    ).fetchall()
+    counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
+    retryable = sum(int(row["retryable"] or 0) for row in rows)
+    latest = rows[0] if rows else None
     raw_failed = _queue_count_for(counts, {"failed", "error"})
     return {
         "name": "Email provider actions",
