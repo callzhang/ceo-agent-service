@@ -12,6 +12,14 @@ removes the historical wide-row scan from the write transaction: production
 telemetry observed a 13.454-second hold there with a simultaneous 13.045-second
 dispatcher lock wait.
 
+Dispatcher lease completion retains the same newest 10,000 terminal rows,
+ordered by `terminal_at desc, rowid desc`, and every active row. The required
+partial terminal-time index supports that order. Completion finds the 10,000th
+row's `(terminal_at, rowid)` boundary and deletes only older terminal rows in the
+same transaction. It no longer sorts the whole table or materializes a 10,000-ID
+membership list while holding the writer lock. Existing-schema initialization
+adds the index without rewriting lease facts.
+
 The meeting delivery batch poll reads the exact ready, unlocked and due
 eligibility before requesting SQLite's shared writer lock. An ineligible poll
 returns without joining the writer queue. This read is not a reservation: the

@@ -418,6 +418,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_scheduled_task_runs_latest",
     "idx_scheduled_task_runs_reply_execution",
     "idx_dispatcher_claim_leases_expiry",
+    "idx_dispatcher_claim_leases_terminal",
     "idx_runtime_skill_bindings_config_order",
     "idx_runtime_skill_load_receipts_config",
     "idx_meeting_memory_write_events_lease",
@@ -2925,6 +2926,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     on dispatcher_claim_leases(
                         adapter_name, lease_expires_at, source_id
                     );
+                create index if not exists idx_dispatcher_claim_leases_terminal
+                    on dispatcher_claim_leases(terminal_at)
+                    where terminal_at<>'';
                 create table if not exists runtime_skill_configs (
                     id integer primary key autoincrement,
                     parent_id integer,
