@@ -1,7 +1,10 @@
 # CEO Agent Service Architecture
 
 Installed Skill discovery (`agent_cli.read_skill()` without a source) returns
-body-free TSV metadata using exact root aliases. The full name, description
+body-free TSV metadata with separate Root and Relative path columns. Joining
+the referenced root directory with the relative component reconstructs the
+absolute source path; no combined alias expression is presented as a read argument.
+The full name, description
 and reconstructed absolute read path of every authorized source are retained,
 including distinct paths sharing a name. The response includes its path joining
 and table quoting instructions. Named/path reads, source authorization and

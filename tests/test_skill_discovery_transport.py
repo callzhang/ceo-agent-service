@@ -10,10 +10,9 @@ def decode_catalog(payload):
     rows = list(csv.reader(io.StringIO(text), delimiter='\t'))
     separator = rows.index([])
     roots = dict(rows[:separator])
-    assert rows[separator + 1] == ['Name', 'Read path', 'Description']
+    assert rows[separator + 1] == ['Name', 'Root', 'Relative path', 'Description']
     result = []
-    for name, aliased_path, description in rows[separator + 2:]:
-        alias, relative = aliased_path.split(':', 1)
+    for name, alias, relative, description in rows[separator + 2:]:
         result.append({'name': name, 'path': str(Path(roots[alias]) / relative), 'description': description})
     return result
 

@@ -1,0 +1,641 @@
+{
+  "version": 2,
+  "scope": "Synthetic mail/document cold code-role extension; preserves all errors and wrong Skill selection, no provider replay",
+  "fixtures": [
+    {
+      "version": 1,
+      "manifest": {
+        "version": 1,
+        "case": "mail",
+        "model": "gpt-5.6-luna",
+        "expected_consumer": "no_action with factual review summary",
+        "expected_audit": "approve same actual Consumer candidate/digest/revision",
+        "source_rows": 343,
+        "scope": "Synthetic cold code-role control; not production provider/scheduler or other task acceptance.",
+        "semantic_requirements": [
+          "No duplicate reply",
+          "exact message identity synthetic-mail-17",
+          "receipt synthetic-delivery-88",
+          "recipient alex@example.test"
+        ]
+      },
+      "runs": [
+        {
+          "role": "consumer",
+          "arm": "baseline",
+          "session_id": "01a131de-0d5f-7842-81d8-cd044b539ac7",
+          "returncode": 0,
+          "canonical_result_valid": true,
+          "nonempty_summary": true,
+          "result": {
+            "outcome": "no_action",
+            "summary": "无需采取外部行动。权威触发消息 synthetic-mail 要求复核邮件 synthetic-mail-17：Alex（alex@example.test）请求签名日程。当前已存在该邮件的确认回执：provider receipt synthetic-delivery-88，状态为 delivered，收件人为 alex@example.test，且 source_digest 为 unchanged。因此，当前请求已经履行，不应再次发送相同回复；重复发送会产生重复效果。邮件身份是 synthetic-mail-17，交付回执身份是 synthetic-delivery-88；本次任务不需要新的回复或其他外部变更。",
+            "proposal": null,
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 0.99,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "requested_input": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false,
+            "source_bindings": [],
+            "durable_memories": []
+          },
+          "candidate_digest": null,
+          "model_visible_catalog_exact": false,
+          "model_catalog_chars": 127188,
+          "catalog_clipped": true,
+          "tool_calls": 2,
+          "tool_errors": 0,
+          "body_reads": [
+            {
+              "arguments": {
+                "name": "synthetic-guide-007"
+              },
+              "is_error": false,
+              "exact_source_and_model_body": true,
+              "target_skill": false,
+              "error_text": null
+            }
+          ],
+          "target_skill_loaded": false,
+          "native_controls": [
+            {
+              "model": "gpt-5.6-luna",
+              "approval_policy": "on-request",
+              "sandbox_policy": {
+                "type": "read-only"
+              }
+            }
+          ],
+          "initial_native_developer_sha256": "6bf84889ce5cfd6feb1440071e9d0bc6178128ddf7d135f35d6ddbbddafe218e",
+          "service_developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+          "task_sha256": "0ffcbd8999d1a481a33a9403762361926aa42dd5120315cd4d239a6a2749d367",
+          "events_sha256": "0f68a2747c3ea35b177cb033e5033f714709c86acaf963655616c18d33bbc971",
+          "native_sha256": "3125d2249014975691b30131b2c059a911a32a1684eb4da1e339199c832923c5"
+        },
+        {
+          "role": "consumer",
+          "arm": "candidate",
+          "session_id": "01a131de-3c84-78b2-ab56-42fb082813ad",
+          "returncode": 0,
+          "canonical_result_valid": true,
+          "nonempty_summary": true,
+          "result": {
+            "outcome": "no_action",
+            "summary": "无需再次发送相同回复。原始请求来自邮件消息 synthetic-mail-17，发件人为 alex@example.test，请求签署后的日程；已有确认收据 synthetic-delivery-88 记录：针对同一消息 synthetic-mail-17 的请求已向 alex@example.test 交付了准确的日程回复，状态为 delivered，且 source_digest 为 unchanged。根据已读取的邮件指导，应在重发相同回复前核对同一消息的交付收据；该收据已确认当前请求已履行。此次不执行任何外部操作。",
+            "proposal": null,
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "requested_input": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false,
+            "source_bindings": [],
+            "durable_memories": []
+          },
+          "candidate_digest": null,
+          "model_visible_catalog_exact": true,
+          "model_catalog_chars": 82831,
+          "catalog_clipped": false,
+          "tool_calls": 2,
+          "tool_errors": 0,
+          "body_reads": [
+            {
+              "arguments": {
+                "name": "synthetic-guide-150"
+              },
+              "is_error": false,
+              "exact_source_and_model_body": true,
+              "target_skill": true,
+              "error_text": null
+            }
+          ],
+          "target_skill_loaded": true,
+          "native_controls": [
+            {
+              "model": "gpt-5.6-luna",
+              "approval_policy": "on-request",
+              "sandbox_policy": {
+                "type": "read-only"
+              }
+            }
+          ],
+          "initial_native_developer_sha256": "6bf84889ce5cfd6feb1440071e9d0bc6178128ddf7d135f35d6ddbbddafe218e",
+          "service_developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+          "task_sha256": "0ffcbd8999d1a481a33a9403762361926aa42dd5120315cd4d239a6a2749d367",
+          "events_sha256": "044f0cfc3ee918ba339eee89daa8eceae0b43ba7add3fec4713733cfb75fc0a6",
+          "native_sha256": "6313875f63808c81513def567b64226e51b9f88b6f335f6cffd91327f3badcac"
+        },
+        {
+          "role": "audit",
+          "arm": "baseline",
+          "session_id": "01a131de-79b7-7273-be21-b0035c32691f",
+          "returncode": 0,
+          "canonical_result_valid": true,
+          "nonempty_summary": true,
+          "result": {
+            "outcome": "approve",
+            "summary": "Approved. The candidate correctly preserves the authoritative trigger and distinguishes the email identity synthetic-mail-17 from the delivery receipt identity synthetic-delivery-88. The supplied fixture confirms that the exact requested schedule reply was delivered to alex@example.test with status delivered and source_digest unchanged. Under the applicable email guidance and duplicate-effects rule, no identical reply or other external action is needed.",
+            "proposal_revision": 0,
+            "candidate_digest": "27c042dbe987cdf8a203c9dbc568465ded458dda71ac95471e58b640649030af",
+            "evidence_refs": [
+              "candidate.source_bindings[0].object_ref=synthetic-mail",
+              "candidate.source_bindings[0].value.trigger_text",
+              "candidate.source_bindings[0].value.trigger_raw_payload.email.message_id=synthetic-mail-17",
+              "candidate.source_bindings[0].value.trigger_raw_payload.delivery.receipt_id=synthetic-delivery-88",
+              "candidate.source_bindings[0].value.trigger_raw_payload.delivery.status=delivered",
+              "candidate.source_bindings[0].value.trigger_raw_payload.delivery.recipient=alex@example.test",
+              "candidate.source_bindings[0].value.trigger_raw_payload.delivery.source_digest=unchanged",
+              "/private/tmp/ceo-skill-mail-roles-2992hhnv/fixture-root/shared-segment/shared-segment/shared-segment/root-03/guide-150/SKILL.md"
+            ],
+            "feedback": null,
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 0.99,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0
+          },
+          "candidate_digest": "27c042dbe987cdf8a203c9dbc568465ded458dda71ac95471e58b640649030af",
+          "model_visible_catalog_exact": false,
+          "model_catalog_chars": 127188,
+          "catalog_clipped": true,
+          "tool_calls": 2,
+          "tool_errors": 0,
+          "body_reads": [
+            {
+              "arguments": {
+                "path": "/private/tmp/ceo-skill-mail-roles-2992hhnv/fixture-root/shared-segment/shared-segment/shared-segment/root-03/guide-150/SKILL.md"
+              },
+              "is_error": false,
+              "exact_source_and_model_body": true,
+              "target_skill": true,
+              "error_text": null
+            }
+          ],
+          "target_skill_loaded": true,
+          "native_controls": [
+            {
+              "model": "gpt-5.6-luna",
+              "approval_policy": "on-request",
+              "sandbox_policy": {
+                "type": "read-only"
+              }
+            }
+          ],
+          "initial_native_developer_sha256": "7f3eaacc03cada8855802ed2b89b2102db010e6ea84ab5291a11f5ff26c23631",
+          "service_developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+          "task_sha256": "475daa861c628db1558ffcdaadd0b1e8e9f5363e2aec8ec591da798d77d5160b",
+          "events_sha256": "07c93136df235d0ce6e39210db2f4850276a40a67ba38ceea7d4640f616e5844",
+          "native_sha256": "93d26127fd953276eb8725a322eddd3080f628a6691859988f10bcc853c76dfe"
+        },
+        {
+          "role": "audit",
+          "arm": "candidate",
+          "session_id": "01a131de-b035-79a2-ae55-41b0f5552c02",
+          "returncode": 0,
+          "canonical_result_valid": true,
+          "nonempty_summary": true,
+          "result": {
+            "outcome": "approve",
+            "summary": "Approved no-action outcome. The authoritative trigger states that message synthetic-mail-17 from alex@example.test already has a confirmed delivered receipt synthetic-delivery-88 for the exact requested schedule reply, with source_digest unchanged. Under synthetic-guide-150, the same-message delivery receipt establishes that an identical resend is unnecessary; no external change should be executed.",
+            "proposal_revision": 0,
+            "candidate_digest": "27c042dbe987cdf8a203c9dbc568465ded458dda71ac95471e58b640649030af",
+            "evidence_refs": [
+              "candidate.source_bindings[0].value.trigger_text",
+              "candidate.source_bindings[0].value.trigger_raw_payload.email.message_id=synthetic-mail-17",
+              "candidate.source_bindings[0].value.trigger_raw_payload.delivery.receipt_id=synthetic-delivery-88",
+              "/private/tmp/ceo-skill-mail-roles-2992hhnv/fixture-root/shared-segment/shared-segment/shared-segment/root-03/guide-150/SKILL.md"
+            ],
+            "feedback": null,
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 0.99,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0
+          },
+          "candidate_digest": "27c042dbe987cdf8a203c9dbc568465ded458dda71ac95471e58b640649030af",
+          "model_visible_catalog_exact": true,
+          "model_catalog_chars": 82831,
+          "catalog_clipped": false,
+          "tool_calls": 2,
+          "tool_errors": 0,
+          "body_reads": [
+            {
+              "arguments": {
+                "name": "synthetic-guide-150",
+                "path": null
+              },
+              "is_error": false,
+              "exact_source_and_model_body": true,
+              "target_skill": true,
+              "error_text": null
+            }
+          ],
+          "target_skill_loaded": true,
+          "native_controls": [
+            {
+              "model": "gpt-5.6-luna",
+              "approval_policy": "on-request",
+              "sandbox_policy": {
+                "type": "read-only"
+              }
+            }
+          ],
+          "initial_native_developer_sha256": "7f3eaacc03cada8855802ed2b89b2102db010e6ea84ab5291a11f5ff26c23631",
+          "service_developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+          "task_sha256": "475daa861c628db1558ffcdaadd0b1e8e9f5363e2aec8ec591da798d77d5160b",
+          "events_sha256": "f5fed1742d9c93c17a808bece93a14c37233fa1f93b0981bf5df6e7384d72e1e",
+          "native_sha256": "d0c35baa46c225beb915ad9e62d929b2e353891c3159f812d6b7d83a30254891"
+        }
+      ],
+      "paired_task_developer_commands_except_arm_equal": true,
+      "business_results": "Both Consumer no_action, both Audit approve same actual valid Consumer candidate/revision. Semantic review required separately.",
+      "acceptance": "Directory completeness and exact body delivery checked; semantic summaries require independent review. Observed tool errors recorded per run; no release claim.",
+      "limits": "One synthetic cold mail code-role pair; no provider changes, private profile/source replay, same-session/other-task/full-runtime acceptance."
+    },
+    {
+      "version": 1,
+      "manifest": {
+        "version": 1,
+        "case": "document",
+        "model": "gpt-5.6-luna",
+        "expected_consumer": "no_action with factual review summary",
+        "expected_audit": "approve same actual Consumer candidate/digest/revision",
+        "source_rows": 343,
+        "scope": "Synthetic cold code-role control; not production provider/scheduler or other task acceptance.",
+        "semantic_requirements": [
+          "stated total 120",
+          "actual row sum 110",
+          "discrepancy 10",
+          "draft correction unapproved"
+        ]
+      },
+      "runs": [
+        {
+          "role": "consumer",
+          "arm": "baseline",
+          "session_id": "01a131de-0cb4-7470-b3aa-90f4ab921aa8",
+          "returncode": 0,
+          "canonical_result_valid": true,
+          "nonempty_summary": true,
+          "result": {
+            "outcome": "no_action",
+            "summary": "已完成对草稿预算文档的只读复核：标题声明总额为120 units；三个完整项目行分别为40、50和20 units，实际行合计为110 units（40 + 50 + 20 = 110）。因此，标题总额比完整项目行合计高10 units，存在10 units的差异。当前材料没有说明该差异已获批准或已完成更正；本次未改写源文档，也未执行或声称执行任何更正。",
+            "proposal": null,
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "requested_input": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false,
+            "source_bindings": [],
+            "durable_memories": []
+          },
+          "candidate_digest": null,
+          "model_visible_catalog_exact": false,
+          "model_catalog_chars": 127300,
+          "catalog_clipped": true,
+          "tool_calls": 2,
+          "tool_errors": 0,
+          "body_reads": [
+            {
+              "arguments": {
+                "name": "synthetic-guide-150"
+              },
+              "is_error": false,
+              "exact_source_and_model_body": true,
+              "target_skill": true,
+              "error_text": null
+            }
+          ],
+          "target_skill_loaded": true,
+          "native_controls": [
+            {
+              "model": "gpt-5.6-luna",
+              "approval_policy": "on-request",
+              "sandbox_policy": {
+                "type": "read-only"
+              }
+            }
+          ],
+          "initial_native_developer_sha256": "6bf84889ce5cfd6feb1440071e9d0bc6178128ddf7d135f35d6ddbbddafe218e",
+          "service_developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+          "task_sha256": "f6ee7dc68c7e7499cab3992ea46918a2c2622dc2da2659c493c0194e4a0a7db3",
+          "events_sha256": "949dfa4bca12ab1994f40fcf78d6bc3bebfbb430690f711f9563c14727f98b79",
+          "native_sha256": "eafc401e9b16927b337fd33198dae0b230311a705898d4a3a2a8b727d2ebcebf"
+        },
+        {
+          "role": "consumer",
+          "arm": "candidate",
+          "session_id": "01a131de-72a8-7281-9c5e-c77890887ae3",
+          "returncode": 0,
+          "canonical_result_valid": true,
+          "nonempty_summary": true,
+          "result": {
+            "outcome": "no_action",
+            "summary": "已完成对合成文档 synthetic-budget-5 的只读审阅。文档标题声明总额为 120 units；三个完整项目行分别为 40、50、20 units，实际合计为 110 units（40 + 50 + 20 = 110）。因此，声明总额比完整项目行合计高 10 units，存在 10 units 的差异。当前材料没有提供其他项目行，也没有显示已批准的更正；本次未改写源文档、未提出更正并已获批准的结论，也未执行任何外部变更。",
+            "proposal": null,
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "requested_input": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false,
+            "source_bindings": [],
+            "durable_memories": []
+          },
+          "candidate_digest": null,
+          "model_visible_catalog_exact": true,
+          "model_catalog_chars": 82883,
+          "catalog_clipped": false,
+          "tool_calls": 4,
+          "tool_errors": 2,
+          "body_reads": [
+            {
+              "arguments": {
+                "path": "/Users/derek/.agents/AGENTS.md"
+              },
+              "is_error": true,
+              "exact_source_and_model_body": false,
+              "target_skill": false,
+              "error_text": [
+                {
+                  "type": "text",
+                  "text": "Error executing tool read_skill: skill_path_forbidden"
+                }
+              ]
+            },
+            {
+              "arguments": {
+                "path": "r4:guide-150/SKILL.md"
+              },
+              "is_error": true,
+              "exact_source_and_model_body": false,
+              "target_skill": false,
+              "error_text": [
+                {
+                  "type": "text",
+                  "text": "Error executing tool read_skill: skill_path_forbidden"
+                }
+              ]
+            },
+            {
+              "arguments": {
+                "name": "synthetic-guide-150"
+              },
+              "is_error": false,
+              "exact_source_and_model_body": true,
+              "target_skill": true,
+              "error_text": null
+            }
+          ],
+          "target_skill_loaded": true,
+          "native_controls": [
+            {
+              "model": "gpt-5.6-luna",
+              "approval_policy": "on-request",
+              "sandbox_policy": {
+                "type": "read-only"
+              }
+            }
+          ],
+          "initial_native_developer_sha256": "6bf84889ce5cfd6feb1440071e9d0bc6178128ddf7d135f35d6ddbbddafe218e",
+          "service_developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+          "task_sha256": "f6ee7dc68c7e7499cab3992ea46918a2c2622dc2da2659c493c0194e4a0a7db3",
+          "events_sha256": "f8fe85369f2545f61e4edb6ac2319fcc01212924b05c52d0482d0f0061f288bd",
+          "native_sha256": "a49e79e1a85b2bf12e107105c33037a3242967145d77fbe4032ea361b3ccecdc"
+        },
+        {
+          "role": "audit",
+          "arm": "baseline",
+          "session_id": "01a131de-a8fa-7812-ab5b-2d3bfc86729e",
+          "returncode": 0,
+          "canonical_result_valid": true,
+          "nonempty_summary": true,
+          "result": {
+            "outcome": "approve",
+            "summary": "批准。候选完整、事实一致且符合适用的文档复核指导：保留原始值，明确记录标题声明总额为120 units，三个完整项目行合计为110 units（40 + 50 + 20），并准确指出存在10 units差异；候选未将差异误述为已批准或已完成的更正，也未执行外部变更。",
+            "proposal_revision": 0,
+            "candidate_digest": "57e6186c3080a4899fa7e51cfa418cb6b35db83d98a6a8976ad7e0e9a71e23d8",
+            "evidence_refs": [
+              "candidate.source_bindings[0].value.trigger_text",
+              "candidate.source_bindings[0].value.trigger_raw_payload.document",
+              "/private/tmp/ceo-skill-document-roles-mqld2ydy/fixture-root/shared-segment/shared-segment/shared-segment/root-03/guide-150/SKILL.md"
+            ],
+            "feedback": null,
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0
+          },
+          "candidate_digest": "57e6186c3080a4899fa7e51cfa418cb6b35db83d98a6a8976ad7e0e9a71e23d8",
+          "model_visible_catalog_exact": false,
+          "model_catalog_chars": 127300,
+          "catalog_clipped": true,
+          "tool_calls": 3,
+          "tool_errors": 0,
+          "body_reads": [
+            {
+              "arguments": {
+                "name": "synthetic-guide-000"
+              },
+              "is_error": false,
+              "exact_source_and_model_body": true,
+              "target_skill": false,
+              "error_text": null
+            },
+            {
+              "arguments": {
+                "name": "synthetic-guide-150"
+              },
+              "is_error": false,
+              "exact_source_and_model_body": true,
+              "target_skill": true,
+              "error_text": null
+            }
+          ],
+          "target_skill_loaded": true,
+          "native_controls": [
+            {
+              "model": "gpt-5.6-luna",
+              "approval_policy": "on-request",
+              "sandbox_policy": {
+                "type": "read-only"
+              }
+            }
+          ],
+          "initial_native_developer_sha256": "7f3eaacc03cada8855802ed2b89b2102db010e6ea84ab5291a11f5ff26c23631",
+          "service_developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+          "task_sha256": "1ad9d73e14158d2a1ffc2dec21ac02cba1274fd8fb82972b555e3f0da5bfee1b",
+          "events_sha256": "40dd7d1b194d5f7d39be60b8d8e994d7b48ae8336da9b4ab4285fbd1ed52881e",
+          "native_sha256": "fadbe719fca3a52f03444cdc029506e653942bc826e44a0b799d86b1ec132170"
+        },
+        {
+          "role": "audit",
+          "arm": "candidate",
+          "session_id": "01a131df-13a6-70a2-af9c-c1caf1f34f14",
+          "returncode": 0,
+          "canonical_result_valid": true,
+          "nonempty_summary": true,
+          "result": {
+            "outcome": "approve",
+            "summary": "Approved. The candidate correctly preserves the supplied document facts: the heading states 120 units, the three complete rows total 110 units (40 + 50 + 20), and the discrepancy is 10 units. It appropriately reports that no approved correction is evidenced, performs no rewrite, and makes no unsupported claim of correction or external change.",
+            "proposal_revision": 0,
+            "candidate_digest": "57e6186c3080a4899fa7e51cfa418cb6b35db83d98a6a8976ad7e0e9a71e23d8",
+            "evidence_refs": [
+              "candidate.source_bindings[0].value.trigger_text",
+              "candidate.source_bindings[0].value.trigger_raw_payload",
+              "synthetic-guide-150"
+            ],
+            "feedback": null,
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0
+          },
+          "candidate_digest": "57e6186c3080a4899fa7e51cfa418cb6b35db83d98a6a8976ad7e0e9a71e23d8",
+          "model_visible_catalog_exact": true,
+          "model_catalog_chars": 82883,
+          "catalog_clipped": false,
+          "tool_calls": 3,
+          "tool_errors": 1,
+          "body_reads": [
+            {
+              "arguments": {
+                "path": "r4:guide-150/SKILL.md"
+              },
+              "is_error": true,
+              "exact_source_and_model_body": false,
+              "target_skill": false,
+              "error_text": [
+                {
+                  "type": "text",
+                  "text": "Error executing tool read_skill: skill_path_forbidden"
+                }
+              ]
+            },
+            {
+              "arguments": {
+                "name": "synthetic-guide-150"
+              },
+              "is_error": false,
+              "exact_source_and_model_body": true,
+              "target_skill": true,
+              "error_text": null
+            }
+          ],
+          "target_skill_loaded": true,
+          "native_controls": [
+            {
+              "model": "gpt-5.6-luna",
+              "approval_policy": "on-request",
+              "sandbox_policy": {
+                "type": "read-only"
+              }
+            }
+          ],
+          "initial_native_developer_sha256": "7f3eaacc03cada8855802ed2b89b2102db010e6ea84ab5291a11f5ff26c23631",
+          "service_developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+          "task_sha256": "1ad9d73e14158d2a1ffc2dec21ac02cba1274fd8fb82972b555e3f0da5bfee1b",
+          "events_sha256": "9fd4ae43958ca08bb5d667a68221b7ec268ae57f4592418e8444b38940d1af4e",
+          "native_sha256": "af26932125b21c4cd25347e1ef89f2d5b43a28ec4956574564a0f3d0bdc30839"
+        }
+      ],
+      "paired_task_developer_commands_except_arm_equal": true,
+      "business_results": "Both Consumer no_action, both Audit approve same actual valid Consumer candidate/revision. Semantic review required separately.",
+      "acceptance": "Directory completeness and exact body delivery checked; semantic summaries require independent review. Observed tool errors recorded per run; no release claim.",
+      "limits": "One synthetic cold document code-role pair; no provider changes, private profile/source replay, same-session/other-task/full-runtime acceptance."
+    }
+  ],
+  "independent_read_only_review": "All eight original streams and results checked. Wrong baseline mail Skill selection and candidate document AGENTS/alias errors retained separately; all supplied facts and final judgments correct. Synthetic cold scope only."
+}

@@ -459,16 +459,17 @@ def render_skill_catalog_metadata(catalog: tuple[BusinessSkillCatalogEntry, ...]
     writer.writerow(("Root", "Path"))
     writer.writerows((alias, str(root)) for root, alias in aliases.items())
     output.write("\n")
-    writer.writerow(("Name", "Read path", "Description"))
+    writer.writerow(("Name", "Root", "Relative path", "Description"))
     for item in catalog:
         root = next(root for root in roots if item.skill_path.is_relative_to(root))
         writer.writerow((
             item.name,
-            f"{aliases[root]}:{item.skill_path.relative_to(root)}",
+            aliases[root],
+            str(item.skill_path.relative_to(root)),
             item.description,
         ))
     return (
-        "Read paths use root-alias:relative-path; join with the exact root below.\n"
+        "Absolute read path = the Root directory joined with Relative path.\n"
         "Tables are tab-separated; quoted cells preserve full text.\n"
         + output.getvalue().rstrip("\n")
     )
