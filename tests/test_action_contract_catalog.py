@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+
 from app.agent_cli import build_role_server
 from app.agent_runtime_contracts import CredentialMode, RuntimeKind, RuntimeRoute
 from app.consumer_agent import system_action_contracts_text
@@ -86,9 +87,7 @@ def test_lookup_returns_shared_rules_and_only_the_exact_action_contract() -> Non
         (entry.capability, entry.operation)
         for entry in parse_action_contracts(result["contract"])
     ] == [("dingtalk-calendar", "respond_calendar_event")]
-    assert [
-        line for line in result["contract"].splitlines() if not line.startswith("|")
-    ] == [line for line in original.splitlines() if not line.startswith("|")]
+    assert _non_table_rules(result["contract"]) == _selected_rule_lines(original, "dingtalk-calendar")
     assert "`event_id` | `response_status`" in result["contract"]
     assert (
         "Exact event's `self_response_status` after native response"
@@ -122,9 +121,7 @@ def test_each_registered_operation_keeps_its_fields_and_all_shared_rules() -> No
             if line.startswith(f"| `{entry.capability}` |")
         )
         assert selected_row.split("|")[3:] == original_row.split("|")[3:]
-        assert [
-            line for line in result["contract"].splitlines() if not line.startswith("|")
-        ] == [line for line in original.splitlines() if not line.startswith("|")]
+        assert _non_table_rules(result["contract"]) == _selected_rule_lines(original, entry.capability)
 
 
 def test_lookup_lists_capability_operations_and_rejects_unknown_names() -> None:
@@ -253,3 +250,52 @@ Shared rule after the table.
     assert "Shared rule before the table." in result["contract"]
     assert "Shared rule after the table." in result["contract"]
     assert "other-capability" not in result["contract"]
+
+
+def _non_table_rules(document):
+    return [line for line in document.splitlines() if line.strip() and not line.startswith("|")]
+
+def _selected_rule_lines(document, capability):
+    shared, *sections = document.split("\n## Capability: ")
+    selected = [section for section in sections if f"`{capability}`" in section.partition("\n")[0]]
+    return _non_table_rules(shared + "".join("\n## Capability: " + section for section in selected))
+
+
+def test_contract_lookup_excludes_unrelated_capability_sections(monkeypatch):
+    from app import action_contract_catalog as catalog
+
+    document = """# Rules
+
+Shared identity rule.
+
+| Capability | Operation | target | payload | Completion evidence |
+| --- | --- | --- | --- | --- |
+| `alpha` | `perform` | `id` | `body` | receipt |
+| `beta` | `perform` | `id` | `body` | receipt |
+
+Shared completion rule.
+
+## Capability: `alpha`
+
+Alpha source detail.
+
+## Capability: `beta`
+
+Beta source detail.
+
+## Capability: `alpha`, `beta`
+
+Detail applicable to both capabilities.
+"""
+    monkeypatch.setattr(catalog, "_contract_document", lambda: document)
+    result = catalog.read_system_action_contract("alpha", "perform")["contract"]
+    assert "Shared identity rule." in result
+    assert "Shared completion rule." in result
+    assert "Alpha source detail." in result
+    assert "Beta source detail." not in result
+    assert "## Capability: `beta`" not in result
+    assert "Detail applicable to both capabilities." in result
+    inverse = catalog.read_system_action_contract("beta", "perform")["contract"]
+    assert "Beta source detail." in inverse
+    assert "Alpha source detail." not in inverse
+    assert "Detail applicable to both capabilities." in inverse
