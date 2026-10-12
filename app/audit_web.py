@@ -9587,7 +9587,10 @@ def handle_rerun_attempt_post(
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
         return 404, {}, render_page("Attempt not found", "Attempt not found")
-    terminal_run = store.get_agent_run(attempt.agent_run_id) if attempt.agent_run_id else None
+    terminal_run = (
+        store.get_agent_run(attempt.agent_run_id, load_events=False)
+        if attempt.agent_run_id else None
+    )
     rerun_block_reason = _attempt_rerun_block_reason(
         attempt, [terminal_run] if terminal_run is not None else []
     )
