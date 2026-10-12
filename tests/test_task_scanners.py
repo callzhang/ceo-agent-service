@@ -735,8 +735,8 @@ def test_scan_pending_oa_approvals_closes_completed_oa_needs_human_attempt(tmp_p
     )
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='done' "
-            "where conversation_id=? and trigger_message_id=?",
+            "update tasks set status='done' "
+            "where record_type='reply_tasks' and conversation_id=? and trigger_message_id=?",
             ("oa_pending_scan", trigger_message_id),
         )
 

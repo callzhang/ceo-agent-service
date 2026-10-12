@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 import app.audit_web as audit_web_module
 from tests.run_reader_fixtures import insert_native_run_fixture
 from app.run_storage import insert_run
+from app.task_storage import WORK_SUMMARY_INPUT_SQL, insert_task, task_id_expression
 from app.email_store import EmailStore
 from app.audit_web import (
     create_audit_app,
@@ -5765,7 +5766,7 @@ def test_attention_api_excludes_needs_human_after_queue_task_closes(
     task = store.get_reply_task_for_message("cid-decision", "msg-decision")
     assert task is not None
     with store._connect() as db:
-        db.execute("update reply_tasks set status='done' where id=?", (task.id,))
+        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task.id,))
     store.record_reply_attempt(
         conversation_id=task.conversation_id,
         conversation_title=task.conversation_title,
@@ -7773,7 +7774,7 @@ def test_rule_decision_attention_excludes_superseded_unreviewed_attempt(
             ("derived-oa-trigger", attempt_id),
         )
         db.execute(
-            "update reply_tasks set execution_generation=? where id=?",
+            "update tasks set execution_generation=? where record_type='reply_tasks' and id=?",
             ("newer-task-generation", task.id),
         )
 
@@ -8115,7 +8116,7 @@ def test_oa_failed_attempt_uses_current_needs_human_task_projection(
     )
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='needs_human' where id=?",
+            "update tasks set status='needs_human' where record_type='reply_tasks' and id=?",
             (task.id,),
         )
 
@@ -8169,8 +8170,8 @@ def test_reply_attempt_queue_excludes_prior_generation_after_trigger_revision(
             (old_run, old_attempt_id),
         )
         db.execute(
-            "update reply_tasks set trigger_message_id=?, execution_generation=?, "
-            "status='done' where id=?",
+            "update tasks set trigger_message_id=?, execution_generation=?, "
+            "status='done' where record_type='reply_tasks' and id=?",
             ("oa-pending:process-1:revision-2", "next-generation", task.id),
         )
 
@@ -8216,7 +8217,7 @@ def test_reply_attempt_queue_hides_failed_history_when_its_task_has_a_terminal_s
         send_error="terminal_source_already_settled",
     )
     with store._connect() as db:
-        db.execute("update reply_tasks set status=? where id=?", (successor_status, task.id))
+        db.execute("update tasks set status=? where record_type='reply_tasks' and id=?", (successor_status, task.id))
 
     payload = build_worker_status_payload(store)
     reply_attempt_queue = next(
@@ -8254,14 +8255,11 @@ def test_status_reports_lease_backed_meeting_memory_health_and_degrades_for_back
     )
     store = AutoReplyStore(tmp_path / "meeting-memory-status.sqlite3")
     with store._connect() as db:
-        db.execute(
-            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
-            "values (1, 'overdue-memory', 'sent', 'summary')"
-        )
-        db.execute(
-            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
-            "values (2, 'ghost-memory', 'sent', 'summary')"
-        )
+        for job_id, meeting_id in ((1, 'overdue-memory'), (2, 'ghost-memory')):
+            insert_task(db, 'meeting_alignment_jobs', {
+                'id': job_id, 'legacy_key': job_id, 'meeting_id': meeting_id,
+                'status': 'sent', 'final_message': 'summary',
+            })
         db.execute(
             """
             insert into meeting_memory_write_events (
@@ -8352,12 +8350,12 @@ def test_attention_hides_historical_failed_task_when_business_object_is_done(
     )
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='failed', error='old failure', "
-            "business_object_key='oa:proc-1:task-1' where id=?",
+            "update tasks set status='failed', error='old failure', "
+            "business_object_key='oa:proc-1:task-1' where record_type='reply_tasks' and id=?",
             (historical.id,),
         )
         db.execute(
-            "update reply_tasks set status='done' where id=?",
+            "update tasks set status='done' where record_type='reply_tasks' and id=?",
             (current.id,),
         )
     attempt_id = store.record_reply_attempt(
@@ -8432,11 +8430,11 @@ def test_attention_does_not_repeat_old_generation_attempt_for_current_oa_task(
             (run.lastrowid, attempt_id),
         )
         db.execute(
-            """update reply_tasks
+            """update tasks
                set trigger_message_id='oa-pending:process-1:new',
                    execution_generation='current-gen', status='failed',
                    error='current failure'
-               where id=?""",
+               where record_type='reply_tasks' and id=?""",
             (task.id,),
         )
 
@@ -8484,10 +8482,10 @@ def test_worker_attempt_counts_hide_historical_needs_human_business_object(
     )
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='done', business_object_key=? where id=?",
+            "update tasks set status='done', business_object_key=? where record_type='reply_tasks' and id=?",
             (current.business_object_key, historical.id),
         )
-        db.execute("update reply_tasks set status='done' where id=?", (current.id,))
+        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (current.id,))
     attempt_id = store.record_reply_attempt(
         conversation_id=historical.conversation_id,
         conversation_title=historical.conversation_title,
@@ -8531,7 +8529,7 @@ def test_attention_hides_failed_attempt_recovered_by_coalesced_business_object(
         ),
     )
     with store._connect() as db:
-        db.execute("update reply_tasks set status='done' where id=?", (current.id,))
+        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (current.id,))
     attempt_id = store.record_reply_attempt(
         conversation_id="salary-conversation",
         conversation_title="Payroll approval",
@@ -8809,7 +8807,8 @@ def test_worker_attention_uses_work_input_summary_instead_of_internal_reference(
     )
     with store._connect() as db:
         db.execute(
-            "update work_summary_inputs set status='failed', error='processing failed' where id=?",
+            "update tasks set status='failed', error='processing failed' "
+            f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
             (work_input_id,),
         )
 
@@ -8833,7 +8832,8 @@ def test_worker_attention_uses_work_input_title_before_raw_reference(tmp_path: P
     )
     with store._connect() as db:
         db.execute(
-            "update work_summary_inputs set status='failed', error='processing failed' where id=?",
+            "update tasks set status='failed', error='processing failed' "
+            f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
             (work_input_id,),
         )
 
@@ -8859,7 +8859,8 @@ def test_worker_attention_excludes_pending_and_processing_work_items(
     )
     with store._connect() as db:
         db.execute(
-            "update work_summary_inputs set status='processing' where id=?",
+            "update tasks set status='processing' "
+            f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
             (processing_id,),
         )
 
@@ -8899,7 +8900,7 @@ def test_worker_attention_excludes_pending_and_processing_reply_and_meeting_rows
     )
     with store._connect() as db:
         db.execute(
-            "update meeting_alignment_jobs set status='processing' where id=?",
+            "update tasks set status='processing' where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
             (meeting_id,),
         )
 
@@ -8947,7 +8948,7 @@ def test_attention_includes_current_failed_attempt_waiting_for_retry(tmp_path: P
             "update reply_attempts set agent_run_id=? where id=?",
             (run.lastrowid, attempt_id),
         )
-        db.execute("update reply_tasks set status='pending' where id=?", (task.id,))
+        db.execute("update tasks set status='pending' where record_type='reply_tasks' and id=?", (task.id,))
 
     rows = audit_web_module._queue_attention_rows(store)
 
@@ -9073,7 +9074,8 @@ def test_worker_attention_uses_local_file_title_as_work_item_context(
     )
     with store._connect() as db:
         db.execute(
-            "update work_summary_inputs set status='failed', error='processing failed' where id=?",
+            "update tasks set status='failed', error='processing failed' "
+            f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
             (work_input_id,),
         )
 
@@ -9109,7 +9111,8 @@ def test_worker_attention_cleans_local_file_summary_metadata(tmp_path: Path):
     )
     with store._connect() as db:
         db.execute(
-            "update work_summary_inputs set status='failed', error='processing failed' where id=?",
+            "update tasks set status='failed', error='processing failed' "
+            f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
             (work_input_id,),
         )
 
@@ -9140,7 +9143,7 @@ def test_worker_attention_meeting_summary_falls_back_to_meeting_title(
     )
     with store._connect() as db:
         db.execute(
-            "update meeting_alignment_jobs set status='failed', error='processing failed' where id=?",
+            "update tasks set status='failed', error='processing failed' where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
             (job_id,),
         )
 
@@ -9236,7 +9239,7 @@ def test_worker_status_ignores_wechat_delivery_from_old_execution_generation(
     assert delivery is not None
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set execution_generation='new-generation' where id=?",
+            "update tasks set execution_generation='new-generation' where record_type='reply_tasks' and id=?",
             (delivery.task_id,),
         )
 
@@ -12136,7 +12139,7 @@ def test_attention_skips_unsubscribe_failures_caused_by_the_external_page(tmp_pa
         )
         with store._connect() as db:
             db.execute(
-                "update reply_tasks set status='failed', error=? where id=?",
+                "update tasks set status='failed', error=? where record_type='reply_tasks' and id=?",
                 (error, task.id),
             )
         ids[name] = str(task.id)
@@ -12165,7 +12168,7 @@ def test_attention_skips_unsubscribe_failures_caused_by_the_external_page(tmp_pa
     assert store.count_current_unresolved_problem_attempts() == 2
     with store._connect() as db:
         assert db.execute(
-            "select count(*) from reply_tasks where status='failed'"
+            "select count(*) from tasks where record_type='reply_tasks' and status='failed'"
         ).fetchone()[0] == 6
 
 
@@ -12183,9 +12186,9 @@ def test_attention_skips_an_expired_dingteam_okr_login(tmp_path: Path):
     )
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='failed', "
+            "update tasks set status='failed', "
             "error='okr_headless_session_expired: dedicated Dingteam session requires login' "
-            "where id=?",
+            "where record_type='reply_tasks' and id=?",
             (task.id,),
         )
 
@@ -12194,7 +12197,7 @@ def test_attention_skips_an_expired_dingteam_okr_login(tmp_path: Path):
     assert not any(row["category"] in {"Reply task", "Reply"} for row in rows)
     with store._connect() as db:
         assert db.execute(
-            "select count(*) from reply_tasks where status='failed'"
+            "select count(*) from tasks where record_type='reply_tasks' and status='failed'"
         ).fetchone()[0] == 1
 
 
@@ -12244,8 +12247,8 @@ def test_attention_keeps_old_scheduled_failure_in_history_after_later_success(
                 "'reply_task', ?)",
                 (run_id, event_id, f"2026-09-28T{run_id-87:02d}:00:00Z", f"2026-09-28T{run_id-87:02d}:00:00Z", snapshot_id, str(task_id)),
             )
-        db.execute("update reply_tasks set status='failed', error='codex_result_missing' where id=?", (old.id,))
-        db.execute("update reply_tasks set status='done' where id=?", (new.id,))
+        db.execute("update tasks set status='failed', error='codex_result_missing' where record_type='reply_tasks' and id=?", (old.id,))
+        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (new.id,))
         db.execute(
             "insert into errors (conversation_id, message_id, kind, detail) "
             "values ('scheduled-task-run:100', null, 'read_recent_messages_rerun', 'invalid conversation')"
@@ -12258,7 +12261,7 @@ def test_attention_keeps_old_scheduled_failure_in_history_after_later_success(
     assert not any(row["category"] == "Reply task" and row["id"] == str(old.id) for row in rows)
     assert not any(row["category"] == "Service error" for row in rows)
     with store._connect() as db:
-        assert db.execute("select status from reply_tasks where id=?", (old.id,)).fetchone()[0] == "failed"
+        assert db.execute("select status from tasks where record_type='reply_tasks' and id=?", (old.id,)).fetchone()[0] == "failed"
         assert db.execute("select count(*) from errors where resolved_at='' ").fetchone()[0] == 2
 
 
@@ -12284,7 +12287,8 @@ def test_attention_projects_only_latest_live_task_agent_error(tmp_path: Path):
     assert task_errors[0]["error"] == "latest"
     with store._connect() as db:
         db.execute(
-            "update work_summary_inputs set status='done', updated_at=current_timestamp where id=?",
+            "update tasks set status='done', updated_at=current_timestamp "
+            f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
             (input_id,),
         )
     assert not any(row.get("root_cause") == "task_agent" for row in audit_web_module._queue_attention_rows(store))
@@ -12369,7 +12373,8 @@ def test_work_item_attention_codec_preserves_failed_filter_order_limit_and_store
         ids.append(input_id)
         with store._connect() as db:
             db.execute(
-                "update work_summary_inputs set payload_json=?,status=?,updated_at=? where id=?",
+                "update tasks set payload_json=?,status=?,updated_at=? "
+                f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
                 (
                     encoded if stored_as_blob else payload,
                     status,
@@ -12380,7 +12385,7 @@ def test_work_item_attention_codec_preserves_failed_filter_order_limit_and_store
     with store._connect() as db:
         before = [
             tuple(row)
-            for row in db.execute("select * from work_summary_inputs order by id")
+            for row in db.execute(f"select * from ({WORK_SUMMARY_INPUT_SQL}) order by id")
         ]
     rows = audit_web_module._queue_attention_rows(store, limit=1)
     assert len(rows) == 1
@@ -12392,5 +12397,5 @@ def test_work_item_attention_codec_preserves_failed_filter_order_limit_and_store
     with store._connect() as db:
         assert [
             tuple(row)
-            for row in db.execute("select * from work_summary_inputs order by id")
+            for row in db.execute(f"select * from ({WORK_SUMMARY_INPUT_SQL}) order by id")
         ] == before

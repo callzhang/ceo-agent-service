@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from app.run_storage import insert_run
 from app import native_trajectory
 from app.store import AutoReplyStore
+from app.task_storage import insert_task
 from app.task_project_repair import apply_manifest, build_repair_manifest
 
 
@@ -18,10 +19,11 @@ def _set_project_times(db_path, project_id, *, created_at):
 
 def _record_agent_value(db_path, project_id, *, title, created_at):
     with sqlite3.connect(db_path) as db:
-        run_id = db.execute(
-            "insert into task_agent_runs(summary_input_id, decision_json, status, created_at) values(?, ?, 'completed', ?)",
-            (project_id, '{"project":{"id":999,"title":"stale database copy"}}', created_at),
-        ).lastrowid
+        run_id = insert_run(db, "task_agent_runs", {
+            "summary_input_id": project_id,
+            "status": "completed",
+            "created_at": created_at,
+        }).lastrowid
         insert_run(
             db, 'agent_runtime_attempts', {
                 'workload_kind': 'task',
@@ -107,21 +109,18 @@ def test_manifest_archives_only_old_local_file_only_project(tmp_path):
             summary="历史材料",
         )
         with sqlite3.connect(db_path) as db:
-            db.execute(
-                "insert into work_summary_inputs(source_type, source_ref, payload_json, status) values('local_file', ?, ?, 'done')",
-                (
-                    source_ref,
-                    json.dumps(
-                        {
-                            "source": {
-                                "type": "local_file",
-                                "ref": source_ref,
-                                "created_at": old_source_time.isoformat(),
-                            }
-                        }
-                    ),
-                ),
-            )
+            insert_task(db, "work_summary_inputs", {
+                "source_type": "local_file",
+                "source_ref": source_ref,
+                "payload_json": json.dumps({
+                    "source": {
+                        "type": "local_file",
+                        "ref": source_ref,
+                        "created_at": old_source_time.isoformat(),
+                    },
+                }),
+                "status": "done",
+            })
     store.create_work_todo(project_id=excluded_id, title="真实 TODO")
 
     manifest = build_repair_manifest(db_path)

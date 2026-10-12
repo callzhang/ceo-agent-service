@@ -11,6 +11,8 @@ from app.task_models import TaskAgentDecision, WorkItem, WorkItemSourceType
 from app.task_semantic_models import ProjectContext
 from app.task_agent import apply_task_agent_decision
 from app.store import AutoReplyStore
+from app.run_storage import TASK_AGENT_RUN_SQL
+from app.task_storage import task_physical_id
 from app.task_agent import process_work_item
 from app.task_attention_projection import BusinessAttentionProjection
 from tests.support.task_native import task_native_records  # noqa: F401
@@ -279,7 +281,10 @@ def test_compacted_replay_rejects_identity_and_length_without_mutation(tmp_path,
         }).model_dump_json()
     else:
         with store._connect() as db:
-            db.execute("update work_summary_inputs set body_bytes=body_bytes+1 where id=?", (target,))
+            db.execute(
+                "update tasks set body_bytes=body_bytes+1 where id=?",
+                (task_physical_id(db, "work_summary_inputs", target),),
+            )
     before = store.get_work_summary_input(target)
     with pytest.raises(ValueError, match="identity|digest"):
         tool.replay_input(store, None, target, source_ref=item.source.ref, source_payload=payload)
@@ -300,7 +305,10 @@ def test_replay_cas_rejects_input_changed_after_verification(tmp_path, monkeypat
 
     def acquire_with_changed_input(current_store):
         with current_store._connect() as db:
-            db.execute("update work_summary_inputs set body_sha256=? where id=?", ("f" * 64, target))
+            db.execute(
+                "update tasks set body_sha256=? where id=?",
+                ("f" * 64, task_physical_id(db, "work_summary_inputs", target)),
+            )
         return original(current_store)
 
     monkeypatch.setattr(TaskAgentSessionLease, "try_acquire", acquire_with_changed_input)
@@ -311,7 +319,7 @@ def test_replay_cas_rejects_input_changed_after_verification(tmp_path, monkeypat
     assert current.status == "done" and current.body_compacted
     assert current.body_sha256 == "f" * 64
     with store._connect() as db:
-        assert db.execute("select count(*) from task_agent_runs").fetchone()[0] == 0
+        assert db.execute(f"select count(*) from ({TASK_AGENT_RUN_SQL})").fetchone()[0] == 0
 
 
 def test_fixed_source_version_cas_preserves_changed_prior_input(tmp_path, monkeypatch):
@@ -328,7 +336,10 @@ def test_fixed_source_version_cas_preserves_changed_prior_input(tmp_path, monkey
         calls.append(input_id)
         current_store.mark_work_summary_input_done(input_id)
         with current_store._connect() as db:
-            db.execute("update work_summary_inputs set body_sha256=? where id=?", ("e" * 64, input_id))
+            db.execute(
+                "update tasks set body_sha256=? where id=?",
+                ("e" * 64, task_physical_id(db, "work_summary_inputs", input_id)),
+            )
         return {"passed": True, "run_status": "completed", "failures": []}
 
     monkeypatch.setattr(tool, "replay_input", complete_then_change)
@@ -345,7 +356,7 @@ def test_fixed_source_version_cas_preserves_changed_prior_input(tmp_path, monkey
     assert current.status == "done" and current.body_compacted
     assert current.body_sha256 == "e" * 64
     with store._connect() as db:
-        assert db.execute("select count(*) from task_agent_runs").fetchone()[0] == 0
+        assert db.execute(f"select count(*) from ({TASK_AGENT_RUN_SQL})").fetchone()[0] == 0
 
 
 def test_evaluation_replays_exact_input_without_claiming_pending_or_rewriting_runs(
@@ -365,7 +376,8 @@ def test_evaluation_replays_exact_input_without_claiming_pending_or_rewriting_ru
     with store._connect() as db:
         old = dict(
             db.execute(
-                "select * from task_agent_runs where id=?", (old_run,)
+                "select * from runs where record_type='task_agent_runs' and legacy_key=?",
+                (str(old_run),),
             ).fetchone()
         )
 
@@ -400,7 +412,8 @@ def test_evaluation_replays_exact_input_without_claiming_pending_or_rewriting_ru
         assert (
             dict(
                 db.execute(
-                    "select * from task_agent_runs where id=?", (old_run,)
+                    "select * from runs where record_type='task_agent_runs' and legacy_key=?",
+                    (str(old_run),),
                 ).fetchone()
             )
             == old
@@ -720,19 +733,20 @@ def recorded_two_project_assessment_case(store):
 
 def read_latest_decision(store):
     with store._connect() as db:
-        run_id = db.execute("select max(id) from task_agent_runs").fetchone()[0]
+        run_id = db.execute(f"select max(id) from ({TASK_AGENT_RUN_SQL})").fetchone()[0]
     return read_task_fixture_decision(store, run_id)
 
 
 def rewrite_latest_run(store, *, decision=None, projection=None):
     with store._connect() as db:
         run = db.execute(
-            "select * from task_agent_runs order by id desc limit 1"
+            f"select * from ({TASK_AGENT_RUN_SQL}) order by id desc limit 1"
         ).fetchone()
         if projection is not None:
             db.execute(
-                "update task_agent_runs set projection_json=? where id=?",
-                (json.dumps(projection, ensure_ascii=False), run["id"]),
+                "update runs set projection_json=? "
+                "where record_type='task_agent_runs' and legacy_key=?",
+                (json.dumps(projection, ensure_ascii=False), str(run["id"])),
             )
     if decision is not None:
         rewrite_task_fixture_decision(store, run["id"], decision)
@@ -766,7 +780,7 @@ def test_assessment_oracle_rejects_unlinked_positive_receipt_signal_without_task
     )
     with store._connect() as db:
         projection = json.loads(
-            db.execute("select projection_json from task_agent_runs").fetchone()[0]
+            db.execute(f"select projection_json from ({TASK_AGENT_RUN_SQL})").fetchone()[0]
         )
     receipt = projection["project_assessments"][0]
     assert receipt["task_ids"] == []
@@ -806,7 +820,7 @@ def test_assessment_oracle_rejects_duplicate_receipt_assessment_index(tmp_path):
     _, input_id, before, _, expected = recorded_assessment_case(store)
     with store._connect() as db:
         projection = json.loads(
-            db.execute("select projection_json from task_agent_runs").fetchone()[0]
+            db.execute(f"select projection_json from ({TASK_AGENT_RUN_SQL})").fetchone()[0]
         )
     duplicate = {
         **projection["project_assessments"][0],
@@ -829,7 +843,7 @@ def test_assessment_oracle_rejects_unmatched_extra_receipt_assessment(tmp_path):
     _, input_id, before, _, expected = recorded_assessment_case(store)
     with store._connect() as db:
         projection = json.loads(
-            db.execute("select projection_json from task_agent_runs").fetchone()[0]
+            db.execute(f"select projection_json from ({TASK_AGENT_RUN_SQL})").fetchone()[0]
         )
     projection["project_assessments"].append(
         {
@@ -851,7 +865,7 @@ def test_assessment_oracle_matches_two_receipts_by_index_after_order_reversal(tm
     input_id, before, expected = recorded_two_project_assessment_case(store)
     with store._connect() as db:
         projection = json.loads(
-            db.execute("select projection_json from task_agent_runs").fetchone()[0]
+            db.execute(f"select projection_json from ({TASK_AGENT_RUN_SQL})").fetchone()[0]
         )
     assert [
         entry["assessment_index"] for entry in projection["project_assessments"]
@@ -883,7 +897,7 @@ def test_assessment_oracle_rejects_blank_extra_current_citation(tmp_path):
     store = AutoReplyStore(tmp_path / "assessment-blank-extra-citation.sqlite3")
     item, input_id, before, _, expected = recorded_assessment_case(store)
     with store._connect() as db:
-        run = db.execute("select * from task_agent_runs").fetchone()
+        run = db.execute(f"select * from ({TASK_AGENT_RUN_SQL})").fetchone()
         projection = json.loads(run["projection_json"])
     decision = read_latest_decision(store)
     decision["project_assessments"][0]["evidence"].append(
@@ -990,7 +1004,7 @@ def test_assessment_oracle_accepts_linked_extra_positive_signal_in_raw_and_recei
     store = AutoReplyStore(tmp_path / "assessment-linked-raw-positive.sqlite3")
     _, input_id, before, _, expected = recorded_assessment_case(store)
     with store._connect() as db:
-        run = db.execute("select * from task_agent_runs").fetchone()
+        run = db.execute(f"select * from ({TASK_AGENT_RUN_SQL})").fetchone()
         projection = json.loads(run["projection_json"])
     decision = read_latest_decision(store)
     receipt = projection["project_assessments"][0]
@@ -1061,7 +1075,7 @@ def test_assessment_oracle_requires_actual_application_receipt(tmp_path, fault):
     _, input_id, before, applied, expected = recorded_assessment_case(store)
     with store._connect() as db:
         projection = json.loads(
-            db.execute("select projection_json from task_agent_runs").fetchone()[0]
+            db.execute(f"select projection_json from ({TASK_AGENT_RUN_SQL})").fetchone()[0]
         )
     if fault == "missing":
         projection["project_assessments"] = []
@@ -1120,7 +1134,7 @@ def test_assessment_oracle_requires_reviewed_proof_coverage_and_validates_extras
     store = AutoReplyStore(tmp_path / f"assessment-proof-{shape}.sqlite3")
     item, input_id, before, _, expected = recorded_assessment_case(store)
     with store._connect() as db:
-        run = db.execute("select * from task_agent_runs").fetchone()
+        run = db.execute(f"select * from ({TASK_AGENT_RUN_SQL})").fetchone()
         projection = json.loads(run["projection_json"])
     decision = read_latest_decision(store)
     if shape == "prefix_and_extra":
@@ -1205,7 +1219,7 @@ def test_assessment_oracle_counts_unique_receipt_task_identities(tmp_path):
     )
     with store._connect() as db:
         projection = json.loads(
-            db.execute("select projection_json from task_agent_runs").fetchone()[0]
+            db.execute(f"select projection_json from ({TASK_AGENT_RUN_SQL})").fetchone()[0]
         )
     receipt = projection["project_assessments"][0]
     assert len(set(receipt["task_ids"])) == 2
@@ -1914,7 +1928,7 @@ def test_projection_failure_preserves_committed_task_input_and_run(
     assert store.get_work_summary_input(input_id).status.value == "done"
     assert len(store.list_business_tasks()) == 1
     with store._connect() as db:
-        (run,) = db.execute("select * from task_agent_runs").fetchall()
+        (run,) = db.execute(f"select * from ({TASK_AGENT_RUN_SQL})").fetchall()
     assert run["status"] == "completed"
     receipt = json.loads(run["projection_json"])
     assert (
@@ -2274,7 +2288,7 @@ def test_recorded_direct_apply_saves_receipt_on_actual_run(tmp_path):
         decision=TaskAgentDecision.model_validate(decision_payload()),
     )
     with store._connect() as db:
-        (run,) = db.execute("select * from task_agent_runs").fetchall()
+        (run,) = db.execute(f"select * from ({TASK_AGENT_RUN_SQL})").fetchall()
     assert run["summary_input_id"] == 8
     assert run["status"] == "completed"
     assert json.loads(run["projection_json"]) == result.projection_receipt.model_dump()
@@ -3173,7 +3187,7 @@ def test_current_source_links_new_task_to_existing_project_and_updates_one_card(
     with store._connect() as db:
         receipt = json.loads(
             db.execute(
-                "select projection_json from task_agent_runs where summary_input_id=?",
+                f"select projection_json from ({TASK_AGENT_RUN_SQL}) where summary_input_id=?",
                 (input_id,),
             ).fetchone()[0]
         )
@@ -3277,7 +3291,7 @@ def test_new_task_relation_and_compound_project_link_use_actual_current_id(tmp_p
     with store._connect() as db:
         receipt = json.loads(
             db.execute(
-                "select projection_json from task_agent_runs where summary_input_id=?",
+                f"select projection_json from ({TASK_AGENT_RUN_SQL}) where summary_input_id=?",
                 (input_id,),
             ).fetchone()[0]
         )

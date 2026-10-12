@@ -7,6 +7,7 @@ an old Project title or an Agent-created DingTalk TODO mirror.
 """
 
 from __future__ import annotations
+from app.task_storage import WORK_SUMMARY_INPUT_SQL
 
 import hashlib
 import json
@@ -114,7 +115,7 @@ def _fingerprint(path: str | Path, db: sqlite3.Connection) -> str:
         table: _rows(db, table) for table in ("business_anchors", "business_projects")
     }
     source_inputs = [dict(row) for row in db.execute(
-        "select source_type, source_ref, payload_json from work_summary_inputs "
+        f"select source_type, source_ref, payload_json from ({WORK_SUMMARY_INPUT_SQL}) "
         "order by source_type, source_ref"
     )]
     for row in source_inputs:
@@ -243,7 +244,7 @@ def _plan_items(db: sqlite3.Connection) -> tuple[LegacyImportItem, ...]:
             _work_summary_input_digest(row),
         )
         for row in db.execute(
-            "select * from work_summary_inputs"
+            f"select * from ({WORK_SUMMARY_INPUT_SQL})"
         )
     }
     todos_by_project: dict[int, list[int]] = {}
@@ -430,7 +431,7 @@ def _check_supporting_source(
         "select * from work_updates where id=?", (details["source_update_id"],)
     ).fetchone()
     source_input = db.execute(
-        "select * from work_summary_inputs "
+        f"select * from ({WORK_SUMMARY_INPUT_SQL}) "
         "where source_type=? and source_ref=?",
         (details["source_type"], details["source_ref"]),
     ).fetchone()

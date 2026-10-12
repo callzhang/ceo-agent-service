@@ -2390,7 +2390,7 @@ def test_agent_action_identity_conflict_rolls_back_the_whole_plan(tmp_path: Path
     with sqlite3.connect(tmp_path / "email-agent.sqlite3") as db:
         assert (
             db.execute(
-                "select count(*) from reply_tasks where trigger_message_id=?",
+                "select count(*) from tasks where record_type='reply_tasks' and trigger_message_id=?",
                 (auto_reply_identity,),
             ).fetchone()[0]
             == 0

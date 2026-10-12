@@ -5,12 +5,27 @@ import sqlite3
 import pytest
 
 from app.agent_cli import MAX_CLI_OUTPUT_BYTES, build_role_server
+from app.task_storage import create_task_schema, insert_task
 
 
 def _task_db(path, generation="first"):
     with sqlite3.connect(path) as db:
-        db.execute("create table reply_tasks (id integer primary key, execution_generation text not null)")
-        db.execute("insert into reply_tasks values (7, ?)", (generation,))
+        create_task_schema(db)
+        _insert_task(db, 7, generation)
+
+
+def _insert_task(db, task_id, generation):
+    insert_task(db, "reply_tasks", {
+        "id": task_id,
+        "channel": "dingtalk",
+        "conversation_id": f"conversation-{task_id}",
+        "conversation_title": "Artifact test",
+        "single_chat": 0,
+        "trigger_message_id": f"message-{task_id}",
+        "trigger_create_time": "",
+        "trigger_sender": "",
+        "execution_generation": generation,
+    })
 
 
 def _tool(role, name, db):
@@ -34,7 +49,7 @@ def test_consumer_writes_and_reads_back_only_its_task_generation(tmp_path, monke
     assert (tmp_path / "workspace/consumer-artifacts/7/first/analysis.py").read_text() == written["content"]
 
     with sqlite3.connect(db) as connection:
-        connection.execute("update reply_tasks set execution_generation='second' where id=7")
+        connection.execute("update tasks set execution_generation='second' where record_type='reply_tasks' and id=7")
     for old_call in (lambda: write("new.md", "stale"), list_files,
                      lambda: read("analysis.py")):
         with pytest.raises(ValueError, match="generation changed"):
@@ -76,7 +91,7 @@ def test_task_artifacts_do_not_cross_task_or_follow_file_links(tmp_path, monkeyp
     db = tmp_path / "service.sqlite3"
     _task_db(db)
     with sqlite3.connect(db) as connection:
-        connection.execute("insert into reply_tasks values (8, 'first')")
+        _insert_task(connection, 8, "first")
     monkeypatch.setattr("app.config.workspace_path", lambda: tmp_path / "workspace")
     _tool("consumer", "consumer_artifact_write", db)("own.md", "task seven")
     other = build_role_server("consumer", task_id=8, db_path=db)
@@ -118,7 +133,7 @@ def test_old_consumer_server_cannot_write_report_after_generation_changes(tmp_pa
     write_report = old._tool_manager.get_tool("consumer_document_write").fn
 
     with sqlite3.connect(db) as connection:
-        connection.execute("update reply_tasks set execution_generation='second' where id=7")
+        connection.execute("update tasks set execution_generation='second' where record_type='reply_tasks' and id=7")
     with pytest.raises(ValueError, match="generation changed"):
         write_report("# Report")
     assert called == []

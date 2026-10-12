@@ -4,6 +4,7 @@ import sqlite3
 
 from app.task_models import WorkSummaryInput
 from app.store import AutoReplyStore
+from app.task_storage import WORK_SUMMARY_INPUT_SQL, insert_task
 from app.storage_maintenance import compact_terminal_work_summary_inputs
 from app.work_summary_payload import (
     decode_work_summary_payload,
@@ -48,7 +49,7 @@ def test_store_round_trips_compressed_work_summary_input(tmp_path):
     assert store.get_work_summary_input(input_id).payload_json == payload
     with sqlite3.connect(database) as db:
         stored = db.execute(
-            "select payload_json from work_summary_inputs where id=?", (input_id,)
+            f"select payload_json from ({WORK_SUMMARY_INPUT_SQL}) where id=?", (input_id,)
         ).fetchone()[0]
     assert isinstance(stored, bytes)
     assert decode_work_summary_payload(stored) == payload
@@ -62,19 +63,22 @@ def test_store_round_trips_compressed_work_summary_input(tmp_path):
 def test_migration_is_bounded_lossless_and_idempotent(tmp_path):
     database = tmp_path / "payloads.sqlite3"
     payload = '{"body":"' + ("周报正文" * 500) + '"}'
+    AutoReplyStore(database)
     with sqlite3.connect(database) as db:
-        db.execute(
-            "create table work_summary_inputs (id integer primary key, payload_json text not null, status text not null)"
-        )
-        db.executemany(
-            "insert into work_summary_inputs values (?, ?, ?)",
-            [(1, payload, "pending"), (2, "{}", "pending"), (3, payload, "done")],
-        )
+        for input_id, body, status in (
+            (1, payload, "pending"), (2, "{}", "pending"),
+            (3, payload, "done"),
+        ):
+            insert_task(db, "work_summary_inputs", {
+                "id": input_id, "legacy_key": input_id,
+                "source_type": "local_file", "source_ref": f"file:{input_id}",
+                "payload_json": body, "status": status,
+            })
 
     first = migrate_work_summary_payloads(database, batch_size=1)
     with sqlite3.connect(database) as db:
         rows = db.execute(
-            "select id,payload_json from work_summary_inputs order by id"
+            f"select id,payload_json from ({WORK_SUMMARY_INPUT_SQL}) order by id"
         ).fetchall()
     assert first == {
         "scanned": 2,
@@ -101,7 +105,8 @@ def test_terminal_compaction_reads_compressed_input_and_preserves_provenance(tmp
     input_id = store.enqueue_work_summary_input("local_file", "file:done", payload)
     with sqlite3.connect(database) as db:
         db.execute(
-            "update work_summary_inputs set status='done' where id=?", (input_id,)
+            "update tasks set status='done' where record_type='work_summary_inputs' "
+            "and cast(legacy_key as integer)=?", (input_id,)
         )
 
     result = compact_terminal_work_summary_inputs(database)
@@ -109,7 +114,7 @@ def test_terminal_compaction_reads_compressed_input_and_preserves_provenance(tmp
     with sqlite3.connect(database) as db:
         row = db.execute(
             "select payload_json, source_created_at, body_sha256, body_bytes, body_compacted "
-            "from work_summary_inputs where id=?",
+            f"from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
             (input_id,),
         ).fetchone()
     assert result["rows_compacted"] == 1

@@ -729,8 +729,8 @@ def test_corrected_generation_replaces_unsent_wechat_delivery(
 
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='pending', execution_generation='corrected' "
-            "where id=1"
+            "update tasks set status='pending', execution_generation='corrected' "
+            "where record_type='reply_tasks' and cast(legacy_key as integer)=1"
         )
     fake_codex.decision = CodexDecision(
         action=CodexAction.SEND_REPLY,
