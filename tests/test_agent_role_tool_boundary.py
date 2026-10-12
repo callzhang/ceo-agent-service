@@ -145,6 +145,9 @@ def test_agent_cli_role_catalogue_excludes_controlled_effects() -> None:
     consumer_tools = set(consumer_catalogue)
     assert "read_skill" in audit_tools
     assert "read_dingtalk_document" in audit_tools
+    assert "exact DingTalk Drive attachment for OA review" in audit_catalogue[
+        "read_dingtalk_drive_file"
+    ].description
     assert {
         "list_dingtalk_minutes", "read_dingtalk_minutes", "search_dingtalk_messages",
         "search_dingtalk_conversations", "search_dingtalk_contacts",
