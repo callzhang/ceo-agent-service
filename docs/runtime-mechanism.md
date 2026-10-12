@@ -1,5 +1,16 @@
 # Current Runtime Mechanism
 
+Audit field-error feedback must cite the exact JSON path, literal value and type
+from the current digest-bound candidate. Prior revision feedback is not evidence
+of the current field value. Quoted numeric identifiers remain strings; an
+already-applied correction must not be requested again. This evidence rule does
+not waive actual action-contract violations or authorize external execution.
+
+Manual rerun reads its terminal run with `load_events=False`: the existing
+refusal check consumes only structured error metadata. Native trajectory and
+result hydration is excluded from this queueing request. The existing refusal,
+original-trigger verification and new-generation enqueue flow are unchanged.
+
 Dispatcher queue claims first probe using a read-only connection. The existing
 candidate scanners still apply source order, due time and live-owner protection;
 positive probes are repeated after acquiring the immediate write transaction
@@ -2210,9 +2221,11 @@ Consumer 和 Audit 每轮 Task 输入均传入当前任务已保存的专项指�
 
 后台 Consumer/Audit 使用原生 skills.config 禁用专项 Skill 的自动正文注入，避免原生加载、Developer inline 与工具读取三份重复。原生 project_doc_max_bytes=0 只关闭项目目录 AGENTS.md；全局 ~/.codex/AGENTS.md 仍由 CLI 加载，服务不修改原生 home 或全局规则文件。此设置仅适用于后台角色命令。
 
+角色命令只在最终角色构建器生成一次原生 Skill 配置。AgentTurnProcess 不再让适配器先按任务 Skill 生成随后被角色构建器丢弃的配置，避免重复扫描 Skill 目录和序列化。任务选择仍用于每轮 Task 的 Skill 入口及运行来源回执；最终原生配置、工具权限、会话和路由不变。独立直接使用 CodexRuntimeAdapter 的调用仍可传入自己的 task Skill 选择。
+
 Codex Consumer/Audit 对 `read_task_skill` 与 `read_skill` 均使用原生单工具 `output_token_limit=30000`，让冻结与已安装 Skill 的正文在 MCP 完整返回后完整进入模型历史。其他工具输出预算、角色、sandbox、审批方式和 session 绑定保持现有行为。该设置保障来源交付，不替代 Skill 精简或证明业务判断正确；验证及发布记录见 `docs/task-skill-native-output-validation.md`。
 
-System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；agent_cli.read_system_action_contract(capability, operation) 返回完整规范，包含原有角色、identity、payload、target、回执和完成条件。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。原生 output-schema 保持关闭：实际探测显示现有 RootModel 顶层 $ref 被拒绝，等价展开后 Consumer 的 oneOf 与 Audit 可选字段仍不满足原生 strict schema 限制；未通过弱化业务契约来适配。
+System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；agent_cli.read_system_action_contract(capability, operation) 保留动作表外的全部原规范正文，只返回选定能力／操作的动作表行；只给 capability 时返回该能力的全部操作。原有角色、identity、payload、target、回执和完成条件保持完整，不返回其他操作的表行。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。原生 output-schema 保持关闭：实际探测显示现有 RootModel 顶层 $ref 被拒绝，等价展开后 Consumer 的 oneOf 与 Audit 可选字段仍不满足原生 strict schema 限制；未通过弱化业务契约来适配。
 
 Worker 上下文回归分别验证当前业务事实、执行阶段和会话恢复，不要求把 Developer 的角色合同复制进用户上下文。Consumer 的真实命令捕获回归另行检查 Developer 中仍包含提案／审核／系统执行边界，且用户输入不重复该角色合同；精简上下文不代表移除安全合同。
 
@@ -2416,11 +2429,17 @@ Attention 的失败回复任务查询先从 `reply_tasks` 状态覆盖索引筛�
 replacement新增的记录、业务结果和回执，不用旧数据库文件覆盖。发布失败沿用
 停止replacement、逆迁、恢复旧代码、启动及health验证的既有顺序。Email schema50
 本单元不变，其他未验证的同时schema变化不能合并发布。
+正迁在第一次结构或行修改前核对实际11.1四张退休源表的19项显式table/index/trigger
+声明，保留SQL字面量与内部空白。未知或缺失声明、同列但约束不同的源均拒绝；捕获
+原DDL用于逆迁，不意味着接受任意历史变体。其他表既有回执外键及其索引／触发器按
+原声明重建，仍保留其数据和行为。
 
 当前Store版本且 `runs` 核心声明准确时，缺少已声明的索引／触发器或其他既有表
 仍走原初始化补齐路径，保留原修复行为和业务行。核心声明、索引或触发器定义不匹配，
 或旧／新核心表混存时，初始化拒绝该未验证布局；不把它当作fresh库部分建表。
 核心schema manifest核对本期实际表声明、索引与触发器，缺失对象不能被标记为current。
+声明比较保留SQL字符串字面量大小写，仅去掉两端空白；当前布局的预期声明由同一
+DDL helper在一次性内存库中生成。缺失对象可补齐，已有对象定义改变不能被补齐路径掩盖。
 
 4A三个整数源ID由唯一 `(CAST(legacy_key AS INTEGER), record_type)` 索引保留
 各自身份范围，显式新key写为原整数的规范字符串。索引先按数字ID排序，按parent或

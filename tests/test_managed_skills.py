@@ -700,11 +700,6 @@ def test_exact_content_settings_classifier_collision_migrates_and_starts_agent(
             on managed_skill_revisions(skill_id, sha256)
             """
         )
-        db.execute(
-            "update service_state set value='legacy-before-provenance-identity' "
-            "where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        )
     store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
 
     reopened = AutoReplyStore(path)

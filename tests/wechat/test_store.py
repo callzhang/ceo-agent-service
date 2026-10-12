@@ -1,4 +1,3 @@
-import sqlite3
 from multiprocessing import get_context
 from pathlib import Path
 
@@ -1138,89 +1137,62 @@ def test_replacing_enabled_scope_does_not_clear_its_watermark(tmp_path):
 
 def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp_path):
     db_path = tmp_path / "legacy.sqlite3"
-    db = sqlite3.connect(db_path)
-    db.executescript(
-        """
-        pragma foreign_keys=on;
-        create table reply_tasks (
-            id integer primary key autoincrement,
-            conversation_id text not null,
-            conversation_title text not null,
-            single_chat integer not null,
-            trigger_message_id text not null,
-            trigger_create_time text not null,
-            trigger_sender text not null,
-            trigger_text text not null,
-            status text not null default 'pending',
-            attempts integer not null default 0,
-            locked_at text,
-            error text not null default '',
-            created_at text not null default current_timestamp,
-            updated_at text not null default current_timestamp,
-            unique(conversation_id, trigger_message_id)
-        );
-        create table wechat_deliveries (
-            id integer primary key autoincrement,
-            reply_task_id integer not null unique,
-            account_id text not null,
-            target_type text not null,
-            target_id text not null,
-                conversation_id text not null default '',
-                reply_text text not null,
-                execution_generation text not null default 'initial',
-                status text not null default 'ready_to_send',
-                action_started_at text not null default '',
-                pre_action_failure integer not null default 0,
-                evidence_json text not null default '{}',
-            error text not null default '',
-            created_at text not null default current_timestamp,
-            updated_at text not null default current_timestamp,
-            foreign key(reply_task_id) references reply_tasks(id)
-        );
-        create table workbench_tasks (
-            id text primary key,
-            title text not null,
-            runtime_kind text not null,
-            provider_session_ref text not null default '',
-            archived_at text not null default '',
-            created_at text not null default current_timestamp,
-            updated_at text not null default current_timestamp
-        );
-        create table workbench_attachments (
-            id text primary key,
-            task_id text not null,
-            filename text not null,
-            media_type text not null,
-            size_bytes integer not null check(size_bytes >= 0),
-            storage_path text not null,
-            created_at text not null default current_timestamp,
-            foreign key(task_id) references workbench_tasks(id)
-        );
-        insert into reply_tasks (
-            id, conversation_id, conversation_title, single_chat,
-            trigger_message_id, trigger_create_time, trigger_sender, trigger_text
-        ) values (
-            7, 'same-conversation', 'Friend', 1,
-            'same-message', '2026-07-20T10:00:00+08:00', 'Friend', 'hello'
-        );
-            insert into wechat_deliveries (
-                reply_task_id, account_id, target_type, target_id, conversation_id,
-                reply_text, status, action_started_at, pre_action_failure
-            ) values (
-                7, 'acct-1', 'direct', 'friend-1', 'same-conversation', 'hi',
-                'failed', '2026-07-20T10:10:00+08:00', 1
-            );
-        insert into workbench_tasks (id, title, runtime_kind)
-        values ('workbench-legacy', 'Legacy attachment', 'codex');
-        insert into workbench_attachments (
-            id, task_id, filename, media_type, size_bytes, storage_path
-        ) values (
-            'attachment-legacy', 'workbench-legacy', 'legacy.txt',
-            'text/plain', 6, '/tmp/legacy.txt'
-        );
-        """
+    from tests.reply_schema_fixtures import restore_cross_channel_reply_parent
+
+    original = AutoReplyStore(db_path)
+    with original._connect() as db:
+        db.execute("insert into sqlite_sequence (name, seq) values ('reply_tasks', 6)")
+    task = original.ensure_reply_task(
+        conversation_id="same-conversation", conversation_title="Friend",
+        single_chat=True, trigger_message_id="same-message",
+        trigger_create_time="2026-07-20T10:00:00+08:00",
+        trigger_sender="Friend", trigger_text="hello",
     )
-    db.close()
+    assert task.id == 7
+    with original._connect() as db:
+        db.execute(
+            """insert into wechat_deliveries (
+                reply_task_id, account_id, target_type, target_id,
+                conversation_id, reply_text, status, action_started_at,
+                pre_action_failure
+            ) values (7, 'acct-1', 'direct', 'friend-1',
+                      'same-conversation', 'hi', 'failed',
+                      '2026-07-20T10:10:00+08:00', 1)"""
+        )
+        db.execute(
+            "insert into workbench_tasks (id, title, runtime_kind) "
+            "values ('workbench-legacy', 'Legacy attachment', 'codex')"
+        )
+        db.execute(
+            """insert into workbench_attachments (
+                id, task_id, filename, media_type, size_bytes, storage_path,
+                client_request_id, content_sha256
+            ) values ('attachment-legacy', 'workbench-legacy',
+                      'legacy.txt', 'text/plain', 6, '/tmp/legacy.txt',
+                      'attachment-legacy', '')"""
+        )
+        db.execute("drop index idx_workbench_attachments_task_request")
+        db.execute("alter table workbench_attachments drop column content_sha256")
+        db.execute("alter table workbench_attachments drop column client_request_id")
+    restore_cross_channel_reply_parent(original)
+    with original._connect() as db:
+        assert db.execute("pragma foreign_key_check").fetchall() == []
+        assert "current_input_id" not in {
+            row[1] for row in db.execute("pragma table_info(reply_tasks)")
+        }
+        assert "client_request_id" not in {
+            row[1] for row in db.execute("pragma table_info(workbench_attachments)")
+        }
+        assert any(
+            tuple(row[0] for row in db.execute(
+                "select name from pragma_index_info(?) order by seqno",
+                (index[1],),
+            ))
+            == ("conversation_id", "trigger_message_id")
+            for index in db.execute("pragma index_list(reply_tasks)")
+            if index[2]
+        )
+    assert original._schema_is_current() is False
 
     context = get_context("spawn")
     barrier = context.Barrier(2)

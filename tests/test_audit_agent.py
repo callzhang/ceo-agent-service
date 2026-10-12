@@ -461,3 +461,14 @@ def test_audit_reads_frozen_prepared_parent_when_native_proposal_differs(setup, 
     _runner(setup, None).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
     assert 'Exact prepared notice' in captured['prompt']
     assert 'Raw message before service preparation' not in captured['prompt']
+
+
+def test_audit_builds_native_role_skill_config_once(setup, tmp_path, monkeypatch):
+    from tests.support.role_skill_scan import track_role_skill_build, assert_single_role_skill_build
+
+    calls, expected = track_role_skill_build(tmp_path, monkeypatch)
+    _store, task, parent, context, _config, _router = setup
+    context = replace(context, task=replace(context.task, skill_names=("ceo-document-review",)))
+    executor = CapturingExecutor(_wire(context.candidate_digest))
+    _runner(setup, executor).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+    assert_single_role_skill_build(calls, expected, executor)

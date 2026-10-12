@@ -3809,3 +3809,15 @@ def test_saved_prompt_changes_update_input_and_hash_without_replacing_route_sess
     assert snapshot['task_prompt'] == executor.prompts[0]
     from app.prompt_composition import load_prompt_configuration
     assert snapshot['invocation_facts']['prompt_configuration'] == load_prompt_configuration().fingerprints()
+
+
+def test_consumer_builds_native_role_skill_config_once(store, task, context, tmp_path, monkeypatch):
+    from tests.support.role_skill_scan import track_role_skill_build, assert_single_role_skill_build
+
+    calls, expected = track_role_skill_build(tmp_path, monkeypatch)
+    selected = replace(context, skill_names=("ceo-document-review",))
+    executor = CapturingExecutor(_result_jsonl())
+    ConsumerAgentRunner(store=store, workspace=Path("/workspace"), executor=executor).run(
+        task, selected, proposal_revision=0, parent_agent_run_id=None,
+    )
+    assert_single_role_skill_build(calls, expected, executor)

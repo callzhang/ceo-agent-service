@@ -1,5 +1,10 @@
 # Changelog
 
+## Audit current-candidate field evidence
+
+- Ground Audit field-error observations in the current candidate JSON, rather
+  than stale revision feedback; retain real contract validation and receipts.
+
 ## 2026-09-30
 
 - Fixed meeting group discovery's DingTalk conversation shim so provider message

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python、SQLite、现有Store/dispatcher/routed runtime/Workbench及schema publication机制。
 
-本文件是基于真实字段的迁移执行计划，精确字段与源DDL见phase4 CSV/inventory。4A目标DDL、DAO切换和配对逆迁已实现并处于验证；4B/4C尚未实现，第四期尚未上线。正式实施每个单元前只为该单元选取新schema marker，不预占后续版本；重新核对main/生产/claims，合入他人的新主线行为。
+本文件是基于真实字段的迁移执行计划，精确字段与源DDL见phase4 CSV/inventory。4A目标DDL、DAO切换和配对逆迁已实现并处于验证；4B首单元foundation尚未接入Store，4C未实现，第四期尚未上线。正式实施每个单元前只为该单元选取新schema marker，不预占后续版本；重新核对main/生产/claims，合入他人的新主线行为。
 
 ## Task 0: 已完成分析交付
 
@@ -87,8 +87,12 @@
 
 ## 本次状态
 
-Task0完成；4A实现、副本正逆迁及独立规格/质量复审通过，远端Quality CI和正式上线尚待完成。最新真实源commit29e0156775b8bb697b2c55484d879193011931cf，Store11.1/Email50；45,573条原核心记录全部投影及145张其他原表全值指纹一致。新增结果/回执及分配后删除的ID在逆迁后保留，真实源302个Python文件逐一匹配Git blob，旧代码读取/领取/再次正迁通过。发布五阶段失败回退演练通过。
+Task0和4A已完成。PR50的完整Quality通过并正常部署为7baa1f0e，Store11.2/Email50；发布PID/health/queues/Attention/History、45,715个原公共ID及115条原回执读回通过，详见4A验收文档。后续其他会话已部署54e6c209的role-Skill构建性能改动，不改变Store12。4A验收文档PR51仍在正常CI流程。
 
-索引修复保留原公共ID和排序；实际副本parent/workload查找已恢复范围索引，没有开放P1/P2。专项core130通过；调用方2493通过/6跳过；最新main扩大组2933通过/6跳过，其12项新fixture旧表SQL失败已修正，native/prompt26通过。独立最终复审114通过；完整远端CI仍是上线门槛。副本已用空间增加3,543,040 B（约0.888%），仅说明结构整合，尚未实现第四期容量减少。4B/4C未实施，第四期未上线。没有新的功能字段、历史状态补造、额外安全政策或正文备份。详细验收见docs/database-redesign-phase4a-validation.md。
+4B第一内部单元在隔离分支43c1585b实现：reply/input/WSI存入tasks，Task run扩展runs；106个Store读写和18个外部调用模块同步切换，诊断/replay脚本使用公共投影和物理映射。准确旧状态/CAS、业务结果、回执、provenance、WSI1及输入身份保持。无值旧10.2→11.1迁移路径退休，保留当前源拒绝/claim/FK/receipt/OA/session约束。
 
-4B首单元已开始本地开发；正式副本源为实际上线后的4A，不以尚未上线candidate冒充生产。reply父物理/公共ID保持相等；输入与WSI采用独立typed公共身份。Task summary_input_id原无FK，保留原public scalar code relation，不新增source不存在的FK或status CHECK。准确字段调整已更新CSV/design；不增业务字段。
+7baa实际源副本正常构造器12→13、四源及原4A runs逐值比较、141其他表逐值、全表DDL/序列/marker baseline inverse、新writes/receipt逆迁、实际旧代码启动/claim/ID水位、完整claimed行再次正迁均通过。五阶段离线publication控制流程回退通过，stop/start/health是callbacks，真实构造器和旧代码另由实际副本验证。独立规格/质量复核关闭证据缺口。当前数据对应其自己的冻结副本，不跨快照按计数猜增删。
+
+599个相关Store/发布/辅助修复测试、71个新storage/reader/manifest用例、五个故障阶段、36个脚本用例、Attention专项及合并后的84个相关测试通过；这些有重叠，不作为完整CI总数。最新主线正在合并，合入A的19个源声明校验与单次元数据读取检查，保留typed Task布局。
+
+Meeting23/13真实字段及已知run2298→缺失job4908已复核，实际scalar映射及只在孤儿保存原job_id的方式写入CSV/design；尚未实施。后续Meeting、OKR、weekly完成后组合发布4B，再实施4C。完整B最终候选仍须最新源副本/回退、相关调用方测试、独立复核、远端Quality及正常deploy/live读回。当前B没有推送或生产迁移，没有第四期容量减少声明。当前详细证据见docs/database-redesign-phase4b-validation.md。

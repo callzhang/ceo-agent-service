@@ -87,6 +87,294 @@ SOURCE_COLUMNS = {
         "created_at",
     ),
 }
+# Frozen from the approved 11.1 production inventory. Capture keeps source DDL
+# for inverse restoration; it does not authorize arbitrary forward declarations.
+SOURCE_RUN_DECLARATIONS = {
+    "agent_runs": (
+        (
+            "index",
+            "idx_agent_runs_status",
+            """CREATE INDEX idx_agent_runs_status
+                    on agent_runs(status, updated_at)""",
+        ),
+        (
+            "table",
+            "agent_runs",
+            """CREATE TABLE "agent_runs" (
+                    id integer primary key autoincrement,
+                    reply_task_id integer not null,
+                    execution_generation text not null,
+                    role text not null check(role in ('consumer', 'audit')),
+                    proposal_revision integer not null default 0
+                        check(proposal_revision >= 0),
+                    turn_attempt integer not null default 0
+                        check(turn_attempt >= 0),
+                    parent_agent_run_id integer,
+                    operation_id text not null default '',
+                    status text not null default 'pending'
+                        check(status in (
+                            'pending', 'running', 'completed', 'failed'
+                        )),
+                    codex_session_id text not null default '',
+                    transcript_start_line integer not null default 0,
+                    transcript_end_line integer not null default 0,
+                    final_result_json text not null default '',
+                    structured_error_json text not null default '',
+                    lease_owner text not null default '',
+                    lease_expires_at text not null default '',
+                    started_at text not null default '',
+                    completed_at text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique(
+                        reply_task_id, execution_generation, role,
+                        proposal_revision, turn_attempt
+                    ),
+                    foreign key(reply_task_id) references reply_tasks(id),
+                    foreign key(parent_agent_run_id) references agent_runs(id)
+                )""",
+        ),
+    ),
+    "agent_runtime_attempts": (
+        (
+            "index",
+            "idx_agent_runtime_attempts_run",
+            """CREATE INDEX idx_agent_runtime_attempts_run
+            on agent_runtime_attempts(agent_run_id, attempt_number)
+            where agent_run_id is not null""",
+        ),
+        (
+            "index",
+            "idx_runtime_attempt_active_lease",
+            """CREATE INDEX idx_runtime_attempt_active_lease
+            on agent_runtime_attempts(status, lease_expires_at)
+            where agent_run_id is null and status in ('starting', 'running')""",
+        ),
+        (
+            "index",
+            "idx_runtime_attempt_active_route",
+            """CREATE UNIQUE INDEX idx_runtime_attempt_active_route
+                    on agent_runtime_attempts(workload_kind, workload_key, route_name)
+                    where status in ('starting', 'running')""",
+        ),
+        (
+            "table",
+            "agent_runtime_attempts",
+            """CREATE TABLE agent_runtime_attempts (
+                    id integer primary key autoincrement,
+                    agent_run_id integer,
+                    workload_kind text not null,
+                    workload_key text not null,
+                    attempt_number integer not null check(attempt_number > 0),
+                    route_name text not null,
+                    runtime_kind text not null,
+                    credential_mode text not null,
+                    model text not null,
+                    session_mode text not null default 'fresh'
+                        check(session_mode in ('fresh', 'resume')),
+                    source_session_id text not null default '',
+                    attempt_purpose text not null default 'normal'
+                        check(attempt_purpose in (
+                            'normal', 'result_validation_correction'
+                        )),
+                    validation_retry_policy_id text not null default '',
+                    validation_result_schema_id text not null default '',
+                    session_id text not null default '',
+                    status text not null check(status in (
+                        'starting', 'running', 'completed', 'failed', 'superseded'
+                    )),
+                    failure_class text not null default '',
+                    failure_code text not null default '',
+                    failover_permitted integer not null default 0,
+                    transcript_reference text not null default '',
+                    transcript_start integer not null default 0,
+                    transcript_end integer not null default 0,
+                    first_effect_started_at text not null default '',
+                    lease_owner text not null default '',
+                    lease_expires_at text not null default '',
+                    result_schema_id text not null default '',
+                    result_envelope_json text not null default '',
+                    started_at text not null default current_timestamp,
+                    finished_at text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    check(
+                        (workload_kind='agent_run' and agent_run_id is not null
+                         and workload_key=cast(agent_run_id as text))
+                        or
+                        (workload_kind<>'agent_run' and agent_run_id is null)
+                    ),
+                    check(
+                        (session_mode='fresh' and source_session_id='')
+                        or (session_mode='resume' and trim(source_session_id)<>'')
+                    ),
+                    unique(workload_kind, workload_key, attempt_number),
+                    foreign key(agent_run_id) references agent_runs(id)
+                )""",
+        ),
+        (
+            "trigger",
+            "trg_runtime_attempt_generalized_lease_insert",
+            """CREATE TRIGGER trg_runtime_attempt_generalized_lease_insert
+            before insert on agent_runtime_attempts
+            when new.agent_run_id is null
+              and new.status in ('starting', 'running')
+              and (trim(new.lease_owner)='' or trim(new.lease_expires_at)='')
+            begin
+                select raise(abort, 'active generalized attempt requires lease');
+            end""",
+        ),
+        (
+            "trigger",
+            "trg_runtime_attempt_generalized_lease_update",
+            """CREATE TRIGGER trg_runtime_attempt_generalized_lease_update
+            before update of status, lease_owner, lease_expires_at
+            on agent_runtime_attempts
+            when new.agent_run_id is null
+              and new.status in ('starting', 'running')
+              and (trim(new.lease_owner)='' or trim(new.lease_expires_at)='')
+            begin
+                select raise(abort, 'active generalized attempt requires lease');
+            end""",
+        ),
+        (
+            "trigger",
+            "trg_runtime_attempt_lineage_immutable",
+            """CREATE TRIGGER trg_runtime_attempt_lineage_immutable
+            before update of attempt_purpose, validation_retry_policy_id,
+                             validation_result_schema_id
+            on agent_runtime_attempts
+            when new.attempt_purpose<>old.attempt_purpose
+              or new.validation_retry_policy_id<>old.validation_retry_policy_id
+              or new.validation_result_schema_id<>old.validation_result_schema_id
+            begin
+                select raise(abort, 'runtime attempt correction lineage is immutable');
+            end""",
+        ),
+        (
+            "trigger",
+            "trg_runtime_attempt_lineage_insert",
+            """CREATE TRIGGER trg_runtime_attempt_lineage_insert
+            before insert on agent_runtime_attempts
+            when\x20
+            new.attempt_purpose not in ('normal', 'result_validation_correction')
+            or (new.attempt_purpose='normal' and
+                (new.validation_retry_policy_id<>''
+                 or new.validation_result_schema_id<>''))
+            or (new.attempt_purpose='result_validation_correction' and
+                (trim(new.validation_retry_policy_id)=''
+                 or trim(new.validation_result_schema_id)=''))
+       \x20
+            begin
+                select raise(abort, 'invalid runtime attempt correction lineage');
+            end""",
+        ),
+        (
+            "trigger",
+            "trg_runtime_attempt_lineage_update",
+            """CREATE TRIGGER trg_runtime_attempt_lineage_update
+            before update of attempt_purpose, validation_retry_policy_id,
+                             validation_result_schema_id
+            on agent_runtime_attempts
+            when\x20
+            new.attempt_purpose not in ('normal', 'result_validation_correction')
+            or (new.attempt_purpose='normal' and
+                (new.validation_retry_policy_id<>''
+                 or new.validation_result_schema_id<>''))
+            or (new.attempt_purpose='result_validation_correction' and
+                (trim(new.validation_retry_policy_id)=''
+                 or trim(new.validation_result_schema_id)=''))
+       \x20
+            begin
+                select raise(abort, 'invalid runtime attempt correction lineage');
+            end""",
+        ),
+        (
+            "trigger",
+            "trg_runtime_attempt_session_evidence_trim_insert",
+            """CREATE TRIGGER trg_runtime_attempt_session_evidence_trim_insert
+            before insert on agent_runtime_attempts
+            when new.session_mode is null or new.source_session_id is null or not (
+                (new.session_mode='fresh' and new.source_session_id='')
+                or (new.session_mode='resume' and trim(new.source_session_id)<>'')
+            )
+            begin
+                select raise(abort, 'invalid runtime attempt session evidence');
+            end""",
+        ),
+        (
+            "trigger",
+            "trg_runtime_attempt_session_evidence_trim_update",
+            """CREATE TRIGGER trg_runtime_attempt_session_evidence_trim_update
+            before update of session_mode, source_session_id on agent_runtime_attempts
+            when new.session_mode is null or new.source_session_id is null or not (
+                (new.session_mode='fresh' and new.source_session_id='')
+                or (new.session_mode='resume' and trim(new.source_session_id)<>'')
+            )
+            begin
+                select raise(abort, 'invalid runtime attempt session evidence');
+            end""",
+        ),
+    ),
+    "agent_run_state_events": (
+        (
+            "index",
+            "idx_agent_run_state_events_run",
+            """CREATE INDEX idx_agent_run_state_events_run
+                    on agent_run_state_events(agent_run_id, id)""",
+        ),
+        (
+            "table",
+            "agent_run_state_events",
+            """CREATE TABLE agent_run_state_events (
+                    id integer primary key autoincrement,
+                    agent_run_id integer not null,
+                    phase text not null,
+                    structured_error_json text not null,
+                    created_at text not null default current_timestamp,
+                    foreign key(agent_run_id) references agent_runs(id)
+                )""",
+        ),
+    ),
+    "agent_run_events": (
+        (
+            "index",
+            "idx_agent_run_events_run_call",
+            """CREATE INDEX idx_agent_run_events_run_call
+                    on agent_run_events(agent_run_id, call_id, sequence)""",
+        ),
+        (
+            "index",
+            "idx_agent_run_events_run_scope",
+            """CREATE INDEX idx_agent_run_events_run_scope on agent_run_events(agent_run_id, event_scope)""",
+        ),
+        (
+            "index",
+            "idx_agent_run_events_run_sequence",
+            """CREATE INDEX idx_agent_run_events_run_sequence
+                    on agent_run_events(agent_run_id, sequence)""",
+        ),
+        (
+            "table",
+            "agent_run_events",
+            """CREATE TABLE agent_run_events (
+                    id integer primary key autoincrement,
+                    agent_run_id integer not null,
+                    sequence integer not null,
+                    event_json text not null,
+                    event_type text not null default '',
+                    call_id text not null default '',
+                    effect_kind text not null default '',
+                    receipt_operation_id text not null default '',
+                    event_scope text not null default 'direct',
+                    created_at text not null default current_timestamp,
+                    unique(agent_run_id, sequence),
+                    foreign key(agent_run_id) references agent_runs(id)
+                )""",
+        ),
+    ),
+}
+
 RETIRED_COLUMNS = {
     "final_result_json": "",
     "result_envelope_json": "",
@@ -505,6 +793,16 @@ def _schema_objects(db, table):
     ]
 
 
+def _validate_source_declarations(db: sqlite3.Connection) -> None:
+    for table, expected in SOURCE_RUN_DECLARATIONS.items():
+        actual = tuple(
+            (obj["type"], obj["name"], obj["sql"].strip())
+            for obj in _schema_objects(db, table)
+        )
+        if actual != expected:
+            raise ValueError(f"unsupported 11.1 source declaration for {table}")
+
+
 def capture_run_schema(db: sqlite3.Connection) -> dict:
     tables = [
         r[0]
@@ -651,6 +949,7 @@ def migrate_run_schema(db: sqlite3.Connection) -> dict:
                 ).fetchone()
             ):
                 raise ValueError(f"{table}.{column} is not a retired empty placeholder")
+    _validate_source_declarations(db)
     for table in RETIRED_RUN_TABLES:
         if table in state["tables"]:
             _drop_explicit_objects(db, state["tables"][table]["objects"])

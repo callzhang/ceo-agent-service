@@ -320,7 +320,6 @@ class AuditAgentRunner:
                     developer_sections, task_assembly.sections
                 ),
             },
-            skill_names=context.task.skill_names,
             prompt=task_assembly.text,
             session_id=run.codex_session_id or None,
             force_new_session=force_new_session,

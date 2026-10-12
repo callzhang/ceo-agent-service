@@ -2682,11 +2682,11 @@ def _dispatcher_queue_snapshots(store: AutoReplyStore) -> list[dict[str, object]
 def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """Summarize only the current task projection for each business object."""
 
-    current_projection = f"""
-        from ({REPLY_TASK_SQL}) as tasks
+    current_projection = """
+        from tasks as tasks
         left join business_object_tasks as current_business_object
           on current_business_object.business_object_key=tasks.business_object_key
-        where (
+        where tasks.record_type='reply_tasks' and (
             trim(tasks.business_object_key)=''
             or current_business_object.reply_task_id is null
             or current_business_object.reply_task_id=tasks.id
@@ -9617,7 +9617,10 @@ def handle_rerun_attempt_post(
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
         return 404, {}, render_page("Attempt not found", "Attempt not found")
-    terminal_run = store.get_agent_run(attempt.agent_run_id) if attempt.agent_run_id else None
+    terminal_run = (
+        store.get_agent_run(attempt.agent_run_id, load_events=False)
+        if attempt.agent_run_id else None
+    )
     rerun_block_reason = _attempt_rerun_block_reason(
         attempt, [terminal_run] if terminal_run is not None else []
     )

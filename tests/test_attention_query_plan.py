@@ -189,3 +189,47 @@ def test_work_failure_reads_keep_nonblank_error_order_and_fresh_recovery(
         assert _queue_attention_rows(store) == []
         with store._connect() as db:
             assert _work_summary_input_queue_snapshot(db)["latest_error"] == ""
+
+
+def test_reply_queue_snapshot_reads_metadata_in_one_source_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    _failed_task(store, "FaIlEd")
+    statements: list[str] = []
+    read_columns: set[tuple[str, str]] = set()
+    original_open = store._open_connection
+
+    def traced_connection():
+        db = original_open()
+        db.set_trace_callback(statements.append)
+
+        def capture_reads(action, table, column, database, trigger):
+            if action == sqlite3.SQLITE_READ:
+                read_columns.add((table, column))
+            return sqlite3.SQLITE_OK
+
+        db.set_authorizer(capture_reads)
+        return db
+
+    monkeypatch.setattr(store, "_open_connection", traced_connection)
+    with store.read_snapshot():
+        with store._connect() as db:
+            snapshot = _reply_task_queue_snapshot(db)
+            assert snapshot["latest_error"] == "service failure"
+            assert snapshot["failed"] == 1
+    queries = [sql for sql in statements if "with current as materialized" in sql]
+    assert len(queries) == 1
+    query = queries[0]
+    assert "trigger_message_json" not in query
+    assert "trigger_text" not in query
+    with store._connect() as db:
+        plan = [row[3] for row in db.execute("explain query plan " + query)]
+    assert sum(step.startswith("SCAN tasks") for step in plan) == 1, plan
+
+    assert ("tasks", "error") in read_columns
+    assert {column for name, column in read_columns if name == "tasks"} <= {
+        "id", "status", "updated_at", "error", "business_object_key", "record_type",
+    }
+    assert not any(name == "reply_task_inputs" for name, column in read_columns)
+    assert any("MATERIALIZE current" in step for step in plan), plan

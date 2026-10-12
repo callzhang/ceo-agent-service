@@ -19,7 +19,7 @@ def _store(tmp_path: Path) -> AutoReplyStore:
 
 def test_current_task_execution_schema_repairs_missing_auxiliary_tables(tmp_path):
     path = tmp_path / "task-execution-migration.sqlite3"
-    AutoReplyStore(path)
+    original = AutoReplyStore(path)
     with sqlite3.connect(path) as db:
         for table in (
             "business_task_dingtalk_links",
@@ -29,6 +29,7 @@ def test_current_task_execution_schema_repairs_missing_auxiliary_tables(tmp_path
         ):
             db.execute(f"drop table if exists {table}")
     store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    original._initialize()
     migrated = AutoReplyStore(path)
     assert migrated._schema_is_current()
     with sqlite3.connect(path) as db:
