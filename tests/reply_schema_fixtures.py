@@ -22,9 +22,39 @@ def restore_legacy_reply_parent(store):
         AutoReplyStore.restore_reply_task_input_schema(
             db, original_tasks_sql=LEGACY_REPLY_TASKS_SQL, original_indexes=indexes
         )
-        db.execute(
-            "update service_state set value='2026-10-10.2' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        )
     store_module._INITIALIZED_STORE_PATHS.discard(store.path.resolve())
     return LEGACY_REPLY_TASKS_SQL, indexes
+
+
+def migrate_legacy_reply_parent(store):
+    """Exercise the historical reply-parent migration explicitly on current core."""
+    with sqlite3.connect(store.path) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("pragma foreign_keys=OFF")
+        db.execute("begin immediate")
+        AutoReplyStore._migrate_reply_task_input_references(db)
+        violations = db.execute("pragma foreign_key_check").fetchall()
+        if violations:
+            raise sqlite3.IntegrityError(f"reply parent migration introduced {violations!r}")
+    store_module._INITIALIZED_STORE_PATHS.discard(store.path.resolve())
+    return AutoReplyStore(store.path)
+
+
+def restore_cross_channel_reply_parent(store):
+    """Rebuild only the historical cross-channel parent on current core."""
+    old_sql = LEGACY_REPLY_TASKS_SQL.replace(
+        "unique(channel, conversation_id, trigger_message_id)",
+        "unique(conversation_id, trigger_message_id)",
+    )
+    with sqlite3.connect(store.path) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("pragma foreign_keys=OFF")
+        db.execute("begin immediate")
+        AutoReplyStore.restore_reply_task_input_schema(
+            db, original_tasks_sql=old_sql, original_indexes=(),
+        )
+        db.execute(
+            'create unique index "legacy user\'s trigger" '
+            "on reply_tasks(conversation_id, trigger_message_id)"
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(store.path.resolve())

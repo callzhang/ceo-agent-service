@@ -16,6 +16,11 @@ def _store(tmp_path: Path) -> WorkbenchStore:
     return WorkbenchStore(tmp_path / "workbench.sqlite3")
 
 
+def _repair_historical_workbench_columns(store: WorkbenchStore) -> None:
+    """Run the Store's noncore DDL repair on a valid current core fixture."""
+    store._initialize()
+
+
 def _running_turn(tmp_path: Path) -> tuple[WorkbenchStore, str, str]:
     store = _store(tmp_path)
     task = store.create_task(title="Analyse sales", runtime_kind="codex")
@@ -65,10 +70,7 @@ def test_store_migrates_resume_context_without_losing_existing_turns(tmp_path: P
     )
     with store._connect() as db:
         db.execute("alter table workbench_turns drop column resume_context")
-        db.execute(
-            "update service_state set value='2026-08-13.1' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        )
+    _repair_historical_workbench_columns(store)
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     migrated = WorkbenchStore(db_path)
@@ -113,10 +115,6 @@ def test_store_upgrades_point_seven_schema_with_current_indexes(tmp_path: Path):
             "idx_workbench_events_event_type",
         ):
             db.execute(f"drop index if exists {index}")
-        db.execute(
-            "update service_state set value='2026-08-13.7' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        )
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     upgraded = WorkbenchStore(db_path)
@@ -174,10 +172,6 @@ def test_store_upgrades_point_nine_attachments_with_idempotency_columns(
         db.execute("drop index idx_workbench_attachments_task_request")
         db.execute("alter table workbench_attachments drop column content_sha256")
         db.execute("alter table workbench_attachments drop column client_request_id")
-        db.execute(
-            "update service_state set value='2026-08-13.9' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        )
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     upgraded = WorkbenchStore(db_path)
@@ -219,10 +213,6 @@ def test_store_upgrades_point_eight_turns_with_stable_per_task_sequence(
         )
         db.execute("drop index idx_workbench_turns_task_sequence")
         db.execute("alter table workbench_turns drop column task_sequence")
-        db.execute(
-            "update service_state set value='2026-08-13.8' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        )
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     upgraded = WorkbenchStore(db_path)
@@ -346,10 +336,7 @@ def test_store_migrates_confirmation_execution_claim_without_losing_data(
             db.execute(f"alter table workbench_confirmations drop column {column}")
         for column in ("execution_run_id", "runtime_quiesced_run_id"):
             db.execute(f"alter table workbench_turns drop column {column}")
-        db.execute(
-            "update service_state set value='2026-08-13.2' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        )
+    _repair_historical_workbench_columns(store)
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     migrated = WorkbenchStore(db_path)
@@ -459,10 +446,7 @@ def test_migration_fails_legacy_pending_confirmations_once_across_turn_states(
             db.execute(f"alter table workbench_confirmations drop column {column}")
         for column in ("execution_run_id", "runtime_quiesced_run_id"):
             db.execute(f"alter table workbench_turns drop column {column}")
-        db.execute(
-            "update service_state set value='2026-08-13.4' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        )
+    _repair_historical_workbench_columns(store)
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     migrated = WorkbenchStore(db_path)
@@ -513,11 +497,7 @@ def test_migration_fails_legacy_pending_confirmations_once_across_turn_states(
     assert sum(event[1] == "turn_failed" for event in before[turns["running"]]) == 1
     assert sum(event[1] == "turn_failed" for event in before[turns["completed"]]) == 0
 
-    with migrated._connect() as db:
-        db.execute(
-            "update service_state set value='2026-08-13.4' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        )
+    _repair_historical_workbench_columns(migrated)
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
     repeated = WorkbenchStore(db_path)
     assert {

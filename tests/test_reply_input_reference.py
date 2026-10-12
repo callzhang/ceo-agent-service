@@ -113,7 +113,7 @@ def test_legacy_current_mismatch_and_missing_input_preserve_old_rows_and_waterma
     tmp_path,
 ):
     import app.store as store_module
-    from tests.reply_schema_fixtures import restore_legacy_reply_parent
+    from tests.reply_schema_fixtures import migrate_legacy_reply_parent, restore_legacy_reply_parent
 
     path = tmp_path / "legacy.sqlite3"
     store = AutoReplyStore(path)
@@ -129,7 +129,7 @@ def test_legacy_current_mismatch_and_missing_input_preserve_old_rows_and_waterma
             (first,),
         )
         db.execute("delete from reply_task_inputs where reply_task_id=?", (missing,))
-    migrated = AutoReplyStore(path)
+    migrated = migrate_legacy_reply_parent(store)
     assert migrated.get_reply_task(first).trigger_text == "actual current"
     assert migrated.get_reply_task(first).input_version == 17
     assert migrated.get_reply_task(first).claimed_input_version == 6
@@ -145,7 +145,7 @@ def test_legacy_current_mismatch_and_missing_input_preserve_old_rows_and_waterma
 
 
 def test_legacy_migration_selects_exact_old_row_instead_of_latest_id(tmp_path):
-    from tests.reply_schema_fixtures import restore_legacy_reply_parent
+    from tests.reply_schema_fixtures import migrate_legacy_reply_parent, restore_legacy_reply_parent
 
     store = AutoReplyStore(tmp_path / "legacy.sqlite3")
     task = store.ensure_reply_task(**values()).id
@@ -160,7 +160,7 @@ def test_legacy_migration_selects_exact_old_row_instead_of_latest_id(tmp_path):
             "update reply_tasks set input_version=29, claimed_input_version=8 where id=?",
             (task,),
         )
-    migrated = AutoReplyStore(store.path)
+    migrated = migrate_legacy_reply_parent(store)
     assert migrated.get_reply_task(task).current_input_id == original
     assert len(migrated.list_reply_task_inputs(task)) == 2
     assert migrated.get_reply_task(task).input_version == 29
@@ -168,7 +168,7 @@ def test_legacy_migration_selects_exact_old_row_instead_of_latest_id(tmp_path):
 
 def test_legacy_live_claim_blocks_atomically(tmp_path):
     import pytest
-    from tests.reply_schema_fixtures import restore_legacy_reply_parent
+    from tests.reply_schema_fixtures import migrate_legacy_reply_parent, restore_legacy_reply_parent
 
     store = AutoReplyStore(tmp_path / "legacy.sqlite3")
     task = store.ensure_reply_task(**values()).id
@@ -179,7 +179,7 @@ def test_legacy_live_claim_blocks_atomically(tmp_path):
             (task,),
         )
     with pytest.raises(RuntimeError, match="quiet"):
-        AutoReplyStore(store.path)
+        migrate_legacy_reply_parent(store)
     with sqlite3.connect(store.path) as db:
         assert "current_input_id" not in {
             row[1] for row in db.execute("pragma table_info(reply_tasks)")
@@ -188,7 +188,7 @@ def test_legacy_live_claim_blocks_atomically(tmp_path):
             db.execute(
                 "select value from service_state where key='store_schema_version'"
             ).fetchone()[0]
-            == "2026-10-10.2"
+            == "2026-10-11.2"
         )
         assert db.execute("select count(*) from reply_task_inputs").fetchone()[0] == 1
 
@@ -196,12 +196,12 @@ def test_legacy_live_claim_blocks_atomically(tmp_path):
 def test_inverse_restores_exact_ddl_and_latest_current_without_erasing_claimed_revision(
     tmp_path,
 ):
-    from tests.reply_schema_fixtures import restore_legacy_reply_parent
+    from tests.reply_schema_fixtures import migrate_legacy_reply_parent, restore_legacy_reply_parent
 
     store = AutoReplyStore(tmp_path / "inverse.sqlite3")
     task = store.ensure_reply_task(**values()).id
     ddl, indexes = restore_legacy_reply_parent(store)
-    migrated = AutoReplyStore(store.path)
+    migrated = migrate_legacy_reply_parent(store)
     claimed = migrated.claim_reply_task(task)
     updated = values("new current")
     updated.update(
@@ -245,7 +245,7 @@ def test_inverse_restores_exact_ddl_and_latest_current_without_erasing_claimed_r
 def test_retired_projection_round_trip_retains_provenance_without_a_second_json(
     tmp_path,
 ):
-    from tests.reply_schema_fixtures import restore_legacy_reply_parent
+    from tests.reply_schema_fixtures import migrate_legacy_reply_parent, restore_legacy_reply_parent
 
     store = AutoReplyStore(tmp_path / "retired.sqlite3")
     task = store.ensure_reply_task(**values()).id
@@ -256,7 +256,7 @@ def test_retired_projection_round_trip_retains_provenance_without_a_second_json(
     projected = store.get_reply_task(task)
     original_inputs = store.list_reply_task_inputs(task)
     ddl, indexes = restore_legacy_reply_parent(store)
-    migrated = AutoReplyStore(store.path)
+    migrated = migrate_legacy_reply_parent(store)
     assert (
         migrated.get_reply_task(task).trigger_message_json
         == projected.trigger_message_json
@@ -290,7 +290,7 @@ def test_retired_projection_round_trip_retains_provenance_without_a_second_json(
 
 def test_legacy_retired_json_must_be_derivable_before_drop(tmp_path):
     import pytest
-    from tests.reply_schema_fixtures import restore_legacy_reply_parent
+    from tests.reply_schema_fixtures import migrate_legacy_reply_parent, restore_legacy_reply_parent
 
     store = AutoReplyStore(tmp_path / "invalid-retired.sqlite3")
     task = store.ensure_reply_task(**values()).id
@@ -305,7 +305,7 @@ def test_legacy_retired_json_must_be_derivable_before_drop(tmp_path):
             (task,),
         )
     with pytest.raises(RuntimeError, match="not derivable"):
-        AutoReplyStore(store.path)
+        migrate_legacy_reply_parent(store)
     with sqlite3.connect(store.path) as db:
         assert "trigger_message_json" in {
             row[1] for row in db.execute("pragma table_info(reply_tasks)")
@@ -314,12 +314,12 @@ def test_legacy_retired_json_must_be_derivable_before_drop(tmp_path):
             db.execute(
                 "select value from service_state where key='store_schema_version'"
             ).fetchone()[0]
-            == "2026-10-10.2"
+            == "2026-10-11.2"
         )
 
 
 def test_inverse_preserves_autoincrement_sequence_after_all_tasks_removed(tmp_path):
-    from tests.reply_schema_fixtures import restore_legacy_reply_parent
+    from tests.reply_schema_fixtures import migrate_legacy_reply_parent, restore_legacy_reply_parent
 
     store = AutoReplyStore(tmp_path / "empty.sqlite3")
     task = store.ensure_reply_task(**values()).id
@@ -329,7 +329,7 @@ def test_inverse_preserves_autoincrement_sequence_after_all_tasks_removed(tmp_pa
         db.execute("delete from reply_task_inputs")
         db.execute("delete from reply_tasks where id=?", (task,))
         db.execute("update sqlite_sequence set seq=77 where name='reply_tasks'")
-    AutoReplyStore(store.path)
+    migrate_legacy_reply_parent(store)
     with sqlite3.connect(store.path) as db:
         db.row_factory = sqlite3.Row
         db.execute("pragma foreign_keys=OFF")

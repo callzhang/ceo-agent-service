@@ -442,16 +442,13 @@ def test_legacy_task_columns_upgrade_preserves_truth_and_raw_history(project):
         ).fetchall()
         db.execute("alter table business_tasks drop column origin")
         db.execute("alter table business_tasks drop column suggestion_json")
-        db.execute(
-            "update service_state set value='2026-10-04.2' where key='store_schema_version'"
-        )
     # A real service upgrade restarts its process; do not let this process's
     # initialized-path cache bypass the migration being tested.
     subprocess.run(
         [
             sys.executable,
             "-c",
-            "import sys; from pathlib import Path; from app.store import AutoReplyStore; AutoReplyStore(Path(sys.argv[1]))",
+            "import sys; from pathlib import Path; from app.store import AutoReplyStore; AutoReplyStore(Path(sys.argv[1]))._initialize()",
             str(store.path),
         ],
         check=True,

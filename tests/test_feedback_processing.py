@@ -1241,11 +1241,6 @@ def test_feedback_round_backfill_preserves_legacy_receipts_and_source(
         ).fetchone()[0] == 0
         assert source_after == source_before
 
-        db.execute(
-            "update service_state set value='legacy' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        )
-
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
     reinitialized = AutoReplyStore(db_path)
     with reinitialized._connect() as db:
