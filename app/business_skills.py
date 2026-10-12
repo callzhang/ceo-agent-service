@@ -838,6 +838,14 @@ def codex_skill_config_override(
     return f"skills.config=[{','.join(items)}]" if items else ""
 
 
+def codex_inlined_skill_config_override(names: Iterable[str]) -> str:
+    """Suppress native copies of explicitly inlined Skills using native names."""
+    items = [
+        f"{{name={json.dumps(name)},enabled=false}}" for name in dict.fromkeys(names)
+    ]
+    return f"skills.config=[{','.join(items)}]" if items else ""
+
+
 def load_bundled_business_skills() -> tuple[BundledBusinessSkill, ...]:
     skills: list[BundledBusinessSkill] = []
     for expected_name in BUNDLED_BUSINESS_SKILL_NAMES:
