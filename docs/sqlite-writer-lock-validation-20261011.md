@@ -1,5 +1,10 @@
 # SQLite writer contention repair — 2026-10-11
 
+The four Attention entries listed at this repair checkpoint were investigated
+in the subsequent [Attention follow-up](attention-resolution-20261011.md).
+That record separates terminal service handling, provider readback and the
+remaining compensation decision; this earlier four-item count is historical.
+
 ## Implemented mechanisms
 
 - `1db85483`: meeting Memory enqueue excludes already-enqueued historical jobs
