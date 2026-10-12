@@ -1,5 +1,25 @@
 # Current Runtime Mechanism
 
+Meeting Memory enqueue first excludes existing event IDs using the meeting
+status and unique event indexes in a read-only connection. Only missing jobs
+load `final_message` to check the existing nonempty delivered-conclusion rule.
+An empty probe returns without acquiring the shared SQLite writer lock. A
+positive probe closes its read connection, then the immediate write transaction
+rechecks status, conclusion and event absence for those exact IDs before insert.
+Competing enqueues create one event without advancing the sequence on a no-op;
+jobs delivered after the read snapshot are picked up by the next scan. This
+removes the historical wide-row scan from the write transaction: production
+telemetry observed a 13.454-second hold there with a simultaneous 13.045-second
+dispatcher lock wait.
+
+Dispatcher lease completion retains the same newest 10,000 terminal rows,
+ordered by `terminal_at desc, rowid desc`, and every active row. The required
+partial terminal-time index supports that order. Completion finds the 10,000th
+row's `(terminal_at, rowid)` boundary and deletes only older terminal rows in the
+same transaction. It no longer sorts the whole table or materializes a 10,000-ID
+membership list while holding the writer lock. Existing-schema initialization
+adds the index without rewriting lease facts.
+
 The meeting delivery batch poll reads the exact ready, unlocked and due
 eligibility before requesting SQLite's shared writer lock. An ineligible poll
 returns without joining the writer queue. This read is not a reservation: the
@@ -257,7 +277,11 @@ write transaction. A negative probe does not acquire the writer lock. A
 positive probe is not a reservation: BEGIN IMMEDIATE must recompute eligibility
 before the unchanged conditional update. New work arriving after a negative
 probe waits for the next poll; no queue result is cached. Each pass starts from
-the indexed pending/failed statuses, then reads sibling actions through the
+the indexed pending/failed statuses and primary-key checks that each action
+belongs to the processed classification's exact current plan. Classifications
+with only retired-plan pending/failed rows do not hydrate historical plan
+bodies. Remaining candidates still read all sibling actions, preserving the
+block from any historical processing action, through the
 `(classification_id, action_plan_id)` index; it does not scan every action while
 holding the SQLite writer lock. Candidate order and the existing action,
 dependency and retry rules are unchanged.

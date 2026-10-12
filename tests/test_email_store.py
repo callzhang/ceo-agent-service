@@ -6773,6 +6773,43 @@ def test_direct_action_claim_does_not_materialize_settled_history(tmp_path: Path
     assert fetch_sizes == [0]
 
 
+def test_direct_action_probe_does_not_load_retired_pending_plan_bodies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = EmailStore(tmp_path / "retired-plan-probe.sqlite3")
+    for index in range(10):
+        original = _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            message_id=f"retired-plan-{index}",
+        )
+        _persist_scan(store, original)
+        application = _correct_to_move_plan(
+            store, original, request_id=f"retired-plan-correction-{index}",
+        )
+        with store._connect() as db:
+            db.execute(
+                "update email_actions set status='done' where action_plan_id=?",
+                (application.resulting_action_plan_id,),
+            )
+    original_open = store._open_connection
+    payload_reads = []
+
+    def instrumented_connection():
+        db = original_open()
+
+        def authorize(operation, table, column, database, trigger):
+            if operation == sqlite3.SQLITE_READ and table == "email_action_plans" and column == "actions_json":
+                payload_reads.append(table)
+            return sqlite3.SQLITE_OK
+
+        db.set_authorizer(authorize)
+        return db
+
+    monkeypatch.setattr(store, "_open_connection", instrumented_connection)
+    assert store.claim_next_direct_action(claimed_at="2026-10-12T00:00:00+00:00") is None
+    assert payload_reads == []
+
+
 @pytest.mark.parametrize("queue", ["empty", "settled", "other_account", "blocked"])
 def test_idle_direct_action_poll_does_not_wait_for_writer(tmp_path, monkeypatch, queue):
     database = tmp_path / "idle-direct-action.sqlite3"

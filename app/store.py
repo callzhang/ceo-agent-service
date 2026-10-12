@@ -418,6 +418,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_scheduled_task_runs_latest",
     "idx_scheduled_task_runs_reply_execution",
     "idx_dispatcher_claim_leases_expiry",
+    "idx_dispatcher_claim_leases_terminal",
     "idx_runtime_skill_bindings_config_order",
     "idx_runtime_skill_load_receipts_config",
     "idx_meeting_memory_write_events_lease",
@@ -2925,6 +2926,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     on dispatcher_claim_leases(
                         adapter_name, lease_expires_at, source_id
                     );
+                create index if not exists idx_dispatcher_claim_leases_terminal
+                    on dispatcher_claim_leases(terminal_at)
+                    where terminal_at<>'';
                 create table if not exists runtime_skill_configs (
                     id integer primary key autoincrement,
                     parent_id integer,
@@ -19118,28 +19122,49 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         return (row["route_name"], row["model"]) if row is not None else ("", "")
 
     def enqueue_sent_meeting_memory_write_events(self) -> int:
-        """Queue every delivered conclusion without conflict-writing old rows.
-
-        The anti-join is deliberately performed inside an immediate write
-        transaction. Repeated idle scans therefore do not execute an ignored
-        insert (which would still advance an AUTOINCREMENT sequence in SQLite).
-        """
+        """Probe missing conclusions, then recheck only those jobs while writing."""
+        with self._connect() as db:
+            missing_ids = [
+                int(row["id"])
+                for row in db.execute(
+                    """
+                    with missing as materialized (
+                        select jobs.id
+                        from meeting_alignment_jobs as jobs
+                        where jobs.status='sent'
+                          and not exists (
+                              select 1 from meeting_memory_write_events as events
+                              where events.meeting_job_id=jobs.id
+                          )
+                    )
+                    select jobs.id
+                    from missing
+                    join meeting_alignment_jobs as jobs on jobs.id=missing.id
+                    where trim(jobs.final_message)<>''
+                    """
+                )
+            ]
+        if not missing_ids:
+            return 0
+        placeholders = ",".join("?" for _ in missing_ids)
         with self._immediate_write_transaction() as db:
             cursor = db.execute(
-                """
+                f"""
                 insert into meeting_memory_write_events (
                     meeting_job_id, execution_generation, payload_json
                 )
-                select jobs.id, lower(hex(randomblob(16))), '{}'
+                select jobs.id, lower(hex(randomblob(16))), '{{}}'
                 from meeting_alignment_jobs as jobs
-                where jobs.status='sent'
+                where jobs.id in ({placeholders})
+                  and jobs.status='sent'
                   and trim(jobs.final_message)<>''
                   and not exists (
                       select 1
                       from meeting_memory_write_events as events
                       where events.meeting_job_id=jobs.id
                   )
-                """
+                """,
+                missing_ids,
             )
         return cursor.rowcount
 

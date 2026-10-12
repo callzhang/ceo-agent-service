@@ -1961,9 +1961,10 @@ def _complete_ledger_in_db(
     if cursor.rowcount != 1:
         raise ValueError("dispatcher source claim is no longer owned")
     db.execute(
-        "delete from dispatcher_claim_leases where terminal_at<>'' and rowid not in ("
-        "select rowid from dispatcher_claim_leases where terminal_at<>'' "
-        "order by terminal_at desc, rowid desc limit 10000)"
+        "delete from dispatcher_claim_leases where terminal_at<>'' "
+        "and (terminal_at,rowid)<("
+        "select terminal_at,rowid from dispatcher_claim_leases where terminal_at<>'' "
+        "order by terminal_at desc,rowid desc limit 1 offset 9999)"
     )
 
 
