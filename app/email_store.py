@@ -5,6 +5,7 @@ provider and never creates Agent, Audit, reply-task, or run records.
 """
 
 from __future__ import annotations
+from app.task_storage import REPLY_TASK_SQL
 
 from app.store import REPLY_TASK_CURRENT_SQL
 
@@ -10931,7 +10932,7 @@ class EmailStore:
             or (
                 task_execution_generation is not None
                 and db.execute(
-                    "select execution_generation from reply_tasks where id=?",
+                    f"select execution_generation from ({REPLY_TASK_SQL}) where id=?",
                     (lineage["task_id"],),
                 ).fetchone()[0]
                 != task_execution_generation
@@ -12006,7 +12007,7 @@ class EmailStore:
                 select runs.role, runs.status, runs.structured_error_json,
                        tasks.channel, tasks.trigger_message_id
                 from ({AGENT_RUN_SQL}) as runs
-                join reply_tasks as tasks on tasks.id=runs.reply_task_id
+                join ({REPLY_TASK_SQL}) as tasks on tasks.id=runs.reply_task_id
                 where runs.id=?
                 """,
                 (audit_agent_run_id,),
@@ -15030,7 +15031,7 @@ class EmailStore:
                 {
                     str(row["status"]): int(row["n"])
                     for row in db.execute(
-                        "select status, count(*) as n from reply_tasks "
+                        f"select status, count(*) as n from ({REPLY_TASK_SQL}) "
                         "where channel='email' and status in ('pending','processing') "
                         "group by status"
                     )
@@ -16711,8 +16712,8 @@ class EmailStore:
                 if receipt is not None:
                     continue
                 task = db.execute(
-                    """
-                    select 1 from reply_tasks
+                    f"""
+                    select 1 from ({REPLY_TASK_SQL})
                     where channel='email' and trigger_message_id=?
                     """,
                     (action_identity,),
@@ -16770,8 +16771,8 @@ class EmailStore:
                 return decision
             db.execute("insert into email_unsubscribe_cancellations(action_identity,decision_json) values (?,?)", (expected_action_identity, _json_dump(decision)))
             db.execute(
-                "update reply_tasks set status='skipped', error='email_unsubscribe_cancelled_by_principal', "
-                "available_at='', locked_at=null, updated_at=? where id=?",
+                "update tasks set status='skipped', error='email_unsubscribe_cancelled_by_principal', "
+                "available_at='', locked_at=null, updated_at=? where record_type='reply_tasks' and id=?",
                 (decision["recorded_at"], task_id),
             )
             return decision
@@ -16902,9 +16903,9 @@ class EmailStore:
                 if cancellation is not None:
                     continue
                 task = db.execute(
-                    """
+                    f"""
                     select id, status, error, attempts, updated_at
-                    from reply_tasks
+                    from ({REPLY_TASK_SQL})
                     where channel='email' and trigger_message_id=?
                     """,
                     (action_identity,),

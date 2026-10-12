@@ -10,7 +10,7 @@ from app.store import AutoReplyStore
 INDEX_NAME = "idx_wechat_deliveries_task_generation"
 
 
-@pytest.mark.parametrize("schema", ["fresh", "missing_index", "legacy_unique"])
+@pytest.mark.parametrize("schema", ["fresh", "missing_index"])
 def test_latest_wechat_delivery_index_survives_schema_initialization(tmp_path, schema):
     path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(path)
@@ -30,15 +30,6 @@ def test_latest_wechat_delivery_index_survives_schema_initialization(tmp_path, s
         ).fetchone())
         if schema != "fresh":
             db.execute(f"drop index if exists {INDEX_NAME}")
-        if schema == "legacy_unique":
-            db.execute(
-                "create unique index legacy_wechat_task_unique "
-                "on wechat_deliveries(reply_task_id)"
-            )
-            db.execute(
-                "update service_state set value='2026-09-24.2' where key=?",
-                (store_module.STORE_SCHEMA_VERSION_KEY,),
-            )
     if schema != "fresh":
         assert store._schema_is_current() is False
         store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())

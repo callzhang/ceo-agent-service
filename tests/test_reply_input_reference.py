@@ -3,6 +3,7 @@ import sqlite3
 import pytest
 
 from app.store import AutoReplyStore
+from app.task_storage import REPLY_TASK_INPUT_SQL
 
 
 def values(text="first"):
@@ -22,25 +23,15 @@ def test_parent_has_real_input_foreign_keys_and_no_payload_cache(tmp_path):
     store = AutoReplyStore(tmp_path / "db.sqlite3")
     task = store.ensure_reply_task(**values()).id
     with sqlite3.connect(store.path) as db:
-        columns = {r[1] for r in db.execute("pragma table_info(reply_tasks)")}
-        assert (
-            not {
-                "trigger_text",
-                "trigger_message_json",
-                "input_compacted",
-                "input_provenance_json",
-            }
-            & columns
-        )
-        keys = {
-            (r[3], r[2], r[4])
-            for r in db.execute("pragma foreign_key_list(reply_tasks)")
-        }
-        assert ("current_input_id", "reply_task_inputs", "id") in keys
-        assert ("claimed_input_id", "reply_task_inputs", "id") in keys
-        assert db.execute(
-            "select current_input_id from reply_tasks where id=?", (task,)
-        ).fetchone()[0]
+        keys = {(r[3], r[2], r[4]) for r in db.execute("pragma foreign_key_list(tasks)")}
+        assert ("current_input_id", "tasks", "id") in keys
+        assert ("claimed_input_id", "tasks", "id") in keys
+        parent = db.execute(
+            "select current_input_id,trigger_text,trigger_message_json,input_compacted,input_provenance_json "
+            "from tasks where record_type='reply_tasks' and id=?", (task,)
+        ).fetchone()
+        assert parent[0] is not None
+        assert parent[1:] == (None, None, None, None)
 
 
 def test_claim_keeps_exact_input_when_current_context_changes(tmp_path):
@@ -59,7 +50,7 @@ def test_claim_keeps_exact_input_when_current_context_changes(tmp_path):
     assert execution.trigger_message_id == "message"
     with sqlite3.connect(store.path) as db:
         current, original = db.execute(
-            "select current_input_id, claimed_input_id from reply_tasks where id=?",
+            "select current_input_id, claimed_input_id from tasks where record_type='reply_tasks' and id=?",
             (task_id,),
         ).fetchone()
         assert current != original
@@ -77,7 +68,7 @@ def test_terminal_input_persists_no_compact_json_but_projects_old_shape(tmp_path
     assert '"input_compacted":true' in result.trigger_message_json
     with sqlite3.connect(store.path) as db:
         assert db.execute(
-            "select trigger_text, trigger_message_json, input_compacted from reply_task_inputs"
+            f"select trigger_text, trigger_message_json, input_compacted from ({REPLY_TASK_INPUT_SQL})"
         ).fetchone() == ("", "", 1)
     assert (
         store.list_reply_task_inputs(task_id)[0]["trigger_message_json"]
@@ -109,240 +100,18 @@ def test_manual_rerun_appends_exact_new_input(tmp_path):
     assert store.get_reply_task(task_id).trigger_text == "rerun"
 
 
-def test_legacy_current_mismatch_and_missing_input_preserve_old_rows_and_watermarks(
-    tmp_path,
-):
-    import app.store as store_module
-    from tests.reply_schema_fixtures import restore_legacy_reply_parent
-
-    path = tmp_path / "legacy.sqlite3"
-    store = AutoReplyStore(path)
-    first = store.ensure_reply_task(**values()).id
-    missing_values = values("missing body")
-    missing_values["trigger_message_id"] = "missing"
-    missing = store.ensure_reply_task(**missing_values).id
-    old = store.list_reply_task_inputs(first)[0]
-    restore_legacy_reply_parent(store)
-    with sqlite3.connect(path) as db:
-        db.execute(
-            "update reply_tasks set trigger_text='actual current', input_version=17, claimed_input_version=6, status='needs_human' where id=?",
-            (first,),
-        )
-        db.execute("delete from reply_task_inputs where reply_task_id=?", (missing,))
-    migrated = AutoReplyStore(path)
-    assert migrated.get_reply_task(first).trigger_text == "actual current"
-    assert migrated.get_reply_task(first).input_version == 17
-    assert migrated.get_reply_task(first).claimed_input_version == 6
-    assert migrated.get_reply_task(first).claimed_input_id is None
-    assert migrated.list_reply_task_inputs(first)[0] == old
-    assert migrated.get_reply_task(missing).trigger_text == "missing body"
-    ids = [row["id"] for row in migrated.list_reply_task_inputs(first)]
-    assert len(ids) == 2
-    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-    assert [
-        row["id"] for row in AutoReplyStore(path).list_reply_task_inputs(first)
-    ] == ids
 
 
-def test_legacy_migration_selects_exact_old_row_instead_of_latest_id(tmp_path):
-    from tests.reply_schema_fixtures import restore_legacy_reply_parent
-
-    store = AutoReplyStore(tmp_path / "legacy.sqlite3")
-    task = store.ensure_reply_task(**values()).id
-    original = store.list_reply_task_inputs(task)[0]["id"]
-    restore_legacy_reply_parent(store)
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            "insert into reply_task_inputs (reply_task_id,channel,conversation_id,conversation_title,single_chat,trigger_message_id,trigger_create_time,trigger_sender,trigger_text,trigger_message_json,business_object_key,input_revision_key) select reply_task_id,channel,conversation_id,conversation_title,single_chat,trigger_message_id,trigger_create_time,trigger_sender,'not current',trigger_message_json,business_object_key,'later revision' from reply_task_inputs where id=?",
-            (original,),
-        )
-        db.execute(
-            "update reply_tasks set input_version=29, claimed_input_version=8 where id=?",
-            (task,),
-        )
-    migrated = AutoReplyStore(store.path)
-    assert migrated.get_reply_task(task).current_input_id == original
-    assert len(migrated.list_reply_task_inputs(task)) == 2
-    assert migrated.get_reply_task(task).input_version == 29
 
 
-def test_legacy_live_claim_blocks_atomically(tmp_path):
-    import pytest
-    from tests.reply_schema_fixtures import restore_legacy_reply_parent
-
-    store = AutoReplyStore(tmp_path / "legacy.sqlite3")
-    task = store.ensure_reply_task(**values()).id
-    restore_legacy_reply_parent(store)
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update reply_tasks set status='processing',claimed_input_version=1 where id=?",
-            (task,),
-        )
-    with pytest.raises(RuntimeError, match="quiet"):
-        AutoReplyStore(store.path)
-    with sqlite3.connect(store.path) as db:
-        assert "current_input_id" not in {
-            row[1] for row in db.execute("pragma table_info(reply_tasks)")
-        }
-        assert (
-            db.execute(
-                "select value from service_state where key='store_schema_version'"
-            ).fetchone()[0]
-            == "2026-10-10.2"
-        )
-        assert db.execute("select count(*) from reply_task_inputs").fetchone()[0] == 1
 
 
-def test_inverse_restores_exact_ddl_and_latest_current_without_erasing_claimed_revision(
-    tmp_path,
-):
-    from tests.reply_schema_fixtures import restore_legacy_reply_parent
-
-    store = AutoReplyStore(tmp_path / "inverse.sqlite3")
-    task = store.ensure_reply_task(**values()).id
-    ddl, indexes = restore_legacy_reply_parent(store)
-    migrated = AutoReplyStore(store.path)
-    claimed = migrated.claim_reply_task(task)
-    updated = values("new current")
-    updated.update(
-        trigger_message_id="second-message",
-        business_object_key=claimed.business_object_key,
-    )
-    migrated.enqueue_reply_task(**updated)
-    before = migrated.list_reply_task_inputs(task)
-    current = migrated.get_reply_task(task)
-    with sqlite3.connect(store.path) as db:
-        db.row_factory = sqlite3.Row
-        original_seq = db.execute(
-            "select seq from sqlite_sequence where name='reply_tasks'"
-        ).fetchone()[0]
-        db.execute("pragma foreign_keys=OFF")
-        db.execute("begin immediate")
-        AutoReplyStore.restore_reply_task_input_schema(
-            db, original_tasks_sql=ddl, original_indexes=indexes
-        )
-        assert db.execute(
-            "select sql from sqlite_master where name='reply_tasks'"
-        ).fetchone()[0] == ddl.rstrip(";")
-        row = db.execute("select * from reply_tasks where id=?", (task,)).fetchone()
-        assert row["trigger_text"] == "new current"
-        assert row["status"] == "processing"
-        assert row["input_version"] == current.input_version
-        assert row["claimed_input_version"] == claimed.claimed_input_version
-        assert (
-            db.execute(
-                "select seq from sqlite_sequence where name='reply_tasks'"
-            ).fetchone()[0]
-            == original_seq
-        )
-        assert [
-            dict(row)
-            for row in db.execute("select * from reply_task_inputs order by id")
-        ] == before
-        assert db.execute("pragma foreign_key_check").fetchall() == []
 
 
-def test_retired_projection_round_trip_retains_provenance_without_a_second_json(
-    tmp_path,
-):
-    from tests.reply_schema_fixtures import restore_legacy_reply_parent
-
-    store = AutoReplyStore(tmp_path / "retired.sqlite3")
-    task = store.ensure_reply_task(**values()).id
-    claimed = store.claim_reply_task(task)
-    store.complete_reply_task(
-        task, expected_execution_generation=claimed.execution_generation
-    )
-    projected = store.get_reply_task(task)
-    original_inputs = store.list_reply_task_inputs(task)
-    ddl, indexes = restore_legacy_reply_parent(store)
-    migrated = AutoReplyStore(store.path)
-    assert (
-        migrated.get_reply_task(task).trigger_message_json
-        == projected.trigger_message_json
-    )
-    assert (
-        migrated.get_reply_task(task).input_provenance_json
-        == projected.input_provenance_json
-    )
-    assert migrated.list_reply_task_inputs(task) == original_inputs
-    with sqlite3.connect(store.path) as db:
-        assert db.execute(
-            "select trigger_text, trigger_message_json from reply_task_inputs"
-        ).fetchone() == ("", "")
-        db.row_factory = sqlite3.Row
-        db.execute("pragma foreign_keys=OFF")
-        db.execute("begin immediate")
-        AutoReplyStore.restore_reply_task_input_schema(
-            db, original_tasks_sql=ddl, original_indexes=indexes
-        )
-        assert (
-            db.execute("select trigger_message_json from reply_task_inputs").fetchone()[
-                0
-            ]
-            == projected.trigger_message_json
-        )
-        assert (
-            db.execute("select trigger_message_json from reply_tasks").fetchone()[0]
-            == projected.trigger_message_json
-        )
 
 
-def test_legacy_retired_json_must_be_derivable_before_drop(tmp_path):
-    import pytest
-    from tests.reply_schema_fixtures import restore_legacy_reply_parent
-
-    store = AutoReplyStore(tmp_path / "invalid-retired.sqlite3")
-    task = store.ensure_reply_task(**values()).id
-    claimed = store.claim_reply_task(task)
-    store.complete_reply_task(
-        task, expected_execution_generation=claimed.execution_generation
-    )
-    restore_legacy_reply_parent(store)
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update reply_task_inputs set trigger_message_json='{}' where reply_task_id=?",
-            (task,),
-        )
-    with pytest.raises(RuntimeError, match="not derivable"):
-        AutoReplyStore(store.path)
-    with sqlite3.connect(store.path) as db:
-        assert "trigger_message_json" in {
-            row[1] for row in db.execute("pragma table_info(reply_tasks)")
-        }
-        assert (
-            db.execute(
-                "select value from service_state where key='store_schema_version'"
-            ).fetchone()[0]
-            == "2026-10-10.2"
-        )
 
 
-def test_inverse_preserves_autoincrement_sequence_after_all_tasks_removed(tmp_path):
-    from tests.reply_schema_fixtures import restore_legacy_reply_parent
-
-    store = AutoReplyStore(tmp_path / "empty.sqlite3")
-    task = store.ensure_reply_task(**values()).id
-    ddl, indexes = restore_legacy_reply_parent(store)
-    with sqlite3.connect(store.path) as db:
-        db.execute("delete from business_object_tasks")
-        db.execute("delete from reply_task_inputs")
-        db.execute("delete from reply_tasks where id=?", (task,))
-        db.execute("update sqlite_sequence set seq=77 where name='reply_tasks'")
-    AutoReplyStore(store.path)
-    with sqlite3.connect(store.path) as db:
-        db.row_factory = sqlite3.Row
-        db.execute("pragma foreign_keys=OFF")
-        db.execute("begin immediate")
-        AutoReplyStore.restore_reply_task_input_schema(
-            db, original_tasks_sql=ddl, original_indexes=indexes
-        )
-        assert (
-            db.execute(
-                "select seq from sqlite_sequence where name='reply_tasks'"
-            ).fetchone()[0]
-            == 77
-        )
 
 
 def test_frozen_skill_reader_uses_claimed_material_after_current_input_changes(

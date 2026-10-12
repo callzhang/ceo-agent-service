@@ -2427,3 +2427,25 @@ replacement新增的记录、业务结果和回执，不用旧数据库文件覆
 workload查provider引用时沿用范围索引并在范围内按原public ID排序；不扫描整个
 provider历史，不改成物理ID排序。取消重复TEXT唯一索引，没有增加覆盖索引。
 此规则限定本期三个实际整数ID类型，后续UUID类型需采用实际TEXT身份约束。
+
+
+## Unified reply and work-input storage (Store 2026-10-11.3)
+
+第四期4B首单元将回复任务、输入版本与工作汇总输入存入物理 `tasks`，Task Agent 运行存入 `runs`。
+逻辑类型使用准确原表名；公共 ID 保留原整数命名空间，`legacy_key` 记录旧 ID。reply task 的公共 ID
+等于物理 ID；输入和工作输入通过类型与公共 ID 查找物理记录。`current_input_id`、`claimed_input_id`
+与输入的父引用使用物理外键，DTO 继续返回准确原公共输入 ID。Task run 的 `summary_input_id`
+仍是原公共工作输入 ID，原来源没有该外键，不新增外键。
+
+保留的输入 TEXT、BLOB 与 WSI1 编码保持原字节。终态正文精简规则、状态与尝试次数、执行代、领取 CAS、
+业务结果、原生运行定位和执行回执保持原语义。Task run 的三项已退休空过程缓存不再物理保存；历史正文
+依然从原生 trajectory 读取，缺失明确报告不可用。没有新增业务字段、旧表视图或长期双写。
+
+此单元配对发布使用已验证的 `2026-10-11.2→2026-10-11.3`。副本正迁和逆迁比较原记录、源 DDL、
+索引、触发器、序列及版本；逆迁保留 replacement 期间的新输入、结果与回执，以及已分配后删除的 ID
+水位。部署静默检查明确读取旧12或新13布局，并支持普通元组与 sqlite3.Row 连接。
+其他 Meeting、OKR、weekly 与 scheduled/Workbench 结构仍由后续单元处理。
+
+这是当前开发分支的行为说明，生产上线状态和验收边界见 `docs/database-redesign-phase4b-validation.md`。
+
+旧 `2026-10-10.2→2026-10-11.1` 输入 publication 与其无运行调用的迁移／inverse helper 已退休；当前二次启动不运行旧全局补造逻辑。损坏或混合的当前 typed schema 明确拒绝，既有修复缺失辅助索引的入口保持原边界。回退使用本次捕获的准确源布局和对应旧代码，保留 replacement 新事实。

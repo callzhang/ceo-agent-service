@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.task_storage import REPLY_TASK_INPUT_SQL, REPLY_TASK_SQL
 
 import asyncio
 import argparse
@@ -943,7 +944,7 @@ def _current_task_generation(db_path: Path | None, task_id: int | None) -> str:
     try:
         with closing(sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True)) as connection:
             row = connection.execute(
-                "select execution_generation from reply_tasks where id=?", (task_id,)
+                f"select execution_generation from ({REPLY_TASK_SQL}) where id=?", (task_id,)
             ).fetchone()
     except sqlite3.Error as exc:
         raise ValueError("task file binding is unavailable") from exc
@@ -970,7 +971,7 @@ def _read_bound_task_skill(
         ) as connection:
             row = connection.execute(
                 "select tasks.execution_generation, inputs.trigger_message_json "
-                "from reply_tasks tasks join reply_task_inputs inputs "
+                f"from ({REPLY_TASK_SQL}) tasks join ({REPLY_TASK_INPUT_SQL}) inputs "
                 "on inputs.id=tasks.claimed_input_id and inputs.reply_task_id=tasks.id "
                 "where tasks.id=?",
                 (task_id,),

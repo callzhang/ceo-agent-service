@@ -133,3 +133,8 @@ Meeting发送键`meeting-alignment:{OLD job.id}:{meeting_id}[:sensitive]`原样�
 4B第一子单元的reply父/输入显示及正文/provenance字段直接保存为真实源scalar列，与4A取舍一致，取消固定键外层JSON包装和json_set/类型转换。这不增加业务字段；原source默认值、NULL、不可变输入身份和终态精简规则保持，不适用类型列为NULL。WSI payload_json仍保持原TEXT/BLOB，不包裹、重压缩或base64。
 
 真实生产Task run没有summary_input_id FK或status CHECK。该字段保留原名和原public WSI值，作为既有代码关系；读取WSI时指定record_type及legacy身份，不能套用共享runs.task_id FK。Task类型task_id保持NULL；逻辑Agent类型task_id仍有实际reply父FK，映到typed tasks。Task error和projection_json也保留原scalar及原字符串。明确取消的三个缓存列不变。原自然running唯一和source索引继续按summary_input_id保持。后续Meeting/OKR真实有声明FK的父关系独立核对与映射，不据此取消其源约束。
+
+
+4B Meeting 子单元字段复核：其23个job字段均保存真实source scalar，包括准确原JSON字符串，取消此前专有字段外层JSON包装。13个run字段只取消三项已退休空过程缓存。真实源没有status CHECK；run updated_at默认空字符串。当前副本唯一已知孤儿是run.id=2298、job_id=4908、status=retry，不是job.id=2298。
+
+有效Meeting run只保存指向typed Meeting task的物理task_id，公共job_id由父legacy_key还原；原缺失父按不同source job_id确定性分配无记录的保留物理ID并推进allocator水位，维持dangling FK，绝不创建ghost业务任务。仅这些孤儿run在真实source字段job_id scalar保留原公共父ID；有效run该列为NULL，不冗余保存可由FK取得的公共ID。DTO及逆迁明确区分两种准确来源，拒绝不一致映射。真实job/source自然键、claim CAS、delivery key、Memory parent唯一/FK及CASCADE保持；逆迁复原原始2298→4908finding。该细化尚未实现，后续副本与故障门槛仍必需。

@@ -1,6 +1,7 @@
 """Remove persisted trajectory copies and reclaim SQLite pages."""
 
 from __future__ import annotations
+from app.task_storage import task_id_expression, REPLY_TASK_INPUT_SQL, WORK_SUMMARY_INPUT_SQL
 
 import argparse
 import json
@@ -89,7 +90,7 @@ def _reply_input_storage_counts(db: sqlite3.Connection) -> tuple[int, int, int, 
         "coalesce(sum(length(cast(trigger_text as blob)) + "
         "length(cast(trigger_message_json as blob)) + "
         "length(cast(input_provenance_json as blob))),0) as bytes "
-        "from reply_task_inputs",
+        f"from ({REPLY_TASK_INPUT_SQL})",
     ).fetchone()
     attempts = db.execute(
         """select coalesce(sum(case when trigger_text<>'' then 1 else 0 end),0) as uncleared,
@@ -116,16 +117,16 @@ def compact_terminal_work_summary_inputs(database: Path) -> dict[str, int]:
         db.execute("begin immediate")
         rows = db.execute(
             "select id, payload_json, source_created_at, body_sha256, body_bytes "
-            "from work_summary_inputs where status in ('done', 'skipped') "
+            f"from ({WORK_SUMMARY_INPUT_SQL}) where status in ('done', 'skipped') "
             "and body_compacted=0 order by id"
         ).fetchall()
         for row in rows:
             payload = row["payload_json"]
             source_created_at, digest, body_bytes = AutoReplyStore._work_summary_input_provenance(payload)
             db.execute(
-                "update work_summary_inputs set payload_json='{}', source_created_at=?, "
+                "update tasks set payload_json='{}', source_created_at=?, "
                 "body_sha256=?, body_bytes=?, body_compacted=1 "
-                "where id=? and status in ('done', 'skipped') and body_compacted=0",
+                f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and status in ('done', 'skipped') and body_compacted=0",
                 (source_created_at, digest, body_bytes, row["id"]),
             )
             counts["rows_compacted"] += 1
@@ -146,7 +147,6 @@ def compact_native_duplicates(database: Path) -> dict[str, int]:
         "reply_attempts": {"audit_tool_events_json": "[]"},
         "okr_review_runs": {"envelope_json": "{}", "audit_summary": "", "audit_tool_events_json": "[]"},
         "meeting_alignment_runs": {"decision_json": "{}", "audit_summary": "", "audit_tool_events_json": "[]"},
-        "task_agent_runs": {"decision_json": "{}", "audit_summary": "", "memory_recall_used": 0},
         "workbench_turns": {"final_text": "", "error_detail": ""},
         "codex_session_search_index": {
             "summary_text": "", "fts_text": "", "embedding_json": "",

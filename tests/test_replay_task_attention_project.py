@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from app.run_storage import create_run_schema
+from app.run_storage import create_run_schema, insert_run
+from app.task_storage import WORK_SUMMARY_INPUT_SQL, create_task_schema, insert_task, task_id_expression
 from app.project_context_service import ProjectContextService
 from app.store import AutoReplyStore
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
@@ -233,6 +234,24 @@ def test_case_replay_enqueues_each_source_version_only_when_its_turn_begins(tmp_
              "context": {"source_conversation_kind": "group"}, "summary": "会议确定交付项目，目标完成一期验收，目前按计划推进。"}
     second = {"source": {"type": "ai_minutes", "ref": "m:same", "created_at": "2026-10-02T10:00:00Z"},
               "context": {"source_conversation_kind": "group"}, "summary": "会议确定交付项目，目标完成一期验收，材料已经收齐。"}
+    with store._connect() as db:
+        insert_task(db, "work_summary_inputs", {
+            "id": 1000, "legacy_key": "10", "source_type": "ai_minutes",
+            "source_ref": "m:unrelated", "payload_json": "{}", "status": "pending",
+        })
+    enqueue = store.enqueue_work_summary_input
+
+    def enqueue_with_distinct_physical_id(*args, **kwargs):
+        public_id = enqueue(*args, **kwargs)
+        with store._connect() as db:
+            db.execute(
+                "update tasks set id=? where record_type='work_summary_inputs' "
+                f"and id={task_id_expression('work_summary_inputs', '?')}",
+                (public_id + 10000, public_id),
+            )
+        return public_id
+
+    monkeypatch.setattr(store, "enqueue_work_summary_input", enqueue_with_distinct_physical_id)
     seen = []
 
     class Runner:
@@ -268,6 +287,15 @@ def test_case_replay_enqueues_each_source_version_only_when_its_turn_begins(tmp_
     if missing_capabilities:
         assert "project_centered_storage_missing" in result["failures"]
     assert len(result["source_steps"]) == 2
+    with store._connect() as db:
+        for step in result["source_steps"]:
+            assert db.execute(
+                "select id from tasks where record_type='work_summary_inputs' and legacy_key=?",
+                (str(step["input_id"]),),
+            ).fetchone()[0] != step["input_id"]
+        assert db.execute(
+            f"select payload_json,status from ({WORK_SUMMARY_INPUT_SQL}) where source_ref='m:unrelated'"
+        ).fetchone()[:] == ("{}", "pending")
     assert [step["source_time"] for step in result["source_steps"]] == [first["source"]["created_at"], second["source"]["created_at"]]
     assert len(store.list_business_project_context_revisions(store.list_business_projects()[0].id)) == 2
 
@@ -302,12 +330,20 @@ def test_baseline_missing_project_storage_is_an_explicit_comparison_failure(tmp_
         for name in ("business_projects", "business_tasks", "business_attention_items", "business_attention_events",
                      "business_task_events", "business_task_anchor_links", "business_anchors"):
             db.execute(f"create table {name} (id integer, canonical_anchor_id integer, active integer)")
-        create_run_schema(db)
-        db.execute("create table task_agent_runs (id integer,summary_input_id integer,status text,decision_json text,projection_json text,error text)")
-        db.execute("insert into task_agent_runs values (1,1,'completed',?,?, '')", (
-            json.dumps({"task_decisions": [], "project_assessments": []}),
-            json.dumps({"status": "no_proposal", "outcomes": [], "recompute_error": ""}),
-        ))
+        create_task_schema(db)
+        create_run_schema(db, include_task_runs=True)
+        insert_run(db, "task_agent_runs", {
+            "id": 1001, "legacy_key": "1", "summary_input_id": 1,
+            "status": "completed", "projection_json": json.dumps({
+                "status": "no_proposal", "outcomes": [], "recompute_error": "",
+            }),
+        })
+        insert_run(db, "task_agent_runs", {
+            "id": 1000, "legacy_key": "2", "summary_input_id": 1,
+            "status": "completed", "projection_json": json.dumps({
+                "status": "no_proposal", "outcomes": [], "recompute_error": "",
+            }),
+        })
 
     class LegacyStore:
         def _connect(self):
@@ -322,6 +358,7 @@ def test_baseline_missing_project_storage_is_an_explicit_comparison_failure(tmp_
     store = LegacyStore()
     before = path.read_bytes()
     result = tool.readback(store, input_id=1, before=tool.read_domain(store))
+    assert result["run_id"] == 2  # latest public ID, despite descending physical IDs
     assert "project_centered_storage_missing" in result["failures"]
     assert result["comparison_capabilities"]["missing_tables"] == ["business_project_context_revisions", "business_project_evidence", "business_source_documents"]
     assert not result["passed"]
@@ -354,9 +391,23 @@ def test_replay_exact_cas_accepts_actual_plain_or_compressed_storage_and_keeps_c
     )
     with store._connect() as db:
         db.execute(
-            "update work_summary_inputs set payload_json=? where id=?",
+            "update tasks set payload_json=? where record_type='work_summary_inputs' "
+            f"and id={task_id_expression('work_summary_inputs', '?')}",
             (encoded if stored_as_blob else payload, input_id),
         )
+    with store._connect() as db:
+        db.execute(
+            "update tasks set id=1001 where record_type='work_summary_inputs' "
+            f"and id={task_id_expression('work_summary_inputs', '?')}", (input_id,),
+        )
+        assert db.execute(
+            "select id from tasks where record_type='work_summary_inputs' and legacy_key=?",
+            (str(input_id),),
+        ).fetchone()[0] != input_id
+        insert_task(db, "work_summary_inputs", {
+            "id": input_id, "legacy_key": "2", "source_type": "ai_minutes",
+            "source_ref": "m:unrelated", "payload_json": "{}", "status": "pending",
+        })
     observed = []
 
     class Runner:
@@ -365,7 +416,7 @@ def test_replay_exact_cas_accepts_actual_plain_or_compressed_storage_and_keeps_c
         def decide(self, current, *args, **kwargs):
             with store._connect() as db:
                 raw, status = db.execute(
-                    "select payload_json,status from work_summary_inputs where id=?",
+                    f"select payload_json,status from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
                     (input_id,),
                 ).fetchone()
             assert isinstance(raw, bytes)
@@ -384,3 +435,59 @@ def test_replay_exact_cas_accepts_actual_plain_or_compressed_storage_and_keeps_c
     )
     assert "execution_error" not in result, result.get("execution_error")
     assert observed == [item.summary]
+    with store._connect() as db:
+        assert db.execute(
+            "select source_ref,payload_json,status from tasks where id=?", (input_id,),
+        ).fetchone()[:] == ("m:unrelated", "{}", "pending")
+
+
+@pytest.mark.parametrize("field,value", [
+    ("source_type", "reply_attempt"), ("source_ref", "m:changed"),
+    ("status", "failed"), ("body_compacted", 1),
+    ("body_sha256", "changed-digest"), ("body_bytes", 999),
+    ("payload_json", "{}"),
+])
+def test_replay_exact_cas_rejects_each_changed_source_field(tmp_path, monkeypatch, field, value):
+    from app.task_agent_session import TaskAgentSessionLease
+    from app.task_models import WorkItem
+
+    store = AutoReplyStore(tmp_path / "cas-replay.sqlite3")
+    item = WorkItem.model_validate({
+        "source": {"type": "ai_minutes", "ref": "m:cas"},
+        "context": {"source_conversation_kind": "group"},
+        "summary": "Exact source version for local CAS validation.",
+    })
+    payload = item.model_dump_json()
+    input_id = store.enqueue_work_summary_input(item.source.type.value, item.source.ref, payload)
+    with store._connect() as db:
+        db.execute(
+            "update tasks set id=1001 where record_type='work_summary_inputs' "
+            f"and id={task_id_expression('work_summary_inputs', '?')}", (input_id,),
+        )
+    acquire = TaskAgentSessionLease.try_acquire
+    snapshots = []
+
+    def change_after_snapshot(current_store):
+        lease = acquire(current_store)
+        assert lease is not None
+        with store._connect() as db:
+            db.execute(
+                f"update tasks set {field}=? where record_type='work_summary_inputs' "
+                f"and id={task_id_expression('work_summary_inputs', '?')}", (value, input_id),
+            )
+            snapshots.append(tuple(db.execute("select * from tasks where id=1001").fetchone()))
+        return lease
+
+    monkeypatch.setattr(TaskAgentSessionLease, "try_acquire", staticmethod(change_after_snapshot))
+
+    class Runner:
+        def decide(self, *args, **kwargs):
+            pytest.fail("CAS failure must occur before runner execution")
+
+    with pytest.raises(ValueError, match="input changed before exact replay"):
+        _tool().replay_input(store, Runner(), input_id, source_ref=item.source.ref, source_payload=payload)
+    with store._connect() as db:
+        assert tuple(db.execute("select * from tasks where id=1001").fetchone()) == snapshots[0]
+    lease = acquire(store)
+    assert lease is not None
+    lease.close()

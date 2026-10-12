@@ -5,6 +5,8 @@ business results stay in their existing sources. The caller owns the transaction
 and disables foreign keys while rebuilding declared FK children.
 """
 
+from contextlib import closing
+from functools import lru_cache
 import re
 import sqlite3
 
@@ -329,11 +331,108 @@ RUN_TRIGGER_DDL = (
 )
 
 
-def create_run_schema(db: sqlite3.Connection) -> None:
-    db.execute(
-        RUN_TABLE_DDL.replace("create table runs", "create table if not exists runs", 1)
+TASK_AGENT_RUN_COLUMNS = (
+    "id",
+    "summary_input_id",
+    "codex_session_id",
+    "decision_json",
+    "audit_summary",
+    "memory_recall_used",
+    "created_at",
+    "status",
+    "error",
+    "finished_at",
+    "updated_at",
+    "projection_json",
+)
+TASK_AGENT_RUN_RETIRED = {
+    "decision_json": "{}",
+    "audit_summary": "",
+    "memory_recall_used": 0,
+}
+TASK_AGENT_RUN_SQL = """select cast(legacy_key as integer) as id, summary_input_id,
+    session_id as codex_session_id, '{}' as decision_json, '' as audit_summary,
+    0 as memory_recall_used, created_at, status, error, finished_at, updated_at,
+    projection_json from runs where record_type='task_agent_runs'"""
+RUN_DEFAULT_SQL["task_agent_runs"] = dict(
+    session_id="''",
+    status="'completed'",
+    error="''",
+    finished_at="''",
+    updated_at="''",
+    created_at="current_timestamp",
+    projection_json="'{}'",
+)
+# Keep the 4A declaration and inverse usable for their original release. 4B
+# extends only the actual Task domain fields and the declared reply-task FK.
+TASK_RUN_TABLE_DDL = RUN_TABLE_DDL.replace(
+    "'agent_run_state_events'))", "'agent_run_state_events','task_agent_runs'))", 1
+).replace("references reply_tasks(id)", "references tasks(id)")
+TASK_RUN_TABLE_DDL = TASK_RUN_TABLE_DDL.replace(
+    "    phase text,",
+    "    phase text,\n    summary_input_id integer,\n    error text,\n    projection_json text,",
+    1,
+)
+TASK_RUN_TABLE_DDL = (
+    TASK_RUN_TABLE_DDL.rstrip().removesuffix(")")
+    + """,
+    check(record_type<>'task_agent_runs' or (
+        summary_input_id is not null and session_id is not null and status is not null
+        and error is not null and finished_at is not null and updated_at is not null
+        and projection_json is not null and task_id is null and parent_id is null))
+)"""
+)
+_TASK_DOMAIN_FIELDS = {
+    "summary_input_id",
+    "session_id",
+    "created_at",
+    "status",
+    "error",
+    "finished_at",
+    "updated_at",
+    "projection_json",
+}
+_CORE_RUN_FIELDS = {
+    COLUMN_MAP[record_type].get(column, column)
+    for record_type, columns in SOURCE_COLUMNS.items()
+    for column in columns
+    if column != "id" and column not in RETIRED_COLUMNS
+}
+TASK_RUN_TABLE_DDL = (
+    TASK_RUN_TABLE_DDL.rstrip().removesuffix(")")
+    + ",check(record_type<>'task_agent_runs' or ("
+    + " and ".join(
+        field + " is null" for field in sorted(_CORE_RUN_FIELDS - _TASK_DOMAIN_FIELDS)
     )
-    for sql in (*RUN_INDEX_DDL, *RUN_TRIGGER_DDL):
+    + ")),check(record_type='task_agent_runs' or (summary_input_id is null and error is null and projection_json is null)))"
+)
+TASK_RUN_INDEX_DDL = (
+    *RUN_INDEX_DDL,
+    "create index idx_task_agent_runs_input on runs(summary_input_id,cast(legacy_key as integer)) where record_type='task_agent_runs'",
+    "create unique index idx_task_agent_runs_active_input on runs(summary_input_id) where record_type='task_agent_runs' and status='running'",
+)
+TASK_RUN_TRIGGER_DDL = (
+    *RUN_TRIGGER_DDL,
+    *tuple(
+        f"create trigger trg_runs_reply_task_{suffix} before {event} on runs when new.task_id is not null and exists(select 1 from tasks where id=new.task_id and record_type<>'reply_tasks') begin select raise(abort,'run task must be a reply task'); end"
+        for event, suffix in (("insert", "insert"), ("update of task_id", "update"))
+    ),
+)
+
+
+def create_run_schema(
+    db: sqlite3.Connection, *, include_task_runs: bool = False
+) -> None:
+    db.execute(
+        (TASK_RUN_TABLE_DDL if include_task_runs else RUN_TABLE_DDL).replace(
+            "create table runs", "create table if not exists runs", 1
+        )
+    )
+    for sql in (
+        (*TASK_RUN_INDEX_DDL, *TASK_RUN_TRIGGER_DDL)
+        if include_task_runs
+        else (*RUN_INDEX_DDL, *RUN_TRIGGER_DDL)
+    ):
         if sql.startswith("create unique index "):
             sql = sql.replace(
                 "create unique index ", "create unique index if not exists ", 1
@@ -345,8 +444,23 @@ def create_run_schema(db: sqlite3.Connection) -> None:
         db.execute(sql)
 
 
+@lru_cache(maxsize=2)
+def _declared_run_objects(include_task_runs: bool) -> dict[str, str]:
+    """Read SQLite's canonical declarations without changing SQL literals."""
+    with closing(sqlite3.connect(":memory:")) as reference:
+        create_run_schema(reference, include_task_runs=include_task_runs)
+        return dict(
+            reference.execute(
+                "select name,sql from sqlite_master where tbl_name='runs' and sql is not null"
+            )
+        )
+
+
 def run_schema_is_current(
-    db: sqlite3.Connection, *, allow_missing_objects: bool = False
+    db: sqlite3.Connection,
+    *,
+    allow_missing_objects: bool = False,
+    include_task_runs: bool = False,
 ) -> bool:
     """Match the current core layout and its declared indexes/triggers.
 
@@ -366,19 +480,17 @@ def run_schema_is_current(
         )
     }
 
-    def normalized(sql: str) -> str:
-        return " ".join(sql.strip().rstrip(";").split()).casefold()
-
-    if normalized(objects.get("runs", "")) != normalized(RUN_TABLE_DDL):
+    expected = _declared_run_objects(include_task_runs)
+    if objects.get("runs", "").strip() != expected["runs"].strip():
         return False
-    for sql in (*RUN_INDEX_DDL, *RUN_TRIGGER_DDL):
-        words = sql.split()
-        name = words[3] if words[1] == "unique" else words[2]
+    for name, sql in expected.items():
+        if name == "runs":
+            continue
         if name not in objects:
             if allow_missing_objects:
                 continue
             return False
-        if normalized(objects[name]) != normalized(sql):
+        if objects[name].strip() != sql.strip():
             return False
     return True
 
