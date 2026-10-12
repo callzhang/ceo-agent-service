@@ -228,11 +228,12 @@ def make_role_agent_command(
             "features.code_mode.enabled=",
             "features.code_mode.excluded_tool_namespaces=",
             "features.code_mode.direct_only_tool_namespaces=",
-            "skills.config=", "project_doc_max_bytes=",
+            "skills.config=", "project_doc_max_bytes=", "memories.use_memories=",
         ),
     )
     options = [
         "-c", "project_doc_max_bytes=0",
+        "-c", "memories.use_memories=false",
         *(option for feature in ROLE_DISABLED_NATIVE_FEATURES
           if feature != "code_mode_host" and not (
               role == "consumer" and feature in {"shell_tool", "unified_exec"}

@@ -1,5 +1,14 @@
 # Current Runtime Mechanism
 
+Codex Consumer/Audit role commands set the native per-invocation
+`memories.use_memories=false`: new role contexts use service-owned Work Profile
+and explicit business sources rather than automatically injected workspace
+memories from the CLI home. Service input assembly, business memory/MCP access
+and memory generation settings are unchanged. Existing conversation sessions
+are reused without reset; this does not erase historical session content or
+global memory files. Other standard/Task/Coding turns retain their current
+native memory settings. This CLI-internal context is not a service prompt section.
+
 The existing `read_dingtalk_drive_file` attachment reader limits downloaded bytes
 and OOXML aggregate uncompressed bytes to 20 MiB before parsing. Member parsing
 also uses bounded reads against one aggregate budget, with actual compressed

@@ -1,0 +1,237 @@
+{
+  "version": 1,
+  "checkout": "6ab876e938d1e0986b0ca6d4985f57e2364b043a",
+  "scope": "metadata-only full native trajectory and durable lifecycle readback; no business replay",
+  "runs": [
+    {
+      "runtime_attempt_id": 348301,
+      "agent_run_id": 348300,
+      "task_id": 404297,
+      "role": "consumer",
+      "proposal_revision": 0,
+      "session_id": "01a13140-8ab3-7a53-afe7-6327f650b851",
+      "native_range": [
+        0,
+        73
+      ],
+      "native_slice_sha256": "d1ac3c18748722a4e8f6b9dec111854c785b5136cce4684e5aa2055cd4fb5828",
+      "memory_chars": 0,
+      "skills": [
+        {
+          "name": "ceo-calendar-invite",
+          "body_chars": 6751,
+          "body_sha256": "b08ab29f68b93c0413fcf817548ca56ba35c54e713d5fca5e83a9766b90c4b5e",
+          "wrapped_sha256": "b08ab29f68b93c0413fcf817548ca56ba35c54e713d5fca5e83a9766b90c4b5e"
+        },
+        {
+          "name": "dingtalk-calendar",
+          "body_chars": 8098,
+          "body_sha256": "994c4adfbb05ed311739ae701c6441629aef4c7a6a3a9a10b1e092fb338fcf62",
+          "wrapped_sha256": "994c4adfbb05ed311739ae701c6441629aef4c7a6a3a9a10b1e092fb338fcf62"
+        },
+        {
+          "name": "dingtalk-chat",
+          "body_chars": 6717,
+          "body_sha256": "88647ed22020bd5b0963d002246b2a8d2b5f785746b19c31e32ecf8af2d575af",
+          "wrapped_sha256": "88647ed22020bd5b0963d002246b2a8d2b5f785746b19c31e32ecf8af2d575af"
+        }
+      ],
+      "outcome": "proposal"
+    },
+    {
+      "runtime_attempt_id": 348307,
+      "agent_run_id": 348306,
+      "task_id": 404297,
+      "role": "audit",
+      "proposal_revision": 0,
+      "session_id": "01a13141-5353-7112-a922-9bf6515bdaad",
+      "native_range": [
+        0,
+        64
+      ],
+      "native_slice_sha256": "6b6888989e1def0d22cd6a84cc3722d61c97a21cc95111b99a2d4d04043b2622",
+      "memory_chars": 0,
+      "skills": [
+        {
+          "name": "ceo-calendar-invite",
+          "body_chars": 6751,
+          "body_sha256": "b08ab29f68b93c0413fcf817548ca56ba35c54e713d5fca5e83a9766b90c4b5e",
+          "wrapped_sha256": "b08ab29f68b93c0413fcf817548ca56ba35c54e713d5fca5e83a9766b90c4b5e"
+        },
+        {
+          "name": "dingtalk-calendar",
+          "body_chars": 8098,
+          "body_sha256": "994c4adfbb05ed311739ae701c6441629aef4c7a6a3a9a10b1e092fb338fcf62",
+          "wrapped_sha256": "994c4adfbb05ed311739ae701c6441629aef4c7a6a3a9a10b1e092fb338fcf62"
+        },
+        {
+          "name": "dingtalk-chat",
+          "body_chars": 6717,
+          "body_sha256": "88647ed22020bd5b0963d002246b2a8d2b5f785746b19c31e32ecf8af2d575af",
+          "wrapped_sha256": "88647ed22020bd5b0963d002246b2a8d2b5f785746b19c31e32ecf8af2d575af"
+        }
+      ],
+      "outcome": "return"
+    },
+    {
+      "runtime_attempt_id": 348312,
+      "agent_run_id": 348311,
+      "task_id": 404297,
+      "role": "consumer",
+      "proposal_revision": 1,
+      "session_id": "01a13140-8ab3-7a53-afe7-6327f650b851",
+      "native_range": [
+        73,
+        121
+      ],
+      "native_slice_sha256": "505f86aac64c47d3b5020537065fa153e637f983095078cb6bf175645485523d",
+      "memory_chars": 0,
+      "skills": [
+        {
+          "name": "ceo-calendar-invite",
+          "body_chars": 6751,
+          "body_sha256": "b08ab29f68b93c0413fcf817548ca56ba35c54e713d5fca5e83a9766b90c4b5e",
+          "wrapped_sha256": "b08ab29f68b93c0413fcf817548ca56ba35c54e713d5fca5e83a9766b90c4b5e"
+        },
+        {
+          "name": "dingtalk-calendar",
+          "body_chars": 8098,
+          "body_sha256": "994c4adfbb05ed311739ae701c6441629aef4c7a6a3a9a10b1e092fb338fcf62",
+          "wrapped_sha256": "994c4adfbb05ed311739ae701c6441629aef4c7a6a3a9a10b1e092fb338fcf62"
+        },
+        {
+          "name": "dingtalk-chat",
+          "body_chars": 6717,
+          "body_sha256": "88647ed22020bd5b0963d002246b2a8d2b5f785746b19c31e32ecf8af2d575af",
+          "wrapped_sha256": "88647ed22020bd5b0963d002246b2a8d2b5f785746b19c31e32ecf8af2d575af"
+        }
+      ],
+      "outcome": "proposal"
+    },
+    {
+      "runtime_attempt_id": 348314,
+      "agent_run_id": 348313,
+      "task_id": 404297,
+      "role": "audit",
+      "proposal_revision": 1,
+      "session_id": "01a13142-bc89-71e3-97ee-99e1b76c39aa",
+      "native_range": [
+        0,
+        75
+      ],
+      "native_slice_sha256": "9a3807fe3aa843b2d489a3c82f633c935162917d2eadeef8c45fbc813c295411",
+      "memory_chars": 0,
+      "skills": [
+        {
+          "name": "ceo-calendar-invite",
+          "body_chars": 6751,
+          "body_sha256": "b08ab29f68b93c0413fcf817548ca56ba35c54e713d5fca5e83a9766b90c4b5e",
+          "wrapped_sha256": "b08ab29f68b93c0413fcf817548ca56ba35c54e713d5fca5e83a9766b90c4b5e"
+        },
+        {
+          "name": "dingtalk-calendar",
+          "body_chars": 8098,
+          "body_sha256": "994c4adfbb05ed311739ae701c6441629aef4c7a6a3a9a10b1e092fb338fcf62",
+          "wrapped_sha256": "994c4adfbb05ed311739ae701c6441629aef4c7a6a3a9a10b1e092fb338fcf62"
+        },
+        {
+          "name": "dingtalk-chat",
+          "body_chars": 6717,
+          "body_sha256": "88647ed22020bd5b0963d002246b2a8d2b5f785746b19c31e32ecf8af2d575af",
+          "wrapped_sha256": "88647ed22020bd5b0963d002246b2a8d2b5f785746b19c31e32ecf8af2d575af"
+        }
+      ],
+      "outcome": "approve"
+    },
+    {
+      "runtime_attempt_id": 348386,
+      "agent_run_id": 348382,
+      "task_id": 404299,
+      "role": "consumer",
+      "proposal_revision": 0,
+      "session_id": "01a13155-3ca9-7281-acc4-e2eb90625968",
+      "native_range": [
+        0,
+        51
+      ],
+      "native_slice_sha256": "c0600cfaa2ecc6f7a2642ec0059a13d489b8cd9019193f11012dd976a333cdb1",
+      "memory_chars": 0,
+      "skills": [
+        {
+          "name": "ceo-message-triage",
+          "body_chars": 7919,
+          "body_sha256": "a2538c3804386ef89a016a03a03f92f64c72cf3f4ff9f5fea0ad5b5906f3dc38",
+          "wrapped_sha256": "a2538c3804386ef89a016a03a03f92f64c72cf3f4ff9f5fea0ad5b5906f3dc38"
+        },
+        {
+          "name": "dingtalk-chat",
+          "body_chars": 6717,
+          "body_sha256": "88647ed22020bd5b0963d002246b2a8d2b5f785746b19c31e32ecf8af2d575af",
+          "wrapped_sha256": "88647ed22020bd5b0963d002246b2a8d2b5f785746b19c31e32ecf8af2d575af"
+        }
+      ],
+      "outcome": "no_action"
+    },
+    {
+      "runtime_attempt_id": 348388,
+      "agent_run_id": 348387,
+      "task_id": 404299,
+      "role": "audit",
+      "proposal_revision": 0,
+      "session_id": "01a13155-8d71-7212-a27a-2da8e9d46036",
+      "native_range": [
+        0,
+        36
+      ],
+      "native_slice_sha256": "b28c2f4384575a0ff650dd29868486d4655944c019d02f53b6ad165db2c9524a",
+      "memory_chars": 0,
+      "skills": [
+        {
+          "name": "ceo-message-triage",
+          "body_chars": 7919,
+          "body_sha256": "a2538c3804386ef89a016a03a03f92f64c72cf3f4ff9f5fea0ad5b5906f3dc38",
+          "wrapped_sha256": "a2538c3804386ef89a016a03a03f92f64c72cf3f4ff9f5fea0ad5b5906f3dc38"
+        },
+        {
+          "name": "dingtalk-chat",
+          "body_chars": 6717,
+          "body_sha256": "88647ed22020bd5b0963d002246b2a8d2b5f785746b19c31e32ecf8af2d575af",
+          "wrapped_sha256": "88647ed22020bd5b0963d002246b2a8d2b5f785746b19c31e32ecf8af2d575af"
+        }
+      ],
+      "outcome": "approve"
+    }
+  ],
+  "calendar": {
+    "task_id": 404297,
+    "source_time_offset_correct": true,
+    "full_model_visible_calendar_list_equals_mcp": true,
+    "consumer_candidate_time_shift_hours": -7,
+    "internal_arithmetic_cause": "not observable; repeated conversion is a hypothesis",
+    "original_candidate_id": 433,
+    "original_review_id": 425,
+    "original_review_decision": "return",
+    "replacement_candidate_id": 434,
+    "replacement_review_id": 426,
+    "replacement_review_decision": "approve",
+    "execution_id": 112,
+    "action_attempt_id": 109,
+    "action_ledger_status": "verified",
+    "provider_success": true,
+    "provider_delivery_status": "unknown",
+    "provider_delivery_status_known": false,
+    "business_completion_boundary": "platform accepted reply; independent delivery not established",
+    "same_session_repeat_skill_chars": 21566,
+    "same_complete_frozen_skill_content": true
+  },
+  "triage": {
+    "task_id": 404299,
+    "candidate_id": 435,
+    "review_id": 427,
+    "consumer_outcome": "no_action",
+    "audit_outcome": "approve",
+    "candidate_execution_count": 0,
+    "prior_processing_reaction_present": true,
+    "boundary": "no candidate execution, not zero external activity"
+  }
+}

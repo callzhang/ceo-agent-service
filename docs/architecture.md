@@ -1,5 +1,14 @@
 # CEO Agent Service Architecture
 
+Codex Consumer/Audit role commands set the native per-invocation
+`memories.use_memories=false`: new role contexts use service-owned Work Profile
+and explicit business sources rather than automatically injected workspace
+memories from the CLI home. Service input assembly, business memory/MCP access
+and memory generation settings are unchanged. Existing conversation sessions
+are reused without reset; this does not erase historical session content or
+global memory files. Other standard/Task/Coding turns retain their current
+native memory settings. This CLI-internal context is not a service prompt section.
+
 Console manual rerun loads only the terminal Agent run metadata used by the
 existing refusal check. It does not discover sessions or read/parse native
 trajectory/result files before queueing. Refusal behavior, original-input
