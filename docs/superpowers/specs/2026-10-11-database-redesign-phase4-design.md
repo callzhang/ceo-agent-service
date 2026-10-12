@@ -45,7 +45,7 @@ tasks候选原表页合计48,447,488B，runs候选原表页合计53,882,880B，�
 
 ## 4. 目标字段规则（逐列以CSV为准）
 
-只增加此前批准的结构：`id INTEGER PRIMARY KEY`、`record_type`、`legacy_key`、必要`parent_id`、承载既有专用字段的`payload_json`；关系列来自真实旧字段。`UNIQUE(record_type,legacy_key)`保留不同旧表的独立身份。
+只增加此前批准的结构：`id INTEGER PRIMARY KEY`、`record_type`、`legacy_key`、必要`parent_id`、承载既有专用字段的`payload_json`；关系列来自真实旧字段。每种原表的公共键唯一性保留。4A三个实际源PK都是INTEGER，使用唯一数字表达式 `(CAST(legacy_key AS INTEGER), record_type)`；显式新键按真实整数源转换为规范字符串。该索引先按公共数字ID查找，取消冗余TEXT唯一索引，避免 record_type 前缀让按parent/workload读取退化成全历史扫描。后续真实UUID类型必须按其原TEXT键另行验证唯一性，不能套用4A数字规则。
 
 - claim、状态、排序、自然唯一键、FK、恢复和运行定位字段保留实际列。CSV目标为tasks.xxx/runs.xxx的字段必须进入DDL或有等价受约束索引表达式，不能让队列扫描JSON正文。channel/conversation/trigger/input_revision、source_type/ref、meeting_id、week_end/manager/digest等自然键按类型保留。
 - 只用于该类型展示/采用结果的旧专用列进入显式typed payload；键名就是旧列名，不允许任意新增键。旧JSON TEXT作为原值字符串保留，不能parse再format而改变原有原文摘要、序列化形式或回执值。

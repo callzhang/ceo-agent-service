@@ -871,3 +871,367 @@ def test_preceding_source_with_runs_table_is_rejected_without_adopting_mixed_lay
         assert {
             table: db.execute(f'select * from "{table}"').fetchall() for table in tables
         } == before_rows
+
+
+def _provider_parent_lookup_store(tmp_path, *, standalone=False):
+    from app.run_storage import migrate_run_schema
+    from tests.run_schema_fixtures import previous_run_schema_store
+
+    path = tmp_path / "provider-parent-plan.db"
+    previous_run_schema_store(
+        path,
+        task_args=dict(
+            conversation_id="cid",
+            conversation_title="title",
+            single_chat=False,
+            trigger_message_id="msg",
+            trigger_create_time="time",
+            trigger_sender="sender",
+            trigger_text="task",
+            execution_generation="source",
+        ),
+    )
+    db = sqlite3.connect(path)
+    db.row_factory = sqlite3.Row
+    db.executemany(
+        "insert into agent_runs(id,reply_task_id,execution_generation,role,turn_attempt,status) values(?,1,'source','consumer',?,'completed')",
+        [(1, 0), (2, 1), (3, 2)],
+    )
+    insert_sql = """insert into agent_runtime_attempts(id,agent_run_id,workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status,session_id,transcript_reference,transcript_start,transcript_end,started_at,finished_at) values(?,?,'agent_run',?,?,?,'codex_cli','local_oauth',?,'completed',?,?,?,?,?,?)"""
+    source_attempts = [
+        (
+            7,
+            1,
+            "1",
+            1,
+            "route-A",
+            "model-A",
+            "synthetic-A",
+            "ref-A",
+            1,
+            11,
+            "start-A",
+            "end-A",
+        ),
+        (
+            9000,
+            1,
+            "1",
+            2,
+            "route-B",
+            "model-B",
+            "synthetic-B",
+            "ref-B",
+            12,
+            22,
+            "start-B",
+            "end-B",
+        ),
+        *(
+            (
+                number,
+                2,
+                "2",
+                number - 99,
+                "unrelated-route",
+                "unrelated-model",
+                "unrelated-session",
+                "unrelated-ref",
+                0,
+                0,
+                "unrelated-start",
+                "unrelated-end",
+            )
+            for number in range(100, 5100)
+        ),
+    ]
+
+    if standalone:
+        insert_sql = insert_sql.replace("'agent_run'", "'workbench'")
+        source_attempts = [
+            (
+                row[0],
+                None,
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+                if row[1] == 1
+                else f"00000000-0000-4000-8000-{row[0]:012d}",
+                row[3] if row[1] == 1 else 1,
+                *row[4:],
+            )
+            for row in source_attempts
+        ]
+    db.executemany(insert_sql, source_attempts)
+    expected = {}
+    for parent in (1, 3):
+        expected[parent] = {
+            "events": [
+                tuple(row)
+                for row in db.execute(
+                    "select runtime_kind,session_id,transcript_reference,transcript_start,transcript_end,started_at,finished_at from agent_runtime_attempts where agent_run_id=? and session_id<>'' order by id",
+                    (parent,),
+                )
+            ],
+            "result": db.execute(
+                "select runtime_kind,session_id,transcript_start,transcript_end from agent_runtime_attempts where agent_run_id=? and status='completed' order by id desc limit 1",
+                (parent,),
+            ).fetchone(),
+            "route": db.execute(
+                "select route_name,model from agent_runtime_attempts where agent_run_id=? order by id desc limit 1",
+                (parent,),
+            ).fetchone(),
+        }
+        expected[parent]["result"] = (
+            tuple(expected[parent]["result"])
+            if expected[parent]["result"] is not None
+            else None
+        )
+        expected[parent]["route"] = (
+            tuple(expected[parent]["route"])
+            if expected[parent]["route"] is not None
+            else ("", "")
+        )
+    if standalone:
+        from app.native_standalone import ref_from_attempt, legacy_codex_ref
+
+        expected["standalone"] = {}
+        expected["standalone_exact"] = {}
+        for key in (
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        ):
+            row = db.execute(
+                "select status,runtime_kind,session_id,transcript_start,transcript_end from agent_runtime_attempts where workload_kind='workbench' and workload_key=? order by (status='completed') desc,id desc limit 1",
+                (key,),
+            ).fetchone()
+            expected["standalone"][key] = ref_from_attempt(row)
+            exact = db.execute(
+                "select runtime_kind,session_id,transcript_start,transcript_end from agent_runtime_attempts where workload_kind='workbench' and workload_key=? and status='completed' and session_id='synthetic-B' and transcript_start=12 and transcript_end=22 order by id desc limit 1",
+                (key,),
+            ).fetchone()
+            expected["standalone_exact"][key] = (
+                ref_from_attempt(exact)
+                if exact is not None
+                else legacy_codex_ref(
+                    {
+                        "codex_session_id": "synthetic-B",
+                        "codex_transcript_start_line": 12,
+                        "codex_transcript_end_line": 22,
+                    }
+                )
+            )
+
+    db.commit()
+    db.execute("pragma foreign_keys=off")
+    db.execute("begin immediate")
+    migrate_run_schema(db)
+    db.execute(
+        "update service_state set value='2026-10-11.2' where key='store_schema_version'"
+    )
+    db.commit()
+    assert (
+        db.execute(
+            "select id from runs where record_type='agent_runtime_attempts' and legacy_key='7'"
+        ).fetchone()[0]
+        != 7
+    )
+    db.close()
+    return AutoReplyStore(path), expected
+
+
+@pytest.mark.parametrize("parent", [1, 3])
+def test_provider_native_snapshot_seeks_parent_and_preserves_source_public_order(
+    tmp_path, parent
+):
+    from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
+
+    store, expected = _provider_parent_lookup_store(tmp_path)
+    with store._connect() as db:
+        row = db.execute(
+            f"select * from ({AGENT_RUN_SQL}) where id=?", (parent,)
+        ).fetchone()
+        progress = []
+        db.set_progress_handler(lambda: progress.append(1) or 0, 100)
+        try:
+            run, events, result = store._agent_run_native_snapshot(row, db=db)
+        finally:
+            db.set_progress_handler(None, 0)
+        assert run.id == parent
+        assert [tuple(event) for event in events] == expected[parent]["events"]
+        assert (tuple(result) if result is not None else None) == expected[parent][
+            "result"
+        ]
+        assert len(progress) * 100 < 2000
+        plans = [
+            row[3]
+            for row in db.execute(
+                f"explain query plan select runtime_kind,session_id,transcript_reference,transcript_start,transcript_end,started_at,finished_at from ({RUNTIME_ATTEMPT_SQL}) where agent_run_id=? and session_id<>'' order by id",
+                (parent,),
+            )
+        ]
+        assert any("SEARCH" in detail and "parent_id=?" in detail for detail in plans)
+        assert not any("SCAN" in detail for detail in plans)
+
+
+@pytest.mark.parametrize("parent", [1, 3])
+def test_latest_provider_route_seeks_parent_and_matches_source_latest_id(
+    tmp_path, parent, monkeypatch
+):
+    from app.run_storage import RUNTIME_ATTEMPT_SQL
+
+    store, expected = _provider_parent_lookup_store(tmp_path)
+    open_connection = store._open_connection
+    progress = []
+
+    def measured_connection():
+        db = open_connection()
+        db.set_progress_handler(lambda: progress.append(1) or 0, 100)
+        return db
+
+    monkeypatch.setattr(store, "_open_connection", measured_connection)
+    assert store.latest_runtime_route_for_agent_run(parent) == expected[parent]["route"]
+    assert len(progress) * 100 < 2000
+    with store._connect() as db:
+        plans = [
+            row[3]
+            for row in db.execute(
+                f"explain query plan select route_name,model from ({RUNTIME_ATTEMPT_SQL}) where agent_run_id=? order by id desc limit 1",
+                (parent,),
+            )
+        ]
+        assert any("SEARCH" in detail and "parent_id=?" in detail for detail in plans)
+        assert not any("SCAN" in detail for detail in plans)
+
+
+def test_provider_batch_parent_lookup_uses_scoped_range_in_public_id_order(tmp_path):
+    from app.run_storage import RUNTIME_ATTEMPT_SQL
+
+    store, expected = _provider_parent_lookup_store(tmp_path)
+    with store._connect() as db:
+        query = f"select agent_run_id,runtime_kind,session_id,transcript_reference,transcript_start,transcript_end,started_at,finished_at from ({RUNTIME_ATTEMPT_SQL}) where session_id<>'' and agent_run_id in (?,?) order by agent_run_id,id"
+        progress = []
+        db.set_progress_handler(lambda: progress.append(1) or 0, 100)
+        try:
+            rows = db.execute(query, (1, 3)).fetchall()
+        finally:
+            db.set_progress_handler(None, 0)
+        assert [tuple(row) for row in rows] == [
+            (1, *event) for event in expected[1]["events"]
+        ]
+        assert len(progress) * 100 < 2000
+        plans = [row[3] for row in db.execute("explain query plan " + query, (1, 3))]
+        assert any("SEARCH" in detail and "parent_id=?" in detail for detail in plans)
+        assert not any("SCAN" in detail for detail in plans)
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"],
+)
+def test_exact_workbench_native_ref_uses_workload_scope_and_matches_source(
+    tmp_path, key
+):
+    from app.native_standalone import latest_standalone_ref, exact_standalone_ref
+    from app.run_storage import RUNTIME_ATTEMPT_SQL
+
+    store, expected = _provider_parent_lookup_store(tmp_path, standalone=True)
+    with store._connect() as db:
+        for operation, expected_ref in (
+            (
+                lambda: latest_standalone_ref(
+                    db, workload_kind="workbench", workload_key=key
+                ),
+                expected["standalone"][key],
+            ),
+            (
+                lambda: exact_standalone_ref(
+                    db,
+                    workload_kind="workbench",
+                    workload_key=key,
+                    row={
+                        "codex_session_id": "synthetic-B",
+                        "codex_transcript_start_line": 12,
+                        "codex_transcript_end_line": 22,
+                    },
+                ),
+                expected["standalone_exact"][key],
+            ),
+        ):
+            progress = []
+            db.set_progress_handler(lambda: progress.append(1) or 0, 100)
+            try:
+                actual = operation()
+            finally:
+                db.set_progress_handler(None, 0)
+            assert actual == expected_ref
+            assert len(progress) * 100 < 2000
+        plans = [
+            row[3]
+            for row in db.execute(
+                f"explain query plan select runtime_kind,session_id,transcript_start,transcript_end from ({RUNTIME_ATTEMPT_SQL}) where workload_kind=? and workload_key=? and status='completed' and session_id=? and transcript_start=? and transcript_end=? order by id desc limit 1",
+                ("workbench", key, "synthetic-B", 12, 22),
+            )
+        ]
+        assert any(
+            "SEARCH" in detail
+            and "workload_kind=?" in detail
+            and "workload_key=?" in detail
+            for detail in plans
+        )
+        assert not any("SCAN" in detail for detail in plans)
+
+
+def test_numeric_scoped_public_identity_is_canonical_and_has_one_unique_index(tmp_path):
+    from app.run_storage import create_run_schema
+
+    db = sqlite3.connect(tmp_path / "numeric-public.db")
+    db.execute("create table reply_tasks(id integer primary key)")
+    create_run_schema(db)
+    insert_run(
+        db,
+        "agent_runs",
+        dict(
+            id=1,
+            task_id=1,
+            execution_generation="g",
+            role="consumer",
+            status="completed",
+        ),
+    )
+    provider = dict(
+        id=7,
+        legacy_key="0007",
+        parent_id=1,
+        workload_kind="agent_run",
+        workload_key="1",
+        attempt_number=1,
+        route_name="route",
+        runtime_kind="codex_cli",
+        credential_mode="local_oauth",
+        model="model",
+        status="completed",
+    )
+    insert_run(db, "agent_runtime_attempts", provider)
+    assert db.execute("select legacy_key from runs where id=7").fetchone()[0] == "7"
+    assert provider["legacy_key"] == "0007"
+    with pytest.raises(sqlite3.IntegrityError):
+        insert_run(
+            db,
+            "agent_runtime_attempts",
+            provider | dict(id=8, legacy_key="7", attempt_number=2),
+        )
+    insert_run(
+        db,
+        "agent_run_state_events",
+        dict(
+            id=8, legacy_key="7", parent_id=1, phase="state", structured_error_json="{}"
+        ),
+    )
+    assert (
+        db.execute(
+            "select count(*) from runs where cast(legacy_key as integer)=7"
+        ).fetchone()[0]
+        == 2
+    )
+    indexes = db.execute("pragma index_list(runs)").fetchall()
+    assert not any(row[1].startswith("sqlite_autoindex_runs_") for row in indexes)
+    assert any(row[1] == "idx_runs_public_id" and row[2] == 1 for row in indexes)

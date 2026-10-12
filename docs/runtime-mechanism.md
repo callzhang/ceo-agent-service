@@ -2421,3 +2421,9 @@ replacement新增的记录、业务结果和回执，不用旧数据库文件覆
 仍走原初始化补齐路径，保留原修复行为和业务行。核心声明、索引或触发器定义不匹配，
 或旧／新核心表混存时，初始化拒绝该未验证布局；不把它当作fresh库部分建表。
 核心schema manifest核对本期实际表声明、索引与触发器，缺失对象不能被标记为current。
+
+4A三个整数源ID由唯一 `(CAST(legacy_key AS INTEGER), record_type)` 索引保留
+各自身份范围，显式新key写为原整数的规范字符串。索引先按数字ID排序，按parent或
+workload查provider引用时沿用范围索引并在范围内按原public ID排序；不扫描整个
+provider历史，不改成物理ID排序。取消重复TEXT唯一索引，没有增加覆盖索引。
+此规则限定本期三个实际整数ID类型，后续UUID类型需采用实际TEXT身份约束。

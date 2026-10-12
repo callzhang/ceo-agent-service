@@ -163,7 +163,6 @@ create table runs (
     first_effect_started_at text,
     result_schema_id text,
     phase text,
-    unique(record_type, legacy_key),
     check(record_type<>'agent_runs' or legacy_key is null or legacy_key=cast(id as text)),
     foreign key(task_id) references reply_tasks(id),
     foreign key(parent_id) references runs(id),
@@ -255,6 +254,8 @@ def insert_run(
     db: sqlite3.Connection, record_type: str, values: dict, *, ignore: bool = False
 ) -> sqlite3.Cursor:
     """Insert one typed fact using only that original source type's defaults."""
+    if values.get("legacy_key") is not None:
+        values = values | {"legacy_key": str(int(values["legacy_key"]))}
     defaults = {
         field: sql
         for field, sql in RUN_DEFAULT_SQL[record_type].items()
@@ -270,7 +271,7 @@ def insert_run(
 
 
 RUN_INDEX_DDL = (
-    "create index idx_runs_public_id on runs(record_type,cast(legacy_key as integer))",
+    "create unique index idx_runs_public_id on runs(cast(legacy_key as integer),record_type)",
     "create unique index idx_agent_runs_turn_identity on runs(task_id,execution_generation,role,proposal_revision,turn_attempt) where record_type='agent_runs'",
     "create index idx_agent_runs_status on runs(status,updated_at) where record_type='agent_runs'",
     "create index idx_agent_run_state_events_run on runs(parent_id,cast(legacy_key as integer)) where record_type='agent_run_state_events'",
