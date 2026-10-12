@@ -1,5 +1,13 @@
 # Task 原生 Skill 目录验证
 
+## 合并后固定版本对照（2026-10-12）
+
+独立审查确认原对照使用历史冻结输入；当前装配输入已变化，原脚本的 HEAD 基线也不能原样复现旧版本。因此新对照固定父版本 `678df76e` 和候选 `b8c8c882`，使用当前完整已安装 Skill、相同匿名事实/context/时间、gpt-5.6-luna/medium、完整原生 schema 和仅本地假 Memory。两版每阶段服务正文逐字相同：cold 32,096 字符，risk 35,600 字符；仅原生 Skill 目录选择不同。四份正文均在各自实际原生会话中唯一逐字匹配，所有结果通过完整业务模型校验。
+
+两版 cold 各实际保存 1 Project、0 Task、0 Attention；risk 各在其有效 cold session 续接。两版 risk 实际应用各保存 1 Project、1 Task 候选、1 Attention，均为 push；四个当前格式隔离数据库 quick_check 均通过。风险应用均复制同一当前 baseline cold 数据库；模型 context 为相同固定匿名夹具，不将该过程当成完整调度/检索验收。假 Memory 不是生产持久化证明，也不据一组样本宣称整体判断更优。
+
+完整原始事件暂存 `/private/tmp/ceo-task-catalog-current-rgsbwkqo`；版本、session、输入/输出摘要和应用计数见 `evals/trajectory_optimization/task_native_skill_catalog.current.results.v1.json`。先前历史差异与无效工具探针继续保留，不由此次成功替代。
+
 2026-10-12 同步父分支 `678df76e`（包含当前 main 的 typed storage 变更）后，目录、schema、指令去重和既有 runtime repair 五个受影响测试文件合计 118 passed；未执行本地全量测试。三个文档末尾追加冲突均保留两侧内容，既有并行材料读取说明也随正常三方合并保留。本条仅是合并后回归，不替代原生对照或生产验收。
 
 ## 原因与改动
