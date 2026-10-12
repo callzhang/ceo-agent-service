@@ -167,6 +167,7 @@ def test_reply_queue_snapshot_reads_metadata_in_one_source_pass(
     assert not any(name == "reply_task_inputs" for name, column in read_columns)
     assert any("MATERIALIZE current" in step for step in plan), plan
 
+
 @pytest.mark.parametrize("status", ["failed", "FaIlEd"])
 def test_work_failure_reads_keep_nonblank_error_order_and_fresh_recovery(
     tmp_path: Path, status: str
