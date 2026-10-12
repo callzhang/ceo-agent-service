@@ -1,5 +1,10 @@
 # CEO Agent Service Architecture
 
+Console manual rerun loads only the terminal Agent run metadata used by the
+existing refusal check. It does not discover sessions or read/parse native
+trajectory/result files before queueing. Refusal behavior, original-input
+verification and the appended execution generation remain unchanged.
+
 Empty dispatcher polls are read-only across all queue adapters. A candidate
 probe does not reserve an item: the existing writer transaction rechecks the
 candidate before changing its source and lease ledger atomically. Todo outbox
