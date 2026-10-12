@@ -117,3 +117,12 @@ This corrects the experiment, not production instructions or provider records. S
 
 
 Latest-main integration checkpoint: merge dccbb023 incorporates main ad7a6506, including phase4A runs and single-build Skill configuration. Both newly appended Consumer tests are retained. The first five-file focused run reports218 passed,4 skipped and one failing draft-only test SQL reference to the removed agent_runtime_attempts table. Adapting that fixture to runs/record_type/legacy_key yields44 passed across native preview, codec and prompt preview files. Runtime code is unchanged by this fixture repair; no production enablement or deployment follows.
+
+
+## Actual AuditAgent storage and session diagnostic
+
+On472eed9b, temporary stores and the real AuditAgentRunner/AgentTurnProcess run two candidates through native complete-schema cold and same-revision continuation. Both legal turns approve in one session. Both wrong-node turns return in their own shared session, correctly locating the bad node but falsely claiming an already-string task_id is numeric. Their strict business judgments fail. All four submitted Tasks match saved/native input, Settings historical Task previews and string candidate IDs; actual source IDs remain numeric. The codec/submission layer did not convert candidate values.
+
+A fixture-persisted Consumer R1 is linked to the previous Audit parent and changes only the genuine bad node. Its digest matches the legal candidate; Audit starts the existing fresh-per-revision session and still returns solely for the false numeric type. This is not stale same-session feedback alone and is not a fully model-generated Consumer feedback loop. No production fix, feedback filter or new prompt rule is adopted.
+
+The anonymous setup uses temporary databases, synthetic common configuration/Skill and empty Profile, with all external MCP replaced by read-only callbacks. Setup errors before model execution remain excluded; successful cold is not rerun after the harness parent/revision correction. Receipt: evals/trajectory_optimization/native_schema_audit_lifecycle.results.v1.json.
