@@ -114,11 +114,22 @@ def test_consumer_role_keeps_report_documents_without_controlled_write_tools(tmp
     """The role catalog is the execution boundary; old event diagnosis is not."""
     from app.agent_cli import build_role_server
     from app.consumer_agent import ConsumerAgentRunner
+    from app.task_storage import create_task_schema, insert_task
 
     db_path = tmp_path / "role.sqlite3"
     with sqlite3.connect(db_path) as db:
-        db.execute("create table reply_tasks (id integer primary key, execution_generation text not null)")
-        db.execute("insert into reply_tasks values (1, 'catalog-test')")
+        create_task_schema(db)
+        insert_task(db, "reply_tasks", {
+            "id": 1,
+            "channel": "dingtalk",
+            "conversation_id": "catalog-conversation",
+            "conversation_title": "Catalog test",
+            "single_chat": 0,
+            "trigger_message_id": "catalog-message",
+            "trigger_create_time": "",
+            "trigger_sender": "",
+            "execution_generation": "catalog-test",
+        })
     consumer = {tool.name for tool in asyncio.run(build_role_server(
         "consumer", task_id=1, db_path=db_path,
     ).list_tools())}
