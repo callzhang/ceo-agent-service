@@ -26,7 +26,11 @@
       "native_tool_calls": 0,
       "native_task_input_match": true,
       "state_and_verbatim_checks_pass": true,
-      "non_navigation_evidence_check_pass": true
+      "non_navigation_evidence_check_pass": true,
+      "observed_approval_policy": "on-request",
+      "observed_sandbox_policy": {
+        "type": "danger-full-access"
+      }
     },
     {
       "case": "confirmation",
@@ -51,7 +55,11 @@
       "native_tool_calls": 0,
       "native_task_input_match": true,
       "state_and_verbatim_checks_pass": true,
-      "non_navigation_evidence_check_pass": true
+      "non_navigation_evidence_check_pass": true,
+      "observed_approval_policy": "on-request",
+      "observed_sandbox_policy": {
+        "type": "danger-full-access"
+      }
     },
     {
       "case": "generic",
@@ -76,7 +84,11 @@
       "native_tool_calls": 0,
       "native_task_input_match": true,
       "state_and_verbatim_checks_pass": true,
-      "non_navigation_evidence_check_pass": true
+      "non_navigation_evidence_check_pass": true,
+      "observed_approval_policy": "on-request",
+      "observed_sandbox_policy": {
+        "type": "danger-full-access"
+      }
     },
     {
       "case": "generic",
@@ -101,7 +113,11 @@
       "native_tool_calls": 0,
       "native_task_input_match": true,
       "state_and_verbatim_checks_pass": true,
-      "non_navigation_evidence_check_pass": false
+      "non_navigation_evidence_check_pass": false,
+      "observed_approval_policy": "on-request",
+      "observed_sandbox_policy": {
+        "type": "danger-full-access"
+      }
     },
     {
       "case": "form",
@@ -126,7 +142,11 @@
       "native_tool_calls": 0,
       "native_task_input_match": true,
       "state_and_verbatim_checks_pass": true,
-      "non_navigation_evidence_check_pass": true
+      "non_navigation_evidence_check_pass": true,
+      "observed_approval_policy": "on-request",
+      "observed_sandbox_policy": {
+        "type": "danger-full-access"
+      }
     },
     {
       "case": "form",
@@ -151,7 +171,11 @@
       "native_tool_calls": 0,
       "native_task_input_match": true,
       "state_and_verbatim_checks_pass": true,
-      "non_navigation_evidence_check_pass": true
+      "non_navigation_evidence_check_pass": true,
+      "observed_approval_policy": "on-request",
+      "observed_sandbox_policy": {
+        "type": "danger-full-access"
+      }
     },
     {
       "case": "login",
@@ -176,7 +200,11 @@
       "native_tool_calls": 0,
       "native_task_input_match": true,
       "state_and_verbatim_checks_pass": true,
-      "non_navigation_evidence_check_pass": true
+      "non_navigation_evidence_check_pass": true,
+      "observed_approval_policy": "on-request",
+      "observed_sandbox_policy": {
+        "type": "danger-full-access"
+      }
     },
     {
       "case": "login",
@@ -201,8 +229,13 @@
       "native_tool_calls": 0,
       "native_task_input_match": true,
       "state_and_verbatim_checks_pass": true,
-      "non_navigation_evidence_check_pass": true
+      "non_navigation_evidence_check_pass": true,
+      "observed_approval_policy": "on-request",
+      "observed_sandbox_policy": {
+        "type": "danger-full-access"
+      }
     }
   ],
-  "acceptance": "incomplete: one candidate generic-page response includes navigation in evidence; no causal attribution established"
+  "acceptance": "incomplete: one candidate generic-page response includes navigation in evidence; no causal attribution established",
+  "independent_review": "Input, argv, native/event hashes, parser results, catalog sizes and zero tool calls independently verified; generic candidate navigation-evidence failure retained; complete acceptance remains incomplete."
 }
