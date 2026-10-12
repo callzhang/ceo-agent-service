@@ -2723,7 +2723,7 @@ def test_a_direct_receipt_without_agent_runs_still_shows_its_unsubscribe_address
             "where action_identity=?",
             (fixture.action_identity,),
         )
-        db.execute("delete from agent_runs")
+        db.execute("delete from runs where record_type='agent_runs'")
 
     detail = fixture.client.get(
         f"/api/console/email/classifications/{fixture.classification_id}"
@@ -2768,9 +2768,16 @@ def test_email_detail_projects_in_flight_unsubscribe_before_terminal_receipt(
             (fixture.task.id,),
         )
         db.execute(
-            "update agent_runs set status='running', completed_at='' where id=?",
+            "update runs set status='running', completed_at='' where record_type='agent_runs' and cast(legacy_key as integer)=?",
             (fixture.audit.id,),
         )
+
+    rows, total = fixture.store.list_unsubscribe_classifications(limit=20, offset=0)
+    assert total == 1
+    assert [row['id'] for row in rows] == [fixture.classification_id]
+    with sqlite3.connect(fixture.database) as db:
+        assert db.execute("select 1 from sqlite_master where name='agent_runs'").fetchone() is None
+        assert db.execute("select 1 from sqlite_master where name='runs'").fetchone() is not None
 
     response = fixture.client.get(
         f"/api/console/email/classifications/{fixture.classification_id}"
@@ -2814,7 +2821,7 @@ def test_email_detail_projects_safe_unsubscribe_continuation_state(
             (fixture.task.id,),
         )
         db.execute(
-            "update agent_runs set status='running', completed_at='' where id=?",
+            "update runs set status='running', completed_at='' where record_type='agent_runs' and cast(legacy_key as integer)=?",
             (fixture.audit.id,),
         )
     fixture.store.persist_email_unsubscribe_continuation(
@@ -2915,7 +2922,7 @@ def test_email_detail_omits_lineage_when_exact_audited_chain_conflicts(
             )
         elif mismatch == "generation":
             db.execute(
-                "update agent_runs set execution_generation='wrong-generation' "
+                "update runs set execution_generation='wrong-generation' "
                 "where id=?",
                 (fixture.audit.id,),
             )

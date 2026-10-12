@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from app.run_storage import AGENT_RUN_SQL, insert_run
 from app.store import AgentRole, AutoReplyStore, STORE_SCHEMA_VERSION_KEY
 from app import store as store_module
 
@@ -179,7 +180,7 @@ def test_wechat_native_replay_rechecks_exact_reference_after_io(tmp_path, monkey
     def rotate_reference(*args):
         result = original(*args)
         with store._connect() as db:
-            db.execute("update agent_runtime_attempts set session_id='rotated' where agent_run_id=? and status='completed'", (run.id,))
+            db.execute("update runs set session_id='rotated' where record_type='agent_runtime_attempts' and parent_id=? and status='completed'", (run.id,))
         return result
 
     monkeypatch.setattr(native_trajectory, "read_native_result_stream", rotate_reference)
@@ -391,12 +392,17 @@ def test_historical_hard_refusal_blocks_execution_without_erasing_review(tmp_pat
     if options:
         store.select_candidate_option(candidate["id"], review["id"], "execute")
     with store._connect() as db:
-        db.execute("""insert into agent_runs
-            (reply_task_id,execution_generation,role,proposal_revision,turn_attempt,status,structured_error_json)
-            values (?,?,'audit',99,0,'failed',?)""", (
-                task.id, "older-generation",
-                json.dumps(error),
-            ))
+        insert_run(
+            db, 'agent_runs', {
+                'task_id': task.id,
+                'execution_generation': 'older-generation',
+                'role': 'audit',
+                'proposal_revision': 99,
+                'turn_attempt': 0,
+                'status': 'failed',
+                'structured_error_json': json.dumps(error),
+            },
+        )
     # Restarting into the System executor cannot make an approved proposal or
     # previously selected human branch bypass the original provider refusal.
     store = AutoReplyStore(tmp_path / "candidate.sqlite3")
@@ -404,7 +410,7 @@ def test_historical_hard_refusal_blocks_execution_without_erasing_review(tmp_pat
         store.claim_candidate_execution(candidate["id"], review["id"], "worker", 60)
     assert store.get_review_candidate(candidate["id"])["invalidated_at"] == ""
     with store._connect() as db:
-        preserved = db.execute("select status,structured_error_json from agent_runs where reply_task_id=? and proposal_revision=99", (task.id,)).fetchone()
+        preserved = db.execute(f'select status,structured_error_json from ({AGENT_RUN_SQL}) where reply_task_id=? and proposal_revision=99', (task.id,)).fetchone()
         assert preserved["status"] == "failed"
         assert json.loads(preserved["structured_error_json"]) == error
         assert db.execute("select count(*) from candidate_executions").fetchone()[0] == 0
@@ -431,7 +437,7 @@ def test_unknown_dispatch_requires_reconciliation_after_restart(tmp_path: Path):
     assert reopened.list_candidate_action_attempts(claim["id"])[0]["status"] == "uncertain"
 
 
-def test_repeated_additive_migration_preserves_existing_history(tmp_path: Path):
+def test_repeated_current_schema_initialization_preserves_existing_history(tmp_path: Path):
     path = tmp_path / "candidate.sqlite3"
     store = AutoReplyStore(path)
     task, candidate, review, _ = _reviewed(store)
@@ -440,7 +446,11 @@ def test_repeated_additive_migration_preserves_existing_history(tmp_path: Path):
     with sqlite3.connect(path) as source, sqlite3.connect(migration_copy) as target:
         source.backup(target)
         assert target.execute("pragma integrity_check").fetchone()[0] == "ok"
-        target.execute("update service_state set value='2026-09-25.1' where key=?", (STORE_SCHEMA_VERSION_KEY,))
+        # Actual predecessor migrations use the exact captured 11.1 source
+        # fixture; this copied current database tests repeated initialization.
+        schema_version = target.execute(
+            "select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,),
+        ).fetchone()[0]
     reopened = AutoReplyStore(migration_copy)
     assert reopened.current_reviewed_candidate(task.id, task.execution_generation)["option_key"] == "stop"
     store_module._INITIALIZED_STORE_PATHS.discard(migration_copy.resolve())
@@ -448,6 +458,9 @@ def test_repeated_additive_migration_preserves_existing_history(tmp_path: Path):
     assert second.get_review_candidate(candidate["id"])["candidate_json"] == candidate["candidate_json"]
     with second._connect() as db:
         assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
+        assert db.execute(
+            "select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,),
+        ).fetchone()[0] == schema_version
 
 
 def test_done_requires_success_ledger_and_stop_branch_skips(tmp_path: Path):

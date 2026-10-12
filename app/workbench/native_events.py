@@ -26,6 +26,7 @@ from app.native_trajectory import (
 )
 from app.workbench.codex_runtime import _native_tool_failed
 from app.workbench.models import WorkbenchEvent, WorkbenchTurn
+from app.run_storage import RUNTIME_ATTEMPT_SQL
 
 AGENT_EVENTS = {"text_delta", "thinking_summary", "tool_started", "tool_completed", "file_changed"}
 UNAVAILABLE = "原生 Agent 记录不可用。"
@@ -101,8 +102,7 @@ def terminal_cached_turn_ids(db: sqlite3.Connection, db_path: Path) -> list[str]
 
 def _attempts(db: sqlite3.Connection, turn_id: str) -> list[sqlite3.Row]:
     return db.execute(
-        "select runtime_kind,session_id,transcript_start,transcript_end,status "
-        "from agent_runtime_attempts where workload_kind='workbench' and workload_key=? order by id",
+        f"select runtime_kind,session_id,transcript_start,transcript_end,status from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where workload_kind='workbench' and workload_key=? order by id",
         (turn_id,),
     ).fetchall()
 

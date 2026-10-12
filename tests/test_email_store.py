@@ -4605,11 +4605,11 @@ def test_audited_unsubscribe_lineage_query_uses_exact_primary_key_chain(
         for detail in details
     )
     assert any(
-        "SEARCH audit_runs USING INTEGER PRIMARY KEY" in detail for detail in details
+        "SEARCH runs USING INTEGER PRIMARY KEY" in detail for detail in details
     )
     assert any("SEARCH parent USING INTEGER PRIMARY KEY" in detail for detail in details)
     assert any("SEARCH canonical USING INTEGER PRIMARY KEY" in detail for detail in details)
-    assert not any("SCAN parent" in detail or "SCAN canonical" in detail for detail in details)
+    assert not any("SCAN runs" in detail or "SCAN parent" in detail or "SCAN canonical" in detail for detail in details)
 
 
 def test_current_schema_missing_required_foreign_key_is_domain_corruption(

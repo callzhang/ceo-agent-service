@@ -6694,7 +6694,7 @@ def test_consume_once_records_stale_processing_tasks_before_requeue(
             (claimed[0].id,),
         )
         db.execute(
-            "update agent_runs set lease_expires_at=datetime('now', '-1 minute') where id=?",
+            "update runs set lease_expires_at=datetime('now', '-1 minute') where record_type='agent_runs' and cast(legacy_key as integer)=?",
             (agent_claim.run.id,),
         )
     dws = FakeDws([conversation()], {"cid-1": []})
@@ -12804,8 +12804,7 @@ def test_stale_codex_resume_retries_same_thread_before_opening_new_thread(
             (task.id,),
         )
         db.execute(
-            "update agent_runs set lease_expires_at=datetime('now', '-1 minute') "
-            "where id=?",
+            "update runs set lease_expires_at=datetime('now', '-1 minute') where record_type='agent_runs' and cast(legacy_key as integer)=?",
             (claim.run.id,),
         )
     worker.now_provider = lambda: (
@@ -12904,8 +12903,7 @@ def test_stale_codex_resume_clears_session_and_retries_with_new_user_message(
             (task.id,),
         )
         db.execute(
-            "update agent_runs set lease_expires_at=datetime('now', '-1 minute') "
-            "where id=?",
+            "update runs set lease_expires_at=datetime('now', '-1 minute') where record_type='agent_runs' and cast(legacy_key as integer)=?",
             (claim.run.id,),
         )
     worker.now_provider = lambda: (

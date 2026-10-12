@@ -1,23 +1,19 @@
 import sqlite3
 
 from app import leak_check, quality_gate
+from app.run_storage import create_run_schema, insert_run
 
 
 def runtime_history(*, count=30, model="model"):
     db = sqlite3.connect(":memory:")
-    db.execute("create table agent_runs (id integer primary key, status text)")
-    db.execute(
-        """create table agent_runtime_attempts (
-        agent_run_id integer, workload_kind text, workload_key text, status text,
-        route_name text, runtime_kind text, credential_mode text, model text,
-        session_id text, failure_code text, transcript_reference text)"""
-    )
-    db.executemany(
-        """insert into agent_runtime_attempts values (
-        null, 'task', ?, 'completed', 'route', 'runtime', 'oauth', ?,
-        'session', '', 'session:reference')""",
-        [(str(index), model) for index in range(count)],
-    )
+    create_run_schema(db)
+    for index in range(count):
+        insert_run(db, 'agent_runtime_attempts', {
+            'workload_kind': 'task', 'workload_key': str(index), 'attempt_number': 1,
+            'status': 'completed', 'route_name': 'route', 'runtime_kind': 'runtime',
+            'credential_mode': 'oauth', 'model': model, 'session_id': 'session',
+            'transcript_reference': 'session:reference',
+        })
     return db
 
 

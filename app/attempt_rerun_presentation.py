@@ -3,6 +3,7 @@
 import json
 from dataclasses import dataclass
 from typing import Any, Iterable
+from app.run_storage import AGENT_RUN_SQL
 
 
 @dataclass(frozen=True)
@@ -20,9 +21,7 @@ def attempt_rerun_presentation(
         # Select only diagnostic JSON; reading a page never changes that guard.
         with store._connect() as db:
             errors = [row[0] for row in db.execute(
-                "select r.structured_error_json from agent_runs r "
-                "join reply_tasks t on t.id=r.reply_task_id "
-                "where t.business_object_key=? and r.structured_error_json<>''",
+                f"select r.structured_error_json from ({AGENT_RUN_SQL}) r join reply_tasks t on t.id=r.reply_task_id where t.business_object_key=? and r.structured_error_json<>''",
                 (reply_task.business_object_key,),
             )]
     else:

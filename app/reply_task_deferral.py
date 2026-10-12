@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
 
 
 _RECEIPT_DDL = """
@@ -123,7 +124,7 @@ def _snapshot(
     task = db.execute('select * from reply_tasks where id=?', (task_id,)).fetchone()
     if task is None:
         raise ValueError('reply task does not exist')
-    run = db.execute("""select * from agent_runs where reply_task_id=?
+    run = db.execute(f"""select * from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=?
         order by id desc limit 1""", (task_id,)).fetchone()
     blocked: list[str] = []
     receipt_table = db.execute("""select 1 from sqlite_master where type='table'
@@ -143,18 +144,18 @@ def _snapshot(
         'consumer', 'failed', task['execution_generation'],
     ):
         blocked.append('latest_run_not_failed_consumer')
-    if db.execute("select 1 from agent_runs where reply_task_id=? and status in ('pending','running') limit 1", (task_id,)).fetchone():
+    if db.execute(f"select 1 from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=? and status in ('pending','running') limit 1", (task_id,)).fetchone():
         blocked.append('active_agent_run')
-    role_leases = db.execute("""select lease_expires_at from agent_runs where reply_task_id=?
+    role_leases = db.execute(f"""select lease_expires_at from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=?
         and lease_owner<>''""", (task_id,)).fetchall()
     if any(_lease_active(row['lease_expires_at'], now) for row in role_leases):
         blocked.append('active_role_lease')
-    if db.execute("""select 1 from agent_runtime_attempts a
-        join agent_runs r on r.id=a.agent_run_id
+    if db.execute(f"""select 1 from ({RUNTIME_ATTEMPT_SQL}) a
+        join ({AGENT_RUN_SQL}) r on r.id=a.agent_run_id
         where r.reply_task_id=? and a.status in ('starting','running') limit 1""", (task_id,)).fetchone():
         blocked.append('active_native_runtime')
-    if db.execute("""select 1 from agent_runtime_attempts a
-        join agent_runs r on r.id=a.agent_run_id join reply_tasks t on t.id=r.reply_task_id
+    if db.execute(f"""select 1 from ({RUNTIME_ATTEMPT_SQL}) a
+        join ({AGENT_RUN_SQL}) r on r.id=a.agent_run_id join reply_tasks t on t.id=r.reply_task_id
         where t.business_object_key=? and a.first_effect_started_at<>'' limit 1""",
         (task['business_object_key'],)).fetchone():
         blocked.append('runtime_effect_started')
@@ -181,7 +182,7 @@ def _snapshot(
         (task['conversation_id'], task['trigger_message_id'])).fetchone():
         blocked.append('sent_reply_projection')
     from app.native_trajectory import read_run_event_evidence
-    for event_run in db.execute("""select r.* from agent_runs r
+    for event_run in db.execute(f"""select r.* from ({AGENT_RUN_SQL}) r
         join reply_tasks t on t.id=r.reply_task_id where t.business_object_key=?""",
         (task['business_object_key'],)).fetchall():
         events, available = read_run_event_evidence(db, event_run)
@@ -189,13 +190,13 @@ def _snapshot(
             blocked.append('tool_effect_or_unknown_effect')
         if not available:
             blocked.append('native_event_source_unavailable')
-    if db.execute("""select 1 from agent_effect_intents e join agent_runs r on r.id=e.agent_run_id
+    if db.execute(f"""select 1 from agent_effect_intents e join ({AGENT_RUN_SQL}) r on r.id=e.agent_run_id
         join reply_tasks t on t.id=r.reply_task_id
         where t.business_object_key=? limit 1""",
         (task['business_object_key'],)).fetchone():
         blocked.append('prepared_or_dispatched_effect')
-    if db.execute("""select 1 from agent_execution_receipts receipt
-        join agent_runs r on r.id=receipt.agent_run_id join reply_tasks t on t.id=r.reply_task_id
+    if db.execute(f"""select 1 from agent_execution_receipts receipt
+        join ({AGENT_RUN_SQL}) r on r.id=receipt.agent_run_id join reply_tasks t on t.id=r.reply_task_id
         where t.business_object_key=? limit 1""",
         (task['business_object_key'],)).fetchone():
         blocked.append('prior_execution_receipt')

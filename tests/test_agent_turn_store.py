@@ -36,6 +36,7 @@ from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayExecutionResult
 from app.process_runner import ProcessRunResult
 from app.service_codex_config import ServiceMcpServer
+from app.run_storage import AGENT_RUN_SQL, RUN_STATE_EVENT_SQL
 from app.store import (
     AgentRole,
     AgentRuntimeAttemptStartConflictError,
@@ -176,7 +177,7 @@ def test_resumed_session_binding_preserves_captured_transcript_end(tmp_path):
     )
     store.mark_agent_runtime_attempt_running_once(attempt.id)
     with store._connect() as db:
-        db.execute("update agent_runtime_attempts set transcript_end=158 where id=?", (attempt.id,))
+        db.execute("update runs set transcript_end=158 where record_type='agent_runtime_attempts' and cast(legacy_key as integer)=?", (attempt.id,))
     bound = store.set_agent_runtime_attempt_session(
         attempt.id, "existing-session", "codex_session:existing-session", transcript_start=124,
     )
@@ -1420,7 +1421,7 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
     assert json.loads(adopted["candidate_json"]) == result.model_dump(mode="json")
     assert summary in adopted["candidate_json"]
     with store._connect() as db:
-        assert db.execute("select final_result_json from agent_runs where id=?", (run.id,)).fetchone()[0] == ""
+        assert db.execute(f"select final_result_json from ({AGENT_RUN_SQL}) where id=?", (run.id,)).fetchone()[0] == ""
     assert store.get_conversation_runtime_session(
         task.conversation_id,
         "claude_api",
@@ -1885,122 +1886,19 @@ def test_failed_run_without_native_does_not_fabricate_effect_event_fact(tmp_path
     assert json.loads(persisted.structured_error_json)["code"] == "crash_after_write"
 
 
-def _create_pre_role_database(path: Path) -> Path:
+def _create_previous_run_database(path: Path) -> Path:
+    from tests.run_schema_fixtures import previous_run_schema_store
+    previous_run_schema_store(path,task_args=dict(conversation_id='cid-old',conversation_title='Old',single_chat=False,trigger_message_id='msg-old',trigger_create_time='2026-08-05 10:00:00',trigger_sender='Derek',trigger_text='old task',execution_generation='old-gen'))
     with sqlite3.connect(path) as db:
-        db.executescript(
-            """
-            pragma foreign_keys=on;
-            create table reply_tasks (
-                id integer primary key autoincrement,
-                channel text not null default 'dingtalk',
-                conversation_id text not null,
-                conversation_title text not null,
-                single_chat integer not null,
-                trigger_message_id text not null,
-                trigger_create_time text not null,
-                trigger_sender text not null,
-                trigger_text text not null,
-                trigger_message_json text not null default '{}',
-                available_at text not null default '',
-                force_new_decision integer not null default 0,
-                oa_url text not null default '',
-                manual_rerun_attempt_id integer not null default 0,
-                manual_rerun_revision_key text not null default '',
-                execution_generation text not null default 'initial',
-                status text not null default 'done',
-                attempts integer not null default 0,
-                locked_at text,
-                error text not null default '',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp,
-                unique(channel, conversation_id, trigger_message_id)
-            );
-            create table agent_runs (
-                id integer primary key autoincrement,
-                reply_task_id integer not null,
-                execution_generation text not null,
-                status text not null default 'pending',
-                codex_session_id text not null default '',
-                transcript_start_line integer not null default 0,
-                transcript_end_line integer not null default 0,
-                final_result_json text not null default '',
-                structured_error_json text not null default '',
-                tool_events_json text not null default '[]',
-                side_effect_state text not null default 'none',
-                lease_owner text not null default '',
-                lease_expires_at text not null default '',
-                reconciliation_attempts integer not null default 0,
-                reconciliation_next_attempt_at text not null default '',
-                reconciliation_suspended integer not null default 0,
-                started_at text not null default '',
-                completed_at text not null default '',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp,
-                unique(reply_task_id, execution_generation),
-                foreign key(reply_task_id) references reply_tasks(id)
-            );
-            create table agent_run_events (
-                id integer primary key autoincrement,
-                agent_run_id integer not null,
-                sequence integer not null,
-                event_json text not null,
-                event_type text not null default '',
-                call_id text not null default '',
-                effect_kind text not null default '',
-                receipt_operation_id text not null default '',
-                event_scope text not null default 'direct',
-                created_at text not null default current_timestamp,
-                unique(agent_run_id, sequence),
-                foreign key(agent_run_id) references agent_runs(id)
-            );
-            create table agent_execution_receipts (
-                id integer primary key autoincrement,
-                agent_run_id integer not null,
-                receipt_id text not null,
-                operation_id text not null,
-                cli text not null,
-                command_path text not null,
-                command_digest text not null,
-                exit_code integer not null,
-                completed integer not null,
-                persisted integer not null,
-                safe_to_confirm integer not null,
-                created_at text not null default current_timestamp,
-                unique(agent_run_id, operation_id),
-                foreign key(agent_run_id) references agent_runs(id)
-            );
-            insert into reply_tasks (
-                id, conversation_id, conversation_title, single_chat,
-                trigger_message_id, trigger_create_time, trigger_sender,
-                trigger_text, execution_generation, status
-            ) values (1, 'cid-old', 'Old', 0, 'msg-old',
-                      '2026-08-05 10:00:00', 'Derek', 'old task', 'old-gen', 'done');
-            insert into agent_runs (
-                id, reply_task_id, execution_generation, status,
-                codex_session_id, final_result_json, completed_at,
-                created_at, updated_at
-            ) values (7, 1, 'old-gen', 'completed', 'session-old',
-                      '{"outcome":"completed"}', '2026-08-05 10:02:00',
-                      '2026-08-05 10:00:00', '2026-08-05 10:02:00');
-            insert into agent_run_events (
-                id, agent_run_id, sequence, event_json, event_type,
-                event_scope, created_at
-            ) values (8, 7, 1, '{"type":"item.completed"}', 'item.completed',
-                      'reconciliation', '2026-08-06 15:00:00');
-            insert into agent_execution_receipts (
-                id, agent_run_id, receipt_id, operation_id, cli,
-                command_path, command_digest, exit_code, completed,
-                persisted, safe_to_confirm, created_at
-            ) values (9, 7, 'receipt-1', 'operation-1', 'dws',
-                      'chat.message.send', 'digest-1', 0, 1, 1, 1,
-                      '2026-08-06 15:01:00');
-            """
-        )
+        db.execute("update reply_tasks set status='done' where id=1")
+        db.execute("""insert into agent_runs(id,reply_task_id,execution_generation,role,status,codex_session_id,completed_at,created_at,updated_at) values(7,1,'old-gen','audit','completed','session-old','2026-08-05 10:02:00','2026-08-05 10:00:00','2026-08-05 10:02:00')""")
+        db.execute("""insert into agent_run_state_events(id,agent_run_id,phase,structured_error_json,created_at) values(8,7,'historical_state','{}','2026-08-06 15:00:00')""")
+        db.execute("""insert into agent_execution_receipts(id,agent_run_id,receipt_id,operation_id,cli,command_path,command_digest,exit_code,completed,persisted,safe_to_confirm,created_at) values(9,7,'receipt-1','operation-1','dws','chat.message.send','digest-1',0,1,1,1,'2026-08-06 15:01:00')""")
     return path
 
 
 def test_agent_run_migration_preserves_receipts_without_exposing_legacy_events(tmp_path):
-    db_path = _create_pre_role_database(tmp_path / "old.sqlite3")
+    db_path = _create_previous_run_database(tmp_path / "old.sqlite3")
 
     store = AutoReplyStore(db_path)
     run = store.get_agent_run(7)
@@ -2015,7 +1913,7 @@ def test_agent_run_migration_preserves_receipts_without_exposing_legacy_events(t
     assert store.foreign_key_violations() == []
     with sqlite3.connect(db_path) as db:
         event = db.execute(
-            "select id, created_at from agent_run_events where agent_run_id=7"
+            f"select id, created_at from ({RUN_STATE_EVENT_SQL}) where agent_run_id=7"
         ).fetchone()
         receipt = db.execute(
             "select id, created_at, effect_counted "
@@ -2026,21 +1924,23 @@ def test_agent_run_migration_preserves_receipts_without_exposing_legacy_events(t
     assert not hasattr(store, "list_agent_execution_receipts")
     with sqlite3.connect(db_path) as db:
         columns = {
-            row[1] for row in db.execute("pragma table_info(agent_runs)").fetchall()
+            row[1] for row in db.execute("pragma table_info(runs)").fetchall()
         }
     assert "side_effect_state" not in columns
     assert not any(column.startswith("reconciliation_") for column in columns)
     assert not any(column.startswith("effect_") for column in columns)
 
 
-def test_agent_run_migration_converts_unknown_projection_and_preserves_history(
+def test_agent_run_migration_preserves_failed_projection_and_legacy_state_history(
     tmp_path,
 ):
-    db_path = _create_pre_role_database(tmp_path / "legacy-unknown.sqlite3")
+    db_path = _create_previous_run_database(tmp_path / "legacy-unknown.sqlite3")
     with sqlite3.connect(db_path) as db:
         db.execute(
-            "update agent_runs set status='unknown', structured_error_json='' where id=7"
+            "update agent_runs set status='failed', structured_error_json='{\"code\":\"legacy_unknown\",\"retryable\":true}' where id=7"
         )
+
+        db.execute("update agent_run_state_events set phase='legacy_unknown_migrated',structured_error_json='{\"code\":\"legacy_unknown\",\"retryable\":true}' where agent_run_id=7")
 
     store = AutoReplyStore(db_path)
     run = store.get_agent_run(7)
@@ -2053,7 +1953,7 @@ def test_agent_run_migration_converts_unknown_projection_and_preserves_history(
     }
     with sqlite3.connect(db_path) as db:
         event = db.execute(
-            "select phase, structured_error_json from agent_run_state_events "
+            f"select phase, structured_error_json from ({RUN_STATE_EVENT_SQL}) "
             "where agent_run_id=7 order by id desc limit 1"
         ).fetchone()
     assert event == (
@@ -2063,15 +1963,10 @@ def test_agent_run_migration_converts_unknown_projection_and_preserves_history(
 
 
 def test_agent_run_migration_preserves_existing_turn_identity(tmp_path):
-    db_path = _create_pre_role_database(tmp_path / "partial.sqlite3")
+    db_path = _create_previous_run_database(tmp_path / "partial.sqlite3")
     with sqlite3.connect(db_path) as db:
         db.executescript(
             """
-            alter table agent_runs add column role text not null default 'audit';
-            alter table agent_runs add column proposal_revision integer not null default 0;
-            alter table agent_runs add column turn_attempt integer not null default 0;
-            alter table agent_runs add column parent_agent_run_id integer;
-            alter table agent_runs add column operation_id text not null default '';
             update agent_runs
             set role='consumer', proposal_revision=2, turn_attempt=3;
             """
@@ -2085,10 +1980,10 @@ def test_agent_run_migration_preserves_existing_turn_identity(tmp_path):
     assert run.turn_attempt == 3
 
 
-def test_agent_run_migration_rolls_back_before_commit_on_foreign_key_failure(
+def test_agent_run_migration_preserves_source_before_nonempty_native_event_failure(
     tmp_path,
 ):
-    db_path = _create_pre_role_database(tmp_path / "broken.sqlite3")
+    db_path = _create_previous_run_database(tmp_path / "broken.sqlite3")
     with sqlite3.connect(db_path) as db:
         db.execute("pragma foreign_keys=off")
         db.execute(
@@ -2099,7 +1994,7 @@ def test_agent_run_migration_rolls_back_before_commit_on_foreign_key_failure(
             """
         )
 
-    with pytest.raises(sqlite3.IntegrityError, match="pre-existing foreign key violations"):
+    with pytest.raises(ValueError, match="agent_run_events contains native events"):
         AutoReplyStore(db_path)
 
     with sqlite3.connect(db_path) as db:
@@ -2109,7 +2004,7 @@ def test_agent_run_migration_rolls_back_before_commit_on_foreign_key_failure(
         orphan = db.execute(
             "select agent_run_id from agent_run_events where id=10"
         ).fetchone()
-    assert "role" not in columns
+    assert "role" in columns
     assert orphan == (999,)
 
 

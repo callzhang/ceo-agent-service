@@ -71,6 +71,7 @@ from app.email_html_text import html_to_text, visible_email_text
 from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 from app.sqlite_schema_lock import schema_initialize_lock
+from app.run_storage import AGENT_RUN_SQL
 
 
 EMAIL_SCHEMA_VERSION = 50
@@ -153,7 +154,7 @@ _AUDITED_UNSUBSCRIBE_LINEAGE_SQL = f"""
            tasks.execution_generation as task_execution_generation,
            tasks.status as task_status
     from email_unsubscribe_effects as effects
-    join agent_runs as audit_runs
+    join ({AGENT_RUN_SQL}) as audit_runs
       on audit_runs.id=effects.audit_agent_run_id
     join ({REPLY_TASK_CURRENT_SQL}) as tasks
       on tasks.id=audit_runs.reply_task_id
@@ -2220,10 +2221,10 @@ def _audited_unsubscribe_run_chain(
     final_audit_run_id: int,
 ) -> tuple[list[int], list[int]] | None:
     rows = db.execute(
-        """
+        f"""
         select id, role, proposal_revision, turn_attempt,
                parent_agent_run_id, operation_id
-        from agent_runs
+        from ({AGENT_RUN_SQL}) as agent_runs
         where reply_task_id=? and execution_generation=?
         """,
         (task_id, execution_generation),
@@ -2489,9 +2490,9 @@ def _current_unsubscribe_task_lineage(
     ):
         return None
     runs = db.execute(
-        """
+        f"""
         select id, role
-        from agent_runs
+        from ({AGENT_RUN_SQL}) as agent_runs
         where reply_task_id=? and execution_generation=?
         order by id
         """,
@@ -10085,12 +10086,12 @@ class EmailStore:
                   and json_extract(tasks.trigger_message_json, '$.lifecycle_version')=?
                 """
                 if audit_agent_run_id is not None:
-                    task_join += """
-                      join agent_runs as audit_runs on audit_runs.id=?
-                      join agent_runs as consumer_runs
+                    task_join += f"""
+                      join ({AGENT_RUN_SQL}) as audit_runs on audit_runs.id=?
+                      join ({AGENT_RUN_SQL}) as consumer_runs
                         on consumer_runs.id=audit_runs.parent_agent_run_id
                     """
-                    task_predicates += """
+                    task_predicates += f"""
                   and audit_runs.reply_task_id=tasks.id
                   and audit_runs.execution_generation=tasks.execution_generation
                   and audit_runs.role='audit'
@@ -10103,7 +10104,7 @@ class EmailStore:
                   and consumer_runs.proposal_revision=audit_runs.proposal_revision
                   and consumer_runs.id=(
                       select current_consumer.id
-                      from agent_runs as current_consumer
+                      from ({AGENT_RUN_SQL}) as current_consumer
                       where current_consumer.reply_task_id=tasks.id
                         and current_consumer.execution_generation=
                             tasks.execution_generation
@@ -10117,7 +10118,7 @@ class EmailStore:
                   )
                   and audit_runs.id=(
                       select current_audit.id
-                      from agent_runs as current_audit
+                      from ({AGENT_RUN_SQL}) as current_audit
                       where current_audit.reply_task_id=tasks.id
                         and current_audit.execution_generation=
                             tasks.execution_generation
@@ -10995,8 +10996,8 @@ class EmailStore:
                        tasks.trigger_message_id,
                        tasks.trigger_message_json,
                        tasks.execution_generation as task_generation
-                from agent_runs as audit
-                join agent_runs as consumer
+                from ({AGENT_RUN_SQL}) as audit
+                join ({AGENT_RUN_SQL}) as consumer
                   on consumer.id=audit.parent_agent_run_id
                 join ({REPLY_TASK_CURRENT_SQL}) as tasks on tasks.id=audit.reply_task_id
                 where audit.id=?
@@ -11526,12 +11527,12 @@ class EmailStore:
         """
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select claims.action_identity, claims.effect_digest,
                        claims.owner_id, claims.owner_generation,
                        claims.lease_token, runs.status as run_status
                 from email_unsubscribe_claims as claims
-                join agent_runs as runs
+                join ({AGENT_RUN_SQL}) as runs
                   on runs.id=claims.audit_agent_run_id
                 where claims.status in ('dispatching', 'uncertain')
                   and runs.status in ('failed', 'completed')
@@ -11570,10 +11571,10 @@ class EmailStore:
         with self._connect() as db:
             db.execute("begin immediate")
             claim = db.execute(
-                """
+                f"""
                 select claims.effect_digest, runs.status as run_status
                 from email_unsubscribe_claims as claims
-                join agent_runs as runs
+                join ({AGENT_RUN_SQL}) as runs
                   on runs.id=claims.audit_agent_run_id
                 where claims.action_identity=?
                   and claims.status in ('dispatching', 'uncertain')
@@ -12001,10 +12002,10 @@ class EmailStore:
                 (action_identity,),
             ).fetchone()
             audit = db.execute(
-                """
+                f"""
                 select runs.role, runs.status, runs.structured_error_json,
                        tasks.channel, tasks.trigger_message_id
-                from agent_runs as runs
+                from ({AGENT_RUN_SQL}) as runs
                 join reply_tasks as tasks on tasks.id=runs.reply_task_id
                 where runs.id=?
                 """,
@@ -13356,11 +13357,11 @@ class EmailStore:
                 str(row["name"])
                 for row in db.execute(
                     "select name from sqlite_master where type='table' "
-                    "and name in ('reply_tasks', 'agent_runs')"
+                    "and name in ('reply_tasks', 'runs')"
                 ).fetchall()
             }
             task_clause = ""
-            if task_tables == {"reply_tasks", "agent_runs"}:
+            if task_tables == {"reply_tasks", "runs"}:
                 task_clause = f"""
                     or classifications.id in (
                         select json_extract(
@@ -13751,11 +13752,11 @@ class EmailStore:
                 for row in db.execute(
                     """
                     select name from sqlite_master
-                    where type='table' and name in ('reply_tasks', 'agent_runs')
+                    where type='table' and name in ('reply_tasks', 'runs')
                     """
                 ).fetchall()
             }
-            if generic_tables != {"reply_tasks", "agent_runs"}:
+            if generic_tables != {"reply_tasks", "runs"}:
                 return None
             classification = db.execute(
                 """
@@ -14004,12 +14005,12 @@ class EmailStore:
                 for row in db.execute(
                     """
                     select name from sqlite_master
-                    where type='table' and name in ('reply_tasks', 'agent_runs')
+                    where type='table' and name in ('reply_tasks', 'runs')
                     """
                 ).fetchall()
             }
             task_rows: Sequence[sqlite3.Row] = ()
-            if generic_tables == {"reply_tasks", "agent_runs"}:
+            if generic_tables == {"reply_tasks", "runs"}:
                 task_rows = db.execute(
                     f"""
                     select id, conversation_id, trigger_message_id,
@@ -14029,7 +14030,7 @@ class EmailStore:
                     (classification_id,),
                 ).fetchall()
             lineage_by_action: dict[str, dict[str, object]] = {}
-            if unsubscribe_rows and generic_tables == {"reply_tasks", "agent_runs"}:
+            if unsubscribe_rows and generic_tables == {"reply_tasks", "runs"}:
                 for row in unsubscribe_rows:
                     _validate_durable_unsubscribe_result_text(
                         row["result_text"],
@@ -16834,7 +16835,7 @@ class EmailStore:
         ).fetchone()
         if source is None:
             raise EmailActionPlanConflict("unsubscribe cancellation source changed")
-        if (db.execute("select 1 from agent_runs where reply_task_id=?", (task_id,)).fetchone()
+        if (db.execute(f'select 1 from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=?', (task_id,)).fetchone()
                 or db.execute("select 1 from dispatcher_claim_leases where adapter_name in ('reply','scheduled_execution') and source_id=? and owner<>'' and coalesce(terminal_at,'')=''", (str(task_id),)).fetchone()
                 or db.execute("select 1 from email_unsubscribe_claims where action_identity=?", (expected_action_identity,)).fetchone()
                 or db.execute("select 1 from email_unsubscribe_effects where action_identity=?", (expected_action_identity,)).fetchone()

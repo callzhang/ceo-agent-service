@@ -17,7 +17,7 @@ def _store(tmp_path: Path) -> AutoReplyStore:
 
 def test_task_execution_schema_migrates_existing_store_and_has_required_columns(tmp_path):
     path = tmp_path / "task-execution-migration.sqlite3"
-    AutoReplyStore(path)
+    original = AutoReplyStore(path)
     with sqlite3.connect(path) as db:
         for table in (
             "business_task_dingtalk_links",
@@ -26,13 +26,9 @@ def test_task_execution_schema_migrates_existing_store_and_has_required_columns(
             "business_task_todo_sync_outbox",
         ):
             db.execute(f"drop table if exists {table}")
-        db.execute(
-            "update service_state set value='2026-09-23.1' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        )
     store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    original._initialize()
     migrated = AutoReplyStore(path)
-    assert store_module.STORE_SCHEMA_VERSION > "2026-09-23.1"
     assert migrated._schema_is_current()
     with sqlite3.connect(path) as db:
         for table in (
@@ -106,52 +102,21 @@ def _claim_audit_run(
 def test_existing_database_adds_agent_runs_without_rewriting_reply_tasks(
     tmp_path: Path,
 ):
-    db_path = tmp_path / "task.sqlite3"
-    with sqlite3.connect(db_path) as db:
-        db.execute(
-            """
-            create table reply_tasks (
-                id integer primary key autoincrement,
-                channel text not null default 'dingtalk',
-                conversation_id text not null,
-                conversation_title text not null,
-                single_chat integer not null,
-                trigger_message_id text not null,
-                trigger_create_time text not null,
-                trigger_sender text not null,
-                trigger_text text not null,
-                trigger_message_json text not null default '{}',
-                available_at text not null default '',
-                force_new_decision integer not null default 0,
-                oa_url text not null default '',
-                manual_rerun_attempt_id integer not null default 0,
-                execution_generation text not null default 'initial',
-                status text not null default 'pending',
-                attempts integer not null default 0,
-                locked_at text,
-                error text not null default '',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp,
-                unique(channel, conversation_id, trigger_message_id)
-            )
-            """
-        )
-        db.execute(
-            """
-            insert into reply_tasks (
-                conversation_id, conversation_title, single_chat,
-                trigger_message_id, trigger_create_time, trigger_sender,
-                trigger_text
-            ) values ('cid-existing', 'Existing', 0, 'msg-existing',
-                      '2026-07-29 00:00:00', 'Derek', 'existing task')
-            """
-        )
+    from tests.run_schema_fixtures import previous_run_schema_store
 
+    db_path = tmp_path / "task.sqlite3"
+    previous = previous_run_schema_store(db_path, task_args=dict(
+        conversation_id="cid-existing", conversation_title="Existing",
+        single_chat=False, trigger_message_id="msg-existing",
+        trigger_create_time="2026-07-29 00:00:00", trigger_sender="Derek",
+        trigger_text="existing task",
+    ))
+    original = previous.get_reply_task(1)
     store = AutoReplyStore(db_path)
-    original = store.get_reply_task(1)
     claim = _claim_audit_run(store, 1, "initial", owner="worker-1")
 
     assert original is not None
+    assert store.get_reply_task(1) == original
     assert original.trigger_text == "existing task"
     assert claim.run.reply_task_id == 1
     with sqlite3.connect(db_path) as db:
@@ -163,6 +128,8 @@ def test_existing_database_adds_agent_runs_without_rewriting_reply_tasks(
             ).fetchall()
         }
     assert "idx_agent_runs_status" in indexes
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("select record_type from runs where id=?", (claim.run.id,)).fetchone() == ("agent_runs",)
 
 
 def test_complete_agent_run_returns_after_transaction_connection_closes(
@@ -311,42 +278,21 @@ def test_concurrent_ensure_reply_task_groups_share_immutable_identities(
 
 
 def test_channel_identity_migration_accepts_quoted_index_names(tmp_path: Path):
-    db_path = tmp_path / "task.sqlite3"
-    with sqlite3.connect(db_path) as db:
-        db.executescript(
-            """
-            create table reply_tasks (
-                id integer primary key autoincrement,
-                conversation_id text not null,
-                conversation_title text not null,
-                single_chat integer not null,
-                trigger_message_id text not null,
-                trigger_create_time text not null,
-                trigger_sender text not null,
-                trigger_text text not null,
-                status text not null default 'pending',
-                attempts integer not null default 0,
-                locked_at text,
-                error text not null default '',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp
-            );
-            create unique index "legacy user's trigger"
-                on reply_tasks(conversation_id, trigger_message_id);
-            insert into reply_tasks (
-                conversation_id, conversation_title, single_chat,
-                trigger_message_id, trigger_create_time, trigger_sender,
-                trigger_text
-            ) values (
-                'cid-quoted', 'Quoted', 0, 'msg-quoted',
-                '2026-07-29 00:00:00', 'Derek', 'quoted index'
-            );
-            """
-        )
+    from tests.reply_schema_fixtures import restore_cross_channel_reply_parent
 
+    db_path = tmp_path / "task.sqlite3"
+    original = AutoReplyStore(db_path)
+    task_id = original.ensure_reply_task(
+        conversation_id="cid-quoted", conversation_title="Quoted",
+        single_chat=False, trigger_message_id="msg-quoted",
+        trigger_create_time="2026-07-29 00:00:00",
+        trigger_sender="Derek", trigger_text="quoted index",
+    ).id
+    restore_cross_channel_reply_parent(original)
+    original._initialize()
     store = AutoReplyStore(db_path)
 
-    task = store.get_reply_task(1)
+    task = store.get_reply_task(task_id)
     assert task is not None
     assert task.channel == "dingtalk"
     assert task.trigger_message_id == "msg-quoted"

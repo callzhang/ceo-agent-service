@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from app.run_storage import RUNTIME_ATTEMPT_SQL
 
 EVALUATION_SCOPE = "task-agent:attention-eval:v1"
 EVALUATION_INSTRUCTION = """Evaluation instruction (prompt guidance only):
@@ -435,8 +436,7 @@ def readback(store, *, input_id, before, expected=None, project_before=None, sou
         attempts = [
             dict(row)
             for row in db.execute(
-                "select id,route_name,runtime_kind,model,status,failure_code,attempt_purpose "
-                "from agent_runtime_attempts where workload_kind='task' and workload_key=? order by id",
+                f"select id,route_name,runtime_kind,model,status,failure_code,attempt_purpose from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where workload_kind='task' and workload_key=? order by id",
                 (str(run["id"]) if run is not None else "",),
             )
         ]
