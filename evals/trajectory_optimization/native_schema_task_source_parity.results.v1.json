@@ -106,8 +106,8 @@
         "calls.json": "183cc9421c28e58a20b0d4bd10d742d387c5809142caa7a6d7a26beff64ba41f",
         "canonical.json": "e8b85a22678221acd8b78fd35bf23202d0c55c502f52d17d18befe94b1edc7e5"
       },
-      "strict_business_pass": false,
-      "reason": "wrong node identified but exact path incomplete"
+      "strict_business_pass": true,
+      "reason": "Correct source-only negative feedback; proposal.actions path is exact relative to the canonical candidate root, no mandatory Task-envelope prefix."
     },
     {
       "arm": "correct-1",
@@ -256,5 +256,6 @@
     ]
   },
   "independent_review": "readonly_business_matrix_review checked all native input hashes, Skill bodies/hashes, exact reads, canonical/native binding and feedback.",
-  "no_source_or_policy_mutation": true
+  "no_source_or_policy_mutation": true,
+  "evaluation_correction": "Existing contract does not require candidate. wrapper prefix; relative paths from ConsumerAgentResult root are accepted. Actual false types/fields/parameter changes remain failures."
 }
