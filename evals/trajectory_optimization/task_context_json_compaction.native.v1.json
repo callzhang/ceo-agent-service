@@ -13,7 +13,6 @@
       "prompt_sha256": "b5fc1372b8522deed2c58e2c9d0b815dc40d5e441cb8cf942fabe30656020f4b",
       "events_sha256": "4c402cf6f5e11d32ef09c8ec55321aa7c14ceeebd3f1490265536ba17246a76e",
       "command_sha256": "26d3c9f0d5e317a2d2a15a2135b8614b80e389fa69fc561d78134511961a5d5b",
-      "native_record_sha256": "aa2b4f6e83b25f0874b5b7b170634d3d90add9e053b0d0393441e3a0bdefcb93",
       "command_contains_skill_override": true,
       "parsed_model_valid": true,
       "project_decisions": 1,
@@ -27,7 +26,8 @@
         "tasks": 0
       },
       "attention_count": 0,
-      "native_calls_cumulative_session": [
+      "full_session_native_sha256": "aa2b4f6e83b25f0874b5b7b170634d3d90add9e053b0d0393441e3a0bdefcb93",
+      "full_session_calls": [
         {
           "name": "exec",
           "namespace": null
@@ -57,7 +57,6 @@
       "prompt_sha256": "b49f662fe8edde35b14d1bedeb654af833ed7549bf69cb8e0dd76f851ded3da1",
       "events_sha256": "3c062e9bb0d9544b24e11756bdb7b939583173bd73b7769019f7a24db1ff49fc",
       "command_sha256": "5e52de56433c013feef941d3d4b7cb1efcda7a40aa85ed63c157bd332e8146fe",
-      "native_record_sha256": "9af856df4dcb3cb3091ef0bbddf30152ef4d5c3c03d8300da76fdcef7bdbe6b2",
       "command_contains_skill_override": true,
       "parsed_model_valid": true,
       "project_decisions": 1,
@@ -71,7 +70,8 @@
         "tasks": 0
       },
       "attention_count": 0,
-      "native_calls_cumulative_session": [
+      "full_session_native_sha256": "9af856df4dcb3cb3091ef0bbddf30152ef4d5c3c03d8300da76fdcef7bdbe6b2",
+      "full_session_calls": [
         {
           "name": "exec",
           "namespace": null
@@ -97,7 +97,6 @@
       "prompt_sha256": "2935148621930bc24cce667cd633547d39db986595bc121fd7a3deb46c704c8b",
       "events_sha256": "8fb2fb99c3fa263b5f5358a423eaf2baea0b2ce7b5d79a7c7ec64d9f746d7185",
       "command_sha256": "ef263599cd385bd7945dccb8069809d9a16441f1bad7a4c5c7f1fc7e0702ac83",
-      "native_record_sha256": "aa2b4f6e83b25f0874b5b7b170634d3d90add9e053b0d0393441e3a0bdefcb93",
       "command_contains_skill_override": true,
       "parsed_model_valid": true,
       "project_decisions": 1,
@@ -111,7 +110,8 @@
         "tasks": 1
       },
       "attention_count": 1,
-      "native_calls_cumulative_session": [
+      "full_session_native_sha256": "aa2b4f6e83b25f0874b5b7b170634d3d90add9e053b0d0393441e3a0bdefcb93",
+      "full_session_calls": [
         {
           "name": "exec",
           "namespace": null
@@ -141,7 +141,6 @@
       "prompt_sha256": "3050c31cc59cc8e8334347e01d6c928ff2a92249b87d833e32dd4e3324cf03c1",
       "events_sha256": "de57ba2869bea0012c9ff08873e92bcc86f490693b88bc719317d3f3769874f8",
       "command_sha256": "217865fb4c6c807400c1e2e80c8a272c23f18e88dcf59bd5930aa9a76e6545eb",
-      "native_record_sha256": "9af856df4dcb3cb3091ef0bbddf30152ef4d5c3c03d8300da76fdcef7bdbe6b2",
       "command_contains_skill_override": true,
       "parsed_model_valid": true,
       "project_decisions": 1,
@@ -155,7 +154,8 @@
         "tasks": 1
       },
       "attention_count": 1,
-      "native_calls_cumulative_session": [
+      "full_session_native_sha256": "9af856df4dcb3cb3091ef0bbddf30152ef4d5c3c03d8300da76fdcef7bdbe6b2",
+      "full_session_calls": [
         {
           "name": "exec",
           "namespace": null
@@ -190,5 +190,6 @@
     "extra_model_tool_reads": "Models redundantly reread the same installed Skill via local commands; baseline reads1\u2013320 and combined AGENTS/Skill output is truncated, candidate reads1\u2013260. Full Skill was already in task input. These are model-selected downstream reads, not evidence that task source lost the full Skill.",
     "native_tool_statistics": "Counts include function_call and custom_tool_call; cumulative same-session baseline4/candidate3 calls. These include local read operations/tool discovery and local fake Memory writes, not zero tools.",
     "risk_initial_state": "Separate current-schema fixture DBs with the same asserted fixed ProjectContext, not continued cold DBs."
-  }
+  },
+  "native_record_scope": "Each row full_session hash/calls is the complete final same-SID cold+resume record; cold rows intentionally include later resume records. Stage-specific stdout event hashes, commands, prompts and decisions remain separate."
 }
