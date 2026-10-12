@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "scope": "Anonymous fixed document comparison: baseline=current named installed list; candidate=existing zero-argument Skill-tool discovery; same3 synthetic entries/source.",
+  "baseline_ref": "a738493c0e92691175d0ca8ca565d1fd0842588e",
+  "candidate_file_sha256": "ffa8513990f808fd0e9523d20e6e79062bc0cf07bb729af68cf27a3fe0278fcf",
+  "runs": [
+    {
+      "role": "consumer",
+      "arm": "baseline",
+      "session_id": "01a13247-fec6-7eb1-8749-c92155113ec7",
+      "canonical_valid": true,
+      "outcome": "no_action",
+      "summary": "Reviewed the draft budget document. The heading states a total of 120 units, while the three complete item rows sum to 110 units (40 + 50 + 20). The stated total exceeds the actual row sum by 10 units. This is a draft discrepancy only; no correction or spending approval is established, and no external action is needed.",
+      "candidate_digest": null,
+      "proposal_revision": 0,
+      "task_chars": 3040,
+      "task_sha256": "edfa52a2df3f0a494208639decdd47371ef99543ed6e2c12a0961f6262d4ab47",
+      "developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T15-42-21-01a13247-fec6-7eb1-8749-c92155113ec7.jsonl",
+      "native_records": 33,
+      "native_sha256": "e917ae109767b9094c42f6daac6746bf4f3c63a67d7d3ed745b8bbeed0a16866",
+      "task_complete": true,
+      "skill_reads": [
+        {
+          "path": "/private/tmp/ceo-skill-tool-discovery-_r38g4nv/skills/fixture-document-review/SKILL.md",
+          "name": "fixture-document-review",
+          "is_error": false,
+          "content_chars": 256,
+          "content_sha256": "137ed8dd024ecc7e2416e5a18f52830a869f6ac8ecb94300c81a0c26f9de8aa9"
+        }
+      ]
+    },
+    {
+      "role": "consumer",
+      "arm": "candidate",
+      "session_id": "01a13248-2259-7053-b97a-e02e1d4157cb",
+      "canonical_valid": true,
+      "outcome": "no_action",
+      "summary": "已完成预算草稿的只读复核：文档标题声明总额为 120 单位，三个完整明细行合计为 110 单位（40 + 50 + 20），两者相差 10 单位；因此，声明总额比明细行实际合计高出 10 单位。该草稿差异不表示支出已获批准，也未进行任何修改或外部操作。",
+      "candidate_digest": null,
+      "proposal_revision": 0,
+      "task_chars": 2492,
+      "task_sha256": "df962e1c710547f506e71b9bc369b3f1952cb9b679890fdc7e3997d156e0a51d",
+      "developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T15-42-30-01a13248-2259-7053-b97a-e02e1d4157cb.jsonl",
+      "native_records": 38,
+      "native_sha256": "69e759e13d9006291d172ee0abb9601189f76a6f6aa4249cdfd15e4f74f4dd60",
+      "task_complete": true,
+      "skill_reads": [
+        {
+          "path": null,
+          "name": null,
+          "is_error": false,
+          "content_chars": 0,
+          "content_sha256": null
+        },
+        {
+          "path": null,
+          "name": "fixture-document-review",
+          "is_error": false,
+          "content_chars": 256,
+          "content_sha256": "137ed8dd024ecc7e2416e5a18f52830a869f6ac8ecb94300c81a0c26f9de8aa9"
+        }
+      ]
+    },
+    {
+      "role": "audit",
+      "arm": "baseline",
+      "session_id": "01a13248-9f8a-70a2-9396-7d6caf3bee58",
+      "canonical_valid": true,
+      "outcome": "approve",
+      "summary": "Approve. The candidate correctly applies the document-review rule: the stated total is 120 units, while the three complete rows sum to 110 units (40 + 50 + 20), producing a 10-unit discrepancy. It correctly treats this as a draft discrepancy, does not claim a correction or spending approval, and proposes no external action.",
+      "candidate_digest": "32060acba2ee1fd000f7d33c9a33cfd55e6004d2651f6e7833aa5450a2343208",
+      "proposal_revision": 0,
+      "task_chars": 4573,
+      "task_sha256": "b7c05db980fadfa3627b33f4631b36011c1ac861ffd51802f9c35b2a54028f49",
+      "developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T15-43-02-01a13248-9f8a-70a2-9396-7d6caf3bee58.jsonl",
+      "native_records": 33,
+      "native_sha256": "19fab1e7f9a0d60d3c2c84332fbe60587d1d2688a29a9898634bd4f2517d17f3",
+      "task_complete": true,
+      "skill_reads": [
+        {
+          "path": "/Users/derek/.agents/AGENTS.md",
+          "name": null,
+          "is_error": true,
+          "content_chars": 0,
+          "content_sha256": null
+        },
+        {
+          "path": "/private/tmp/ceo-skill-tool-discovery-_r38g4nv/skills/fixture-document-review/SKILL.md",
+          "name": "fixture-document-review",
+          "is_error": false,
+          "content_chars": 256,
+          "content_sha256": "137ed8dd024ecc7e2416e5a18f52830a869f6ac8ecb94300c81a0c26f9de8aa9"
+        }
+      ]
+    },
+    {
+      "role": "audit",
+      "arm": "candidate",
+      "session_id": "01a13248-f180-7543-a458-eb2455e91666",
+      "canonical_valid": true,
+      "outcome": "approve",
+      "summary": "Approved. The candidate correctly applies the document-review rule: the stated total is 120 units, the three complete rows sum to 110 units (40 + 50 + 20), and the resulting 10-unit discrepancy is reported. It correctly identifies this as a draft discrepancy, does not claim a correction or spending approval, and proposes no external action.",
+      "candidate_digest": "32060acba2ee1fd000f7d33c9a33cfd55e6004d2651f6e7833aa5450a2343208",
+      "proposal_revision": 0,
+      "task_chars": 4025,
+      "task_sha256": "d00ec65d6a4786627e4f7bd4e2038557c3a36817f12bc240ccfc80322ad353f9",
+      "developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T15-43-23-01a13248-f180-7543-a458-eb2455e91666.jsonl",
+      "native_records": 40,
+      "native_sha256": "270bc1c738f0f5ccbe4f11ba7b940fbeeb71045662eafabd3b0af90d1aeb8a29",
+      "task_complete": true,
+      "skill_reads": [
+        {
+          "path": null,
+          "name": null,
+          "is_error": false,
+          "content_chars": 0,
+          "content_sha256": null
+        },
+        {
+          "path": null,
+          "name": "fixture-document-review",
+          "is_error": false,
+          "content_chars": 256,
+          "content_sha256": "137ed8dd024ecc7e2416e5a18f52830a869f6ac8ecb94300c81a0c26f9de8aa9"
+        },
+        {
+          "path": "/Users/derek/.agents/AGENTS.md",
+          "name": null,
+          "is_error": true,
+          "content_chars": 0,
+          "content_sha256": null
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "All4 turns use same initialized temporary Git directory and existing role helpers.",
+    "No production configuration change; no private business source/Skill content replay.",
+    "Single anonymous document case is not all-domain acceptance.",
+    "Candidate discovery says no Task Skill selected while the synthetic context still lists3 names; this is a fixture semantic mismatch, not an exact production unselected-task path.",
+    "OA refs7→1 changes future frozen Skill material membership. Prompt suffix unchanged does not prove delivery or version preservation for the other6 domains."
+  ],
+  "comparison": "Current applicable installed list vs existing zero-argument tool discovery. Both arms read only the document Skill body; no candidate body-read reduction proved.",
+  "oa_configuration_candidate": {
+    "task_id": 4,
+    "expected_version": 10,
+    "current_prompt_sha256": "91ccbae5fb0768536185c3036f7319aba25138b8b0379b7c8d57a0d8abc04baa",
+    "candidate_prompt_sha256": "bd3bc5aed557df687f8a4bdd2c1d830b2c2ff4a3e2dd964d1dac20653843d455",
+    "current_prompt_chars": 813,
+    "candidate_prompt_chars": 628,
+    "before_refs": [
+      "dingtalk-oa-approval",
+      "stardust-oa-finance-review",
+      "stardust-oa-project-review",
+      "stardust-oa-contract-review",
+      "stardust-oa-people-review",
+      "stardust-oa-attendance-travel-review",
+      "stardust-oa-cloud-resource-review"
+    ],
+    "after_refs": [
+      "dingtalk-oa-approval"
+    ],
+    "only_removed_text": "six explicit domain Skill references from the initial applicability list",
+    "all_other_payload_fields_identical": true,
+    "all_business_rule_text_after_first_sentence_unchanged": true,
+    "api_schema_validation": "both valid",
+    "live_write_performed": false,
+    "candidate_payload_local_path": "/private/tmp/ceo-skill-tool-discovery-_r38g4nv/oa-task4-candidate.json",
+    "release_gate": "Not release-ready: verify relevant business-domain delivery and same-run rule source consistency before applying via version-guarded API; retain historical snapshots.",
+    "future_frozen_source_change": "Only generic OA will be frozen;6 domain bodies would instead be read installed on demand. Applicable dependency delivery and source-version semantics require acceptance before publication."
+  },
+  "native_task_delivery": {
+    "prior4_task_messages_exactly_match_saved_service_prompts": true,
+    "native_skill_trigger_rule": "Multiple named available Skills must all be used when named by the user.",
+    "interpretation": "Potential interaction with generated user-message inventory; not established as causal by this second comparison.",
+    "current_oa_task4_has7_explicit_dollar_references": true
+  },
+  "independent_review": {
+    "agent": "native_catalog_review",
+    "mode": "read-only",
+    "all4_results_native_completion_verified": true,
+    "metadata3_rows_and_document_body_model_visible": true,
+    "candidate_body_read_reduction_proved": false,
+    "exact_config_diff_verified": true,
+    "release_ready": false
+  }
+}
