@@ -45,3 +45,7 @@ Task command factory 未传 native skill_names，最终适配器使用全量原�
 ## Existing CI fixture correction
 
 GitHub run38231038884 failed5 tests after11806 passes. Locally reproduced5 failures/27 passes: four semantic-repair tests hit a FakeAdapter signature that lacked the real adapter's skill_names argument; one source assertion still required the removed inline schema. FakeAdapter now accepts the real parameter and RecordingAdapter explicitly checks the Task selection. No repair, same-receipt replay, exhaustion-count, damaged-trajectory or reset-isolation assertion changed. The obsolete schema assertion is corrected separately above. Four affected test files pass91 locally, Ruff and diff checks pass, and independent read-only review found no relaxed business oracle. No full suite ran alongside the live service or manual Actions rerun was requested.
+
+## Released main integration (2026-10-12)
+
+Merged released main `6b43a93b` into this draft without rewriting either history. Three declaration conflicts in `CodexCommandFactory` preserve both Task `skill_names` and classifier `inlined_skill_names`; their existing build paths remain separate. Classifier Skill-once, Codex adapter, Task schema and runtime-router tests: 123 passed. Ruff and diff check pass. This integration is not a new native comparison or deployment; Vercel failure remains unexplained and the PR remains draft.

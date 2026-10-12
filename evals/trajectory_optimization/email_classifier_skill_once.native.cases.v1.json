@@ -1,0 +1,20 @@
+[
+  {
+    "name": "work",
+    "message": {
+      "sender": "project@example.invalid",
+      "subject": "Delivery review",
+      "text": "Please review the project delivery milestone. This is ordinary customer project discussion, not a bill or legal contract."
+    },
+    "expected": "work"
+  },
+  {
+    "name": "junk",
+    "message": {
+      "sender": "promo@example.invalid",
+      "subject": "Unrequested unrelated promotion",
+      "text": "Unsolicited promotion for unrelated products with no retention value."
+    },
+    "expected": "junk"
+  }
+]

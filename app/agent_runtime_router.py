@@ -182,6 +182,7 @@ class CodexCommandFactory:
     use_output_schema: bool = False
     image_paths: tuple[Path, ...] = ()
     skill_names: tuple[str, ...] = ()
+    inlined_skill_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.developer_instructions.strip():
@@ -196,6 +197,7 @@ class CodexCommandFactory:
         use_output_schema: bool = False,
         image_paths: Sequence[Path] = (),
         skill_names: Sequence[str] = (),
+        inlined_skill_names: Sequence[str] = (),
     ) -> "CodexCommandFactory":
         return cls(
             developer_instructions=developer_instructions,
@@ -203,6 +205,7 @@ class CodexCommandFactory:
             use_output_schema=use_output_schema,
             image_paths=tuple(image_paths),
             skill_names=tuple(skill_names),
+            inlined_skill_names=tuple(inlined_skill_names),
         )
 
     def build(
@@ -231,6 +234,12 @@ class CodexCommandFactory:
         if skip_git_repo_check:
             build_options["skip_git_repo_check"] = True
         command = adapter.build_command(**build_options)
+        if self.inlined_skill_names:
+            from app.business_skills import codex_inlined_skill_config_override
+
+            override = codex_inlined_skill_config_override(self.inlined_skill_names)
+            if override:
+                command[-1:-1] = ["-c", override]
         return command, adapter.build_env(route)
 
 

@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "route": "codex_oauth",
+  "model": "gpt-5.6-luna",
+  "reasoning": "medium",
+  "baseline": "same current factory with inlined_skill_names=(); reproduces prior standard command behavior",
+  "candidate": "new factory inlined_skill_names=(ceo-email-classifier,)",
+  "raw_evidence": "/private/tmp/ceo-email-skill-once-v2-4slyagw1",
+  "cases": [
+    {
+      "variant": "baseline",
+      "case": "work",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13012-13b8-78d2-baf8-0f93e663cf3b",
+      "prompt_sha256": "209ebb0f64c946253d1aa77c86f9836e13ab22098cbd0d30a5429556857a62a0",
+      "expected_category_matches": true,
+      "native_selected_skill_chars": [
+        4343
+      ],
+      "actual_input_exact": true,
+      "tool_calls": 0,
+      "events_sha256": "fbbed8a0e933fc256bd94ad6b37169de77c84cc0fc41c734699b5961e18629b8",
+      "decision_sha256": "8a6f367d359a787dd909bfaa6c720ae1862d5fd3c3d4fb8fce31ffd23a308ad2"
+    },
+    {
+      "variant": "candidate",
+      "case": "work",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13012-3aa2-7283-96ed-5b1fa27bd41e",
+      "prompt_sha256": "209ebb0f64c946253d1aa77c86f9836e13ab22098cbd0d30a5429556857a62a0",
+      "expected_category_matches": true,
+      "native_selected_skill_chars": [],
+      "actual_input_exact": true,
+      "tool_calls": 0,
+      "events_sha256": "51cbe19cc7cd9c042c66fae21749ea91a9d3a0ae338dc9da4ff5327d1a6fe182",
+      "decision_sha256": "da4c892aae848eaa86793197378b7d1ff673f632761645d8638a6b3c6cdb3672"
+    },
+    {
+      "variant": "baseline",
+      "case": "junk",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13012-5b77-7510-b976-76969752bab3",
+      "prompt_sha256": "278a63175a8b2ce78dcaab1f98bc9c3084c23fccceb6fd5ac7fb02c4e248ec24",
+      "expected_category_matches": true,
+      "native_selected_skill_chars": [
+        4343
+      ],
+      "actual_input_exact": true,
+      "tool_calls": 0,
+      "events_sha256": "de38bba4de7c7f46b936c55bae3495f3a163eacdb4589727067eb88950f8c7c3",
+      "decision_sha256": "4d6fa87489037e85ad497c578df5bc463bd9646bf511c3842f620df506e98e9f"
+    },
+    {
+      "variant": "candidate",
+      "case": "junk",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a13012-7e2d-7ac1-a7a2-a0e777fc95e4",
+      "prompt_sha256": "278a63175a8b2ce78dcaab1f98bc9c3084c23fccceb6fd5ac7fb02c4e248ec24",
+      "expected_category_matches": true,
+      "native_selected_skill_chars": [],
+      "actual_input_exact": true,
+      "tool_calls": 0,
+      "events_sha256": "e5b3cb48f2826b7a0ef419f3245ce64664a59ce1b01efa39ab5ae25eae30edeb",
+      "decision_sha256": "06fc8dbc0de9dc3ac77a18ed770596afefaa87c97229c38be6c5dd67866653b1"
+    }
+  ],
+  "managed_skill_sha256": "816012c27fe309a31e2054969abf944e8d63bcdc0f5575516acba5a720fc0dc9",
+  "callbacks": "all MCP servers disabled; zero native tool calls; no mail or durable memory actions",
+  "initial_nonreproducing_control": {
+    "raw_evidence": "/private/tmp/ceo-email-skill-once-l_8tkq0y",
+    "reason": "No scheduled explicit $Skill mention, so no native selected Skill injection. Observation helper cached its first inventory and could not see the next new SID; no native replay was used to repair that observation.",
+    "sessions": [
+      "01a13010-bf1b-7290-a6b5-d6af5e57160c",
+      "01a13010-e3c6-7ee3-a539-4f547a0c783f"
+    ]
+  },
+  "acceptance_boundary": "two anonymous cold cases, strict classification only; not scheduler, mailbox action or all-provider business acceptance",
+  "independent_review": "target behavior, four native submissions/results and narrow source changes verified read-only",
+  "catalog_observation_boundary": {
+    "baseline_work": 164,
+    "baseline_junk": 164,
+    "candidate_work": 163,
+    "candidate_junk": 253,
+    "extra_candidate_junk_plugin_entries": 90,
+    "cause": "unconfirmed; not attributed to override",
+    "user_disabled_path_entries_not_seen": 11,
+    "same_unrelated_visibility_universally_proved": false
+  }
+}
