@@ -181,6 +181,7 @@ class CodexCommandFactory:
     output_schema_path: Path | None = None
     use_output_schema: bool = False
     image_paths: tuple[Path, ...] = ()
+    skill_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.developer_instructions.strip():
@@ -194,12 +195,14 @@ class CodexCommandFactory:
         output_schema_path: Path | None = None,
         use_output_schema: bool = False,
         image_paths: Sequence[Path] = (),
+        skill_names: Sequence[str] = (),
     ) -> "CodexCommandFactory":
         return cls(
             developer_instructions=developer_instructions,
             output_schema_path=output_schema_path,
             use_output_schema=use_output_schema,
             image_paths=tuple(image_paths),
+            skill_names=tuple(skill_names),
         )
 
     def build(
@@ -223,6 +226,8 @@ class CodexCommandFactory:
             use_approval_bypass=False,
             sandbox_mode=None,
         )
+        if self.skill_names:
+            build_options["skill_names"] = self.skill_names
         if skip_git_repo_check:
             build_options["skip_git_repo_check"] = True
         command = adapter.build_command(**build_options)
