@@ -1852,7 +1852,8 @@ Email task visibility in Store13: unsubscribe classification lists, classificati
 隔离候选的核心 schema 将 scheduled_task_runs 和 workbench_events 存入 runs，
 workbench_tasks 和 workbench_turns 存入 tasks；record_type 保留来源身份。Workbench
 公共 TEXT ID 按原值保留，内部父引用使用物理整数 ID；原任务/run ID 不重写。
-本核心单元没有完成外层 scheduled/Workbench CRUD 与 reader 切换，不表示整期 C 已上线。
+scheduled/Workbench CRUD 与 reader 切换已完成并通过独立规格及质量复核。
+生产是否启用本期结构，以本期验收文档中的实际部署读回为准。
 
 构造器支持精确已验证 source13 到本期候选的事务迁移；无标记/未知来源包含任一退休源表
 时，在初始化修改之前拒绝。C 源 tasks/runs 的完整对象清单也必须符合已捕获的声明，
@@ -1862,13 +1863,14 @@ workbench_tasks 和 workbench_turns 存入 tasks；record_type 保留来源身�
 embedding_model、embedding_updated_at；非空或 NULL 值在迁移修改之前拒绝。用户输入、
 恢复上下文、错误详情、原始事件 payload、附件/工件/confirmation 结果保留；三个子表仍在
 原表，父外键映射保留原 NO ACTION 语义。七列搜索元数据与 title-only external-content
-FTS 保留，native 检索排序算法不变。Workbench DTO/native/RAM 的外层呈现由后续单元验证。
+FTS 保留，native 检索排序算法不变。Workbench DTO/native/RAM 的呈现已通过相关调用测试。
 
 配对回退通过当前数据逆迁，保留迁移后业务事实，而非用旧数据库文件覆盖。原 DDL、
 marker/timestamp、分配水位、TEXT 源表与保留子表的 rowid，以及原 FTS shadow 状态由
 本次发布的临时内存证据准确恢复；新/变更/删除搜索元数据只调整相应差异。
-不持久保存另一份 trajectory 或索引快照。完整实际副本、当前生产旧代码启动、
-发布失败阶段、CI、部署和线上读回仍须另行通过，详见 database-redesign-phase4c-validation.md。
+不持久保存另一份 trajectory 或索引快照。实际副本迁移、逆迁、新事实保留、旧代码
+启动及五种离线发布失败阶段已通过6b43a93b来源验证。最终验收还需绑定最新生产来源，
+通过完整CI、正常部署和线上读回；详见 database-redesign-phase4c-validation.md。
 
 
 ## Phase4C scheduled caller candidate
@@ -1913,8 +1915,9 @@ pending confirmation，原有业务recovery是独立调用，不作为迁移副�
 相关停止/完成竞态、late write、quiescence和恢复行为仍由原机制管理。
 
 旧列补齐测试已换成真实source13值保留和当前不完整schema非修改拒绝；索引修复
-继续以两次并发构造、原外键及附件bytes验证。候选尚需整期一致副本、真实旧代码
-逆迁启动、完整CI、正常发布与线上读回；本段不表示已部署。
+继续以两次并发构造、原外键及附件bytes验证。缺失辅助对象的既有初始化路径仍会
+执行conversation-session回填并更新schema marker时间；它不承诺所有业务行逐字不变。
+最终发布仍须最新来源绑定、完整CI、正常部署与线上读回；本段不表示已部署。
 
 
 Phase4C Attention 定时错误读取以原event_id或规范scheduled-task-run:<公共整数ID>

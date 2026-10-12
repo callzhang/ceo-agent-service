@@ -123,3 +123,6 @@ B live release completed: PR58/44a1a4e3, complete Quality38248135583 passed, PID
 4C WBcallerunit ready tocommit afterSPEC342 andQUALITY342 focusedpasses; own345primarypasses. PublicTEXT/numericcursor/physicalparent isolation, childDTO/FK, nativebounds/realhydration/stop/CAS/recovery,50k-event original20kbudget verified. Rootexplicitretirement ofpre-.7/.8/.9補列compat documented; actualsource13preservation,currentincomplete nonmutation/currentindexrepair fixtures retained. Nextsinglewriter fixes six residualcurrentfixture files beforewholeCactualcopy/oldcode/publication/CI/deploy.
 
 4C residualfixtures+one AttentionlocatorSQLunit SPEC/QUALITY each899focusedchecks passed. Query5khistoryregression repairedexistingevent/public-IDindexedUNION ALLprobes withoriginalsame-schedulelaterrecovery/identity/output/no-mutation semantics;sampled55,100→200(original2kbudget). AllCcore/scheduled/WB/residualunitreviewsdone. Nextactualsource6b consistentcopy/normalconstructor/fullinverse/newfact/realoldcode/re-forward/fivestageofflinepublication,thencompleteCI+normaldeploy/liveevidence.
+
+
+4C完整实现和四单元独立SPEC/QUALITY已完成。冻结6b实际来源正迁/基线逆迁/新事实/真实旧代码/再次正迁、五阶段离线发布失败已通过；完整原字段映射与验收见C文档。最新生产8d增量合入f2b88a85，124相关测试通过。PR61草稿已创建；最新8d来源绑定、完整远端Quality、正常部署和线上读回仍待完成，不以旧来源验收代替。
