@@ -3709,19 +3709,21 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                   )
                   and not exists (
                     select 1
-                    from ({SCHEDULED_RUN_SQL}) as stale_run
-                   where (
-                         stale_run.event_id=error_event.message_id
-                         or (
-                             stale_run.id=cast(substr(
-                                 error_event.conversation_id,
-                                 length('scheduled-task-run:') + 1
-                             ) as integer)
-                             and error_event.conversation_id=
-                                 'scheduled-task-run:' || cast(stale_run.id as text)
-                         )
-                   )
-                     and exists (
+                    from (
+                        select event_run.id, event_run.scheduled_task_id
+                        from ({SCHEDULED_RUN_SQL}) as event_run
+                        where event_run.event_id=error_event.message_id
+                        union all
+                        select identity_run.id, identity_run.scheduled_task_id
+                        from ({SCHEDULED_RUN_SQL}) as identity_run
+                        where identity_run.id=cast(substr(
+                            error_event.conversation_id,
+                            length('scheduled-task-run:') + 1
+                        ) as integer)
+                          and error_event.conversation_id=
+                              'scheduled-task-run:' || cast(identity_run.id as text)
+                    ) as stale_run
+                    where exists (
                          select 1
                          from ({SCHEDULED_RUN_SQL}) as later_run
                          join ({REPLY_TASK_SQL}) as later_task

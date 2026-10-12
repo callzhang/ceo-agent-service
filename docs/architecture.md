@@ -1912,3 +1912,10 @@ pending confirmation，原有业务recovery是独立调用，不作为迁移副�
 旧列补齐测试已换成真实source13值保留和当前不完整schema非修改拒绝；索引修复
 继续以两次并发构造、原外键及附件bytes验证。候选尚需整期一致副本、真实旧代码
 逆迁启动、完整CI、正常发布与线上读回；本段不表示已部署。
+
+
+Phase4C Attention 定时错误读取以原event_id或规范scheduled-task-run:<公共整数ID>
+分别定位候选，再应用原同日程较新dispatched且回复done/skipped的恢复谓词。
+两路以UNION ALL组合，事件身份和conversation身份互相矛盾时仍沿用原“任一路匹配”
+语义；不新增身份收紧政策。定位使用既有event/public-ID索引，不新增schema/index/helper。
+原2,000VM步预算和只读合同保留；采样进度回调数不表示精确总指令数。
