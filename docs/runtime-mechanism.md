@@ -1,5 +1,11 @@
 # Current Runtime Mechanism
 
+Audit field-error feedback must cite the exact JSON path, literal value and type
+from the current digest-bound candidate. Prior revision feedback is not evidence
+of the current field value. Quoted numeric identifiers remain strings; an
+already-applied correction must not be requested again. This evidence rule does
+not waive actual action-contract violations or authorize external execution.
+
 Dispatcher queue claims first probe using a read-only connection. The existing
 candidate scanners still apply source order, due time and live-owner protection;
 positive probes are repeated after acquiring the immediate write transaction
