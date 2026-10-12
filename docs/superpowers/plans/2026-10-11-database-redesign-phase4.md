@@ -26,13 +26,13 @@
 
 - [x] 在一致副本捕获旧实际DDL/index/trigger/序列/schema版本及所有scoped/public/native/业务fingerprint；文件只在task-specific/tmp。
 - [x] 实现本单元精确DDL与CSV→physical scalar投影；既有reply_tasks仍在原位置，本单元runs.task_id直接关联它，不提前建立半成品tasks双写。类型专有字段采用真实列，以保留SQL约束与查询索引；不适用类型为NULL。
-- [ ] RED覆盖不同源同号ID、Consumer/Audit代际/revision/turn/parent、多个provider attempts、standalone无parent、7trigger/correction/resume约束、自然唯一和expired-lease reclaim、原生缺失、result_schema校验。
-- [ ] 一次事务迁移三表，取消final_result_json/result_envelope_json占位，保留完整校验参数、DTO/native投影、adopted结果JOIN；所有相关SQL与已有外键同版本切换。
-- [ ] 去除agent_run_events的纯退休SQL后删除该空表；若真实副本存在服务业务行，停止该删除并重新分析，不复制trajectory正文。
-- [ ] 对10条原agent FK关系逐行映射；原public IDs/workload strings不变；typed parent lineage使用原真实身份比较。
-- [ ] 证明初始化不会重新创建旧表/列或改变source触发器合同；没有读旧表fallback、长期双写或native正文入库。
-- [ ] 运行相关focused tests、Ruff及diff-check；更新architecture/runtime当前行为及本单元验收，同代码提交。
-- [ ] 按Task4完成副本正迁/逆迁/实际旧代码及发布失败各阶段演练；独立复核后才部署4A。
+- [x] RED覆盖不同源同号ID、Consumer/Audit代际/revision/turn/parent、多个provider attempts、standalone无parent、7trigger/correction/resume约束、自然唯一和expired-lease reclaim、原生缺失、result_schema校验。
+- [x] 一次事务迁移三表，取消final_result_json/result_envelope_json占位，保留完整校验参数、DTO/native投影、adopted结果JOIN；所有相关SQL与已有外键同版本切换。
+- [x] 去除agent_run_events的纯退休SQL后删除该空表；若真实副本存在服务业务行，停止该删除并重新分析，不复制trajectory正文。
+- [x] 对10条原agent FK关系逐行映射；原public IDs/workload strings不变；typed parent lineage使用原真实身份比较。
+- [x] 证明初始化不会重新创建旧表/列或改变source触发器合同；没有读旧表fallback、长期双写或native正文入库。
+- [x] 运行相关focused tests、Ruff及diff-check；更新architecture/runtime当前行为及本单元验收，同代码提交。
+- [x] 按Task4完成副本正迁/逆迁/实际旧代码及发布失败各阶段演练；独立复核通过；远端完整CI与正式部署仍待完成。
 
 ## Task 2: 4B task containers/input and domain runs
 
@@ -87,4 +87,6 @@
 
 ## 本次状态
 
-Task0完成；4A已实现，正在收尾专项测试和独立复核。真实一致副本正迁与逆迁验证了原45,560条核心记录的全部投影，145张其他原表内容指纹一致；新增测试记录、执行回执及业务结果在逆迁后保留，真实源代码0e6f0e46启动、读取和领取CAS通过，再次正迁原字段指纹一致。五阶段发布失败回退测试通过。已修正新增后删除记录的allocator水位，并通过真实旧代码不复用ID的验证；邮件物理存在性检查和未知版本拒绝原子性已修正。有效当前schema缺少非核心表／索引时的原修复路径已恢复，原回归断言保持不变；核心manifest核对所有本期声明对象，仍需剩余调用方测试和独立复核后才发布。4B/4C未实施，第四期未上线。没有新的功能字段、历史状态补造、额外安全政策或正文备份。
+Task0完成；4A实现、副本正逆迁及独立规格/质量复审通过，远端Quality CI和正式上线尚待完成。最新真实源commit29e0156775b8bb697b2c55484d879193011931cf，Store11.1/Email50；45,573条原核心记录全部投影及145张其他原表全值指纹一致。新增结果/回执及分配后删除的ID在逆迁后保留，真实源302个Python文件逐一匹配Git blob，旧代码读取/领取/再次正迁通过。发布五阶段失败回退演练通过。
+
+索引修复保留原公共ID和排序；实际副本parent/workload查找已恢复范围索引，没有开放P1/P2。专项core130通过；调用方2493通过/6跳过；最新main扩大组2933通过/6跳过，其12项新fixture旧表SQL失败已修正，native/prompt26通过。独立最终复审114通过；完整远端CI仍是上线门槛。副本已用空间增加3,543,040 B（约0.888%），仅说明结构整合，尚未实现第四期容量减少。4B/4C未实施，第四期未上线。没有新的功能字段、历史状态补造、额外安全政策或正文备份。详细验收见docs/database-redesign-phase4a-validation.md。

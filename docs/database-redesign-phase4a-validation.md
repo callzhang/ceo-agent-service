@@ -1,6 +1,6 @@
 # Phase4A validation boundary
 
-Status: implementation and consistent-copy gates passed; final independent quality re-review and remote Quality CI pending. Not deployed. Phase4B/4C remain pending.
+Status: implementation and consistent-copy gates passed; independent spec and code-quality re-review approved; remote Quality CI pending. Not deployed. Phase4B/4C remain pending.
 
 ## Exact scope
 
@@ -38,7 +38,7 @@ Focused core/turn/release/readers/metadata-lock/Email-PK/current-repair tests:13
 
 Publication failure at dependencies/import verification/restart/health/loaded stages restores schema before old-code restart and retains replacement writes. Inverse interruption after child rebuilding rolls back atomically. The inverse never overwrites the DB file with an old backup.
 
-A5,000-unrelated-provider regression reproduces the former global-scan plan. After the numeric-first index repair, real native snapshot/latest-route/exact-workload queries seek parent or workload ranges and remain below2,000 VM instructions. Target/empty snapshots and exact workload lookups invoke no100-opcode progress callback; parent batch uses100 counted instructions. Returned source values and original public IDs7/9000 remain equal despite physical remapping. No INDEXED BY hint, physical-ID sorting, native selection heuristic or covering index was added. Existing Task repair LIKE behavior measured40,000 VM instructions on both source and target and remains unchanged.
+A 5,000-unrelated-provider regression reproduces the former global-scan plan. After the numeric-first index repair, real native snapshot/latest-route/exact-workload queries seek parent or workload ranges and remain below 2,000 VM instructions. Target/empty snapshots and exact workload lookups invoke no 100-opcode progress callback; parent batch uses 100 counted instructions. Returned source values and original public IDs7/9000 remain equal despite physical remapping. No INDEXED BY hint, physical-ID sorting, native selection heuristic or covering index was added. Existing Task repair LIKE behavior measured40,000 VM instructions on both source and target and remains unchanged.
 
 The35-module caller fixture group passed2,493 tests/6 skips before the index fix. Post-index plus latest-main expanded run passed2,933 tests/6 skips; its12 failures were five raw old-table updates in new native-input test fixtures. Those updates were switched to typed provider predicates and all26 native/prompt tests passed. Remote complete Quality remains required. Ruff passes across app and tests.
 
@@ -55,3 +55,5 @@ Consistent-copy page measurements after repeated forward/inverse:
 Used-page change is +3,543,040 B, about0.89%. The target includes explicitly declared synthetic rows and repeated migration cycles; this is not a production disk-reclamation claim. The core mapping and identity indexes add storage while reducing table fragmentation in the design. The duplicate TEXT index was eliminated; numeric public index occupies1,400,832 B in this copy. No production VACUUM or new retention policy was introduced. Final Phase4 size must be measured after4B/4C.
 
 Disposable databases, copied old code and full test logs remain temporary until the release gates close, then are removed. Only regression code and concise acceptance evidence belong in the repository. Latest verified production backup follows the existing deploy retention workflow.
+
+Independent final review: 114 additional focused tests passed against the same runtime code. Actual-copy old/new result values and ordering match; populated parent, batch and workload lookups use their range indexes. No open P1/P2 finding.
