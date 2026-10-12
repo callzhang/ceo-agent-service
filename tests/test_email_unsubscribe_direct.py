@@ -1073,6 +1073,7 @@ def test_cancellation_storage_migrates_schema49_without_changing_plan_or_receipt
     store = _seed(database)
     original = store.get_classification(CLASSIFICATION_ID)
     with sqlite3.connect(database) as db:
+        db.execute("drop table email_direct_retry_requests")
         db.execute("drop table email_unsubscribe_cancellations")
         db.execute("delete from email_schema_migrations where version>=50")
         db.execute("insert into email_schema_migrations(version,applied_at) values (49,'2026-10-11T00:00:00Z')")
@@ -1081,7 +1082,8 @@ def test_cancellation_storage_migrates_schema49_without_changing_plan_or_receipt
     assert migrated.get_email_unsubscribe_cancellation(ACTION_IDENTITY) is None
     assert migrated.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
     with sqlite3.connect(database) as db:
-        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == 50
+        assert db.execute("select max(version) from email_schema_migrations").fetchone()[0] == 51
+        assert db.execute("select count(*) from email_direct_retry_requests").fetchone()[0] == 0
         assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
 
 

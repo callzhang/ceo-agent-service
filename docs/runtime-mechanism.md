@@ -1,5 +1,33 @@
 # Current Runtime Mechanism
 
+`retry-source-verified-email-action --account ... --action-id ...` examines one
+current failed move/trash action through the existing read-only IMAP wrapper.
+Preview opens SQLite read-only without schema initialization. Only an exact
+message still in its source can be released with `--apply`; missing, ambiguous,
+already moved or changed identities are not retried. The transaction checks the
+current plan, parameters, config version, failure snapshot, dependencies and
+active sibling claims. It schedules one attempt using `next_attempt_at`, keeps
+the failed status and immutable attempt history, and does not reset the counter.
+The normal worker consumes that schedule before calling the provider; another
+failure does not renew this explicit allowance. Dry-run refuses `--apply`.
+Schema 51 records the source-readback digest and exact next attempt number in
+the immutable `email_direct_retry_requests` relation. Provider-factory failures
+and interrupted-worker recovery also consume this one-attempt allowance rather
+than renewing it. Deployment requires a verified backup and the matched 50-to-51
+publication inverse; rollback removes only an empty request relation and refuses
+to discard any recorded recovery authorization. Readback exceptions close the
+session opened by the examination worker before propagating the error.
+Duplicate-key inserts, including SQLite `INSERT OR REPLACE`, are rejected by
+the authorization relation alongside updates and deletes.
+Authorization includes a canonical non-secret snapshot of the IMAP account identity,
+transport, credential reference and move mode captured by the read-only factory.
+The release transaction and both normal-worker claim paths compare it against
+the current account configuration; a changed configuration cannot consume that
+old authorization.
+Missing captured configuration evidence is rejected rather than inferred from
+the current database. A changed configuration is also shown and counted as
+blocked, not as automatically retriable; authorization and failure history remain.
+
 Audit field-error feedback must cite the exact JSON path, literal value and type
 from the current digest-bound candidate. Prior revision feedback is not evidence
 of the current field value. Quoted numeric identifiers remain strings; an
@@ -1011,7 +1039,7 @@ candidate_executions 保存租约，candidate_action_attempts 在 provider 调�
 参数、命令、工具输出和从原生记录提取的结果均按需读取。中断运行按原生 `task_started` / `task_complete`
 边界恢复证据，既有投递核对和恢复契约保持不变。
 
-Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 consumer-artifacts 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
+Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 consumer-artifacts 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。两角色的 `read_dingtalk_drive_file` 只下载调用方明确指定的已授权钉盘节点，返回受限正文和当前 MCP 进程临时目录路径；扫描 PDF 可交给选中的 OCR Skill，MCP 进程退出时清理目录。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
 
 Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`，并将任务绑定的 `mcp__agent_cli` 设为 `direct_only_tool_namespaces`。任务工具直接向模型声明；已验证的成功读取使用具名直接调用，但 Agent 仍可能尝试 CodeMode 并在调用错误后恢复，声明方式不保证没有额外步骤。其他工具继续使用 CodeMode；既有角色工具选择、functions 排除、沙箱、会话和路线不变。超长直接调用结果仍可能被原生运行时截断，不能以完整原始回执替代模型实际可见内容的验证。
 
