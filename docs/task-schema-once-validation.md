@@ -21,3 +21,7 @@
 `runtime_route_surface_capabilities` 声明 Codex/Claude 在本机具有 `local_workspace_access`；Friday 无该能力。Task 当前 required capabilities 只有 structured_output/local_schema_validation，不能假设所有可选路线都能读取本机 Skill。FridayExecutionInput 的既有公共合同也没有 Skill/文件资源字段。
 
 后续应先核实当前配置与各路线的实际 Skill 读取入口，再设计按运行环境提交的最小指令；不得直接删除完整正文并指向不可达本机路径，不新增或变更路由来掩盖读取能力缺失。这里没有修改 Skill 提交方式、权限或路由。
+
+## Obsolete source assertion correction
+
+Existing GitHub run38231038884 reports an assertion requiring `task_agent_output_schema` inside the Task builder after this change removed that duplication. It was reproduced locally. The assertion now excludes the duplicate serializer; independent schema-delivery tests still check the complete native schema and one complete schema through Claude/Friday. This is a test correction, with no runtime or business validation change.

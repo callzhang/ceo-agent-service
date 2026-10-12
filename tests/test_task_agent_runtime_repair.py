@@ -67,6 +67,7 @@ def _routed_runner(store, config, payloads):
 
     class RecordingAdapter(FakeAdapter):
         def build_command(self, **kwargs):
+            assert kwargs["skill_names"] == ("ceo-work-tracking",)
             provider_calls.append(kwargs["prompt"])
             return super().build_command(**kwargs)
 

@@ -128,6 +128,7 @@ class FakeAdapter:
         developer_instructions,
         use_approval_bypass,
         sandbox_mode=None,
+        skill_names=(),
     ):
         self.commands.append(
             (route.name, session_id, approval_policy, use_approval_bypass)
