@@ -453,19 +453,22 @@ def action_plan_release(tmp_path):
     return path, prepare_email_schema_release(tmp_path, path)
 
 
-def schema49_runtime_store(path):
-    """Use the already-validated target-49 fixture without running future upgrades."""
+def reference_migration_test_store(path):
+    """Use current APIs with auxiliary DDL, without advancing reference versions."""
     from app.email_store import EmailStore
 
     store = object.__new__(EmailStore)
     store.path = path
     with store._connect() as db:
+        versions = tuple(db.execute("select * from email_schema_migrations order by version"))
+        store._create_durable_tables(db)
         store._validate_durable_state(db)
+        assert tuple(db.execute("select * from email_schema_migrations order by version")) == versions
     return store
 
 
 def migrate_plan_reference_to49(_root, path):
-    store = schema49_runtime_store(path)
+    store = reference_migration_test_store(path)
     with store._connect() as db:
         db.execute("begin immediate")
         store._migrate_v48_to_v49(db)
@@ -478,7 +481,7 @@ def test_plan_inverse_preserves_new_classification_and_canonical_versions(tmp_pa
     path, publication = action_plan_release(tmp_path)
     publication.migrate = migrate_plan_reference_to49
     publication.publish()
-    store = schema49_runtime_store(path)
+    store = reference_migration_test_store(path)
     _persist_scan(store, _classification(status=EmailClassificationStatus.PROCESSED,
                                         classification_id=3, message_id='after-migration'))
     from app.email_classifier_contracts import EmailActionPlan
@@ -499,7 +502,7 @@ def test_plan_inverse_preserves_new_classification_and_canonical_versions(tmp_pa
         assert all(json.loads(snapshot)['classification_id'] == identity
                    for identity, snapshot in snapshots if snapshot != 'null')
         assert db.execute('pragma integrity_check').fetchone() == ('ok',)
-    assert schema49_runtime_store(path).get_classification(3) == api
+    assert reference_migration_test_store(path).get_classification(3) == api
 
 
 def test_plan_inverse_failure_is_atomic(tmp_path):
