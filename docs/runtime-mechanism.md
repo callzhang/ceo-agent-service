@@ -1,5 +1,12 @@
 # Current Runtime Mechanism
 
+Dispatcher queue claims first probe using a read-only connection. The existing
+candidate scanners still apply source order, due time and live-owner protection;
+positive probes are repeated after acquiring the immediate write transaction
+before changing the source or lease ledger. Empty probes acquire no writer lock.
+Todo outboxes also probe for expired running rows that need their existing
+reconciliation transition, so that cleanup still runs even with no queued work.
+
 Agent run claim, lease renewal, session binding and expired-run failure commit
 their metadata transaction before native trajectory hydration. They capture the
 written row and its native attempt references together, so the returned metadata

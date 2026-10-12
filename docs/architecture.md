@@ -1,5 +1,12 @@
 # CEO Agent Service Architecture
 
+Empty dispatcher polls are read-only across all queue adapters. A candidate
+probe does not reserve an item: the existing writer transaction rechecks the
+candidate before changing its source and lease ledger atomically. Todo outbox
+probes include expired running rows requiring the existing reconciliation
+transition. Candidate order, live-owner protection and claim generations retain
+their existing rules.
+
 Agent run metadata writes (claim, lease renewal, session binding and expired-run
 failure) capture their row and native attempt references in the transaction,
 then commit and close SQLite before native session discovery, transcript reading
