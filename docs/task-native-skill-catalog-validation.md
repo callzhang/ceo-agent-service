@@ -31,3 +31,7 @@ Task command factory 未传 native skill_names，最终适配器使用全量原�
 新的两版冷启动和同session风险续接均结束并再次通过完整本地业务应用：正常场景1 Project/0 Task；风险场景1 Project/1 display-only候选，建议赵华，1份Attention提案。当前两版均为watch；先前工具不可用样本的push/watch差异仍保留，不能借重跑抹掉采样差异。两版每阶段prompt SHA一致，角色、模型、事实相同。
 
 实际原生只读user_get探针成功且有MCP完成回执，证明正确注册的测试工具可用。四次匿名业务运行仍未调用Memory write；这些合成材料不能作为真实durable-memory业务验收，也未通过额外prompt强迫写入。旧启动错误、导入/注册错误、从源码推测名字的失败探针均保留为无效工具验收证据。此项改动的明确证据是目录真实减少与固定业务判断/应用未回归，不是全任务最优或Memory行为验证完成。
+
+## Existing CI fixture correction
+
+GitHub run38231038884 failed5 tests after11806 passes. Locally reproduced5 failures/27 passes: four semantic-repair tests hit a FakeAdapter signature that lacked the real adapter's skill_names argument; one source assertion still required the removed inline schema. FakeAdapter now accepts the real parameter and RecordingAdapter explicitly checks the Task selection. No repair, same-receipt replay, exhaustion-count, damaged-trajectory or reset-isolation assertion changed. The obsolete schema assertion is corrected separately above. Four affected test files pass91 locally, Ruff and diff checks pass, and independent read-only review found no relaxed business oracle. No full suite ran alongside the live service or manual Actions rerun was requested.
