@@ -87,12 +87,12 @@
 
 ## 本次状态
 
-Task0和4A已完成。PR50的完整Quality通过并正常部署为7baa1f0e，Store11.2/Email50；发布PID/health/queues/Attention/History、45,715个原公共ID及115条原回执读回通过，详见4A验收文档。后续其他会话已部署54e6c209的role-Skill构建性能改动，不改变Store12。4A验收文档PR51仍在正常CI流程。
+Task0和4A已完成。PR50的完整Quality通过并正常部署为7baa1f0e，Store11.2/Email50；发布PID/health/queues/Attention/History、45,715个原公共ID及115条原回执读回通过，详见4A验收文档。后续其他会话已部署54e6c209的role-Skill构建性能改动，不改变Store12。4A验收文档PR51的Quality38205420510通过并合入ad7a6506。
 
 4B第一内部单元在隔离分支43c1585b实现：reply/input/WSI存入tasks，Task run扩展runs；106个Store读写和18个外部调用模块同步切换，诊断/replay脚本使用公共投影和物理映射。准确旧状态/CAS、业务结果、回执、provenance、WSI1及输入身份保持。无值旧10.2→11.1迁移路径退休，保留当前源拒绝/claim/FK/receipt/OA/session约束。
 
 7baa实际源副本正常构造器12→13、四源及原4A runs逐值比较、141其他表逐值、全表DDL/序列/marker baseline inverse、新writes/receipt逆迁、实际旧代码启动/claim/ID水位、完整claimed行再次正迁均通过。五阶段离线publication控制流程回退通过，stop/start/health是callbacks，真实构造器和旧代码另由实际副本验证。独立规格/质量复核关闭证据缺口。当前数据对应其自己的冻结副本，不跨快照按计数猜增删。
 
-599个相关Store/发布/辅助修复测试、71个新storage/reader/manifest用例、五个故障阶段、36个脚本用例、Attention专项及合并后的84个相关测试通过；这些有重叠，不作为完整CI总数。最新主线正在合并，合入A的19个源声明校验与单次元数据读取检查，保留typed Task布局。
+599个相关Store/发布/辅助修复测试、71个新storage/reader/manifest用例、五个故障阶段、36个脚本用例、Attention专项及合并后的84个相关测试通过；这些有重叠，不作为完整CI总数。已逐项合入主线54e6c209及验收文档ad7a6506，保留A的19个源声明校验、单次元数据读取检查及typed Task布局；额外32个源声明与6个状态投影用例通过。
 
 Meeting23/13真实字段及已知run2298→缺失job4908已复核，实际scalar映射及只在孤儿保存原job_id的方式写入CSV/design；尚未实施。后续Meeting、OKR、weekly完成后组合发布4B，再实施4C。完整B最终候选仍须最新源副本/回退、相关调用方测试、独立复核、远端Quality及正常deploy/live读回。当前B没有推送或生产迁移，没有第四期容量减少声明。当前详细证据见docs/database-redesign-phase4b-validation.md。
