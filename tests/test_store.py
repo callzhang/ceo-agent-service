@@ -4157,48 +4157,25 @@ def test_store_repairs_missing_required_table_despite_current_schema_version(
         ).fetchone() == (1,)
 
 
-def test_store_adds_legacy_workbench_lease_columns_before_recovery_index(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "legacy-workbench.sqlite3"
-    with sqlite3.connect(db_path) as db:
-        db.executescript(
-            """
-            create table workbench_turns (
-                id text primary key,
-                task_id text not null,
-                client_request_id text not null unique,
-                task_sequence integer not null default 0,
-                user_text text not null,
-                status text not null,
-                stop_requested integer not null default 0,
-                final_text text not null default '',
-                error_code text not null default '',
-                error_detail text not null default '',
-                resume_context text not null default '',
-                execution_run_id text not null default '',
-                runtime_quiesced_run_id text not null default '',
-                started_at text not null default '',
-                completed_at text not null default '',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp
-            );
-            """
-        )
+def test_source13_workbench_lease_values_survive_before_recovery_index(tmp_path: Path) -> None:
+    from tests.workbench_caller_fixtures import empty_source13
+    from app.task_storage import WORKBENCH_TURN_SQL
 
+    db_path = tmp_path / "source13-workbench.sqlite3"
+    with empty_source13(db_path) as db:
+        db.execute("insert into workbench_tasks(id,title,runtime_kind) values('parent','Leases','codex')")
+        db.execute("""insert into workbench_turns(id,task_id,client_request_id,task_sequence,user_text,status,lease_owner,lease_expires_at)
+            values('turn','parent','request',1,'kept','running','original-owner','2026-10-13 00:00:00')""")
     AutoReplyStore(db_path)
-
     with sqlite3.connect(db_path) as db:
-        columns = {
-            str(row[1]) for row in db.execute("pragma table_info(workbench_turns)")
-        }
+        columns = {str(row[1]) for row in db.execute("pragma table_info(tasks)")}
         recovery_index = db.execute(
-            "select 1 from sqlite_master "
-            "where type='index' and name='idx_workbench_turns_recovery'"
+            "select 1 from sqlite_master where type='index' and name='idx_workbench_turns_recovery'"
         ).fetchone()
-
+        lease = db.execute(f"select lease_owner,lease_expires_at from ({WORKBENCH_TURN_SQL}) where id='turn'").fetchone()
     assert {"lease_owner", "lease_expires_at"} <= columns
     assert recovery_index == (1,)
+    assert lease == ("original-owner", "2026-10-13 00:00:00")
 
 
 def test_store_rechecks_schema_after_transient_database_lock(tmp_path, monkeypatch):

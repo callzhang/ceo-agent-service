@@ -11449,7 +11449,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             args = (snapshot_id,)
         elif workload_kind == "workbench":
-            query = "select 1 from workbench_turns where id=? and status='running'"
+            query = "select 1 from tasks where record_type='workbench_turns' and legacy_key=? and status='running'"
             args = (workload_key,)
         else:
             source, _, source_key = workload_key.partition(":")

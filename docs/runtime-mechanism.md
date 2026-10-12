@@ -2578,3 +2578,30 @@ typed 父引用。历史 Attempt 和 skipped 快照不因运行路由改名而�
 包括没有 scheduled 行的混合库。真正历史来源和当前候选沿用原忙碌/租约谓词，
 只读检查不修改行、schema 或数据库 bytes。Workbench CRUD/native/API 仍是后续单元，
 本段不表示完整 C 已发布。
+
+
+Phase4C 的初始化修复边界：旧分散 Workbench0.7/0.8/0.9表缺列后自动补
+resume_context、task_sequence、turn控制和附件client_request_id/content_sha256的路径
+已退休。当前变更只支持准确source13正迁和完整current14声明；缺失必要列的库拒绝，
+不通过补默认值猜测原数据。已有缺失索引/触发器修复继续支持。源13迁移须保留
+原user_text、私有恢复上下文、task_sequence、控制状态、附件标识/hash/path/文件bytes；
+原本同时间戳但不同UUID的turn按原sequence排序。测试覆盖真实来源保留、当前不完整
+声明的非修改拒绝与并发索引修复，不以半旧半新的schema冒充来源。
+
+
+## Phase4C Workbench caller candidate
+
+Workbench task/turn 的CRUD、全局client_request幂等、task_sequence、单active turn、
+claim/lease/stop/control/recovery保留原合同。读者从typed tasks投影公共TEXT ID，
+写者按record_type+legacy_key定位；附件/工件/确认表存储物理父整数，DTO仍返回公共
+task/turn ID。事件在runs中按公共numeric legacy cursor分页和配对，物理run ID、
+turn sequence及native ordinal各自保持原含义；先按物理父筛选再投影cursor以使用索引。
+
+不再写入物理final_text；已有native/RAM与Codex/Claude/Friday读取继续提供正文。
+本单元不改API/UI契约、工具权限、确认政策或新的保留期限。准确source13迁移保留
+pending confirmation，原有业务recovery是独立调用，不作为迁移副作用。
+相关停止/完成竞态、late write、quiescence和恢复行为仍由原机制管理。
+
+旧列补齐测试已换成真实source13值保留和当前不完整schema非修改拒绝；索引修复
+继续以两次并发构造、原外键及附件bytes验证。候选尚需整期一致副本、真实旧代码
+逆迁启动、完整CI、正常发布与线上读回；本段不表示已部署。

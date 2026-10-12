@@ -1,4 +1,5 @@
 import json
+import hashlib
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -9,6 +10,8 @@ import pytest
 import app.store as store_module
 import app.workbench.store as workbench_store_module
 from app.workbench.models import ConfirmationStatus, TurnStatus
+from app.task_storage import task_physical_id, task_id_expression, insert_task, WORKBENCH_TURN_SQL
+from tests.workbench_caller_fixtures import empty_source13
 from app.workbench.store import WorkbenchConflictError, WorkbenchStore
 
 
@@ -61,28 +64,19 @@ def _waiting_confirmation(store: WorkbenchStore):
     return task, turn.id, confirmation
 
 
-def test_store_migrates_resume_context_without_losing_existing_turns(tmp_path: Path):
+def test_source13_migration_preserves_user_text_and_private_resume_context(tmp_path: Path):
     db_path = tmp_path / "workbench.sqlite3"
-    store = WorkbenchStore(db_path)
-    task = store.create_task(title="Analyse sales", runtime_kind="codex")
-    turn = store.create_turn(
-        task.id, user_text="Compare regions", client_request_id="request-1"
-    )
-    with store._connect() as db:
-        db.execute("alter table workbench_turns drop column resume_context")
-    _repair_historical_workbench_columns(store)
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
+    with empty_source13(db_path) as db:
+        db.execute("insert into workbench_tasks(id,title,runtime_kind) values('parent','Analyse sales','codex')")
+        db.execute("""insert into workbench_turns(id,task_id,client_request_id,task_sequence,user_text,status,resume_context)
+            values('turn','parent','request-1',1,'Compare regions','completed','private receipt')""")
     migrated = WorkbenchStore(db_path)
-
-    assert migrated.get_turn(turn.id).user_text == "Compare regions"
-    assert "resume_context" not in migrated.get_turn(turn.id).model_dump()
+    assert migrated.get_turn("turn").user_text == "Compare regions"
+    assert "resume_context" not in migrated.get_turn("turn").model_dump()
     with migrated._connect() as db:
-        columns = {
-            row["name"]
-            for row in db.execute("pragma table_info(workbench_turns)").fetchall()
-        }
-    assert "resume_context" in columns
+        assert migrated._require_turn(db, "turn")["resume_context"] == "private receipt"
+        assert "resume_context" in {row["name"] for row in db.execute("pragma table_info(tasks)")}
+
 
 
 def test_store_schema_check_rejects_missing_required_reply_attempt_column(
@@ -156,67 +150,52 @@ def test_store_repairs_missing_required_point_nine_index(tmp_path: Path):
     assert index is not None
 
 
-def test_store_upgrades_point_nine_attachments_with_idempotency_columns(
-    tmp_path: Path,
-):
+def test_source13_migration_preserves_attachment_request_hash_and_file_bytes(tmp_path: Path):
     db_path = tmp_path / "workbench.sqlite3"
-    store = WorkbenchStore(db_path)
-    task = store.create_task(title="Attachment upgrade", runtime_kind="codex")
-    attachment = store.save_attachment(
-        task.id,
-        filename="legacy.png",
-        media_type="image/png",
-        content=b"legacy",
-    )
-    with store._connect() as db:
-        db.execute("drop index idx_workbench_attachments_task_request")
-        db.execute("alter table workbench_attachments drop column content_sha256")
-        db.execute("alter table workbench_attachments drop column client_request_id")
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    upgraded = WorkbenchStore(db_path)
-    with upgraded._connect() as db:
-        row = db.execute(
-            "select client_request_id, content_sha256 from workbench_attachments where id=?",
-            (attachment.id,),
-        ).fetchone()
-        index = db.execute(
-            """select name from sqlite_master
-               where type='index' and name='idx_workbench_attachments_task_request'"""
-        ).fetchone()
-
-    assert row["client_request_id"] == attachment.id
-    assert row["content_sha256"] == ""
+    task_id = "00000000-0000-4000-8000-000000000011"
+    attachment_id = "00000000-0000-4000-8000-000000000012"
+    directory = tmp_path / "workbench" / "attachments" / task_id
+    directory.mkdir(parents=True)
+    attachment_path = directory / attachment_id
+    attachment_path.write_bytes(b"legacy")
+    with empty_source13(db_path) as db:
+        db.execute("insert into workbench_tasks(id,title,runtime_kind) values(?,'Attachment upgrade','codex')", (task_id,))
+        db.execute("""insert into workbench_attachments(id,task_id,client_request_id,filename,media_type,size_bytes,content_sha256,storage_path)
+            values(?,?,'original-request','legacy.png','image/png',6,?,?)""",
+            (attachment_id, task_id, hashlib.sha256(b"legacy").hexdigest(), str(attachment_path)))
+        before = db.execute("select id,client_request_id,content_sha256,filename,media_type,size_bytes,storage_path,created_at from workbench_attachments").fetchone()
+    migrated = WorkbenchStore(db_path)
+    with migrated._connect() as db:
+        after = tuple(db.execute("select id,client_request_id,content_sha256,filename,media_type,size_bytes,storage_path,created_at from workbench_attachments").fetchone())
+        assert after == before
+        assert db.execute("select task_id from workbench_attachments").fetchone()[0] == task_physical_id(db, "workbench_tasks", task_id)
+        index = db.execute("select name from sqlite_master where type='index' and name='idx_workbench_attachments_task_request'").fetchone()
+    assert after[1] == "original-request"
+    assert after[2] == hashlib.sha256(b"legacy").hexdigest()
+    assert attachment_path.read_bytes() == b"legacy"
+    assert migrated.list_attachments(task_id)[0].task_id == task_id
     assert index is not None
 
 
-def test_store_upgrades_point_eight_turns_with_stable_per_task_sequence(
+
+def test_source13_migration_preserves_stable_per_task_sequence(
     tmp_path: Path,
 ):
     db_path = tmp_path / "workbench.sqlite3"
-    store = WorkbenchStore(db_path)
-    task = store.create_task(title="Legacy order", runtime_kind="codex")
     first_id = "ffffffff-ffff-4fff-8fff-ffffffffffff"
     second_id = "00000000-0000-4000-8000-000000000001"
-    with store._connect() as db:
-        db.execute(
-            """insert into workbench_turns
-               (id,task_id,client_request_id,user_text,status,task_sequence,created_at)
-               values(?,?,?,?,?,?,?)""",
-            (first_id, task.id, "legacy-first", "first", "completed", 1, "2026-08-13 00:00:00"),
-        )
-        db.execute(
-            """insert into workbench_turns
-               (id,task_id,client_request_id,user_text,status,task_sequence,created_at)
-               values(?,?,?,?,?,?,?)""",
-            (second_id, task.id, "legacy-second", "second", "failed", 2, "2026-08-13 00:00:00"),
-        )
-        db.execute("drop index idx_workbench_turns_task_sequence")
-        db.execute("alter table workbench_turns drop column task_sequence")
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    task_id = "source-parent"
+    with empty_source13(db_path) as db:
+        db.execute("insert into workbench_tasks(id,title,runtime_kind) values(?,'Legacy order','codex')", (task_id,))
+        db.execute("""insert into workbench_turns
+            (id,task_id,client_request_id,user_text,status,task_sequence,created_at)
+            values(?,?,?,?,?,?,?)""", (first_id,task_id,'legacy-first','first','completed',1,'2026-08-13 00:00:00'))
+        db.execute("""insert into workbench_turns
+            (id,task_id,client_request_id,user_text,status,task_sequence,created_at)
+            values(?,?,?,?,?,?,?)""", (second_id,task_id,'legacy-second','second','failed',2,'2026-08-13 00:00:00'))
 
     upgraded = WorkbenchStore(db_path)
-    turns = upgraded.list_turns(task.id)
+    turns = upgraded.list_turns(task_id)
     with upgraded._connect() as db:
         schema_version = db.execute(
             "select value from service_state where key=?",
@@ -228,7 +207,7 @@ def test_store_upgrades_point_eight_turns_with_stable_per_task_sequence(
         (second_id, 2),
         (first_id, 1),
     ]
-    assert upgraded.get_task_summary(task.id)[1] == "failed"
+    assert upgraded.get_task_summary(task_id)[1] == "failed"
 
 
 def test_concurrent_turn_creation_allocates_unique_monotonic_task_sequences(
@@ -299,52 +278,26 @@ def test_timeline_snapshot_does_not_mix_a_concurrent_terminal_transition(
     assert page["task_state"] == TurnStatus.QUEUED.value
 
 
-def test_store_migrates_confirmation_execution_claim_without_losing_data(
+def test_source13_confirmation_controls_survive_migration_and_existing_recovery(
     tmp_path: Path,
 ):
     db_path = tmp_path / "workbench.sqlite3"
-    store = WorkbenchStore(db_path)
-    _, _, confirmation = _waiting_confirmation(store)
-    with store._connect() as db:
-        db.execute("drop index idx_workbench_confirmations_recovery")
-        db.execute("drop index idx_workbench_confirmations_ready_intents")
-        db.execute("drop index idx_workbench_confirmations_proposer_recovery")
-        db.execute("drop index idx_workbench_confirmations_legacy_proposer_recovery")
-        db.execute(
-            "drop index idx_workbench_confirmations_legacy_execution_owner_recovery"
-        )
-        db.execute(
-            "drop index idx_workbench_confirmations_legacy_execution_lease_recovery"
-        )
-        for column in (
-            "execution_owner",
-            "execution_lease_expires_at",
-            "execution_started_at",
-            "canonical_capability",
-            "canonical_operation",
-            "canonical_targets_json",
-            "canonical_operation_digest",
-            "canonical_arguments_digest",
-            "authorization_consumed_at",
-            "proposer_run_id",
-            "proposer_owner",
-            "proposer_lease_expires_at",
-            "proposer_quiesced_at",
-            "decision_requested",
-            "decision_requested_at",
-        ):
-            db.execute(f"alter table workbench_confirmations drop column {column}")
-        for column in ("execution_run_id", "runtime_quiesced_run_id"):
-            db.execute(f"alter table workbench_turns drop column {column}")
-    _repair_historical_workbench_columns(store)
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    confirmation_id = "source-confirmation"
+    with empty_source13(db_path) as db:
+        db.execute("insert into workbench_tasks(id,title,runtime_kind) values('parent','Analyse sales','codex')")
+        db.execute("""insert into workbench_turns(id,task_id,client_request_id,task_sequence,user_text,status)
+            values('turn','parent','request',1,'Compare regions','waiting_confirmation')""")
+        db.execute("""insert into workbench_confirmations(id,turn_id,action_kind,target,summary,risk,arguments_json,status)
+            values(?,'turn','reviewed_cli','Executive group','Send update','External message','{}','pending')""", (confirmation_id,))
 
     migrated = WorkbenchStore(db_path)
+    assert migrated.get_confirmation(confirmation_id).status is ConfirmationStatus.PENDING
+    assert migrated.reconcile_unquiesced_proposers() == 1
 
-    assert migrated.get_confirmation(confirmation.id).status is ConfirmationStatus.FAILED
+    assert migrated.get_confirmation(confirmation_id).status is ConfirmationStatus.FAILED
     with migrated._connect() as db:
         row = db.execute(
-            "select * from workbench_confirmations where id=?", (confirmation.id,)
+            "select * from workbench_confirmations where id=?", (confirmation_id,)
         ).fetchone()
     assert row["execution_owner"] == ""
     assert row["execution_lease_expires_at"] == ""
@@ -356,100 +309,35 @@ def test_store_migrates_confirmation_execution_claim_without_losing_data(
     with migrated._connect() as db:
         turn_columns = {
             item["name"]
-            for item in db.execute("pragma table_info(workbench_turns)").fetchall()
+            for item in db.execute("pragma table_info(tasks)").fetchall()
         }
     assert {"execution_run_id", "runtime_quiesced_run_id"} <= turn_columns
 
 
-def test_migration_fails_legacy_pending_confirmations_once_across_turn_states(
+def test_source13_blank_proposer_recovery_is_once_across_turn_states(
     tmp_path: Path,
 ):
     db_path = tmp_path / "workbench.sqlite3"
-    store = WorkbenchStore(db_path)
     turns = {}
     confirmations = []
-    for label in ("waiting", "queued", "running", "completed"):
-        task = store.create_task(title=label, runtime_kind="codex")
-        turn = store.create_turn(
-            task.id,
-            user_text=label,
-            client_request_id=f"request-{label}",
-        )
-        store.claim_next_turn(owner=f"owner-{label}")
-        confirmation = store.create_confirmation(
-            turn.id,
-            action_kind="reviewed_cli",
-            target="group=executive",
-            summary="[Untrusted agent description] send",
-            risk="[Untrusted agent risk] external",
-            arguments_json={"argv": ["dws", "chat", "message", "send", "--yes"]},
-            owner=f"owner-{label}",
-        )
-        turns[label] = turn.id
-        confirmations.append(confirmation.id)
-    with store._connect() as db:
-        source = db.execute(
-            "select * from workbench_confirmations where id=?",
-            (confirmations[0],),
-        ).fetchone()
+    with empty_source13(db_path) as db:
+        for label, status in (("waiting", "waiting_confirmation"), ("queued", "queued"), ("running", "running"), ("completed", "completed")):
+            task_id, turn_id, confirmation_id = f"task-{label}", f"turn-{label}", f"confirmation-{label}"
+            db.execute("insert into workbench_tasks(id,title,runtime_kind) values(?,?,'codex')", (task_id,label))
+            db.execute("""insert into workbench_turns(id,task_id,client_request_id,task_sequence,user_text,status)
+                values(?,?,?,1,?,?)""", (turn_id,task_id,f"request-{label}",label,status))
+            db.execute("""insert into workbench_confirmations(id,turn_id,action_kind,target,summary,risk,arguments_json,status)
+                values(?,?,'reviewed_cli','group=executive','send','external','{}','pending')""", (confirmation_id,turn_id))
+            turns[label] = turn_id
+            confirmations.append(confirmation_id)
         duplicate_id = "00000000-0000-4000-8000-000000000099"
-        db.execute(
-            """
-            insert into workbench_confirmations (
-                id, turn_id, action_kind, target, summary, risk, arguments_json,
-                canonical_capability, canonical_operation, canonical_targets_json,
-                canonical_operation_digest, canonical_arguments_digest, status
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-            """,
-            (
-                duplicate_id,
-                source["turn_id"],
-                source["action_kind"],
-                source["target"],
-                source["summary"],
-                source["risk"],
-                source["arguments_json"],
-                source["canonical_capability"],
-                source["canonical_operation"],
-                source["canonical_targets_json"],
-                source["canonical_operation_digest"],
-                source["canonical_arguments_digest"],
-            ),
-        )
+        db.execute("""insert into workbench_confirmations(id,turn_id,action_kind,target,summary,risk,arguments_json,status)
+            values(?,?,'reviewed_cli','group=executive','send','external','{}','pending')""", (duplicate_id,turns["waiting"]))
         confirmations.append(duplicate_id)
-        db.execute(
-            "update workbench_turns set status='queued' where id=?",
-            (turns["queued"],),
-        )
-        db.execute(
-            "update workbench_turns set status='running' where id=?",
-            (turns["running"],),
-        )
-        db.execute(
-            """
-            update workbench_turns set status='completed', completed_at=current_timestamp
-            where id=?
-            """,
-            (turns["completed"],),
-        )
-        db.execute("drop index idx_workbench_confirmations_ready_intents")
-        db.execute("drop index idx_workbench_confirmations_proposer_recovery")
-        db.execute("drop index idx_workbench_confirmations_legacy_proposer_recovery")
-        for column in (
-            "proposer_run_id",
-            "proposer_owner",
-            "proposer_lease_expires_at",
-            "proposer_quiesced_at",
-            "decision_requested",
-            "decision_requested_at",
-        ):
-            db.execute(f"alter table workbench_confirmations drop column {column}")
-        for column in ("execution_run_id", "runtime_quiesced_run_id"):
-            db.execute(f"alter table workbench_turns drop column {column}")
-    _repair_historical_workbench_columns(store)
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     migrated = WorkbenchStore(db_path)
+    assert all(migrated.get_confirmation(item).status is ConfirmationStatus.PENDING for item in confirmations)
+    assert migrated.reconcile_unquiesced_proposers() == 5
 
     expected_result = {
         "code": "legacy_proposer_state_unknown",
@@ -519,7 +407,7 @@ def test_public_turn_excludes_private_resume_context(tmp_path: Path):
     store, _, turn_id = _running_turn(tmp_path)
     with store._connect() as db:
         db.execute(
-            "update workbench_turns set resume_context='private receipt' where id=?",
+            "update tasks set resume_context='private receipt' where record_type='workbench_turns' and legacy_key=?",
             (turn_id,),
         )
     public = store.get_turn(turn_id)
@@ -708,8 +596,7 @@ def test_workbench_query_indexes_exist(tmp_path: Path):
     with store._connect() as db:
         timeline_plans = {
             "events": db.execute(
-                """explain query plan select * from workbench_events
-                   where turn_id in (?,?) order by id desc limit ?""",
+                "explain query plan select * from runs as workbench_events where record_type='workbench_events' and task_id in (?,?) order by cast(legacy_key as integer) desc limit ?",
                 ("turn-1", "turn-2", 1001),
             ).fetchall(),
             "artifacts": db.execute(
@@ -724,13 +611,12 @@ def test_workbench_query_indexes_exist(tmp_path: Path):
             ).fetchall(),
         }
         stats_plan = db.execute(
-            """explain query plan select event_type,count(*)
-               from workbench_events group by event_type"""
+            "explain query plan select event_type,count(*) from runs where record_type='workbench_events' group by event_type"
         ).fetchall()
     for table, rows in timeline_plans.items():
         rendered = " ".join(row["detail"] for row in rows)
         assert f"SEARCH workbench_{table}" in rendered
-        assert "turn_id=?" in rendered
+        assert ("task_id=?" if table == "events" else "turn_id=?") in rendered
     rendered_stats_plan = " ".join(row["detail"] for row in stats_plan)
     assert "COVERING INDEX idx_workbench_events_event_type" in rendered_stats_plan
     assert "TEMP B-TREE" not in rendered_stats_plan
@@ -810,24 +696,19 @@ def test_timeline_snapshot_work_is_bounded_by_selected_turns_not_global_events(
     unrelated_task = store.create_task(title="Unrelated", runtime_kind="codex")
     unrelated_turn_id = "00000000-0000-4000-8000-000000000050"
     with store._connect() as db:
-        db.execute(
-            """insert into workbench_turns
-               (id,task_id,client_request_id,task_sequence,user_text,status)
-               values(?,?,?,?,?,?)""",
-            (
-                unrelated_turn_id,
-                unrelated_task.id,
-                "unrelated-request",
-                1,
-                "unrelated",
-                "completed",
-            ),
-        )
+        insert_task(db, 'workbench_turns', {
+                "legacy_key": unrelated_turn_id,
+                "parent_id": task_physical_id(db, "workbench_tasks", unrelated_task.id),
+                "client_request_id": "unrelated-request",
+                "task_sequence": 1,
+                "user_text": "unrelated",
+                "status": "completed",
+            })
+        unrelated_physical_id = task_physical_id(db, "workbench_turns", unrelated_turn_id)
         db.executemany(
-            """insert into workbench_events
-               (turn_id,sequence,event_type,payload_json)
-               values(?,?,'text_delta','{"text":"noise"}')""",
-            ((unrelated_turn_id, sequence) for sequence in range(1, 50_001)),
+            """insert into runs(record_type,task_id,sequence,event_type,payload_json,created_at)
+               values('workbench_events',?,?,'text_delta','{"text":"noise"}',current_timestamp)""",
+            ((unrelated_physical_id, sequence) for sequence in range(1, 50_001)),
         )
 
     progress_calls = 0
@@ -860,28 +741,20 @@ def test_get_task_summary_uses_latest_turn_index_and_limit_one(tmp_path: Path):
     with store._connect() as db:
         for index in range(1_000):
             created_at = f"2026-08-{1 + index // 24:02d} {index % 24:02d}:00:00"
-            db.execute(
-                """insert into workbench_turns
-                   (id,task_id,client_request_id,task_sequence,user_text,status,
-                    created_at,updated_at)
-                   values(?,?,?,?,?,?,?,?)""",
-                (
-                    f"00000000-0000-4000-8000-{index:012d}",
-                    task.id,
-                    f"summary-{index}",
-                    index + 1,
-                    "summary",
-                    "completed" if index < 999 else "failed",
-                    created_at,
-                    created_at,
-                ),
-            )
+            insert_task(db, 'workbench_turns', {
+                "legacy_key": f"00000000-0000-4000-8000-{index:012d}",
+                "parent_id": task_physical_id(db, "workbench_tasks", task.id),
+                "client_request_id": f"summary-{index}",
+                "task_sequence": index + 1,
+                "user_text": "summary",
+                "status": "completed" if index < 999 else "failed",
+                "created_at": created_at,
+                "updated_at": created_at,
+            })
         plan = " ".join(
             row["detail"]
             for row in db.execute(
-                """explain query plan
-                   select status from workbench_turns where task_id=?
-                   order by task_sequence desc limit 1""",
+                f"explain query plan select status from tasks where record_type='workbench_turns' and parent_id={task_id_expression('workbench_tasks', '?')} order by task_sequence desc limit 1",
                 (task.id,),
             ).fetchall()
         )
@@ -908,11 +781,7 @@ def test_stale_prior_run_quiescence_cannot_unlock_confirmation(tmp_path: Path):
             (confirmation.id,),
         )
         db.execute(
-            """
-            update workbench_turns
-            set execution_run_id='new-run', runtime_quiesced_run_id=''
-            where id=?
-            """,
+            "\n            update tasks\n            set execution_run_id='new-run', runtime_quiesced_run_id=''\n            where record_type='workbench_turns' and legacy_key=?\n            ",
             (turn_id,),
         )
 
@@ -1157,8 +1026,8 @@ def test_append_artifact_event_rolls_back_artifact_when_event_insert_fails(tmp_p
     artifact_path.write_text("report", encoding="utf-8")
     with store._connect() as db:
         db.execute(
-            """create trigger reject_artifact_event before insert on workbench_events
-               when new.event_type='artifact_created'
+            """create trigger reject_artifact_event before insert on runs
+               when new.record_type='workbench_events' and new.event_type='artifact_created'
                begin select raise(abort, 'rejected'); end"""
         )
 
@@ -1246,7 +1115,7 @@ def test_transition_to_waiting_confirmation_releases_worker_lease(tmp_path: Path
     assert store.get_turn(turn.id).status is TurnStatus.WAITING_CONFIRMATION
     with sqlite3.connect(store.path) as db:
         assert db.execute(
-            "select lease_owner from workbench_turns where id=?", (turn.id,)
+            f'select lease_owner from ({WORKBENCH_TURN_SQL}) as workbench_turns where id=?', (turn.id,)
         ).fetchone()[0] == ""
 
 
@@ -1691,7 +1560,7 @@ def test_attachment_reconciliation_removes_generated_orphans(tmp_path: Path):
             """,
             (
                 missing_id,
-                task.id,
+                task_physical_id(db, "workbench_tasks", task.id),
                 missing_id,
                 "missing.txt",
                 "text/plain",
