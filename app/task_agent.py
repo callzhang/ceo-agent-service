@@ -383,6 +383,7 @@ class TaskAgentCodexRunner:
                         "Return exactly one TaskAgentDecision JSON object.\n\n"
                         + BACKGROUND_AGENT_RUNTIME_BOUNDARY
                     ),
+                    skill_names=(WORK_TRACKING_SKILL_PATH.parent.name,),
                     output_schema_path=TASK_AGENT_DECISION_SCHEMA_PATH,
                     use_output_schema=True,
                 ),
