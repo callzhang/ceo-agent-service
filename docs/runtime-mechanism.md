@@ -1,5 +1,17 @@
 # Current Runtime Mechanism
 
+The existing `read_dingtalk_drive_file` attachment reader limits downloaded bytes
+and OOXML aggregate uncompressed bytes to 20 MiB before parsing. Downloads open
+the resulting regular file once with `O_NOFOLLOW` and read from that validated
+descriptor; link replacement cannot redirect the read. Every attachment format
+returns a SHA-256 digest of the downloaded bytes. PDF and presentation previews
+report actual text/page truncation, and the complete serialized tool response
+must fit below the 1 MiB MCP text-block boundary including JSON escaping and
+duplicated text. An oversized response fails rather than presenting partial
+business evidence as complete. Scanned PDF OCR paths and process-owned temporary
+directory cleanup remain unchanged; failed extraction/serialization removes the
+new material file. These limits do not grant shell access to DWS credentials.
+
 `retry-source-verified-email-action --account ... --action-id ...` examines one
 current failed move/trash action through the existing read-only IMAP wrapper.
 Preview opens SQLite read-only without schema initialization. Only an exact

@@ -18,6 +18,7 @@ import zipfile
 from collections.abc import Callable, Sequence
 from contextlib import closing
 from dataclasses import dataclass, replace
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote
 from xml.etree import ElementTree
@@ -53,6 +54,7 @@ from app.native_cli_metadata import (
 # Codex truncates one MCP text block at 1 MiB. Keep command output below that
 # boundary even after JSON escaping so the controlled receipt remains valid.
 MAX_CLI_OUTPUT_BYTES = 128 * 1024
+MAX_MCP_MATERIAL_RESPONSE_BYTES = 1024 * 1024 - 1024
 MAX_SKILL_BYTES = 256 * 1024
 MAX_TEXT_MATERIAL_BYTES = 512 * 1024
 MAX_SPREADSHEET_BYTES = 20 * 1024 * 1024
@@ -443,12 +445,14 @@ def _read_pdf_material(material_file, material_path: Path) -> dict[str, object]:
 
     previews: list[dict[str, object]] = []
     remaining_chars = MAX_TEXT_MATERIAL_BYTES
+    truncated_text = False
     for index, page in enumerate(reader.pages, start=1):
         try:
             text = page.extract_text() or ""
         except (PdfReadError, ValueError) as exc:
             raise AgentReadOnlyViolationError("pdf_material_text_unavailable") from exc
         if len(text) > remaining_chars:
+            truncated_text = True
             text = text[:remaining_chars]
         previews.append({"index": index, "text": text})
         remaining_chars -= len(text)
@@ -462,6 +466,7 @@ def _read_pdf_material(material_file, material_path: Path) -> dict[str, object]:
         "page_count": len(reader.pages),
         "pages": previews,
         "content": "\n\n".join(page["text"] for page in previews),
+        "truncated": truncated_text or len(previews) < len(reader.pages),
         "path": str(material_path),
         "sha256": digest,
     }
@@ -482,10 +487,16 @@ def _download_dingtalk_drive_file(
         raise AgentReadOnlyViolationError("drive_file_name_invalid")
     material_root.mkdir(parents=True, exist_ok=True)
     contents = dws.download_drive_file(
-        node_id, file_name=file_name, space_id=space_id
+        node_id, file_name=file_name, space_id=space_id,
+        max_bytes=MAX_SPREADSHEET_BYTES,
     )
     if len(contents) > MAX_SPREADSHEET_BYTES:
         raise AgentReadOnlyViolationError("drive_file_too_large")
+    package_source = BytesIO(contents)
+    if zipfile.is_zipfile(package_source):
+        with zipfile.ZipFile(package_source) as package:
+            if sum(member.file_size for member in package.infolist()) > MAX_SPREADSHEET_BYTES:
+                raise AgentReadOnlyViolationError("drive_file_expanded_too_large")
     extension = Path(file_name).suffix
     suffix = extension if extension[1:].isalnum() and len(extension) <= 16 else ""
     prefix = hashlib.sha256(node_id.encode()).hexdigest()[:12] + "-"
@@ -494,16 +505,23 @@ def _download_dingtalk_drive_file(
     ) as material_file:
         material_file.write(contents)
         material_path = Path(material_file.name)
-    extracted = read_text_file(str(material_path))
-    result = {
-        "node_id": node_id,
-        "space_id": space_id,
-        "file_name": file_name,
-        **extracted,
-    }
-    if extracted.get("format") == "pdf" and not extracted.get("content", "").strip():
-        result["ocr_required"] = True
-    return result
+    try:
+        extracted = read_text_file(str(material_path))
+        result = {
+            "node_id": node_id,
+            "space_id": space_id,
+            "file_name": file_name,
+            **extracted,
+            "sha256": hashlib.sha256(contents).hexdigest(),
+        }
+        if extracted.get("format") == "pdf" and not extracted.get("content", "").strip():
+            result["ocr_required"] = True
+        if len(json.dumps(result, ensure_ascii=True).encode("utf-8")) > MAX_MCP_MATERIAL_RESPONSE_BYTES:
+            raise AgentReadOnlyViolationError("drive_material_response_too_large")
+        return result
+    except BaseException:
+        material_path.unlink()
+        raise
 
 
 def _read_xlsx_workbook(
@@ -536,6 +554,7 @@ def _read_presentation_workbook(workbook: zipfile.ZipFile) -> dict[str, object]:
     """Return bounded visible text from an OOXML presentation package."""
     slides: list[dict[str, object]] = []
     remaining_chars = MAX_SPREADSHEET_PREVIEW_CHARS
+    truncated_text = False
     slide_names = sorted(
         name
         for name in workbook.namelist()
@@ -548,6 +567,7 @@ def _read_presentation_workbook(workbook: zipfile.ZipFile) -> dict[str, object]:
             for node in root.iter()
             if node.tag.endswith("}t") and node.text
         )
+        truncated_text |= len(text) > remaining_chars
         text = text[:remaining_chars]
         remaining_chars -= len(text)
         slides.append({"index": index, "text": text})
@@ -556,7 +576,7 @@ def _read_presentation_workbook(workbook: zipfile.ZipFile) -> dict[str, object]:
     return {
         "format": "pptx",
         "slides": slides,
-        "truncated": len(slides) < len(slide_names),
+        "truncated": truncated_text or len(slides) < len(slide_names),
     }
 
 
