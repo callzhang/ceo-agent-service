@@ -1081,3 +1081,5 @@ reverts committed work they did not author.
 | codex-skill-discovery-role-control | Same isolated Skill transport tree: role-control metadata and investigation only | Consumer/Audit full code-role synthetic calendar paired control; preserve observed alias-path failure and full trajectory, no policy/runtime change. | active 2026-10-12 |
 
 | codex-skill-discovery-address-columns | Same isolated Skill transport tree: app/business_skills.py compact metadata table only; transport/business-Skill tests; architecture/runtime and scoped evidence | Repeated native alias-path argument misuse. Separate root and relative path columns instead of presenting a joined alias expression as Read path; preserve every source field, no new resolver/instruction stack/policy. | active 2026-10-12 |
+
+| codex-skill-discovery-session-diagnostics | Same isolated Skill transport tree: continuation diagnostics and investigation only | Preserve inherited-cwd confound and invalid original-trigger rewrite; distinguish typed binding from expected judgment; no runtime/session/source-policy change. | active 2026-10-12 |
