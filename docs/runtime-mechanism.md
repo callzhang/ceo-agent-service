@@ -1,13 +1,18 @@
 # Current Runtime Mechanism
 
 The existing `read_dingtalk_drive_file` attachment reader limits downloaded bytes
-and OOXML aggregate uncompressed bytes to 20 MiB before parsing. Downloads open
+and OOXML aggregate uncompressed bytes to 20 MiB before parsing. Member parsing
+also uses bounded reads against one aggregate budget, with actual compressed
+stream termination checked instead of trusting the ZIP directory's size alone;
+only stored and deflated OOXML members are accepted. This termination check is
+covered with the configured Python 3.12 runtime and CI. Downloads open
 the resulting regular file once with `O_NOFOLLOW` and read from that validated
 descriptor; link replacement cannot redirect the read. Every attachment format
 returns a SHA-256 digest of the downloaded bytes. PDF and presentation previews
 report actual text/page truncation, and the complete serialized tool response
-must fit below the 1 MiB MCP text-block boundary including JSON escaping and
-duplicated text. An oversized response fails rather than presenting partial
+must fit below the 1 MiB MCP text-block boundary using the same indented
+`pydantic_core.to_json` serialization as the pinned FastMCP SDK, including JSON
+escaping, structural whitespace and duplicated text. An oversized response fails rather than presenting partial
 business evidence as complete. Scanned PDF OCR paths and process-owned temporary
 directory cleanup remain unchanged; failed extraction/serialization removes the
 new material file. These limits do not grant shell access to DWS credentials.

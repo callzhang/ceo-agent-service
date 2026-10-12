@@ -1,4 +1,5 @@
 import hashlib
+import asyncio
 import json
 import os
 import zipfile
@@ -6,6 +7,7 @@ from io import BytesIO
 from pathlib import Path
 
 import pytest
+from mcp.server.fastmcp.exceptions import ToolError
 
 from app import agent_cli
 from app.dws_client import DwsClient, DwsError
@@ -94,6 +96,41 @@ def test_pdf_text_overflow_is_reported(tmp_path, monkeypatch, text, expected):
     result = agent_cli._read_pdf_material(BytesIO(b"pdf fixture"), tmp_path / "evidence.pdf")
     assert result["content"] == "1234567890"
     assert result["truncated"] is expected
+
+
+def test_package_parser_never_requests_unbounded_member_read(tmp_path, monkeypatch):
+    calls = []
+    original_read = zipfile.ZipExtFile.read
+
+    def reading(source, count=-1):
+        calls.append(count)
+        return original_read(source, count)
+
+    monkeypatch.setattr(zipfile.ZipExtFile, "read", reading)
+    result = read_attachment(tmp_path, monkeypatch, presentation("Normal document"))
+    assert result["slides"][0]["text"] == "Normal document"
+    assert calls and all(0 < count <= agent_cli.MAX_SPREADSHEET_BYTES + 1 for count in calls)
+
+
+def test_dense_workbook_is_bounded_by_actual_mcp_text_block(tmp_path, monkeypatch):
+    columns = [chr(65 + index) for index in range(26)]
+    columns += ["A" + chr(65 + index) for index in range(26)]
+    columns += ["B" + chr(65 + index) for index in range(12)]
+    material = {"format": "xlsx", "sheets": [
+        {"name": str(sheet), "rows": [
+            {"row": row, "cells": {column: "x" for column in columns}}
+            for row in range(200)
+        ], "truncated": False}
+        for sheet in range(6)
+    ]}
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("read_dingtalk_drive_file")
+    blocks, _ = tool.fn_metadata.convert_result(material)
+    assert len(json.dumps(material).encode()) < agent_cli.MAX_MCP_MATERIAL_RESPONSE_BYTES
+    assert len(blocks[0].text.encode()) > 1024 * 1024
+    monkeypatch.setattr(DwsClient, "download_drive_file", lambda *args, **kwargs: b"fixture")
+    monkeypatch.setattr(agent_cli, "read_text_file", lambda *args: material)
+    with pytest.raises(ToolError, match="response_too_large"):
+        asyncio.run(tool.run({"node_id": "node-1", "space_id": "space-1", "file_name": "evidence.xlsx"}, convert_result=True))
 
 
 def test_download_does_not_follow_link_swapped_at_open(tmp_path, monkeypatch):

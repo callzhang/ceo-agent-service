@@ -27,6 +27,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
+from pydantic_core import to_json
 
 from app.action_contract_catalog import read_system_action_contract as load_system_action_contract
 from app.agent_result import EffectKind
@@ -338,6 +339,33 @@ def read_skill(path: str) -> dict[str, str]:
     }
 
 
+class _MaterialZipFile(zipfile.ZipFile):
+    def __init__(self, file):
+        super().__init__(file)
+        self._remaining_material_bytes = MAX_SPREADSHEET_BYTES
+
+    def read(self, name, pwd=None):
+        member = name if isinstance(name, zipfile.ZipInfo) else self.getinfo(name)
+        if member.file_size > self._remaining_material_bytes:
+            raise AgentReadOnlyViolationError("material_expanded_too_large")
+        if member.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            raise AgentReadOnlyViolationError("material_compression_unsupported")
+        if member.compress_type == zipfile.ZIP_STORED and member.file_size != member.compress_size:
+            raise AgentReadOnlyViolationError("material_compression_size_invalid")
+        with self.open(member, pwd=pwd) as source:
+            content = source.read(self._remaining_material_bytes + 1)
+            if len(content) > self._remaining_material_bytes:
+                raise AgentReadOnlyViolationError("material_expanded_too_large")
+            # ZipExtFile slices output to the archive's declared size. Check the
+            # actual compressed stream termination before trusting that slice.
+            if (source._compress_left != 0
+                    or (source._decompressor is not None and not source._decompressor.eof)
+                    or len(content) != member.file_size):
+                raise AgentReadOnlyViolationError("material_compression_size_invalid")
+        self._remaining_material_bytes -= len(content)
+        return content
+
+
 def read_spreadsheet(
     path: str,
     *,
@@ -365,7 +393,7 @@ def read_spreadsheet(
         if file_stat.st_size > MAX_SPREADSHEET_BYTES:
             raise AgentReadOnlyViolationError("spreadsheet_file_too_large")
         try:
-            with zipfile.ZipFile(material_file) as workbook:
+            with _MaterialZipFile(material_file) as workbook:
                 return _read_xlsx_workbook(
                     workbook,
                     max_rows=max_rows,
@@ -403,7 +431,7 @@ def read_text_file(path: str) -> dict[str, object]:
         if zipfile.is_zipfile(material_file):
             material_file.seek(0)
             try:
-                with zipfile.ZipFile(material_file) as workbook:
+                with _MaterialZipFile(material_file) as workbook:
                     if {"[Content_Types].xml", "xl/workbook.xml"}.issubset(
                         workbook.namelist()
                     ):
@@ -516,7 +544,7 @@ def _download_dingtalk_drive_file(
         }
         if extracted.get("format") == "pdf" and not extracted.get("content", "").strip():
             result["ocr_required"] = True
-        if len(json.dumps(result, ensure_ascii=True).encode("utf-8")) > MAX_MCP_MATERIAL_RESPONSE_BYTES:
+        if len(to_json(result, indent=2)) > MAX_MCP_MATERIAL_RESPONSE_BYTES:
             raise AgentReadOnlyViolationError("drive_material_response_too_large")
         return result
     except BaseException:
