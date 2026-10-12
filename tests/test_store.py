@@ -17,6 +17,8 @@ import pytest
 
 import app.store as store_module
 from tests.reply_schema_fixtures import restore_legacy_reply_parent
+from tests.run_reader_fixtures import assert_no_core_native_storage, insert_native_run_fixture
+from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RUN_STATE_EVENT_SQL, insert_run
 from app.store import (
     REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
     AgentRole,
@@ -121,8 +123,7 @@ def _write_native_run_events(
     )
     with store._connect() as db:
         db.execute(
-            "update agent_runs set codex_session_id=?, transcript_start_line=0, "
-            "transcript_end_line=? where id=?",
+            "update runs set session_id=?, transcript_start=0, transcript_end=? where record_type='agent_runs' and cast(legacy_key as integer)=?",
             (session_id, len(records), run_id),
         )
 
@@ -424,7 +425,7 @@ def test_restart_requeues_a_processing_task_whose_last_run_already_failed(tmp_pa
     )
     with store._connect() as db:
         db.execute(
-            "update agent_runs set status='failed' where id=?",
+            "update runs set status='failed' where record_type='agent_runs' and cast(legacy_key as integer)=?",
             (claim.run.id,),
         )
 
@@ -719,7 +720,7 @@ def test_runtime_attempt_claim_rejects_missing_agent_parent(tmp_path: Path):
         )
 
     with store._connect() as db:
-        assert db.execute("select count(*) from agent_runtime_attempts").fetchone()[0] == 0
+        assert db.execute(f'select count(*) from ({RUNTIME_ATTEMPT_SQL})').fetchone()[0] == 0
 
 
 def _runtime_effect_started_event(operation_id: str) -> dict[str, object]:
@@ -820,11 +821,7 @@ def test_runtime_attempt_history_lookup_uses_run_index(tmp_path: Path):
     ]
     with store._connect() as db:
         plan = db.execute(
-            """
-            explain query plan
-            select * from agent_runtime_attempts
-            where agent_run_id=? order by attempt_number
-            """,
+            f'\n            explain query plan\n            select * from ({RUNTIME_ATTEMPT_SQL})\n            where agent_run_id=? order by attempt_number\n            ',
             (run.id,),
         ).fetchall()
 
@@ -923,18 +920,23 @@ def test_runtime_attempt_session_evidence_is_persisted_and_validated(tmp_path: P
             source_session_id=1,
         )
     with store._connect() as db, pytest.raises(sqlite3.IntegrityError):
-        db.execute(
-            """
-            insert into agent_runtime_attempts (
-                agent_run_id, workload_kind, workload_key, attempt_number,
-                route_name, runtime_kind, credential_mode, model, session_mode,
-                source_session_id, status, started_at, created_at, updated_at
-            ) values (?, 'agent_run', ?, 99, 'direct', 'codex_cli',
-                      'local_oauth', 'gpt-5.5', 'resume', '   ', 'starting',
-                      '2026-08-20 10:00:00', '2026-08-20 10:00:00',
-                      '2026-08-20 10:00:00')
-            """,
-            (run.id, str(run.id)),
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'parent_id': run.id,
+                'workload_kind': 'agent_run',
+                'workload_key': str(run.id),
+                'attempt_number': 99,
+                'route_name': 'direct',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'local_oauth',
+                'model': 'gpt-5.5',
+                'session_mode': 'resume',
+                'source_session_id': '   ',
+                'status': 'starting',
+                'started_at': '2026-08-20 10:00:00',
+                'created_at': '2026-08-20 10:00:00',
+                'updated_at': '2026-08-20 10:00:00',
+            },
         )
 
 
@@ -957,233 +959,61 @@ def test_runtime_attempt_active_claim_compares_session_evidence(tmp_path: Path):
         )
 
 
-def test_runtime_attempt_upgrade_adds_session_evidence_constraints(tmp_path: Path):
-    db_path = tmp_path / "runtime-attempt-upgrade.sqlite3"
-    store = AutoReplyStore(db_path)
-    run = _claimed_runtime_agent_run(store)
-    attempt = store.claim_agent_runtime_attempt(
-        run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
-    )
-    with store._connect() as db:
-        db.execute("drop trigger if exists trg_runtime_attempt_session_evidence_insert")
-        db.execute("drop trigger if exists trg_runtime_attempt_session_evidence_update")
-        db.execute(
-            "alter table agent_runtime_attempts rename to legacy_runtime_attempts"
-        )
-        db.execute(
-            """
-            create table agent_runtime_attempts (
-                id integer primary key autoincrement,
-                agent_run_id integer,
-                workload_kind text not null,
-                workload_key text not null,
-                attempt_number integer not null,
-                route_name text not null,
-                runtime_kind text not null,
-                credential_mode text not null,
-                model text not null,
-                session_id text not null default '',
-                status text not null,
-                failure_class text not null default '',
-                failure_code text not null default '',
-                failover_permitted integer not null default 0,
-                transcript_reference text not null default '',
-                transcript_start integer not null default 0,
-                transcript_end integer not null default 0,
-                first_effect_started_at text not null default '',
-                started_at text not null,
-                finished_at text not null default '',
-                created_at text not null,
-                updated_at text not null
-            )
-            """
-        )
-        db.execute(
-            """
-            insert into agent_runtime_attempts (
-                id, agent_run_id, workload_kind, workload_key, attempt_number,
-                route_name, runtime_kind, credential_mode, model, session_id,
-                status, failure_class, failure_code, failover_permitted,
-                transcript_reference, transcript_start, transcript_end,
-                first_effect_started_at, started_at, finished_at, created_at, updated_at
-            )
-            select id, agent_run_id, workload_kind, workload_key, attempt_number,
-                route_name, runtime_kind, credential_mode, model, session_id,
-                status, failure_class, failure_code, failover_permitted,
-                transcript_reference, transcript_start, transcript_end,
-                first_effect_started_at, started_at, finished_at, created_at, updated_at
-            from legacy_runtime_attempts
-            """
-        )
-        db.execute("drop table legacy_runtime_attempts")
-    assert store._schema_is_current() is False
+def _previous_11_1_runtime_attempt(db_path):
+    from tests.run_schema_fixtures import previous_run_schema_store
+
+    previous_run_schema_store(db_path, task_args=dict(
+        conversation_id='cid-universal', conversation_title='Universal', single_chat=False,
+        trigger_message_id='msg-universal', trigger_create_time='2026-07-20 10:00:00',
+        trigger_sender='Derek', trigger_text='Handle this task', execution_generation='initial',
+    ))
+    with sqlite3.connect(db_path) as db:
+        db.execute("insert into agent_runs(id,reply_task_id,execution_generation,role,status) "
+                   "values(1,1,'initial','audit','running')")
+        db.execute("insert into agent_runtime_attempts(id,agent_run_id,workload_kind,workload_key,"
+                   "attempt_number,route_name,runtime_kind,credential_mode,model,status) "
+                   "values(1,1,'agent_run','1',1,'codex_oauth','codex_cli','local_oauth','gpt-5.5','starting')")
+
+
+def _assert_core_source_rejected_without_mutation(db_path):
+    with sqlite3.connect(db_path) as db:
+        before = tuple(db.iterdump())
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    with pytest.raises((ValueError, sqlite3.IntegrityError),
+                       match="unsupported|native events|retired empty placeholder"):
+        AutoReplyStore(db_path)
+    with sqlite3.connect(db_path) as db:
+        assert tuple(db.iterdump()) == before
 
+
+def test_exact_11_1_runtime_migration_preserves_session_evidence_constraints(tmp_path: Path):
+    db_path = tmp_path / 'runtime-attempt-11-1.sqlite3'
+    _previous_11_1_runtime_attempt(db_path)
     upgraded = AutoReplyStore(db_path)
-    restored = upgraded.get_agent_runtime_attempt(attempt.id)
-
-    assert restored.session_mode == "fresh"
-    assert restored.source_session_id == ""
+    restored = upgraded.get_agent_runtime_attempt(1)
+    assert restored.session_mode == 'fresh'
+    assert restored.source_session_id == ''
     with upgraded._connect() as db, pytest.raises(sqlite3.IntegrityError):
-        db.execute(
-            "update agent_runtime_attempts set session_mode='resume', "
-            "source_session_id='   ' where id=?",
-            (attempt.id,),
-        )
+        db.execute("update runs set session_mode='resume',source_session_id='   ' "
+                   "where record_type='agent_runtime_attempts' and legacy_key='1'")
 
 
-def test_runtime_attempt_upgrade_replaces_pretrim_session_evidence_triggers(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "runtime-attempt-pretrim-trigger-upgrade.sqlite3"
-    store = AutoReplyStore(db_path)
-    run = _claimed_runtime_agent_run(store)
-    attempt = store.claim_agent_runtime_attempt(
-        run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
-    )
-    with store._connect() as db:
-        db.execute(
-            "drop trigger if exists trg_runtime_attempt_session_evidence_trim_insert"
-        )
-        db.execute(
-            "drop trigger if exists trg_runtime_attempt_session_evidence_trim_update"
-        )
-        db.execute(
-            "alter table agent_runtime_attempts rename to legacy_runtime_attempts"
-        )
-        db.execute(
-            """
-            create table agent_runtime_attempts (
-                id integer primary key autoincrement,
-                agent_run_id integer,
-                workload_kind text not null,
-                workload_key text not null,
-                attempt_number integer not null,
-                route_name text not null,
-                runtime_kind text not null,
-                credential_mode text not null,
-                model text not null,
-                session_mode text not null default 'fresh'
-                    check(session_mode in ('fresh', 'resume')),
-                source_session_id text not null default '',
-                session_id text not null default '',
-                status text not null,
-                failure_class text not null default '',
-                failure_code text not null default '',
-                failover_permitted integer not null default 0,
-                transcript_reference text not null default '',
-                transcript_start integer not null default 0,
-                transcript_end integer not null default 0,
-                first_effect_started_at text not null default '',
-                started_at text not null,
-                finished_at text not null default '',
-                created_at text not null,
-                updated_at text not null,
-                check(
-                    (session_mode='fresh' and source_session_id='')
-                    or (session_mode='resume' and source_session_id<>'')
-                ),
-                unique(agent_run_id, attempt_number),
-                foreign key(agent_run_id) references agent_runs(id)
-            )
-            """
-        )
-        db.execute(
-            """
-            insert into agent_runtime_attempts (
-                id, agent_run_id, workload_kind, workload_key, attempt_number,
-                route_name, runtime_kind, credential_mode, model, session_mode,
-                source_session_id, session_id, status, failure_class, failure_code,
-                failover_permitted, transcript_reference, transcript_start,
-                transcript_end, first_effect_started_at, started_at, finished_at,
-                created_at, updated_at
-            )
-            select id, agent_run_id, workload_kind, workload_key, attempt_number,
-                route_name, runtime_kind, credential_mode, model, session_mode,
-                source_session_id, session_id, status, failure_class, failure_code,
-                failover_permitted, transcript_reference, transcript_start,
-                transcript_end, first_effect_started_at, started_at, finished_at,
-                created_at, updated_at
-            from legacy_runtime_attempts
-            """
-        )
-        db.execute("drop table legacy_runtime_attempts")
-        db.execute(
-            "create index idx_runtime_attempt_active_route "
-            "on agent_runtime_attempts(agent_run_id, route_name) "
-            "where status in ('starting', 'running')"
-        )
-        db.execute(
-            """
-            create trigger trg_runtime_attempt_session_evidence_insert
-            before insert on agent_runtime_attempts
-            when new.session_mode is null or new.source_session_id is null or not (
-                (new.session_mode='fresh' and new.source_session_id='')
-                or (new.session_mode='resume' and new.source_session_id<>'')
-            )
-            begin
-                select raise(abort, 'invalid runtime attempt session evidence');
-            end
-            """
-        )
-        db.execute(
-            """
-            create trigger trg_runtime_attempt_session_evidence_update
-            before update of session_mode, source_session_id on agent_runtime_attempts
-            when new.session_mode is null or new.source_session_id is null or not (
-                (new.session_mode='fresh' and new.source_session_id='')
-                or (new.session_mode='resume' and new.source_session_id<>'')
-            )
-            begin
-                select raise(abort, 'invalid runtime attempt session evidence');
-            end
-            """
-        )
-        trigger_names = {
-            str(row["name"])
-            for row in db.execute(
-                "select name from sqlite_master where type='trigger'"
-            ).fetchall()
-        }
-        assert {
-            "trg_runtime_attempt_session_evidence_insert",
-            "trg_runtime_attempt_session_evidence_update",
-        } <= trigger_names
-        db.execute(
-            "update service_state set value=? where key=?",
-            ("2026-08-20.1", store_module.STORE_SCHEMA_VERSION_KEY),
-        )
-        db.execute(
-            "update agent_runtime_attempts set session_mode='resume', "
-            "source_session_id='   ' where id=?",
-            (attempt.id,),
-        )
-    assert store._schema_is_current() is False
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
+def test_exact_11_1_runtime_migration_preserves_trim_session_evidence_triggers(tmp_path: Path):
+    db_path = tmp_path / 'runtime-attempt-trim-11-1.sqlite3'
+    _previous_11_1_runtime_attempt(db_path)
     upgraded = AutoReplyStore(db_path)
-
     with upgraded._connect() as db:
-        trigger_sql = {
-            str(row["name"]): str(row["sql"])
-            for row in db.execute(
-                "select name, sql from sqlite_master where type='trigger'"
-            ).fetchall()
-        }
-        assert "trg_runtime_attempt_session_evidence_insert" not in trigger_sql
-        assert "trg_runtime_attempt_session_evidence_update" not in trigger_sql
-        assert "trim(new.source_session_id)<>''" in trigger_sql[
-            "trg_runtime_attempt_session_evidence_trim_insert"
-        ]
-        assert "trim(new.source_session_id)<>''" in trigger_sql[
-            "trg_runtime_attempt_session_evidence_trim_update"
-        ]
+        trigger_sql = dict(db.execute("select name,sql from sqlite_master where type='trigger'"))
+        assert 'trg_runtime_attempt_session_evidence_insert' not in trigger_sql
+        assert 'trg_runtime_attempt_session_evidence_update' not in trigger_sql
+        for name in ('trg_runtime_attempt_session_evidence_trim_insert',
+                     'trg_runtime_attempt_session_evidence_trim_update'):
+            assert "trim(new.source_session_id)<>''" in trigger_sql[name]
         with pytest.raises(sqlite3.IntegrityError):
-            db.execute(
-                "update agent_runtime_attempts set session_mode='resume', "
-                "source_session_id='   ' where id=?",
-                (attempt.id,),
-            )
+            db.execute("update runs set session_mode='resume',source_session_id='   ' "
+                       "where record_type='agent_runtime_attempts' and legacy_key='1'")
+
 
 
 @pytest.mark.parametrize(
@@ -1382,9 +1212,7 @@ def test_runtime_attempt_correction_lineage_is_sealed_and_immutable(tmp_path: Pa
         sqlite3.IntegrityError, match="lineage is immutable"
     ):
         db.execute(
-            "update agent_runtime_attempts set attempt_purpose='normal', "
-            "validation_retry_policy_id='', validation_result_schema_id='' "
-            "where id=?",
+            "update runs set attempt_purpose='normal', validation_retry_policy_id='', validation_result_schema_id='' where record_type='agent_runtime_attempts' and cast(legacy_key as integer)=?",
             (correction.id,),
         )
     with pytest.raises(ValueError, match="cannot carry correction lineage"):
@@ -2127,28 +1955,12 @@ def test_current_schema_sentinel_requires_new_runtime_parent_tables(tmp_path: Pa
     assert {"weekly_okr_analysis_jobs", "wechat_memory_import_jobs"} <= tables
 
 
-def test_current_schema_removes_legacy_agent_runs_tool_events_column(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "agent-runs-missing-tool-events.sqlite3"
-    store = AutoReplyStore(db_path)
+def test_current_schema_has_no_legacy_core_trajectory_columns(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / 'core-no-trajectory.sqlite3')
+    assert store._schema_is_current() is True
     with store._connect() as db:
-        db.execute(
-            "alter table agent_runs add column "
-            "tool_events_json text not null default '[]'"
-        )
+        assert_no_core_native_storage(db)
 
-    assert store._schema_is_current() is False
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    reopened = AutoReplyStore(db_path)
-
-    with reopened._connect() as db:
-        columns = {
-            row["name"] for row in db.execute("pragma table_info(agent_runs)").fetchall()
-        }
-    assert "tool_events_json" not in columns
-    assert reopened._schema_is_current() is True
 
 
 def test_current_schema_sentinel_migrates_complete_legacy_meeting_run_shape(
@@ -2713,7 +2525,7 @@ def test_list_agent_run_summaries_for_terminal_runs_batches_without_events(
     )
     normalized_statements = [statement.casefold() for statement in statements]
     assert len(
-        [statement for statement in normalized_statements if "from agent_runs" in statement]
+        [statement for statement in normalized_statements if f'from ({AGENT_RUN_SQL})' in statement]
     ) == 1
     assert not any("agent_run_events" in statement for statement in normalized_statements)
     assert method([]) == {}
@@ -3507,18 +3319,15 @@ def test_history_hides_legacy_duplicate_attempt_projections_for_one_reply_task(
     ]
     with store._connect() as db:
         for generation, attempt_id in enumerate(attempt_ids):
-            run = db.execute(
-                """
-                insert into agent_runs (
-                    reply_task_id, execution_generation, role, operation_id, status
-                ) values (?, ?, 'consumer', ?, 'completed')
-                """,
-                (
-                    task.id,
-                    task.execution_generation if generation == len(attempt_ids) - 1
+            run = insert_run(
+                db, 'agent_runs', {
+                    'task_id': task.id,
+                    'execution_generation': task.execution_generation if generation == len(attempt_ids) - 1
                     else f"legacy-generation-{generation}",
-                    f"legacy-{generation}",
-                ),
+                    'role': 'consumer',
+                    'operation_id': f"legacy-{generation}",
+                    'status': 'completed',
+                },
             )
             db.execute(
                 "update reply_attempts set agent_run_id=? where id=?",
@@ -4067,13 +3876,20 @@ def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
             codex_transcript_end_line=index * 2 + 2,
         )
         with store._connect() as db:
-            db.execute(
-                "insert into agent_runtime_attempts "
-                "(workload_kind, workload_key, attempt_number, route_name, runtime_kind, "
-                "credential_mode, model, session_id, status, transcript_start, transcript_end) "
-                "values ('meeting', ?, 1, 'test', 'codex_cli', 'local_oauth', 'test', ?, "
-                "'completed', ?, ?)",
-                (str(run_id), session_id, index * 2, index * 2 + 2),
+            insert_run(
+                db, 'agent_runtime_attempts', {
+                    'workload_kind': 'meeting',
+                    'workload_key': str(run_id),
+                    'attempt_number': 1,
+                    'route_name': 'test',
+                    'runtime_kind': 'codex_cli',
+                    'credential_mode': 'local_oauth',
+                    'model': 'test',
+                    'session_id': session_id,
+                    'status': 'completed',
+                    'transcript_start': index * 2,
+                    'transcript_end': index * 2 + 2,
+                },
             )
         store.upsert_codex_session_search_index(
             session_id=session_id, source_type="meeting_alignment",
@@ -5002,7 +4818,10 @@ def test_store_migrates_reply_tasks_with_initial_execution_generation(
     tmp_path: Path,
 ):
     db_path = tmp_path / "worker.sqlite3"
+    # Retain a valid current core while isolating this older business-table shape.
+    AutoReplyStore(db_path)
     with sqlite3.connect(db_path) as db:
+        db.execute('drop table reply_tasks')
         db.execute(
             """
             create table reply_tasks (
@@ -5034,6 +4853,7 @@ def test_store_migrates_reply_tasks_with_initial_execution_generation(
             """
         )
 
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
     store = AutoReplyStore(db_path)
 
     assert store.claim_reply_tasks(limit=1)[0].execution_generation == "initial"
@@ -5043,7 +4863,10 @@ def test_store_channel_identity_migration_preserves_active_execution_generation(
     tmp_path: Path,
 ):
     db_path = tmp_path / "worker.sqlite3"
+    # Retain a valid current core while isolating this older business-table shape.
+    AutoReplyStore(db_path)
     with sqlite3.connect(db_path) as db:
+        db.execute('drop table reply_tasks')
         db.executescript(
             """
             create table reply_tasks (
@@ -5083,6 +4906,7 @@ def test_store_channel_identity_migration_preserves_active_execution_generation(
             """
         )
 
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
     with pytest.raises(RuntimeError, match="quiet"):
         AutoReplyStore(db_path)
     with sqlite3.connect(db_path) as db:
@@ -6224,20 +6048,10 @@ def test_agent_run_events_are_not_copied_to_sqlite(tmp_path: Path):
     store.append_agent_run_event(run.id, first, owner="worker-1")
     store.append_agent_run_event(run.id, second, owner="worker-1")
 
-    with sqlite3.connect(store.path) as db:
-        rows = db.execute(
-            "select sequence, event_json from agent_run_events "
-            "where agent_run_id=? order by sequence",
-            (run.id,),
-        ).fetchall()
-        second_copy = [
-            row[1]
-            for row in db.execute("pragma table_info(agent_runs)")
-            if row[1] == "tool_events_json"
-        ]
-    assert rows == []
-    assert second_copy == []
     assert store.get_agent_run(run.id).tool_events == [first, second]
+    with sqlite3.connect(store.path) as db:
+        assert_no_core_native_storage(db)
+
 
 
 def test_append_agent_events_does_not_reparse_prior_json(tmp_path: Path, monkeypatch):
@@ -6271,44 +6085,14 @@ def test_append_agent_events_does_not_reparse_prior_json(tmp_path: Path, monkeyp
     assert calls <= 300
 
 
-def test_agent_run_event_migration_discards_legacy_json_copies(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    task_id = _enqueue_universal_reply_task(store)
-    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
-    legacy_events = [
-        {"type": "item.started", "call_id": "legacy-1"},
-        {"type": "item.failed", "call_id": "legacy-1"},
-    ]
+def test_exact_11_1_source_with_native_event_body_is_rejected_without_mutation(tmp_path: Path):
+    db_path = tmp_path / 'nonempty-source-events.sqlite3'
+    _previous_11_1_runtime_attempt(db_path)
     with sqlite3.connect(db_path) as db:
-        db.execute("drop table agent_run_events")
-        db.execute(
-            "alter table agent_runs add column tool_events_json "
-            "text not null default '[]'"
-        )
-        db.execute(
-            "update agent_runs set tool_events_json=? where id=?",
-            (json.dumps(legacy_events), run.id),
-        )
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+        db.execute("insert into agent_run_events(agent_run_id,sequence,event_json) "
+                   "values(1,1,?)", (json.dumps({'type':'item.started','call_id':'legacy-1'}),))
+    _assert_core_source_rejected_without_mutation(db_path)
 
-    migrated = AutoReplyStore(db_path)
-    first_load = migrated.get_agent_run(run.id)
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    second_load = AutoReplyStore(db_path).get_agent_run(run.id)
-
-    assert first_load.tool_events == []
-    assert second_load.tool_events == []
-    with sqlite3.connect(db_path) as db:
-        assert db.execute(
-            "select count(*) from agent_run_events where agent_run_id=?",
-            (run.id,),
-        ).fetchone()[0] == 0
-        # Legacy copies are removed; native transcripts are the trajectory source.
-        assert not any(
-            row[1] == "tool_events_json"
-            for row in db.execute("pragma table_info(agent_runs)")
-        )
 
 
 
@@ -6783,7 +6567,7 @@ def test_reconcile_failed_agent_message_accepts_send_and_readback_in_same_run(
     assert attempt.send_status == "completed"
 
 
-def test_reconcile_preserves_legacy_authorization_projection(tmp_path: Path):
+def test_reconcile_preserves_legacy_authorization_projection(tmp_path: Path, monkeypatch):
     """An unreviewed old choice remains recorded but is not made actionable."""
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
@@ -6825,11 +6609,14 @@ def test_reconcile_preserves_legacy_authorization_projection(tmp_path: Path):
         "error_authorization_required": True,
     }
     with store._connect() as db:
-        run = db.execute(
-            """insert into agent_runs (
-                reply_task_id, execution_generation, role, status, final_result_json
-            ) values (?, ?, 'consumer', 'completed', ?)""",
-            (task.id, task.execution_generation, json.dumps(result)),
+        run = insert_native_run_fixture(
+            db, {
+                'task_id': task.id,
+                'execution_generation': task.execution_generation,
+                'role': 'consumer',
+                'status': 'completed',
+            },
+                    result=json.dumps(result), tmp_path=tmp_path, monkeypatch=monkeypatch,
         )
         db.execute(
             "update reply_attempts set agent_run_id=? where id=?",
@@ -7011,7 +6798,7 @@ def test_list_agent_runs_reads_native_events_after_connection_closes(
     reference_query_count = {"value": 0}
 
     def trace_query(statement):
-        if "from agent_runtime_attempts" in statement.casefold():
+        if f'from ({RUNTIME_ATTEMPT_SQL})' in statement.casefold():
             reference_query_count["value"] += 1
 
     def assert_connection_closed(row, attempts, db_path):
@@ -7174,7 +6961,7 @@ def test_agent_run_terminal_transitions_are_strict_and_exactly_idempotent(
     }) + "\n")
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *a, **k: native_path)
     with store._connect() as db:
-        db.execute("update agent_runs set codex_session_id='terminal-session' where id=?", (run.id,))
+        db.execute("update runs set session_id='terminal-session' where record_type='agent_runs' and cast(legacy_key as integer)=?", (run.id,))
 
     completed = store.complete_agent_run(
         run.id,
@@ -7323,9 +7110,11 @@ def test_schema_upgrade_aliases_historical_oa_comment_to_the_known_node(
     restore_legacy_reply_parent(store)
     with store._connect() as db:
         db.execute(
-            "update service_state set value='2026-09-07.2' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
+            "update service_state set value=? where key=?",
+            (store_module.STORE_SCHEMA_VERSION, store_module.STORE_SCHEMA_VERSION_KEY),
         )
+    # The core is current; exercise the retained business migration directly.
+    store._initialize()
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     upgraded = AutoReplyStore(db_path)
@@ -7373,9 +7162,11 @@ def test_schema_upgrade_preserves_unchanged_business_object_mapping_rows(
             "from business_object_tasks order by business_object_key"
         )]
         db.execute(
-            "update service_state set value='2026-10-09.0' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
+            "update service_state set value=? where key=?",
+            (store_module.STORE_SCHEMA_VERSION, store_module.STORE_SCHEMA_VERSION_KEY),
         )
+    # The core is current; exercise the retained business migration directly.
+    store._initialize()
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     upgraded = AutoReplyStore(db_path)
@@ -7410,9 +7201,11 @@ def test_schema_upgrade_keeps_latest_business_object_remapping(tmp_path: Path) -
             (first.business_object_key, second.id),
         )
         db.execute(
-            "update service_state set value='2026-10-09.0' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
+            "update service_state set value=? where key=?",
+            (store_module.STORE_SCHEMA_VERSION, store_module.STORE_SCHEMA_VERSION_KEY),
         )
+    # The core is current; exercise the retained business migration directly.
+    store._initialize()
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     upgraded = AutoReplyStore(db_path)
@@ -7992,58 +7785,18 @@ def test_generation_switch_revokes_old_run_write_access_and_only_new_run_claims(
 
 
 
-def test_legacy_agent_run_events_adds_scope_before_index_and_is_idempotent(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "worker.sqlite3"
-    with sqlite3.connect(db_path) as db:
-        db.executescript(
-            """
-            create table agent_run_events (
-                id integer primary key autoincrement,
-                agent_run_id integer not null,
-                sequence integer not null,
-                event_json text not null,
-                event_type text not null default '',
-                call_id text not null default '',
-                effect_kind text not null default '',
-                receipt_operation_id text not null default '',
-                created_at text not null default current_timestamp,
-                unique(agent_run_id, sequence)
-            );
-            insert into agent_run_events (
-                agent_run_id, sequence, event_json, event_type
-            ) values (7, 1, '{"type":"item.completed"}', 'item.completed');
-            """
-        )
-
+def test_reopening_current_core_keeps_native_events_in_ram_only(tmp_path: Path):
+    db_path = tmp_path / 'core-native-ram.sqlite3'
     store = AutoReplyStore(db_path)
-    store._initialize()
+    run = _claimed_runtime_agent_run(store)
+    event = {'type':'item.completed','call_id':'native-1'}
+    store.append_agent_run_event(run.id, event, owner='runtime-attempt')
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    reopened = AutoReplyStore(db_path)
+    assert reopened.get_agent_run(run.id).tool_events == [event]
+    with reopened._connect() as db:
+        assert_no_core_native_storage(db)
 
-    with sqlite3.connect(db_path) as db:
-        columns = {
-            row[1] for row in db.execute("pragma table_info(agent_run_events)")
-        }
-        indexes = {
-            row[1] for row in db.execute("pragma index_list(agent_run_events)")
-        }
-        preserved = db.execute(
-            "select agent_run_id, sequence, event_json, event_scope "
-            "from agent_run_events"
-        ).fetchall()
-        plan = db.execute(
-            "explain query plan select count(*) from agent_run_events "
-            "where agent_run_id=? and event_scope='reconciliation'",
-            (7,),
-        ).fetchall()
-
-    assert "event_scope" in columns
-    assert "idx_agent_run_events_run_scope" in indexes
-    assert preserved == [(7, 1, '{"type":"item.completed"}', "direct")]
-    assert any(
-        "USING COVERING INDEX idx_agent_run_events_run_scope" in row[3]
-        for row in plan
-    ), plan
 
 
 def test_get_agent_run_for_turn_returns_exact_row(tmp_path: Path):
@@ -8315,7 +8068,7 @@ def test_requeue_reply_task_records_stale_run_terminal_failure_event(tmp_path: P
     assert failed.status == "failed"
     with store._connect() as db:
         events = db.execute(
-            "select phase, structured_error_json from agent_run_state_events "
+            f"select phase, structured_error_json from ({RUN_STATE_EVENT_SQL}) "
             "where agent_run_id=? order by id",
             (run.id,),
         ).fetchall()
@@ -10412,18 +10165,21 @@ def test_meeting_memory_health_uses_matching_live_leases_not_runtime_status_alon
             (31, "active", "worker-active"),
             (32, "ghost", "worker-ghost"),
         ):
-            db.execute(
-                """
-                insert into agent_runtime_attempts (
-                    workload_kind, workload_key, attempt_number, route_name,
-                    runtime_kind, credential_mode, model, status, lease_owner,
-                    lease_expires_at, started_at, updated_at
-                ) values ('memory', ?, 1, 'codex_oauth', 'codex_cli',
-                          'local_oauth', 'gpt-5.6-sol', 'running', ?,
-                          '2026-09-15T12:20:00+00:00',
-                          '2026-09-15T11:55:00+00:00', '2026-09-15T11:55:00+00:00')
-                """,
-                (f"meeting_memory_write_event:{event_id}:{generation}", owner),
+            insert_run(
+                db, 'agent_runtime_attempts', {
+                    'workload_kind': 'memory',
+                    'workload_key': f"meeting_memory_write_event:{event_id}:{generation}",
+                    'attempt_number': 1,
+                    'route_name': 'codex_oauth',
+                    'runtime_kind': 'codex_cli',
+                    'credential_mode': 'local_oauth',
+                    'model': 'gpt-5.6-sol',
+                    'status': 'running',
+                    'lease_owner': owner,
+                    'lease_expires_at': '2026-09-15T12:20:00+00:00',
+                    'started_at': '2026-09-15T11:55:00+00:00',
+                    'updated_at': '2026-09-15T11:55:00+00:00',
+                },
             )
 
     health = store.meeting_memory_health_snapshot(
@@ -11033,7 +10789,8 @@ def test_removed_runtime_tables_modules_and_apis_are_absent(tmp_path: Path) -> N
             ).fetchall()
         }
 
-    assert "agent_runs" in tables
+    assert "runs" in tables
+    assert "agent_runs" not in tables
     assert "universal_plan_executions" not in tables
     assert "universal_action_executions" not in tables
     assert store.get_service_state("dws_auth_backup") is None
@@ -11297,6 +11054,9 @@ def test_removed_runtime_migrates_every_action_status_with_terminal_semantics(
                     else "failed"
                 )
 
+    # The core is current; exercise the retained business migration directly.
+    store._initialize()
+    store.set_service_state(store_module.STORE_SCHEMA_VERSION_KEY, store_module.STORE_SCHEMA_VERSION)
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
     migrated = AutoReplyStore(db_path)
     actual = {
@@ -11572,7 +11332,7 @@ def test_stale_processing_task_ignores_future_lease_without_recent_heartbeat(
             (task.id,),
         )
         db.execute(
-            "update agent_runs set updated_at='2026-07-20 10:00:00', lease_expires_at='2099-01-01 00:00:00' where reply_task_id=?",
+            "update runs set updated_at='2026-07-20 10:00:00', lease_expires_at='2099-01-01 00:00:00' where record_type='agent_runs' and task_id=?",
             (task.id,),
         )
 
@@ -11844,119 +11604,40 @@ def test_late_work_input_failure_or_retry_cannot_reopen_compacted_input(
     assert store.claim_work_summary_inputs(1) == []
 
 
-def test_reopening_drops_the_second_copy_of_a_run_trajectory(tmp_path: Path):
-    """Reopening removes retired SQLite payloads without reviving their contents."""
-    db_path = tmp_path / "legacy-tool-events-column.sqlite3"
+def test_reopening_current_core_never_recreates_a_second_trajectory_copy(tmp_path: Path):
+    db_path = tmp_path / 'core-native-only.sqlite3'
     store = AutoReplyStore(db_path)
-    task_id = _enqueue_universal_reply_task(store)
-    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
-    with store._connect() as db:
-        db.execute(
-            "alter table agent_runs add column tool_events_json "
-            "text not null default '[]'"
-        )
-        db.execute(
-            "update agent_runs set tool_events_json=? where id=?",
-            (
-                json.dumps([{"type": "item.completed", "call_id": "legacy-1"}]),
-                run.id,
-            ),
-        )
-        db.execute(
-            "update service_state set value='2026-08-20.1' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        )
+    run = _claimed_runtime_agent_run(store)
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
     reopened = AutoReplyStore(db_path)
-
+    assert reopened.get_agent_run(run.id).tool_events == []
     with reopened._connect() as db:
-        columns = {row["name"] for row in db.execute("pragma table_info(agent_runs)")}
-    assert "tool_events_json" not in columns
-    loaded = reopened.get_agent_run(run.id)
-    assert loaded is not None
-    assert loaded.tool_events == []
+        assert_no_core_native_storage(db)
 
 
-def test_dropping_the_trajectory_column_requires_clearing_retired_payloads(
-    tmp_path: Path,
-):
-    """The column cannot be dropped while it still contains retired payloads."""
-    store = AutoReplyStore(tmp_path / "undrained-tool-events.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
-    with store._connect() as db:
-        db.execute(
-            "alter table agent_runs add column tool_events_json "
-            "text not null default '[]'"
-        )
-        db.execute(
-            "update agent_runs set tool_events_json=? where id=?",
-            (json.dumps([{"type": "item.completed", "call_id": "kept"}]), run.id),
-        )
 
-        with pytest.raises(ValueError, match="not cleared"):
-            store._drop_agent_run_tool_events_column(db)
-
-        assert any(
-            row["name"] == "tool_events_json"
-            for row in db.execute("pragma table_info(agent_runs)")
-        )
-        store._migrate_agent_run_events(db)
-        store._drop_agent_run_tool_events_column(db)
-        assert not any(
-            row["name"] == "tool_events_json"
-            for row in db.execute("pragma table_info(agent_runs)")
-        )
+def test_exact_11_1_source_with_result_body_is_rejected_without_erasing_payload(tmp_path: Path):
+    db_path = tmp_path / 'undrained-source-result.sqlite3'
+    _previous_11_1_runtime_attempt(db_path)
+    with sqlite3.connect(db_path) as db:
+        db.execute("update agent_runs set final_result_json=? where id=1",
+                   (json.dumps({'type':'item.completed','call_id':'kept'}),))
+    _assert_core_source_rejected_without_mutation(db_path)
 
 
-def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "current-version-old-runtime-attempt.sqlite3"
-    store = AutoReplyStore(db_path)
-    with store._connect() as db:
-        db.execute("drop index idx_runtime_attempt_active_lease")
-        db.execute("drop trigger trg_runtime_attempt_generalized_lease_insert")
-        db.execute("drop trigger trg_runtime_attempt_generalized_lease_update")
-        db.execute("drop trigger trg_runtime_attempt_lineage_insert")
-        db.execute("drop trigger trg_runtime_attempt_lineage_update")
-        db.execute("drop trigger trg_runtime_attempt_lineage_immutable")
-        for column in (
-            "validation_result_schema_id",
-            "validation_retry_policy_id",
-            "attempt_purpose",
-            "result_envelope_json",
-            "result_schema_id",
-            "lease_expires_at",
-            "lease_owner",
-        ):
-            db.execute(f"alter table agent_runtime_attempts drop column {column}")
-        db.execute(
-            "update service_state set value='2026-08-20.1' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        )
-    assert store._schema_is_current() is False
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
-    reopened = AutoReplyStore(db_path)
+def test_exact_11_1_runtime_migration_keeps_execution_shape_without_result_cache(tmp_path: Path):
+    db_path = tmp_path / 'runtime-execution-shape-11-1.sqlite3'
+    _previous_11_1_runtime_attempt(db_path)
+    upgraded = AutoReplyStore(db_path)
+    with upgraded._connect() as db:
+        columns = {row['name'] for row in db.execute('pragma table_info(runs)')}
+        assert {'lease_owner','lease_expires_at','attempt_purpose',
+                'validation_retry_policy_id','validation_result_schema_id','result_schema_id'} <= columns
+        assert_no_core_native_storage(db)
+    assert upgraded.get_agent_runtime_attempt(1).attempt_purpose == 'normal'
+    assert upgraded._schema_is_current() is True
 
-    with reopened._connect() as db:
-        columns = {
-            row["name"]
-            for row in db.execute("pragma table_info(agent_runtime_attempts)")
-        }
-    assert store_module.STORE_SCHEMA_VERSION > "2026-09-24.2"
-    assert {
-        "lease_owner",
-        "lease_expires_at",
-        "attempt_purpose",
-        "validation_retry_policy_id",
-        "validation_result_schema_id",
-        "result_schema_id",
-        "result_envelope_json",
-    } <= columns
-    assert reopened._schema_is_current() is True
 
 
 def test_current_schema_sentinel_migrates_missing_meeting_memory_write_table(
@@ -11969,10 +11650,12 @@ def test_current_schema_sentinel_migrates_missing_meeting_memory_write_table(
         db.execute("drop table meeting_memory_write_events")
         db.execute(
             "update service_state set value=? where key=?",
-            ("2026-09-14.1", store_module.STORE_SCHEMA_VERSION_KEY),
+            (store_module.STORE_SCHEMA_VERSION, store_module.STORE_SCHEMA_VERSION_KEY),
         )
 
     assert store._schema_is_current() is False
+    # The core is current; exercise the retained business migration directly.
+    store._initialize()
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     upgraded = AutoReplyStore(db_path)
@@ -12017,8 +11700,10 @@ def test_schema_upgrade_removes_meeting_memory_payload_copies(tmp_path: Path) ->
         )
         db.execute(
             "update service_state set value=? where key=?",
-            ("2026-09-14.3", store_module.STORE_SCHEMA_VERSION_KEY),
+            (store_module.STORE_SCHEMA_VERSION, store_module.STORE_SCHEMA_VERSION_KEY),
         )
+    # The core is current; exercise the retained business migration directly.
+    store._initialize()
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     upgraded = AutoReplyStore(db_path)
@@ -12045,8 +11730,10 @@ def test_schema_upgrade_adds_meeting_memory_processing_lease_fields(
             )
         db.execute(
             "update service_state set value=? where key=?",
-            ("2026-09-14.4", store_module.STORE_SCHEMA_VERSION_KEY),
+            (store_module.STORE_SCHEMA_VERSION, store_module.STORE_SCHEMA_VERSION_KEY),
         )
+    # The core is current; exercise the retained business migration directly.
+    store._initialize()
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     upgraded = AutoReplyStore(db_path)
@@ -12121,9 +11808,11 @@ def test_schema_upgrade_preserves_reply_inputs_and_adds_revision_identity(
                 """
             )
         db.execute(
-            "update service_state set value='2026-09-13.1' where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
+            "update service_state set value=? where key=?",
+            (store_module.STORE_SCHEMA_VERSION, store_module.STORE_SCHEMA_VERSION_KEY),
         )
+    # The core is current; exercise the retained business migration directly.
+    store._initialize()
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     reopened = AutoReplyStore(db_path)
@@ -12195,26 +11884,43 @@ def test_recover_stale_runtime_attempts_closes_terminal_parent_and_expired_lease
     )
     assert task is not None
     with store._connect() as db:
-        db.execute(
-            "insert into agent_runs (reply_task_id, execution_generation, role, status) "
-            "values (?, 'generation', 'consumer', 'completed')",
-            (task.id,),
+        insert_run(
+            db, 'agent_runs', {
+                'task_id': task.id,
+                'execution_generation': 'generation',
+                'role': 'consumer',
+                'status': 'completed',
+            },
         )
         parent_id = int(db.execute("select last_insert_rowid()").fetchone()[0])
-        db.execute(
-            "insert into agent_runtime_attempts "
-            "(agent_run_id, workload_kind, workload_key, attempt_number, route_name, "
-            "runtime_kind, credential_mode, model, status, lease_expires_at, updated_at) "
-            "values (?, 'agent_run', ?, 1, 'codex_oauth', 'codex_cli', 'oauth', 'model', "
-            "'running', '', '2020-01-01 00:00:00')",
-            (parent_id, str(parent_id)),
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'parent_id': parent_id,
+                'workload_kind': 'agent_run',
+                'workload_key': str(parent_id),
+                'attempt_number': 1,
+                'route_name': 'codex_oauth',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'oauth',
+                'model': 'model',
+                'status': 'running',
+                'lease_expires_at': '',
+                'updated_at': '2020-01-01 00:00:00',
+            },
         )
-        db.execute(
-            "insert into agent_runtime_attempts "
-            "(workload_kind, workload_key, attempt_number, route_name, runtime_kind, "
-            "credential_mode, model, status, lease_owner, lease_expires_at) "
-            "values ('meeting', 'stale-meeting', 1, 'codex_oauth', 'codex_cli', "
-            "'oauth', 'model', 'running', 'stale-owner', '2020-01-01 00:00:00')"
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'workload_kind': 'meeting',
+                'workload_key': 'stale-meeting',
+                'attempt_number': 1,
+                'route_name': 'codex_oauth',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'oauth',
+                'model': 'model',
+                'status': 'running',
+                'lease_owner': 'stale-owner',
+                'lease_expires_at': '2020-01-01 00:00:00',
+            },
         )
 
     closed = store.recover_stale_runtime_attempts(
@@ -12225,7 +11931,7 @@ def test_recover_stale_runtime_attempts_closes_terminal_parent_and_expired_lease
     assert closed == 2
     with store._connect() as db:
         rows = db.execute(
-            "select status, failure_code from agent_runtime_attempts order by id"
+            f'select status, failure_code from ({RUNTIME_ATTEMPT_SQL}) order by id'
         ).fetchall()
     assert [(row["status"], row["failure_code"]) for row in rows] == [
         ("failed", "runtime_lease_expired"),
@@ -12610,7 +12316,7 @@ def test_discard_unstarted_agent_run_removes_only_a_fresh_claim(tmp_path: Path):
     with store._connect() as db:
         assert (
             db.execute(
-                "select count(*) from agent_run_state_events where agent_run_id=?",
+                f"select count(*) from ({RUN_STATE_EVENT_SQL}) where agent_run_id=?",
                 (run.id,),
             ).fetchone()[0]
             == 0
@@ -13257,8 +12963,7 @@ def test_an_attempt_that_started_a_provider_effect_is_left_alone(tmp_path: Path)
     _input_id, run_id, attempt = _input_with_live_run(store)
     with store._connect() as db:
         db.execute(
-            "update agent_runtime_attempts set first_effect_started_at=current_timestamp "
-            "where id=?",
+            "update runs set first_effect_started_at=current_timestamp where record_type='agent_runtime_attempts' and cast(legacy_key as integer)=?",
             (attempt.id,),
         )
 
@@ -13314,12 +13019,9 @@ def test_a_task_whose_approval_action_completed_still_ends_failed(tmp_path):
             "aggregated_output": '{"success":true}',
         },
     }
+    store.append_agent_run_event(claim.run.id, reject, owner='effect-test-owner')
     with store._connect() as db:
-        db.execute(
-            "insert into agent_run_events (agent_run_id, sequence, event_json, event_type) "
-            "values (?, 1, ?, 'item.completed')",
-            (claim.run.id, json.dumps(reject, ensure_ascii=False)),
-        )
+        assert_no_core_native_storage(db)
 
     store.fail_reply_task(
         task.id,
@@ -13403,7 +13105,7 @@ def test_a_task_holding_a_lock_with_no_live_run_is_requeued(tmp_path):
         owner="stale-test-owner",
     )
     with store._connect() as db:
-        db.execute("update agent_runs set status='failed' where id=?", (claim.run.id,))
+        db.execute("update runs set status='failed' where record_type='agent_runs' and cast(legacy_key as integer)=?", (claim.run.id,))
         db.execute(
             "insert into dispatcher_claim_leases "
             "(adapter_name, source_id, owner, owner_pid, generation, lease_expires_at) "
@@ -13831,7 +13533,7 @@ def test_failed_task_without_a_current_human_projection_is_unchanged(tmp_path: P
     assert store.get_reply_task(task.id).status == "failed"
 
 
-def test_old_generation_attempt_cannot_fail_or_surface_current_task(tmp_path: Path):
+def test_old_generation_attempt_cannot_fail_or_surface_current_task(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "generation-guard.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     task = store.get_reply_task(task_id)
@@ -13848,11 +13550,14 @@ def test_old_generation_attempt_cannot_fail_or_surface_current_task(tmp_path: Pa
         channel=task.channel,
     )
     with store._connect() as db:
-        run = db.execute(
-            """insert into agent_runs (
-                reply_task_id, execution_generation, role, status, final_result_json
-            ) values (?, ?, 'consumer', 'completed', '{}')""",
-            (task.id, task.execution_generation),
+        run = insert_native_run_fixture(
+            db, {
+                'task_id': task.id,
+                'execution_generation': task.execution_generation,
+                'role': 'consumer',
+                'status': 'completed',
+            },
+                    result='{}', tmp_path=tmp_path, monkeypatch=monkeypatch,
         )
         db.execute(
             "update reply_attempts set agent_run_id=?, send_error='needs_human' where id=?",
@@ -13869,7 +13574,7 @@ def test_old_generation_attempt_cannot_fail_or_surface_current_task(tmp_path: Pa
     assert store.list_current_unresolved_problem_attempts() == []
 
 
-def test_current_generation_failed_attempt_remains_visible_while_task_retries(tmp_path: Path):
+def test_current_generation_failed_attempt_remains_visible_while_task_retries(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "retry-attention.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     task = store.get_reply_task(task_id)
@@ -13886,11 +13591,14 @@ def test_current_generation_failed_attempt_remains_visible_while_task_retries(tm
         channel=task.channel,
     )
     with store._connect() as db:
-        run = db.execute(
-            """insert into agent_runs (
-                reply_task_id, execution_generation, role, status, final_result_json
-            ) values (?, ?, 'consumer', 'failed', '{}')""",
-            (task.id, task.execution_generation),
+        run = insert_native_run_fixture(
+            db, {
+                'task_id': task.id,
+                'execution_generation': task.execution_generation,
+                'role': 'consumer',
+                'status': 'failed',
+            },
+                    result='{}', tmp_path=tmp_path, monkeypatch=monkeypatch,
         )
         db.execute(
             "update reply_attempts set agent_run_id=?, send_error='codex_process_failed' where id=?",

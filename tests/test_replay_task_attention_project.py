@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from app.run_storage import create_run_schema
 from app.project_context_service import ProjectContextService
 from app.store import AutoReplyStore
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
@@ -301,7 +302,7 @@ def test_baseline_missing_project_storage_is_an_explicit_comparison_failure(tmp_
         for name in ("business_projects", "business_tasks", "business_attention_items", "business_attention_events",
                      "business_task_events", "business_task_anchor_links", "business_anchors"):
             db.execute(f"create table {name} (id integer, canonical_anchor_id integer, active integer)")
-        db.execute("create table agent_runtime_attempts (id integer,route_name text,runtime_kind text,model text,status text,failure_code text,attempt_purpose text,workload_kind text,workload_key text,session_id text,transcript_start integer,transcript_end integer)")
+        create_run_schema(db)
         db.execute("create table task_agent_runs (id integer,summary_input_id integer,status text,decision_json text,projection_json text,error text)")
         db.execute("insert into task_agent_runs values (1,1,'completed',?,?, '')", (
             json.dumps({"task_decisions": [], "project_assessments": []}),

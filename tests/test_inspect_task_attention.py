@@ -6,6 +6,8 @@ from pathlib import Path
 from uuid import uuid4
 import pytest
 
+from app.run_storage import create_run_schema, insert_run
+
 from tests.support.task_native import read_task_fixture_decision
 
 
@@ -36,7 +38,6 @@ def _database(path, monkeypatch):
     ]), encoding="utf-8")
     with sqlite3.connect(path) as db:
         db.executescript(
-            "create table agent_runtime_attempts (id integer, workload_kind text, workload_key text, status text, runtime_kind text, session_id text, transcript_start integer, transcript_end integer);"
             "create table work_summary_inputs (id integer, source_type text, status text, payload_json text);"
             "create table task_agent_runs (id integer, summary_input_id integer, status text, projection_json text, audit_summary text, decision_json text);"
             "insert into work_summary_inputs values (7, 'management_weekly_report', 'completed', 'private payload');"
@@ -44,7 +45,14 @@ def _database(path, monkeypatch):
             "insert into task_agent_runs values (11, 7, 'completed', '{\"status\":\"pending\",\"proposal_count\":2,\"applied_count\":0,\"project_assessments\":[]}', 'current private audit', '{\"project_assessments\":[],\"private\":\"decision\"}');"
             "insert into task_agent_runs values (12, 8, 'failed', '{}', 'other input', '{}');"
         )
-        db.execute("insert into agent_runtime_attempts values (1,'task','11','completed','codex_cli',?,1,3)", (session_id,))
+        create_run_schema(db)
+        insert_run(db, 'agent_runtime_attempts', {
+            'id': 1, 'workload_kind': 'task', 'workload_key': '11',
+            'status': 'completed', 'runtime_kind': 'codex_cli',
+            'session_id': session_id, 'transcript_start': 1, 'transcript_end': 3,
+            'attempt_number': 1, 'route_name': 'test', 'credential_mode': 'oauth',
+            'model': 'test',
+        })
 
 
 def test_inspect_task_attention_reads_exact_input_receipts_without_payload(tmp_path, monkeypatch):
@@ -104,7 +112,7 @@ def test_inspector_does_not_replace_unavailable_native_decision_with_sql_body(tm
         native.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
     else:
         with sqlite3.connect(path) as db:
-            db.execute("update agent_runtime_attempts set transcript_end=99")
+            db.execute('update runs set transcript_end=99')
     before = path.read_bytes()
     result = _inspect(path, 7)
     assert result.returncode == 0, result.stderr
@@ -195,14 +203,21 @@ def test_inspector_reads_actual_zero_task_project_revision_without_rewriting_old
         "\n".join(map(json.dumps, records)) + "\n", encoding="utf-8",
     )
     with store._connect() as db:
-        db.execute(
-            "insert into agent_runtime_attempts "
-            "(workload_kind, workload_key, attempt_number, route_name, runtime_kind, "
-            "credential_mode, model, session_id, status, transcript_reference, "
-            "transcript_start, transcript_end) "
-            "values ('task', ?, 1, 'fixture', 'codex_cli', 'local_oauth', 'fixture', "
-            "?, 'completed', ?, 1, 4)",
-            (str(run_id), session_id, f"codex_session:{session_id}"),
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'workload_kind': 'task',
+                'workload_key': str(run_id),
+                'attempt_number': 1,
+                'route_name': 'fixture',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'local_oauth',
+                'model': 'fixture',
+                'session_id': session_id,
+                'status': 'completed',
+                'transcript_reference': f"codex_session:{session_id}",
+                'transcript_start': 1,
+                'transcript_end': 4,
+            },
         )
     assert read_task_fixture_decision(store, run_id) == decision
     native_readback = subprocess.run(

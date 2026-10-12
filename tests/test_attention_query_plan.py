@@ -1,4 +1,5 @@
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -93,11 +94,19 @@ def test_failure_diagnostics_do_not_scan_queue_payloads(
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     _failed_task(store, "FaIlEd")
     statements: list[str] = []
+    read_columns: set[tuple[str, str]] = set()
     original_open = store._open_connection
 
     def traced_connection():
         db = original_open()
         db.set_trace_callback(statements.append)
+
+        def capture_reads(action, table, column, database, trigger):
+            if action == sqlite3.SQLITE_READ:
+                read_columns.add((table, column))
+            return sqlite3.SQLITE_OK
+
+        db.set_authorizer(capture_reads)
         return db
 
     monkeypatch.setattr(store, "_open_connection", traced_connection)
@@ -114,7 +123,7 @@ def test_failure_diagnostics_do_not_scan_queue_payloads(
                     table = "work_summary_inputs"
                 else:
                     assert _reply_task_queue_snapshot(db)["latest_error"] == "service failure"
-                    needle = "select tasks.error"
+                    needle = "with current as materialized"
                     table = "tasks"
     query = next(sql for sql in statements if needle in sql)
     with store._connect() as db:
@@ -124,6 +133,16 @@ def test_failure_diagnostics_do_not_scan_queue_payloads(
                 deterministic=True,
             )
         plan = [row[3] for row in db.execute("explain query plan " + query)]
+    if surface == 'reply_error':
+        # Main evaluates the current-business projection once. Its table scan
+        # reads scalar metadata, and never joins canonical input bodies.
+        assert ('reply_tasks', 'error') in read_columns
+        assert {column for name, column in read_columns if name == 'reply_tasks'} <= {
+            'id', 'status', 'updated_at', 'error', 'business_object_key',
+        }
+        assert not any(name == 'reply_task_inputs' for name, column in read_columns)
+        assert any('MATERIALIZE current' in step for step in plan), plan
+        return
     assert any(f"SEARCH {table} USING INTEGER PRIMARY KEY" in step for step in plan), plan
     assert not any(step.startswith(f"SCAN {table}") and "COVERING" not in step for step in plan), plan
 

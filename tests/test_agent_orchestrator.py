@@ -292,7 +292,7 @@ def test_active_audit_lease_defers_and_expiry_creates_append_only_attempt(tmp_pa
     assert waiting.status == "failed_retryable"
     assert len(audit.calls) == 0
     with sqlite3.connect(store.path) as db:
-        db.execute("update agent_runs set lease_expires_at='2000-01-01 00:00:00' where id=?", (active.id,))
+        db.execute("update runs set lease_expires_at='2000-01-01 00:00:00' where record_type='agent_runs' and cast(legacy_key as integer)=?", (active.id,))
     resumed = driver.process(task, context, refresh_context=lambda: context)
     assert resumed.status == "executed"
     assert [run.turn_attempt for run in store.list_agent_runs_for_task_generation(

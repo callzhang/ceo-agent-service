@@ -16,6 +16,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.audit_web as audit_web_module
+from tests.run_reader_fixtures import insert_native_run_fixture
+from app.run_storage import insert_run
 from app.email_store import EmailStore
 from app.audit_web import (
     create_audit_app,
@@ -363,7 +365,7 @@ def test_attempt_detail_marks_missing_linked_consumer_result_unavailable(tmp_pat
     attempt_id = _finalize_consumer_result_attempt(store, task, audit)
     with store._immediate_write_transaction() as db:
         db.execute(
-            "update agent_runs set parent_agent_run_id=null where id=?",
+            "update runs set parent_id=null where record_type='agent_runs' and cast(legacy_key as integer)=?",
             (audit.id,),
         )
 
@@ -396,7 +398,7 @@ def test_attempt_detail_rejects_non_consumer_audit_parent(tmp_path: Path):
     attempt_id = _finalize_consumer_result_attempt(store, task, terminal_audit)
     with store._immediate_write_transaction() as db:
         db.execute(
-            "update agent_runs set parent_agent_run_id=? where id=?",
+            "update runs set parent_id=? where record_type='agent_runs' and cast(legacy_key as integer)=?",
             (first_audit.id, terminal_audit.id),
         )
 
@@ -1009,13 +1011,20 @@ def _seed_native_meeting_search(
     )) + "\n")
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *args, **kwargs: native)
     with store._connect() as db:
-        db.execute(
-            "insert into agent_runtime_attempts "
-            "(workload_kind, workload_key, attempt_number, route_name, runtime_kind, "
-            "credential_mode, model, session_id, status, transcript_start, transcript_end) "
-            "values ('meeting', ?, 1, 'test', 'codex_cli', 'local_oauth', 'test', "
-            "'meeting-session-history-1', 'completed', 0, 2)",
-            (str(run_id),),
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'workload_kind': 'meeting',
+                'workload_key': str(run_id),
+                'attempt_number': 1,
+                'route_name': 'test',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'local_oauth',
+                'model': 'test',
+                'session_id': 'meeting-session-history-1',
+                'status': 'completed',
+                'transcript_start': 0,
+                'transcript_end': 2,
+            },
         )
     return native
 
@@ -2709,18 +2718,15 @@ def test_history_chart_projects_hidden_legacy_attempts_through_terminal_task(
     ]
     with store._connect() as db:
         for generation, attempt_id in enumerate(attempt_ids):
-            run = db.execute(
-                """
-                insert into agent_runs (
-                    reply_task_id, execution_generation, role, operation_id, status
-                ) values (?, ?, 'consumer', ?, 'completed')
-                """,
-                    (
-                        task.id,
-                        task.execution_generation if generation == len(attempt_ids) - 1
+            run = insert_run(
+                db, 'agent_runs', {
+                    'task_id': task.id,
+                    'execution_generation': task.execution_generation if generation == len(attempt_ids) - 1
                         else f"legacy-chart-generation-{generation}",
-                        f"legacy-{generation}",
-                    ),
+                    'role': 'consumer',
+                    'operation_id': f"legacy-{generation}",
+                    'status': 'completed',
+                },
             )
             db.execute(
                 "update reply_attempts set agent_run_id=? where id=?",
@@ -6095,13 +6101,13 @@ def test_settings_page_flattens_sections_into_left_navigation(tmp_path: Path):
         assert label in html
 
 
-def test_info_menu_moves_producer_configuration_values_to_configuration():
+def test_info_menu_moves_producer_configuration_values_to_configuration(tmp_path):
     html = render_config_page()
 
     assert '<table class="config-info-values">' not in html
     assert "实际生效值请在 Configuration 中查看" in html
     configuration_html = render_settings_page(
-        AutoReplyStore(Path("/tmp/settings-configuration-test.sqlite3")),
+        AutoReplyStore(tmp_path / "settings-configuration-test.sqlite3"),
         active_tab="configuration",
     )
     assert "FAST_PATH_UNREAD_BACKOFF" in configuration_html
@@ -6676,33 +6682,33 @@ def test_runtime_attempt_history_renders_only_safe_allowlisted_evidence(tmp_path
             "update reply_attempts set agent_run_id=? where id=?",
             (run.id, attempt_id),
         )
-        db.execute(
-            """insert into agent_runtime_attempts
-               (agent_run_id, workload_kind, workload_key, attempt_number,
-                route_name, runtime_kind, credential_mode, model, session_mode,
-                source_session_id, attempt_purpose, validation_retry_policy_id,
-                validation_result_schema_id, session_id, status, failure_class,
-                failure_code, failover_permitted, transcript_reference,
-                transcript_start, transcript_end, first_effect_started_at,
-                lease_owner, result_schema_id, result_envelope_json)
-               values (?, 'agent_run', ?, 1, 'codex_api', 'codex_cli',
-                       'service_api', 'gpt-5.5', 'resume', ?,
-                       'result_validation_correction', ?, ?,
-                       'safe-session-42', 'failed', 'authentication',
-                       'codex_provider_auth_failed', 1, ?, 12, 34,
-                       '2026-08-07 09:01:00', ?, ?, ?)""",
-            (
-                run.id,
-                str(run.id),
-                "prompt=do not expose this business prompt",
-                "stderr=provider-secret-error",
-                "env=OPENAI_API_KEY",
-                "/tmp/private/transcript.jsonl",
-                "OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz",
-                "private-envelope-schema",
-                '{"prompt":"private business input","stderr":"raw provider stderr",'
-                '"env":{"OPENAI_API_KEY":"sk-proj-abcdefghijklmnopqrstuvwxyz"}}',
-            ),
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'parent_id': run.id,
+                'workload_kind': 'agent_run',
+                'workload_key': str(run.id),
+                'attempt_number': 1,
+                'route_name': 'codex_api',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'service_api',
+                'model': 'gpt-5.5',
+                'session_mode': 'resume',
+                'source_session_id': "prompt=do not expose this business prompt",
+                'attempt_purpose': 'result_validation_correction',
+                'validation_retry_policy_id': "stderr=provider-secret-error",
+                'validation_result_schema_id': "env=OPENAI_API_KEY",
+                'session_id': 'safe-session-42',
+                'status': 'failed',
+                'failure_class': 'authentication',
+                'failure_code': 'codex_provider_auth_failed',
+                'failover_permitted': 1,
+                'transcript_reference': "/tmp/private/transcript.jsonl",
+                'transcript_start': 12,
+                'transcript_end': 34,
+                'first_effect_started_at': '2026-08-07 09:01:00',
+                'lease_owner': "OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz",
+                'result_schema_id': "private-envelope-schema",
+            },
         )
 
     status, html = render_attempt_detail(store, attempt_id)
@@ -8138,10 +8144,13 @@ def test_reply_attempt_queue_excludes_prior_generation_after_trigger_revision(
         business_object_key="oa:process-1:task-1",
     )
     with store._connect() as db:
-        old_run = db.execute(
-            "insert into agent_runs (reply_task_id, execution_generation, role, status) "
-            "values (?, ?, 'consumer', 'completed')",
-            (task.id, task.execution_generation),
+        old_run = insert_run(
+            db, 'agent_runs', {
+                'task_id': task.id,
+                'execution_generation': task.execution_generation,
+                'role': 'consumer',
+                'status': 'completed',
+            },
         ).lastrowid
     old_attempt_id = store.record_reply_attempt(
         channel="dingtalk",
@@ -8273,16 +8282,19 @@ def test_status_reports_lease_backed_meeting_memory_health_and_degrades_for_back
                       '2020-01-01T00:00:00+00:00', '2020-01-01T00:00:00+00:00')
             """
         )
-        db.execute(
-            """
-            insert into agent_runtime_attempts (
-                workload_kind, workload_key, attempt_number, route_name,
-                runtime_kind, credential_mode, model, status, lease_owner,
-                lease_expires_at
-            ) values ('memory', 'meeting_memory_write_event:2:ghost', 1,
-                      'codex_oauth', 'codex_cli', 'local_oauth', 'gpt-5.6-sol',
-                      'running', 'event-owner', '2030-01-01T00:00:00+00:00')
-            """
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'workload_kind': 'memory',
+                'workload_key': 'meeting_memory_write_event:2:ghost',
+                'attempt_number': 1,
+                'route_name': 'codex_oauth',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'local_oauth',
+                'model': 'gpt-5.6-sol',
+                'status': 'running',
+                'lease_owner': 'event-owner',
+                'lease_expires_at': '2030-01-01T00:00:00+00:00',
+            },
         )
 
     payload = build_worker_status_payload(store)
@@ -8381,6 +8393,7 @@ def test_attention_hides_historical_failed_task_when_business_object_is_done(
 
 def test_attention_does_not_repeat_old_generation_attempt_for_current_oa_task(
     tmp_path: Path,
+    monkeypatch,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = store.ensure_reply_task(
@@ -8405,11 +8418,14 @@ def test_attention_does_not_repeat_old_generation_attempt_for_current_oa_task(
         channel=task.channel,
     )
     with store._connect() as db:
-        run = db.execute(
-            """insert into agent_runs (
-                reply_task_id, execution_generation, role, status, final_result_json
-            ) values (?, ?, 'consumer', 'completed', '{}')""",
-            (task.id, task.execution_generation),
+        run = insert_native_run_fixture(
+            db, {
+                'task_id': task.id,
+                'execution_generation': task.execution_generation,
+                'role': 'consumer',
+                'status': 'completed',
+            },
+                    result='{}', tmp_path=tmp_path, monkeypatch=monkeypatch,
         )
         db.execute(
             "update reply_attempts set agent_run_id=?, send_error='old failure' where id=?",
@@ -8893,7 +8909,7 @@ def test_worker_attention_excludes_pending_and_processing_reply_and_meeting_rows
     assert all(row["id"] != str(meeting_id) for row in rows)
 
 
-def test_attention_includes_current_failed_attempt_waiting_for_retry(tmp_path: Path):
+def test_attention_includes_current_failed_attempt_waiting_for_retry(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "retry-attention.sqlite3")
     task_id = store.enqueue_reply_task(
         conversation_id="cid-retry-attention",
@@ -8918,11 +8934,14 @@ def test_attention_includes_current_failed_attempt_waiting_for_retry(tmp_path: P
         channel=task.channel,
     )
     with store._connect() as db:
-        run = db.execute(
-            """insert into agent_runs (
-                reply_task_id, execution_generation, role, status, final_result_json
-            ) values (?, ?, 'consumer', 'failed', '{}')""",
-            (task.id, task.execution_generation),
+        run = insert_native_run_fixture(
+            db, {
+                'task_id': task.id,
+                'execution_generation': task.execution_generation,
+                'role': 'consumer',
+                'status': 'failed',
+            },
+                    result='{}', tmp_path=tmp_path, monkeypatch=monkeypatch,
         )
         db.execute(
             "update reply_attempts set agent_run_id=? where id=?",
@@ -12313,9 +12332,9 @@ def test_failed_reply_attention_does_not_use_stale_or_malformed_run(tmp_path, ol
     store.fail_agent_run(run.id, {'code':'agent_reported_failure','source':'agent','source_code':'foreign_diagnostic','retryable':False}, owner='test')
     with store._connect() as db:
         if old_generation:
-            db.execute("update agent_runs set execution_generation='old' where id=?", (run.id,))
+            db.execute("update runs set execution_generation='old' where record_type='agent_runs' and cast(legacy_key as integer)=?", (run.id,))
         if bad_json:
-            db.execute("update agent_runs set structured_error_json='invalid-json' where id=?", (run.id,))
+            db.execute("update runs set structured_error_json='invalid-json' where record_type='agent_runs' and cast(legacy_key as integer)=?", (run.id,))
     store.fail_reply_task(task.id, 'task_fallback_error', expected_execution_generation=task.execution_generation)
     [row] = [r for r in audit_web_module._queue_attention_rows(store) if r['category']=='Reply task']
     assert row['error'] == 'task_fallback_error'

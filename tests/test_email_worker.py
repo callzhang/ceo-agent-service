@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.run_storage import AGENT_RUN_SQL
 from app.agent_context import AgentTaskContext
 from app.agent_contracts import ProposedAction
 from app.email_classifier_contracts import (
@@ -9143,7 +9144,7 @@ def test_direct_action_executes_without_email_task_consumer_or_audit_run(tmp_pat
     )
     assert task_store.list_reply_tasks(channel="email") == []
     with sqlite3.connect(database) as db:
-        assert db.execute("select count(*) from agent_runs").fetchone()[0] == 0
+        assert db.execute(f'select count(*) from ({AGENT_RUN_SQL})').fetchone()[0] == 0
         assert db.execute(
             "select folder, uidvalidity, uid from email_classifications where id=901"
         ).fetchone() == ("Archive", 10, 41)

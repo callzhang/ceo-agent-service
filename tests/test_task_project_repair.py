@@ -2,6 +2,7 @@ import json
 import sqlite3
 from datetime import datetime, timedelta
 
+from app.run_storage import insert_run
 from app import native_trajectory
 from app.store import AutoReplyStore
 from app.task_project_repair import apply_manifest, build_repair_manifest
@@ -21,13 +22,20 @@ def _record_agent_value(db_path, project_id, *, title, created_at):
             "insert into task_agent_runs(summary_input_id, decision_json, status, created_at) values(?, ?, 'completed', ?)",
             (project_id, '{"project":{"id":999,"title":"stale database copy"}}', created_at),
         ).lastrowid
-        db.execute(
-            "insert into agent_runtime_attempts "
-            "(workload_kind, workload_key, attempt_number, route_name, runtime_kind, "
-            "credential_mode, model, session_id, status, transcript_start, transcript_end) "
-            "values ('task', ?, 1, 'test', 'codex_cli', 'local_oauth', 'test', "
-            "'native-task', 'completed', 1, 2)",
-            (str(run_id),),
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'workload_kind': 'task',
+                'workload_key': str(run_id),
+                'attempt_number': 1,
+                'route_name': 'test',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'local_oauth',
+                'model': 'test',
+                'session_id': 'native-task',
+                'status': 'completed',
+                'transcript_start': 1,
+                'transcript_end': 2,
+            },
         )
 
 
