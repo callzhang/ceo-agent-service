@@ -1,0 +1,16 @@
+# Actual email classification trajectory readback — 2026-10-12
+
+This examines the separate EmailClassifierAgent lifecycle rather than a Consumer mail-card reply. Current source `app/email_worker.py` builds EmailClassifierAgent with EmailClassifierRoutedBackend. `app/email_classifier_agent.py` submits a task-keyed standard runtime turn with a120-character classifier Developer, no conversation binding and no native output schema; exact allowed categories and candidate selections are validated before the durable result is returned. This describes existing behavior, not a proposed policy/schema change.
+
+Read-only current runtime metadata selected native attempts176972 and176874. Their native input, all retained records, final typed output and persistent classification were inspected in memory. Each classification's private stable identity hashes exactly to the corresponding workload key; both native category/importance/certainty/confidence/reason fields equal the saved result. Neither turn makes a tool call. No mail body, sender/account identifiers, private candidate URLs, example text or source record is copied to this report or result JSON.
+
+| Attempt | Developer chars | Task chars | Skill chars | Similar examples chars | Invocation context chars | Persisted result | Provider boundary |
+| --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
+|176972|120|15878|4352|3156|7887|exact match; processed|one action done; current provider readback unavailable|
+|176874|120|17685|4352|3618|9232|exact match; processed|two actions done; provider readback categorized|
+
+Counts include only the actual native service input. Both supplied invocation contexts contain allowed_category_keys, category_descriptions, message, provider_unread and unsubscribe_candidates. The largest input components are necessary case/category facts and labelled examples, not broad Developer instructions. Current full managed Skill is deliberately inline in this tool-free classification turn; Consumer/Audit read_skill access must not be assumed here. Removing the body without establishing an actual read capability would alter its execution contract. The presence of shared category semantics in Skill and configurable category descriptions merits comparison before any deletion, not an automatic character-budget cut. This inspection found no unnecessary Consumer/Audit/calendar/document flow injection.
+
+Attempts176727 and175481 retain session references, but files could not be found in the native sessions or archived_sessions inventory. Their stored completed status does not substitute for full trajectory evidence. No failure sample, uncertain classification, native retry or complete email plan-execution family is covered by these two successes. Owner-labelled semantic correctness and external delivery are not inferred from typed validation, processed status, or action done. For176972 provider truth is explicitly unavailable;176874's current categorized readback supports that narrower state only.
+
+Evidence: `evals/trajectory_optimization/email_classifier_native_readback.v1.json`. This is an audit result, not a new classifier change or release. Next, select a current actual failure/uncertainty or unsubscribe execution attempt and inspect its full native sequence before deciding whether further instruction or delivery changes are warranted.
