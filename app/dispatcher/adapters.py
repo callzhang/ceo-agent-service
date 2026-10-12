@@ -1,5 +1,5 @@
 from __future__ import annotations
-from app.task_storage import MEETING_JOB_SQL, task_id_expression, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
+from app.task_storage import MEETING_JOB_SQL, OKR_REQUEST_SQL, task_id_expression, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
 
 from app.store import REPLY_TASK_CURRENT_SQL
 
@@ -853,10 +853,10 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
         now_text = _sqlite_time(now)
         with self.store._connect() as db:
             pending = db.execute(
-                "select count(*) from okr_review_requests where status='pending'"
+                "select count(*) from tasks where record_type='okr_review_requests' and status='pending'"
             ).fetchone()[0]
             due = db.execute(
-                "select count(*) from okr_review_requests request "
+                f"select count(*) from ({OKR_REQUEST_SQL}) request "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(request.id as text) "
                 "where (request.status='pending' and (claim.owner is null "
@@ -866,7 +866,7 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
                 (self.name, now_text, now_text),
             ).fetchone()[0]
             claimed = db.execute(
-                "select count(*) from okr_review_requests request "
+                f"select count(*) from ({OKR_REQUEST_SQL}) request "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(request.id as text) "
                 "where request.status='processing' and (claim.owner is null "
@@ -874,7 +874,7 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
                 (self.name, now_text),
             ).fetchone()[0]
             oldest = db.execute(
-                "select min(request.created_at) from okr_review_requests request "
+                f"select min(request.created_at) from ({OKR_REQUEST_SQL}) request "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(request.id as text) "
                 "where (request.status='pending' and (claim.owner is null "
@@ -887,7 +887,7 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
                 db,
                 column="error",
                 source_projection=(
-                    "from okr_review_requests source "
+                    f"from ({OKR_REQUEST_SQL}) source "
                     "left join dispatcher_claim_leases source_claim "
                     "on source_claim.adapter_name=? "
                     "and source_claim.source_id=cast(source.id as text) "
@@ -930,7 +930,7 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
                     "select request.*, claim.owner as claim_owner, "
                     "claim.owner_pid as claim_owner_pid, "
                     "claim.lease_expires_at as claim_expires_at "
-                    "from okr_review_requests request "
+                    f"from ({OKR_REQUEST_SQL}) request "
                     "left join dispatcher_claim_leases claim "
                     "on claim.adapter_name=? "
                     "and claim.source_id=cast(request.id as text) "
@@ -959,8 +959,9 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
                 return None
             source_id = str(row["id"])
             cursor = db.execute(
-                "update okr_review_requests set status='processing', error='', "
-                "updated_at=? where id=? and status in ('pending','processing')",
+                "update tasks set status='processing', error='', "
+                "updated_at=? where record_type='okr_review_requests' "
+                "and cast(legacy_key as integer)=? and status in ('pending','processing')",
                 (now_text, row["id"]),
             )
             if cursor.rowcount != 1:
@@ -994,8 +995,9 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
         with self.store._immediate_write_transaction() as db:
             _release_lease(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
             cursor = db.execute(
-                "update okr_review_requests set status='pending', updated_at=? "
-                "where id=? and status='processing'",
+                "update tasks set status='pending', updated_at=? "
+                "where record_type='okr_review_requests' "
+                "and cast(legacy_key as integer)=? and status='processing'",
                 (_sqlite_time(now), int(envelope.source_id)),
             )
             if cursor.rowcount != 1:

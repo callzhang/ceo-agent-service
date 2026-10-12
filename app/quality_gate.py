@@ -8,7 +8,7 @@ table as a failed check rather than silently dropping a queue from coverage.
 """
 
 from __future__ import annotations
-from app.task_storage import MEETING_JOB_SQL, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
+from app.task_storage import MEETING_JOB_SQL, OKR_REQUEST_SQL, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
 
 import json
 import sqlite3
@@ -124,7 +124,7 @@ def scan_hourly_quality(
             str(row["name"])
             for row in db.execute("select name from sqlite_master where type='table'")
         }
-        physical_source = {"agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks"}
+        physical_source = {"agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks"}
         missing = tuple(source for source in REQUIRED_SOURCES if physical_source.get(source, source) not in existing)
         checked = (
             *(source for source in REQUIRED_SOURCES if physical_source.get(source, source) in existing),
@@ -794,14 +794,14 @@ def _check_okr_reviews(
     attention: list[QualityIssue],
 ) -> None:
     _add(violations, source="okr_review_requests", code="failed", count=_count(
-        db, "select count(*) from okr_review_requests where lower(status)='failed'"
+        db, f"select count(*) from ({OKR_REQUEST_SQL}) where lower(status)='failed'"
     ), severity="error", detail="OKR review request has no terminal handling")
     _add(violations, source="okr_review_requests", code="processing_stale", count=_count(
-        db, "select count(*) from okr_review_requests where lower(status)='processing' and datetime(updated_at) < datetime(?)",
+        db, f"select count(*) from ({OKR_REQUEST_SQL}) where lower(status)='processing' and datetime(updated_at) < datetime(?)",
         (_cutoff(now, OKR_PROCESSING_STALE_SECONDS),),
     ), severity="error", detail="OKR review exceeded the Codex timeout")
     _add(attention, source="okr_review_requests", code="active", count=_count(
-        db, "select count(*) from okr_review_requests where lower(status) in ('pending','processing')"
+        db, f"select count(*) from ({OKR_REQUEST_SQL}) where lower(status) in ('pending','processing')"
     ), severity="info", detail="OKR review work is pending")
 
 

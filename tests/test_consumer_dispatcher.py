@@ -446,7 +446,12 @@ def _many_due_sources(
                 trigger_text="Please check this.",
                 execution_generation=f"generation-{index}",
             )
-            ids.append(str(index + 1))
+            with store._connect() as db:
+                reply_id = db.execute(
+                    "select id from tasks where record_type='reply_tasks' and trigger_message_id=?",
+                    (f"msg-{index}",),
+                ).fetchone()[0]
+            ids.append(str(reply_id))
         return ReplyQueueAdapter, tuple(ids)
     if adapter_name == "meeting":
         ids = []
@@ -971,7 +976,7 @@ def test_work_summary_claim_uses_dispatcher_time_for_due_boundary(tmp_path: Path
     source_id = _work_summary(store)
     with store._connect() as db:
         db.execute(
-            "update work_summary_inputs set available_at=? where id=?",
+            "update tasks set available_at=? where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             ((NOW + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S"), source_id),
         )
     adapter = WorkSummaryQueueAdapter(store)
@@ -1963,30 +1968,30 @@ def test_actionable_error_ignores_newer_blank_rows_for_or_based_adapters(
     newer = (NOW + timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S")
     with store._connect() as db:
         db.execute(
-            "update meeting_alignment_jobs set error='retryable meeting failure', "
-            "updated_at=? where id=?",
+            "update tasks set error='retryable meeting failure', "
+            "updated_at=? where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
             (older, meeting_id),
         )
         db.execute(
-            "update meeting_alignment_jobs set error='', updated_at=? where id=?",
+            "update tasks set error='', updated_at=? where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
             (newer, blank_meeting_id),
         )
         db.execute(
-            "update work_summary_inputs set error='retryable work-summary failure', "
-            "updated_at=? where id=?",
+            "update tasks set error='retryable work-summary failure', "
+            "updated_at=? where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             (older, work_summary_id),
         )
         db.execute(
-            "update work_summary_inputs set error='', updated_at=? where id=?",
+            "update tasks set error='', updated_at=? where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             (newer, blank_work_summary_id),
         )
         db.execute(
-            "update okr_review_requests set error='retryable OKR failure', updated_at=? "
-            "where id=?",
+            "update tasks set error='retryable OKR failure', updated_at=? "
+            "where record_type='okr_review_requests' and cast(legacy_key as integer)=?",
             (older, okr_id),
         )
         db.execute(
-            "update okr_review_requests set error='', updated_at=? where id=?",
+            "update tasks set error='', updated_at=? where record_type='okr_review_requests' and cast(legacy_key as integer)=?",
             (newer, blank_okr_id),
         )
 
@@ -2022,10 +2027,10 @@ def test_expired_live_owner_hides_dispatcher_error_until_owner_is_dead(
     expired = (NOW - timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S")
     with store._connect() as db:
         reply_id = db.execute(
-            "select id from reply_tasks where channel='dingtalk'"
+            "select id from tasks where record_type='reply_tasks' and channel='dingtalk'"
         ).fetchone()[0]
         scheduled_execution_id = db.execute(
-            "select id from reply_tasks where channel='scheduled'"
+            "select id from tasks where record_type='reply_tasks' and channel='scheduled'"
         ).fetchone()[0]
         db.execute(
             "update scheduled_task_runs set skip_or_error_reason='scheduled error' "
@@ -2033,22 +2038,22 @@ def test_expired_live_owner_hides_dispatcher_error_until_owner_is_dead(
             (scheduled_id,),
         )
         db.execute(
-            "update reply_tasks set error='reply error' where id=?", (reply_id,)
+            "update tasks set error='reply error' where record_type='reply_tasks' and id=?", (reply_id,)
         )
         db.execute(
-            "update reply_tasks set error='scheduled execution error' where id=?",
+            "update tasks set error='scheduled execution error' where record_type='reply_tasks' and id=?",
             (scheduled_execution_id,),
         )
         db.execute(
-            "update meeting_alignment_jobs set error='meeting error' where id=?",
+            "update tasks set error='meeting error' where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
             (meeting_id,),
         )
         db.execute(
-            "update work_summary_inputs set error='work-summary error' where id=?",
+            "update tasks set error='work-summary error' where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             (work_summary_id,),
         )
         db.execute(
-            "update okr_review_requests set error='OKR error' where id=?", (okr_id,)
+            "update tasks set error='OKR error' where record_type='okr_review_requests' and cast(legacy_key as integer)=?", (okr_id,)
         )
         db.execute(
             "update task_todo_sync_outbox set error='todo error' where id=?", (todo_id,)
@@ -2129,7 +2134,7 @@ def test_error_metrics_skip_owner_checks_and_payload_projection_for_no_error_bac
     expired = (NOW - timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S")
     now_text = NOW.strftime("%Y-%m-%d %H:%M:%S")
     with store._connect() as db:
-        ids = [row[0] for row in db.execute("select id from reply_tasks").fetchall()]
+        ids = [row[0] for row in db.execute("select id from tasks where record_type='reply_tasks'").fetchall()]
         db.executemany(
             "insert into dispatcher_claim_leases "
             "(adapter_name, source_id, owner, owner_pid, generation, "
@@ -2190,26 +2195,26 @@ def test_dispatcher_metrics_only_report_errors_from_actionable_sources(
             (scheduled.id,),
         )
         db.execute(
-            "update reply_tasks set status='failed', error='terminal reply failure' "
-            "where channel='dingtalk'"
+            "update tasks set status='failed', error='terminal reply failure' "
+            "where record_type='reply_tasks' and channel='dingtalk'"
         )
         db.execute(
-            "update reply_tasks set status='failed', error='terminal scheduled execution failure' "
-            "where channel='scheduled'"
+            "update tasks set status='failed', error='terminal scheduled execution failure' "
+            "where record_type='reply_tasks' and channel='scheduled'"
         )
         db.execute(
-            "update meeting_alignment_jobs set status='failed', error='terminal meeting failure' "
-            "where id=?",
+            "update tasks set status='failed', error='terminal meeting failure' "
+            "where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
             (meeting_id,),
         )
         db.execute(
-            "update work_summary_inputs set status='failed', error='terminal work-summary failure' "
-            "where id=?",
+            "update tasks set status='failed', error='terminal work-summary failure' "
+            "where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             (work_summary_id,),
         )
         db.execute(
-            "update okr_review_requests set status='failed', error='terminal OKR failure' "
-            "where id=?",
+            "update tasks set status='failed', error='terminal OKR failure' "
+            "where record_type='okr_review_requests' and cast(legacy_key as integer)=?",
             (okr_id,),
         )
         db.execute(
@@ -2242,12 +2247,12 @@ def test_dispatcher_metrics_only_report_errors_from_actionable_sources(
 
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='pending', error='retryable reply failure' "
-            "where channel='dingtalk'"
+            "update tasks set status='pending', error='retryable reply failure' "
+            "where record_type='reply_tasks' and channel='dingtalk'"
         )
         db.execute(
-            "update reply_tasks set status='pending', error='retryable scheduled execution failure' "
-            "where channel='scheduled'"
+            "update tasks set status='pending', error='retryable scheduled execution failure' "
+            "where record_type='reply_tasks' and channel='scheduled'"
         )
         db.execute(
             "update dispatcher_claim_leases set terminal_at='', "
@@ -2435,7 +2440,7 @@ def test_a_finished_claim_that_lets_go_is_claimable_while_its_owner_lives(
     assert envelope is not None
     with store._immediate_write_transaction() as db:
         db.execute(
-            "update reply_tasks set status='pending', locked_at=null where id=?",
+            "update tasks set status='pending', locked_at=null where record_type='reply_tasks' and id=?",
             (int(envelope.source_id),),
         )
     later = NOW + timedelta(minutes=30)
@@ -2460,7 +2465,7 @@ def test_reply_handler_errors_stop_after_three_claims_with_backoff(tmp_path, sch
     _reply(store)
     if scheduled:
         with store._connect() as db:
-            db.execute("update reply_tasks set channel='scheduled' where id=1")
+            db.execute("update tasks set channel='scheduled' where record_type='reply_tasks' and id=1")
     adapter = (ScheduledExecutionQueueAdapter if scheduled else ReplyQueueAdapter)(store, owner_alive=lambda _pid: False)
     when = NOW
     for attempt in range(1, 4):

@@ -565,10 +565,10 @@ def _seed_runtime_operation_parent(
     with store._connect() as db:
         assert db.execute("pragma foreign_keys").fetchone()[0] == 1
         if workload_kind == "structured":
-            db.execute("insert into okr_review_requests (id, conversation_id, conversation_title, trigger_message_id, trigger_sender, trigger_text, period_label, period_start, period_end, status) values (?, 'cid', 'title', 'msg', 'sender', 'text', 'period', 'start', 'end', 'processing')", (int(workload_key),))
+            insert_task(db, 'okr_review_requests', {'legacy_key': int(workload_key), 'conversation_id': 'cid', 'conversation_title': 'title', 'trigger_message_id': 'msg', 'trigger_sender': 'sender', 'trigger_text': 'text', 'period_label': 'period', 'period_start': 'start', 'period_end': 'end', 'status': 'processing'})
         elif workload_kind == "meeting":
-            db.execute("insert into meeting_alignment_jobs (id, meeting_id) values (1, 'meeting-1')")
-            db.execute("insert into meeting_alignment_runs (id, job_id, status) values (?, 1, 'running')", (int(workload_key),))
+            job_id = insert_task(db, 'meeting_alignment_jobs', {'legacy_key': 1, 'meeting_id': 'meeting-1'}).lastrowid
+            insert_run(db, 'meeting_alignment_runs', {'legacy_key': int(workload_key), 'task_id': job_id, 'status': 'running'})
         elif workload_kind == "task":
             source_id, separator, _ = workload_key.partition(":")
             summary_input_id = insert_task(db, 'work_summary_inputs', {
@@ -585,12 +585,7 @@ def _seed_runtime_operation_parent(
                 })
         elif workload_kind == "weekly_okr":
             week_end, manager_user_id, source_digest = workload_key.split(":", 2)
-            db.execute(
-                "insert into weekly_okr_analysis_jobs "
-                "(week_end, manager_user_id, source_digest, status) "
-                "values (?, ?, ?, 'running')",
-                (week_end, manager_user_id, source_digest),
-            )
+            insert_task(db, 'weekly_okr_analysis_jobs', {'week_end': week_end, 'manager_user_id': manager_user_id, 'source_digest': source_digest, 'status': 'running'})
         elif workload_kind == "memory":
             source, _, source_key = workload_key.partition(":")
             source_id, _, execution_generation = source_key.partition(":")
@@ -604,10 +599,7 @@ def _seed_runtime_operation_parent(
                 db.execute("insert into reply_attempts (id, conversation_id, conversation_title, trigger_message_id, trigger_sender, trigger_text, action, sensitivity_kind, final_reply_text, permission_action, permission_reason, send_status) values (1, 'cid', 'title', 'msg', 'sender', 'text', 'none', 'none', '', 'none', '', 'pending')")
                 db.execute("insert into memory_write_events (id, attempt_id, event_type, payload_json) values (?, 1, 'test', '{}')", (int(source_id),))
             elif table_name == "meeting_memory_write_events":
-                db.execute(
-                    "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
-                    "values (1, 'meeting-memory-parent', 'sent', 'sent summary')"
-                )
+                insert_task(db, 'meeting_alignment_jobs', {'legacy_key': 1, 'meeting_id': 'meeting-memory-parent', 'status': 'sent', 'final_message': 'sent summary'})
                 db.execute(
                     "insert into meeting_memory_write_events "
                     "(id, meeting_job_id, execution_generation, payload_json) "
@@ -1155,7 +1147,7 @@ def test_runtime_attempt_requires_parent_to_be_in_runnable_state(tmp_path: Path)
     store = AutoReplyStore(tmp_path / "runtime-parent-state.sqlite3")
     _seed_runtime_operation_parent(store, "meeting", "13")
     with store._connect() as db:
-        db.execute("update meeting_alignment_runs set status='failed' where id=13")
+        db.execute("update runs set status='failed' where record_type='meeting_alignment_runs' and cast(legacy_key as integer)=13")
 
     with pytest.raises(ValueError, match="parent does not exist or is not running"):
         store.claim_runtime_operation_attempt(
@@ -1325,7 +1317,7 @@ def test_weekly_okr_failed_job_reopens_and_completed_job_is_cache_hit(tmp_path: 
     assert reopened.outcome == "claimed"
     with store._connect() as db:
         row = db.execute(
-            "select * from weekly_okr_analysis_jobs where id=?",
+            "select * from tasks where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer)=?",
             (reopened.job_id,),
         ).fetchone()
     assert row["status"] == "running"
@@ -1348,7 +1340,7 @@ def test_weekly_okr_manager_identity_is_canonicalized(tmp_path: Path):
     )
     with store._connect() as db:
         row = db.execute(
-            "select manager_user_id from weekly_okr_analysis_jobs where id=?",
+            "select manager_user_id from tasks where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer)=?",
             (claim.job_id,),
         ).fetchone()
     assert row["manager_user_id"] == "manager-1"
@@ -1408,8 +1400,8 @@ def test_weekly_okr_completed_cache_miss_reclaims_same_job(tmp_path: Path):
     assert reclaimed.outcome == "claimed"
     with store._connect() as db:
         row = db.execute(
-            "select status, error, finished_at from weekly_okr_analysis_jobs "
-            "where id=?",
+            "select status, error, finished_at from tasks "
+            "where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer)=?",
             (original.job_id,),
         ).fetchone()
     assert tuple(row) == ("running", "", "")
@@ -1894,7 +1886,8 @@ def test_current_schema_sentinel_requires_new_runtime_parent_tables(tmp_path: Pa
     store = AutoReplyStore(db_path)
     with store._connect() as db:
         db.execute("drop index idx_weekly_okr_analysis_jobs_identity")
-        db.execute("drop table weekly_okr_analysis_jobs")
+        db.execute("drop index idx_wechat_memory_import_jobs_status")
+        db.execute("drop table wechat_memory_import_jobs")
     assert store._schema_is_current() is False
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
@@ -1906,7 +1899,17 @@ def test_current_schema_sentinel_requires_new_runtime_parent_tables(tmp_path: Pa
                 "select name from sqlite_master where type='table'"
             ).fetchall()
         }
-    assert {"weekly_okr_analysis_jobs", "wechat_memory_import_jobs"} <= tables
+        assert "weekly_okr_analysis_jobs" not in tables
+        assert "wechat_memory_import_jobs" in tables
+        weekly_index = db.execute(
+            "select tbl_name from sqlite_master where type='index' "
+            "and name='idx_weekly_okr_analysis_jobs_identity'"
+        ).fetchone()
+        assert weekly_index["tbl_name"] == "tasks"
+        assert db.execute(
+            "select tbl_name from sqlite_master where type='index' "
+            "and name='idx_wechat_memory_import_jobs_status'"
+        ).fetchone()["tbl_name"] == "wechat_memory_import_jobs"
 
 
 def test_current_schema_has_no_legacy_core_trajectory_columns(tmp_path: Path):
@@ -1917,12 +1920,14 @@ def test_current_schema_has_no_legacy_core_trajectory_columns(tmp_path: Path):
 
 
 
-def test_current_schema_sentinel_migrates_complete_legacy_meeting_run_shape(
+def test_current_schema_sentinel_rejects_malformed_duplicate_meeting_source(
     tmp_path: Path,
 ):
+    from tests.test_task_storage import fingerprint, source_database
+
     db_path = tmp_path / "legacy-meeting-run-shape.sqlite3"
-    store = AutoReplyStore(db_path)
-    with store._connect() as db:
+    db = source_database(db_path)
+    try:
         db.execute(
             "insert into meeting_alignment_jobs (id, meeting_id) "
             "values (1, 'legacy-meeting')"
@@ -1934,50 +1939,14 @@ def test_current_schema_sentinel_migrates_complete_legacy_meeting_run_shape(
             "(7, 1, 'running', '', '2026-08-20 09:00:00'), "
             "(8, 1, 'running', '', '2026-08-20 09:00:00')"
         )
-        db.execute(
-            "alter table meeting_alignment_runs rename to meeting_alignment_runs_current"
-        )
-        db.execute(
-            "create table meeting_alignment_runs ("
-            "id integer primary key autoincrement, job_id integer not null, "
-            "codex_session_id text not null default '', "
-            "codex_transcript_start_line integer not null default 0, "
-            "codex_transcript_end_line integer not null default 0, "
-            "decision_json text not null default '{}', "
-            "audit_tool_events_json text not null default '[]', "
-            "audit_summary text not null default '', status text not null, "
-            "error text not null default '', "
-            "created_at text not null default current_timestamp, "
-            "foreign key(job_id) references meeting_alignment_jobs(id))"
-        )
-        db.execute(
-            "insert into meeting_alignment_runs select id, job_id, codex_session_id, "
-            "codex_transcript_start_line, codex_transcript_end_line, decision_json, "
-            "audit_tool_events_json, audit_summary, status, error, created_at "
-            "from meeting_alignment_runs_current"
-        )
-        db.execute("drop table meeting_alignment_runs_current")
-    assert store._schema_is_current() is False
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    upgraded = AutoReplyStore(db_path)
-    older = upgraded.get_meeting_alignment_run(7)
-    newest = upgraded.get_meeting_alignment_run(8)
-    assert older is not None and newest is not None
-    assert older.status == "failed"
-    assert older.error == "schema_migration_duplicate_running_meeting_run"
-    assert older.finished_at == older.created_at
-    assert older.updated_at == older.created_at
-    assert newest.status == "running"
-    assert newest.finished_at == ""
-    with upgraded._connect() as db:
-        ids = [
-            row["id"]
-            for row in db.execute(
-                "select id from meeting_alignment_runs order by id"
-            ).fetchall()
-        ]
-    assert ids == [7, 8]
+        db.commit()
+        before = fingerprint(db)
+    finally:
+        db.close()
+    with pytest.raises((ValueError, sqlite3.IntegrityError), match="unsupported|malformed"):
+        AutoReplyStore(db_path)
+    with sqlite3.connect(db_path) as db:
+        assert fingerprint(db) == before
 
 
 def test_runtime_attempt_transitions_are_terminal_safe(tmp_path: Path):
@@ -3900,7 +3869,7 @@ def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
     assert len(calls) == 3
     with store._connect() as db:
         db.execute(
-            "update meeting_alignment_jobs set source_json=? where id=1",
+            "update tasks set source_json=? where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=1",
             ('{"minutes_info":{"summary":"业务补充摘要"}}',),
         )
     refreshed_source = store.search_codex_sessions(
@@ -8229,7 +8198,7 @@ def test_reset_recoverable_okr_review_requests_requeues_stale_processing(
     assert store.acquire_codex_session_lock("cid-1", f"okr_review:{request_id}")
     with sqlite3.connect(db_path) as db:
         db.execute(
-            "update okr_review_requests set updated_at=datetime('now', '-31 minutes') where id=?",
+            "update tasks set updated_at=datetime('now', '-31 minutes') where record_type='okr_review_requests' and cast(legacy_key as integer)=?",
             (request_id,),
         )
 
@@ -9729,26 +9698,14 @@ def test_meeting_memory_health_uses_matching_live_leases_not_runtime_status_alon
     store = AutoReplyStore(tmp_path / "meeting-memory-health.sqlite3")
     now = "2026-09-15T12:00:00+00:00"
     with store._connect() as db:
-        db.execute(
-            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
-            "values (1, 'health-active', 'sent', 'summary')"
-        )
-        db.execute(
-            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
-            "values (2, 'health-ghost', 'sent', 'summary')"
-        )
-        db.execute(
-            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
-            "values (3, 'health-due', 'sent', 'summary')"
-        )
-        db.execute(
-            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
-            "values (4, 'health-retry', 'sent', 'summary')"
-        )
-        db.execute(
-            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
-            "values (5, 'health-failed', 'sent', 'summary')"
-        )
+        for job_id, meeting_id in enumerate(
+            ("health-active", "health-ghost", "health-due", "health-retry", "health-failed"),
+            start=1,
+        ):
+            insert_task(db, 'meeting_alignment_jobs', {
+                'id': job_id, 'legacy_key': job_id, 'meeting_id': meeting_id,
+                'status': 'sent', 'final_message': 'summary',
+            })
         db.execute(
             """
             insert into meeting_memory_write_events (
@@ -11627,7 +11584,7 @@ def test_recover_stale_runtime_attempts_closes_expired_weekly_okr_parent(
     with store._connect() as db:
         job = db.execute(
             "select status, error, lease_owner, lease_expires_at, finished_at "
-            "from weekly_okr_analysis_jobs where id=?",
+            "from tasks where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer)=?",
             (claim.job_id,),
         ).fetchone()
     assert tuple(job) == (
@@ -11675,7 +11632,7 @@ def test_superseded_stale_weekly_okr_job_is_completed_and_can_be_reclaimed(
     with store._connect() as db:
         row = db.execute(
             "select status, error, lease_owner, lease_expires_at from "
-            "weekly_okr_analysis_jobs where id=?",
+            "tasks where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer)=?",
             (stale.job_id,),
         ).fetchone()
     assert tuple(row) == (
@@ -11823,13 +11780,13 @@ def test_superseded_failed_weekly_okr_job_is_completed(tmp_path: Path, failure: 
     # pin the order the live rows had (the rerun started after the failure).
     with store._connect() as db:
         db.execute(
-            "update weekly_okr_analysis_jobs set created_at='2026-09-08 04:25:00' "
-            "where id in (?, ?)",
+            "update tasks set created_at='2026-09-08 04:25:00' "
+            "where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer) in (?, ?)",
             (stale.job_id, business.job_id),
         )
         db.execute(
-            "update weekly_okr_analysis_jobs set created_at='2026-09-08 05:12:00' "
-            "where status='completed'",
+            "update tasks set created_at='2026-09-08 05:12:00' "
+            "where record_type='weekly_okr_analysis_jobs' and status='completed'",
         )
 
     assert store.complete_superseded_failed_weekly_okr_analysis_jobs(
@@ -11839,8 +11796,8 @@ def test_superseded_failed_weekly_okr_job_is_completed(tmp_path: Path, failure: 
         rows = {
             row[0]: tuple(row[1:])
             for row in db.execute(
-                "select id, status, error, lease_owner, lease_expires_at "
-                "from weekly_okr_analysis_jobs where id in (?, ?)",
+                "select cast(legacy_key as integer), status, error, lease_owner, lease_expires_at "
+                "from tasks where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer) in (?, ?)",
                 (stale.job_id, business.job_id),
             ).fetchall()
         }

@@ -3,7 +3,7 @@ import sqlite3
 
 import pytest
 
-from app.run_storage import insert_run
+from app.run_storage import MEETING_RUN_SQL, OKR_RUN_SQL, TASK_AGENT_RUN_SQL, insert_run
 from app import native_trajectory
 from app.agent_envelope import AgentEnvelope
 from app.store import AutoReplyStore
@@ -69,8 +69,7 @@ def test_meeting_run_hydrates_only_exact_native_range_and_reports_unavailable(tm
     with store._connect() as db:
         _attempt(db, run, str(run), "native-meeting", 1, 3, 1, kind="meeting")
         row = db.execute(
-            "select decision_json, audit_summary, audit_tool_events_json "
-            "from meeting_alignment_runs where id=?", (run,)
+            f"select decision_json, audit_summary, audit_tool_events_json from ({MEETING_RUN_SQL}) where id=?", (run,)
         ).fetchone()
     assert tuple(row) == ("{}", "", "[]")
     loaded = store.get_meeting_alignment_run(run)
@@ -263,8 +262,7 @@ def test_task_run_uses_latest_completed_exact_attempt_without_old_fallback(tmp_p
         _attempt(db, run, str(run), "native-task", 0, 1, 1)
         _attempt(db, run, f"{run}:decision_repair.1", "native-task", 1, 2, 1)
         stored = db.execute(
-            "select decision_json, audit_summary, memory_recall_used "
-            "from task_agent_runs where id=?", (run,)
+            f"select decision_json, audit_summary, memory_recall_used from ({TASK_AGENT_RUN_SQL}) where id=?", (run,)
         ).fetchone()
     assert tuple(stored) == ("{}", "", 0)
     loaded = store.get_task_agent_run(run)
@@ -293,7 +291,7 @@ def test_task_evaluation_reads_original_native_decision_without_sql_copy(tmp_pat
     run = store.record_task_agent_run(summary_input_id=input_id, decision_json=json.dumps(decision))
     with store._connect() as db:
         _attempt(db, run, str(run), "native-evaluation", 0, 1, 1)
-        assert db.execute("select decision_json from task_agent_runs where id=?", (run,)).fetchone()[0] == "{}"
+        assert db.execute(f"select decision_json from ({TASK_AGENT_RUN_SQL}) where id=?", (run,)).fetchone()[0] == "{}"
     result = tool.readback(store, input_id=input_id, before=tool.read_domain(store))
     assert result["project_decisions"] == []
     assert result["project_assessments"] == []
@@ -359,8 +357,7 @@ def test_okr_run_keeps_business_items_and_reads_native_envelope(tmp_path, monkey
     with sqlite3.connect(store.path) as db:
         _attempt(db, run, "1", "native-okr", 0, 1, 1, kind="structured")
         assert db.execute(
-            "select envelope_json, audit_summary, audit_tool_events_json "
-            "from okr_review_runs where id=?", (run,)
+            f"select envelope_json, audit_summary, audit_tool_events_json from ({OKR_RUN_SQL}) where id=?", (run,)
         ).fetchone() == ("{}", "", "[]")
         assert db.execute("select item_json from okr_review_items").fetchone()[0] == '{"adopted":"business"}'
     loaded = store.get_okr_review_run(run)

@@ -36,11 +36,11 @@ from app.reviewed_candidate_store import (
 )
 from app.sqlite_schema_lock import schema_initialize_lock
 from app.run_storage import (
-    AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES, TASK_AGENT_RUN_SQL, MEETING_RUN_SQL,
+    AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES, TASK_AGENT_RUN_SQL, MEETING_RUN_SQL, OKR_RUN_SQL,
     create_run_schema, install_run_child_guards, insert_run, run_schema_is_current,
 )
 from app.task_storage import (
-    REPLY_TASK_SQL, REPLY_TASK_INPUT_SQL, WORK_SUMMARY_INPUT_SQL, MEETING_JOB_SQL, SOURCE_COLUMNS, task_id_expression,
+    REPLY_TASK_SQL, REPLY_TASK_INPUT_SQL, WORK_SUMMARY_INPUT_SQL, MEETING_JOB_SQL, OKR_REQUEST_SQL, WEEKLY_JOB_SQL, SOURCE_COLUMNS, task_id_expression,
     RETIRED_TASK_TABLES, create_task_schema, migrate_task_schema,
     task_schema_is_current, insert_task, install_task_child_guards,
 )
@@ -313,7 +313,6 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "task_todo_sync_outbox",
     "runs",
     "conversation_runtime_sessions",
-    "weekly_okr_analysis_jobs",
     "wechat_memory_import_jobs",
     "meeting_memory_write_events",
     "agent_effect_intents",
@@ -466,7 +465,7 @@ STORE_SCHEMA_REMOVED_TABLES = (
 )
 STORE_SCHEMA_REMOVED_COLUMNS = {
     "runs": ("final_result_json", "result_envelope_json", "tool_events_json",
-             "decision_json", "audit_tool_events_json", "audit_summary"),
+             "decision_json", "envelope_json", "audit_tool_events_json", "audit_summary"),
     "business_task_signals": ("evidence_text",),
 }
 STORE_SCHEMA_REQUIRED_COLUMNS = {
@@ -477,6 +476,9 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "input_version", "claimed_input_version", "current_input_id", "claimed_input_id",
         "input_provenance_json", "input_compacted",
         "meeting_id", "calendar_summary_status", "calendar_summary_result_json",
+        "trigger_sender_user_id", "period_label", "period_start", "period_end",
+        "okr_source_json", "codex_session_id", "week_end", "manager_user_id",
+        "source_digest", "lease_owner", "lease_expires_at", "finished_at",
     ),
     "business_source_documents": ("id", "identity_key", "body", "created_at"),
     "meeting_alignment_delivery_claims": ("job_id", "claim_token"),
@@ -620,7 +622,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     "sent_replies": ("agent_run_id", "external_action_key"),
     "runs": (
         "record_type", "legacy_key", "task_id", "parent_id",
-        "summary_input_id", "error", "projection_json", "job_id",
+        "summary_input_id", "error", "projection_json", "job_id", "request_id",
         "session_mode",
         "source_session_id",
         "attempt_purpose",
@@ -631,17 +633,6 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "result_schema_id",
     ),
     "conversation_runtime_sessions": ("contract_hash",),
-    "weekly_okr_analysis_jobs": (
-        "week_end",
-        "manager_user_id",
-        "source_digest",
-        "status",
-        "lease_owner",
-        "lease_expires_at",
-        "error",
-        "finished_at",
-        "updated_at",
-    ),
     "wechat_memory_import_jobs": (
         "import_run_id",
         "account_id",
@@ -3530,38 +3521,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     owner text not null,
                     locked_at text not null default current_timestamp
                 );
-                create table if not exists okr_review_requests (
-                    id integer primary key autoincrement,
-                    conversation_id text not null,
-                    conversation_title text not null,
-                    trigger_message_id text not null,
-                    trigger_sender text not null,
-                    trigger_sender_user_id text not null default '',
-                    trigger_text text not null,
-                    period_label text not null,
-                    period_start text not null,
-                    period_end text not null,
-                    okr_source_json text not null default '{}',
-                    status text not null default 'pending',
-                    error text not null default '',
-                    codex_session_id text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    unique(conversation_id, trigger_message_id)
-                );
-                create index if not exists idx_okr_review_requests_status
-                    on okr_review_requests(status, id);
-                create table if not exists okr_review_runs (
-                    id integer primary key autoincrement,
-                    request_id integer not null,
-                    codex_session_id text not null default '',
-                    codex_transcript_start_line integer not null default 0,
-                    codex_transcript_end_line integer not null default 0,
-                    envelope_json text not null default '{}',
-                    audit_tool_events_json text not null default '[]',
-                    audit_summary text not null default '',
-                    created_at text not null default current_timestamp
-                );
                 create table if not exists okr_review_items (
                     id integer primary key autoincrement,
                     request_id integer not null,
@@ -4142,24 +4101,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     on todo_evidence_candidates(work_summary_input_id);
                 create index if not exists idx_todo_evidence_candidates_project
                     on todo_evidence_candidates(project_id, id desc);
-                create table if not exists weekly_okr_analysis_jobs (
-                    id integer primary key autoincrement,
-                    week_end text not null,
-                    manager_user_id text not null,
-                    source_digest text not null,
-                    status text not null default 'running'
-                        check(status in ('running', 'completed', 'failed')),
-                    lease_owner text not null default '',
-                    lease_expires_at text not null default '',
-                    error text not null default '',
-                    created_at text not null default current_timestamp,
-                    finished_at text not null default '',
-                    updated_at text not null default current_timestamp
-                );
-                create unique index if not exists idx_weekly_okr_analysis_jobs_identity
-                    on weekly_okr_analysis_jobs(
-                        week_end, manager_user_id, source_digest
-                    );
                 create table if not exists follow_up_drafts (
                     id integer primary key autoincrement,
                     project_id integer not null,
@@ -5299,41 +5240,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     on work_updates(created_at, id)
                 """
             )
-            db.execute(
-                """
-                create table if not exists weekly_okr_analysis_jobs (
-                    id integer primary key autoincrement,
-                    week_end text not null,
-                    manager_user_id text not null,
-                    source_digest text not null,
-                    status text not null default 'running'
-                        check(status in ('running', 'completed', 'failed')),
-                    lease_owner text not null default '',
-                    lease_expires_at text not null default '',
-                    error text not null default '',
-                    created_at text not null default current_timestamp,
-                    finished_at text not null default '',
-                    updated_at text not null default current_timestamp
-                )
-                """
-            )
-            db.execute(
-                "create unique index if not exists "
-                "idx_weekly_okr_analysis_jobs_identity "
-                "on weekly_okr_analysis_jobs(week_end, manager_user_id, source_digest)"
-            )
-            weekly_job_columns = {
-                row["name"]
-                for row in db.execute(
-                    "pragma table_info(weekly_okr_analysis_jobs)"
-                ).fetchall()
-            }
-            for column in ("lease_owner", "lease_expires_at"):
-                if column not in weekly_job_columns:
-                    db.execute(
-                        f"alter table weekly_okr_analysis_jobs add column {column} "
-                        "text not null default ''"
-                    )
             outbox_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(task_todo_sync_outbox)").fetchall()
@@ -11899,17 +11805,18 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             parts = workload_key.split(":")
             week_end, manager_user_id, source_digest = parts[:3]
             query = (
-                "select 1 from weekly_okr_analysis_jobs "
-                "where week_end=? and manager_user_id=? and source_digest=? "
+                "select 1 from tasks where record_type='weekly_okr_analysis_jobs' "
+                "and week_end=? and manager_user_id=? and source_digest=? "
                 "and status='running'"
             )
             args: tuple[object, ...] = (week_end, manager_user_id, source_digest)
             if len(parts) == 5:
-                query += " and id=? and lease_owner=?"
+                query += " and cast(legacy_key as integer)=? and lease_owner=?"
                 args += (int(parts[3]), parts[4])
             return db.execute(query, args).fetchone() is not None
         if workload_kind == "structured":
-            query = "select 1 from okr_review_requests where id=? and status='processing'"
+            query = ("select 1 from tasks where record_type='okr_review_requests' "
+                     "and cast(legacy_key as integer)=? and status='processing'")
             args = (int(workload_key),)
         elif workload_kind == "meeting":
             query = ("select 1 from runs where record_type='meeting_alignment_runs' "
@@ -12706,11 +12613,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             weekly_okr_cursor = db.execute(
                 f"""
-                update weekly_okr_analysis_jobs as job
+                update tasks as job
                 set status='failed', error='runtime_lease_expired',
                     lease_owner='', lease_expires_at='',
                     finished_at=?, updated_at=?
-                where job.status='running'
+                where job.record_type='weekly_okr_analysis_jobs'
+                  and job.status='running'
                   and job.lease_expires_at!=''
                   and job.lease_expires_at<=?
                   and exists (
@@ -12719,7 +12627,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       and attempt.workload_kind='weekly_okr'
                       and attempt.workload_key like (
                         job.week_end || ':' || job.manager_user_id || ':' ||
-                        job.source_digest || ':' || cast(job.id as text) || ':%'
+                        job.source_digest || ':' || job.legacy_key || ':%'
                       )
                       and attempt.status='failed'
                       and attempt.failure_code='runtime_lease_expired'
@@ -19031,7 +18939,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             db.execute(
                 """
-                insert into okr_review_requests (
+                insert into tasks (
+                    record_type,
                     conversation_id,
                     conversation_title,
                     trigger_message_id,
@@ -19041,16 +18950,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     period_label,
                     period_start,
                     period_end,
-                    okr_source_json
+                    okr_source_json, status, error, codex_session_id,
+                    created_at, updated_at
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                on conflict(conversation_id, trigger_message_id) do update set
+                values ('okr_review_requests', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        'pending', '', '', current_timestamp, current_timestamp)
+                on conflict(conversation_id, trigger_message_id)
+                    where record_type='okr_review_requests' do update set
                     okr_source_json=excluded.okr_source_json,
                     status='pending',
                     error='',
                     codex_session_id='',
                     updated_at=current_timestamp
-                where okr_review_requests.status='failed'
+                where tasks.status='failed'
                 """,
                 (
                     conversation_id,
@@ -19067,8 +18979,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             row = db.execute(
                 """
-                select id from okr_review_requests
-                where conversation_id=? and trigger_message_id=?
+                select cast(legacy_key as integer) as id from tasks
+                where record_type='okr_review_requests'
+                  and conversation_id=? and trigger_message_id=?
                 """,
                 (conversation_id, trigger_message_id),
             ).fetchone()
@@ -19079,9 +18992,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             return []
         with self._immediate_write_transaction() as db:
             rows = db.execute(
-                """
+                f"""
                 select *
-                from okr_review_requests
+                from ({OKR_REQUEST_SQL})
                 where status='pending'
                 order by id
                 limit ?
@@ -19094,18 +19007,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             placeholders = ",".join("?" for _ in ids)
             db.execute(
                 f"""
-                update okr_review_requests
+                update tasks
                 set status='processing',
                     error='',
                     updated_at=current_timestamp
-                where id in ({placeholders})
+                where record_type='okr_review_requests'
+                  and cast(legacy_key as integer) in ({placeholders})
                 """,
                 ids,
             )
             claimed = db.execute(
                 f"""
                 select *
-                from okr_review_requests
+                from ({OKR_REQUEST_SQL})
                 where id in ({placeholders})
                 order by id
                 """,
@@ -19119,10 +19033,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             params: list[object] = []
             processing_clause = (
-                "status='processing' and not exists ("
+                "request.status='processing' and not exists ("
                 "select 1 from dispatcher_claim_leases claim "
                 "where claim.adapter_name='okr_review' "
-                "and claim.source_id=cast(okr_review_requests.id as text) "
+                "and claim.source_id=cast(request.id as text) "
                 "and claim.owner<>'' and claim.terminal_at='' "
                 "and claim.lease_expires_at>current_timestamp)"
             )
@@ -19131,27 +19045,27 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     return []
                 processing_clause = (
                     processing_clause + " "
-                    "and datetime(updated_at) <= datetime('now', ?)"
+                    "and datetime(request.updated_at) <= datetime('now', ?)"
                 )
                 params.append(f"-{int(processing_max_age_seconds)} seconds")
             rows = db.execute(
                 f"""
                 select *
-                from okr_review_requests
+                from ({OKR_REQUEST_SQL}) as request
                 where ({processing_clause})
                    or (
-                       status='failed'
-                       and error like 'codex session locked:%'
+                       request.status='failed'
+                       and request.error like 'codex session locked:%'
                        and not exists (
                            select 1
                            from codex_session_locks
                            where codex_session_locks.conversation_id =
-                                 okr_review_requests.conversation_id
+                                 request.conversation_id
                              and datetime(codex_session_locks.locked_at) >
                                  datetime('now', ?)
                        )
                    )
-                order by updated_at, id
+                order by request.updated_at, request.id
                 """,
                 (*params, f"-{CODEX_SESSION_LOCK_STALE_SECONDS} seconds"),
             ).fetchall()
@@ -19170,12 +19084,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             request_placeholders = ",".join("?" for _ in request_ids)
             db.execute(
                 f"""
-                update okr_review_requests
+                update tasks
                 set status='pending',
                     error='',
                     codex_session_id='',
                     updated_at=current_timestamp
-                where id in ({request_placeholders})
+                where record_type='okr_review_requests'
+                  and cast(legacy_key as integer) in ({request_placeholders})
                 """,
                 request_ids,
             )
@@ -19184,9 +19099,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def get_okr_review_request(self, request_id: int) -> OkrReviewRequest:
         with self._connect() as db:
             row = db.execute(
-                """
+                f"""
                 select *
-                from okr_review_requests
+                from ({OKR_REQUEST_SQL})
                 where id=?
                 """,
                 (request_id,),
@@ -19201,12 +19116,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             db.execute(
                 """
-                update okr_review_requests
+                update tasks
                 set status='done',
                     error='',
                     codex_session_id=?,
                     updated_at=current_timestamp
-                where id=?
+                where record_type='okr_review_requests'
+                  and cast(legacy_key as integer)=?
                 """,
                 (codex_session_id, request_id),
             )
@@ -19215,11 +19131,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             db.execute(
                 """
-                update okr_review_requests
+                update tasks
                 set status='failed',
                     error=?,
                     updated_at=current_timestamp
-                where id=?
+                where record_type='okr_review_requests'
+                  and cast(legacy_key as integer)=?
                 """,
                 (error, request_id),
             )
@@ -19236,29 +19153,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         audit_summary: str,
     ) -> int:
         with self._connect() as db:
-            cursor = db.execute(
-                """
-                insert into okr_review_runs (
-                    request_id,
-                    codex_session_id,
-                    codex_transcript_start_line,
-                    codex_transcript_end_line,
-                    envelope_json,
-                    audit_tool_events_json,
-                    audit_summary
-                )
-                values (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    request_id,
-                    codex_session_id,
-                    codex_transcript_start_line,
-                    codex_transcript_end_line,
-                    "{}",
-                    "[]",
-                    "",
-                ),
-            )
+            cursor = insert_run(db, "okr_review_runs", {
+                "request_id": request_id,
+                "session_id": codex_session_id,
+                "transcript_start": codex_transcript_start_line,
+                "transcript_end": codex_transcript_end_line,
+            })
             return int(cursor.lastrowid)
 
     def get_okr_review_run(self, run_id: int) -> dict[str, object] | None:
@@ -19269,7 +19169,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
         with self._connect() as db:
             row = db.execute(
-                "select * from okr_review_runs where id=?", (run_id,)
+                f"select * from ({OKR_RUN_SQL}) where id=?", (run_id,)
             ).fetchone()
             ref = (exact_standalone_ref(
                 db, workload_kind="structured", workload_key=str(row["request_id"]),
@@ -29447,21 +29347,16 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
                 "%Y-%m-%d %H:%M:%S"
             )
-            inserted = db.execute(
-                "insert or ignore into weekly_okr_analysis_jobs "
-                "(week_end, manager_user_id, source_digest, status, lease_owner, "
-                "lease_expires_at, updated_at) values (?, ?, ?, 'running', ?, ?, ?)",
-                (
-                    normalized_week_end,
-                    normalized_manager,
-                    normalized_digest,
-                    owner,
-                    lease_expires_at,
-                    now_text,
-                ),
-            )
+            inserted = insert_task(db, "weekly_okr_analysis_jobs", {
+                "week_end": normalized_week_end,
+                "manager_user_id": normalized_manager,
+                "source_digest": normalized_digest,
+                "lease_owner": owner,
+                "lease_expires_at": lease_expires_at,
+                "updated_at": now_text,
+            }, ignore=True)
             row = db.execute(
-                "select id, status, lease_expires_at from weekly_okr_analysis_jobs "
+                f"select id, status, lease_expires_at from ({WEEKLY_JOB_SQL}) "
                 "where week_end=? and manager_user_id=? and source_digest=?",
                 (normalized_week_end, normalized_manager, normalized_digest),
             ).fetchone()
@@ -29473,10 +29368,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
             if row["status"] == "failed":
                 changed = db.execute(
-                    "update weekly_okr_analysis_jobs set status='running', "
+                    "update tasks set status='running', "
                     "error='', finished_at='', lease_owner=?, lease_expires_at=?, "
                     "updated_at=? "
-                    "where id=? and status='failed'",
+                    "where record_type='weekly_okr_analysis_jobs' "
+                    "and cast(legacy_key as integer)=? and status='failed'",
                     (owner, lease_expires_at, now_text, job_id),
                 )
                 if changed.rowcount != 1:
@@ -29494,9 +29390,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise RuntimeError("weekly OKR analysis job has invalid status")
             if not row["lease_expires_at"] or row["lease_expires_at"] <= now_text:
                 changed = db.execute(
-                    "update weekly_okr_analysis_jobs set lease_owner=?, "
+                    "update tasks set lease_owner=?, "
                     "lease_expires_at=?, error='', finished_at='', updated_at=? "
-                    "where id=? and status='running' and "
+                    "where record_type='weekly_okr_analysis_jobs' "
+                    "and cast(legacy_key as integer)=? and status='running' and "
                     "(lease_expires_at='' or lease_expires_at<=?)",
                     (owner, lease_expires_at, now_text, job_id, now_text),
                 )
@@ -29521,17 +29418,19 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             cursor = db.execute(
                 """
-                update weekly_okr_analysis_jobs as stale
+                update tasks as stale
                 set status='completed', error='superseded_by_later_completed_week',
                     lease_owner='', lease_expires_at='',
                     finished_at=?, updated_at=?
-                where stale.status='running'
+                where stale.record_type='weekly_okr_analysis_jobs'
+                  and stale.status='running'
                   and stale.lease_expires_at!=''
                   and stale.lease_expires_at<=?
                   and exists (
                     select 1
-                    from weekly_okr_analysis_jobs as completed
-                    where completed.manager_user_id=stale.manager_user_id
+                    from tasks as completed
+                    where completed.record_type='weekly_okr_analysis_jobs'
+                      and completed.manager_user_id=stale.manager_user_id
                       and completed.status='completed'
                       and completed.week_end>stale.week_end
                   )
@@ -29556,11 +29455,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             cursor = db.execute(
                 """
-                update weekly_okr_analysis_jobs as stale
+                update tasks as stale
                 set status='completed', error='superseded_by_later_completed_week',
                     lease_owner='', lease_expires_at='',
                     finished_at=?, updated_at=?
-                where stale.status='failed'
+                where stale.record_type='weekly_okr_analysis_jobs'
+                  and stale.status='failed'
                   and stale.error in (
                     'runtime_route_unavailable',
                     'runtime_lease_expired',
@@ -29568,8 +29468,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   )
                   and exists (
                     select 1
-                    from weekly_okr_analysis_jobs as completed
-                    where completed.manager_user_id=stale.manager_user_id
+                    from tasks as completed
+                    where completed.record_type='weekly_okr_analysis_jobs'
+                      and completed.manager_user_id=stale.manager_user_id
                       and completed.status='completed'
                       and completed.error=''
                       and (
@@ -29598,7 +29499,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             _, now_text = clock
             row = db.execute(
                 "select status, error, lease_owner, lease_expires_at "
-                "from weekly_okr_analysis_jobs where id=?",
+                f"from ({WEEKLY_JOB_SQL}) where id=?",
                 (job_id,),
             ).fetchone()
             if row is None:
@@ -29610,9 +29511,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
                 raise ValueError("weekly OKR analysis lease ownership lost")
             changed = db.execute(
-                "update weekly_okr_analysis_jobs set status=?, error=?, "
+                "update tasks set status=?, error=?, "
                 "lease_owner='', lease_expires_at='', finished_at=?, updated_at=? "
-                "where id=? and status='running' and lease_owner=? "
+                "where record_type='weekly_okr_analysis_jobs' "
+                "and cast(legacy_key as integer)=? and status='running' and lease_owner=? "
                 "and lease_expires_at>?",
                 (status, error, now_text, now_text, job_id, owner, now_text),
             )
@@ -29649,7 +29551,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             row = db.execute(
                 "select week_end, manager_user_id, source_digest, status "
-                "from weekly_okr_analysis_jobs where id=?",
+                f"from ({WEEKLY_JOB_SQL}) where id=?",
                 (job_id,),
             ).fetchone()
             if (
@@ -29663,10 +29565,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise ValueError("weekly OKR analysis job natural key mismatch")
             if row["status"] == "completed":
                 changed = db.execute(
-                    "update weekly_okr_analysis_jobs set status='running', "
+                    "update tasks set status='running', "
                     "error='', finished_at='', lease_owner=?, lease_expires_at=?, "
                     "updated_at=? "
-                    "where id=? and status='completed'",
+                    "where record_type='weekly_okr_analysis_jobs' "
+                    "and cast(legacy_key as integer)=? and status='completed'",
                     (owner, lease_expires_at, now_text, job_id),
                 )
                 if changed.rowcount != 1:

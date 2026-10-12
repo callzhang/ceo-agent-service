@@ -1,4 +1,4 @@
-"""Typed reply/input/Meeting storage with an exact, paired 11.2 source inverse.
+"""Typed 4B task storage with an exact, paired 11.2 source inverse.
 
 The caller owns the private FK-off transaction. Public numeric IDs stay in their
 source namespaces; only declared references use the global physical task ID.
@@ -13,6 +13,9 @@ from app.run_storage import (
     MEETING_RUN_COLUMNS,
     MEETING_RUN_RETIRED,
     MEETING_RUN_SQL,
+    OKR_RUN_COLUMNS,
+    OKR_RUN_RETIRED,
+    OKR_RUN_SQL,
     TASK_AGENT_RUN_COLUMNS,
     TASK_AGENT_RUN_RETIRED,
     TASK_AGENT_RUN_SQL,
@@ -24,18 +27,24 @@ from app.run_storage import (
     run_schema_is_current,
 )
 
-TASK_TYPES = ("reply_tasks", "reply_task_inputs", "work_summary_inputs", "meeting_alignment_jobs")
+TASK_TYPES = (
+    "reply_tasks", "reply_task_inputs", "work_summary_inputs", "meeting_alignment_jobs",
+    "okr_review_requests", "weekly_okr_analysis_jobs",
+)
 DOMAIN_RUN_COLUMNS = {
     "task_agent_runs": TASK_AGENT_RUN_COLUMNS,
     "meeting_alignment_runs": MEETING_RUN_COLUMNS,
+    "okr_review_runs": OKR_RUN_COLUMNS,
 }
 DOMAIN_RUN_RETIRED = {
     "task_agent_runs": TASK_AGENT_RUN_RETIRED,
     "meeting_alignment_runs": MEETING_RUN_RETIRED,
+    "okr_review_runs": OKR_RUN_RETIRED,
 }
 DOMAIN_RUN_PROJECTIONS = {
     "task_agent_runs": TASK_AGENT_RUN_SQL,
     "meeting_alignment_runs": MEETING_RUN_SQL,
+    "okr_review_runs": OKR_RUN_SQL,
 }
 RETIRED_TASK_TABLES = (*TASK_TYPES, *DOMAIN_RUN_COLUMNS)
 SOURCE_COLUMNS = {
@@ -109,6 +118,16 @@ SOURCE_COLUMNS = {
         "target_title", "mentions_json", "final_message", "send_result_json",
         "created_at", "updated_at", "calendar_summary_status",
         "calendar_summary_result_json",
+    ),
+    "okr_review_requests": (
+        "id", "conversation_id", "conversation_title", "trigger_message_id",
+        "trigger_sender", "trigger_sender_user_id", "trigger_text", "period_label",
+        "period_start", "period_end", "okr_source_json", "status", "error",
+        "codex_session_id", "created_at", "updated_at",
+    ),
+    "weekly_okr_analysis_jobs": (
+        "id", "week_end", "manager_user_id", "source_digest", "status", "lease_owner",
+        "lease_expires_at", "error", "created_at", "finished_at", "updated_at",
     ),
 }
 # Frozen actual production source contract from the committed Phase 4 inventory.
@@ -284,6 +303,62 @@ SOURCE_TASK_DECLARATIONS.update({
                     foreign key(job_id) references meeting_alignment_jobs(id)
                 )"""),
     ),
+    "okr_review_requests": (
+        ("index", "idx_okr_review_requests_status", """CREATE INDEX idx_okr_review_requests_status
+                    on okr_review_requests(status, id)"""),
+        ("table", "okr_review_requests", """CREATE TABLE okr_review_requests (
+                    id integer primary key autoincrement,
+                    conversation_id text not null,
+                    conversation_title text not null,
+                    trigger_message_id text not null,
+                    trigger_sender text not null,
+                    trigger_sender_user_id text not null default '',
+                    trigger_text text not null,
+                    period_label text not null,
+                    period_start text not null,
+                    period_end text not null,
+                    okr_source_json text not null default '{}',
+                    status text not null default 'pending',
+                    error text not null default '',
+                    codex_session_id text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique(conversation_id, trigger_message_id)
+                )"""),
+    ),
+    "okr_review_runs": (
+        ("table", "okr_review_runs", """CREATE TABLE okr_review_runs (
+                    id integer primary key autoincrement,
+                    request_id integer not null,
+                    codex_session_id text not null default '',
+                    codex_transcript_start_line integer not null default 0,
+                    codex_transcript_end_line integer not null default 0,
+                    envelope_json text not null default '{}',
+                    audit_tool_events_json text not null default '[]',
+                    audit_summary text not null default '',
+                    created_at text not null default current_timestamp
+                )"""),
+    ),
+    "weekly_okr_analysis_jobs": (
+        ("index", "idx_weekly_okr_analysis_jobs_identity", """CREATE UNIQUE INDEX idx_weekly_okr_analysis_jobs_identity
+                    on weekly_okr_analysis_jobs(
+                        week_end, manager_user_id, source_digest
+                    )"""),
+        ("table", "weekly_okr_analysis_jobs", """CREATE TABLE weekly_okr_analysis_jobs (
+                    id integer primary key autoincrement,
+                    week_end text not null,
+                    manager_user_id text not null,
+                    source_digest text not null,
+                    status text not null default 'running'
+                        check(status in ('running', 'completed', 'failed')),
+                    lease_owner text not null default '',
+                    lease_expires_at text not null default '',
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    finished_at text not null default '',
+                    updated_at text not null default current_timestamp
+                )"""),
+    ),
 })
 
 
@@ -335,6 +410,15 @@ TASK_DEFAULT_SQL = {
         updated_at="current_timestamp", calendar_summary_status="'not_started'",
         calendar_summary_result_json="'{}'",
     ),
+    "okr_review_requests": dict(
+        trigger_sender_user_id="''", okr_source_json="'{}'", status="'pending'",
+        error="''", codex_session_id="''", created_at="current_timestamp",
+        updated_at="current_timestamp",
+    ),
+    "weekly_okr_analysis_jobs": dict(
+        status="'running'", lease_owner="''", lease_expires_at="''", error="''",
+        created_at="current_timestamp", finished_at="''", updated_at="current_timestamp",
+    ),
 }
 NULLABLE = {
     "reply_tasks": {"locked_at", "current_input_id", "claimed_input_id"},
@@ -364,7 +448,7 @@ PHYSICAL_COLUMNS = tuple(
     )
 )
 TASK_TABLE_DDL = (
-    "create table tasks (id integer primary key autoincrement, record_type text not null check(record_type in ('reply_tasks','reply_task_inputs','work_summary_inputs','meeting_alignment_jobs')), legacy_key text,"
+    "create table tasks (id integer primary key autoincrement, record_type text not null check(record_type in ('reply_tasks','reply_task_inputs','work_summary_inputs','meeting_alignment_jobs','okr_review_requests','weekly_okr_analysis_jobs')), legacy_key text,"
     + ",".join(
         field + (" integer" if field in INTEGER_FIELDS else " text")
         for field in PHYSICAL_COLUMNS
@@ -395,7 +479,7 @@ TASK_TABLE_DDL = (
         + "))"
         for record_type, columns in SOURCE_COLUMNS.items()
     )
-    + ")"
+    + ",check(record_type<>'weekly_okr_analysis_jobs' or status in ('running','completed','failed')))"
 )
 
 TASK_INDEX_DDL = (
@@ -411,6 +495,9 @@ TASK_INDEX_DDL = (
     "create index idx_work_summary_inputs_updated on tasks(updated_at desc,cast(legacy_key as integer) desc) where record_type='work_summary_inputs'",
     "create unique index idx_meeting_alignment_jobs_identity on tasks(meeting_id) where record_type='meeting_alignment_jobs'",
     "create index idx_meeting_alignment_jobs_claim on tasks(status,available_at,eligible_at,cast(legacy_key as integer)) where record_type='meeting_alignment_jobs'",
+    "create unique index idx_okr_review_requests_identity on tasks(conversation_id,trigger_message_id) where record_type='okr_review_requests'",
+    "create index idx_okr_review_requests_status on tasks(status,cast(legacy_key as integer)) where record_type='okr_review_requests'",
+    "create unique index idx_weekly_okr_analysis_jobs_identity on tasks(week_end,manager_user_id,source_digest) where record_type='weekly_okr_analysis_jobs'",
 )
 TASK_TRIGGER_DDL = (
     "create trigger trg_tasks_record_type_immutable before update of record_type on tasks when new.record_type<>old.record_type begin select raise(abort,'task record type is immutable'); end",
@@ -464,6 +551,8 @@ REPLY_TASK_SQL = TASK_PROJECTIONS["reply_tasks"]
 REPLY_TASK_INPUT_SQL = TASK_PROJECTIONS["reply_task_inputs"]
 WORK_SUMMARY_INPUT_SQL = TASK_PROJECTIONS["work_summary_inputs"]
 MEETING_JOB_SQL = TASK_PROJECTIONS["meeting_alignment_jobs"]
+OKR_REQUEST_SQL = TASK_PROJECTIONS["okr_review_requests"]
+WEEKLY_JOB_SQL = TASK_PROJECTIONS["weekly_okr_analysis_jobs"]
 
 
 def insert_task(
@@ -877,7 +966,9 @@ def restore_task_schema(db: sqlite3.Connection, state: dict) -> dict:
     saved["runs"] = db.execute(
         "select "
         + ",".join(state["tables"]["runs"]["columns"])
-        + " from runs where record_type not in ('task_agent_runs','meeting_alignment_runs')"
+        + " from runs where record_type not in ("
+        + ",".join("?" for _ in DOMAIN_RUN_COLUMNS) + ")",
+        tuple(DOMAIN_RUN_COLUMNS),
     ).fetchall()
     _drop_explicit_objects(db, _schema_objects(db, "tasks"))
     _drop_explicit_objects(db, _schema_objects(db, "runs"))

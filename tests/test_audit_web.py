@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 import app.audit_web as audit_web_module
 from tests.run_reader_fixtures import insert_native_run_fixture
 from app.run_storage import insert_run
-from app.task_storage import WORK_SUMMARY_INPUT_SQL, task_id_expression
+from app.task_storage import WORK_SUMMARY_INPUT_SQL, insert_task, task_id_expression
 from app.email_store import EmailStore
 from app.audit_web import (
     create_audit_app,
@@ -8255,14 +8255,11 @@ def test_status_reports_lease_backed_meeting_memory_health_and_degrades_for_back
     )
     store = AutoReplyStore(tmp_path / "meeting-memory-status.sqlite3")
     with store._connect() as db:
-        db.execute(
-            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
-            "values (1, 'overdue-memory', 'sent', 'summary')"
-        )
-        db.execute(
-            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
-            "values (2, 'ghost-memory', 'sent', 'summary')"
-        )
+        for job_id, meeting_id in ((1, 'overdue-memory'), (2, 'ghost-memory')):
+            insert_task(db, 'meeting_alignment_jobs', {
+                'id': job_id, 'legacy_key': job_id, 'meeting_id': meeting_id,
+                'status': 'sent', 'final_message': 'summary',
+            })
         db.execute(
             """
             insert into meeting_memory_write_events (
@@ -8903,7 +8900,7 @@ def test_worker_attention_excludes_pending_and_processing_reply_and_meeting_rows
     )
     with store._connect() as db:
         db.execute(
-            "update meeting_alignment_jobs set status='processing' where id=?",
+            "update tasks set status='processing' where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
             (meeting_id,),
         )
 
@@ -9146,7 +9143,7 @@ def test_worker_attention_meeting_summary_falls_back_to_meeting_title(
     )
     with store._connect() as db:
         db.execute(
-            "update meeting_alignment_jobs set status='failed', error='processing failed' where id=?",
+            "update tasks set status='failed', error='processing failed' where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
             (job_id,),
         )
 

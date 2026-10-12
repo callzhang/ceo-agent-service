@@ -142,7 +142,7 @@ Meeting发送键`meeting-alignment:{OLD job.id}:{meeting_id}[:sensitive]`原样�
 
 4B OKR/weekly 源字段复核：实际PRAGMA确认OKR run.request_id与items.request_id均没有声明FK，原“已有FK”的标注已更正。OKR run按原request_id public scalar保存代码关系，不给共享task_id增加新FK；items.request_id仍原值，其他record_type的request_id为NULL。请求的16个真实字段与weekly的11个字段使用准确source scalar；原JSON字符串不包裹、不改格式。OKR请求无status CHECK且有真实skipped；run不存在status/error/finished_at，不补造。三个run cache全为既有占位，可按已批准清单退休。
 
-weekly保留原running/completed/failed CHECK、week_end/manager_user_id/source_digest自然键、owner/expiry CAS、cache hit/miss与supersession语义。当前历史副本169个完成job均有finished_at，25个error为superseded_by_later_completed_week，不能因全完成就删错误或时间。源序列718大于现存最大ID574，迁移与逆迁必须保留水位。report singleton lease和last_attempt/last_success继续在service_state。以上后续单元尚未实现，最终发布前仍需重新测实际源。
+weekly保留原running/completed/failed CHECK、week_end/manager_user_id/source_digest自然键、owner/expiry CAS、cache hit/miss与supersession语义。当前历史副本169个完成job均有finished_at，25个error为superseded_by_later_completed_week，不能因全完成就删错误或时间。源序列718大于现存最大ID574，迁移与逆迁必须保留水位。report singleton lease和last_attempt/last_success继续在service_state。OKR/weekly核心与运行调用已在隔离分支实现并独立复核；当前仍在完成相关fixture及最终一致副本、旧代码回退和发布验证，最终发布前仍需重新测实际源。
 
 
 ## 10. 4C代码预分析与字段调整（尚未实施）

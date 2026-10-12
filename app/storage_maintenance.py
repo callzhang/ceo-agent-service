@@ -145,7 +145,6 @@ def compact_native_duplicates(database: Path) -> dict[str, int]:
     counts = {"event_runs_cleared": 0, "payload_fields_cleared": 0, "payload_bytes_removed": 0}
     columns = {
         "reply_attempts": {"audit_tool_events_json": "[]"},
-        "okr_review_runs": {"envelope_json": "{}", "audit_summary": "", "audit_tool_events_json": "[]"},
         "workbench_turns": {"final_text": "", "error_detail": ""},
         "codex_session_search_index": {
             "summary_text": "", "fts_text": "", "embedding_json": "",

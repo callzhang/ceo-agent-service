@@ -9,7 +9,7 @@ import pytest
 from app.store import AutoReplyStore
 
 
-def test_fresh_task_container_replaces_task_and_meeting_sources(tmp_path):
+def test_fresh_task_container_replaces_all_4b_sources(tmp_path):
     store = AutoReplyStore(tmp_path / "tasks.db")
     with store._connect() as db:
         tables = {
@@ -25,9 +25,12 @@ def test_fresh_task_container_replaces_task_and_meeting_sources(tmp_path):
                 "task_agent_runs",
                 "meeting_alignment_jobs",
                 "meeting_alignment_runs",
+                "okr_review_requests",
+                "okr_review_runs",
+                "weekly_okr_analysis_jobs",
             }
         )
-        assert {"weekly_okr_analysis_jobs", "runs"} <= tables
+        assert {"okr_review_items", "runs"} <= tables
 
 
 def source_database(path):
@@ -48,6 +51,10 @@ def source_database(path):
         "task_agent_runs",
         "meeting_alignment_jobs",
         "meeting_alignment_runs",
+        "okr_review_requests",
+        "okr_review_runs",
+        "weekly_okr_analysis_jobs",
+        "okr_review_items",
     ):
         source = inventory["tables"][table]
         db.execute(source["sql"])
@@ -219,6 +226,10 @@ def test_exact_forward_inverse_preserves_overlaps_claim_raw_blob_and_source_ddl(
         "task_agent_runs",
         "meeting_alignment_jobs",
         "meeting_alignment_runs",
+        "okr_review_requests",
+        "okr_review_runs",
+        "weekly_okr_analysis_jobs",
+        "okr_review_items",
         "receipt",
         "runs",
     )

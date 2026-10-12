@@ -73,3 +73,24 @@ Current production readback remains54e6c209 and Store2026-10-11.2. A read-only c
 
 
 Meeting fixture closure: six affected test files passed 284 cases excluding four tests that require ps access. The four maintenance recovery/race cases passed separately with that permission, using temporary databases and test callbacks; no live service was stopped. The two malformed-source/current-schema tests additionally compare complete logical dumps and user_version before/after rejection, including retained rows. They cover the exact supported-layout boundary rather than resurrecting pre-marker calendar backfills. The final scoped fixture SPEC and QUALITY review passed with no P1/P2. All six test-function counts remain unchanged, no skip/xfail was added, and the source/current rejection assertions were strengthened.
+
+
+## OKR and weekly internal unit boundary
+
+Nine-table core and OKR/weekly readers are implemented and independently reviewed with no P1/P2 in their scopes. Core focused190 cases passed; independent review ran125 cases and compared current production DDL read-only. A separate old-source oracle compared complete inverse rows/DDL/FK across15 source tables, including BLOB, SQLite-permitted scalar values, absent request relationships, and replacement deleted-allocation watermarks. This remains fixture proof, not the final whole production copy. The 4A prefix, function ASTs,19 source declarations and include_task_runs=False objects remain unchanged.
+
+Reader tests cover failed-only upsert, public/physical divergence, multiple native runs, raw item request references, lease successor/expiry, cache hit/miss, superseded technical versus business failures, Dispatcher generations and typed quality/Attention. Seven selected cases passed; independent review additionally passed four new cases and six relevant Store cases. Broad raw-table fixture migration is still in progress. The22 old run-storage failures were reproduced on clean8a7ce193 and need coherent pure-A/current-B test setups, with no runtime legacy fallback.
+
+For final old-code rehearsal,321 app files from current production54e6c209 were extracted into a task-owned temporary directory and verified against Git blobs. Final consistent database capture, combined-candidate copy validation, new-fact inverse, real old-code startup/claim, CI and normal deploy have not yet been executed for complete B.
+
+
+Runtime fixture review closure (2026-10-12): root ran all ten affected files: 1,439 passed and two failed in 110.03s. Both failures are unchanged obsolete Store constructor fixtures at lines1889/1918; they remain explicit pending repairs, not waived checks. Independent SPEC then QUALITY review found no blocking findings, identical1,244 test-function counts, no removed per-test assertions or new skip/xfail. All57 changed functions (64 parametrized cases) passed independently in23.93s. Latest direct production Git readback remains54e6c209950898f60178fc9926b9857b9409c1ad with clean app paths and Store2026-10-11.2. Complete B copy/reversal/deploy gates remain unexecuted.
+
+
+Extended runtime dependencies (2026-10-12): eight focused worker/email/Console/Task files yielded1,676 passed,74 failed,2 existing skipped in90.08s. Several failures directly reference retired reply_tasks/work_summary_inputs tables in test setup/readback; old source-body migration premises also require separate diagnosis. These74 failures remain unresolved gates; the run is not accepted as passing and no migration guard is relaxed. A read-only call to the actual nine-table source-declaration preflight against the current production database passed; it performed no migration or live mutation.
+
+
+Legacy core fixture closure: the direct inventory11.1 fixture and explicit migration/inverse tests plus two Store sentinel cases passed60 checks. Independent review found no additional blocking issue in that scope, but identified four adjacent Agent-turn tests that still require receipt-table construction and an explicit11.1 migration/current13 DAO boundary. Those four and an accurate renamed rejection test are required before committing this fixture unit. Final copy-oracle review also identified missing deleted-run allocation coverage; task-only sequence checks cannot support a combined tasks/runs watermark claim. That verifier gap is pending repair before execution.
+
+
+Adjacent legacy fixture closure completed: full Agent-turn/run-storage/release files and the two Store sentinel cases passed120 tests in5.48s. Independent SPEC then QUALITY re-review passed, with six adjacent cases passing separately in2.09s. Receipt source DDL, explicit11.1 migration, fresh13 DAO reads, original receipt/state identity, native absence, and complete rejection nonmutation remain covered. The shared helper caller gap is closed; extended eight-file74-failure gate remains pending. This internal unit is ready for a private commit, not publication.

@@ -674,15 +674,32 @@ RUN_DEFAULT_SQL["meeting_alignment_runs"] = dict(
     session_id="''", transcript_start="0", transcript_end="0", error="''",
     created_at="current_timestamp", finished_at="''", updated_at="''",
 )
+OKR_RUN_COLUMNS = (
+    "id", "request_id", "codex_session_id", "codex_transcript_start_line",
+    "codex_transcript_end_line", "envelope_json", "audit_tool_events_json",
+    "audit_summary", "created_at",
+)
+OKR_RUN_RETIRED = {
+    "envelope_json": "{}", "audit_tool_events_json": "[]", "audit_summary": "",
+}
+OKR_RUN_SQL = """select cast(legacy_key as integer) as id, request_id,
+    session_id as codex_session_id, transcript_start as codex_transcript_start_line,
+    transcript_end as codex_transcript_end_line, '{}' as envelope_json,
+    '[]' as audit_tool_events_json, '' as audit_summary, created_at
+    from runs where record_type='okr_review_runs'"""
+RUN_DEFAULT_SQL["okr_review_runs"] = dict(
+    session_id="''", transcript_start="0", transcript_end="0",
+    created_at="current_timestamp",
+)
 # Keep the 4A declaration and inverse usable for their original release. 4B
-# extends the actual Task/Meeting fields and the declared task parent FKs.
+# extends the actual domain fields and only the source-declared task parent FKs.
 TASK_RUN_TABLE_DDL = RUN_TABLE_DDL.replace(
     "'agent_run_state_events'))",
-    "'agent_run_state_events','task_agent_runs','meeting_alignment_runs'))", 1
+    "'agent_run_state_events','task_agent_runs','meeting_alignment_runs','okr_review_runs'))", 1
 ).replace("references reply_tasks(id)", "references tasks(id)")
 TASK_RUN_TABLE_DDL = TASK_RUN_TABLE_DDL.replace(
     "    phase text,",
-    "    phase text,\n    summary_input_id integer,\n    error text,\n    projection_json text,\n    job_id integer,",
+    "    phase text,\n    summary_input_id integer,\n    error text,\n    projection_json text,\n    job_id integer,\n    request_id integer,",
     1,
 )
 TASK_RUN_TABLE_DDL = (
@@ -695,7 +712,10 @@ TASK_RUN_TABLE_DDL = (
     check(record_type<>'meeting_alignment_runs' or (
         task_id is not null and session_id is not null and transcript_start is not null
         and transcript_end is not null and status is not null and error is not null
-        and finished_at is not null and updated_at is not null))
+        and finished_at is not null and updated_at is not null)),
+    check(record_type<>'okr_review_runs' or (
+        request_id is not null and session_id is not null and transcript_start is not null
+        and transcript_end is not null))
 )"""
 )
 _TASK_DOMAIN_FIELDS = {
@@ -712,6 +732,9 @@ _MEETING_DOMAIN_FIELDS = {
     "task_id", "job_id", "session_id", "transcript_start", "transcript_end",
     "status", "error", "created_at", "finished_at", "updated_at",
 }
+_OKR_DOMAIN_FIELDS = {
+    "request_id", "session_id", "transcript_start", "transcript_end", "created_at",
+}
 _CORE_RUN_FIELDS = {
     COLUMN_MAP[record_type].get(column, column)
     for record_type, columns in SOURCE_COLUMNS.items()
@@ -724,15 +747,16 @@ TASK_RUN_TABLE_DDL = (
     + ",".join(
         f"check(record_type<>'{record_type}' or ("
         + " and ".join(field + " is null" for field in sorted(
-            (_CORE_RUN_FIELDS | _TASK_DOMAIN_FIELDS | _MEETING_DOMAIN_FIELDS) - fields
+            (_CORE_RUN_FIELDS | _TASK_DOMAIN_FIELDS | _MEETING_DOMAIN_FIELDS | _OKR_DOMAIN_FIELDS) - fields
         ))
         + "))"
         for record_type, fields in (
             ("task_agent_runs", _TASK_DOMAIN_FIELDS),
             ("meeting_alignment_runs", _MEETING_DOMAIN_FIELDS),
+            ("okr_review_runs", _OKR_DOMAIN_FIELDS),
         )
     )
-    + ",check(record_type in ('task_agent_runs','meeting_alignment_runs') or (summary_input_id is null and error is null and projection_json is null and job_id is null)))"
+    + ",check(record_type in ('task_agent_runs','meeting_alignment_runs','okr_review_runs') or (summary_input_id is null and error is null and projection_json is null and job_id is null and request_id is null)))"
 )
 TASK_RUN_INDEX_DDL = (
     *RUN_INDEX_DDL,
