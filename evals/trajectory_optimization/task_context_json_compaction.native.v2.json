@@ -1,0 +1,210 @@
+{
+  "version": 2,
+  "scope": "Fixed synthetic current Task factory/schema/Skill; semantic JSON whitespace is the only service task input difference. Freeze exact same skills.config option across all four calls. Cold phase commands and Developer content identical across arms; risk commands differ by native session ID, Developer remains identical. Downstream model-selected tool calls and decisions may vary. Local fake Memory and read operations only, isolated application; not private production-source/model or all-provider acceptance.",
+  "rows": [
+    {
+      "variant": "baseline",
+      "phase": "cold",
+      "session_id": "01a13192-3adf-7751-96eb-e3f366ba9f9c",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_chars": 32096,
+      "normalized_prompt_sha256": "29a53794d933146dd90f8441ffe02ff74077810047a6b7ed4726be34f06c647a",
+      "prompt_sha256": "b5fc1372b8522deed2c58e2c9d0b815dc40d5e441cb8cf942fabe30656020f4b",
+      "events_sha256": "912501cd9ade7809e7790fb7bba22023435fe5d7cf7786f727fab5ebfb5c9ca2",
+      "command_sha256": "114852176387966c9924102d4ee69f88fee3ef81769af42997cca0378649773f",
+      "command_contains_skill_override": true,
+      "parsed_model_valid": true,
+      "project_decisions": 1,
+      "task_decisions": 0,
+      "assessment_outcomes": [
+        "not_needed"
+      ],
+      "isolated_apply": {
+        "applied": true,
+        "projects": 1,
+        "tasks": 0
+      },
+      "attention_count": 0,
+      "developer_chars": [
+        18885
+      ],
+      "catalog_sha256": "e8d0c447a5e4e001404cf88375f25f986c47b018509ea34af4920dfc0f272135",
+      "full_session_native_sha256": "bd7125e669f2c792dd2395827b4891e7334d0436f0f957f8e56116a593e220e2",
+      "full_session_calls": [
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        }
+      ],
+      "attention_categories": [],
+      "developer_blocks_json_sha256": "9010a0945ab0b4d368f1ac01961cdbdb2748509be466ef579712aaf998b8a0eb",
+      "developer_utf8_sha256": "0af4c745f25e99f6555f0e899b0df94f6d13cac85dec52b4184465f58d929577"
+    },
+    {
+      "variant": "candidate",
+      "phase": "cold",
+      "session_id": "01a13192-7171-7c51-9272-f97055d90b96",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_chars": 31652,
+      "normalized_prompt_sha256": "29a53794d933146dd90f8441ffe02ff74077810047a6b7ed4726be34f06c647a",
+      "prompt_sha256": "b49f662fe8edde35b14d1bedeb654af833ed7549bf69cb8e0dd76f851ded3da1",
+      "events_sha256": "89b44936f81ee90b6430cb586656238bd9c8205ab57547f65ac4b4360f2d2a1c",
+      "command_sha256": "114852176387966c9924102d4ee69f88fee3ef81769af42997cca0378649773f",
+      "command_contains_skill_override": true,
+      "parsed_model_valid": true,
+      "project_decisions": 1,
+      "task_decisions": 0,
+      "assessment_outcomes": [
+        "not_needed"
+      ],
+      "isolated_apply": {
+        "applied": true,
+        "projects": 1,
+        "tasks": 0
+      },
+      "attention_count": 0,
+      "developer_chars": [
+        18885
+      ],
+      "catalog_sha256": "e8d0c447a5e4e001404cf88375f25f986c47b018509ea34af4920dfc0f272135",
+      "full_session_native_sha256": "79acae8284b2f1cd9257ad1f0d7f41dcc7349eb911dc1edce31925219bfb49d4",
+      "full_session_calls": [
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        }
+      ],
+      "attention_categories": [],
+      "developer_blocks_json_sha256": "9010a0945ab0b4d368f1ac01961cdbdb2748509be466ef579712aaf998b8a0eb",
+      "developer_utf8_sha256": "0af4c745f25e99f6555f0e899b0df94f6d13cac85dec52b4184465f58d929577"
+    },
+    {
+      "variant": "baseline",
+      "phase": "risk",
+      "session_id": "01a13192-3adf-7751-96eb-e3f366ba9f9c",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_chars": 35600,
+      "normalized_prompt_sha256": "07d34f15f863508a662808ffec894e89629fbebea2c52d4b6c210afc835e22bf",
+      "prompt_sha256": "2935148621930bc24cce667cd633547d39db986595bc121fd7a3deb46c704c8b",
+      "events_sha256": "32f0200055c54522cd8b01d9ff55b55a9540ac42a7d0517e68318f906286c12f",
+      "command_sha256": "587033a34ea65a60af09d656d519658e48f57d69d51b2c13000e985b80afb9fe",
+      "command_contains_skill_override": true,
+      "parsed_model_valid": true,
+      "project_decisions": 1,
+      "task_decisions": 1,
+      "assessment_outcomes": [
+        "needs_attention"
+      ],
+      "isolated_apply": {
+        "applied": true,
+        "projects": 1,
+        "tasks": 1
+      },
+      "attention_count": 1,
+      "developer_chars": [
+        18885
+      ],
+      "catalog_sha256": "e8d0c447a5e4e001404cf88375f25f986c47b018509ea34af4920dfc0f272135",
+      "full_session_native_sha256": "bd7125e669f2c792dd2395827b4891e7334d0436f0f957f8e56116a593e220e2",
+      "full_session_calls": [
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        }
+      ],
+      "attention_categories": [
+        "watch"
+      ],
+      "developer_blocks_json_sha256": "9010a0945ab0b4d368f1ac01961cdbdb2748509be466ef579712aaf998b8a0eb",
+      "developer_utf8_sha256": "0af4c745f25e99f6555f0e899b0df94f6d13cac85dec52b4184465f58d929577"
+    },
+    {
+      "variant": "candidate",
+      "phase": "risk",
+      "session_id": "01a13192-7171-7c51-9272-f97055d90b96",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_chars": 33866,
+      "normalized_prompt_sha256": "07d34f15f863508a662808ffec894e89629fbebea2c52d4b6c210afc835e22bf",
+      "prompt_sha256": "3050c31cc59cc8e8334347e01d6c928ff2a92249b87d833e32dd4e3324cf03c1",
+      "events_sha256": "97d1b9cfb30aa3072be0d825363ed9a231e33ac1bbd04a0549444e478a4a3b07",
+      "command_sha256": "28417a2e8b3b57b3de6fd11fdc1bf3dcf4c2d18dd0a4abeaa6600c9d9cd2faa0",
+      "command_contains_skill_override": true,
+      "parsed_model_valid": true,
+      "project_decisions": 1,
+      "task_decisions": 1,
+      "assessment_outcomes": [
+        "needs_attention"
+      ],
+      "isolated_apply": {
+        "applied": true,
+        "projects": 1,
+        "tasks": 1
+      },
+      "attention_count": 1,
+      "developer_chars": [
+        18885
+      ],
+      "catalog_sha256": "e8d0c447a5e4e001404cf88375f25f986c47b018509ea34af4920dfc0f272135",
+      "full_session_native_sha256": "79acae8284b2f1cd9257ad1f0d7f41dcc7349eb911dc1edce31925219bfb49d4",
+      "full_session_calls": [
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        }
+      ],
+      "attention_categories": [
+        "watch"
+      ],
+      "developer_blocks_json_sha256": "9010a0945ab0b4d368f1ac01961cdbdb2748509be466ef579712aaf998b8a0eb",
+      "developer_utf8_sha256": "0af4c745f25e99f6555f0e899b0df94f6d13cac85dec52b4184465f58d929577"
+    }
+  ],
+  "retained_harness_failures": [],
+  "legacy_harness_field_note": "Current harness records command-selected frozen Skill configuration hash; prior drifting v1 probe remains separate.",
+  "native_record_scope": "Full-session hashes and calls include cold and later risk continuation; phase command/prompt/decision/event hashes are separate.",
+  "developer_hash_definition": "developer_utf8_sha256 hashes joined verbatim Developer strings; developer_blocks_json_sha256 hashes json.dumps(blocks,ensure_ascii=False) as a list. Only one block occurs here."
+}
