@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "scope": "Fixed synthetic current Task factory/schema/Skill; semantic JSON whitespace is the only service task input difference. Freeze exact same skills.config option across all four calls. Cold phase commands and Developer content identical across arms; risk commands differ by native session ID, Developer remains identical. Downstream model-selected tool calls and decisions may vary. Local fake Memory and read operations only, isolated application; not private production-source/model or all-provider acceptance.",
   "rows": [
     {
