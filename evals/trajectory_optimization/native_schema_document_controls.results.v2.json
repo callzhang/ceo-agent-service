@@ -1,0 +1,164 @@
+{
+  "version": 2,
+  "scope": "Public-code/synthetic document Audit, no private Work Profile or Skill body, stubbed reads, cold only.",
+  "artifact_root": "/private/tmp/ceo-native-audit-document-v2-ubh5ifjc",
+  "results": [
+    {
+      "arm": "full",
+      "route": "qwen_gpu4",
+      "case": "audit-document-feedback",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e02-2749-70a1-86bf-4cdf62fe221a",
+      "turn_completed": true,
+      "developer_characters": 9549,
+      "task_characters": 5254,
+      "calls": [
+        "read_task_skill",
+        "read_dingtalk_document"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "business_review": "Fact correction, binding and original reply target confirmed; contract read full missing, fields present."
+    },
+    {
+      "arm": "fields",
+      "route": "qwen_gpu4",
+      "case": "audit-document-feedback",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e03-c994-7183-95f6-e522421c0f6c",
+      "turn_completed": true,
+      "developer_characters": 8274,
+      "task_characters": 5254,
+      "calls": [
+        "read_task_skill",
+        "read_dingtalk_document",
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "business_review": "Fact correction, binding and original reply target confirmed; contract read full missing, fields present."
+    }
+  ],
+  "input_generation": {
+    "configuration": {
+      "developer_template": "Synthetic source-first review.",
+      "developer_instructions": "Synthetic source-first review.",
+      "user_template": "{{task_context}}",
+      "work_profile": "",
+      "work_profile_text": ""
+    },
+    "generator_sha256": "e3bd1177566d54dfeb2ef1050c2d1b4bcf9f75f22a812fd4e6ffb3566c41d9c7",
+    "case_sha256": "d10ebe508e2858322554b55b1f18ae42722cefe10623ec1efaedd37a8f534c90",
+    "sections": [
+      {
+        "name": "\u5ba1\u6838\u89c4\u5219",
+        "source": "\u5df2\u4fdd\u5b58 Audit Rules",
+        "characters": 15,
+        "sha256": "da73377d623c5e88c9d81fa2fe2a39c8b62a794c42ca04cdae922677b5f754d1"
+      },
+      {
+        "name": "\u89d2\u8272\u5408\u540c",
+        "source": "\u670d\u52a1\u89d2\u8272\u5408\u540c",
+        "characters": 785,
+        "sha256": "3d7b8d298142cb8398d483142460f1a8d0c1ce498ce8158e950be2809bf6b9bd"
+      },
+      {
+        "name": "Skill \u4f7f\u7528\u7ea6\u5b9a",
+        "source": "\u670d\u52a1\u89d2\u8272\u5408\u540c",
+        "characters": 335,
+        "sha256": "651b1f8557bd948a10f37a74c009b7b69506f40725d16c2bdb3a57893f2406bb"
+      },
+      {
+        "name": "\u5171\u540c\u5de5\u4f5c\u539f\u5219",
+        "source": "\u5df2\u4fdd\u5b58 Developer \u6a21\u677f",
+        "characters": 30,
+        "sha256": "ee3820798b426ba698672b33ffe35835192bc4048ce1c5fe7b3f088782af64f7"
+      },
+      {
+        "name": "\u7cfb\u7edf\u52a8\u4f5c\u76ee\u5f55",
+        "source": "\u7cfb\u7edf\u52a8\u4f5c\u5408\u540c",
+        "characters": 881,
+        "sha256": "71669525c989bb095c34a96cc5979fe2125916a19054b6582eac40b72eace2ca"
+      },
+      {
+        "name": "\u8f93\u51fa\u5951\u7ea6",
+        "source": "Pydantic \u4e1a\u52a1\u6a21\u578b",
+        "characters": 1575,
+        "sha256": "88afd58a9be3cfd8b97704ab81d28fa2227f60fb848b1e3822b52520f7ba7923"
+      },
+      {
+        "name": "\u80fd\u529b\u8fb9\u754c",
+        "source": "\u670d\u52a1\u80fd\u529b\u5408\u540c",
+        "characters": 828,
+        "sha256": "f5ab5947de021491561eb1a7d0467c3e7d0b9b9997f32c8a294c6c4016891466"
+      },
+      {
+        "name": "\u540e\u53f0\u8bb0\u5fc6\u8bf4\u660e",
+        "source": "\u670d\u52a1\u8fd0\u884c\u5408\u540c",
+        "characters": 350,
+        "sha256": "5c80a4dfcdbb2cd0c09c46f19dd37ef91541be5950904fa0ea1b7bb360ebaa61"
+      },
+      {
+        "name": "\u51b3\u7b56\u8bc1\u636e",
+        "source": "\u670d\u52a1\u51b3\u7b56\u8d28\u91cf\u5408\u540c",
+        "characters": 1761,
+        "sha256": "29a5d2db2c02af1810ffda253cee1a03cc929fc0e2dc32fcca9fa6781b91a379"
+      },
+      {
+        "name": "\u5e94\u7528\u7ed3\u679c\u5408\u540c",
+        "source": "\u670d\u52a1\u5e94\u7528\u5408\u540c",
+        "characters": 2546,
+        "sha256": "f06e71bb044e7e87448cf90c501e6cbd5517505d3f6698b33ce27b99bb8d69f5"
+      },
+      {
+        "name": "\u54cd\u5e94\u5b8c\u6574\u6027",
+        "source": "\u5ba1\u6838\u89d2\u8272\u5408\u540c",
+        "characters": 423,
+        "sha256": "1185b3c9d90c44078661ba61fea32ba66685aeb06af6912c67bfb5a9df06d654"
+      },
+      {
+        "name": "\u8fd0\u884c\u73af\u5883",
+        "source": "\u5f53\u524d\u8fd0\u884c\u73af\u5883",
+        "characters": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "\u5de5\u4f5c\u4eba\u683c",
+        "source": "\u5df2\u4fdd\u5b58 Work Profile",
+        "characters": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ]
+  },
+  "hashes": {
+    "run.py": "b2ccb1870f7a23fab8ef2487b4b5fd31f1ff6355f103fe983f8f128d832fc87f",
+    "server.py": "cc15f31ee1ab03c71ed0075e472dcb32930a22377b775978ef8321ff649a363e",
+    "generate.py": "e3bd1177566d54dfeb2ef1050c2d1b4bcf9f75f22a812fd4e6ffb3566c41d9c7",
+    "case.json": "d10ebe508e2858322554b55b1f18ae42722cefe10623ec1efaedd37a8f534c90",
+    "results.json": "6d5c5a8cc281116f069a454fcdf6275b9c5c6b29ba979703fe463f94b4ea6ee6",
+    "full/input.json": "7fc2a9a655c429aabbbb2901359f4cf86de32eb66a34ba703f8e8b64849efdf0",
+    "fields/input.json": "25b3548410860fad1516e378f1b692995cbeaacca956c33c062e91c7f7504af4"
+  },
+  "independent_review": {
+    "facts_and_original_reply_target_preserved_both": true,
+    "mandatory_contract_read": {
+      "full": false,
+      "fields": true
+    },
+    "release_qualified": false,
+    "comparison_limits": [
+      "Native environment context differs by arm working directory; host-skills and AGENTS same hashes.",
+      "Only v2 service Developer output contract is single-variable; v1-to-v2 Task/source binding/digest changed.",
+      "Search callback supported but not exercised; no real discovery or permission proof.",
+      "One trial per version cannot establish stable field-guide benefit."
+    ]
+  }
+}
