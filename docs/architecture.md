@@ -1,5 +1,11 @@
 # CEO Agent Service Architecture
 
+Agent run metadata writes (claim, lease renewal, session binding and expired-run
+failure) capture their row and native attempt references in the transaction,
+then commit and close SQLite before native session discovery, transcript reading
+or parsing. Return values retain that written metadata snapshot and the existing
+native event/result projection. File I/O never extends these writer leases.
+
 本文档默认描述当前 Consumer Agent A / Audit Agent B 运行架构；明确标注为“已批准的
 生命周期政策”的段落描述后续实现必须达到的目标，不表示对应代码已经切换、部署或在生产
 启用。历史方案保留在 `docs/superpowers/` 中，仅用于追溯，不代表当前目标运行方式。

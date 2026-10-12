@@ -1,5 +1,14 @@
 # Current Runtime Mechanism
 
+Agent run claim, lease renewal, session binding and expired-run failure commit
+their metadata transaction before native trajectory hydration. They capture the
+written row and its native attempt references together, so the returned metadata
+remains the exact operation snapshot even if another writer runs during file
+reading. Native session-directory discovery, transcript parsing and result
+projection run after SQLite has released the writer lock and closed the
+connection; lease checks, claim ownership and returned events/results remain
+unchanged.
+
 Meeting Memory enqueue first excludes existing event IDs using the meeting
 status and unique event indexes in a read-only connection. Only missing jobs
 load `final_message` to check the existing nonempty delivered-conclusion rule.
