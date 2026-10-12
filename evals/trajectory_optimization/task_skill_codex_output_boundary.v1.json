@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "native_cli": "0.154.0",
+  "session_id": "01a12f8d-9484-7bc3-ac9a-cdfa9d9b7270",
+  "skill_sha256": "99f2c30ed48cb1734d4ee859f0633f504562257be103136e8de7b96d0fbc3d05",
+  "calls": [
+    {
+      "phase": "cold",
+      "call_id": "call_iOjlZwW9ElgDSb53pQz7mbEN",
+      "inner_requests_30000": true,
+      "outer_pragma_present": false,
+      "combined_agents_and_skill": true,
+      "truncation_marker": true,
+      "model_visible_chars": 39903,
+      "complete_exact_skill": false,
+      "model_visible_sha256": "e48ec7d3a2185a300e9727f363e33089664c374ecccd05c14f985c1c1fc6a1f8"
+    },
+    {
+      "phase": "risk",
+      "call_id": "call_069e0e7d20c04849a775b329ffa53213",
+      "inner_requests_30000": true,
+      "outer_pragma_present": false,
+      "combined_agents_and_skill": false,
+      "truncation_marker": false,
+      "model_visible_chars": 23501,
+      "complete_exact_skill": true,
+      "model_visible_sha256": "937c4a07933492dce7135a965558a1c994a8dc372c84c572a1b630f94ffb0b7c"
+    }
+  ],
+  "confirmed_cause": "CodeMode outer output budget is independent from nested exec_command requested budget; cold combined shared instructions and Skill exceeded default outer budget. Risk standalone read contained exact full Skill.",
+  "business_error_causality": "unproven",
+  "sources": [
+    "https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/core/src/tools/code_mode/mod.rs#L302-L316",
+    "https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/core/src/unified_exec/mod.rs#L203-L205"
+  ],
+  "change": "none; no global budget, prompt patch, approval or routing changes"
+}
