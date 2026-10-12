@@ -931,7 +931,7 @@ project_link_proposal、attention_proposal。历史运行只保存原生执行�
 Codex CLI 路径通过 `--output-schema` 使用 `app/schemas/task_agent_decision.schema.json`，
 该文件由 `TaskAgentDecision.model_json_schema()` 生成并由测试校验一致；strict schema
 要求每个对象显式返回全部属性，省略值用其契约允许的 `null` 表示。服务仍运行本地 Pydantic
-语义校验，失败时最多在同一 session 修正一次；结构化输出不取代业务校验。
+语义校验，失败时最多在同一 session 修正一次；结构化输出不取代业务校验。Task 任务正文不重复附加完整 schema；Codex 使用上述原生通道，Claude／Friday 由现有运行适配器将同一份完整 schema 拼入单条消息。Skill、事实、业务规则和会话绑定保持不变。
 
 ProjectSelector 使用既有 anchor_id 或零基 project_decision_index 二选一；后者指向顶层
 Project 决定，不是 Task 列表。Task 用 project 与 project_link_evidence 明确归属，复用真正已有
@@ -963,7 +963,7 @@ historical_comparison 同时用当前与历史原始证明；当前对旧报告�
 支持 Task 必须实际属于所评 Project，或本轮同一支持决定用真实证据确认；不能只因 ID 存在算成员。
 
 同一个既有 stored Project/assessment 只读校验器也在领域应用前、原有两轮 decision
-repair 中通过短连接执行；完整来源、原始错误和被拒决定始终作为修订的完整输入。只有实际运行线路续接刚生成候选的同一个 native session 时，才提交仅含错误与被拒决定的短输入；冷启动或续接其他 session 使用完整输入。Task prompt 中的完整 schema 使用紧凑 JSON 排版，不删除字段或断言。
+repair 中通过短连接执行；完整来源、原始错误和被拒决定始终作为修订的完整输入。只有实际运行线路续接刚生成候选的同一个 native session 时，才提交仅含错误与被拒决定的短输入；冷启动或续接其他 session 使用完整输入。Task 正文不再重复附加运行适配器已提交的完整 schema，不删除 schema 字段或断言。
 包括已有关注卡缺少其保存原证据的声明错误，不放宽原文、身份、成员标准。领域事务内
 仍再次执行未改动的同一校验器；SQLite 操作错误和原子应用阶段错误不进入模型纠正。
 没有新增校验政策、循环或纠正预算。
