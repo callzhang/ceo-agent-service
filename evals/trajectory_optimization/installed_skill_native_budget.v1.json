@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "scope": "actual current role builder; only read_skill native output budget comparison; anonymous data and all callback stubs",
+  "baseline": "same builder with installed read_skill budget leaf removed",
+  "candidate": "modified actual builder, no manual budget override",
+  "facts": "same nonce and content per role/phase",
+  "model": "gpt-5.6-luna",
+  "effort": "low",
+  "cases": [
+    "baseline-consumer-cold",
+    "candidate-consumer-cold",
+    "candidate-consumer-resume",
+    "candidate-audit-cold",
+    "candidate-audit-resume"
+  ],
+  "output_schema": "Consumer off; Audit exact native full schema to isolate unrelated result-format failure",
+  "business_acceptance": false,
+  "base_commit": "7aec844a",
+  "actual_role_builder": true,
+  "manual_candidate_budget_override": false
+}

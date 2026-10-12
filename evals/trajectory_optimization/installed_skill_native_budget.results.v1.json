@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "arm": "baseline",
+      "role": "consumer",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12d83-bb7f-7ba2-91a4-55d65fe1aa26",
+      "same_session": true,
+      "source_calls": 1,
+      "unexpected_callbacks": [],
+      "canonical_valid": true,
+      "summary_matches_nonce": false,
+      "binding_valid": true,
+      "passed": false,
+      "native_terminal": true,
+      "native_model_source_exact": false,
+      "native_model_source_characters": 45701,
+      "source_characters": 63055,
+      "native_model_source_hash_valid": false,
+      "native_function_calls": [
+        {
+          "name": "read_skill",
+          "arguments": "{\"name\":\"fixture-skill\"}"
+        }
+      ]
+    },
+    {
+      "arm": "candidate",
+      "role": "consumer",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12d84-adb2-7f13-85d2-7b2a2fede3f6",
+      "same_session": true,
+      "source_calls": 1,
+      "unexpected_callbacks": [],
+      "canonical_valid": true,
+      "summary_matches_nonce": true,
+      "binding_valid": true,
+      "passed": true,
+      "native_terminal": true,
+      "native_model_source_exact": true,
+      "native_model_source_characters": 63055,
+      "source_characters": 63055,
+      "native_model_source_hash_valid": true,
+      "native_function_calls": [
+        {
+          "name": "read_skill",
+          "arguments": "{\"name\":\"fixture-skill\"}"
+        }
+      ]
+    },
+    {
+      "arm": "candidate",
+      "role": "consumer",
+      "phase": "resume",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12d84-adb2-7f13-85d2-7b2a2fede3f6",
+      "same_session": true,
+      "source_calls": 1,
+      "unexpected_callbacks": [],
+      "canonical_valid": true,
+      "summary_matches_nonce": true,
+      "binding_valid": true,
+      "passed": true,
+      "native_terminal": true,
+      "native_model_source_exact": true,
+      "native_model_source_characters": 63055,
+      "source_characters": 63055,
+      "native_model_source_hash_valid": true,
+      "native_function_calls": [
+        {
+          "name": "read_skill",
+          "arguments": "{\"name\":\"fixture-skill\"}"
+        }
+      ]
+    },
+    {
+      "arm": "candidate",
+      "role": "audit",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12d84-e032-7331-be12-2cc4dc6beb34",
+      "same_session": true,
+      "source_calls": 1,
+      "unexpected_callbacks": [],
+      "canonical_valid": true,
+      "summary_matches_nonce": true,
+      "binding_valid": true,
+      "passed": true,
+      "native_terminal": true,
+      "native_model_source_exact": true,
+      "native_model_source_characters": 63055,
+      "source_characters": 63055,
+      "native_model_source_hash_valid": true,
+      "native_function_calls": [
+        {
+          "name": "read_skill",
+          "arguments": "{\"name\":\"fixture-skill\"}"
+        }
+      ]
+    },
+    {
+      "arm": "candidate",
+      "role": "audit",
+      "phase": "resume",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12d84-e032-7331-be12-2cc4dc6beb34",
+      "same_session": true,
+      "source_calls": 1,
+      "unexpected_callbacks": [],
+      "canonical_valid": true,
+      "summary_matches_nonce": true,
+      "binding_valid": true,
+      "passed": true,
+      "native_terminal": true,
+      "native_model_source_exact": true,
+      "native_model_source_characters": 63055,
+      "source_characters": 63055,
+      "native_model_source_hash_valid": true,
+      "native_function_calls": [
+        {
+          "name": "read_skill",
+          "arguments": "{\"name\":\"fixture-skill\"}"
+        }
+      ]
+    }
+  ],
+  "same_consumer_cold_source": true,
+  "candidate_cold_and_resume_all_valid": true,
+  "business_acceptance": false,
+  "production_release": true,
+  "independent_review": {
+    "reviewer": "readonly_business_matrix_review",
+    "accepted": true,
+    "verified": "five native turns: exact source, hash, marker, tool arguments, per-turn boundaries, valid candidate cold/resume",
+    "boundary": "isolated fake MCP catalog; Audit probe schema on; production defaults unchanged; no OA business or production readback acceptance"
+  },
+  "production_readback": {
+    "deployed_commit": "a797118d",
+    "deployment_command": "python -m app.deploy",
+    "pid": 28815,
+    "health_http": 200,
+    "status_http": 200,
+    "attention_http": 200,
+    "history_http": 200,
+    "public_settings_http": 200,
+    "reply_work_meeting_processing": 0,
+    "existing_failed_task": 386349,
+    "existing_failed_task_updated_at_utc": "2026-10-11 23:15:42",
+    "live_private_skill_model_readback": "not executed; automatic approval rejected; exact authorization pending"
+  }
+}

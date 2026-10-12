@@ -1,5 +1,21 @@
 # Current Runtime Mechanism
 
+Dispatcher queue claims first probe using a read-only connection. The existing
+candidate scanners still apply source order, due time and live-owner protection;
+positive probes are repeated after acquiring the immediate write transaction
+before changing the source or lease ledger. Empty probes acquire no writer lock.
+Todo outboxes also probe for expired running rows that need their existing
+reconciliation transition, so that cleanup still runs even with no queued work.
+
+Agent run claim, lease renewal, session binding and expired-run failure commit
+their metadata transaction before native trajectory hydration. They capture the
+written row and its native attempt references together, so the returned metadata
+remains the exact operation snapshot even if another writer runs during file
+reading. Native session-directory discovery, transcript parsing and result
+projection run after SQLite has released the writer lock and closed the
+connection; lease checks, claim ownership and returned events/results remain
+unchanged.
+
 Meeting Memory enqueue first excludes existing event IDs using the meeting
 status and unique event indexes in a read-only connection. Only missing jobs
 load `final_message` to check the existing nonempty delivered-conclusion rule.
@@ -337,6 +353,10 @@ Attention 行；前端保留其独立说明。提供 `human_decision_rows` 时�
 
 Status 的每次请求从一份新的只读 SQLite 快照读取队列、Attention 和人工决策，
 同一请求各区块及 summary 复用这些结果，不再逐区块重复扫描或混用不同快照。
+回复任务的当前业务对象投影与邮件动作的当前 ActionPlan 投影各在单条查询内物化一次，
+计数、可重试数量、最新更新时间和最新错误从同一紧凑投影计算；不为这些字段反复读取历史宽行。
+回复错误仍按失败任务的更新时间／ID 取最新，邮件仍按当前动作的更新时间／动作 ID 取最新，
+原有大小写、空值、终态失败与可重试划分保持。
 下一次请求重新读取，不缓存业务队列状态。连接器、微信 IPC 及系统健康探测仍使用
 各自已有的短期后台缓存，不阻塞业务队列读取；此优化不修改失败或人工决策的判定。
 
@@ -2190,7 +2210,7 @@ Consumer 和 Audit 每轮 Task 输入均传入当前任务已保存的专项指�
 
 后台 Consumer/Audit 使用原生 skills.config 禁用专项 Skill 的自动正文注入，避免原生加载、Developer inline 与工具读取三份重复。原生 project_doc_max_bytes=0 只关闭项目目录 AGENTS.md；全局 ~/.codex/AGENTS.md 仍由 CLI 加载，服务不修改原生 home 或全局规则文件。此设置仅适用于后台角色命令。
 
-Codex Consumer/Audit 使用原生 `mcp_servers.agent_cli.tools.read_task_skill.output_token_limit=30000`，仅增加不可变 Task Skill 的单工具模型历史输出额度，避免 MCP 完整返回后正文被 CLI 从中部裁剪。其他工具输出预算、角色、sandbox、审批方式和 session 绑定保持现有行为。该设置保障来源交付，不替代 Skill 精简或证明业务判断正确；验证及发布记录见 `docs/task-skill-native-output-validation.md`。
+Codex Consumer/Audit 对 `read_task_skill` 与 `read_skill` 均使用原生单工具 `output_token_limit=30000`，让冻结与已安装 Skill 的正文在 MCP 完整返回后完整进入模型历史。其他工具输出预算、角色、sandbox、审批方式和 session 绑定保持现有行为。该设置保障来源交付，不替代 Skill 精简或证明业务判断正确；验证及发布记录见 `docs/task-skill-native-output-validation.md`。
 
 System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；agent_cli.read_system_action_contract(capability, operation) 返回完整规范，包含原有角色、identity、payload、target、回执和完成条件。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。原生 output-schema 保持关闭：实际探测显示现有 RootModel 顶层 $ref 被拒绝，等价展开后 Consumer 的 oneOf 与 Audit 可选字段仍不满足原生 strict schema 限制；未通过弱化业务契约来适配。
 

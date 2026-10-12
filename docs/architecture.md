@@ -1,5 +1,18 @@
 # CEO Agent Service Architecture
 
+Empty dispatcher polls are read-only across all queue adapters. A candidate
+probe does not reserve an item: the existing writer transaction rechecks the
+candidate before changing its source and lease ledger atomically. Todo outbox
+probes include expired running rows requiring the existing reconciliation
+transition. Candidate order, live-owner protection and claim generations retain
+their existing rules.
+
+Agent run metadata writes (claim, lease renewal, session binding and expired-run
+failure) capture their row and native attempt references in the transaction,
+then commit and close SQLite before native session discovery, transcript reading
+or parsing. Return values retain that written metadata snapshot and the existing
+native event/result projection. File I/O never extends these writer leases.
+
 本文档默认描述当前 Consumer Agent A / Audit Agent B 运行架构；明确标注为“已批准的
 生命周期政策”的段落描述后续实现必须达到的目标，不表示对应代码已经切换、部署或在生产
 启用。历史方案保留在 `docs/superpowers/` 中，仅用于追溯，不代表当前目标运行方式。
@@ -593,6 +606,9 @@ DWS 明确的保密群历史拒绝由适配器转换为候选级 `GroupHistoryRe
 ## History 语义与无效入口边界
 
 Status 的 Attempt 队列统计先按触发对象选出最新 Attempt 标识，再读取当前状态和失败详情，排序不携带历史错误正文。
+Status 的 Reply task 当前业务对象投影和 Email 当前计划动作投影各在单次 SQL 中只读取一次，
+随后计算计数、重试、最新时间和错误。每次请求仍使用新的只读快照；当前对象范围、大小写与空值
+处理、失败／重试划分以及更新时间和 ID 的最新行排序均沿用原口径。
 
 History 分页先在同一数据库快照中筛选、计数和排序记录标识，再只读取本页记录的展示正文；总数与内容保持同一时点，正文读取量随页大小变化。
 
@@ -1612,7 +1628,7 @@ Consumer 和 Audit 的 Task 输入都携带当前任务已保存的专项指令�
 
 后台 Consumer/Audit 使用原生 skills.config 禁用专项 Skill 的自动正文注入，避免原生加载、Developer inline 与工具读取三份重复。原生 project_doc_max_bytes=0 只关闭项目目录 AGENTS.md；全局 ~/.codex/AGENTS.md 仍由 CLI 加载，服务不修改原生 home 或全局规则文件。此设置仅适用于后台角色命令。
 
-Codex Consumer/Audit 使用原生 `mcp_servers.agent_cli.tools.read_task_skill.output_token_limit=30000`，仅增加不可变 Task Skill 的单工具模型历史输出额度，避免 MCP 完整返回后正文被 CLI 从中部裁剪。其他工具输出预算、角色、sandbox、审批方式和 session 绑定保持现有行为。该设置保障来源交付，不替代 Skill 精简或证明业务判断正确；验证及发布记录见 `docs/task-skill-native-output-validation.md`。
+Codex Consumer/Audit 对 `read_task_skill` 与 `read_skill` 均使用原生单工具 `output_token_limit=30000`，让冻结与已安装 Skill 的正文在 MCP 完整返回后完整进入模型历史。其他工具输出预算、角色、sandbox、审批方式和 session 绑定保持现有行为。该设置保障来源交付，不替代 Skill 精简或证明业务判断正确；验证及发布记录见 `docs/task-skill-native-output-validation.md`。
 
 System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；agent_cli.read_system_action_contract(capability, operation) 返回完整规范，包含原有角色、identity、payload、target、回执和完成条件。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。原生 output-schema 保持关闭：实际探测显示现有 RootModel 顶层 $ref 被拒绝，等价展开后 Consumer 的 oneOf 与 Audit 可选字段仍不满足原生 strict schema 限制；未通过弱化业务契约来适配。
 

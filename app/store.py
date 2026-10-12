@@ -12246,6 +12246,46 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ),
         })
 
+    def _agent_run_native_snapshot(self, row: sqlite3.Row, *, db: sqlite3.Connection):
+        """Capture metadata and native references together, without file I/O."""
+        run = self._agent_run_from_row(row, db=db, load_events=False)
+        event_attempts = db.execute(
+            "select runtime_kind, session_id, transcript_reference, "
+            "transcript_start, transcript_end, started_at, finished_at "
+            "from agent_runtime_attempts "
+            "where agent_run_id=? and session_id<>'' order by id",
+            (run.id,),
+        ).fetchall()
+        result_attempt = (
+            db.execute(
+                "select runtime_kind, session_id, transcript_start, transcript_end "
+                "from agent_runtime_attempts "
+                "where agent_run_id=? and status='completed' "
+                "order by id desc limit 1",
+                (run.id,),
+            ).fetchone()
+            if run.status == "completed" else None
+        )
+        return run, event_attempts, result_attempt
+
+    def _hydrate_written_agent_run(self, row: sqlite3.Row, snapshot) -> AgentRun:
+        """Read native files only after the metadata transaction commits."""
+        from app.native_trajectory import (
+            hydrate_run_events_from_attempts,
+            read_native_result_json_from_attempt,
+        )
+
+        run, event_attempts, result_attempt = snapshot
+        return run.model_copy(update={
+            "tool_events": hydrate_run_events_from_attempts(
+                row, event_attempts, str(self.path.resolve())
+            ),
+            "final_result_json": (
+                read_native_result_json_from_attempt(row, result_attempt)
+                if run.status == "completed" else ""
+            ),
+        })
+
     def get_agent_run_for_turn(
         self,
         reply_task_id: int,
@@ -14126,10 +14166,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
                 claimed = reclaimed.rowcount == 1
                 row = db.execute(f'select * from ({AGENT_RUN_SQL}) as agent_runs where id=?', (row["id"],)).fetchone()
-            return AgentRunClaim(
-                run=self._agent_run_from_row(row, db=db),
-                claimed=claimed,
-            )
+            snapshot = self._agent_run_native_snapshot(row, db=db)
+        return AgentRunClaim(
+            run=self._hydrate_written_agent_run(row, snapshot),
+            claimed=claimed,
+        )
 
     def renew_agent_run_lease(
         self,
@@ -14187,7 +14228,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 f'select * from ({AGENT_RUN_SQL}) as agent_runs where id=?',
                 (run_id,),
             ).fetchone()
-            return self._agent_run_from_row(updated, db=db)
+            snapshot = self._agent_run_native_snapshot(updated, db=db)
+        return self._hydrate_written_agent_run(updated, snapshot)
 
     def set_agent_run_session(
         self,
@@ -14274,7 +14316,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 f'select * from ({AGENT_RUN_SQL}) as agent_runs where id=?',
                 (run_id,),
             ).fetchone()
-            return self._agent_run_from_row(updated, db=db)
+            snapshot = self._agent_run_native_snapshot(updated, db=db)
+        return self._hydrate_written_agent_run(updated, snapshot)
 
     def append_agent_run_event(
         self,
@@ -14676,7 +14719,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 f'select * from ({AGENT_RUN_SQL}) as agent_runs where id=?',
                 (run_id,),
             ).fetchone()
-            return self._agent_run_from_row(row, db=db)
+            snapshot = self._agent_run_native_snapshot(row, db=db)
+        return self._hydrate_written_agent_run(row, snapshot)
     def peek_reply_tasks(
         self,
         limit: int,
