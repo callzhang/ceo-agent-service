@@ -1,0 +1,1383 @@
+{
+  "version": 1,
+  "production_commit": "4b38ab8b55568666770f32b0cb385eb4d11db512",
+  "scope": "Read-only post-deployment actual native role ranges; metadata only, private facts/Profile excluded from saved artifact",
+  "runs": [
+    {
+      "id": 348815,
+      "parent_id": 348814,
+      "role": "consumer",
+      "task_id": 404297,
+      "proposal_revision": 0,
+      "session_mode": "resume",
+      "source_session_id": "01a13140-8ab3-7a53-afe7-6327f650b851",
+      "session_id": "01a13140-8ab3-7a53-afe7-6327f650b851",
+      "status": "completed",
+      "started_at": "2026-10-12 20:30:59",
+      "finished_at": "2026-10-12 20:31:34",
+      "transcript_start": 121,
+      "transcript_end": 187,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T10-54-35-01a13140-8ab3-7a53-afe7-6327f650b851.jsonl",
+      "complete_native_range": true,
+      "native_range_sha256": "56a268520a97158ecd1c8146cb6637f05d6fb05dca51d33c00f73feb25aaafe9",
+      "native_records": 66,
+      "outcome": "proposal",
+      "summary_chars": 201,
+      "summary_sha256": "578b771b1f4cd0387bc5a97a1bf1208a0c3002ae0d527ba5de0576e4ea1d8942",
+      "feedback_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "source_binding_count": 0,
+      "proposal_operation_shapes": [
+        {
+          "capability": "dingtalk-chat",
+          "operation": "reply_to_message",
+          "target_types": {
+            "conversation_id": "str",
+            "message_id": "str"
+          },
+          "payload_types": {
+            "content": "str"
+          }
+        }
+      ],
+      "skill_reads": [
+        {
+          "tool": "read_task_skill",
+          "name": "ceo-message-triage",
+          "path": null,
+          "content_chars": 7919,
+          "content_sha256": "a2538c3804386ef89a016a03a03f92f64c72cf3f4ff9f5fea0ad5b5906f3dc38",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_task_skill",
+          "name": "ceo-calendar-invite",
+          "path": null,
+          "content_chars": 6751,
+          "content_sha256": "b08ab29f68b93c0413fcf817548ca56ba35c54e713d5fca5e83a9766b90c4b5e",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_task_skill",
+          "name": "dingtalk-chat",
+          "path": null,
+          "content_chars": 6717,
+          "content_sha256": "88647ed22020bd5b0963d002246b2a8d2b5f785746b19c31e32ecf8af2d575af",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_task_skill",
+          "name": "dingtalk-calendar",
+          "path": null,
+          "content_chars": 8098,
+          "content_sha256": "994c4adfbb05ed311739ae701c6441629aef4c7a6a3a9a10b1e092fb338fcf62",
+          "directory_rows": null,
+          "is_error": false
+        }
+      ],
+      "function_calls": [
+        "read_task_skill",
+        "read_task_skill",
+        "read_task_skill",
+        "read_task_skill",
+        "read_dingtalk_calendar_event",
+        "read_dingtalk_messages",
+        "read_system_action_contract"
+      ],
+      "custom_calls": 1,
+      "tool_errors": 0,
+      "model_output_clipping_markers": 2,
+      "service_task_chars": [
+        37266
+      ],
+      "service_developer_chars": []
+    },
+    {
+      "id": 348820,
+      "parent_id": 348819,
+      "role": "audit",
+      "task_id": 404297,
+      "proposal_revision": 0,
+      "session_mode": "fresh",
+      "source_session_id": "",
+      "session_id": "01a131d0-7d12-7af2-8ec6-0ef9f48b0940",
+      "status": "completed",
+      "started_at": "2026-10-12 20:31:48",
+      "finished_at": "2026-10-12 20:32:20",
+      "transcript_start": 0,
+      "transcript_end": 64,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T13-31-49-01a131d0-7d12-7af2-8ec6-0ef9f48b0940.jsonl",
+      "complete_native_range": true,
+      "native_range_sha256": "832f2ccf035619b9b7a0729316226eef103f02ae32ccb07d65dc3d4818c07935",
+      "native_records": 64,
+      "outcome": "return",
+      "summary_chars": 192,
+      "summary_sha256": "45abbfdea5bef605a3962a16c2d6939718401716961ba3f29404b5b184968d04",
+      "feedback_sha256": "f71d1cc572f7c6691f6830494cdb0058d3b8b927fa34227f931159834cfb8192",
+      "source_binding_count": 0,
+      "proposal_operation_shapes": [],
+      "skill_reads": [
+        {
+          "tool": "read_task_skill",
+          "name": "ceo-message-triage",
+          "path": null,
+          "content_chars": 7919,
+          "content_sha256": "a2538c3804386ef89a016a03a03f92f64c72cf3f4ff9f5fea0ad5b5906f3dc38",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_task_skill",
+          "name": "ceo-calendar-invite",
+          "path": null,
+          "content_chars": 6751,
+          "content_sha256": "b08ab29f68b93c0413fcf817548ca56ba35c54e713d5fca5e83a9766b90c4b5e",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_task_skill",
+          "name": "dingtalk-chat",
+          "path": null,
+          "content_chars": 6717,
+          "content_sha256": "88647ed22020bd5b0963d002246b2a8d2b5f785746b19c31e32ecf8af2d575af",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_task_skill",
+          "name": "dingtalk-calendar",
+          "path": null,
+          "content_chars": 8098,
+          "content_sha256": "994c4adfbb05ed311739ae701c6441629aef4c7a6a3a9a10b1e092fb338fcf62",
+          "directory_rows": null,
+          "is_error": false
+        }
+      ],
+      "function_calls": [
+        "read_task_skill",
+        "read_task_skill",
+        "read_task_skill",
+        "read_task_skill",
+        "read_system_action_contract",
+        "read_dingtalk_calendar_event",
+        "read_dingtalk_messages"
+      ],
+      "custom_calls": 1,
+      "tool_errors": 0,
+      "model_output_clipping_markers": 1,
+      "service_task_chars": [
+        46126
+      ],
+      "service_developer_chars": [
+        29440
+      ]
+    },
+    {
+      "id": 348824,
+      "parent_id": 348823,
+      "role": "consumer",
+      "task_id": 404297,
+      "proposal_revision": 1,
+      "session_mode": "resume",
+      "source_session_id": "01a13140-8ab3-7a53-afe7-6327f650b851",
+      "session_id": "01a13140-8ab3-7a53-afe7-6327f650b851",
+      "status": "completed",
+      "started_at": "2026-10-12 20:32:33",
+      "finished_at": "2026-10-12 20:32:57",
+      "transcript_start": 187,
+      "transcript_end": 242,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T10-54-35-01a13140-8ab3-7a53-afe7-6327f650b851.jsonl",
+      "complete_native_range": true,
+      "native_range_sha256": "105e9a7f34da1f94f466356ee4ed7afd7c572498d4b1295fc05b85dfbee0acbc",
+      "native_records": 55,
+      "outcome": "no_action",
+      "summary_chars": 209,
+      "summary_sha256": "d71082c6982b5d7e63fdcadbc4cc3a4bebaf42af36a469e2ec0a0ec1d1c82f33",
+      "feedback_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "source_binding_count": 0,
+      "proposal_operation_shapes": [],
+      "skill_reads": [
+        {
+          "tool": "read_task_skill",
+          "name": "ceo-message-triage",
+          "path": null,
+          "content_chars": 7919,
+          "content_sha256": "a2538c3804386ef89a016a03a03f92f64c72cf3f4ff9f5fea0ad5b5906f3dc38",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_task_skill",
+          "name": "ceo-calendar-invite",
+          "path": null,
+          "content_chars": 6751,
+          "content_sha256": "b08ab29f68b93c0413fcf817548ca56ba35c54e713d5fca5e83a9766b90c4b5e",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_task_skill",
+          "name": "dingtalk-chat",
+          "path": null,
+          "content_chars": 6717,
+          "content_sha256": "88647ed22020bd5b0963d002246b2a8d2b5f785746b19c31e32ecf8af2d575af",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_task_skill",
+          "name": "dingtalk-calendar",
+          "path": null,
+          "content_chars": 8098,
+          "content_sha256": "994c4adfbb05ed311739ae701c6441629aef4c7a6a3a9a10b1e092fb338fcf62",
+          "directory_rows": null,
+          "is_error": false
+        }
+      ],
+      "function_calls": [
+        "read_task_skill",
+        "read_task_skill",
+        "read_task_skill",
+        "read_task_skill",
+        "read_dingtalk_calendar_event",
+        "read_dingtalk_messages"
+      ],
+      "custom_calls": 1,
+      "tool_errors": 0,
+      "model_output_clipping_markers": 1,
+      "service_task_chars": [
+        38282
+      ],
+      "service_developer_chars": []
+    },
+    {
+      "id": 348826,
+      "parent_id": 348825,
+      "role": "audit",
+      "task_id": 404297,
+      "proposal_revision": 1,
+      "session_mode": "fresh",
+      "source_session_id": "",
+      "session_id": "01a131d1-bd55-76d2-89cc-0100ba8bc8f7",
+      "status": "completed",
+      "started_at": "2026-10-12 20:33:10",
+      "finished_at": "2026-10-12 20:33:33",
+      "transcript_start": 0,
+      "transcript_end": 57,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T13-33-11-01a131d1-bd55-76d2-89cc-0100ba8bc8f7.jsonl",
+      "complete_native_range": true,
+      "native_range_sha256": "cb8be8467255372f8481c9edfd57d36fee838e3756e4f3e53a2cd3595480d08a",
+      "native_records": 57,
+      "outcome": "return",
+      "summary_chars": 212,
+      "summary_sha256": "d7e7337f390d246f2eae4ae96ed663e01857e9ae291d0bab09563bee241250fa",
+      "feedback_sha256": "a93adffc4daf660394ec32324d73dd986cec4b5bd4cde9be12c840cadc3e82ba",
+      "source_binding_count": 0,
+      "proposal_operation_shapes": [],
+      "skill_reads": [
+        {
+          "tool": "read_task_skill",
+          "name": "ceo-message-triage",
+          "path": null,
+          "content_chars": 7919,
+          "content_sha256": "a2538c3804386ef89a016a03a03f92f64c72cf3f4ff9f5fea0ad5b5906f3dc38",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_task_skill",
+          "name": "ceo-calendar-invite",
+          "path": null,
+          "content_chars": 6751,
+          "content_sha256": "b08ab29f68b93c0413fcf817548ca56ba35c54e713d5fca5e83a9766b90c4b5e",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_task_skill",
+          "name": "dingtalk-chat",
+          "path": null,
+          "content_chars": 6717,
+          "content_sha256": "88647ed22020bd5b0963d002246b2a8d2b5f785746b19c31e32ecf8af2d575af",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_task_skill",
+          "name": "dingtalk-calendar",
+          "path": null,
+          "content_chars": 8098,
+          "content_sha256": "994c4adfbb05ed311739ae701c6441629aef4c7a6a3a9a10b1e092fb338fcf62",
+          "directory_rows": null,
+          "is_error": false
+        }
+      ],
+      "function_calls": [
+        "read_task_skill",
+        "read_task_skill",
+        "read_task_skill",
+        "read_task_skill",
+        "read_dingtalk_calendar_event",
+        "read_dingtalk_messages"
+      ],
+      "custom_calls": 1,
+      "tool_errors": 0,
+      "model_output_clipping_markers": 1,
+      "service_task_chars": [
+        43753
+      ],
+      "service_developer_chars": [
+        29440
+      ]
+    },
+    {
+      "id": 348828,
+      "parent_id": 348827,
+      "role": "consumer",
+      "task_id": 404297,
+      "proposal_revision": 2,
+      "session_mode": "resume",
+      "source_session_id": "01a13140-8ab3-7a53-afe7-6327f650b851",
+      "session_id": "01a13140-8ab3-7a53-afe7-6327f650b851",
+      "status": "completed",
+      "started_at": "2026-10-12 20:33:47",
+      "finished_at": "2026-10-12 20:34:12",
+      "transcript_start": 242,
+      "transcript_end": 265,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T10-54-35-01a13140-8ab3-7a53-afe7-6327f650b851.jsonl",
+      "complete_native_range": true,
+      "native_range_sha256": "8a8cb12fd97ff850e1a2c56bb0027476afb2276d40d272ab00b5fde3cb0b5373",
+      "native_records": 23,
+      "outcome": "proposal",
+      "summary_chars": 210,
+      "summary_sha256": "d225f522d31dc370d3448a3a2340930718e3e6190519814107bfd87663be0856",
+      "feedback_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "source_binding_count": 0,
+      "proposal_operation_shapes": [
+        {
+          "capability": "dingtalk-chat",
+          "operation": "reply_to_message",
+          "target_types": {
+            "conversation_id": "str",
+            "message_id": "str"
+          },
+          "payload_types": {
+            "content": "str"
+          }
+        }
+      ],
+      "skill_reads": [],
+      "function_calls": [
+        "read_system_action_contract"
+      ],
+      "custom_calls": 0,
+      "tool_errors": 0,
+      "model_output_clipping_markers": 0,
+      "service_task_chars": [
+        37952
+      ],
+      "service_developer_chars": []
+    },
+    {
+      "id": 348830,
+      "parent_id": 348829,
+      "role": "audit",
+      "task_id": 404297,
+      "proposal_revision": 2,
+      "session_mode": "fresh",
+      "source_session_id": "",
+      "session_id": "01a131d2-f126-7521-9a00-9f52c530629e",
+      "status": "completed",
+      "started_at": "2026-10-12 20:34:29",
+      "finished_at": "2026-10-12 20:34:53",
+      "transcript_start": 0,
+      "transcript_end": 64,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T13-34-30-01a131d2-f126-7521-9a00-9f52c530629e.jsonl",
+      "complete_native_range": true,
+      "native_range_sha256": "6bd9f973b09b6804d58aff575994dd566ba08f1284e53e3d817a58c1aa4e6899",
+      "native_records": 64,
+      "outcome": "approve",
+      "summary_chars": 297,
+      "summary_sha256": "a6a736fb774b66a52de724015d405413789c564383d735824275ba7943adb4cd",
+      "feedback_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "source_binding_count": 0,
+      "proposal_operation_shapes": [],
+      "skill_reads": [
+        {
+          "tool": "read_task_skill",
+          "name": "ceo-message-triage",
+          "path": null,
+          "content_chars": 7919,
+          "content_sha256": "a2538c3804386ef89a016a03a03f92f64c72cf3f4ff9f5fea0ad5b5906f3dc38",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_task_skill",
+          "name": "ceo-calendar-invite",
+          "path": null,
+          "content_chars": 6751,
+          "content_sha256": "b08ab29f68b93c0413fcf817548ca56ba35c54e713d5fca5e83a9766b90c4b5e",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_task_skill",
+          "name": "dingtalk-chat",
+          "path": null,
+          "content_chars": 6717,
+          "content_sha256": "88647ed22020bd5b0963d002246b2a8d2b5f785746b19c31e32ecf8af2d575af",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_task_skill",
+          "name": "dingtalk-calendar",
+          "path": null,
+          "content_chars": 8098,
+          "content_sha256": "994c4adfbb05ed311739ae701c6441629aef4c7a6a3a9a10b1e092fb338fcf62",
+          "directory_rows": null,
+          "is_error": false
+        }
+      ],
+      "function_calls": [
+        "read_task_skill",
+        "read_task_skill",
+        "read_task_skill",
+        "read_task_skill",
+        "read_system_action_contract",
+        "read_dingtalk_calendar_event",
+        "read_dingtalk_messages"
+      ],
+      "custom_calls": 1,
+      "tool_errors": 0,
+      "model_output_clipping_markers": 1,
+      "service_task_chars": [
+        46085
+      ],
+      "service_developer_chars": [
+        29440
+      ]
+    },
+    {
+      "id": 349148,
+      "parent_id": 349147,
+      "role": "consumer",
+      "task_id": 386399,
+      "proposal_revision": 0,
+      "session_mode": "resume",
+      "source_session_id": "01a12ef3-8cfb-7142-9a09-e8a9948006fb",
+      "session_id": "01a12ef3-8cfb-7142-9a09-e8a9948006fb",
+      "status": "completed",
+      "started_at": "2026-10-12 22:14:19",
+      "finished_at": "2026-10-12 22:14:49",
+      "transcript_start": 244,
+      "transcript_end": 301,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T00-11-15-01a12ef3-8cfb-7142-9a09-e8a9948006fb.jsonl",
+      "complete_native_range": true,
+      "native_range_sha256": "06bd2e904afca8bb45e0d675acb27734a090f22421b416a1a8ccc4ed6381acb8",
+      "native_records": 57,
+      "outcome": "proposal",
+      "summary_chars": 290,
+      "summary_sha256": "bffc43abb02ac8cfd97abc166432f7fb042f561646a4180c5169faa17a82cd4a",
+      "feedback_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "source_binding_count": 0,
+      "proposal_operation_shapes": [
+        {
+          "capability": "dingtalk-oa",
+          "operation": "revert_task",
+          "target_types": {
+            "process_instance_id": "str",
+            "target_activity_id": "str",
+            "task_id": "str"
+          },
+          "payload_types": {
+            "remark": "str",
+            "revert_action": "str"
+          }
+        }
+      ],
+      "skill_reads": [
+        {
+          "tool": "read_skill",
+          "name": "dingtalk-oa-approval",
+          "path": "/Users/derek/.agents/skills/dingtalk-oa-approval/SKILL.md",
+          "content_chars": 37887,
+          "content_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_skill",
+          "name": "stardust-oa-attendance-travel-review",
+          "path": "/Users/derek/.agents/skills/stardust-oa-attendance-travel-review/SKILL.md",
+          "content_chars": 7044,
+          "content_sha256": "caf1675ad5221347a3941852d625e87de65a40a916b9294d2abbf7b6875096a4",
+          "directory_rows": null,
+          "is_error": false
+        }
+      ],
+      "function_calls": [
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_oa_records",
+        "read_dingtalk_oa_revert_activities",
+        "read_system_action_contract"
+      ],
+      "custom_calls": 1,
+      "tool_errors": 0,
+      "model_output_clipping_markers": 0,
+      "service_task_chars": [
+        8406
+      ],
+      "service_developer_chars": []
+    },
+    {
+      "id": 349150,
+      "parent_id": 349149,
+      "role": "consumer",
+      "task_id": 386402,
+      "proposal_revision": 0,
+      "session_mode": "resume",
+      "source_session_id": "01a12f21-4878-7d83-8d6f-9830a6ad8bff",
+      "session_id": "01a12f21-4878-7d83-8d6f-9830a6ad8bff",
+      "status": "completed",
+      "started_at": "2026-10-12 22:14:23",
+      "finished_at": "2026-10-12 22:14:48",
+      "transcript_start": 178,
+      "transcript_end": 237,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T01-01-12-01a12f21-4878-7d83-8d6f-9830a6ad8bff.jsonl",
+      "complete_native_range": true,
+      "native_range_sha256": "d62ce4b0e907e40f9753f367003bd1fa21121884024262583d33c465bf7a08e8",
+      "native_records": 59,
+      "outcome": "no_action",
+      "summary_chars": 314,
+      "summary_sha256": "b3c1d9033b74f90a3608bbf96604cdde0224accd9c5a325b6fbdeed2cb370376",
+      "feedback_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "source_binding_count": 0,
+      "proposal_operation_shapes": [],
+      "skill_reads": [
+        {
+          "tool": "read_skill",
+          "name": "dingtalk-oa-approval",
+          "path": "/Users/derek/.agents/skills/dingtalk-oa-approval/SKILL.md",
+          "content_chars": 37887,
+          "content_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_skill",
+          "name": "stardust-oa-attendance-travel-review",
+          "path": "/Users/derek/.agents/skills/stardust-oa-attendance-travel-review/SKILL.md",
+          "content_chars": 7044,
+          "content_sha256": "caf1675ad5221347a3941852d625e87de65a40a916b9294d2abbf7b6875096a4",
+          "directory_rows": null,
+          "is_error": false
+        }
+      ],
+      "function_calls": [
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_records",
+        "read_dingtalk_oa_tasks",
+        "list_dingtalk_pending_oa"
+      ],
+      "custom_calls": 1,
+      "tool_errors": 0,
+      "model_output_clipping_markers": 0,
+      "service_task_chars": [
+        8513
+      ],
+      "service_developer_chars": []
+    },
+    {
+      "id": 349152,
+      "parent_id": 349151,
+      "role": "audit",
+      "task_id": 386402,
+      "proposal_revision": 0,
+      "session_mode": "fresh",
+      "source_session_id": "",
+      "session_id": "01a1322e-cfb0-7821-84da-754ae6ea129c",
+      "status": "completed",
+      "started_at": "2026-10-12 22:14:50",
+      "finished_at": "2026-10-12 22:15:16",
+      "transcript_start": 0,
+      "transcript_end": 56,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T15-14-51-01a1322e-cfb0-7821-84da-754ae6ea129c.jsonl",
+      "complete_native_range": true,
+      "native_range_sha256": "3fd7f484f5447796a200dd128bce12b1b1601ee9f01a56eff1d4df7e8acf722f",
+      "native_records": 56,
+      "outcome": "approve",
+      "summary_chars": 436,
+      "summary_sha256": "b10c21a715011e1ad0d261c7764d01b491e4a20dcf520bfcd66e98fb0cded8e9",
+      "feedback_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "source_binding_count": 0,
+      "proposal_operation_shapes": [],
+      "skill_reads": [
+        {
+          "tool": "read_skill",
+          "name": "dingtalk-oa-approval",
+          "path": "/Users/derek/.agents/skills/dingtalk-oa-approval/SKILL.md",
+          "content_chars": 37887,
+          "content_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_skill",
+          "name": "stardust-oa-attendance-travel-review",
+          "path": "/Users/derek/.agents/skills/stardust-oa-attendance-travel-review/SKILL.md",
+          "content_chars": 7044,
+          "content_sha256": "caf1675ad5221347a3941852d625e87de65a40a916b9294d2abbf7b6875096a4",
+          "directory_rows": null,
+          "is_error": false
+        }
+      ],
+      "function_calls": [
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_records",
+        "read_dingtalk_oa_tasks"
+      ],
+      "custom_calls": 1,
+      "tool_errors": 0,
+      "model_output_clipping_markers": 0,
+      "service_task_chars": [
+        10603
+      ],
+      "service_developer_chars": [
+        29448
+      ]
+    },
+    {
+      "id": 349154,
+      "parent_id": 349153,
+      "role": "audit",
+      "task_id": 386399,
+      "proposal_revision": 0,
+      "session_mode": "fresh",
+      "source_session_id": "",
+      "session_id": "01a1322e-d1fb-7432-a7d9-e2e69c8de5f8",
+      "status": "completed",
+      "started_at": "2026-10-12 22:14:51",
+      "finished_at": "2026-10-12 22:15:31",
+      "transcript_start": 0,
+      "transcript_end": 109,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T15-14-51-01a1322e-d1fb-7432-a7d9-e2e69c8de5f8.jsonl",
+      "complete_native_range": true,
+      "native_range_sha256": "7ca5e26b6fb5eeafe295541690bc17a91f3558ec23a5919d2536ef4fa38ed472",
+      "native_records": 109,
+      "outcome": "return",
+      "summary_chars": 281,
+      "summary_sha256": "11df46446932a5fcde3fea3fc77318201d557b9a8ddc9c35d46af3cdf5f8b4ad",
+      "feedback_sha256": "24e8a94e9c86f678f5de96109be2883d1c4830b10d52300896e2aa7a329344dd",
+      "source_binding_count": 0,
+      "proposal_operation_shapes": [],
+      "skill_reads": [
+        {
+          "tool": "read_skill",
+          "name": "dingtalk-oa-approval",
+          "path": "/Users/derek/.agents/skills/dingtalk-oa-approval/SKILL.md",
+          "content_chars": 37887,
+          "content_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_skill",
+          "name": "stardust-oa-attendance-travel-review",
+          "path": "/Users/derek/.agents/skills/stardust-oa-attendance-travel-review/SKILL.md",
+          "content_chars": 7044,
+          "content_sha256": "caf1675ad5221347a3941852d625e87de65a40a916b9294d2abbf7b6875096a4",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_skill",
+          "name": "stardust-oa-finance-review",
+          "path": "/Users/derek/.agents/skills/stardust-oa-finance-review/SKILL.md",
+          "content_chars": 7654,
+          "content_sha256": "56b64abafe72d751e2a3930e358052608b0f1dea8d284c599e674c31e8b14f1e",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_skill",
+          "name": "stardust-oa-project-review",
+          "path": "/Users/derek/.agents/skills/stardust-oa-project-review/SKILL.md",
+          "content_chars": 7523,
+          "content_sha256": "74b9ce6a8fb7763f9a4881e1fae9e7dfb6c94f260efc83afe7e1444fd7dcff20",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_skill",
+          "name": "stardust-oa-contract-review",
+          "path": "/Users/derek/.agents/skills/stardust-oa-contract-review/SKILL.md",
+          "content_chars": 5514,
+          "content_sha256": "6d9de522374b7751dd215541c7eaf40e4a7109a905556e9d720965a33dfe61f5",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_skill",
+          "name": "stardust-oa-people-review",
+          "path": "/Users/derek/.agents/skills/stardust-oa-people-review/SKILL.md",
+          "content_chars": 11717,
+          "content_sha256": "94c7d8d59c3bd9205277ca631e9567e90fa0c36295607206fae9caf85043f756",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_skill",
+          "name": "stardust-oa-cloud-resource-review",
+          "path": "/Users/derek/.agents/skills/stardust-oa-cloud-resource-review/SKILL.md",
+          "content_chars": 3453,
+          "content_sha256": "e0e7e91307215f86608b75f9f6928a00ed5319253e6d24a7e7606f490b1537f8",
+          "directory_rows": null,
+          "is_error": false
+        }
+      ],
+      "function_calls": [
+        "read_skill",
+        "read_skill",
+        "read_skill",
+        "read_skill",
+        "read_skill",
+        "read_skill",
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_records",
+        "read_dingtalk_oa_tasks",
+        "list_dingtalk_pending_oa",
+        "read_dingtalk_oa_revert_activities",
+        "read_dingtalk_user_profiles"
+      ],
+      "custom_calls": 1,
+      "tool_errors": 0,
+      "model_output_clipping_markers": 0,
+      "service_task_chars": [
+        18264
+      ],
+      "service_developer_chars": [
+        29448
+      ]
+    },
+    {
+      "id": 349160,
+      "parent_id": 349159,
+      "role": "consumer",
+      "task_id": 386399,
+      "proposal_revision": 1,
+      "session_mode": "resume",
+      "source_session_id": "01a12ef3-8cfb-7142-9a09-e8a9948006fb",
+      "session_id": "01a12ef3-8cfb-7142-9a09-e8a9948006fb",
+      "status": "completed",
+      "started_at": "2026-10-12 22:15:33",
+      "finished_at": "2026-10-12 22:15:48",
+      "transcript_start": 301,
+      "transcript_end": 339,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T00-11-15-01a12ef3-8cfb-7142-9a09-e8a9948006fb.jsonl",
+      "complete_native_range": true,
+      "native_range_sha256": "939690defa954dfee946b6393614f5949ff831b758f3da56e5649d70d9a804f1",
+      "native_records": 38,
+      "outcome": "no_action",
+      "summary_chars": 333,
+      "summary_sha256": "3ad401b74d8886016b554a73147548d90ae0e6d6548a21d92718b2a2bfebf3b8",
+      "feedback_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "source_binding_count": 0,
+      "proposal_operation_shapes": [],
+      "skill_reads": [
+        {
+          "tool": "read_skill",
+          "name": "dingtalk-oa-approval",
+          "path": "/Users/derek/.agents/skills/dingtalk-oa-approval/SKILL.md",
+          "content_chars": 37887,
+          "content_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_skill",
+          "name": "stardust-oa-attendance-travel-review",
+          "path": "/Users/derek/.agents/skills/stardust-oa-attendance-travel-review/SKILL.md",
+          "content_chars": 7044,
+          "content_sha256": "caf1675ad5221347a3941852d625e87de65a40a916b9294d2abbf7b6875096a4",
+          "directory_rows": null,
+          "is_error": false
+        }
+      ],
+      "function_calls": [
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_records"
+      ],
+      "custom_calls": 0,
+      "tool_errors": 0,
+      "model_output_clipping_markers": 0,
+      "service_task_chars": [
+        9090
+      ],
+      "service_developer_chars": []
+    },
+    {
+      "id": 349162,
+      "parent_id": 349161,
+      "role": "audit",
+      "task_id": 386399,
+      "proposal_revision": 1,
+      "session_mode": "fresh",
+      "source_session_id": "",
+      "session_id": "01a1322f-b91f-75b3-bcd0-2096ec00e76a",
+      "status": "completed",
+      "started_at": "2026-10-12 22:15:50",
+      "finished_at": "2026-10-12 22:16:45",
+      "transcript_start": 0,
+      "transcript_end": 59,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T15-15-50-01a1322f-b91f-75b3-bcd0-2096ec00e76a.jsonl",
+      "complete_native_range": true,
+      "native_range_sha256": "9a38d7753a05675460bafd0d7d5e3af9a101e4de7ab324427c0477d2f388bb67",
+      "native_records": 59,
+      "outcome": "approve",
+      "summary_chars": 215,
+      "summary_sha256": "08445bac934fef27905d32eea53d982b1ca5ad61c026c94c2bfffdb1f0c068d8",
+      "feedback_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "source_binding_count": 0,
+      "proposal_operation_shapes": [],
+      "skill_reads": [
+        {
+          "tool": "read_skill",
+          "name": "dingtalk-oa-approval",
+          "path": "/Users/derek/.agents/skills/dingtalk-oa-approval/SKILL.md",
+          "content_chars": 37887,
+          "content_sha256": "cceeca1bd20857b08be186f57e78e77c96534c3d72d084284460982051bc81b5",
+          "directory_rows": null,
+          "is_error": false
+        },
+        {
+          "tool": "read_skill",
+          "name": "stardust-oa-attendance-travel-review",
+          "path": "/Users/derek/.agents/skills/stardust-oa-attendance-travel-review/SKILL.md",
+          "content_chars": 7044,
+          "content_sha256": "caf1675ad5221347a3941852d625e87de65a40a916b9294d2abbf7b6875096a4",
+          "directory_rows": null,
+          "is_error": false
+        }
+      ],
+      "function_calls": [
+        "read_skill",
+        "read_skill",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_records",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ],
+      "custom_calls": 1,
+      "tool_errors": 0,
+      "model_output_clipping_markers": 0,
+      "service_task_chars": [
+        10515
+      ],
+      "service_developer_chars": [
+        29448
+      ]
+    }
+  ],
+  "calendar_previous_feedback_coverage": {
+    "next_attempt": 348826,
+    "service_task_blocks": 1,
+    "previous_feedback_long_fields": 3,
+    "verbatim_long_fields_present": 0,
+    "note": "Absence of verbatim fields alone does not exclude candidate-summary paraphrase; normal AuditTurnContext has no prior-feedback field."
+  },
+  "critical_reply_coverage": [
+    {
+      "attempt": 348820,
+      "source_type": "dict",
+      "source_keys": [
+        "messages"
+      ],
+      "message_shape": [
+        "open_conversation_id",
+        "open_message_id",
+        "conversation_title",
+        "single_chat",
+        "sender_name",
+        "sender_open_dingtalk_id",
+        "sender_user_id",
+        "message_type",
+        "create_time",
+        "content",
+        "mentioned_user_ids",
+        "quoted_message_id",
+        "quoted_content",
+        "raw_payload"
+      ],
+      "matched_objects": 2,
+      "fields": [
+        {
+          "key": "open_conversation_id",
+          "chars": 47,
+          "sha256": "77482ceffa1a99093c837d6814020366e7e36ab915c60f891562ca82a56b50e8",
+          "complete_visible": true
+        },
+        {
+          "key": "open_message_id",
+          "chars": 27,
+          "sha256": "46f1f90121c1d6c3a3a30787c4955f2a3c90f734c6047d3272eefdf57523f93d",
+          "complete_visible": true
+        },
+        {
+          "key": "conversation_title",
+          "chars": 6,
+          "sha256": "31bc3a1d35832f3d6ad2f666ea4afd112954cb93226564f5c61b6450fe5bc661",
+          "complete_visible": true
+        },
+        {
+          "key": "sender_name",
+          "chars": 2,
+          "sha256": "7b1bec33ff029e9fc7dcfc0e6fd239473cd309f8ec26825af057b0a4a67cec7e",
+          "complete_visible": true
+        },
+        {
+          "key": "sender_open_dingtalk_id",
+          "chars": 34,
+          "sha256": "a932b1697f9f685417c2092454a81eba9238a8368589c03eb90642393561c9ff",
+          "complete_visible": true
+        },
+        {
+          "key": "create_time",
+          "chars": 19,
+          "sha256": "88c3b9980a2096deb426dc754ab0d9a1a8501746f46e060e07e0bac8a438aec9",
+          "complete_visible": true
+        },
+        {
+          "key": "content",
+          "chars": 366,
+          "sha256": "57b5292ad2b8c95e3cfb83056ad906d568f649c7f6239f9d45b143d2adadad51",
+          "complete_visible": true
+        },
+        {
+          "key": "quoted_message_id",
+          "chars": 27,
+          "sha256": "588e5bdeaf2f8e65d3a0069b466636169d5fe10d040ba54d1db5b61e932cd213",
+          "complete_visible": true
+        },
+        {
+          "key": "quoted_content",
+          "chars": 670,
+          "sha256": "d575f69e5737f03a37102480b3c3049cb278bc199169a53f3f8cfa3899c61379",
+          "complete_visible": true
+        },
+        {
+          "key": "content",
+          "chars": 366,
+          "sha256": "57b5292ad2b8c95e3cfb83056ad906d568f649c7f6239f9d45b143d2adadad51",
+          "complete_visible": true
+        },
+        {
+          "key": "conversationId",
+          "chars": 47,
+          "sha256": "77482ceffa1a99093c837d6814020366e7e36ab915c60f891562ca82a56b50e8",
+          "complete_visible": true
+        },
+        {
+          "key": "createTime",
+          "chars": 19,
+          "sha256": "88c3b9980a2096deb426dc754ab0d9a1a8501746f46e060e07e0bac8a438aec9",
+          "complete_visible": true
+        },
+        {
+          "key": "messageAiSendFlag",
+          "chars": 3,
+          "sha256": "1d595d9e342bccc3b158fabfcdfece54d9f821cf9c7461c5d3b6c0157c442f94",
+          "complete_visible": true
+        },
+        {
+          "key": "messageId",
+          "chars": 27,
+          "sha256": "46f1f90121c1d6c3a3a30787c4955f2a3c90f734c6047d3272eefdf57523f93d",
+          "complete_visible": true
+        },
+        {
+          "key": "openConversationId",
+          "chars": 47,
+          "sha256": "77482ceffa1a99093c837d6814020366e7e36ab915c60f891562ca82a56b50e8",
+          "complete_visible": true
+        },
+        {
+          "key": "openMessageId",
+          "chars": 27,
+          "sha256": "46f1f90121c1d6c3a3a30787c4955f2a3c90f734c6047d3272eefdf57523f93d",
+          "complete_visible": true
+        },
+        {
+          "key": "sendType",
+          "chars": 4,
+          "sha256": "04f8996da763b7a969b1028ee3007569eaf3a635486ddab211d512c85b9df8fb",
+          "complete_visible": true
+        },
+        {
+          "key": "sender",
+          "chars": 2,
+          "sha256": "7b1bec33ff029e9fc7dcfc0e6fd239473cd309f8ec26825af057b0a4a67cec7e",
+          "complete_visible": true
+        },
+        {
+          "key": "senderId",
+          "chars": 34,
+          "sha256": "a932b1697f9f685417c2092454a81eba9238a8368589c03eb90642393561c9ff",
+          "complete_visible": true
+        },
+        {
+          "key": "senderOpenDingTalkId",
+          "chars": 34,
+          "sha256": "a932b1697f9f685417c2092454a81eba9238a8368589c03eb90642393561c9ff",
+          "complete_visible": true
+        },
+        {
+          "key": "text",
+          "chars": 366,
+          "sha256": "57b5292ad2b8c95e3cfb83056ad906d568f649c7f6239f9d45b143d2adadad51",
+          "complete_visible": true
+        }
+      ],
+      "model_body_sha256": "11bba7191ad6b36f7aa6e06788f049f3fca1967c56ef65dfce9bd6c8acdcbea0"
+    },
+    {
+      "attempt": 348826,
+      "source_type": "dict",
+      "source_keys": [
+        "messages"
+      ],
+      "message_shape": [
+        "open_conversation_id",
+        "open_message_id",
+        "conversation_title",
+        "single_chat",
+        "sender_name",
+        "sender_open_dingtalk_id",
+        "sender_user_id",
+        "message_type",
+        "create_time",
+        "content",
+        "mentioned_user_ids",
+        "quoted_message_id",
+        "quoted_content",
+        "raw_payload"
+      ],
+      "matched_objects": 2,
+      "fields": [
+        {
+          "key": "open_conversation_id",
+          "chars": 47,
+          "sha256": "77482ceffa1a99093c837d6814020366e7e36ab915c60f891562ca82a56b50e8",
+          "complete_visible": true
+        },
+        {
+          "key": "open_message_id",
+          "chars": 27,
+          "sha256": "46f1f90121c1d6c3a3a30787c4955f2a3c90f734c6047d3272eefdf57523f93d",
+          "complete_visible": true
+        },
+        {
+          "key": "conversation_title",
+          "chars": 6,
+          "sha256": "31bc3a1d35832f3d6ad2f666ea4afd112954cb93226564f5c61b6450fe5bc661",
+          "complete_visible": true
+        },
+        {
+          "key": "sender_name",
+          "chars": 2,
+          "sha256": "7b1bec33ff029e9fc7dcfc0e6fd239473cd309f8ec26825af057b0a4a67cec7e",
+          "complete_visible": true
+        },
+        {
+          "key": "sender_open_dingtalk_id",
+          "chars": 34,
+          "sha256": "a932b1697f9f685417c2092454a81eba9238a8368589c03eb90642393561c9ff",
+          "complete_visible": true
+        },
+        {
+          "key": "create_time",
+          "chars": 19,
+          "sha256": "88c3b9980a2096deb426dc754ab0d9a1a8501746f46e060e07e0bac8a438aec9",
+          "complete_visible": true
+        },
+        {
+          "key": "content",
+          "chars": 366,
+          "sha256": "57b5292ad2b8c95e3cfb83056ad906d568f649c7f6239f9d45b143d2adadad51",
+          "complete_visible": true
+        },
+        {
+          "key": "quoted_message_id",
+          "chars": 27,
+          "sha256": "588e5bdeaf2f8e65d3a0069b466636169d5fe10d040ba54d1db5b61e932cd213",
+          "complete_visible": true
+        },
+        {
+          "key": "quoted_content",
+          "chars": 670,
+          "sha256": "d575f69e5737f03a37102480b3c3049cb278bc199169a53f3f8cfa3899c61379",
+          "complete_visible": true
+        },
+        {
+          "key": "content",
+          "chars": 366,
+          "sha256": "57b5292ad2b8c95e3cfb83056ad906d568f649c7f6239f9d45b143d2adadad51",
+          "complete_visible": true
+        },
+        {
+          "key": "conversationId",
+          "chars": 47,
+          "sha256": "77482ceffa1a99093c837d6814020366e7e36ab915c60f891562ca82a56b50e8",
+          "complete_visible": true
+        },
+        {
+          "key": "createTime",
+          "chars": 19,
+          "sha256": "88c3b9980a2096deb426dc754ab0d9a1a8501746f46e060e07e0bac8a438aec9",
+          "complete_visible": true
+        },
+        {
+          "key": "messageAiSendFlag",
+          "chars": 3,
+          "sha256": "1d595d9e342bccc3b158fabfcdfece54d9f821cf9c7461c5d3b6c0157c442f94",
+          "complete_visible": true
+        },
+        {
+          "key": "messageId",
+          "chars": 27,
+          "sha256": "46f1f90121c1d6c3a3a30787c4955f2a3c90f734c6047d3272eefdf57523f93d",
+          "complete_visible": true
+        },
+        {
+          "key": "openConversationId",
+          "chars": 47,
+          "sha256": "77482ceffa1a99093c837d6814020366e7e36ab915c60f891562ca82a56b50e8",
+          "complete_visible": true
+        },
+        {
+          "key": "openMessageId",
+          "chars": 27,
+          "sha256": "46f1f90121c1d6c3a3a30787c4955f2a3c90f734c6047d3272eefdf57523f93d",
+          "complete_visible": true
+        },
+        {
+          "key": "sendType",
+          "chars": 4,
+          "sha256": "04f8996da763b7a969b1028ee3007569eaf3a635486ddab211d512c85b9df8fb",
+          "complete_visible": true
+        },
+        {
+          "key": "sender",
+          "chars": 2,
+          "sha256": "7b1bec33ff029e9fc7dcfc0e6fd239473cd309f8ec26825af057b0a4a67cec7e",
+          "complete_visible": true
+        },
+        {
+          "key": "senderId",
+          "chars": 34,
+          "sha256": "a932b1697f9f685417c2092454a81eba9238a8368589c03eb90642393561c9ff",
+          "complete_visible": true
+        },
+        {
+          "key": "senderOpenDingTalkId",
+          "chars": 34,
+          "sha256": "a932b1697f9f685417c2092454a81eba9238a8368589c03eb90642393561c9ff",
+          "complete_visible": true
+        },
+        {
+          "key": "text",
+          "chars": 366,
+          "sha256": "57b5292ad2b8c95e3cfb83056ad906d568f649c7f6239f9d45b143d2adadad51",
+          "complete_visible": true
+        }
+      ],
+      "model_body_sha256": "11bba7191ad6b36f7aa6e06788f049f3fca1967c56ef65dfce9bd6c8acdcbea0"
+    },
+    {
+      "attempt": 348830,
+      "source_type": "dict",
+      "source_keys": [
+        "messages"
+      ],
+      "message_shape": [
+        "open_conversation_id",
+        "open_message_id",
+        "conversation_title",
+        "single_chat",
+        "sender_name",
+        "sender_open_dingtalk_id",
+        "sender_user_id",
+        "message_type",
+        "create_time",
+        "content",
+        "mentioned_user_ids",
+        "quoted_message_id",
+        "quoted_content",
+        "raw_payload"
+      ],
+      "matched_objects": 2,
+      "fields": [
+        {
+          "key": "open_conversation_id",
+          "chars": 47,
+          "sha256": "77482ceffa1a99093c837d6814020366e7e36ab915c60f891562ca82a56b50e8",
+          "complete_visible": true
+        },
+        {
+          "key": "open_message_id",
+          "chars": 27,
+          "sha256": "46f1f90121c1d6c3a3a30787c4955f2a3c90f734c6047d3272eefdf57523f93d",
+          "complete_visible": true
+        },
+        {
+          "key": "conversation_title",
+          "chars": 6,
+          "sha256": "31bc3a1d35832f3d6ad2f666ea4afd112954cb93226564f5c61b6450fe5bc661",
+          "complete_visible": true
+        },
+        {
+          "key": "sender_name",
+          "chars": 2,
+          "sha256": "7b1bec33ff029e9fc7dcfc0e6fd239473cd309f8ec26825af057b0a4a67cec7e",
+          "complete_visible": true
+        },
+        {
+          "key": "sender_open_dingtalk_id",
+          "chars": 34,
+          "sha256": "a932b1697f9f685417c2092454a81eba9238a8368589c03eb90642393561c9ff",
+          "complete_visible": true
+        },
+        {
+          "key": "create_time",
+          "chars": 19,
+          "sha256": "88c3b9980a2096deb426dc754ab0d9a1a8501746f46e060e07e0bac8a438aec9",
+          "complete_visible": true
+        },
+        {
+          "key": "content",
+          "chars": 366,
+          "sha256": "57b5292ad2b8c95e3cfb83056ad906d568f649c7f6239f9d45b143d2adadad51",
+          "complete_visible": true
+        },
+        {
+          "key": "quoted_message_id",
+          "chars": 27,
+          "sha256": "588e5bdeaf2f8e65d3a0069b466636169d5fe10d040ba54d1db5b61e932cd213",
+          "complete_visible": true
+        },
+        {
+          "key": "quoted_content",
+          "chars": 670,
+          "sha256": "d575f69e5737f03a37102480b3c3049cb278bc199169a53f3f8cfa3899c61379",
+          "complete_visible": true
+        },
+        {
+          "key": "content",
+          "chars": 366,
+          "sha256": "57b5292ad2b8c95e3cfb83056ad906d568f649c7f6239f9d45b143d2adadad51",
+          "complete_visible": true
+        },
+        {
+          "key": "conversationId",
+          "chars": 47,
+          "sha256": "77482ceffa1a99093c837d6814020366e7e36ab915c60f891562ca82a56b50e8",
+          "complete_visible": true
+        },
+        {
+          "key": "createTime",
+          "chars": 19,
+          "sha256": "88c3b9980a2096deb426dc754ab0d9a1a8501746f46e060e07e0bac8a438aec9",
+          "complete_visible": true
+        },
+        {
+          "key": "messageAiSendFlag",
+          "chars": 3,
+          "sha256": "1d595d9e342bccc3b158fabfcdfece54d9f821cf9c7461c5d3b6c0157c442f94",
+          "complete_visible": true
+        },
+        {
+          "key": "messageId",
+          "chars": 27,
+          "sha256": "46f1f90121c1d6c3a3a30787c4955f2a3c90f734c6047d3272eefdf57523f93d",
+          "complete_visible": true
+        },
+        {
+          "key": "openConversationId",
+          "chars": 47,
+          "sha256": "77482ceffa1a99093c837d6814020366e7e36ab915c60f891562ca82a56b50e8",
+          "complete_visible": true
+        },
+        {
+          "key": "openMessageId",
+          "chars": 27,
+          "sha256": "46f1f90121c1d6c3a3a30787c4955f2a3c90f734c6047d3272eefdf57523f93d",
+          "complete_visible": true
+        },
+        {
+          "key": "sendType",
+          "chars": 4,
+          "sha256": "04f8996da763b7a969b1028ee3007569eaf3a635486ddab211d512c85b9df8fb",
+          "complete_visible": true
+        },
+        {
+          "key": "sender",
+          "chars": 2,
+          "sha256": "7b1bec33ff029e9fc7dcfc0e6fd239473cd309f8ec26825af057b0a4a67cec7e",
+          "complete_visible": true
+        },
+        {
+          "key": "senderId",
+          "chars": 34,
+          "sha256": "a932b1697f9f685417c2092454a81eba9238a8368589c03eb90642393561c9ff",
+          "complete_visible": true
+        },
+        {
+          "key": "senderOpenDingTalkId",
+          "chars": 34,
+          "sha256": "a932b1697f9f685417c2092454a81eba9238a8368589c03eb90642393561c9ff",
+          "complete_visible": true
+        },
+        {
+          "key": "text",
+          "chars": 366,
+          "sha256": "57b5292ad2b8c95e3cfb83056ad906d568f649c7f6239f9d45b143d2adadad51",
+          "complete_visible": true
+        }
+      ],
+      "model_body_sha256": "4cd3039fe20b32ad06a4c14e4ddcea7e3cdfa1bf6a4c9341b896228d166cbca2"
+    }
+  ],
+  "conclusions": {
+    "confirmed": [
+      "Calendar first two Audit message model bodies are byte-identical after native wrapper; key prior reply fields fully visible in both",
+      "Normal AuditTurnContext does not separately include prior audit feedback; each examined Audit uses a fresh session",
+      "OA first Audit reads7 Skills; later applicable-domain turns read2; existing generic Skill already directs category-based reading"
+    ],
+    "unconfirmed": [
+      "Missing prior feedback caused Calendar reversal",
+      "Whole message clipping caused this Calendar reversal",
+      "Seven OA Skill reads were required by assembly rather than model choice"
+    ]
+  },
+  "independent_review": {
+    "agent": "native_catalog_review",
+    "mode": "read-only",
+    "all_12_ranges_have_task_complete": true,
+    "hashes_and_critical_field_visibility_verified": true,
+    "audit_context_call_path_verified": true,
+    "causal_attribution": "unconfirmed; candidate differs proposal versus no_action"
+  }
+}
