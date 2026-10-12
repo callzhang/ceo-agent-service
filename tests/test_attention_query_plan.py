@@ -86,7 +86,7 @@ def test_indexed_attention_applies_order_and_limit_after_failed_selection(tmp_pa
         assert [row["id"] for row in rows] == [str(task.id) for task in expected]
 
 
-@pytest.mark.parametrize("surface", ["work_attention", "work_error", "reply_error"])
+@pytest.mark.parametrize("surface", ["work_attention", "work_error"])
 def test_failure_diagnostics_do_not_scan_queue_payloads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, surface: str
 ):
@@ -108,14 +108,9 @@ def test_failure_diagnostics_do_not_scan_queue_payloads(
             table = "work_summary_inputs"
         else:
             with store._connect() as db:
-                if surface == "work_error":
-                    assert _queue_latest_error(db, "work_summary_inputs", "status", "error") == ""
-                    needle = "select error as value"
-                    table = "work_summary_inputs"
-                else:
-                    assert _reply_task_queue_snapshot(db)["latest_error"] == "service failure"
-                    needle = "select tasks.error"
-                    table = "tasks"
+                assert _queue_latest_error(db, "work_summary_inputs", "status", "error") == ""
+                needle = "select error as value"
+                table = "work_summary_inputs"
     query = next(sql for sql in statements if needle in sql)
     with store._connect() as db:
         if surface == "work_attention":
@@ -126,6 +121,35 @@ def test_failure_diagnostics_do_not_scan_queue_payloads(
         plan = [row[3] for row in db.execute("explain query plan " + query)]
     assert any(f"SEARCH {table} USING INTEGER PRIMARY KEY" in step for step in plan), plan
     assert not any(step.startswith(f"SCAN {table}") and "COVERING" not in step for step in plan), plan
+
+
+def test_reply_queue_snapshot_reads_metadata_in_one_source_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    _failed_task(store, "FaIlEd")
+    statements: list[str] = []
+    original_open = store._open_connection
+
+    def traced_connection():
+        db = original_open()
+        db.set_trace_callback(statements.append)
+        return db
+
+    monkeypatch.setattr(store, "_open_connection", traced_connection)
+    with store.read_snapshot():
+        with store._connect() as db:
+            snapshot = _reply_task_queue_snapshot(db)
+            assert snapshot["latest_error"] == "service failure"
+            assert snapshot["failed"] == 1
+    queries = [sql for sql in statements if "with current as materialized" in sql]
+    assert len(queries) == 1
+    query = queries[0]
+    assert "trigger_message_json" not in query
+    assert "trigger_text" not in query
+    with store._connect() as db:
+        plan = [row[3] for row in db.execute("explain query plan " + query)]
+    assert sum(step.startswith("SCAN tasks") for step in plan) == 1, plan
 
 
 @pytest.mark.parametrize("status", ["failed", "FaIlEd"])

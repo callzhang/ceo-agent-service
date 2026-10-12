@@ -1,5 +1,11 @@
 # Current Runtime Mechanism
 
+Audit field-error feedback must cite the exact JSON path, literal value and type
+from the current digest-bound candidate. Prior revision feedback is not evidence
+of the current field value. Quoted numeric identifiers remain strings; an
+already-applied correction must not be requested again. This evidence rule does
+not waive actual action-contract violations or authorize external execution.
+
 Manual rerun reads its terminal run with `load_events=False`: the existing
 refusal check consumes only structured error metadata. Native trajectory and
 result hydration is excluded from this queueing request. The existing refusal,
