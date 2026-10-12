@@ -2540,7 +2540,7 @@ weekly analysis job的11个原字段、running/completed/failed CHECK和week_end
 Email task visibility in Store13: unsubscribe classification lists, classification detail/in-flight progress, verified entry URL lineage and summary queue counts detect the physical tasks/runs tables. They read public task/run IDs through the typed projections and resolve canonical inputs through the physical current_input_id reference. A standalone EmailStore without the shared task tables retains its existing behavior. Existing receipt/lineage/URL validation and redaction rules remain; this change fixes the physical-table presence check and adds no policy.
 
 
-## Phase4C core storage candidate (Store 2026-10-12.1)
+## Phase4C core storage (Store 2026-10-12.1)
 
 隔离候选的核心 schema 将 scheduled_task_runs 和 workbench_events 存入 runs，
 workbench_tasks 和 workbench_turns 存入 tasks；record_type 保留来源身份。Workbench
@@ -2566,7 +2566,7 @@ marker/timestamp、分配水位、TEXT 源表与保留子表的 rowid，以及�
 通过完整CI、正常部署和线上读回；详见 database-redesign-phase4c-validation.md。
 
 
-## Phase4C scheduled caller candidate
+## Phase4C scheduled callers
 
 候选的定时触发 DAO、dispatcher、恢复、Attempt/History、运行路由引用读取已切换到
 runs 中 record_type=scheduled_task_runs 的记录。查询返回原公共 scheduled ID；写入按
@@ -2594,7 +2594,7 @@ resume_context、task_sequence、turn控制和附件client_request_id/content_sh
 声明的非修改拒绝与并发索引修复，不以半旧半新的schema冒充来源。
 
 
-## Phase4C Workbench caller candidate
+## Phase4C Workbench callers
 
 Workbench task/turn 的CRUD、全局client_request幂等、task_sequence、单active turn、
 claim/lease/stop/control/recovery保留原合同。读者从typed tasks投影公共TEXT ID，
@@ -2626,3 +2626,5 @@ work_summary_inputs类型的scalar状态记录筛出公共ID，再读取所选�
 增长不扩大其候选扫描。会议Memory入队的missing候选、主键连接和事务复核使用
 现有物理任务ID；meeting_memory_write_events仍保存物理父FK，对外还原公共ID，
 已入队记录正文不参与候选检查。状态、排序、limit、去重与竞争复核规则不变。
+
+Phase4C已于2026-10-12通过PR61/05ca33b1正常上线，生产Store2026-10-12.1、Email51、PID43265及数据/队列读回已验证。具体来源、字段映射、回退、CI、容量和清理边界见docs/database-redesign-phase4c-validation.md；上文候选阶段的时间性验收说明以本条及验收文档最终回执为准。

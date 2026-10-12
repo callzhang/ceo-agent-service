@@ -1,6 +1,6 @@
 # Phase4C scheduled / Workbench acceptance
 
-Status: all four implementation units and final integration have passed independent review; latest production8d source copy/inverse/old-code/re-forward passed. Complete Quality found six failures plus three fixture setup errors; scoped fixes have passed independent SPEC and QUALITY review. Full CI and production C release remain pending. Historical notes below retain their original stage boundaries.
+Status: Phase4C is LIVE as05ca33b17c199f4db8afc8d698853a82fc0eb6be after complete Quality and normal deployment. Store2026-10-12.1 / Email51 / PID43265 verified. The exact field map and chronological evidence below retain their original snapshot boundaries.
 
 ## Actual source and exact field map
 
@@ -148,3 +148,20 @@ Latest Store13 runtime predeployment backup auto-reply.sqlite3.pre-phase4c-verif
 Capacity boundary: latest source file455614464bytes, used pages401874944bytes; latest candidate after replacement/old-code/inverse/re-forward exercises470478848bytes, used pages425332736bytes. These are copy exercise snapshots; Phase4C does not claim physical or used-page reduction. No production VACUUM/checkpoint is included.
 
 CI closure independent SPEC passed18original/new/neighbor checks6.37s and8unchangedMeetingrace/idle cases0.73s. QUALITY passed direct runtime/fixture/oracle inspection, all original ordinary/orphan sqlite_sequence entries and six numeric projections compareexactwithpublicordering; bothTEXT projections unchanged. NoP1/P2, no source/schema/index/policy/hint change; reviewed runtime/testdiffSHA2568a49622d23211886e9144fe8cb921405b2c719a5647f6f7ab46dd837b1dd4d96. Final supplemental source hash binding, completeCI rerun/deploy/live stillpending.
+
+
+## C production release receipt
+
+Final code26e4647095322e58f12fe93938d70352ea98ef68, appSHA256904a5a1aa18254248e5a7497f2cf0d248ffbbc6d2a6b74941679dc900920cfa2. Supplemental acceptance verified325Gitappfiles/322unchangedblobs and onlythreeauthorizedfunctionASTchanges; constructors/migration/inverse/releases/DDL identical to complete9c acceptance. Twofreshprocessnormalconstructors ononeownedcurrentcopy preservedallrawvalues/types/applicationandinternalrowids/schema/FTS/allocators/headers; source andacceptedcandidatehashes unchanged, retainedsourcecomparison exact. Complete migration loop and fiveofflinefailurestages were not repeated onthisverifiedscope.
+
+PR61 mergedas05ca33b17c199f4db8afc8d698853a82fc0eb6be; mergefiletree equals tested26e46470 exactly. Complete Quality38279945019 succeeded:12097Pythonpassed/99existing skipped/44deselected,723frontendpassed/2existing skipped,build,and2browserpassed8.73s. Normal python-m-app.deploy deployed8dcb1c7d→05ca33b1 withstandardquiet/mutex/pairedmigration/health; no skipquiet/manualprocesscontrol/productioncodeedit.
+
+ActualproductionSHA05ca33b1/PID43265/Store2026-10-12.1/Email51/quick_checkok readback. Fourretiredtablesandsixretiredcolumns absent. Against immutable15:59source, all originalscheduled156781andWorkbench20/37/810rowsretainexactvalues/types/publicidentities, all original59337core runs exact, nooriginalcoretask/run/childmissing. Schedulednaturaladditions266atonepostdeploymentreadback are countedseparately. KnownFKfinding(runs190042→tasksabsent404225) unchanged; no newghostparent.
+
+Freshnear-publicationStore13backupwascreated/integrity-verifiedbeforedeploy at auto-reply.sqlite3.pre-phase4c-verified-20261012-final(455614464bytes,completeCEOB). Comparisonagainstthisnearbackup:115executionreceiptrows/14731reply_attemptrows/553business_taskrows exactinallvalues/types/rowids;59375originalcore runs exact. Nineoldreplytasks changeonlyupdated_at(15:49:58→17:22:12), remainingfields/status/input/results identical; theunchangedservice-start recovery path executesonrestart. Twooriginalscheduledrows move pending→dispatched with17:21:09/17:21:50timestamps; newtriggers countedseparately, not treatedas migration loss. Otherbackground email/error/lease/runtimeSkilltables naturallyadvancebetween snapshots; no all-table-live-freeze claim.
+
+Health/status/Attention/History HTTP200 in0.05/0.31/0.16/0.62seconds atreadback; serviceok. Dispatcherqueuespending/due/runningall0/latesterrorsblank. Summarypending3/failed4/attention2 matchespredeploy; theseexistingitems were not erased. FailedreplypublicIDs386399/386402 andrawfailedattemptcount5167 unchanged. Sourcefourdomains/receipt/childretention is distinctfrom futureproviderbusinessoutcomes; no manualhistoricalreplay/provideraction occurredduringacceptance.
+
+Livepagesnapshot:file471347200bytes,used426106880bytes,free45240320bytes,WAL166439792bytes. Source15:59file455614464/used401874944. Structuralconsolidationretainsbusinesshistoryandadds typed layout/index overhead; it doesnotdeliverabyte-reductionclaim. No productionVACUUM/checkpoint/retentionpolicy added.
+
+Final task cleanup completed after verified release/readback and no open handles: final ownedCtemporary roots(database copies,325-fileoldcode,logs/scripts/proofs)1420756047bytes removed; earlier4189452582bytes supersededtempremoved,total5610208629temporarybytes. Twoolder task-owned preB/preC recoverycopies876847104bytes removed after latestStore13/Email51 integrity+CEOBverification. Only latest auto-reply.sqlite3.pre-phase4c-verified-20261012-final retained for thisworkflow; unique old dailyEmail50 backup remained untouched pendingprevious explicitquestion. No nativeusertrajectory copies or historical test archives remain. Concise evidence is thisdocument, committed regressiontests andPR/CIreceipts.
