@@ -12,7 +12,7 @@ The earlier candidate and observations below are retained as investigation histo
 
 # Earlier candidate investigation
 
-Current production Consumer/Audit native trajectories include a16,098-character automatically injected CLI-home memory block in addition to service-owned Work Profile, common instructions and explicit task sources. This is a separate context layer containing workspace-level cross-project guidance and profile material; it is not the service's business Memory/MCP context. Removing it requires business validation rather than assuming every remembered fact is irrelevant.
+The earlier arithmetic probe without the existing role feature option observed a16,098-character automatically injected CLI-home memory block. Treating that probe as representative of current Consumer/Audit production injection was an incorrect inference: the later role and single-factor controls show the current role helper already suppresses this block with features.memories=false. This is separate from service business Memory/MCP context.
 
 The official [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference) documents `memories.use_memories=false` as skipping existing-memory injection into future sessions. `memories.generate_memories` is a different setting controlling whether new threads become memory-generation inputs. The candidate adds only the use=false option to existing Codex Consumer/Audit role command construction and removes conflicting incoming copies of that exact key. It introduces no new setting API, CLI home or global file edit.
 
@@ -26,7 +26,7 @@ A same-model, same-home, same-directory, same-input cold comparison uses a synth
 
 The native true session has exactly one16,098-character memory Developer block; false has none. All other Developer blocks have the same canonical hash and both results are sum5. Independent read-only review verified original commands, native records and hashes. This proves injection mechanics only, not business behavior. Local debug prompt-input true/false results omit the Memory block in both modes and are identical; debug rendering is therefore not accepted as verification of actual native turn context.
 
-Evidence: `business_native_memory_scope.native.v1.json`. Full Consumer/Audit business cold/resume comparison, preservation of necessary user preferences through authoritative service sources, and production publication remain open. Do not deploy solely on the arithmetic probe or passing unit tests.
+Evidence: `business_native_memory_scope.native.v1.json`. Actual saved-configuration Consumer/Audit cold/resume comparisons with full provider scenarios, preservation of necessary user preferences through authoritative service sources, and production publication remain open. Do not deploy solely on the arithmetic probe or passing unit tests.
 
 ## Fresh production context readback
 
