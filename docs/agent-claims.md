@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+| codex-meeting-memory-enqueue-lock-20261011 | Isolated sqlite-writer-lock-timings worktree: app/store.py (`enqueue_sent_meeting_memory_write_events` only); tests/test_meeting_memory_write.py; docs/architecture.md and docs/runtime-mechanism.md (meeting Memory enqueue query/transaction boundary); docs/agent-claims.md | Production timing identifies a 13.454-second writer hold in idle meeting Memory enqueue and a simultaneous 13.045-second dispatcher wait. Exclude already-enqueued history with indexed read-only lookup, then recheck only missing job IDs in the write transaction. Preserve delivered-conclusion eligibility, unique events and generation; no provider call or retention change. | 2026-10-11 |
+
 | codex-meeting-idle-writer-20261011 | Isolated /private/tmp/ceo-unsubscribe-recipient-form-20261011 branch codex/meeting-idle-writer-20261011: app/store.py (batch ready-to-send meeting claim only), tests/test_meeting_alignment.py (idle writer contention and competing claim), docs/runtime-mechanism.md and CHANGELOG.md | Avoid taking the shared writer lock for an ineligible meeting delivery poll; keep exact due/status/lock predicates, transactional recheck and delivery tokens. No external send, cache, schema or retry-policy change. | 2026-10-11 |
 
 

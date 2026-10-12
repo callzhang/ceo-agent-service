@@ -1,5 +1,17 @@
 # Current Runtime Mechanism
 
+Meeting Memory enqueue first excludes existing event IDs using the meeting
+status and unique event indexes in a read-only connection. Only missing jobs
+load `final_message` to check the existing nonempty delivered-conclusion rule.
+An empty probe returns without acquiring the shared SQLite writer lock. A
+positive probe closes its read connection, then the immediate write transaction
+rechecks status, conclusion and event absence for those exact IDs before insert.
+Competing enqueues create one event without advancing the sequence on a no-op;
+jobs delivered after the read snapshot are picked up by the next scan. This
+removes the historical wide-row scan from the write transaction: production
+telemetry observed a 13.454-second hold there with a simultaneous 13.045-second
+dispatcher lock wait.
+
 The meeting delivery batch poll reads the exact ready, unlocked and due
 eligibility before requesting SQLite's shared writer lock. An ineligible poll
 returns without joining the writer queue. This read is not a reservation: the

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -715,6 +717,127 @@ def test_idle_meeting_memory_enqueue_does_not_mutate_rows_or_sequence(
 
     assert [dict(row) for row in after] == [dict(row) for row in before]
     assert sequence_after == sequence_before
+
+
+@pytest.mark.parametrize("history", ["empty", "enqueued", "blank"])
+def test_idle_meeting_memory_enqueue_does_not_wait_for_writer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, history: str,
+) -> None:
+    import app.store as store_module
+
+    store = AutoReplyStore(tmp_path / "idle-enqueue.sqlite3")
+    if history != "empty":
+        job_id = _store_sent_job(store)
+        if history == "enqueued":
+            assert store.enqueue_sent_meeting_memory_write_events() == 1
+        else:
+            store.update_meeting_alignment_job(job_id, final_message="   ")
+    store.busy_timeout_seconds = 0
+    store.busy_timeout_milliseconds = 0
+    monkeypatch.setattr(store_module, "STORE_WRITE_LOCK_RETRY_ATTEMPTS", 1)
+    writer = sqlite3.connect(store.path, timeout=0)
+    try:
+        writer.execute("begin immediate")
+        assert store.enqueue_sent_meeting_memory_write_events() == 0
+    finally:
+        writer.rollback()
+        writer.close()
+
+
+def test_meeting_memory_enqueue_does_not_read_already_enqueued_bodies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "enqueue-history.sqlite3")
+    for index in range(4):
+        _store_sent_job(store, meeting_id=f"history-{index}")
+    assert store.enqueue_sent_meeting_memory_write_events() == 4
+    missing_id = _store_sent_job(store, meeting_id="new-conclusion")
+    store.update_meeting_alignment_job(missing_id, final_message="new delivered conclusion")
+    original_open = store._open_connection
+    checked_bodies = []
+
+    def recording_connection():
+        db = original_open()
+
+        def trim(value):
+            checked_bodies.append(value)
+            return value.strip(" ")
+
+        db.create_function("trim", 1, trim)
+        return db
+
+    monkeypatch.setattr(store, "_open_connection", recording_connection)
+    assert store.enqueue_sent_meeting_memory_write_events() == 1
+    assert checked_bodies == ["new delivered conclusion", "new delivered conclusion"]
+
+
+def test_meeting_memory_enqueue_rechecks_competing_enqueue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "enqueue-race.sqlite3")
+    other = AutoReplyStore(store.path)
+    _store_sent_job(store)
+    original_transaction = store._immediate_write_transaction
+
+    @contextmanager
+    def enqueue_before_transaction():
+        assert other.enqueue_sent_meeting_memory_write_events() == 1
+        with original_transaction() as db:
+            yield db
+
+    monkeypatch.setattr(store, "_immediate_write_transaction", enqueue_before_transaction)
+    assert store.enqueue_sent_meeting_memory_write_events() == 0
+    with store._connect() as db:
+        assert db.execute("select count(*) from meeting_memory_write_events").fetchone()[0] == 1
+        assert db.execute(
+            "select seq from sqlite_sequence where name='meeting_memory_write_events'"
+        ).fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("change", ["status", "body"])
+def test_meeting_memory_enqueue_rechecks_delivery_eligibility(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str,
+) -> None:
+    store = AutoReplyStore(tmp_path / "enqueue-changed.sqlite3")
+    other = AutoReplyStore(store.path)
+    job_id = _store_sent_job(store)
+    original_transaction = store._immediate_write_transaction
+
+    @contextmanager
+    def change_before_transaction():
+        other.update_meeting_alignment_job(
+            job_id, **({"status": "pending"} if change == "status" else {"final_message": ""}),
+        )
+        with original_transaction() as db:
+            yield db
+
+    monkeypatch.setattr(store, "_immediate_write_transaction", change_before_transaction)
+    assert store.enqueue_sent_meeting_memory_write_events() == 0
+
+
+def test_concurrent_meeting_memory_enqueue_creates_one_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stores = [AutoReplyStore(tmp_path / "enqueue-concurrent.sqlite3") for _ in range(2)]
+    _store_sent_job(stores[0])
+    barrier = threading.Barrier(2)
+
+    def synchronized_transaction(original):
+        @contextmanager
+        def transaction():
+            barrier.wait(timeout=5)
+            with original() as db:
+                yield db
+        return transaction
+
+    for store in stores:
+        monkeypatch.setattr(
+            store, "_immediate_write_transaction",
+            synchronized_transaction(store._immediate_write_transaction),
+        )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda store: store.enqueue_sent_meeting_memory_write_events(), stores))
+    assert sorted(results) == [0, 1]
 
 
 def test_meeting_memory_processing_uses_bounded_parallelism_and_returns_outcome(
