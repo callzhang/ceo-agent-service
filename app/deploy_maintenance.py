@@ -14,7 +14,7 @@ from app.database_backup import create_database_backup
 from app.reply_task_deferral import _legacy_event_may_have_effect
 from app.repository_updater import UpgradePreconditionError
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
-from app.task_schema_release import publication_task_sources
+from app.task_schema_release import publication_meeting_sources, publication_task_sources
 
 
 @dataclass(frozen=True)
@@ -29,12 +29,13 @@ def check_maintenance(database_path: Path, task_ids: tuple[int, ...]) -> Mainten
     with sqlite3.connect(database_path.resolve().as_uri() + '?mode=ro', uri=True) as db:
         db.row_factory = sqlite3.Row
         reply_source, work_source = publication_task_sources(db)
+        meeting_jobs, _ = publication_meeting_sources(db)
         processing = {row[0] for row in db.execute(f"select id from ({reply_source}) where status='processing'")}
         if not processing.issubset(set(task_ids)):
             raise UpgradePreconditionError('maintenance has unapproved processing reply tasks')
         for query in (
             f"select 1 from ({work_source}) where status='processing' limit 1",
-            "select 1 from meeting_alignment_jobs where status in ('processing','sending','summarizing') limit 1",
+            f"select 1 from ({meeting_jobs}) where status in ('processing','sending','summarizing') limit 1",
             "select 1 from email_actions where status not in ('pending','done','skipped','failed','needs_human') limit 1",
             "select 1 from scheduled_task_runs where dispatch_status='pending' and lease_owner<>'' "
             "and julianday(lease_expires_at)>julianday('now') limit 1",

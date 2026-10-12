@@ -1,5 +1,5 @@
 
-from app.task_storage import REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
+from app.task_storage import MEETING_JOB_SQL, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
 from app.store import REPLY_TASK_CURRENT_SQL
 from app.work_summary_payload import decode_work_summary_payload
 import json
@@ -2572,13 +2572,16 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
     snapshots: list[dict[str, object]] = []
     with store._connect() as db:
         for name, table, status_column, updated_column, error_column in specs:
-            if not _sqlite_table_exists(db, "tasks" if table in ("reply_tasks", "work_summary_inputs") else table):
+            if not _sqlite_table_exists(db, "tasks" if table in ("reply_tasks", "work_summary_inputs", "meeting_alignment_jobs") else table):
                 continue
             if table == "reply_tasks":
                 snapshots.append(_reply_task_queue_snapshot(db))
                 continue
             if table == "work_summary_inputs":
                 snapshots.append(_work_summary_input_queue_snapshot(db))
+                continue
+            if table == "meeting_alignment_jobs":
+                snapshots.append(_meeting_job_queue_snapshot(db))
                 continue
             if table == "reply_attempts":
                 snapshots.append(_reply_attempt_queue_snapshot(db))
@@ -2631,6 +2634,26 @@ def _work_summary_input_queue_snapshot(db: sqlite3.Connection) -> dict[str, obje
         "processing": _queue_count_for(counts, {"processing", "running", "sending"}),
         "failed": _queue_count_for(counts, {"failed", "error"}),
         "retryable": 0,
+        "latest_updated_at": "" if latest is None else str(latest[0] or ""),
+        "latest_error": "" if failed is None else str(failed[0] or ""),
+    }
+
+
+def _meeting_job_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
+    rows = db.execute("select lower(coalesce(status,'')) as status, count(*) as count "
+        "from tasks where record_type='meeting_alignment_jobs' "
+        "group by lower(coalesce(status,''))").fetchall()
+    counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
+    latest = db.execute("select updated_at from tasks where record_type='meeting_alignment_jobs' "
+        "order by updated_at desc limit 1").fetchone()
+    failed = db.execute("select error from tasks where record_type='meeting_alignment_jobs' "
+        "and lower(status)='failed' and trim(coalesce(error,''))<>'' "
+        "order by updated_at desc, cast(legacy_key as integer) desc limit 1").fetchone()
+    return {
+        "name": "Meeting jobs", "table": "meeting_alignment_jobs", "counts": counts,
+        "pending": _queue_count_for(counts, {"pending", "draft", "approved", "waiting", "ready", "creating"}),
+        "processing": _queue_count_for(counts, {"processing", "running", "sending"}),
+        "failed": _queue_count_for(counts, {"failed", "error"}), "retryable": 0,
         "latest_updated_at": "" if latest is None else str(latest[0] or ""),
         "latest_error": "" if failed is None else str(failed[0] or ""),
     }
@@ -3411,9 +3434,10 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
         for category, table, status_column, context_column, summary_column, updated_column, error_column, statuses in specs:
-            if not _sqlite_table_exists(db, "tasks" if table == "work_summary_inputs" else table):
+            if not _sqlite_table_exists(db, "tasks" if table in ("work_summary_inputs", "meeting_alignment_jobs") else table):
                 continue
-            source_table = f"({WORK_SUMMARY_INPUT_SQL})" if table == "work_summary_inputs" else table
+            source_table = (f"({WORK_SUMMARY_INPUT_SQL})" if table == "work_summary_inputs"
+                            else f"({MEETING_JOB_SQL})" if table == "meeting_alignment_jobs" else table)
             status_placeholders = ",".join("?" for _ in statuses)
             current_generation_filter = (
                 f"and exists (select 1 from ({REPLY_TASK_SQL}) as reply_tasks "
@@ -3552,7 +3576,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 )
         if (
             _sqlite_table_exists(db, "meeting_memory_write_events")
-            and _sqlite_table_exists(db, "meeting_alignment_jobs")
+            and _sqlite_table_exists(db, "tasks")
         ):
             meeting_memory_sql = """
                 select events.id, events.status,
@@ -3560,7 +3584,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                        coalesce(nullif(jobs.title, ''), jobs.meeting_id) as summary,
                        events.updated_at, events.error
                 from meeting_memory_write_events as events
-                join meeting_alignment_jobs as jobs on jobs.id=events.meeting_job_id
+                join tasks as jobs on jobs.id=events.meeting_job_id
+                    and jobs.record_type='meeting_alignment_jobs'
                 where lower(events.status)='failed'
                 order by events.updated_at desc, events.id desc
             """

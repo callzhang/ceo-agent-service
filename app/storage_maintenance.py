@@ -146,7 +146,6 @@ def compact_native_duplicates(database: Path) -> dict[str, int]:
     columns = {
         "reply_attempts": {"audit_tool_events_json": "[]"},
         "okr_review_runs": {"envelope_json": "{}", "audit_summary": "", "audit_tool_events_json": "[]"},
-        "meeting_alignment_runs": {"decision_json": "{}", "audit_summary": "", "audit_tool_events_json": "[]"},
         "workbench_turns": {"final_text": "", "error_detail": ""},
         "codex_session_search_index": {
             "summary_text": "", "fts_text": "", "embedding_json": "",

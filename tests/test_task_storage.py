@@ -9,7 +9,7 @@ import pytest
 from app.store import AutoReplyStore
 
 
-def test_fresh_task_container_replaces_only_first_subunit_sources(tmp_path):
+def test_fresh_task_container_replaces_task_and_meeting_sources(tmp_path):
     store = AutoReplyStore(tmp_path / "tasks.db")
     with store._connect() as db:
         tables = {
@@ -23,9 +23,11 @@ def test_fresh_task_container_replaces_only_first_subunit_sources(tmp_path):
                 "reply_task_inputs",
                 "work_summary_inputs",
                 "task_agent_runs",
+                "meeting_alignment_jobs",
+                "meeting_alignment_runs",
             }
         )
-        assert {"meeting_alignment_jobs", "weekly_okr_analysis_jobs", "runs"} <= tables
+        assert {"weekly_okr_analysis_jobs", "runs"} <= tables
 
 
 def source_database(path):
@@ -44,6 +46,8 @@ def source_database(path):
         "reply_task_inputs",
         "work_summary_inputs",
         "task_agent_runs",
+        "meeting_alignment_jobs",
+        "meeting_alignment_runs",
     ):
         source = inventory["tables"][table]
         db.execute(source["sql"])
@@ -213,6 +217,8 @@ def test_exact_forward_inverse_preserves_overlaps_claim_raw_blob_and_source_ddl(
         "reply_task_inputs",
         "work_summary_inputs",
         "task_agent_runs",
+        "meeting_alignment_jobs",
+        "meeting_alignment_runs",
         "receipt",
         "runs",
     )

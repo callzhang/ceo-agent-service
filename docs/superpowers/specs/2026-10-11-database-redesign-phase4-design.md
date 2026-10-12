@@ -137,7 +137,7 @@ Meeting发送键`meeting-alignment:{OLD job.id}:{meeting_id}[:sensitive]`原样�
 
 4B Meeting 子单元字段复核：其23个job字段均保存真实source scalar，包括准确原JSON字符串，取消此前专有字段外层JSON包装。13个run字段只取消三项已退休空过程缓存。真实源没有status CHECK；run updated_at默认空字符串。当前副本唯一已知孤儿是run.id=2298、job_id=4908、status=retry，不是job.id=2298。
 
-有效Meeting run只保存指向typed Meeting task的物理task_id，公共job_id由父legacy_key还原；原缺失父按不同source job_id确定性分配无记录的保留物理ID并推进allocator水位，维持dangling FK，绝不创建ghost业务任务。仅这些孤儿run在真实source字段job_id scalar保留原公共父ID；有效run该列为NULL，不冗余保存可由FK取得的公共ID。DTO及逆迁明确区分两种准确来源，拒绝不一致映射。真实job/source自然键、claim CAS、delivery key、Memory parent唯一/FK及CASCADE保持；逆迁复原原始2298→4908finding。该细化尚未实现，后续副本与故障门槛仍必需。
+有效Meeting run只保存指向typed Meeting task的物理task_id，公共job_id由父legacy_key还原；原缺失父按不同source job_id确定性分配无记录的保留物理ID并推进allocator水位，维持dangling FK，绝不创建ghost业务任务。仅这些孤儿run在真实source字段job_id scalar保留原公共父ID；有效run该列为NULL，不冗余保存可由FK取得的公共ID。DTO及逆迁明确区分两种准确来源，拒绝不一致映射。真实job/source自然键、claim CAS、delivery key、Memory parent唯一/FK及CASCADE保持；逆迁复原原始2298→4908finding。该细化已在隔离分支实现并完成核心、DAO与外围查询独立复核；完整行为测试与最终副本、故障回退及发布门槛仍必需。
 
 
 4B OKR/weekly 源字段复核：实际PRAGMA确认OKR run.request_id与items.request_id均没有声明FK，原“已有FK”的标注已更正。OKR run按原request_id public scalar保存代码关系，不给共享task_id增加新FK；items.request_id仍原值，其他record_type的request_id为NULL。请求的16个真实字段与weekly的11个字段使用准确source scalar；原JSON字符串不包裹、不改格式。OKR请求无status CHECK且有真实skipped；run不存在status/error/finished_at，不补造。三个run cache全为既有占位，可按已批准清单退休。
@@ -154,3 +154,6 @@ CSV中的九个真实源字段改为直接scalar列：task的title、runtime_kin
 workbench_events保留准确payload_json；event公共整数id是全局SSE游标，sequence是turn内顺序，native_ordinal是原生完成顺序，三者不能合并。历史副本37turn/810event，event最大ID及sqlite_sequence分配水位均810；confirmations/attachments/artifacts当时无行，验证必须补充有内容的synthetic子记录及结果/回执，保持原NO ACTION外键。该快照不代表最终发布源，最终正逆迁仍须重新测量。
 
 scheduled_task_runs的17字段已有准确runs映射。event_id唯一、scheduled-only自然partial unique、两项实际FK、五个显式索引及原默认值保留；occurrence_count源DDL没有正数CHECK，不能新增。execution_id为reply时保留原公共十进制字符串，为service_command时保留原命令文本，不制造reply任务。Dispatcher source_id、History/API游标、输入provenance和execution_generation仍用原trigger公共ID；dispatch_status仅表示调度，不推造Agent业务终态。历史副本154843行、序列154846与原设计153867不同，最终副本需刷新，不能跨快照证明增删。
+
+
+Workbench源DDL的TEXT PRIMARY KEY没有NOT NULL约束，SQLite允许NULL；历史20/37项公共UUID均非NULL，DAO由uuid4产生身份。共享legacy_key本已可NULL，但其自动数字key触发器在4C必须限定真实数字类型，不能给SQL允许的Workbench NULL补造公共身份，也不能加入源没有的NOT NULL CHECK。workbench_events.sequence与event_type仅NOT NULL，源无默认值或CHECK；DAO的正数/已知类型校验仍在原调用层，不能误记为源数据库约束。

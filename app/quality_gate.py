@@ -8,7 +8,7 @@ table as a failed check rather than silently dropping a queue from coverage.
 """
 
 from __future__ import annotations
-from app.task_storage import REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
+from app.task_storage import MEETING_JOB_SQL, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
 
 import json
 import sqlite3
@@ -124,7 +124,7 @@ def scan_hourly_quality(
             str(row["name"])
             for row in db.execute("select name from sqlite_master where type='table'")
         }
-        physical_source = {"agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks"}
+        physical_source = {"agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks"}
         missing = tuple(source for source in REQUIRED_SOURCES if physical_source.get(source, source) not in existing)
         checked = (
             *(source for source in REQUIRED_SOURCES if physical_source.get(source, source) in existing),
@@ -771,19 +771,19 @@ def _check_meetings(
 ) -> None:
     _add(violations, source="meeting_alignment_jobs", code="failed", count=_count(
         db,
-        """select count(*) from meeting_alignment_jobs
+        f"""select count(*) from ({MEETING_JOB_SQL})
            where lower(status)='failed' and trim(coalesce(error, ''))=''""",
     ), severity="error", detail="meeting delivery has no concrete terminal failure")
     _add(violations, source="meeting_alignment_jobs", code="active_stale", count=_count(
         db,
-        "select count(*) from meeting_alignment_jobs where lower(status) in ('pending','processing','ready_to_send','retry') and datetime(updated_at) < datetime(?)",
+        f"select count(*) from ({MEETING_JOB_SQL}) where lower(status) in ('pending','processing','ready_to_send','retry') and datetime(updated_at) < datetime(?)",
         (_cutoff(now, MEETING_PROCESSING_STALE_SECONDS),),
     ), severity="error", detail="meeting alignment job stopped progressing")
     _add(attention, source="meeting_alignment_jobs", code="active", count=_count(
-        db, "select count(*) from meeting_alignment_jobs where lower(status) in ('waiting','pending','processing','ready_to_send','retry')"
+        db, f"select count(*) from ({MEETING_JOB_SQL}) where lower(status) in ('waiting','pending','processing','ready_to_send','retry')"
     ), severity="info", detail="meeting alignment work is pending")
     _add(attention, source="meeting_alignment_jobs", code="quarantined", count=_count(
-        db, "select count(*) from meeting_alignment_jobs where lower(status)='quarantined'"
+        db, f"select count(*) from ({MEETING_JOB_SQL}) where lower(status)='quarantined'"
     ), severity="info", detail="meeting delivery outcome cannot be verified")
 
 

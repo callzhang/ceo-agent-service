@@ -1,4 +1,4 @@
-"""Typed reply/input storage with an exact, paired 11.2 source inverse.
+"""Typed reply/input/Meeting storage with an exact, paired 11.2 source inverse.
 
 The caller owns the private FK-off transaction. Public numeric IDs stay in their
 source namespaces; only declared references use the global physical task ID.
@@ -10,6 +10,9 @@ import re
 import sqlite3
 
 from app.run_storage import (
+    MEETING_RUN_COLUMNS,
+    MEETING_RUN_RETIRED,
+    MEETING_RUN_SQL,
     TASK_AGENT_RUN_COLUMNS,
     TASK_AGENT_RUN_RETIRED,
     TASK_AGENT_RUN_SQL,
@@ -21,8 +24,20 @@ from app.run_storage import (
     run_schema_is_current,
 )
 
-TASK_TYPES = ("reply_tasks", "reply_task_inputs", "work_summary_inputs")
-RETIRED_TASK_TABLES = (*TASK_TYPES, "task_agent_runs")
+TASK_TYPES = ("reply_tasks", "reply_task_inputs", "work_summary_inputs", "meeting_alignment_jobs")
+DOMAIN_RUN_COLUMNS = {
+    "task_agent_runs": TASK_AGENT_RUN_COLUMNS,
+    "meeting_alignment_runs": MEETING_RUN_COLUMNS,
+}
+DOMAIN_RUN_RETIRED = {
+    "task_agent_runs": TASK_AGENT_RUN_RETIRED,
+    "meeting_alignment_runs": MEETING_RUN_RETIRED,
+}
+DOMAIN_RUN_PROJECTIONS = {
+    "task_agent_runs": TASK_AGENT_RUN_SQL,
+    "meeting_alignment_runs": MEETING_RUN_SQL,
+}
+RETIRED_TASK_TABLES = (*TASK_TYPES, *DOMAIN_RUN_COLUMNS)
 SOURCE_COLUMNS = {
     "reply_tasks": (
         "id",
@@ -86,6 +101,14 @@ SOURCE_COLUMNS = {
         "body_sha256",
         "body_bytes",
         "body_compacted",
+    ),
+    "meeting_alignment_jobs": (
+        "id", "meeting_id", "title", "source_json", "participants_json",
+        "ended_at", "eligible_at", "status", "attempts", "locked_at",
+        "available_at", "error", "decision_json", "target_kind", "target_id",
+        "target_title", "mentions_json", "final_message", "send_result_json",
+        "created_at", "updated_at", "calendar_summary_status",
+        "calendar_summary_result_json",
     ),
 }
 # Frozen actual production source contract from the committed Phase 4 inventory.
@@ -212,6 +235,57 @@ SOURCE_TASK_DECLARATIONS = {'reply_tasks': (('index',
                       "not null default '', finished_at text not null default '', updated_at "
                       "text not null default '', projection_json text not null default '{}')"))}
 
+SOURCE_TASK_DECLARATIONS.update({
+    "meeting_alignment_jobs": (
+        ("index", "idx_meeting_alignment_jobs_claim", """CREATE INDEX idx_meeting_alignment_jobs_claim
+                    on meeting_alignment_jobs(status, available_at, eligible_at, id)"""),
+        ("table", "meeting_alignment_jobs", """CREATE TABLE meeting_alignment_jobs (
+                    id integer primary key autoincrement,
+                    meeting_id text not null unique,
+                    title text not null default '',
+                    source_json text not null default '{}',
+                    participants_json text not null default '[]',
+                    ended_at text not null default '',
+                    eligible_at text not null default '',
+                    status text not null default 'waiting',
+                    attempts integer not null default 0,
+                    locked_at text,
+                    available_at text not null default '',
+                    error text not null default '',
+                    decision_json text not null default '{}',
+                    target_kind text not null default '',
+                    target_id text not null default '',
+                    target_title text not null default '',
+                    mentions_json text not null default '[]',
+                    final_message text not null default '',
+                    send_result_json text not null default '{}',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp
+                , calendar_summary_status text not null default 'not_started', calendar_summary_result_json text not null default '{}')"""),
+    ),
+    "meeting_alignment_runs": (
+        ("index", "idx_meeting_alignment_runs_active_job", "CREATE UNIQUE INDEX idx_meeting_alignment_runs_active_job on meeting_alignment_runs(job_id) where status='running'"),
+        ("index", "idx_meeting_alignment_runs_created", """CREATE INDEX idx_meeting_alignment_runs_created
+                    on meeting_alignment_runs(created_at, id)"""),
+        ("index", "idx_meeting_alignment_runs_job", """CREATE INDEX idx_meeting_alignment_runs_job
+                    on meeting_alignment_runs(job_id, id)"""),
+        ("table", "meeting_alignment_runs", """CREATE TABLE meeting_alignment_runs (
+                    id integer primary key autoincrement,
+                    job_id integer not null,
+                    codex_session_id text not null default '',
+                    codex_transcript_start_line integer not null default 0,
+                    codex_transcript_end_line integer not null default 0,
+                    decision_json text not null default '{}',
+                    audit_tool_events_json text not null default '[]',
+                    audit_summary text not null default '',
+                    status text not null,
+                    error text not null default '',
+                    created_at text not null default current_timestamp, finished_at text not null default '', updated_at text not null default '',
+                    foreign key(job_id) references meeting_alignment_jobs(id)
+                )"""),
+    ),
+})
+
 
 TASK_DEFAULT_SQL = {
     "reply_tasks": dict(
@@ -252,8 +326,20 @@ TASK_DEFAULT_SQL = {
         body_bytes="0",
         body_compacted="0",
     ),
+    "meeting_alignment_jobs": dict(
+        title="''", source_json="'{}'", participants_json="'[]'", ended_at="''",
+        eligible_at="''", status="'waiting'", attempts="0", available_at="''",
+        error="''", decision_json="'{}'", target_kind="''", target_id="''",
+        target_title="''", mentions_json="'[]'", final_message="''",
+        send_result_json="'{}'", created_at="current_timestamp",
+        updated_at="current_timestamp", calendar_summary_status="'not_started'",
+        calendar_summary_result_json="'{}'",
+    ),
 }
-NULLABLE = {"reply_tasks": {"locked_at", "current_input_id", "claimed_input_id"}}
+NULLABLE = {
+    "reply_tasks": {"locked_at", "current_input_id", "claimed_input_id"},
+    "meeting_alignment_jobs": {"locked_at"},
+}
 INTEGER_FIELDS = {
     "parent_id",
     "single_chat",
@@ -278,7 +364,7 @@ PHYSICAL_COLUMNS = tuple(
     )
 )
 TASK_TABLE_DDL = (
-    "create table tasks (id integer primary key autoincrement, record_type text not null check(record_type in ('reply_tasks','reply_task_inputs','work_summary_inputs')), legacy_key text,"
+    "create table tasks (id integer primary key autoincrement, record_type text not null check(record_type in ('reply_tasks','reply_task_inputs','work_summary_inputs','meeting_alignment_jobs')), legacy_key text,"
     + ",".join(
         field + (" integer" if field in INTEGER_FIELDS else " text")
         for field in PHYSICAL_COLUMNS
@@ -323,6 +409,8 @@ TASK_INDEX_DDL = (
     "create unique index idx_work_summary_inputs_identity on tasks(source_type,source_ref) where record_type='work_summary_inputs'",
     "create index idx_work_summary_inputs_status on tasks(status,cast(legacy_key as integer)) where record_type='work_summary_inputs'",
     "create index idx_work_summary_inputs_updated on tasks(updated_at desc,cast(legacy_key as integer) desc) where record_type='work_summary_inputs'",
+    "create unique index idx_meeting_alignment_jobs_identity on tasks(meeting_id) where record_type='meeting_alignment_jobs'",
+    "create index idx_meeting_alignment_jobs_claim on tasks(status,available_at,eligible_at,cast(legacy_key as integer)) where record_type='meeting_alignment_jobs'",
 )
 TASK_TRIGGER_DDL = (
     "create trigger trg_tasks_record_type_immutable before update of record_type on tasks when new.record_type<>old.record_type begin select raise(abort,'task record type is immutable'); end",
@@ -375,6 +463,7 @@ TASK_PROJECTIONS = {record_type: _projection(record_type) for record_type in TAS
 REPLY_TASK_SQL = TASK_PROJECTIONS["reply_tasks"]
 REPLY_TASK_INPUT_SQL = TASK_PROJECTIONS["reply_task_inputs"]
 WORK_SUMMARY_INPUT_SQL = TASK_PROJECTIONS["work_summary_inputs"]
+MEETING_JOB_SQL = TASK_PROJECTIONS["meeting_alignment_jobs"]
 
 
 def insert_task(
@@ -432,7 +521,8 @@ def task_schema_is_current(
     db: sqlite3.Connection, *, allow_missing_objects: bool = False
 ) -> bool:
     if db.execute(
-        "select 1 from sqlite_master where type in ('table','view') and name in (?,?,?,?)",
+        "select 1 from sqlite_master where type in ('table','view') and name in ("
+        + ",".join("?" for _ in RETIRED_TASK_TABLES) + ")",
         RETIRED_TASK_TABLES,
     ).fetchone():
         return False
@@ -509,13 +599,21 @@ def capture_task_schema(db: sqlite3.Connection) -> dict:
                 int(sequences.get(table) or 0),
                 db.execute(f'select coalesce(max(id),0) from "{table}"').fetchone()[0],
             )
-            for table in ("runs", "task_agent_runs")
+            for table in ("runs", *DOMAIN_RUN_COLUMNS)
             if table in tables
         ]
+    )
+    missing_meeting_parents = (
+        [row[0] for row in db.execute("""select distinct r.job_id
+            from meeting_alignment_runs r
+            left join meeting_alignment_jobs p on p.id=r.job_id
+            where p.id is null order by r.job_id""")]
+        if {"meeting_alignment_jobs", "meeting_alignment_runs"} <= tables else []
     )
     return {
         "tables": {table: _capture_table(db, table, sequences) for table in scoped},
         "children": children,
+        "missing_meeting_parents": missing_meeting_parents,
         "allocator": {
             "source_high_water": high,
             "migration_high_water": high
@@ -523,13 +621,12 @@ def capture_task_schema(db: sqlite3.Connection) -> dict:
                 db.execute(f'select count(*) from "{table}"').fetchone()[0]
                 for table in TASK_TYPES[1:]
                 if table in tables
-            ),
+            ) + len(missing_meeting_parents),
             "run_source_high_water": run_high,
             "run_migration_high_water": run_high
-            + (
-                db.execute("select count(*) from task_agent_runs").fetchone()[0]
-                if "task_agent_runs" in tables
-                else 0
+            + sum(
+                db.execute(f'select count(*) from "{table}"').fetchone()[0]
+                for table in DOMAIN_RUN_COLUMNS if table in tables
             ),
         },
     }
@@ -569,12 +666,21 @@ def install_task_child_guards(db: sqlite3.Connection) -> None:
             if fk[2] != "tasks":
                 continue
             column = fk[3]
+            parent_type = (
+                "meeting_alignment_jobs"
+                if (table, column) in {
+                    ("meeting_memory_write_events", "meeting_job_id"),
+                    ("meeting_alignment_delivery_claims", "job_id"),
+                }
+                else "reply_tasks"
+            )
+            parent_label = "meeting job" if parent_type == "meeting_alignment_jobs" else "reply task"
             for event, suffix in (
                 ("insert", "insert"),
                 (f'update of "{column}"', "update"),
             ):
                 db.execute(
-                    f'create trigger if not exists trg_tasks_child_{table}_{column}_{suffix} before {event} on "{table}" when new."{column}" is not null and exists(select 1 from tasks where id=new."{column}" and record_type<>\'reply_tasks\') begin select raise(abort,\'task parent must be a reply task\'); end'
+                    f'create trigger if not exists trg_tasks_child_{table}_{column}_{suffix} before {event} on "{table}" when new."{column}" is not null and exists(select 1 from tasks where id=new."{column}" and record_type<>\'{parent_type}\') begin select raise(abort,\'task parent must be a {parent_label}\'); end'
                 )
 
 
@@ -586,6 +692,24 @@ def validate_reply_input_references(db: sqlite3.Connection) -> None:
             current.id is null or current.record_type<>'reply_task_inputs' or current.parent_id<>parent.id
             or (parent.claimed_input_id is not null and (claimed.id is null or claimed.record_type<>'reply_task_inputs' or claimed.parent_id<>parent.id))) limit 1""").fetchone():
         raise ValueError("reply input ownership mismatch")
+
+
+def validate_meeting_run_references(db: sqlite3.Connection) -> None:
+    """Typed parents and reserved absent parents are distinct source relations."""
+    if db.execute("""select 1 from runs r left join tasks p on p.id=r.task_id
+        where r.record_type='meeting_alignment_runs' and (
+            (p.id is not null and (p.record_type<>'meeting_alignment_jobs' or r.job_id is not null))
+            or (p.id is null and r.job_id is null)) limit 1""").fetchone():
+        raise ValueError("meeting run parent mapping mismatch")
+    for group, target in (("job_id", "task_id"), ("task_id", "job_id")):
+        if db.execute(
+            f"select 1 from runs where record_type='meeting_alignment_runs' and job_id is not null group by {group} having count(distinct {target})<>1 limit 1"
+        ).fetchone():
+            raise ValueError("meeting orphan parent mapping mismatch")
+    if db.execute("""select 1 from runs r where r.record_type='meeting_alignment_runs'
+        and r.job_id is not null and r.task_id>coalesce(
+            (select seq from sqlite_sequence where name='tasks'),0) limit 1""").fetchone():
+        raise ValueError("meeting orphan parent allocator is not reserved")
 
 
 def _validate_source_declarations(db: sqlite3.Connection) -> None:
@@ -614,7 +738,7 @@ def migrate_task_schema(db: sqlite3.Connection) -> dict:
         raise ValueError("unsupported 11.2 source schema: tasks already exists")
     for table, columns in {
         **SOURCE_COLUMNS,
-        "task_agent_runs": TASK_AGENT_RUN_COLUMNS,
+        **DOMAIN_RUN_COLUMNS,
     }.items():
         if table not in state["tables"] or set(
             state["tables"][table]["columns"]
@@ -623,12 +747,13 @@ def migrate_task_schema(db: sqlite3.Connection) -> dict:
     _validate_source_declarations(db)
     if not run_schema_is_current(db):
         raise ValueError("unsupported 11.2 core run schema")
-    for column, empty in TASK_AGENT_RUN_RETIRED.items():
-        if db.execute(
-            f'select 1 from task_agent_runs where "{column}" is null or "{column}"<>? limit 1',
-            (empty,),
-        ).fetchone():
-            raise ValueError(f"task_agent_runs.{column} is not an empty retired cache")
+    for table, retired in DOMAIN_RUN_RETIRED.items():
+        for column, empty in retired.items():
+            if db.execute(
+                f'select 1 from "{table}" where "{column}" is null or "{column}"<>? limit 1',
+                (empty,),
+            ).fetchone():
+                raise ValueError(f"{table}.{column} is not an empty retired cache")
     if db.execute("""select 1 from reply_tasks p left join reply_task_inputs c on c.id=p.current_input_id
         left join reply_task_inputs x on x.id=p.claimed_input_id where c.id is null or c.reply_task_id<>p.id
         or (p.claimed_input_id is not null and (x.id is null or x.reply_task_id<>p.id)) limit 1""").fetchone():
@@ -643,6 +768,11 @@ def migrate_task_schema(db: sqlite3.Connection) -> dict:
                 next_id += 1
                 physical = next_id
             mapping[table, key] = physical
+    # Reserve one absent physical parent per actual missing public key. No task
+    # row is manufactured; the sequence prevents new automatic IDs filling it.
+    for key in state["missing_meeting_parents"]:
+        next_id += 1
+        mapping["meeting_alignment_jobs", key] = next_id
     for table in RETIRED_TASK_TABLES:
         _drop_explicit_objects(db, state["tables"][table]["objects"])
     create_task_schema(db)
@@ -677,20 +807,29 @@ def migrate_task_schema(db: sqlite3.Connection) -> dict:
         old_runs,
     )
     next_run = state["allocator"]["run_source_high_water"]
-    for row in db.execute("select * from task_agent_runs order by id").fetchall():
-        source = dict(
-            zip(state["tables"]["task_agent_runs"]["columns"], row, strict=True)
-        )
-        next_run += 1
-        values = {"id": next_run, "legacy_key": str(source.pop("id"))}
-        values.update(
-            {
-                ("session_id" if column == "codex_session_id" else column): value
+    run_column_map = {
+        "codex_session_id": "session_id",
+        "codex_transcript_start_line": "transcript_start",
+        "codex_transcript_end_line": "transcript_end",
+    }
+    for table in DOMAIN_RUN_COLUMNS:
+        source_rows = db.execute(f'select * from "{table}" order by id').fetchall()
+        counts[table] = len(source_rows)
+        for row in source_rows:
+            source = dict(zip(state["tables"][table]["columns"], row, strict=True))
+            next_run += 1
+            values = {"id": next_run, "legacy_key": str(source.pop("id"))}
+            if table == "meeting_alignment_runs":
+                key = source.pop("job_id")
+                values["task_id"] = mapping["meeting_alignment_jobs", key]
+                if key in state["missing_meeting_parents"]:
+                    values["job_id"] = key
+            values.update({
+                run_column_map.get(column, column): value
                 for column, value in source.items()
-                if column not in TASK_AGENT_RUN_RETIRED
-            }
-        )
-        insert_run(db, "task_agent_runs", values)
+                if column not in DOMAIN_RUN_RETIRED[table]
+            })
+            insert_run(db, table, values)
     for table in state["children"]:
         schema = state["tables"][table]
         child_rows = []
@@ -709,10 +848,12 @@ def migrate_task_schema(db: sqlite3.Connection) -> dict:
     _set_sequence(db, "runs", next_run)
     install_task_child_guards(db)
     validate_reply_input_references(db)
+    validate_meeting_run_references(db)
     return {"counts": counts, "children": state["children"]}
 
 
 def restore_task_schema(db: sqlite3.Connection, state: dict) -> dict:
+    validate_meeting_run_references(db)
     sequences = dict(db.execute("select name,seq from sqlite_sequence"))
     task_reserve = (
         sequences.get("tasks", 0)
@@ -731,11 +872,12 @@ def restore_task_schema(db: sqlite3.Connection, state: dict) -> dict:
         table: db.execute(projection).fetchall()
         for table, projection in TASK_PROJECTIONS.items()
     }
-    saved["task_agent_runs"] = db.execute(TASK_AGENT_RUN_SQL).fetchall()
+    saved.update({table: db.execute(projection).fetchall()
+                  for table, projection in DOMAIN_RUN_PROJECTIONS.items()})
     saved["runs"] = db.execute(
         "select "
         + ",".join(state["tables"]["runs"]["columns"])
-        + " from runs where record_type<>'task_agent_runs'"
+        + " from runs where record_type not in ('task_agent_runs','meeting_alignment_runs')"
     ).fetchall()
     _drop_explicit_objects(db, _schema_objects(db, "tasks"))
     _drop_explicit_objects(db, _schema_objects(db, "runs"))
@@ -745,8 +887,8 @@ def restore_task_schema(db: sqlite3.Connection, state: dict) -> dict:
             next(obj["sql"] for obj in schema["objects"] if obj["type"] == "table")
         )
         projection_columns = (
-            TASK_AGENT_RUN_COLUMNS
-            if table == "task_agent_runs"
+            DOMAIN_RUN_COLUMNS[table]
+            if table in DOMAIN_RUN_COLUMNS
             else SOURCE_COLUMNS[table]
         )
         values = [
@@ -764,7 +906,7 @@ def restore_task_schema(db: sqlite3.Connection, state: dict) -> dict:
         for obj in schema["objects"]:
             if obj["type"] != "table":
                 db.execute(obj["sql"])
-        reserve = run_reserve if table == "task_agent_runs" else task_reserve
+        reserve = run_reserve if table in DOMAIN_RUN_COLUMNS else task_reserve
         if schema["sequence"] is not None or reserve:
             maximum = db.execute(
                 f'select coalesce(max(id),0) from "{table}"'

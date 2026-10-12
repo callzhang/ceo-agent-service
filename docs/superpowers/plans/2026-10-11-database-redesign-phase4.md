@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python、SQLite、现有Store/dispatcher/routed runtime/Workbench及schema publication机制。
 
-本文件是基于真实字段的迁移执行计划，精确字段与源DDL见phase4 CSV/inventory。4A目标DDL、DAO切换和配对逆迁已实现并处于验证；4B首单元foundation尚未接入Store，4C未实现，第四期尚未上线。正式实施每个单元前只为该单元选取新schema marker，不预占后续版本；重新核对main/生产/claims，合入他人的新主线行为。
+本文件是基于真实字段的迁移执行计划，精确字段与源DDL见phase4 CSV/inventory。4A目标DDL、DAO切换和配对逆迁已实现并处于验证；4B首单元及会议核心/DAO/外围调用已在隔离分支实现，4B完整候选与4C尚未上线；4A发布状态见本次状态。正式实施每个单元前只为该单元选取新schema marker，不预占后续版本；重新核对main/生产/claims，合入他人的新主线行为。
 
 ## Task 0: 已完成分析交付
 
@@ -95,4 +95,4 @@ Task0和4A已完成。PR50的完整Quality通过并正常部署为7baa1f0e，Sto
 
 599个相关Store/发布/辅助修复测试、71个新storage/reader/manifest用例、五个故障阶段、36个脚本用例、Attention专项及合并后的84个相关测试通过；这些有重叠，不作为完整CI总数。已逐项合入主线54e6c209及验收文档ad7a6506，保留A的19个源声明校验、单次元数据读取检查及typed Task布局；额外32个源声明与6个状态投影用例通过。
 
-Meeting23/13真实字段及已知run2298→缺失job4908已复核，实际scalar映射及只在孤儿保存原job_id的方式写入CSV/design；尚未实施。后续Meeting、OKR、weekly完成后组合发布4B，再实施4C。完整B最终候选仍须最新源副本/回退、相关调用方测试、独立复核、远端Quality及正常deploy/live读回。当前B没有推送或生产迁移，没有第四期容量减少声明。当前详细证据见docs/database-redesign-phase4b-validation.md。
+Meeting23/13真实字段及已知run2298→缺失job4908已复核并在隔离分支实现。核心21项、DAO9项（含修复显式updated_at遗漏）、外围定向24项通过，并完成分阶段独立规格/质量复核；组合67项也通过，数量存在重叠。六张实际生产源DDL只读校验通过；这些不代替最终一致副本或上线。六个相关fixture文件284项通过，另四项读取ps的维护恢复/竞态用例在具备权限的隔离测试环境中通过；损坏源/current布局拒绝前后全逻辑dump及user_version一致。fixture最终独立规格/质量复核通过，没有剩余P1/P2；全B最终副本及发布验收仍待完成。后续Meeting、OKR、weekly完成后组合发布4B，再实施4C。完整B最终候选仍须最新源副本/回退、相关调用方测试、独立复核、远端Quality及正常deploy/live读回。当前B没有推送或生产迁移，没有第四期容量减少声明。当前详细证据见docs/database-redesign-phase4b-validation.md。

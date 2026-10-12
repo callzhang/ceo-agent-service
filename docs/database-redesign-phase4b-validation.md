@@ -63,3 +63,13 @@ Independent core review checked the enhanced scripts and reports: original4A run
 Diagnostic callers: inspector and replay scripts now use public Task/WSI projections and typed physical updates. Their 36 focused tests passed, covering divergent IDs and decoys, public run ordering, seven source-field drift rejections before a fake runner, exact changed-row retention and lease release, TEXT/BLOB codec, read-only inspection and native unavailability. Existing replay CAS parameter tuples and predicates remain; independent read-only code review found no P1/P2. Tests use temporary copies and fake runners, with no actual provider replay.
 
 Still required before release: integrate current main without losing newer behavior, rerun final copy gates on the final candidate, publication-failure exercises, remote CI, normal deploy and live readback. No production B migration, VACUUM or capacity-reduction claim has been made.
+
+
+## Meeting internal unit boundary
+
+Meeting core, Store DAO and outer readers are implemented and separately reviewed in the isolated branch, unpublished. Core21 cases, Store9 cases and the67-case overlapping combination passed; outer24 focused cases passed. Review found and closed one DAO timestamp omission: begin/direct-record again explicitly write SQLite current_timestamp, while the source empty-string default is unchanged. No other P1/P2 remained within these reviewed scopes.
+
+Current production readback remains54e6c209 and Store2026-10-11.2. A read-only check of SOURCE_TASK_DECLARATIONS matched all six actual source table declarations without running migration. Final live-source copy refresh still remains. Existing raw old-table fixtures are being adapted; this is not the complete Meeting behavior gate or fullB acceptance. An escalated maintenance run passed the receipt/unknown_tool race cases; other_task then exposed a remaining rawreply fixture, distinct from the resolved ps sandbox limitation.
+
+
+Meeting fixture closure: six affected test files passed 284 cases excluding four tests that require ps access. The four maintenance recovery/race cases passed separately with that permission, using temporary databases and test callbacks; no live service was stopped. The two malformed-source/current-schema tests additionally compare complete logical dumps and user_version before/after rejection, including retained rows. They cover the exact supported-layout boundary rather than resurrecting pre-marker calendar backfills. The final scoped fixture SPEC and QUALITY review passed with no P1/P2. All six test-function counts remain unchanged, no skip/xfail was added, and the source/current rejection assertions were strengthened.

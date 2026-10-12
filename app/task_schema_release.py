@@ -6,14 +6,17 @@ from pathlib import Path
 import sqlite3
 from typing import Callable
 
-from app.run_storage import run_schema_is_current
+from app.run_storage import MEETING_RUN_SQL, run_schema_is_current
 from app.task_storage import (
     RETIRED_TASK_TABLES,
     REPLY_TASK_SQL,
+    MEETING_JOB_SQL,
+    _validate_source_declarations,
     capture_task_schema,
     restore_task_schema,
     task_schema_is_current,
     validate_reply_input_references,
+    validate_meeting_run_references,
 )
 
 OLD_TASK_VERSION = "2026-10-11.2"
@@ -31,12 +34,28 @@ def publication_task_sources(db: sqlite3.Connection) -> tuple[str, str]:
     tables = {
         row[0] for row in db.execute("select name from sqlite_master where type='table'")
     }
-    old = {"reply_tasks", "reply_task_inputs", "work_summary_inputs", "task_agent_runs"}
+    old = set(RETIRED_TASK_TABLES)
     if version == OLD_TASK_VERSION and old <= tables and "tasks" not in tables:
         return "select * from reply_tasks", "select status from work_summary_inputs"
     if version == TASK_VERSION and "tasks" in tables and not old.intersection(tables):
         return REPLY_TASK_SQL, "select status from tasks where record_type='work_summary_inputs'"
     raise ValueError("unknown or mixed task publication source schema")
+
+
+def publication_meeting_sources(db: sqlite3.Connection) -> tuple[str, str]:
+    """Read Meeting from the exact old source or combined current layout."""
+    version = db.execute(
+        "select value from service_state where key=?", (VERSION_KEY,)
+    ).fetchone()
+    version = version[0] if version is not None else None
+    tables = {
+        row[0] for row in db.execute("select name from sqlite_master where type='table'")
+    }
+    if version == OLD_TASK_VERSION and set(RETIRED_TASK_TABLES) <= tables and "runs" in tables and "tasks" not in tables:
+        return "select * from meeting_alignment_jobs", "select * from meeting_alignment_runs"
+    if version == TASK_VERSION and {"tasks", "runs"} <= tables and not set(RETIRED_TASK_TABLES).intersection(tables):
+        return MEETING_JOB_SQL, MEETING_RUN_SQL
+    raise ValueError("unknown or mixed meeting publication source schema")
 
 
 def _migrate(root, path):
@@ -49,6 +68,24 @@ def _foreign_keys(db):
     return tuple(sorted(tuple(row) for row in db.execute("pragma foreign_key_check")))
 
 
+def _semantic_foreign_keys(db):
+    """Compare the same actual missing Meeting parent across physical layouts."""
+    findings = []
+    for table, row_id, parent, fk_id in _foreign_keys(db):
+        if table == "meeting_alignment_runs" and parent == "meeting_alignment_jobs":
+            raw = db.execute("select job_id from meeting_alignment_runs where id=?", (row_id,)).fetchone()[0]
+            findings.append((table, row_id, parent, fk_id, raw))
+        elif table == "runs" and parent == "tasks":
+            run = db.execute("select record_type,legacy_key,job_id from runs where id=?", (row_id,)).fetchone()
+            if run[0] == "meeting_alignment_runs":
+                findings.append(("meeting_alignment_runs", int(run[1]), "meeting_alignment_jobs", 0, run[2]))
+            else:
+                findings.append((table, row_id, parent, fk_id))
+        else:
+            findings.append((table, row_id, parent, fk_id))
+    return tuple(sorted(findings))
+
+
 @dataclass
 class TaskSchemaRelease:
     root: Path
@@ -56,6 +93,7 @@ class TaskSchemaRelease:
     original_version: tuple[str, str]
     source_schema: dict
     source_fk: tuple[tuple, ...]
+    source_semantic_fk: tuple[tuple, ...]
     migrate: Callable[[Path, Path], None] = _migrate
 
     def publish(self):
@@ -76,8 +114,9 @@ class TaskSchemaRelease:
             ):
                 raise ValueError("typed task schema readback mismatch")
             validate_reply_input_references(db)
+            validate_meeting_run_references(db)
             if (
-                _foreign_keys(db) != self.source_fk
+                _semantic_foreign_keys(db) != self.source_semantic_fk
                 or db.execute("pragma quick_check").fetchone()[0] != "ok"
             ):
                 raise ValueError("typed task schema integrity/FK mismatch")
@@ -94,6 +133,9 @@ class TaskSchemaRelease:
             db.execute("pragma foreign_keys=off")
             db.execute("begin immediate")
             try:
+                validate_meeting_run_references(db)
+                if _semantic_foreign_keys(db) != self.source_semantic_fk:
+                    raise ValueError("task inverse integrity/FK mismatch")
                 restore_task_schema(db, self.source_schema)
                 db.execute(
                     "update service_state set value=?,updated_at=? where key=?",
@@ -142,6 +184,8 @@ def prepare_task_schema_release(root, path, original_version):
             "tables"
         ].keys() or not run_schema_is_current(db):
             raise ValueError("original task source schema is incomplete")
+        _validate_source_declarations(db)
         return TaskSchemaRelease(
-            root, path, original_version, source, _foreign_keys(db)
+            root, path, original_version, source, _foreign_keys(db),
+            _semantic_foreign_keys(db),
         )

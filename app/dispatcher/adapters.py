@@ -1,5 +1,5 @@
 from __future__ import annotations
-from app.task_storage import task_id_expression, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
+from app.task_storage import MEETING_JOB_SQL, task_id_expression, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
 
 from app.store import REPLY_TASK_CURRENT_SQL
 
@@ -629,11 +629,11 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
         now_text = _sqlite_time(now)
         with self.store._connect() as db:
             pending = db.execute(
-                "select count(*) from meeting_alignment_jobs "
+                f"select count(*) from ({MEETING_JOB_SQL}) "
                 "where status in ('waiting','pending','retry')"
             ).fetchone()[0]
             due = db.execute(
-                "select count(*) from meeting_alignment_jobs job "
+                f"select count(*) from ({MEETING_JOB_SQL}) job "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(job.id as text) "
                 "where (job.status in ('waiting','pending','retry') "
@@ -646,7 +646,7 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                 (self.name, now_text, now_text, now_text, now_text),
             ).fetchone()[0]
             claimed = db.execute(
-                "select count(*) from meeting_alignment_jobs job "
+                f"select count(*) from ({MEETING_JOB_SQL}) job "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(job.id as text) "
                 "where job.status='processing' and (claim.owner is null "
@@ -657,7 +657,7 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                 "select min(case when job.available_at='' then job.eligible_at "
                 "when datetime(job.available_at)>datetime(job.eligible_at) "
                 "then job.available_at else job.eligible_at end) "
-                "from meeting_alignment_jobs job "
+                f"from ({MEETING_JOB_SQL}) job "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(job.id as text) "
                 "where (job.status in ('waiting','pending','retry') "
@@ -673,7 +673,7 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                 db,
                 column="error",
                 source_projection=(
-                    "from meeting_alignment_jobs source "
+                    f"from ({MEETING_JOB_SQL}) source "
                     "left join dispatcher_claim_leases source_claim "
                     "on source_claim.adapter_name=? "
                     "and source_claim.source_id=cast(source.id as text) "
@@ -729,7 +729,7 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                 if after is not None:
                     keyset = (
                         f"and ({ready_at}>datetime(?) or "
-                        f"({ready_at}=datetime(?) and job.id>?)) "
+                    f"({ready_at}=datetime(?) and job.id>?)) "
                     )
                     params.extend(
                         [after["ready_at"], after["ready_at"], after["id"]]
@@ -740,7 +740,7 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                     "claim.generation as claim_generation, "
                     "claim.owner_pid as claim_owner_pid, "
                     "claim.lease_expires_at as claim_expires_at "
-                    "from meeting_alignment_jobs job "
+                    f"from ({MEETING_JOB_SQL}) job "
                     "left join dispatcher_claim_leases claim "
                     "on claim.adapter_name=? and claim.source_id=cast(job.id as text) "
                     "where ((job.status in ('waiting','pending','retry') "
@@ -773,9 +773,10 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                 return None
             source_id = str(row["id"])
             cursor = db.execute(
-                "update meeting_alignment_jobs set status='processing', "
+                "update tasks set status='processing', "
                 "attempts=attempts+1, locked_at=?, updated_at=? "
-                "where id=? and status in ('waiting','pending','retry','processing')",
+                "where id=" + task_id_expression("meeting_alignment_jobs", "?")
+                + " and record_type='meeting_alignment_jobs' and status in ('waiting','pending','retry','processing')",
                 (now_text, now_text, row["id"]),
             )
             if cursor.rowcount != 1:
@@ -790,7 +791,7 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                 now=now_text,
             )
             claimed = db.execute(
-                "select * from meeting_alignment_jobs where id=?", (row["id"],)
+                f"select * from ({MEETING_JOB_SQL}) where id=?", (row["id"],)
             ).fetchone()
             assert claimed is not None
         return DispatchEnvelope(
@@ -813,9 +814,10 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
         with self.store._immediate_write_transaction() as db:
             _release_lease(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
             cursor = db.execute(
-                "update meeting_alignment_jobs set status='retry', "
+                "update tasks set status='retry', "
                 "attempts=max(attempts-1,0), locked_at=null, updated_at=? "
-                "where id=? and status='processing'",
+                "where id=" + task_id_expression("meeting_alignment_jobs", "?")
+                + " and record_type='meeting_alignment_jobs' and status='processing'",
                 (_sqlite_time(now), int(envelope.source_id)),
             )
             if cursor.rowcount != 1:
