@@ -47,14 +47,17 @@ def test_meeting_alignment_schema_is_added_to_existing_database(tmp_path):
             ).fetchall()
         }
     assert "legacy_data" in tables
-    assert {"meeting_alignment_jobs", "meeting_alignment_runs"} <= tables
+    assert {"tasks", "runs"} <= tables
+    assert "meeting_alignment_jobs" not in tables
+    assert "meeting_alignment_runs" not in tables
     assert {
         "idx_meeting_alignment_jobs_claim",
+        "idx_meeting_alignment_jobs_identity",
         "idx_meeting_alignment_runs_job",
     } <= indexes
 
 
-def test_meeting_calendar_summary_columns_are_added_to_existing_job_table(tmp_path):
+def test_incomplete_unmarked_meeting_source_is_rejected_without_mutation(tmp_path):
     db_path = tmp_path / "worker.sqlite3"
     with sqlite3.connect(db_path) as db:
         db.execute(
@@ -84,41 +87,32 @@ def test_meeting_calendar_summary_columns_are_added_to_existing_job_table(tmp_pa
             )
             """
         )
+        db.execute("insert into meeting_alignment_jobs(meeting_id, title) values ('minutes-old', 'retained source')")
 
-    store = AutoReplyStore(db_path)
-
-    with store._connect() as db:
-        columns = {
-            row["name"]
-            for row in db.execute(
-                "pragma table_info(meeting_alignment_jobs)"
-            ).fetchall()
-        }
-    assert {"calendar_summary_status", "calendar_summary_result_json"} <= columns
+    with sqlite3.connect(db_path) as db:
+        before = tuple(db.iterdump())
+        user_version = db.execute("pragma user_version").fetchone()[0]
+    with pytest.raises(sqlite3.IntegrityError, match="unsupported or malformed Store source schema"):
+        AutoReplyStore(db_path)
+    with sqlite3.connect(db_path) as db:
+        assert tuple(db.iterdump()) == before
+        assert db.execute("pragma user_version").fetchone()[0] == user_version
 
 
 def test_current_schema_manifest_detects_missing_calendar_summary_columns(tmp_path):
     db_path = tmp_path / "worker.sqlite3"
-    AutoReplyStore(db_path)
-    with sqlite3.connect(db_path) as db:
-        db.execute(
-            "alter table meeting_alignment_jobs drop column calendar_summary_status"
-        )
-        db.execute(
-            "alter table meeting_alignment_jobs drop column calendar_summary_result_json"
-        )
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
     store = AutoReplyStore(db_path)
-
-    with store._connect() as db:
-        columns = {
-            row["name"]
-            for row in db.execute(
-                "pragma table_info(meeting_alignment_jobs)"
-            ).fetchall()
-        }
-    assert {"calendar_summary_status", "calendar_summary_result_json"} <= columns
+    seed_job(store, meeting_id="minutes-retained")
+    with sqlite3.connect(db_path) as db:
+        db.execute("alter table tasks rename column calendar_summary_status to missing_calendar_summary_status")
+        before = tuple(db.iterdump())
+        user_version = db.execute("pragma user_version").fetchone()[0]
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    with pytest.raises(sqlite3.IntegrityError, match="unsupported or malformed Store source schema"):
+        AutoReplyStore(db_path)
+    with sqlite3.connect(db_path) as db:
+        assert tuple(db.iterdump()) == before
+        assert db.execute("pragma user_version").fetchone()[0] == user_version
 
 
 def test_meeting_job_upsert_and_get_return_typed_model(tmp_path):

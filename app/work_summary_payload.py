@@ -1,6 +1,7 @@
 """Versioned, lossless storage codec for work-summary input JSON."""
 
 from __future__ import annotations
+from app.task_storage import task_id_expression, WORK_SUMMARY_INPUT_SQL
 
 import argparse
 import json
@@ -53,7 +54,7 @@ def migrate_work_summary_payloads(
         while True:
             db.execute("begin immediate")
             rows = db.execute(
-                "select id,payload_json from work_summary_inputs "
+                f"select id,payload_json from ({WORK_SUMMARY_INPUT_SQL}) "
                 "where id>? and status not in ('done','skipped') order by id limit ?",
                 (last_id, batch_size),
             ).fetchall()
@@ -77,7 +78,7 @@ def migrate_work_summary_payloads(
                     if stored == raw:
                         continue
                     cursor = db.execute(
-                        "update work_summary_inputs set payload_json=? where id=? and payload_json=?",
+                        f"update tasks set payload_json=? where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and payload_json=?",
                         (encoded, row_id, current),
                     )
                     if cursor.rowcount:

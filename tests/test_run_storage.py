@@ -4,6 +4,7 @@ import pytest
 
 from app.store import AutoReplyStore
 from app.run_storage import insert_run
+from tests.run_schema_fixtures import current_store_with_migrated_core
 
 
 def test_fresh_storage_has_one_core_run_table(tmp_path):
@@ -270,11 +271,11 @@ def test_standalone_attempt_has_native_public_id_and_lease(tmp_path):
 
 
 def test_migrated_attempt_public_lookup_and_mutation_use_legacy_namespace(tmp_path):
-    from app.run_storage import RUNTIME_ATTEMPT_SQL
+    from app.run_storage import RUNTIME_ATTEMPT_SQL, migrate_run_schema
     from tests.run_schema_fixtures import previous_run_schema_store
 
     path = tmp_path / "public-lookup.db"
-    source = previous_run_schema_store(
+    previous_run_schema_store(
         path,
         task_args=dict(
             conversation_id="cid",
@@ -287,14 +288,21 @@ def test_migrated_attempt_public_lookup_and_mutation_use_legacy_namespace(tmp_pa
             execution_generation="generation",
         ),
     )
-    with source._connect() as db:
+    with sqlite3.connect(path) as db:
         db.execute(
             "insert into agent_runs(id,reply_task_id,execution_generation,role,status,lease_owner,lease_expires_at) values(7,1,'generation','consumer','running','owner','2099-01-01 00:00:00')"
         )
         db.execute(
             "insert into agent_runtime_attempts(id,agent_run_id,workload_kind,workload_key,attempt_number,route_name,runtime_kind,credential_mode,model,status) values(7,7,'agent_run','7',1,'route','codex_cli','local_oauth','model','starting')"
         )
-    store = AutoReplyStore(path)
+        db.commit()
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        migrate_run_schema(db)
+        db.execute(
+            "update service_state set value='2026-10-11.2' where key='store_schema_version'"
+        )
+    store = current_store_with_migrated_core(tmp_path, path)
     assert store.get_agent_runtime_attempt(7).id == 7
     assert store.mark_agent_runtime_attempt_running_once(7).status == "running"
     assert (
@@ -317,9 +325,9 @@ def test_migrated_attempt_public_lookup_and_mutation_use_legacy_namespace(tmp_pa
             db.execute(
                 "select value from service_state where key='store_schema_version'"
             ).fetchone()[0]
-            == "2026-10-11.2"
+            == "2026-10-11.3"
         )
-    reopened = AutoReplyStore(path)
+    reopened = AutoReplyStore(store.path)
     assert reopened.get_agent_runtime_attempt(7).status == "failed"
 
 
@@ -410,10 +418,16 @@ def test_nonempty_retired_source_is_rejected_without_schema_rows_or_marker_chang
             table: db.execute(f"select * from {table}").fetchall()
             for table in state["tables"]
         }
-    with pytest.raises(
-        ValueError, match="retired empty placeholder|contains native events"
-    ):
-        AutoReplyStore(path)
+    from app.run_storage import migrate_run_schema
+
+    with sqlite3.connect(path) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        with pytest.raises(
+            ValueError, match="retired empty placeholder|contains native events"
+        ):
+            migrate_run_schema(db)
+        db.rollback()
     with sqlite3.connect(path) as db:
         assert capture_run_schema(db) == state
         assert {
@@ -462,14 +476,21 @@ def test_partial_migration_exception_rolls_back_all_source_objects_and_rows(
     path = tmp_path / "atomic.db"
     previous_run_schema_store(path)
     with sqlite3.connect(path) as db:
+        db.execute(
+            "create table receipt(id integer primary key autoincrement,agent_run_id integer references agent_runs(id),body blob)"
+        )
         state = storage.capture_run_schema(db)
 
     def fail_child(*args):
         raise sqlite3.IntegrityError("injected child rebuild failure")
 
     monkeypatch.setattr(storage, "_rebuild_child", fail_child)
-    with pytest.raises(sqlite3.IntegrityError, match="injected child rebuild failure"):
-        AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        with pytest.raises(sqlite3.IntegrityError, match="injected child rebuild failure"):
+            storage.migrate_run_schema(db)
+        db.rollback()
     with sqlite3.connect(path) as db:
         assert storage.capture_run_schema(db) == state
         assert (
@@ -516,7 +537,6 @@ def test_inverse_preserves_deleted_replacement_allocation_without_changing_basel
         migrate_run_schema,
         restore_run_schema,
     )
-    from app.store import AgentRole
     from tests.run_schema_fixtures import previous_run_schema_store
 
     path = tmp_path / "allocator.db"
@@ -575,20 +595,20 @@ def test_inverse_preserves_deleted_replacement_allocation_without_changing_basel
             > source_high_sequence
         )
     if allocate_and_delete:
-        store = AutoReplyStore(path)
-        run = store.claim_agent_run(
-            1,
-            "source",
-            role=AgentRole.CONSUMER,
-            proposal_revision=0,
-            turn_attempt=1,
-            parent_agent_run_id=None,
-            operation_id="",
-            owner="owner",
-        ).run
-        assert run.id > baseline
-        assert store.discard_unstarted_agent_run(run.id, owner="owner") is True
-        allocated = run.id
+        db.execute("begin immediate")
+        allocated = insert_run(
+            db,
+            "agent_runs",
+            {
+                "task_id": 1,
+                "execution_generation": "replacement",
+                "role": "consumer",
+                "status": "pending",
+            },
+        ).lastrowid
+        assert allocated > baseline
+        db.execute("delete from runs where id=?", (allocated,))
+        db.commit()
         assert not db.execute("select 1 from runs where id=?", (allocated,)).fetchone()
     db.execute("begin immediate")
     restore_run_schema(db, state)
@@ -621,7 +641,7 @@ def test_inverse_preserves_deleted_replacement_allocation_without_changing_basel
         assert restored == state
 
 
-@pytest.mark.parametrize("marker", ["2026-10-10.2", "2026-10-11.2", None])
+@pytest.mark.parametrize("marker", ["2026-10-10.2", "2026-10-11.1", None])
 def test_unsupported_or_malformed_store_source_is_rejected_before_bootstrap(
     tmp_path, marker
 ):
@@ -696,8 +716,14 @@ def test_preceding_marker_with_malformed_core_columns_fails_without_mutation(tmp
         before_rows = {
             table: db.execute(f'select * from "{table}"').fetchall() for table in tables
         }
-    with pytest.raises(ValueError, match="unsupported 11.1 source schema"):
-        AutoReplyStore(path)
+    from app.run_storage import migrate_run_schema
+
+    with sqlite3.connect(path) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        with pytest.raises(ValueError, match="unsupported 11.1 source schema"):
+            migrate_run_schema(db)
+        db.rollback()
     with sqlite3.connect(path) as db:
         assert (
             db.execute(
@@ -736,7 +762,7 @@ def test_fresh_store_bootstrap_on_email_only_database_keeps_email_schema_and_row
             db.execute(
                 "select value from service_state where key='store_schema_version'"
             ).fetchone()[0]
-            == "2026-10-11.2"
+            == "2026-10-11.3"
         )
 
 
@@ -857,10 +883,16 @@ def test_preceding_source_with_runs_table_is_rejected_without_adopting_mixed_lay
         before_rows = {
             table: db.execute(f'select * from "{table}"').fetchall() for table in tables
         }
-    with pytest.raises(
-        ValueError, match="unsupported 11.1 source schema: runs already exists"
-    ):
-        AutoReplyStore(path)
+    from app.run_storage import migrate_run_schema
+
+    with sqlite3.connect(path) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        with pytest.raises(
+            ValueError, match="unsupported 11.1 source schema: runs already exists"
+        ):
+            migrate_run_schema(db)
+        db.rollback()
     with sqlite3.connect(path) as db:
         assert (
             db.execute(
@@ -1035,7 +1067,7 @@ def _provider_parent_lookup_store(tmp_path, *, standalone=False):
         != 7
     )
     db.close()
-    return AutoReplyStore(path), expected
+    return current_store_with_migrated_core(tmp_path, path), expected
 
 
 @pytest.mark.parametrize("parent", [1, 3])

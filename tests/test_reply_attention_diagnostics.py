@@ -40,7 +40,7 @@ def test_reply_attention_shows_original_current_run_error_without_effect_claim(t
     with store._connect() as db:
         before = {
             table: [tuple(row) for row in db.execute(f"select * from {table}")]
-            for table in ("reply_tasks", "runs", "reply_attempts", "sent_replies")
+            for table in ("tasks", "runs", "reply_attempts", "sent_replies")
         }
     [row] = [row for row in audit_web._queue_attention_rows(store) if row["category"] == "Reply task"]
     assert row["id"] == str(task.id)

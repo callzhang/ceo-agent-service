@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.native_standalone import latest_task_ref, task_decision_value
+from app.task_storage import TASK_AGENT_RUN_SQL, WORK_SUMMARY_INPUT_SQL
 
 
 def inspect_run(db, run, decision):
@@ -62,7 +63,7 @@ def main() -> int:
     with closing(sqlite3.connect(args.db.resolve().as_uri() + "?mode=ro", uri=True)) as db:
         db.row_factory = sqlite3.Row
         item = db.execute(
-            "select id, source_type, status from work_summary_inputs where id=?",
+            f"select id, source_type, status from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
             (args.input_id,),
         ).fetchone()
         if item is None:
@@ -70,7 +71,7 @@ def main() -> int:
             return 1
         runs = db.execute(
             "select id, status, projection_json "
-            "from task_agent_runs where summary_input_id=? order by id",
+            f"from ({TASK_AGENT_RUN_SQL}) where summary_input_id=? order by id",
             (args.input_id,),
         ).fetchall()
         refs = [latest_task_ref(db, run["id"]) for run in runs]

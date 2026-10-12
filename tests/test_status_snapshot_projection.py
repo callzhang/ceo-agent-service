@@ -11,9 +11,9 @@ def database():
     db = sqlite3.connect(":memory:")
     db.row_factory = sqlite3.Row
     db.executescript("""
-        create table reply_tasks (
+        create table tasks (
             id integer primary key, status text, business_object_key text,
-            updated_at text, error text
+            updated_at text, error text, record_type text not null default 'reply_tasks'
         );
         create table business_object_tasks (
             business_object_key text primary key, reply_task_id integer
@@ -46,7 +46,7 @@ def test_queue_summary_evaluates_current_projection_once(database, snapshot):
 
 def test_reply_summary_preserves_current_business_identity_and_latest_error(database):
     database.executemany(
-        "insert into reply_tasks values(?,?,?,?,?)",
+        "insert into tasks(id,status,business_object_key,updated_at,error) values(?,?,?,?,?)",
         [
             (1, "failed", "object-a", "2026-10-12", "retired error"),
             (2, "done", "object-a", "2026-10-11", ""),
@@ -64,7 +64,7 @@ def test_reply_summary_preserves_current_business_identity_and_latest_error(data
 
 def test_reply_summary_latest_failed_tie_uses_id(database):
     database.executemany(
-        "insert into reply_tasks values(?,?,?,?,?)",
+        "insert into tasks(id,status,business_object_key,updated_at,error) values(?,?,?,?,?)",
         [(1, "failed", "", "2026-10-11", "first"),
          (2, "failed", "", "2026-10-11", "second")],
     )
@@ -97,3 +97,13 @@ def test_email_summary_preserves_plan_retry_and_latest_row_semantics(database):
     assert result["processing"] == 0
     assert result["latest_updated_at"] == "2026-10-11"
     assert result["latest_error"] == "最新\x1f错误"
+
+
+def test_reply_summary_excludes_other_task_types(database):
+    database.execute(
+        "insert into tasks(id,record_type,status,updated_at,error) values(99,'work_summary_inputs','failed','future','other-type-error')"
+    )
+    result = _reply_task_queue_snapshot(database)
+    assert result["counts"] == {}
+    assert result["failed"] == 0
+    assert result["latest_error"] == ""

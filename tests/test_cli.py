@@ -2081,8 +2081,8 @@ def test_process_okr_reviews_command_does_not_reclaim_active_dispatcher_owner(
     assert claimed is not None
     with store._connect() as db:
         db.execute(
-            "update okr_review_requests set updated_at=datetime('now', '-31 minutes') "
-            "where id=?",
+            "update tasks set updated_at=datetime('now', '-31 minutes') "
+            "where record_type='okr_review_requests' and cast(legacy_key as integer)=?",
             (request_id,),
         )
     monkeypatch.setattr(cli, "_build_okr_review_runner", lambda *_args: object())
@@ -2158,7 +2158,7 @@ def test_process_okr_reviews_command_requeues_stale_processing_request(
     assert store.acquire_codex_session_lock("cid-1", f"okr_review:{request_id}")
     with sqlite3.connect(db_path) as db:
         db.execute(
-            "update okr_review_requests set updated_at=datetime('now', '-31 minutes') where id=?",
+            "update tasks set updated_at=datetime('now', '-31 minutes') where record_type='okr_review_requests' and cast(legacy_key as integer)=?",
             (request_id,),
         )
 
@@ -2393,7 +2393,7 @@ def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatc
     assert loaded.claim_work_summary_inputs(limit=1) == []
     with loaded._connect() as db:
         status = db.execute(
-            "select status from work_summary_inputs where id=?",
+            "select status from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             (input_id,),
         ).fetchone()["status"]
     assert status == "done"
@@ -2444,7 +2444,7 @@ def test_process_work_items_command_leaves_input_pending_when_shared_session_is_
     assert loaded.get_work_summary_input(input_id).status.value == "pending"
     with loaded._connect() as db:
         row = db.execute(
-            "select attempts from work_summary_inputs where id=?",
+            "select attempts from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             (input_id,),
         ).fetchone()
     assert row["attempts"] == 0
@@ -2500,7 +2500,7 @@ def test_process_work_items_command_does_not_claim_when_lease_is_lost_before_cla
     assert store.get_work_summary_input(input_id).status.value == "pending"
     with store._connect() as db:
         row = db.execute(
-            "select attempts from work_summary_inputs where id=?",
+            "select attempts from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             (input_id,),
         ).fetchone()
     assert row["attempts"] == 0
@@ -2705,7 +2705,7 @@ def test_process_work_items_command_processes_existing_input_without_feature_gat
     assert capsys.readouterr().out == "process-work-items processed=1\n"
     with store._connect() as db:
         assert db.execute(
-            "select status from work_summary_inputs where id=?", (input_id,)
+            "select status from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?", (input_id,)
         ).fetchone()["status"] == "done"
 def test_process_work_items_command_reclaims_stale_processing_input(
     tmp_path,
@@ -2781,7 +2781,7 @@ def test_process_work_items_command_reclaims_stale_processing_input(
     claimed = store.claim_work_summary_inputs(limit=1)
     with store._connect() as db:
         db.execute(
-            "update work_summary_inputs set updated_at=datetime('now', '-25 minutes') where id=?",
+            "update tasks set updated_at=datetime('now', '-25 minutes') where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             (claimed[0].id,),
         )
 
@@ -2794,7 +2794,7 @@ def test_process_work_items_command_reclaims_stale_processing_input(
     assert capsys.readouterr().out == "process-work-items processed=1\n"
     with loaded._connect() as db:
         row = db.execute(
-            "select status, attempts from work_summary_inputs where id=?",
+            "select status, attempts from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             (input_id,),
         ).fetchone()
     assert dict(row) == {"status": "done", "attempts": 1}
@@ -2866,10 +2866,10 @@ def test_process_work_items_command_does_not_batch_claim_after_failure(
     with AutoReplyStore(db_path)._connect() as db:
         rows = db.execute(
             """
-            select id, status, attempts, error
-            from work_summary_inputs
-            where id in (?, ?)
-            order by id
+            select cast(legacy_key as integer) as id, status, attempts, error
+            from tasks
+            where record_type='work_summary_inputs' and cast(legacy_key as integer) in (?, ?)
+            order by cast(legacy_key as integer)
             """,
             (first_id, second_id),
         ).fetchall()
@@ -2935,8 +2935,8 @@ def test_process_work_items_command_backoffs_transient_codex_failure(
         row = db.execute(
             """
             select status, attempts, error, available_at
-            from work_summary_inputs
-            where id=?
+            from tasks
+            where record_type='work_summary_inputs' and cast(legacy_key as integer)=?
             """,
             (input_id,),
         ).fetchone()
@@ -2999,8 +2999,8 @@ def test_process_work_items_command_fails_native_codex_missing_auth_header(
         row = db.execute(
             """
             select status, attempts, error, available_at
-            from work_summary_inputs
-            where id=?
+            from tasks
+            where record_type='work_summary_inputs' and cast(legacy_key as integer)=?
             """,
             (input_id,),
         ).fetchone()
@@ -3062,7 +3062,7 @@ def test_process_work_items_command_keeps_native_missing_header_terminal_after_l
     )
     with store._connect() as db:
         db.execute(
-            "update work_summary_inputs set attempts=3 where id=?",
+            "update tasks set attempts=3 where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             (input_id,),
         )
 
@@ -3076,8 +3076,8 @@ def test_process_work_items_command_keeps_native_missing_header_terminal_after_l
         row = db.execute(
             """
             select status, attempts, error, available_at
-            from work_summary_inputs
-            where id=?
+            from tasks
+            where record_type='work_summary_inputs' and cast(legacy_key as integer)=?
             """,
             (input_id,),
         ).fetchone()
@@ -3130,7 +3130,7 @@ def test_process_work_items_command_fails_codex_transport_failure_after_limit(
     )
     with store._connect() as db:
         db.execute(
-            "update work_summary_inputs set attempts=3 where id=?",
+            "update tasks set attempts=3 where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             (input_id,),
         )
 
@@ -3144,8 +3144,8 @@ def test_process_work_items_command_fails_codex_transport_failure_after_limit(
         row = db.execute(
             """
             select status, attempts, error, available_at
-            from work_summary_inputs
-            where id=?
+            from tasks
+            where record_type='work_summary_inputs' and cast(legacy_key as integer)=?
             """,
             (input_id,),
         ).fetchone()
@@ -3200,7 +3200,7 @@ def test_process_work_items_pauses_after_codex_capacity_exhaustion(
         )
     with store._connect() as db:
         db.execute(
-            "update work_summary_inputs set attempts=3 where source_ref='1'"
+            "update tasks set attempts=3 where record_type='work_summary_inputs' and source_ref='1'"
         )
 
     assert process_work_items_command(
@@ -3210,7 +3210,7 @@ def test_process_work_items_pauses_after_codex_capacity_exhaustion(
 
     with AutoReplyStore(db_path)._connect() as db:
         rows = db.execute(
-            "select status, attempts, error from work_summary_inputs order by id"
+            "select status, attempts, error from tasks where record_type='work_summary_inputs' order by cast(legacy_key as integer)"
         ).fetchall()
     assert [(row["status"], row["attempts"], row["error"]) for row in rows] == [
         ("pending", 3, "codex_provider_capacity_exhausted"),
@@ -3262,7 +3262,7 @@ def test_work_summary_process_failure_continues_prior_capacity_wait(
         ).model_dump_json(),
     )
     with store._connect() as db:
-        db.execute("update work_summary_inputs set attempts=3 where id=?", (input_id,))
+        db.execute("update tasks set attempts=3 where record_type='work_summary_inputs' and cast(legacy_key as integer)=?", (input_id,))
 
     settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
     assert process_work_items_command(settings) == 0
@@ -3272,7 +3272,7 @@ def test_work_summary_process_failure_continues_prior_capacity_wait(
     store.set_service_state("codex_capacity_pause", json.dumps(state))
     with store._connect() as db:
         db.execute(
-            "update work_summary_inputs set available_at='' where id=?",
+            "update tasks set available_at='' where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             (input_id,),
         )
 
@@ -3281,7 +3281,7 @@ def test_work_summary_process_failure_continues_prior_capacity_wait(
 
     with store._connect() as db:
         row = db.execute(
-            "select status, attempts, error from work_summary_inputs where id=?",
+            "select status, attempts, error from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             (input_id,),
         ).fetchone()
     assert (row["status"], row["attempts"], row["error"]) == (
@@ -3335,7 +3335,7 @@ def test_process_work_items_command_fails_typed_external_failure_after_limit(
     )
     with store._connect() as db:
         db.execute(
-            "update work_summary_inputs set attempts=3 where id=?",
+            "update tasks set attempts=3 where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             (input_id,),
         )
 
@@ -3347,7 +3347,7 @@ def test_process_work_items_command_fails_typed_external_failure_after_limit(
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     with AutoReplyStore(db_path)._connect() as db:
         row = db.execute(
-            "select status, error, available_at from work_summary_inputs where id=?",
+            "select status, error, available_at from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             (input_id,),
         ).fetchone()
     assert row["status"] == "failed"
@@ -3406,8 +3406,8 @@ def test_process_work_items_command_fails_missing_memory_recall_tool_event(
         row = db.execute(
             """
             select status, attempts, error, available_at
-            from work_summary_inputs
-            where id=?
+            from tasks
+            where record_type='work_summary_inputs' and cast(legacy_key as integer)=?
             """,
             (input_id,),
         ).fetchone()
@@ -3468,8 +3468,8 @@ def test_process_work_items_command_discards_cross_project_follow_up_draft(
         row = db.execute(
             """
             select status, attempts, error
-            from work_summary_inputs
-            where id=?
+            from tasks
+            where record_type='work_summary_inputs' and cast(legacy_key as integer)=?
             """,
             (input_id,),
         ).fetchone()
@@ -4749,16 +4749,16 @@ def test_send_attempt_command_refuses_unavailable_original_without_queue(
             provenance = store._reply_input_provenance(original.trigger_text, original.trigger_message_json)
             with sqlite3.connect(settings.db_path) as db:
                 db.execute(
-                    "update reply_task_inputs set input_compacted=1, trigger_text='', "
-                    "trigger_message_json='', input_provenance_json=? where id in "
-                    "(select current_input_id from reply_tasks where conversation_id='cid-1')",
+                    "update tasks set input_compacted=1, trigger_text='', "
+                    "trigger_message_json='', input_provenance_json=? where record_type='reply_task_inputs' and id in "
+                    "(select current_input_id from tasks where record_type='reply_tasks' and conversation_id='cid-1')",
                     (provenance,),
                 )
         else:
             with sqlite3.connect(settings.db_path) as db:
                 db.execute(
-                    "update reply_task_inputs set trigger_message_json='{}' "
-                    "where id in (select current_input_id from reply_tasks where conversation_id='cid-1')"
+                    "update tasks set trigger_message_json='{}' "
+                    "where record_type='reply_task_inputs' and id in (select current_input_id from tasks where record_type='reply_tasks' and conversation_id='cid-1')"
                 )
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1", conversation_title="Friday",
@@ -4822,9 +4822,9 @@ def test_send_attempt_email_requires_exact_uncompacted_action_payload(
         provenance = store._reply_input_provenance(original.trigger_text, original.trigger_message_json)
         with sqlite3.connect(settings.db_path) as db:
             db.execute(
-                "update reply_task_inputs set input_compacted=1, trigger_text='', "
-                "trigger_message_json='', input_provenance_json=? where id in "
-                "(select current_input_id from reply_tasks where channel='email')",
+                "update tasks set input_compacted=1, trigger_text='', "
+                "trigger_message_json='', input_provenance_json=? where record_type='reply_task_inputs' and id in "
+                "(select current_input_id from tasks where record_type='reply_tasks' and channel='email')",
                 (provenance,),
             )
         with pytest.raises(SystemExit, match="original trigger is unavailable"):
@@ -5012,10 +5012,10 @@ def test_send_attempt_command_rotates_pending_task_with_previous_error(
     with sqlite3.connect(settings.db_path) as db:
         db.execute(
             """
-            update reply_tasks
+            update tasks
             set error='reviewed_write_not_authorized',
                 available_at='2099-01-01 00:00:00'
-            where id=?
+            where record_type='reply_tasks' and id=?
             """,
             (first["task_id"],),
         )
@@ -8085,7 +8085,7 @@ def test_run_service_requeues_processing_work_summary_inputs_on_startup(
 
     with store._connect() as db:
         row = db.execute(
-            "select status, attempts, error from work_summary_inputs where id=?",
+            "select status, attempts, error from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             (input_id,),
         ).fetchone()
     errors = store.list_errors(limit=10)
@@ -8678,7 +8678,7 @@ def test_process_work_items_waits_for_paused_routes_without_spending_attempts(
         ).model_dump_json(),
     )
     with store._connect() as db:
-        db.execute("update work_summary_inputs set attempts=3 where id=?", (input_id,))
+        db.execute("update tasks set attempts=3 where record_type='work_summary_inputs' and cast(legacy_key as integer)=?", (input_id,))
 
     settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
     assert process_work_items_command(settings) == 0
@@ -8686,7 +8686,7 @@ def test_process_work_items_waits_for_paused_routes_without_spending_attempts(
 
     with store._connect() as db:
         row = db.execute(
-            "select status, attempts, error, available_at from work_summary_inputs where id=?",
+            "select status, attempts, error, available_at from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             (input_id,),
         ).fetchone()
         error_rows = db.execute("select count(*) from errors").fetchone()[0]
@@ -8756,7 +8756,7 @@ def test_process_work_items_waits_for_provider_outage_after_failed_attempt_witho
     store = AutoReplyStore(db_path)
     input_id = _route_outage_work_input(store)
     with store._connect() as db:
-        db.execute("update work_summary_inputs set attempts=3 where id=?", (input_id,))
+        db.execute("update tasks set attempts=3 where record_type='work_summary_inputs' and cast(legacy_key as integer)=?", (input_id,))
 
     settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
     assert process_work_items_command(settings) == 0
@@ -8764,7 +8764,7 @@ def test_process_work_items_waits_for_provider_outage_after_failed_attempt_witho
 
     with store._connect() as db:
         row = db.execute(
-            "select status, attempts, error, available_at from work_summary_inputs where id=?",
+            "select status, attempts, error, available_at from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             (input_id,),
         ).fetchone()
         error_rows = db.execute("select count(*) from errors").fetchone()[0]
@@ -8809,7 +8809,7 @@ def test_process_work_items_keeps_execution_failures_bounded(
     store = AutoReplyStore(db_path)
     input_id = _route_outage_work_input(store)
     with store._connect() as db:
-        db.execute("update work_summary_inputs set attempts=3 where id=?", (input_id,))
+        db.execute("update tasks set attempts=3 where record_type='work_summary_inputs' and cast(legacy_key as integer)=?", (input_id,))
 
     settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
     assert process_work_items_command(settings) == 0
@@ -8817,7 +8817,7 @@ def test_process_work_items_keeps_execution_failures_bounded(
 
     with store._connect() as db:
         row = db.execute(
-            "select status, attempts, error from work_summary_inputs where id=?",
+            "select status, attempts, error from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
             (input_id,),
         ).fetchone()
         error_rows = db.execute("select kind, detail from errors").fetchall()

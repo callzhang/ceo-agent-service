@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.run_storage import insert_run
 from app.store import AutoReplyStore
+from app.task_storage import REPLY_TASK_SQL, task_physical_id
 from app.web_api.attempts import _runtime_payload
 from app.web_api.registration import register_console_routes
 
@@ -38,14 +39,14 @@ def _seed_task_history(store: AutoReplyStore) -> tuple[int, int]:
     with store._connect() as db:
         task_id = int(
             db.execute(
-                "select id from reply_tasks where conversation_id=? and trigger_message_id=?",
+                f"select id from ({REPLY_TASK_SQL}) where conversation_id=? and trigger_message_id=?",
                 (conversation_id, trigger_message_id),
             ).fetchone()[0]
         )
         historical_audit_run_id = int(
             insert_run(
                 db, 'agent_runs', {
-                    'task_id': task_id,
+                    'task_id': task_physical_id(db, 'reply_tasks', task_id),
                     'execution_generation': 'historical-generation',
                     'role': 'audit',
                     'status': 'completed',
@@ -56,7 +57,7 @@ def _seed_task_history(store: AutoReplyStore) -> tuple[int, int]:
         current_consumer_run_id = int(
             insert_run(
                 db, 'agent_runs', {
-                    'task_id': task_id,
+                    'task_id': task_physical_id(db, 'reply_tasks', task_id),
                     'execution_generation': 'current-generation',
                     'role': 'consumer',
                     'status': 'completed',
@@ -67,7 +68,7 @@ def _seed_task_history(store: AutoReplyStore) -> tuple[int, int]:
         current_audit_run_id = int(
             insert_run(
                 db, 'agent_runs', {
-                    'task_id': task_id,
+                    'task_id': task_physical_id(db, 'reply_tasks', task_id),
                     'execution_generation': 'current-generation',
                     'role': 'audit',
                     'status': 'completed',

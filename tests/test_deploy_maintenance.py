@@ -1,6 +1,7 @@
 import pytest
 
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, insert_run
+from app.task_storage import REPLY_TASK_SQL, task_id_expression
 from app.deploy import deploy
 
 
@@ -86,8 +87,8 @@ def test_real_interrupted_recovery_preserves_identity_and_verified_backup(tmp_pa
     EmailStore(path)
     native_end = native_events(path, task_id, monkeypatch, {'type': 'AgentMessage', 'text': 'preparing'})
     with sqlite3.connect(path) as db:
-        db.execute("update reply_tasks set status='processing' where id=?", (task_id,))
-        db.execute("update runs set status='running',completed_at='' where record_type='agent_runs' and task_id=?", (task_id,))
+        db.execute("update tasks set status='processing' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task_id,))
+        db.execute(f"update runs set status='running',completed_at='' where record_type='agent_runs' and task_id={task_id_expression('reply_tasks', '?')}", (task_id,))
         run_id = db.execute(f'select id from ({AGENT_RUN_SQL}) where reply_task_id=?', (task_id,)).fetchone()[0]
         insert_run(
             db, 'agent_runtime_attempts', {
@@ -104,11 +105,11 @@ def test_real_interrupted_recovery_preserves_identity_and_verified_backup(tmp_pa
                 'transcript_end': native_end,
             },
         )
-        before = db.execute('select execution_generation,input_version,business_object_key,attempts from reply_tasks where id=?', (task_id,)).fetchone()
+        before = db.execute(f'select execution_generation,input_version,business_object_key,attempts from ({REPLY_TASK_SQL}) where id=?', (task_id,)).fetchone()
     prepare_maintenance(path, (task_id,), 'test-maintenance', check_maintenance(path, (task_id,)))
     with sqlite3.connect(path) as db:
-        assert db.execute('select execution_generation,input_version,business_object_key,attempts from reply_tasks where id=?', (task_id,)).fetchone() == before
-        assert db.execute('select status from reply_tasks where id=?', (task_id,)).fetchone()[0] == 'pending'
+        assert db.execute(f'select execution_generation,input_version,business_object_key,attempts from ({REPLY_TASK_SQL}) where id=?', (task_id,)).fetchone() == before
+        assert db.execute(f'select status from ({REPLY_TASK_SQL}) where id=?', (task_id,)).fetchone()[0] == 'pending'
         assert db.execute(f'select status from ({AGENT_RUN_SQL}) where id=?', (run_id,)).fetchone()[0] == 'failed'
         assert db.execute(f'select failure_code from ({RUNTIME_ATTEMPT_SQL}) where agent_run_id=?', (run_id,)).fetchone()[0] == 'service_restart_interrupted'
         receipt = json.loads(db.execute("select value from service_state where key='deployment_maintenance_receipt'").fetchone()[0])
@@ -116,7 +117,7 @@ def test_real_interrupted_recovery_preserves_identity_and_verified_backup(tmp_pa
     backup = Path(receipt['verified_backup'])
     assert backup_is_complete(backup)
     with sqlite3.connect(backup) as db:
-        assert db.execute('select status from reply_tasks where id=?', (task_id,)).fetchone()[0] == 'processing'
+        assert db.execute(f'select status from ({REPLY_TASK_SQL}) where id=?', (task_id,)).fetchone()[0] == 'processing'
         assert db.execute('pragma integrity_check').fetchone()[0] == 'ok'
 
 
@@ -136,7 +137,7 @@ def test_post_stop_race_rejected_before_recovery_or_backup(tmp_path, monkeypatch
         elif effect == 'unknown_tool':
             native_events(path, task_id, monkeypatch, {'type': 'CommandExecution'})
         else:
-            db.execute("update reply_tasks set status='processing' where id=?", (task_id,))
+            db.execute("update tasks set status='processing' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task_id,))
     allowed = () if effect == 'other_task' else (task_id,)
     with pytest.raises(UpgradePreconditionError):
         prepare_maintenance(path, allowed, 'rejected', snapshot)
