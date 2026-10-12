@@ -5,26 +5,54 @@ import sqlite3
 
 import pytest
 
-from app.store import AgentRunLeaseLostError, AutoReplyStore, STORE_SCHEMA_VERSION
+from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.task_storage import RETIRED_TASK_TABLES, migrate_task_schema
 from tests.test_task_storage import source_database
+from tests.workbench_caller_fixtures import empty_source13
+
+
+def original_rows_source13(path, source_factory=source_database):
+    """Keep every original business row on independently captured source13 DDL."""
+    with closing(source_factory(path.with_suffix(".original.sqlite3"))) as original:
+        original.execute("begin immediate")
+        migrate_task_schema(original)
+        original.commit()
+        with empty_source13(path) as db:
+            for table, sql in original.execute(
+                "select name,sql from sqlite_master where type='table' "
+                "and name not like 'sqlite_%' and name<>'service_state'"
+            ).fetchall():
+                if not db.execute("select 1 from sqlite_master where name=?", (table,)).fetchone():
+                    db.execute(sql)
+                    for (object_sql,) in original.execute(
+                        "select sql from sqlite_master where tbl_name=? "
+                        "and type<>'table' and sql is not null", (table,),
+                    ):
+                        db.execute(object_sql)
+                db.execute(f'delete from "{table}"')
+                columns = [row[1] for row in original.execute(f'pragma table_info("{table}")')]
+                rows = original.execute(f'select * from "{table}"').fetchall()
+                column_sql = ','.join(f'"{column}"' for column in columns)
+                if rows:
+                    placeholders = ','.join('?' for _ in columns)
+                    db.executemany(f'insert into "{table}" ({column_sql}) values ({placeholders})', rows)
+                assert db.execute(f'select {column_sql} from "{table}" order by rowid').fetchall() == original.execute(
+                    f'select {column_sql} from "{table}" order by rowid'
+                ).fetchall()
+            for name, seq in original.execute("select name,seq from sqlite_sequence"):
+                db.execute("update sqlite_sequence set seq=? where name=?", (seq, name))
 
 
 @pytest.fixture(params=("fresh", "migrated"))
 def typed_runtime(request, tmp_path, monkeypatch):
     path = tmp_path / "runtime.db"
     if request.param == "migrated":
-        # Migrate the independent captured 11.2 fixture, then exercise the real
-        # current-schema repair/bootstrap path for its unrelated absent tables.
-        with closing(source_database(path)) as db:
-            db.execute("begin immediate")
-            db.execute("update work_summary_inputs set source_type='local_file' where id=2")
-            migrate_task_schema(db)
-            db.execute(
-                "update service_state set value=? where key='store_schema_version'",
-                (STORE_SCHEMA_VERSION,),
-            )
-            db.commit()
+        original_rows_source13(path)
+        # Preserve this reader's original local-file recovery input on source13.
+        with sqlite3.connect(path) as db:
+            db.execute("update tasks set source_type='local_file' "
+                       "where record_type='work_summary_inputs' and legacy_key='2'")
+        AutoReplyStore(path)  # Publish the complete source before observing typed readers.
 
     accesses = set()
     retired_accesses = []

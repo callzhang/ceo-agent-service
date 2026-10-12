@@ -3477,14 +3477,21 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 current_generation_filter = (
                     f"and not {external_task_error_sql(error_column)}"
                 )
+            candidate_sql = (
+                f"select cast(legacy_key as integer) from tasks "
+                f"where record_type='work_summary_inputs' "
+                f"and lower({status_column}) in ({status_placeholders})"
+                if table == "work_summary_inputs"
+                else f"select id from {source_table} "
+                     f"where lower({status_column}) in ({status_placeholders})"
+            )
             sql = f"""
                 select id, {status_column} as status, {context_column} as context,
                        {summary_column} as summary, {updated_column} as updated_at,
                        {error_column} as error
                 from {source_table}
                 where id in (
-                    select id from {source_table}
-                    where lower({status_column}) in ({status_placeholders})
+                    {candidate_sql}
                 )
                   {current_generation_filter}
                 order by

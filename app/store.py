@@ -17283,7 +17283,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 for row in db.execute(
                     """
                     with missing as materialized (
-                        select cast(jobs.legacy_key as integer) as id
+                        select jobs.id
                         from tasks as jobs
                         where jobs.record_type='meeting_alignment_jobs'
                           and jobs.status='sent'
@@ -17292,10 +17292,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                               where events.meeting_job_id=jobs.id
                           )
                     )
-                    select cast(jobs.legacy_key as integer) as id
+                    select jobs.id
                     from missing
-                    join tasks as jobs on jobs.record_type='meeting_alignment_jobs'
-                      and cast(jobs.legacy_key as integer)=missing.id
+                    join tasks as jobs on jobs.id=missing.id
+                      and jobs.record_type='meeting_alignment_jobs'
                     where trim(jobs.final_message)<>''
                     """
                 )
@@ -17312,7 +17312,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 select jobs.id, lower(hex(randomblob(16))), '{{}}'
                 from tasks as jobs
                 where jobs.record_type='meeting_alignment_jobs'
-                  and cast(jobs.legacy_key as integer) in ({placeholders})
+                  and jobs.id in ({placeholders})
                   and jobs.status='sent'
                   and trim(jobs.final_message)<>''
                   and not exists (

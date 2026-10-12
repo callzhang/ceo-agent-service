@@ -1925,3 +1925,11 @@ Phase4C Attention 定时错误读取以原event_id或规范scheduled-task-run:<�
 两路以UNION ALL组合，事件身份和conversation身份互相矛盾时仍沿用原“任一路匹配”
 语义；不新增身份收紧政策。定位使用既有event/public-ID索引，不新增schema/index/helper。
 原2,000VM步预算和只读合同保留；采样进度回调数不表示精确总指令数。
+
+
+Phase4C 查询性能边界：数字ID投影显式包含已有部分索引的类型条件，SQLite可使用
+idx_tasks_public_id完成按公共ID查找；TEXT投影不加入此条件。Work Attention先从
+work_summary_inputs类型的scalar状态记录筛出公共ID，再读取所选输入正文；无关类型
+增长不扩大其候选扫描。会议Memory入队的missing候选、主键连接和事务复核使用
+现有物理任务ID；meeting_memory_write_events仍保存物理父FK，对外还原公共ID，
+已入队记录正文不参与候选检查。状态、排序、limit、去重与竞争复核规则不变。

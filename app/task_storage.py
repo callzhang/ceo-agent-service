@@ -618,7 +618,11 @@ def _projection(record_type: str) -> str:
         else:
             value = "t." + COLUMN_MAP.get(field, field)
         fields.append(value + " as " + field)
-    return f"select {','.join(fields)} from tasks t where t.record_type='{record_type}'"
+    predicate = f"t.record_type='{record_type}'"
+    if record_type not in TEXT_TASK_TYPES:
+        # SQLite cannot infer this partial-index predicate from one type equality.
+        predicate += " and t.record_type not in ('workbench_tasks','workbench_turns')"
+    return f"select {','.join(fields)} from tasks t where {predicate}"
 
 
 TASK_PROJECTIONS = {record_type: _projection(record_type) for record_type in TASK_TYPES}

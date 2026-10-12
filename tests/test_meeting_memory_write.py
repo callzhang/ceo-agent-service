@@ -744,8 +744,9 @@ def test_idle_meeting_memory_enqueue_does_not_wait_for_writer(
         writer.close()
 
 
+@pytest.mark.parametrize("public_offset", [0, 1000])
 def test_meeting_memory_enqueue_does_not_read_already_enqueued_bodies(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, public_offset: int,
 ) -> None:
     store = AutoReplyStore(tmp_path / "enqueue-history.sqlite3")
     for index in range(4):
@@ -753,6 +754,15 @@ def test_meeting_memory_enqueue_does_not_read_already_enqueued_bodies(
     assert store.enqueue_sent_meeting_memory_write_events() == 4
     missing_id = _store_sent_job(store, meeting_id="new-conclusion")
     store.update_meeting_alignment_job(missing_id, final_message="new delivered conclusion")
+    with store._connect() as db:
+        physical_id = db.execute(
+            "select id from tasks where record_type='meeting_alignment_jobs' and legacy_key=?",
+            (str(missing_id),),
+        ).fetchone()[0]
+        if public_offset:
+            db.execute("update tasks set legacy_key=cast(cast(legacy_key as integer)+? as text) "
+                       "where record_type='meeting_alignment_jobs'", (public_offset,))
+            assert physical_id != missing_id + public_offset
     original_open = store._open_connection
     checked_bodies = []
 
@@ -769,6 +779,12 @@ def test_meeting_memory_enqueue_does_not_read_already_enqueued_bodies(
     monkeypatch.setattr(store, "_open_connection", recording_connection)
     assert store.enqueue_sent_meeting_memory_write_events() == 1
     assert checked_bodies == ["new delivered conclusion", "new delivered conclusion"]
+    with store._connect() as db:
+        assert db.execute(
+            "select meeting_job_id from meeting_memory_write_events order by id desc limit 1"
+        ).fetchone()[0] == physical_id
+    events = store.list_due_meeting_memory_write_events(now="2099-01-01T00:00:00Z", limit=10)
+    assert events[-1].meeting_job_id == missing_id + public_offset
 
 
 def test_meeting_memory_enqueue_rechecks_competing_enqueue(
