@@ -1,5 +1,33 @@
 # Current Runtime Mechanism
 
+`retry-source-verified-email-action --account ... --action-id ...` examines one
+current failed move/trash action through the existing read-only IMAP wrapper.
+Preview opens SQLite read-only without schema initialization. Only an exact
+message still in its source can be released with `--apply`; missing, ambiguous,
+already moved or changed identities are not retried. The transaction checks the
+current plan, parameters, config version, failure snapshot, dependencies and
+active sibling claims. It schedules one attempt using `next_attempt_at`, keeps
+the failed status and immutable attempt history, and does not reset the counter.
+The normal worker consumes that schedule before calling the provider; another
+failure does not renew this explicit allowance. Dry-run refuses `--apply`.
+Schema 51 records the source-readback digest and exact next attempt number in
+the immutable `email_direct_retry_requests` relation. Provider-factory failures
+and interrupted-worker recovery also consume this one-attempt allowance rather
+than renewing it. Deployment requires a verified backup and the matched 50-to-51
+publication inverse; rollback removes only an empty request relation and refuses
+to discard any recorded recovery authorization. Readback exceptions close the
+session opened by the examination worker before propagating the error.
+Duplicate-key inserts, including SQLite `INSERT OR REPLACE`, are rejected by
+the authorization relation alongside updates and deletes.
+Authorization includes a canonical non-secret snapshot of the IMAP account identity,
+transport, credential reference and move mode captured by the read-only factory.
+The release transaction and both normal-worker claim paths compare it against
+the current account configuration; a changed configuration cannot consume that
+old authorization.
+Missing captured configuration evidence is rejected rather than inferred from
+the current database. A changed configuration is also shown and counted as
+blocked, not as automatically retriable; authorization and failure history remain.
+
 Audit field-error feedback must cite the exact JSON path, literal value and type
 from the current digest-bound candidate. Prior revision feedback is not evidence
 of the current field value. Quoted numeric identifiers remain strings; an

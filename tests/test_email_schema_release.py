@@ -15,8 +15,19 @@ INDEX_SQL = (f"CREATE INDEX {LOOKUP_INDEX} ON email_provider_observations"
              "(account_id,stable_message_identity,observed_at desc)")
 
 
-def test_schema50_publication_has_verified_inverse_for_empty_cancellation_relation(tmp_path):
+def _migrate_schema50(_root, path):
     from app.email_store import EmailStore
+
+    # Exercise the historical transition, not the latest startup migrator.
+    store = EmailStore.__new__(EmailStore)
+    with sqlite3.connect(path) as db:
+        db.execute("create table email_unsubscribe_cancellations ("
+                   "action_identity text primary key check(trim(action_identity) != ''),"
+                   "decision_json text not null check(json_valid(decision_json)))")
+        store._migrate_v49_to_v50(db)
+
+
+def test_schema50_publication_has_verified_inverse_for_empty_cancellation_relation(tmp_path):
     from tests.test_email_unsubscribe_direct import _seed, CLASSIFICATION_ID
 
     root = tmp_path / "target"
@@ -27,12 +38,13 @@ def test_schema50_publication_has_verified_inverse_for_empty_cancellation_relati
     store = _seed(database)
     original = store.get_classification(CLASSIFICATION_ID)
     with sqlite3.connect(database) as db:
+        db.execute("drop table email_direct_retry_requests")
         db.execute("drop table email_unsubscribe_cancellations")
         db.execute("delete from email_schema_migrations where version>=50")
         db.execute("insert or ignore into email_schema_migrations(version,applied_at) values (49,'original')")
     publication = prepare_email_schema_release(root, database)
     assert publication is not None
-    publication.migrate = lambda _root, path: EmailStore(path)
+    publication.migrate = _migrate_schema50
     publication.publish()
     publication.verify_loaded()
     publication.rollback()
@@ -46,9 +58,8 @@ def test_schema50_publication_has_verified_inverse_for_empty_cancellation_relati
 
 
 @pytest.mark.parametrize("protected", ["decision", "unknown_execution"])
-def test_schema50_rollback_refuses_new_human_decision_or_unknown_effect(tmp_path, protected):
+def test_schema50_rollback_refuses_new_human_decision_or_unknown_effect(tmp_path, protected, monkeypatch):
     from hashlib import sha256
-    from app.email_store import EmailStore
     from app.email_browser_profile import EmailBrowserProfile
     from tests.test_email_unsubscribe_direct import _operation, ACTION_IDENTITY
 
@@ -58,12 +69,14 @@ def test_schema50_rollback_refuses_new_human_decision_or_unknown_effect(tmp_path
     operation, task, store, _browser = _operation(tmp_path, [])
     database = tmp_path / "direct-unsubscribe.sqlite3"
     with sqlite3.connect(database) as db:
+        db.execute("drop table email_direct_retry_requests")
         db.execute("drop table email_unsubscribe_cancellations")
         db.execute("delete from email_schema_migrations where version>=50")
         db.execute("insert or ignore into email_schema_migrations(version,applied_at) values (49,'original')")
     publication = prepare_email_schema_release(root, database)
-    publication.migrate = lambda _root, path: EmailStore(path)
+    publication.migrate = _migrate_schema50
     publication.publish()
+    monkeypatch.setattr("app.email_store.EMAIL_SCHEMA_VERSION", 50)
     if protected == "decision":
         operation.task_store.fail_reply_task(task.id, "failed", expected_execution_generation=task.execution_generation)
         store.cancel_failed_email_unsubscribe_task(
