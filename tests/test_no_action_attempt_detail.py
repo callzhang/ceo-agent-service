@@ -1,4 +1,5 @@
 from app.store import AgentRole, AutoReplyStore
+from app.task_storage import task_physical_id
 from app.web_api.attempts import build_attempt_detail
 from tests.support.candidate_review import complete_synthetic_approval
 
@@ -37,7 +38,10 @@ def test_audited_no_action_detail_preserves_skipped_without_rewriting_history(tm
     )
     with store._connect() as db:
         db.execute('update reply_attempts set agent_run_id=? where id=?', (audit.id, attempt_id))
-        db.execute("update reply_tasks set status='done' where id=?", (task.id,))
+        db.execute(
+            "update tasks set status='done' where record_type='reply_tasks' and id=?",
+            (task_physical_id(db, "reply_tasks", task.id),),
+        )
     original_attempt = store.get_reply_attempt(attempt_id)
     original_task = store.get_reply_task(task.id)
     status, detail = build_attempt_detail(store, attempt_id)
