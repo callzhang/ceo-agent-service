@@ -125,6 +125,51 @@
       "artifact_directory": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-native-api-consumer-fixed-atww8hah/consumer-cold",
       "events_sha256": "a3b2cee1b3e38b3854c70e7586319f872b01b18ffc170ecf72081d302ffb6902",
       "harness_error": false
+    },
+    {
+      "route": "qwen_gpu4",
+      "role": "audit",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": true,
+      "session_id": "01a12db6-6a66-7ee3-a083-ea4c04bd5ae0",
+      "same_session": true,
+      "canonical_valid": false,
+      "payload_exact": false,
+      "summary_matches_nonce": false,
+      "native_schema_valid": false,
+      "turn_completed": false,
+      "parse_error": "ResultParseError",
+      "passed": false,
+      "source_calls": 42,
+      "control": "marker-only same Task/schema/effort/deadline",
+      "artifact_directory": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-native-qwen-audit-source-control-7_aq35d4/audit-cold"
+    },
+    {
+      "route": "qwen_gpu4",
+      "role": "audit",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12dba-4fc9-7df3-ae3c-f8929b9cc019",
+      "same_session": true,
+      "canonical_valid": true,
+      "payload_exact": true,
+      "summary_matches_nonce": true,
+      "native_schema_valid": true,
+      "turn_completed": true,
+      "passed": true,
+      "source_calls": 1,
+      "control": "marker-only, only effort changed medium to low",
+      "artifact_directory": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-native-qwen-audit-effort-control-6flqtgcg/audit-cold",
+      "tool_arguments_exact": true
     }
-  ]
+  ],
+  "checkpoint_template": {
+    "model_repository": "gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090",
+    "revision": "35fd99fb8434ef70ee61372df3face5174bed2c8",
+    "chat_template_sha256": "0a20a4673d45476ed88dcb4a60b6af35ca202ae470fee6fd2bd419758aabd9ab",
+    "confirmed_behavior": "vLLM Responses forwards reasoning_effort into chat-template kwargs. Cached template enables thinking for low and medium; low adds brief/focused/direct-conclusion instruction, medium leaves reasoning_instructions empty.",
+    "causal_boundary": "paired result is diagnostic evidence; no complete mechanism attribution, production effort change or fallback"
+  }
 }
