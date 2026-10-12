@@ -1,0 +1,329 @@
+{
+  "release": "29e01567",
+  "checks": [
+    {
+      "path": "/healthz",
+      "http": 200,
+      "seconds": 0.024,
+      "total": null
+    },
+    {
+      "path": "/api/console/status",
+      "http": 200,
+      "seconds": 0.441,
+      "status_keys": [
+        "service",
+        "system_health",
+        "components",
+        "connectors",
+        "email",
+        "meeting_memory_health",
+        "wechat",
+        "queues",
+        "dispatcher_queues",
+        "attention_rows",
+        "human_decision_rows",
+        "database",
+        "summary"
+      ],
+      "queues": [
+        {
+          "name": "Reply tasks",
+          "table": "reply_tasks (current business-object projection)",
+          "counts": {
+            "done": 6969,
+            "failed": 1,
+            "needs_human": 3,
+            "skipped": 107
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 1,
+          "retryable": 0,
+          "latest_updated_at": "2026-10-12 01:08:35",
+          "latest_error": "audit_revision_exhausted"
+        },
+        {
+          "name": "Reply attempts",
+          "table": "reply_attempts (current trigger state)",
+          "counts": {
+            "calendar": 14,
+            "commented": 27,
+            "completed": 1085,
+            "decision_selected": 4,
+            "failed": 1,
+            "needs_human": 3,
+            "reacted": 367,
+            "recovered": 67,
+            "sent": 1721,
+            "skipped": 3704
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 1,
+          "retryable": 0,
+          "latest_updated_at": "2026-10-12 01:05:37",
+          "latest_error": "audit_revision_exhausted"
+        },
+        {
+          "name": "Work items",
+          "table": "work_summary_inputs",
+          "counts": {
+            "done": 4682,
+            "skipped": 4402
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "2026-10-11 16:12:28",
+          "latest_error": ""
+        },
+        {
+          "name": "Email classifications",
+          "table": "email_agent_classification_tasks",
+          "counts": {
+            "done": 1348
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "2026-10-11T00:22:40.458238+00:00",
+          "latest_error": ""
+        },
+        {
+          "name": "Follow-ups",
+          "table": "follow_up_drafts",
+          "counts": {
+            "cancelled": 20,
+            "completed": 162,
+            "sent": 1085,
+            "skipped": 1210
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "2026-09-25 05:09:46",
+          "latest_error": ""
+        },
+        {
+          "name": "Meeting jobs",
+          "table": "meeting_alignment_jobs",
+          "counts": {
+            "no_action": 85,
+            "sent": 537,
+            "skipped": 59
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "2026-10-11 10:13:59",
+          "latest_error": ""
+        },
+        {
+          "name": "OKR reviews",
+          "table": "okr_review_requests",
+          "counts": {
+            "done": 19,
+            "skipped": 1
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "2026-08-25 17:50:49",
+          "latest_error": ""
+        },
+        {
+          "name": "Memory writes",
+          "table": "memory_write_events",
+          "counts": {
+            "skipped": 164,
+            "written": 312
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "2026-07-26 14:21:00",
+          "latest_error": ""
+        },
+        {
+          "name": "Meeting Memory writes",
+          "table": "meeting_memory_write_events",
+          "counts": {
+            "done": 537
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "2026-10-11 10:20:13",
+          "latest_error": ""
+        },
+        {
+          "name": "DingTalk Todos",
+          "table": "work_todo_dingtalk_links",
+          "counts": {
+            "active": 540,
+            "cancelled": 5,
+            "done": 330
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "2026-09-25 03:16:01",
+          "latest_error": ""
+        },
+        {
+          "name": "WeChat deliveries",
+          "table": "wechat_deliveries (delivery outcome)",
+          "counts": {
+            "sent": 54,
+            "skipped": 5,
+            "superseded": 66
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "2026-10-11 07:53:18",
+          "latest_error": ""
+        },
+        {
+          "name": "Email provider actions",
+          "table": "email_actions",
+          "counts": {
+            "done": 9560,
+            "pending": 3,
+            "skipped": 2
+          },
+          "pending": 3,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "2026-10-12T01:00:07+00:00",
+          "latest_error": ""
+        },
+        {
+          "name": "Email unsubscribe tasks",
+          "table": "reply_tasks (channel=email, unsubscribe)",
+          "counts": {
+            "done": 1013,
+            "skipped": 57
+          },
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0,
+          "latest_updated_at": "2026-10-12 00:30:59",
+          "latest_error": ""
+        }
+      ]
+    },
+    {
+      "path": "/api/console/attention",
+      "http": 200,
+      "seconds": 0.055,
+      "total": 1
+    },
+    {
+      "path": "/api/console/history?page_size=3&include_chart=false",
+      "http": 200,
+      "seconds": 0.647,
+      "total": 34574
+    }
+  ],
+  "samples": [
+    {
+      "status": "available",
+      "run_id": 25757,
+      "runtime_attempt_id": 22746,
+      "role": "consumer",
+      "runtime_kind": "codex_cli",
+      "submission_state": "invoked",
+      "developer_characters": 32371,
+      "developer_sha256": "b086661ec29bb8803407a81c718087536e5d6cc1e21716bc3b7075e4c79405f7",
+      "task_characters": 5460,
+      "task_sha256": "b790f5c2b613d3b4d01031aea335fbfb557bef707aedf362d5eb863202e0d9bf",
+      "matches_native_evidence": true,
+      "sources": [
+        "本轮原生 Developer 记录",
+        "选定 attempt 的原生输入"
+      ]
+    },
+    {
+      "status": "available",
+      "run_id": 25759,
+      "runtime_attempt_id": 22748,
+      "role": "consumer",
+      "runtime_kind": "codex_cli",
+      "submission_state": "invoked",
+      "developer_characters": 32371,
+      "developer_sha256": "b086661ec29bb8803407a81c718087536e5d6cc1e21716bc3b7075e4c79405f7",
+      "task_characters": 6119,
+      "task_sha256": "10fe8e715fec75478aaf4ca0d5918b96730b389beefe0247b557c2ada67b0e66",
+      "matches_native_evidence": true,
+      "sources": [
+        "session 已保存的 Developer（非本轮重新提交回执）",
+        "选定 attempt 的原生输入"
+      ]
+    },
+    {
+      "status": "available",
+      "run_id": 25765,
+      "runtime_attempt_id": 22754,
+      "role": "audit",
+      "runtime_kind": "codex_cli",
+      "submission_state": "invoked",
+      "developer_characters": 28853,
+      "developer_sha256": "eede9b3894135c2fc7d8d383dc78cfff08d0ed6565dbbdfd672c5a86fb747ae5",
+      "task_characters": 33029,
+      "task_sha256": "046946915e0a8ff27a53c10329ebad4e3fc9fa97cde6e7e9f1b1fd97510ccb79",
+      "matches_native_evidence": true,
+      "sources": [
+        "本轮原生 Developer 记录",
+        "选定 attempt 的原生输入"
+      ]
+    },
+    {
+      "status": "available",
+      "run_id": 25439,
+      "runtime_attempt_id": 22382,
+      "role": "audit",
+      "runtime_kind": "claude_cli",
+      "submission_state": "invoked",
+      "developer_characters": 31613,
+      "developer_sha256": "b60611678c8f9252379359ef00b50f9b033e829c03ef1a2a03a97eec579a6f8f",
+      "task_characters": 22094,
+      "task_sha256": "f84f9923c39a2d9e7ca8cc9ec0091ea8cb59781e277092ec4585fd2d6285b18f",
+      "matches_native_evidence": true,
+      "sources": [
+        "本轮原生 Claude 合并输入",
+        "选定 attempt 的原生输入"
+      ]
+    },
+    {
+      "status": "available",
+      "run_id": 25440,
+      "runtime_attempt_id": 22383,
+      "role": "consumer",
+      "runtime_kind": "claude_cli",
+      "submission_state": "invoked",
+      "developer_characters": 32519,
+      "developer_sha256": "9595106e0a9ef89ae69e799906e18c53d3ff62507bf28a6843c73dedfecf0af1",
+      "task_characters": 16105,
+      "task_sha256": "2eebda2fad97990fe86c4d3e78fd0cb562e2084f6ef1d35e3cfb7e0febe764af",
+      "matches_native_evidence": true,
+      "sources": [
+        "本轮原生 Claude 合并输入",
+        "选定 attempt 的原生输入"
+      ]
+    }
+  ],
+  "pid": 53962
+}
