@@ -1245,7 +1245,7 @@ def build_role_server(
         capability: str,
         operation: str | None = None,
     ) -> dict[str, object]:
-        """Read the complete canonical contract for an exact reviewed system action.
+        """Read canonical shared rules and the requested reviewed system action rows.
 
         Pass a capability from the prompt catalog and optionally one of its
         operations. The result retains every shared, role, identity, payload,

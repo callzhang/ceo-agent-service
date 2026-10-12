@@ -1,6 +1,6 @@
 # Native schema integration on current main
 
-Draft PR31 (3a4942a8) is integrated with current main b451cfe7 in the isolated codex/native-schema-current-main branch. No main merge, production deployment, prompt reduction or provider change is performed here. Native schema files and canonical business models remain unchanged.
+Draft PR31 (3a4942a8) was initially integrated with main b451cfe7 and has now been refreshed to main fda0bc5d in the isolated codex/native-schema-current-main branch. No main merge, production deployment, prompt reduction or provider change is performed here. Native schema files and canonical business models remain unchanged.
 
 ## Confirmed integration repairs
 
@@ -44,3 +44,7 @@ Independent evidence review verified all seven recorded result-file hashes again
 The v2 anonymous fixture separates document_id from node_id, supplies a MaterialReference with the native read entry, and supports the declared search tool. Both arms use identical Task/candidate/digest/schema. Only their service Developer output contract differs (1575 to 300 characters; total9549 to8274). The input generation script and configuration fingerprint are retained. Native host-skills/AGENTS blocks match, but arm working-directory paths differ in the environment context; this is not a claim that the entire native input has only one differing byte region. v1-to-v2 also changes the Task/source binding/digest, so only within-v2 comparisons isolate the service contract segment.
 
 Both cold arms complete with valid schema/canonical results, exact revision/digest binding, grounded correction of source-only conflicts and explicit preservation of the original reply target. The contract-read result reverses v1: v2 full omits read_system_action_contract; v2 fields calls it successfully. Thus no stable superiority or causal contract-read effect is established. No continuation or production release is inferred. Both directly read the correct node, so the now-supported search path is not exercised. Evidence: evals/trajectory_optimization/native_schema_document_controls.results.v2.json and retained local original trajectories. The shorter wire guide remains a prototype.
+
+The draft was subsequently integrated with main fda0bc5d (including selected action-table return a0be28d6 and independently scoped Audit field-evidence PR49). Earlier controls retain their actual earlier inputs/results; they are not relabeled as tests of the new rules. Canonical models and native schema files remain unchanged.
+
+Latest-main merge verification: 107 codec, native/current Settings preview, action-catalog and context tests passed; independent read-only conflict review confirmed both source-selection and draft native-output behavior. No deployment or native-schema enablement follows from this merge.

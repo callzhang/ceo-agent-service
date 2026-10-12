@@ -74,6 +74,14 @@ def test_audit_core_prompt_contains_only_runtime_invariants():
     assert "current-instance-bound" in text
 
 
+def test_audit_field_feedback_is_grounded_in_current_candidate_json():
+    text = _core_prompt(_AUDIT_AGENT_RULES, AUDIT_DYNAMIC_SKILL_BODY)
+    assert "exact JSON path, literal value and JSON type" in text
+    assert "quoted identifier is a string" in text
+    assert "prior revision or prior feedback" in text
+    assert "do not request a change already present" in text
+
+
 @pytest.mark.parametrize(
     "mutate",
     (
