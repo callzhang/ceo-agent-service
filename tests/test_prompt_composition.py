@@ -570,3 +570,38 @@ def test_same_developer_template_changed_variable_updates_rendered_fingerprint_a
     assert consumer_wire_contract_hash(prompt_configuration=first) != consumer_wire_contract_hash(prompt_configuration=second)
     assert 'First responsibilities' in consumer_developer_instructions(prompt_configuration=first, runtime_context='')
     assert 'Second responsibilities' in consumer_developer_instructions(prompt_configuration=second, runtime_context='')
+
+
+def test_installed_skill_selection_reads_applicable_workflows_not_every_catalog_entry(tmp_path):
+    from app.business_skills import BusinessSkillCatalogEntry, render_task_skill_discovery
+
+    names = ("approval-review", "travel-review", "contract-review")
+    catalog = tuple(
+        BusinessSkillCatalogEntry(name, tmp_path / name / "SKILL.md", f"Use {name}.")
+        for name in names
+    )
+    rendered = render_task_skill_discovery(names, catalog=catalog)
+
+    # A multi-domain selection is discovery, not a request to load every domain.
+    assert "Read the applicable installed Skills" in rendered
+    assert "For each installed selection" not in rendered
+    assert "When a selected Skill names another installed Skill" not in rendered
+    assert "dependencies required by their workflows" in rendered
+    for entry in catalog:
+        assert entry.name in rendered
+        assert str(entry.skill_path.resolve()) in rendered
+
+
+def test_applicable_installed_discovery_preserves_required_frozen_selection(tmp_path):
+    from app.business_skills import BusinessSkillCatalogEntry, render_task_skill_discovery
+
+    installed = BusinessSkillCatalogEntry("installed-review", tmp_path / "SKILL.md", "Review.")
+    rendered = render_task_skill_discovery(
+        ("frozen-review", "installed-review"),
+        catalog=(installed,), frozen_names=("frozen-review",),
+    )
+
+    assert "For the task-frozen selection `frozen-review`, call" in rendered
+    assert "agent_cli.read_task_skill(name)" in rendered
+    assert "Read the applicable installed Skills" in rendered
+    assert str(installed.skill_path.resolve()) in rendered

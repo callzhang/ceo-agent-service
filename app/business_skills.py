@@ -531,13 +531,13 @@ def render_task_skill_discovery(
         installed = tuple(name for name in selected if name not in frozen)
         if installed:
             instructions.append(
-                "For each installed selection, call its exact "
-                "`agent_cli.read_skill(path=...)` entry below before deciding "
+                "Read the applicable installed Skills through their exact "
+                "`agent_cli.read_skill(path=...)` entries before deciding "
                 "or reviewing."
             )
         instructions.append(
-            "When a selected Skill names another installed Skill, read that exact "
-            "dependency on demand with `agent_cli.read_skill(name=...)`."
+            "Read installed dependencies required by their workflows on demand "
+            "with `agent_cli.read_skill(name=...)`."
         )
         read_instruction = " ".join(instructions)
     else:
