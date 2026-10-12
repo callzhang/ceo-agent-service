@@ -54,12 +54,15 @@ def test_exact_current_skill_is_read_on_demand_locally_and_inlined_once_remotely
     )
     assert body not in prompt
     assert str(path) in prompt
+    assert f"[$ceo-work-tracking]({path})" in prompt
+    assert "cat the file" not in prompt
     assert "EXACT_CURRENT_FACT" in prompt
     assert record.factory.skill_paths == (path,)
     local = _claude_turn_text(record.factory, prompt)
     remote = _friday_turn_text(record.factory, prompt)
     assert body not in local
     assert str(path) in local
+    assert local.count(f"Read the complete current Skill at {path} (cat the file).") == 1
     assert remote.count(body) == 1
     assert "EXACT_CURRENT_FACT" in remote
     assert path.read_text().strip() in remote

@@ -265,7 +265,7 @@ def test_project_guidance_resolves_current_authoritative_name_before_existing_li
     item, _ = source_registration("project_weekly_report", 1)
     text = build_task_agent_prompt(item, "当前已有项目上下文")
     assert str(skill_path) in text
-    assert "Read the complete current Skill" in text
+    assert f"[$ceo-work-tracking]({skill_path})" in text
     guidance = " ".join(skill_path.read_text().split())
     assert (
         "Adopt the exact current authoritative Project definition with registration to register or reuse"

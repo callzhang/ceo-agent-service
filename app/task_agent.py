@@ -558,7 +558,7 @@ synthetic Task or an unrelated update_fields carrier.
 {scheduled_prompt}
 ## Current Skill
 ceo-work-tracking: Project/Task extraction and assessment.
-Read the complete current Skill at {WORK_TRACKING_SKILL_PATH} (cat the file).
+[$ceo-work-tracking]({WORK_TRACKING_SKILL_PATH})
 For a remote runtime, use the full Skill supplied with this turn.
 
 The current independent Project/Task/assessment envelope controls output.

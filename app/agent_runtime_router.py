@@ -273,8 +273,12 @@ def _friday_turn_text(command_factory: CodexCommandFactory, prompt: str) -> str:
 
 def _claude_turn_text(command_factory: CodexCommandFactory, prompt: str) -> str:
     """Claude reads its instructions from the same contract Agent turns use."""
+    skill_entries = "\n\n".join(
+        f"Read the complete current Skill at {path} (cat the file)."
+        for path in command_factory.skill_paths
+    )
     return claude_input_contract(
-        prompt=prompt,
+        prompt="\n\n".join(part for part in (skill_entries, prompt) if part),
         developer_instructions=_out_of_band_instructions(command_factory),
     )
 

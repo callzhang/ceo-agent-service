@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "entry": "exact link plus use full Skill; read if absent",
+  "raw_root": "/private/tmp/ceo-task-skill-link-read-gqbhr19v",
+  "native_path": "/Users/derek/.claude/projects/-Users-derek-Projects-ceo-agent-service/065373f2-876c-4501-bb81-2d235b905002.jsonl",
+  "complete_selected_body_present": false,
+  "turns": [
+    {
+      "phase": "cold",
+      "events_sha256": "d0e7f5ecdf28a6b2ff2b1461a54c61c68c8486890d457bb311dbc81e511f4346",
+      "business_model_valid": true,
+      "session_id": "065373f2-876c-4501-bb81-2d235b905002"
+    },
+    {
+      "phase": "risk",
+      "events_sha256": "10abaf9f1177adb410825b13c568c325b98d10d7bd4d39d59f7bb5563c43cc17",
+      "business_model_valid": false,
+      "session_id": "065373f2-876c-4501-bb81-2d235b905002"
+    }
+  ],
+  "acceptance": "rejected",
+  "confirmed_failures": [
+    "Cold does not read complete Skill",
+    "Risk business parse fails: suggestion cannot carry actual owner, formal basis, dates or lifecycle changes"
+  ],
+  "boundary": "Preserve native outputs; no repair rerun or production change. Native process result is separate from business validation."
+}

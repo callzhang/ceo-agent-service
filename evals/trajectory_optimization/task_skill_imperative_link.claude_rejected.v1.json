@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "entry": "Read complete current Skill: exact path link; no cat",
+  "raw_root": "/private/tmp/ceo-task-skill-explicit-link-t2q_16d0",
+  "phase": "cold",
+  "session_id": "22840f55-f397-4c4c-a8c9-cfc395bea079",
+  "native_path": "/Users/derek/.claude/projects/-Users-derek-Projects-ceo-agent-service/22840f55-f397-4c4c-a8c9-cfc395bea079.jsonl",
+  "events_sha256": "a789172460fbe62baf931a0085e5319b8204be9a29d3599cec3b888ae583da46",
+  "submitted_sha256": "d091c2de3803c73c82afdfad27745a0fd967ea9b73d553d65e0faa0d62d07c55",
+  "complete_selected_body_present": false,
+  "business_model_valid": false,
+  "acceptance": "rejected; no valid cold means no resume",
+  "failure": "project fact date type and value must both be present or empty",
+  "boundary": "Preserve existing validator failure; no additional prompt rules or repair rerun. Read tools available but no read observed."
+}
