@@ -1286,10 +1286,13 @@ def build_role_server(
     def read_dingtalk_drive_file(
         node_id: str, space_id: str, file_name: str
     ) -> dict[str, object]:
-        """Download and read one exact DingTalk Drive attachment node.
+        """Read the body of one exact DingTalk Drive attachment for OA review.
 
-        The file is retained only in this Agent CLI process's temporary directory
-        so the selected OCR Skill can read scanned PDFs by the returned path.
+        Use after drive metadata identifies an accessible attachment node. Returns
+        bounded PDF, workbook, presentation, or text contents. Scanned PDFs set
+        ocr_required and include a temporary path; only send that material to OCR
+        when the current run authorizes the OCR destination. A technical read
+        failure does not mean the applicant omitted the material.
         """
         nonlocal drive_material_directory
         from app.dws_client import DwsClient
