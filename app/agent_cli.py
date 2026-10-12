@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import argparse
 import hashlib
 import errno
@@ -17,6 +18,7 @@ import zipfile
 from collections.abc import Callable, Sequence
 from contextlib import closing
 from dataclasses import dataclass, replace
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote
 from xml.etree import ElementTree
@@ -25,6 +27,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
+from pydantic_core import to_json
 
 from app.action_contract_catalog import read_system_action_contract as load_system_action_contract
 from app.agent_result import EffectKind
@@ -52,6 +55,7 @@ from app.native_cli_metadata import (
 # Codex truncates one MCP text block at 1 MiB. Keep command output below that
 # boundary even after JSON escaping so the controlled receipt remains valid.
 MAX_CLI_OUTPUT_BYTES = 128 * 1024
+MAX_MCP_MATERIAL_RESPONSE_BYTES = 1024 * 1024 - 1024
 MAX_SKILL_BYTES = 256 * 1024
 MAX_TEXT_MATERIAL_BYTES = 512 * 1024
 MAX_SPREADSHEET_BYTES = 20 * 1024 * 1024
@@ -335,6 +339,33 @@ def read_skill(path: str) -> dict[str, str]:
     }
 
 
+class _MaterialZipFile(zipfile.ZipFile):
+    def __init__(self, file):
+        super().__init__(file)
+        self._remaining_material_bytes = MAX_SPREADSHEET_BYTES
+
+    def read(self, name, pwd=None):
+        member = name if isinstance(name, zipfile.ZipInfo) else self.getinfo(name)
+        if member.file_size > self._remaining_material_bytes:
+            raise AgentReadOnlyViolationError("material_expanded_too_large")
+        if member.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            raise AgentReadOnlyViolationError("material_compression_unsupported")
+        if member.compress_type == zipfile.ZIP_STORED and member.file_size != member.compress_size:
+            raise AgentReadOnlyViolationError("material_compression_size_invalid")
+        with self.open(member, pwd=pwd) as source:
+            content = source.read(self._remaining_material_bytes + 1)
+            if len(content) > self._remaining_material_bytes:
+                raise AgentReadOnlyViolationError("material_expanded_too_large")
+            # ZipExtFile slices output to the archive's declared size. Check the
+            # actual compressed stream termination before trusting that slice.
+            if (source._compress_left != 0
+                    or (source._decompressor is not None and not source._decompressor.eof)
+                    or len(content) != member.file_size):
+                raise AgentReadOnlyViolationError("material_compression_size_invalid")
+        self._remaining_material_bytes -= len(content)
+        return content
+
+
 def read_spreadsheet(
     path: str,
     *,
@@ -362,7 +393,7 @@ def read_spreadsheet(
         if file_stat.st_size > MAX_SPREADSHEET_BYTES:
             raise AgentReadOnlyViolationError("spreadsheet_file_too_large")
         try:
-            with zipfile.ZipFile(material_file) as workbook:
+            with _MaterialZipFile(material_file) as workbook:
                 return _read_xlsx_workbook(
                     workbook,
                     max_rows=max_rows,
@@ -400,7 +431,7 @@ def read_text_file(path: str) -> dict[str, object]:
         if zipfile.is_zipfile(material_file):
             material_file.seek(0)
             try:
-                with zipfile.ZipFile(material_file) as workbook:
+                with _MaterialZipFile(material_file) as workbook:
                     if {"[Content_Types].xml", "xl/workbook.xml"}.issubset(
                         workbook.namelist()
                     ):
@@ -442,12 +473,14 @@ def _read_pdf_material(material_file, material_path: Path) -> dict[str, object]:
 
     previews: list[dict[str, object]] = []
     remaining_chars = MAX_TEXT_MATERIAL_BYTES
+    truncated_text = False
     for index, page in enumerate(reader.pages, start=1):
         try:
             text = page.extract_text() or ""
         except (PdfReadError, ValueError) as exc:
             raise AgentReadOnlyViolationError("pdf_material_text_unavailable") from exc
         if len(text) > remaining_chars:
+            truncated_text = True
             text = text[:remaining_chars]
         previews.append({"index": index, "text": text})
         remaining_chars -= len(text)
@@ -461,9 +494,62 @@ def _read_pdf_material(material_file, material_path: Path) -> dict[str, object]:
         "page_count": len(reader.pages),
         "pages": previews,
         "content": "\n\n".join(page["text"] for page in previews),
+        "truncated": truncated_text or len(previews) < len(reader.pages),
         "path": str(material_path),
         "sha256": digest,
     }
+
+
+def _download_dingtalk_drive_file(
+    *,
+    dws,
+    node_id: str,
+    space_id: str,
+    file_name: str,
+    material_root: Path,
+) -> dict[str, object]:
+    """Download one named DingTalk Drive node and extract its bounded contents."""
+    if not node_id.strip() or not space_id.strip():
+        raise AgentReadOnlyViolationError("drive_file_identity_required")
+    if not _task_file_component(file_name) or len(file_name) > 255:
+        raise AgentReadOnlyViolationError("drive_file_name_invalid")
+    material_root.mkdir(parents=True, exist_ok=True)
+    contents = dws.download_drive_file(
+        node_id, file_name=file_name, space_id=space_id,
+        max_bytes=MAX_SPREADSHEET_BYTES,
+    )
+    if len(contents) > MAX_SPREADSHEET_BYTES:
+        raise AgentReadOnlyViolationError("drive_file_too_large")
+    package_source = BytesIO(contents)
+    if zipfile.is_zipfile(package_source):
+        with zipfile.ZipFile(package_source) as package:
+            if sum(member.file_size for member in package.infolist()) > MAX_SPREADSHEET_BYTES:
+                raise AgentReadOnlyViolationError("drive_file_expanded_too_large")
+    extension = Path(file_name).suffix
+    suffix = extension if extension[1:].isalnum() and len(extension) <= 16 else ""
+    prefix = hashlib.sha256(node_id.encode()).hexdigest()[:12] + "-"
+    with tempfile.NamedTemporaryFile(
+        mode="wb", prefix=prefix, suffix=suffix, dir=material_root, delete=False
+    ) as material_file:
+        material_file.write(contents)
+        material_path = Path(material_file.name)
+    try:
+        extracted = read_text_file(str(material_path))
+        result = {
+            "node_id": node_id,
+            "space_id": space_id,
+            "file_name": file_name,
+            **extracted,
+            "sha256": hashlib.sha256(contents).hexdigest(),
+        }
+        if extracted.get("format") == "pdf" and not extracted.get("content", "").strip():
+            result["ocr_required"] = True
+        if len(to_json(result, indent=2)) > MAX_MCP_MATERIAL_RESPONSE_BYTES:
+            raise AgentReadOnlyViolationError("drive_material_response_too_large")
+        return result
+    except BaseException:
+        material_path.unlink()
+        raise
 
 
 def _read_xlsx_workbook(
@@ -496,6 +582,7 @@ def _read_presentation_workbook(workbook: zipfile.ZipFile) -> dict[str, object]:
     """Return bounded visible text from an OOXML presentation package."""
     slides: list[dict[str, object]] = []
     remaining_chars = MAX_SPREADSHEET_PREVIEW_CHARS
+    truncated_text = False
     slide_names = sorted(
         name
         for name in workbook.namelist()
@@ -508,6 +595,7 @@ def _read_presentation_workbook(workbook: zipfile.ZipFile) -> dict[str, object]:
             for node in root.iter()
             if node.tag.endswith("}t") and node.text
         )
+        truncated_text |= len(text) > remaining_chars
         text = text[:remaining_chars]
         remaining_chars -= len(text)
         slides.append({"index": index, "text": text})
@@ -516,7 +604,7 @@ def _read_presentation_workbook(workbook: zipfile.ZipFile) -> dict[str, object]:
     return {
         "format": "pptx",
         "slides": slides,
-        "truncated": len(slides) < len(slide_names),
+        "truncated": truncated_text or len(slides) < len(slide_names),
     }
 
 
@@ -1240,6 +1328,39 @@ def build_role_server(
     bound.add_tool(read_skill_tool, name="read_skill", annotations=read)
     bound.add_tool(read_text_file_tool, name="read_text_file", annotations=read)
     bound.add_tool(read_spreadsheet_tool, name="read_spreadsheet", annotations=read)
+    drive_material_directory: tempfile.TemporaryDirectory[str] | None = None
+
+    def read_dingtalk_drive_file(
+        node_id: str, space_id: str, file_name: str
+    ) -> dict[str, object]:
+        """Read the body of one exact DingTalk Drive attachment for OA review.
+
+        Use after drive metadata identifies an accessible attachment node. Returns
+        bounded PDF, workbook, presentation, or text contents. Scanned PDFs set
+        ocr_required and include a temporary path; only send that material to OCR
+        when the current run authorizes the OCR destination. A technical read
+        failure does not mean the applicant omitted the material.
+        """
+        nonlocal drive_material_directory
+        from app.dws_client import DwsClient
+        if drive_material_directory is None:
+            drive_material_directory = tempfile.TemporaryDirectory(
+                prefix="oa-review-"
+            )
+            atexit.register(drive_material_directory.cleanup)
+        return _download_dingtalk_drive_file(
+            dws=DwsClient(),
+            node_id=node_id,
+            space_id=space_id,
+            file_name=file_name,
+            material_root=Path(drive_material_directory.name),
+        )
+
+    bound.add_tool(
+        read_dingtalk_drive_file,
+        name="read_dingtalk_drive_file",
+        annotations=read,
+    )
 
     def read_system_action_contract(
         capability: str,
@@ -1609,6 +1730,7 @@ def build_role_server(
         ("read_dingtalk_document_info", read_dingtalk_document_info),
         ("read_dingtalk_document_permissions", read_dingtalk_document_permissions),
         ("read_dingtalk_drive_info", read_dingtalk_drive_info),
+        ("read_dingtalk_drive_file", read_dingtalk_drive_file),
         ("list_dingtalk_sheets", list_dingtalk_sheets),
         ("read_dingtalk_sheet_info", read_dingtalk_sheet_info),
         ("read_dingtalk_sheet_range", read_dingtalk_sheet_range),
