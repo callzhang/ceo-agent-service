@@ -107,3 +107,13 @@ These six probes still use synthetic common settings/Skill, empty WorkProfile an
 Main has subsequently advanced through phase4A schema release7baa1f0e and the independently deployed role-build cleanup54e6c209. This draft still contains its earlier main integration; refresh the draft against current main before claiming current runtime/database integration or conducting lifecycle tests. Historical controlled results retain their original code/input timepoints.
 
 Evaluation correction: the declared contract requires an exact path in the current candidate, not a mandatory candidate. Task-wrapper prefix. Re-review accepts the native-parity negative relative proposal.actions path; this does not excuse missing proposal layers, wrong field names or invented revisions in other results.
+
+
+## Observed native source-shape correction
+
+Three anonymous OAuth cold controls now preserve the observed historical trigger taskId string, numeric live task IDs, result.taskIdList and result.instRevertActivities including revertAction. All complete, read the full selected synthetic Skill and exact four contract/provider sources, and validate native/canonical/digest output. Both legal candidates approve without feedback; the wrong-node candidate returns only the precise target_activity_id correction and preserves valid ID and revert-action parameters. Independent full-trajectory review passes these three source-only business judgments. Two runs each attempt one unsupported synthetic AGENTS.md read.
+
+This corrects the experiment, not production instructions or provider records. Several fixture details changed together, so no individual causal repair is proven. Empty Profile/common settings, synthetic Skill and direct adapter execution remain limitations; full AuditAgent lifecycle and real business acceptance are incomplete. Runs use81e586e3 before the latest main integration. Receipt: evals/trajectory_optimization/native_schema_real_source_shape.results.v1.json.
+
+
+Latest-main integration checkpoint: merge dccbb023 incorporates main ad7a6506, including phase4A runs and single-build Skill configuration. Both newly appended Consumer tests are retained. The first five-file focused run reports218 passed,4 skipped and one failing draft-only test SQL reference to the removed agent_runtime_attempts table. Adapting that fixture to runs/record_type/legacy_key yields44 passed across native preview, codec and prompt preview files. Runtime code is unchanged by this fixture repair; no production enablement or deployment follows.
