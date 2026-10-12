@@ -6,7 +6,6 @@ from dataclasses import dataclass
 import io
 import json
 import os
-import re
 from pathlib import Path
 import shutil
 import tempfile
@@ -677,55 +676,6 @@ def frozen_task_skill_materials(
     )
 
 
-def expand_skill_dependencies(
-    names: Iterable[str], *, target_root: Path | None = None
-) -> tuple[str, ...]:
-    """Add every installed Skill the given Skills reference, transitively.
-
-    A task declares the Skills it works through; those Skills delegate to others
-    by name (the OA Skill shells out to `ocr`, which leads to `pdf` and `xlsx`
-    several hops away). Leaving a dependency out would hide it from the Agent
-    silently, so the closure is followed to the end rather than cut at a depth.
-
-    Two kinds of reference count, and only when they resolve to a Skill that is
-    actually installed: an exact Skill name, and a `dws <product>` command, which
-    is documented by the `dingtalk-<product>` Skill. Matching a Skill mentioned
-    only to say "do not use it" over-includes, which errs toward visibility; an
-    unresolvable token is never invented into a name.
-    """
-    catalog = {entry.name: entry.skill_path for entry in installed_runtime_skills(target_root)}
-    if not catalog:
-        return tuple(dict.fromkeys(name for name in names if name))
-    name_pattern = re.compile(
-        r"(?<![\w-])("
-        + "|".join(re.escape(name) for name in sorted(catalog, key=len, reverse=True))
-        + r")(?![\w-])"
-    )
-    dws_pattern = re.compile(r"(?<![\w-])dws\s+([a-z][a-z0-9-]*)")
-    resolved: dict[str, None] = {}
-    pending = [name for name in names if name]
-    while pending:
-        name = pending.pop()
-        if name in resolved:
-            continue
-        resolved[name] = None
-        path = catalog.get(name)
-        if path is None:
-            continue
-        try:
-            body = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
-            continue
-        referenced = set(name_pattern.findall(body))
-        referenced |= {
-            f"dingtalk-{product}"
-            for product in dws_pattern.findall(body)
-            if f"dingtalk-{product}" in catalog
-        }
-        pending.extend(sorted(referenced - resolved.keys()))
-    return tuple(resolved)
-
-
 # Plugins whose Skills every Agent turn gets regardless of the task's own list.
 # The Consumer and Audit contracts tell the Agent to recall durable context
 # through memory; trimming these away would leave that instruction unusable.
@@ -814,11 +764,14 @@ def codex_skill_config_override(
     - Codex also reads ~/.codex/skills and its plugin caches, so exclusion has
       to walk those roots too, or their Skills keep crowding the budget.
 
+    Only explicitly selected names enter the catalog; a mention in a Skill body
+    is not a dependency declaration. Referenced Skills remain readable on demand.
+
     Trimming matters for quality, not only size: over its Skill budget Codex
     truncates descriptions mid-sentence, and the description is what the Agent
     picks a Skill by. Returns an empty string when there is nothing to set.
     """
-    keep_names = set(expand_skill_dependencies(allowed_names, target_root=target_root))
+    keep_names = set(allowed_names)
     roots = codex_skill_roots(target_root=target_root, codex_home=codex_home)
     files = sorted(
         {path for root in roots if root.is_dir() for path in root.rglob("SKILL.md")}
