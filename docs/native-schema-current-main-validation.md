@@ -48,3 +48,23 @@ Both cold arms complete with valid schema/canonical results, exact revision/dige
 The draft was subsequently integrated with main fda0bc5d (including selected action-table return a0be28d6 and independently scoped Audit field-evidence PR49). Earlier controls retain their actual earlier inputs/results; they are not relabeled as tests of the new rules. Canonical models and native schema files remain unchanged.
 
 Latest-main merge verification: 107 codec, native/current Settings preview, action-catalog and context tests passed; independent read-only conflict review confirmed both source-selection and draft native-output behavior. No deployment or native-schema enablement follows from this merge.
+
+
+## Current-rule field and destination controls
+
+A fresh synthetic OA fixture compares the pre-PR49 application-result rules at a0be28d6 with the current rules, holding each candidate/Task/digest, full Audit schema, model, medium effort, deadline and read-only callbacks fixed. Both candidate variants pass the complete canonical model. Their action task_id is a string; the captured provider taskId is numeric. The wrong-destination variant changes only target_activity_id and its derived binding. No private Skill, Work Profile or business record is sent.
+
+| Route and phase | Rules/case | Format and binding | Source-only judgment |
+| --- | --- | --- | --- |
+| Qwen cold | Before / correct | Valid | Approve |
+| Qwen cold | Current / correct | 180-second deadline; no final | Not passed |
+| Qwen cold | Before / wrong destination | Valid | Return for the wrong node |
+| Qwen cold | Current / wrong destination | Valid | Return for the wrong node; feedback path omits proposal layer |
+| OpenAI API cold | Current / correct | Valid | False task_id type correction |
+| OpenAI API same-session resume | Current / correct | Valid | Approve; cold error retained |
+
+OpenAI API capacity is available at this later timepoint; the prior HTTP429 records remain unchanged. API cold and resume use session01a12e61-204f-7363-bb25-6a288e93dd46. Saved inputs, native submitted Tasks, callback arguments and source returns match. The cold native Task contains candidate task_id as a quoted string, yet feedback says its literal is a number and requests the already-present string conversion. Submission/codec conversion is excluded for this case. Source numeric/candidate string confusion is a plausible inference, not a proven internal cause. The next identical same-session turn approves; this does not prove session reuse caused the changed judgment or that the new rules fixed the error.
+
+These are bounded diagnostics, not complete OA acceptance: none reads the synthetic Skill; before/correct also calls an unsupported synthetic artifact-list tool. The synthetic legal return node is not a verification of the real OA Skill's fixed start-event convention. Single samples establish neither a causal improvement nor regression from the new rules. Current Qwen correct repeats contract/task reads and times out. No schema enablement, effort change or additional prompt rule is shipped. An initial fixture with unsupported TO_SPECIFIC_NODE was stopped and excluded; the retained controls use the supported REVERT_FOR_RESUBMIT.
+
+Independent read-only review verified all six native trajectories and their input/source/final boundaries. Evidence: evals/trajectory_optimization/native_schema_audit_field_controls.results.v1.json. Later production observation at2026-10-12T04:25:23Z:947f4f24, PID67717, service healthy, all processing queues0, Attention2, one failed Reply and one failed Email provider action. This observation does not replace the earlier selected-contract deployment timepoint or claim those business failures resolved.

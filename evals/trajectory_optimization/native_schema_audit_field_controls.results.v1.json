@@ -1,0 +1,345 @@
+{
+  "version": 1,
+  "code_commit": "b5f3108f",
+  "before_rules_commit": "a0be28d6",
+  "native_schemas": {
+    "consumer": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+    "audit": "d328078ce53eb8189a495dfd8f83855135caa6a135691a8c0f18373881a3a1de"
+  },
+  "fixture": {
+    "case_sha256": "b0a8a1f3a37857a0ceefd029f4128dac0a58c1f7ea14303075c12852ce45494d",
+    "generator_sha256": "5b2beb857c2636060b13ce531e157108a46162e25b47d72eb4b39c421b118e62",
+    "server_sha256": "0ac1222dd536d737d6719e389dcc0fdeacde5f50f031008b89a99d07b352a9e8",
+    "runner_sha256": "b539daf4cccfff756594d0c247107b8079e75a4d25fcf754bf2e38ed29bf5ffb",
+    "source": "synthetic only; no private Skill/Profile/records",
+    "candidate_task_id_json_type": "string",
+    "provider_taskId_json_type": "number"
+  },
+  "runs": [
+    {
+      "arm": "before-correct",
+      "route": "qwen_gpu4",
+      "case": "correct",
+      "variant": "before",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e5b-122f-75e2-99b4-caee1c695141",
+      "turn_completed": true,
+      "developer_characters": 9594,
+      "task_characters": 5147,
+      "calls": [
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities",
+        "list_task_artifacts"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "approve",
+      "feedback_nonnull": false,
+      "phase": "cold",
+      "artifact_root": "/private/tmp/ceo-audit-type-controls-udqhmse7",
+      "hashes": {
+        "input.json": "fb0b0a78082ae1abccfcd66b70c524d7a5882e746dfcc17a0f7865317c8821cd",
+        "events.jsonl": "0adce31a5b74c7368bc742ee9e45234c4db14339c2c40c4348817d45ca196078",
+        "calls.json": "97d860f93e618a70b6b0818d54a0c17324a9a8e440fd20f6667bb3d5476c021d",
+        "canonical.json": "719456464ef400140807e4bc086a65d384bfa4a8fec55ecdb6e4b0bfe18afe13"
+      },
+      "read_only_business_callbacks": true,
+      "business_assessment": "correct synthetic source-only judgment"
+    },
+    {
+      "arm": "current-correct",
+      "route": "qwen_gpu4",
+      "case": "correct",
+      "variant": "current",
+      "exit_code": 0,
+      "timed_out": true,
+      "session_id": "01a12e5c-64d1-7480-a2e5-f249e00fe99c",
+      "turn_completed": false,
+      "developer_characters": 10055,
+      "task_characters": 5147,
+      "calls": [
+        "read_system_action_contract",
+        "read_dingtalk_oa_revert_activities",
+        "read_dingtalk_oa_tasks",
+        "read_system_action_contract",
+        "read_dingtalk_oa_tasks"
+      ],
+      "canonical_valid": false,
+      "binding_valid": false,
+      "native_schema_valid": false,
+      "parse_error": "ResultParseError",
+      "phase": "cold",
+      "artifact_root": "/private/tmp/ceo-audit-type-controls-udqhmse7",
+      "hashes": {
+        "input.json": "0e1d32fc4700a51bab08413cd208f63d3d70b916a7b862e7e5db859acb1c11f0",
+        "events.jsonl": "6bf09d8be047f1b51e4e81b42d0ea88f424754e477963cb17c210468769a7ced",
+        "calls.json": "92ab23226d4b0a6be10038829dfe8c7ee57079884c0fb12da29a49f0226eb91a"
+      },
+      "read_only_business_callbacks": true,
+      "business_assessment": "no final result; failed bounded gate"
+    },
+    {
+      "arm": "before-wrong_destination",
+      "route": "qwen_gpu4",
+      "case": "wrong_destination",
+      "variant": "before",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e5f-25ec-7920-9786-040e6da05d34",
+      "turn_completed": true,
+      "developer_characters": 9594,
+      "task_characters": 5147,
+      "calls": [
+        "read_system_action_contract",
+        "read_dingtalk_oa_revert_activities",
+        "read_dingtalk_oa"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "phase": "cold",
+      "artifact_root": "/private/tmp/ceo-audit-type-controls-udqhmse7",
+      "hashes": {
+        "input.json": "b7f45013c2ec06e3279f554d70cc7f3f5b061f2dac1518b677485443c3e25d02",
+        "events.jsonl": "1ad822f59a91e0a67c8e1b32f65cf1d0d226bf4e1f6f8c4a40d126c82a95529f",
+        "calls.json": "b5f1924c773ac7aa0bc14f500ac3e5d855a81b567d21bbb360465db13eb07b5f",
+        "canonical.json": "fedd825fa09ba08f98a59d3b4338cb6bf70ca955a9d23abc0a4e947afdd60a07"
+      },
+      "read_only_business_callbacks": true,
+      "business_assessment": "correct synthetic source-only judgment"
+    },
+    {
+      "arm": "current-wrong_destination",
+      "route": "qwen_gpu4",
+      "case": "wrong_destination",
+      "variant": "current",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e61-00e4-7982-8e59-97fe3ef9435d",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5147,
+      "calls": [
+        "read_system_action_contract",
+        "read_dingtalk_oa_revert_activities",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "phase": "cold",
+      "artifact_root": "/private/tmp/ceo-audit-type-controls-udqhmse7",
+      "hashes": {
+        "input.json": "b38a42f926e6662190422d3643226c27e9a3b52db947a0dd026ee4874dcb360f",
+        "events.jsonl": "9b43e8044caa134f8c77be871531f3c69bb1b406a280405af0e6ad75faa32643",
+        "calls.json": "cf81ab4d777d7520530bc151f73fdf2e241e2fb095fcf069142c9600a52620dd",
+        "canonical.json": "927f3cbb2c1f135eb3d3258f60bc629c062440d90edbc2197eb1bfcbb38f9e0f"
+      },
+      "read_only_business_callbacks": true,
+      "business_assessment": "correct synthetic source-only judgment"
+    },
+    {
+      "arm": "current-correct",
+      "route": "codex_api",
+      "case": "correct",
+      "variant": "current",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e61-204f-7363-bb25-6a288e93dd46",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5147,
+      "calls": [
+        "read_system_action_contract",
+        "read_dingtalk_oa"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "phase": "cold",
+      "artifact_root": "/private/tmp/ceo-audit-api-capacity-control-5cj_9xyf",
+      "hashes": {
+        "input.json": "0e1d32fc4700a51bab08413cd208f63d3d70b916a7b862e7e5db859acb1c11f0",
+        "events.jsonl": "f2ca51276c9d9ab7ea8baf38964d1560059491c37a7a8a302e332ef9eff9ec17",
+        "calls.json": "bc6aa03bc0da40fefba1d018a878931549d3b3ba9da46110f5fd05ea6386ab46",
+        "canonical.json": "b5681b48e1a287b0175b980bacfbdf6cc510ba19b64cbcbb6ea47a65991f5478"
+      },
+      "read_only_business_callbacks": true,
+      "business_assessment": "false field-type correction despite string candidate"
+    },
+    {
+      "arm": "current-correct",
+      "route": "codex_api",
+      "case": "correct",
+      "variant": "current",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e61-204f-7363-bb25-6a288e93dd46",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5147,
+      "calls": [
+        "read_system_action_contract",
+        "read_dingtalk_oa"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "approve",
+      "feedback_nonnull": false,
+      "phase": "resume",
+      "artifact_root": "/private/tmp/ceo-audit-api-resume-control-67qzvcc6",
+      "hashes": {
+        "input.json": "0e1d32fc4700a51bab08413cd208f63d3d70b916a7b862e7e5db859acb1c11f0",
+        "events.jsonl": "93ba9432fb6ed6bdd94411b49407644a7a790c991d5815d31bc9f8408d9f9d65",
+        "calls.json": "bc6aa03bc0da40fefba1d018a878931549d3b3ba9da46110f5fd05ea6386ab46",
+        "canonical.json": "25f2a953f1d54a72b7484ded327c38dcf261368423ec09f40eec6c95a3f24a67"
+      },
+      "read_only_business_callbacks": true,
+      "business_assessment": "correct synthetic approval; earlier cold business failure retained"
+    }
+  ],
+  "confirmed": [
+    "All successful final results pass native schema and complete canonical Pydantic validation with exact digest/revision binding.",
+    "API cold actual native user input matches submitted Task and contains candidate task_id string; final feedback incorrectly calls it number.",
+    "API same-session resume returns approve on the same Task and source fixtures; cold business failure remains."
+  ],
+  "limitations": [
+    "All arms omit reading the selected synthetic Skill; full business workflow not accepted.",
+    "Qwen before-correct calls unsupported synthetic list_task_artifacts.",
+    "Synthetic return destination is legal in the fixture but not a verified real OA Skill convention.",
+    "Current Qwen wrong-destination feedback uses an incomplete JSON path while identifying the right field/value.",
+    "Single samples do not establish causal benefit or regression from the added rules.",
+    "No prompt/schema/provider/production change was made for these probes."
+  ],
+  "excluded_fixture": {
+    "artifact_root": "/private/tmp/ceo-audit-type-controls-9lafbf0s",
+    "reason": "Unsupported TO_SPECIFIC_NODE enum; own runner/native child stopped; no acceptance claim."
+  },
+  "latest_production_readback": {
+    "read_at": "2026-10-12T04:25:23.702956+00:00",
+    "production_commit": "947f4f24475e64845bbfddc80f84fa9fc2f0cceb",
+    "status": {
+      "http_status": 200,
+      "pid": "67717",
+      "service_ok": true,
+      "queues": [
+        {
+          "name": "Reply tasks",
+          "pending": 0,
+          "processing": 0,
+          "failed": 1,
+          "retryable": 0
+        },
+        {
+          "name": "Reply attempts",
+          "pending": 0,
+          "processing": 0,
+          "failed": 1,
+          "retryable": 0
+        },
+        {
+          "name": "Work items",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Email classifications",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Follow-ups",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Meeting jobs",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "OKR reviews",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Memory writes",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Meeting Memory writes",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "DingTalk Todos",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "WeChat deliveries",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Email provider actions",
+          "pending": 3,
+          "processing": 0,
+          "failed": 1,
+          "retryable": 0
+        },
+        {
+          "name": "Email unsubscribe tasks",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        }
+      ]
+    },
+    "attention": {
+      "http_status": 200,
+      "record_count": 2
+    },
+    "history": {
+      "http_status": 200,
+      "status_counts": {
+        "skipped": 1,
+        "completed": 1,
+        "done": 3
+      }
+    }
+  },
+  "independent_review": "readonly_business_matrix_review verified four Qwen trajectories and API native cold/resume actual inputs, callbacks, source returns, final output and binding."
+}
