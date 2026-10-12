@@ -70,5 +70,71 @@
     "Native Skill catalog truncation warning remains.",
     "Startup invalid-transport runs excluded; superseded pre-review candidate excluded."
   ],
-  "artifact_root": "/private/tmp/ceo-task-guidance-eval-7_xd_p6r"
+  "artifact_root": "/private/tmp/ceo-task-guidance-eval-7_xd_p6r",
+  "native_skill_warning_evidence": [
+    {
+      "file": "baseline-events.jsonl",
+      "line": 4,
+      "sha256": "bda188571feefa7712886a703edc417dc36db749acbbfb894192e7c115127e8c",
+      "message": "Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest."
+    },
+    {
+      "file": "candidate-events.jsonl",
+      "line": 4,
+      "sha256": "8178f832e7d5f8b62937a89e1303d509c6230e3e4de18b7409fa0a2e3c043af1",
+      "message": "Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest."
+    },
+    {
+      "file": "candidate-resume-events.jsonl",
+      "line": 4,
+      "sha256": "024df754fca8ed00737761b184001c7c768e13a9c3a33d9b766099100e3f7fd0",
+      "message": "Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest."
+    }
+  ],
+  "observed_usage_not_causal_comparison": [
+    {
+      "variant": "baseline",
+      "phase": "cold",
+      "usage": {
+        "input_tokens": 80887,
+        "cached_input_tokens": 37632,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1370,
+        "reasoning_output_tokens": 523
+      }
+    },
+    {
+      "variant": "baseline",
+      "phase": "resume",
+      "usage": {
+        "input_tokens": 135687,
+        "cached_input_tokens": 79360,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 2514,
+        "reasoning_output_tokens": 876
+      }
+    },
+    {
+      "variant": "candidate",
+      "phase": "cold",
+      "usage": {
+        "input_tokens": 35234,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 927,
+        "reasoning_output_tokens": 301
+      }
+    },
+    {
+      "variant": "candidate",
+      "phase": "resume",
+      "usage": {
+        "input_tokens": 85954,
+        "cached_input_tokens": 34560,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1878,
+        "reasoning_output_tokens": 515
+      }
+    }
+  ]
 }

@@ -42,6 +42,8 @@
 
 冷启动两版均输出正确项目、总体负责人和独立职责、零 Task、not_needed、无 Attention；本地完整业务应用均成功，存储回读仍为一个 Project、零 Task、原职责正确。冷启动来源上下文为人工最小全原文夹具；后续输入改用实际 retrieve_task_semantic_context/render_task_semantic_context 生成，不将夹具等同于生产检索验收。只读审查后的候选重新冷启动通过；修正前候选记录保留，不充作修正后证明。
 
-原生完整事件和输入暂存 `/private/tmp/ceo-task-guidance-eval-7_xd_p6r`；摘要回执见 `evals/trajectory_optimization/task_guidance_dedup.results.v1.json`。基线与修正后候选各自冷启动和同 session 续接均通过，四次完整本地业务应用成功。续接复用同一 Project、零 Task、not_needed、无 Attention；总体负责人的原始存储引文逐项相等。续接前均使用同一份已真实应用的项目快照，续接来源与服务生成的检索上下文相同。完整事件另显示基线冷启动读取了一次共享 AGENTS.md，双方均有原生 Skill 目录截短警告；因此不能声称原生附加上下文严格相同或性能因果收益。这些读取与警告未在本次改动中被隐藏或关闭。
+原生完整事件和输入暂存 `/private/tmp/ceo-task-guidance-eval-7_xd_p6r`；摘要回执见 `evals/trajectory_optimization/task_guidance_dedup.results.v1.json`。基线与修正后候选各自冷启动和同 session 续接均通过，四次完整本地业务应用成功。续接复用同一 Project、零 Task、not_needed、无 Attention；总体负责人的原始存储引文逐项相等。续接前均使用同一份已真实应用的项目快照，续接来源与服务生成的检索上下文相同。完整事件另显示基线冷启动读取了一次共享 AGENTS.md，`baseline-events.jsonl:4`、`candidate-events.jsonl:4` 与 `candidate-resume-events.jsonl:4` 都记录了原生警告 “Skill descriptions were shortened to fit the skills context budget.”（baseline 续接没有该警告），准确文件 SHA 保存在摘要回执中；因此不能声称原生附加上下文严格相同或性能因果收益。这些读取与警告未在本次改动中被隐藏或关闭。
 
 该对照不能证明风险建议、跨时区或其他配置提供商均通过，尚不具备全域发布结论。
+
+独立只读证据复核确认四份输入摘要、结果、应用数据库和原职责引文保留；目录警告的初次检索未匹配 shortened 文案，主 Agent 逐行确认并补充了上述准确来源。
