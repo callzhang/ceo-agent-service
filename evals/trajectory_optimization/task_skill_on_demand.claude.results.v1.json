@@ -1,0 +1,321 @@
+{
+  "version": 1,
+  "baseline": "5bcfac89 Task prompt, same Claude adapter/factory/schema",
+  "candidate": "2ee3d94b",
+  "claude_cli_version": "2.1.269",
+  "route": "claude_oauth",
+  "configured_model": "sonnet",
+  "reasoning": "medium",
+  "raw_evidence_root": "/private/tmp/ceo-task-on-demand-el39rf6f",
+  "skill_sha256": "1cd05b1a3589437d795001723ec5bfb332456db16f21ff79b7f23bce6af5b101",
+  "runs": [
+    {
+      "route": "claude_oauth",
+      "model": "sonnet",
+      "variant": "baseline",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "49945b98-ef1e-40c0-8f22-901c436ec1b0",
+      "submitted_chars": 81763,
+      "submitted_sha256": "5087ba57364286b6e6eeef61bddc9c64f03377b691ea7cad6f6b1d5f14b3f50b",
+      "actual_model": "claude-sonnet-5",
+      "events_sha256": "ba042734b92601fc732553104bbf01941b1b50ee43b2eb1f4acd22e259075b87",
+      "decision_sha256": "0f22d1588d97d3684156af5f83e749201587d275088b03a43f091975729cd6a2",
+      "full_skill_read_returned": false,
+      "tool_receipts": [
+        {
+          "name": "ToolSearch",
+          "completed": true,
+          "error": false
+        },
+        {
+          "name": "mcp__memory_fixture__memory_write",
+          "completed": true,
+          "error": false
+        }
+      ],
+      "native_duration_ms": 57287,
+      "native_num_turns": 3,
+      "native_usage": {
+        "input_tokens": 6,
+        "cache_creation_input_tokens": 40037,
+        "cache_read_input_tokens": 131566,
+        "output_tokens": 4716,
+        "output_tokens_details": {
+          "thinking_tokens": 2874
+        },
+        "server_tool_use": {
+          "web_search_requests": 0,
+          "web_fetch_requests": 0
+        },
+        "service_tier": "standard",
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 40037,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "global",
+        "iterations": [
+          {
+            "input_tokens": 2,
+            "output_tokens": 1458,
+            "cache_read_input_tokens": 58145,
+            "cache_creation_input_tokens": 427,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 427
+            },
+            "type": "message"
+          }
+        ],
+        "speed": "standard"
+      },
+      "native_reported_cost_usd": 0.25515920000000003,
+      "project_count": 1,
+      "task_count": 0,
+      "attention_categories": [],
+      "task_titles": []
+    },
+    {
+      "route": "claude_oauth",
+      "model": "sonnet",
+      "variant": "baseline",
+      "phase": "risk",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "49945b98-ef1e-40c0-8f22-901c436ec1b0",
+      "submitted_chars": 85267,
+      "submitted_sha256": "899d6512acc2fb4cf2b7b47759f84137770df9fbea035956bb72dfda9a4b2034",
+      "actual_model": "claude-sonnet-5",
+      "events_sha256": "b6da51f10cf3018f9b775f63fc8206a19db6e8d3d8bc3fb0dc5f38b014362caf",
+      "decision_sha256": "6c979515a9790947e774d77ef9db6692e90cc3db1a20546cc519e51fade6e892",
+      "full_skill_read_returned": false,
+      "tool_receipts": [
+        {
+          "name": "mcp__memory_fixture__memory_write",
+          "completed": true,
+          "error": false
+        }
+      ],
+      "native_duration_ms": 68717,
+      "native_num_turns": 2,
+      "native_usage": {
+        "input_tokens": 4,
+        "cache_creation_input_tokens": 33035,
+        "cache_read_input_tokens": 146798,
+        "output_tokens": 6392,
+        "output_tokens_details": {
+          "thinking_tokens": 2927
+        },
+        "server_tool_use": {
+          "web_search_requests": 0,
+          "web_fetch_requests": 0
+        },
+        "service_tier": "standard",
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 33035,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "global",
+        "iterations": [
+          {
+            "input_tokens": 2,
+            "output_tokens": 3106,
+            "cache_read_input_tokens": 88226,
+            "cache_creation_input_tokens": 3381,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 3381
+            },
+            "type": "message"
+          }
+        ],
+        "speed": "standard"
+      },
+      "native_reported_cost_usd": 0.22542759999999998,
+      "project_count": 1,
+      "task_count": 1,
+      "attention_categories": [
+        "watch"
+      ],
+      "task_titles": [
+        "完成客户验收材料确认以推动付款日期排期"
+      ]
+    },
+    {
+      "route": "claude_oauth",
+      "model": "sonnet",
+      "variant": "candidate",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "07159ea0-9d58-49bd-b4e8-1ebdea3b3838",
+      "submitted_chars": 58565,
+      "submitted_sha256": "d5ff299aa3494745fe1e2edd243c75c6576c42f1c0dad0e6b7b88c52ef24be80",
+      "actual_model": "claude-sonnet-5",
+      "events_sha256": "babb447a8ffa61500b8193a21c8f8f5a19a9fa0cffad270b1038a00a0ca2abaf",
+      "decision_sha256": "59137cd11fda6703271cef2c544dd49ae380b4fb37bc88a091e8785808a10a3c",
+      "full_skill_read_returned": true,
+      "tool_receipts": [
+        {
+          "name": "Bash",
+          "completed": true,
+          "error": false
+        },
+        {
+          "name": "ToolSearch",
+          "completed": true,
+          "error": false
+        },
+        {
+          "name": "mcp__memory_fixture__memory_write",
+          "completed": true,
+          "error": false
+        }
+      ],
+      "native_duration_ms": 68967,
+      "native_num_turns": 4,
+      "native_usage": {
+        "input_tokens": 8,
+        "cache_creation_input_tokens": 35671,
+        "cache_read_input_tokens": 185280,
+        "output_tokens": 5607,
+        "output_tokens_details": {
+          "thinking_tokens": 3647
+        },
+        "server_tool_use": {
+          "web_search_requests": 0,
+          "web_fetch_requests": 0
+        },
+        "service_tier": "standard",
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 35671,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "global",
+        "iterations": [
+          {
+            "input_tokens": 2,
+            "output_tokens": 1458,
+            "cache_read_input_tokens": 59114,
+            "cache_creation_input_tokens": 462,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 462
+            },
+            "type": "message"
+          }
+        ],
+        "speed": "standard"
+      },
+      "native_reported_cost_usd": 0.25221,
+      "project_count": 1,
+      "task_count": 0,
+      "attention_categories": [],
+      "task_titles": []
+    },
+    {
+      "route": "claude_oauth",
+      "model": "sonnet",
+      "variant": "candidate",
+      "phase": "risk",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "07159ea0-9d58-49bd-b4e8-1ebdea3b3838",
+      "submitted_chars": 62069,
+      "submitted_sha256": "b6823266906bb495c77015708b699b96ce6cb86af913209decdd2a6fb4a146f3",
+      "actual_model": "claude-sonnet-5",
+      "events_sha256": "19ffc5bb5227188dae73c3899ba5ca17062d72698087440dbd9c2257ccfa4763",
+      "decision_sha256": "767c57d50c03a0d17004b721da322f5ed32ad2d49136c05669d361b5775ae4a8",
+      "full_skill_read_returned": false,
+      "tool_receipts": [
+        {
+          "name": "mcp__memory_fixture__memory_write",
+          "completed": true,
+          "error": false
+        }
+      ],
+      "native_duration_ms": 99290,
+      "native_num_turns": 2,
+      "native_usage": {
+        "input_tokens": 4,
+        "cache_creation_input_tokens": 28201,
+        "cache_read_input_tokens": 141302,
+        "output_tokens": 9158,
+        "output_tokens_details": {
+          "thinking_tokens": 5598
+        },
+        "server_tool_use": {
+          "web_search_requests": 0,
+          "web_fetch_requests": 0
+        },
+        "service_tier": "standard",
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 28201,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "global",
+        "iterations": [
+          {
+            "input_tokens": 2,
+            "output_tokens": 3209,
+            "cache_read_input_tokens": 81726,
+            "cache_creation_input_tokens": 6051,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 6051
+            },
+            "type": "message"
+          }
+        ],
+        "speed": "standard"
+      },
+      "native_reported_cost_usd": 0.23265240000000004,
+      "project_count": 1,
+      "task_count": 1,
+      "attention_categories": [
+        "watch"
+      ],
+      "task_titles": [
+        "完成星桥交付项目验收材料确认，推进回款日期安排"
+      ]
+    }
+  ],
+  "application_summary": [
+    {
+      "variant": "claude-baseline",
+      "phase": "cold",
+      "applied": true,
+      "projects": 1,
+      "tasks": 0
+    },
+    {
+      "variant": "claude-candidate",
+      "phase": "cold",
+      "applied": true,
+      "projects": 1,
+      "tasks": 0
+    },
+    {
+      "variant": "claude-baseline",
+      "phase": "risk",
+      "applied": true,
+      "projects": 1,
+      "tasks": 1
+    },
+    {
+      "variant": "claude-candidate",
+      "phase": "risk",
+      "applied": true,
+      "projects": 1,
+      "tasks": 1
+    }
+  ],
+  "limits": [
+    "No real business or durable Memory service connected. All tool writes use local fake Memory fixture.",
+    "Candidate cold read returned exact complete Skill. Same-session continuation did not reread unchanged file.",
+    "Claude full schema is embedded by existing bridge; sizes include this schema, unlike Codex service Task sizes.",
+    "Single-run provider duration/cache/usage differences do not establish general performance or total-token improvement.",
+    "Friday remains delivery-regression evidence only."
+  ]
+}
