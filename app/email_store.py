@@ -13358,11 +13358,11 @@ class EmailStore:
                 str(row["name"])
                 for row in db.execute(
                     "select name from sqlite_master where type='table' "
-                    "and name in ('reply_tasks', 'runs')"
+                    "and name in ('tasks', 'runs')"
                 ).fetchall()
             }
             task_clause = ""
-            if task_tables == {"reply_tasks", "runs"}:
+            if task_tables == {"tasks", "runs"}:
                 task_clause = f"""
                     or classifications.id in (
                         select json_extract(
@@ -13753,11 +13753,11 @@ class EmailStore:
                 for row in db.execute(
                     """
                     select name from sqlite_master
-                    where type='table' and name in ('reply_tasks', 'runs')
+                    where type='table' and name in ('tasks', 'runs')
                     """
                 ).fetchall()
             }
-            if generic_tables != {"reply_tasks", "runs"}:
+            if generic_tables != {"tasks", "runs"}:
                 return None
             classification = db.execute(
                 """
@@ -14006,12 +14006,12 @@ class EmailStore:
                 for row in db.execute(
                     """
                     select name from sqlite_master
-                    where type='table' and name in ('reply_tasks', 'runs')
+                    where type='table' and name in ('tasks', 'runs')
                     """
                 ).fetchall()
             }
             task_rows: Sequence[sqlite3.Row] = ()
-            if generic_tables == {"reply_tasks", "runs"}:
+            if generic_tables == {"tasks", "runs"}:
                 task_rows = db.execute(
                     f"""
                     select id, conversation_id, trigger_message_id,
@@ -14031,7 +14031,7 @@ class EmailStore:
                     (classification_id,),
                 ).fetchall()
             lineage_by_action: dict[str, dict[str, object]] = {}
-            if unsubscribe_rows and generic_tables == {"reply_tasks", "runs"}:
+            if unsubscribe_rows and generic_tables == {"tasks", "runs"}:
                 for row in unsubscribe_rows:
                     _validate_durable_unsubscribe_result_text(
                         row["result_text"],
@@ -15025,7 +15025,7 @@ class EmailStore:
                 )
             }
             has_tasks = db.execute(
-                "select count(*) from sqlite_master where type='table' and name='reply_tasks'"
+                "select count(*) from sqlite_master where type='table' and name='tasks'"
             ).fetchone()[0]
             unsubscribe_queue = (
                 {

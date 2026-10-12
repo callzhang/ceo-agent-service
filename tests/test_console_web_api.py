@@ -2780,10 +2780,10 @@ def test_queue_attention_rows_excludes_legacy_audit_revision_needs_human(tmp_pat
     )
     with store._connect() as db:
         task_id = db.execute(
-            "select id from reply_tasks where conversation_id=? and trigger_message_id=?",
+            "select id from tasks where record_type='reply_tasks' and conversation_id=? and trigger_message_id=?",
             ("audit-revision-conversation", "audit-revision-message"),
         ).fetchone()[0]
-        db.execute("update reply_tasks set status='done' where id=?", (task_id,))
+        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task_id,))
         run = insert_native_run_fixture(
             db, {
                 'task_id': task_id,
@@ -2846,10 +2846,10 @@ def test_queue_attention_rows_excludes_actionable_structured_needs_human_attempt
     }
     with store._connect() as db:
         task_id = db.execute(
-            "select id from reply_tasks where conversation_id=? and trigger_message_id=?",
+            "select id from tasks where record_type='reply_tasks' and conversation_id=? and trigger_message_id=?",
             ("needs-human-conversation", "needs-human-message"),
         ).fetchone()[0]
-        db.execute("update reply_tasks set status='done' where id=?", (task_id,))
+        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task_id,))
         run = insert_native_run_fixture(
             db, {
                 'task_id': task_id,
@@ -3494,7 +3494,7 @@ def test_current_wechat_delivery_failure_remains_in_history_after_candidate_done
         sensitivity_kind="normal", send_status="failed", channel="wechat",
     )
     with store._connect() as db:
-        db.execute("update reply_tasks set status='done' where id=?", (task.id,))
+        db.execute("update tasks set status='done' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,))
         db.execute(
             "update wechat_deliveries set status=?, error='wechat_ui_not_ready', "
             "pre_action_failure=1, execution_generation=?, conversation_id=? where id=?",
@@ -3533,7 +3533,7 @@ def test_principal_superseded_wechat_delivery_is_terminal_in_detail_and_retry_ap
         inactive_before="2026-07-30 10:10:00",
     )
     with store._connect() as db:
-        db.execute("update reply_tasks set status='done' where id=1")
+        db.execute("update tasks set status='done' where record_type='reply_tasks' and cast(legacy_key as integer)=1")
     before = _wechat_delivery_and_attempt_state(store, delivery_id)
     sends = []
     monkeypatch.setattr("app.wechat.service.build_sender", lambda: SimpleNamespace())
@@ -3565,7 +3565,7 @@ def test_old_principal_supersession_does_not_describe_current_pending_task(tmp_p
         inactive_before="2026-07-30 10:10:00",
     )
     with store._connect() as db:
-        db.execute("update reply_tasks set execution_generation=?,status='pending' where id=1", (generation,))
+        db.execute("update tasks set execution_generation=?,status='pending' where record_type='reply_tasks' and cast(legacy_key as integer)=1", (generation,))
         db.execute("update wechat_deliveries set conversation_id=? where id=?", (conversation, delivery_id))
     before = _wechat_delivery_and_attempt_state(store, delivery_id)
     with _client(tmp_path) as client:

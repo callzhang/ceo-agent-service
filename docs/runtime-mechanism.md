@@ -2486,3 +2486,6 @@ DAO、Dispatcher、runtime父定位与恢复、History、搜索、Console及静�
 OKR run保留原公共request_id、session、transcript range与created_at，只退休三个空过程缓存。源没有request外键或run状态、错误、完成/更新时间；共享列保持NULL，task_id不补成FK。items的request_id同样没有声明FK，保留原public scalar；多个run及原允许的缺失request关系均不合并或补造父行。精确native读取继续使用structured workload的公共request ID和原session/range。
 
 weekly analysis job的11个原字段、running/completed/failed CHECK和week_end/manager/source_digest自然键保持。cache hit与cache miss复用同一公共job ID，owner/expiry CAS及superseded错误和时间保持；runtime workload包含原公共job ID。周报全局lease及last_success/last_attempt仍在service_state。逆迁保留原序列水位和replacement新写入/删除后的分配水位。当前代码处于隔离分支；完整B验收与生产状态以验收文档为准。
+
+
+Email task visibility in Store13: unsubscribe classification lists, classification detail/in-flight progress, verified entry URL lineage and summary queue counts detect the physical tasks/runs tables. They read public task/run IDs through the typed projections and resolve canonical inputs through the physical current_input_id reference. A standalone EmailStore without the shared task tables retains its existing behavior. Existing receipt/lineage/URL validation and redaction rules remain; this change fixes the physical-table presence check and adds no policy.

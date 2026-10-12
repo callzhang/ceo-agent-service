@@ -62,10 +62,11 @@ def _wechat_delivery_and_attempt_state(store, delivery_id):
                 """
                 select attempts.*
                 from reply_attempts as attempts
-                join reply_tasks as tasks
+                join tasks as tasks
                   on tasks.conversation_id=attempts.conversation_id
                  and tasks.trigger_message_id=attempts.trigger_message_id
-                where tasks.id=? and attempts.channel='wechat'
+                where tasks.id=? and tasks.record_type='reply_tasks'
+                  and attempts.channel='wechat'
                 order by attempts.id
                 """,
                 (delivery["reply_task_id"],),
@@ -811,11 +812,13 @@ def test_exhausted_stale_wechat_delivery_rejects_ineligible_state_unchanged(
         elif invalid_state == "delivery_generation_mismatch":
             expected_generation = "different-generation"
         elif invalid_state == "task_generation_mismatch":
-            db.execute(
-                "update reply_tasks set execution_generation='new-generation' "
-                "where id=(select reply_task_id from wechat_deliveries where id=?)",
+            changed = db.execute(
+                "update tasks set execution_generation='new-generation' "
+                "where record_type='reply_tasks' and id=(select reply_task_id "
+                "from wechat_deliveries where id=?)",
                 (delivery_id,),
             )
+            assert changed.rowcount == 1
         elif invalid_state == "missing_matching_attempt":
             db.execute("delete from reply_attempts where id=?", (attempt_id,))
     before = _wechat_delivery_and_attempt_state(store, delivery_id)
