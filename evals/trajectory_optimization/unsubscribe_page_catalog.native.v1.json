@@ -1,0 +1,241 @@
+{
+  "version": 1,
+  "model": "gpt-5.6-luna",
+  "scope": "synthetic page facts; actual factory/adapter command; empty service MCP manifest shared across arms; cold turns only; current native output mode",
+  "results": [
+    {
+      "case": "confirmation",
+      "arm": "baseline",
+      "expected": "done",
+      "result": {
+        "state": "done",
+        "evidence": "You have been unsubscribed. You will no longer receive these emails."
+      },
+      "session_id": "01a1313b-b167-76c3-be60-0097331c59a2",
+      "events_sha256": "bf73c45b5d9119a1374c1ecc4593200bdcdca52ba3e66a6b47c66b35630434e9",
+      "prompt_sha256": "ea41a85687aa91effd0ff0ad8925332edba440b8dbf3fea5b891e5dffff83265",
+      "native_sha256": "09401a4ccec1856ec1603eb2962be8913d82b2cc186d4747e0bcbcb31be7a464",
+      "developer_block_chars": [
+        150,
+        16098,
+        1014,
+        21488
+      ],
+      "skill_file_mentions": 266,
+      "non_catalog_developer_sha256": "18536ca4d72da253150631648662e057ff67259dc102c25a9838ee68a58fe283",
+      "native_tool_calls": 0,
+      "native_task_input_match": true,
+      "state_and_verbatim_checks_pass": true,
+      "non_navigation_evidence_check_pass": true,
+      "observed_approval_policy": "on-request",
+      "observed_sandbox_policy": {
+        "type": "danger-full-access"
+      }
+    },
+    {
+      "case": "confirmation",
+      "arm": "candidate",
+      "expected": "done",
+      "result": {
+        "state": "done",
+        "evidence": "You have been unsubscribed. You will no longer receive these emails."
+      },
+      "session_id": "01a1313b-cef3-7013-90f4-c04a52de6fda",
+      "events_sha256": "f3d6f39c9ce810abdaa70a0dc84aba54b181cb452781dc784fecf48764003901",
+      "prompt_sha256": "ea41a85687aa91effd0ff0ad8925332edba440b8dbf3fea5b891e5dffff83265",
+      "native_sha256": "6217dd6608cb0ea35c532ce7caf2f5fd2714c0449ce6f05a3c908391477ff746",
+      "developer_block_chars": [
+        150,
+        16098,
+        1014,
+        1698
+      ],
+      "skill_file_mentions": 7,
+      "non_catalog_developer_sha256": "18536ca4d72da253150631648662e057ff67259dc102c25a9838ee68a58fe283",
+      "native_tool_calls": 0,
+      "native_task_input_match": true,
+      "state_and_verbatim_checks_pass": true,
+      "non_navigation_evidence_check_pass": true,
+      "observed_approval_policy": "on-request",
+      "observed_sandbox_policy": {
+        "type": "danger-full-access"
+      }
+    },
+    {
+      "case": "generic",
+      "arm": "baseline",
+      "expected": "unknown",
+      "result": {
+        "state": "unknown",
+        "evidence": "Welcome to Example."
+      },
+      "session_id": "01a1313b-e96c-76a0-9352-d04ea4d6a9f6",
+      "events_sha256": "862655c689caccc89c0ea1904dda4f2750d2e88de1925fd9d7a6d5ce9dd12ee3",
+      "prompt_sha256": "835288c193b0e91583c92647b18f737de0d1fd5b4f9b82f9ded8f4f8f82fae1b",
+      "native_sha256": "c5343d030eacddd15c3b1b36d325bc614b664b454888a1dc6a41765ad3a3b26a",
+      "developer_block_chars": [
+        150,
+        16098,
+        1014,
+        21488
+      ],
+      "skill_file_mentions": 266,
+      "non_catalog_developer_sha256": "18536ca4d72da253150631648662e057ff67259dc102c25a9838ee68a58fe283",
+      "native_tool_calls": 0,
+      "native_task_input_match": true,
+      "state_and_verbatim_checks_pass": true,
+      "non_navigation_evidence_check_pass": true,
+      "observed_approval_policy": "on-request",
+      "observed_sandbox_policy": {
+        "type": "danger-full-access"
+      }
+    },
+    {
+      "case": "generic",
+      "arm": "candidate",
+      "expected": "unknown",
+      "result": {
+        "state": "unknown",
+        "evidence": "Welcome to Example. Home. Articles. Sign in."
+      },
+      "session_id": "01a1313c-035f-76c3-81ec-b3210b7d0ee8",
+      "events_sha256": "63b653224ed5c998cb4c2c4edcb539dc51d034c904bdbac8a1a94bf801e9724f",
+      "prompt_sha256": "835288c193b0e91583c92647b18f737de0d1fd5b4f9b82f9ded8f4f8f82fae1b",
+      "native_sha256": "32443ead06549a6be38d4c99224ab6ff0097886ed1c4716963e20e2202854650",
+      "developer_block_chars": [
+        150,
+        16098,
+        1014,
+        1698
+      ],
+      "skill_file_mentions": 7,
+      "non_catalog_developer_sha256": "18536ca4d72da253150631648662e057ff67259dc102c25a9838ee68a58fe283",
+      "native_tool_calls": 0,
+      "native_task_input_match": true,
+      "state_and_verbatim_checks_pass": true,
+      "non_navigation_evidence_check_pass": false,
+      "observed_approval_policy": "on-request",
+      "observed_sandbox_policy": {
+        "type": "danger-full-access"
+      }
+    },
+    {
+      "case": "form",
+      "arm": "baseline",
+      "expected": "action_required",
+      "result": {
+        "state": "action_required",
+        "evidence": "Enter your email address below and click Unsubscribe to stop receiving these emails."
+      },
+      "session_id": "01a1313c-1a74-7ba0-b4c7-4053cb53ee81",
+      "events_sha256": "7ad4098947f7e03f19dc430173d89a4e1ebd92941948e9fb3580c1fb8579b75f",
+      "prompt_sha256": "5a9485ee2a6773af8fd204160015ebe814b26307945bc007bc61b08d1f487a62",
+      "native_sha256": "df4244428bbf6a634a38cedea9a819e208bcd86a0299d1c30c7116d79fff5af2",
+      "developer_block_chars": [
+        150,
+        16098,
+        1014,
+        18653
+      ],
+      "skill_file_mentions": 171,
+      "non_catalog_developer_sha256": "18536ca4d72da253150631648662e057ff67259dc102c25a9838ee68a58fe283",
+      "native_tool_calls": 0,
+      "native_task_input_match": true,
+      "state_and_verbatim_checks_pass": true,
+      "non_navigation_evidence_check_pass": true,
+      "observed_approval_policy": "on-request",
+      "observed_sandbox_policy": {
+        "type": "danger-full-access"
+      }
+    },
+    {
+      "case": "form",
+      "arm": "candidate",
+      "expected": "action_required",
+      "result": {
+        "state": "action_required",
+        "evidence": "Enter your email address below and click Unsubscribe to stop receiving these emails."
+      },
+      "session_id": "01a1313c-3654-7a81-a515-dc870ec9ff53",
+      "events_sha256": "2d83a7d9f66e4cbd65ee234d8bab9a5bcea02c599e9b6b1abce3d32f792a2da2",
+      "prompt_sha256": "5a9485ee2a6773af8fd204160015ebe814b26307945bc007bc61b08d1f487a62",
+      "native_sha256": "9359cfbf6847812136cd82d3adb19d5cfa89d97a8f9537b1fed591aa5b53b01e",
+      "developer_block_chars": [
+        150,
+        16098,
+        1014,
+        1698
+      ],
+      "skill_file_mentions": 7,
+      "non_catalog_developer_sha256": "18536ca4d72da253150631648662e057ff67259dc102c25a9838ee68a58fe283",
+      "native_tool_calls": 0,
+      "native_task_input_match": true,
+      "state_and_verbatim_checks_pass": true,
+      "non_navigation_evidence_check_pass": true,
+      "observed_approval_policy": "on-request",
+      "observed_sandbox_policy": {
+        "type": "danger-full-access"
+      }
+    },
+    {
+      "case": "login",
+      "arm": "baseline",
+      "expected": "login_required",
+      "result": {
+        "state": "login_required",
+        "evidence": "Please sign in to your account to manage your email subscriptions."
+      },
+      "session_id": "01a1313c-51e8-7670-a626-ea31d1912d23",
+      "events_sha256": "5aff82ff3ac45f95f46ba6862ef8eb84daafb91b658feb05c489f9801c2cdcbd",
+      "prompt_sha256": "39de36d7b37a7493ca98c82cfdbc87217dafa1a015835734b696765b37bb5095",
+      "native_sha256": "9b01e1fb4a32f18f62aedcf369238abafdd719e6a2dc95587432f6911b4776ef",
+      "developer_block_chars": [
+        150,
+        16098,
+        1014,
+        18653
+      ],
+      "skill_file_mentions": 171,
+      "non_catalog_developer_sha256": "18536ca4d72da253150631648662e057ff67259dc102c25a9838ee68a58fe283",
+      "native_tool_calls": 0,
+      "native_task_input_match": true,
+      "state_and_verbatim_checks_pass": true,
+      "non_navigation_evidence_check_pass": true,
+      "observed_approval_policy": "on-request",
+      "observed_sandbox_policy": {
+        "type": "danger-full-access"
+      }
+    },
+    {
+      "case": "login",
+      "arm": "candidate",
+      "expected": "login_required",
+      "result": {
+        "state": "login_required",
+        "evidence": "Please sign in to your account to manage your email subscriptions."
+      },
+      "session_id": "01a1313c-6ecc-7002-8ec9-40b2fe58ce98",
+      "events_sha256": "a612e7984443ab5ed9687df87305cf05a32d2690a01c51902031d87403ffdc71",
+      "prompt_sha256": "39de36d7b37a7493ca98c82cfdbc87217dafa1a015835734b696765b37bb5095",
+      "native_sha256": "e7f7d4ea1a160a25131b5a2fbd182103afcef892157e822de0b767bf137e098b",
+      "developer_block_chars": [
+        150,
+        16098,
+        1014,
+        1698
+      ],
+      "skill_file_mentions": 7,
+      "non_catalog_developer_sha256": "18536ca4d72da253150631648662e057ff67259dc102c25a9838ee68a58fe283",
+      "native_tool_calls": 0,
+      "native_task_input_match": true,
+      "state_and_verbatim_checks_pass": true,
+      "non_navigation_evidence_check_pass": true,
+      "observed_approval_policy": "on-request",
+      "observed_sandbox_policy": {
+        "type": "danger-full-access"
+      }
+    }
+  ],
+  "acceptance": "incomplete: one candidate generic-page response includes navigation in evidence; no causal attribution established",
+  "independent_review": "Input, argv, native/event hashes, parser results, catalog sizes and zero tool calls independently verified; generic candidate navigation-evidence failure retained; complete acceptance remains incomplete."
+}
