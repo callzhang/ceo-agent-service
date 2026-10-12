@@ -87,3 +87,19 @@ def test_codex_task_schema_is_out_of_band_and_business_input_remains(monkeypatch
     assert "FULL_SKILL_RULE" in prompt
     assert "CURRENT_SEMANTIC_FACT" in prompt
     assert "TaskAgentDecision Pydantic JSON schema:" not in prompt
+
+
+def test_task_factory_forwards_its_native_skill_selection(monkeypatch):
+    prompt, factory = prompt_and_factory(monkeypatch)
+    calls = []
+    adapter = SimpleNamespace(
+        build_command=lambda **kwargs: calls.append(kwargs) or ["codex"],
+        build_env=lambda route: {},
+    )
+    factory.build(
+        adapter=adapter,
+        route=SimpleNamespace(name="codex_oauth"),
+        prompt=prompt,
+        session_id=None,
+    )
+    assert calls[0]["skill_names"] == ("ceo-work-tracking",)
