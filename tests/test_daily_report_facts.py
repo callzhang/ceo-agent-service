@@ -12,6 +12,7 @@ from app.daily_report_facts import (
 )
 from app.email_store import EmailStore
 from app.store import AutoReplyStore
+from app.task_storage import task_physical_id
 
 
 REPORT_DATE = date(2026, 9, 24)
@@ -272,7 +273,11 @@ def test_meetings_are_the_sent_follow_ups_of_meetings_that_ended_today(tmp_path:
             eligible_at=ended_at,
             status="sent",
         )
-        _set(store, "meeting_alignment_jobs", job_id, final_message=f"{meeting_id} 的会后跟进")
+        with store._connect() as db:
+            db.execute(
+                "update tasks set final_message=? where record_type='meeting_alignment_jobs' and id=?",
+                (f"{meeting_id} 的会后跟进", task_physical_id(db, "meeting_alignment_jobs", job_id)),
+            )
 
     facts = collect_daily_report_facts(store, EmailStore(store.path), DAY)
 

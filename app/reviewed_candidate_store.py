@@ -1,5 +1,6 @@
 """Durable, generation-bound Consumer candidates and system execution progress."""
 
+from app.task_storage import REPLY_TASK_SQL
 import hashlib
 import json
 import sqlite3
@@ -9,9 +10,9 @@ from app.run_storage import AGENT_RUN_SQL
 
 
 REVIEWED_CANDIDATE_DDL = """
-create index if not exists idx_reply_tasks_business_object_key on reply_tasks(business_object_key);
+create index if not exists idx_reply_tasks_business_object_key on tasks(business_object_key) where record_type='reply_tasks';
 create table if not exists review_candidates (
- id integer primary key, task_id integer not null references reply_tasks(id),
+ id integer primary key, task_id integer not null references tasks(id),
  execution_generation text not null, consumer_run_id integer not null unique references runs(id),
  stage_index integer not null, proposal_revision integer not null,
  predecessor_review_id integer references candidate_reviews(id),
@@ -92,8 +93,8 @@ def _clock(value: datetime) -> str:
 
 class ReviewedCandidateStoreMixin:
     def _candidate_context(self, db: sqlite3.Connection, candidate_id: int) -> sqlite3.Row:
-        row = db.execute("""select c.*, t.execution_generation as current_generation,
-            t.business_object_key from review_candidates c join reply_tasks t on t.id=c.task_id
+        row = db.execute(f"""select c.*, t.execution_generation as current_generation,
+            t.business_object_key from review_candidates c join ({REPLY_TASK_SQL}) t on t.id=c.task_id
             where c.id=?""", (candidate_id,)).fetchone()
         if row is None:
             raise ValueError("candidate does not exist")
@@ -112,7 +113,7 @@ class ReviewedCandidateStoreMixin:
 
     def _check_historical_runtime_refusal(self, db: sqlite3.Connection, business_object_key: str) -> None:
         rows = db.execute(f"""select r.structured_error_json from ({AGENT_RUN_SQL}) r
-            join reply_tasks t on t.id=r.reply_task_id
+            join ({REPLY_TASK_SQL}) t on t.id=r.reply_task_id
             where t.business_object_key=? and r.structured_error_json<>''""", (business_object_key,))
         for row in rows:
             try:
@@ -127,7 +128,7 @@ class ReviewedCandidateStoreMixin:
         body = _json(prepared_result)
         digest = hashlib.sha256(body.encode()).hexdigest()
         data = json.loads(body)
-        task_row = db.execute("select execution_generation, channel from reply_tasks where id=?", (run["reply_task_id"],)).fetchone()
+        task_row = db.execute(f"select execution_generation, channel from ({REPLY_TASK_SQL}) where id=?", (run["reply_task_id"],)).fetchone()
         if (task_row is not None and task_row["channel"] == "wechat"
             and "action" in data and "outcome" not in data):
             from app.dingtalk_models import CodexDecision
@@ -181,7 +182,7 @@ class ReviewedCandidateStoreMixin:
         with self._connect() as db:
             saved = db.execute(f"""select c.*, r.status as run_status, t.execution_generation as current_generation
                 from review_candidates c join ({AGENT_RUN_SQL}) r on r.id=c.consumer_run_id
-                join reply_tasks t on t.id=c.task_id where c.consumer_run_id=?""", (consumer_run.id,)).fetchone()
+                join ({REPLY_TASK_SQL}) t on t.id=c.task_id where c.consumer_run_id=?""", (consumer_run.id,)).fetchone()
             if (saved is None or saved["task_id"] != task.id
                 or saved["execution_generation"] != task.execution_generation
                 or saved["current_generation"] != task.execution_generation
@@ -249,9 +250,9 @@ class ReviewedCandidateStoreMixin:
 
     def current_reviewed_candidate(self, task_id: int, generation: str) -> dict[str, Any] | None:
         with self._connect() as db:
-            row = db.execute("""select c.*, r.id as review_id, r.audit_run_id, r.decision, s.id as selection_id,
+            row = db.execute(f"""select c.*, r.id as review_id, r.audit_run_id, r.decision, s.id as selection_id,
                 s.option_key, s.branch_json, s.status as selection_status
-                from review_candidates c join reply_tasks t on t.id=c.task_id
+                from review_candidates c join ({REPLY_TASK_SQL}) t on t.id=c.task_id
                 join candidate_reviews r on r.candidate_id=c.id
                 left join candidate_selections s on s.candidate_id=c.id
                 where c.task_id=? and c.execution_generation=? and t.execution_generation=?
@@ -310,14 +311,14 @@ class ReviewedCandidateStoreMixin:
             latest_id = db.execute("select max(id) from review_candidates where task_id=? and execution_generation=?", (candidate["task_id"],candidate["execution_generation"])).fetchone()[0]
             if latest_id != candidate_id:
                 raise ValueError("stale candidate")
-            task = db.execute("select * from reply_tasks where id=?", (candidate["task_id"],)).fetchone()
+            task = db.execute(f"select * from ({REPLY_TASK_SQL}) where id=?", (candidate["task_id"],)).fetchone()
             if task["status"] == "needs_human":
-                db.execute("""update reply_tasks set status='pending',available_at='',locked_at=null,
-                    updated_at=current_timestamp where id=? and execution_generation=? and status='needs_human'""",
+                db.execute("""update tasks set status='pending',available_at='',locked_at=null,
+                    updated_at=current_timestamp where record_type='reply_tasks' and id=? and execution_generation=? and status='needs_human'""",
                     (candidate["task_id"],candidate["execution_generation"]))
             elif task["status"] not in ("pending", "processing", "done", "skipped"):
                 raise ValueError("selected candidate task is unavailable")
-            return dict(db.execute("select * from reply_tasks where id=?", (candidate["task_id"],)).fetchone())
+            return dict(db.execute(f"select * from ({REPLY_TASK_SQL}) where id=?", (candidate["task_id"],)).fetchone())
 
     def claim_candidate_execution(self, candidate_id: int, review_id: int, owner: str, lease_seconds: int) -> dict[str, Any] | None:
         if not owner.strip() or lease_seconds <= 0:
@@ -479,8 +480,8 @@ class ReviewedCandidateStoreMixin:
         result_digest = hashlib.sha256(provider_json.encode()).hexdigest()
         with self._immediate_write_transaction() as db:
             execution = self._leased_execution(db, execution_id, owner)
-            candidate = db.execute("""select c.*, t.business_object_key from review_candidates c
-                join reply_tasks t on t.id=c.task_id where c.id=?""", (execution["candidate_id"],)).fetchone()
+            candidate = db.execute(f"""select c.*, t.business_object_key from review_candidates c
+                join ({REPLY_TASK_SQL}) t on t.id=c.task_id where c.id=?""", (execution["candidate_id"],)).fetchone()
             attempt = db.execute("select * from candidate_action_attempts where execution_id=? and action_index=? and external_action_key=?", (execution_id,action_index,external_action_key)).fetchone()
             if attempt is None:
                 raise ValueError("action dispatch identity mismatch")
@@ -542,10 +543,10 @@ class ReviewedCandidateStoreMixin:
         to execute it after the candidate has changed or been invalidated.
         """
         with self._connect() as db:
-            task = db.execute("select business_object_key from reply_tasks where id=?", (task_id,)).fetchone()
+            task = db.execute(f"select business_object_key from ({REPLY_TASK_SQL}) where id=?", (task_id,)).fetchone()
             if task is None:
                 raise ValueError("task does not exist")
-            rows = db.execute("""select * from (
+            rows = db.execute(f"""select * from (
                 select 'selection' as kind, s.id as source_record_id,
                 s.created_at, s.option_key, s.branch_json, '' as instruction,
                 c.id as candidate_id, c.execution_generation, c.stage_index,
@@ -555,7 +556,7 @@ class ReviewedCandidateStoreMixin:
                 join review_candidates c on c.id=s.candidate_id
                 join candidate_reviews r on r.id=s.review_id and r.candidate_id=c.id
                   and r.decision='approve' and r.candidate_digest=c.candidate_digest
-                join reply_tasks t on t.id=c.task_id
+                join ({REPLY_TASK_SQL}) t on t.id=c.task_id
                 where t.business_object_key=?
                 union all
                 select 'supplement' as kind, supplement.id as source_record_id,
@@ -570,7 +571,7 @@ class ReviewedCandidateStoreMixin:
                     from candidate_reviews approved where approved.candidate_id=c.id
                       and approved.decision='approve'
                       and approved.candidate_digest=c.candidate_digest)
-                join reply_tasks t on t.id=c.task_id
+                join ({REPLY_TASK_SQL}) t on t.id=c.task_id
                 where t.business_object_key=?
                 ) as events
                 order by events.created_at, events.candidate_id,

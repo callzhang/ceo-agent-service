@@ -1,5 +1,6 @@
 """Read-only wording for manual reevaluation, without changing retry eligibility."""
 
+from app.task_storage import REPLY_TASK_SQL
 import json
 from dataclasses import dataclass
 from typing import Any, Iterable
@@ -21,7 +22,7 @@ def attempt_rerun_presentation(
         # Select only diagnostic JSON; reading a page never changes that guard.
         with store._connect() as db:
             errors = [row[0] for row in db.execute(
-                f"select r.structured_error_json from ({AGENT_RUN_SQL}) r join reply_tasks t on t.id=r.reply_task_id where t.business_object_key=? and r.structured_error_json<>''",
+                f"select r.structured_error_json from ({AGENT_RUN_SQL}) r join ({REPLY_TASK_SQL}) t on t.id=r.reply_task_id where t.business_object_key=? and r.structured_error_json<>''",
                 (reply_task.business_object_key,),
             )]
     else:

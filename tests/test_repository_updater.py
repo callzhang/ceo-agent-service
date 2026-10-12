@@ -434,15 +434,17 @@ def test_quiet_counts_meeting_preparation_and_claimed_delivery(tmp_path, status,
     path = tmp_path / "meeting-quiet.sqlite3"
     AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        cursor = db.execute(
-            "insert into meeting_alignment_jobs(meeting_id,status,locked_at) values (?,?,?)",
-            ("meeting", status, locked_at),
-        )
+        from app.run_storage import insert_run
+        from app.task_storage import insert_task
+
+        cursor = insert_task(db, "meeting_alignment_jobs", {
+            "legacy_key": 42, "meeting_id": "meeting", "status": status,
+            "locked_at": locked_at,
+        })
         if status == "processing":
-            db.execute(
-                "insert into meeting_alignment_runs(job_id,status) values (?, 'running')",
-                (cursor.lastrowid,),
-            )
+            insert_run(db, "meeting_alignment_runs", {
+                "task_id": cursor.lastrowid, "status": "running",
+            })
     assert in_flight_work(path) == expected
 
 
@@ -453,10 +455,12 @@ def test_quiet_does_not_count_unclaimed_historical_meeting_processing(tmp_path):
     path = tmp_path / "historical-meeting.sqlite3"
     AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        db.execute(
-            "insert into meeting_alignment_jobs(meeting_id,status,locked_at) "
-            "values ('historical','processing','2026-01-01 00:00:00')"
-        )
+        from app.task_storage import insert_task
+
+        insert_task(db, "meeting_alignment_jobs", {
+            "legacy_key": 42, "meeting_id": "historical", "status": "processing",
+            "locked_at": "2026-01-01 00:00:00",
+        })
     assert in_flight_work(path) == 0
 
 

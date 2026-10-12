@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from app.run_storage import insert_run
+from app.task_storage import TASK_AGENT_RUN_SQL
 from app.native_standalone import latest_task_ref
 from app import native_trajectory
 from app.store import AutoReplyStore
@@ -64,7 +65,7 @@ def task_native_records(tmp_path, monkeypatch):
             if latest_task_ref(db, run_id) is not None:
                 return
             assert db.execute(
-                "select decision_json from task_agent_runs where id=?", (run_id,),
+                f"select decision_json from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,),
             ).fetchone()[0] == "{}"
             session = str(uuid4())
             path = root / f"{session}.jsonl"
