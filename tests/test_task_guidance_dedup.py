@@ -19,13 +19,11 @@ def test_current_skill_owns_shared_guidance_once_and_task_keeps_unique_contract(
     prompt = build_task_agent_prompt(
         work, "EXACT_CURRENT_CONTEXT", current_time="2026-10-12T10:00:00Z"
     )
-    assert path.read_text().strip() in prompt
-    assert (
-        prompt.count(
-            "All source_excerpt values are exact contiguous quotes, preserving punctuation,"
-        )
-        == 1
-    )
+    assert path.read_text().strip() not in prompt
+    assert str(path) in prompt
+    assert (path.read_text() + prompt).count(
+        "All source_excerpt values are exact contiguous quotes, preserving punctuation,"
+    ) == 1
     assert "EXACT_CURRENT_CONTEXT" in prompt
     assert "2026-10-12T10:00:00Z" in prompt
     assert '"ref": "synthetic-source"' in prompt

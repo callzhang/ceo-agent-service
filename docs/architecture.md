@@ -1802,4 +1802,8 @@ provider历史，不改成物理ID排序。取消重复TEXT唯一索引，没有
 
 ### Task 原生 Skill 目录
 
-Task 的 command factory 将当前 `ceo-work-tracking` 选择传到既有 Codex adapter，使用 CLI 原生 `skills.config` 限制目录。目录只启用明确选择的 Skill 和既有默认 Memory 插件，不再从正文的名称提及或 `dws` 命令推断递归依赖；相关依赖继续由 Agent 按需读取。未选中 Skill 的文件和既有读取权限不变。Consumer/Audit 使用空选择时，生成的配置与变更前逐字符相同。Task 完整 Skill 正文、动态事实、输出 schema、业务校验、session 与路线选择保持原有行为；Claude/Friday 的单消息装配不受该 Codex 配置影响。Codex 自带系统 Skill 仍由 CLI 决定，不将目录配置数量冒充实际显示数量。验证见 `docs/task-native-skill-catalog-validation.md`。
+Task 的 command factory 将当前 `ceo-work-tracking` 选择传到既有 Codex adapter，使用 CLI 原生 `skills.config` 限制目录。目录只启用明确选择的 Skill 和既有默认 Memory 插件，不再从正文的名称提及或 `dws` 命令推断递归依赖；相关依赖继续由 Agent 按需读取。未选中 Skill 的文件和既有读取权限不变。Consumer/Audit 使用空选择时，生成的配置与变更前逐字符相同。动态事实、输出 schema、业务校验、session 与路线选择不由目录配置改变；Skill 正文的路线交付方式见下节。Codex 自带系统 Skill 仍由 CLI 决定，不将目录配置数量冒充实际显示数量。验证见 `docs/task-native-skill-catalog-validation.md`。
+
+### Task Skill 按需读取
+
+Task 每轮服务输入保留 `ceo-work-tracking` 极简用途及当前 `WORK_TRACKING_SKILL_PATH` 的确切文件入口，本机 Codex/Claude 通过原生文件工具按需读取全文，服务不再内嵌正文。既有文件加载 preflight 保留。command factory 保存同一源路径：Codex 从父目录名生成原生目录选择；Friday 无本机文件读取入口，其既有单消息桥从该确切路径读取并内联全文一次，不按名称重新解析另一根目录。历史 scheduled Skill 快照仍不作为当前协议。任务专属动态事实和当前入口每轮提交，复用既有 session。结果 schema、业务校验、路由、工具权限不变。服务输入长度下降不代表总上下文/token 等量下降：按需读取的全文进入原生工具结果。验证与路线证据边界见 `docs/task-skill-on-demand-validation.md`。

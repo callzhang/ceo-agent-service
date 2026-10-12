@@ -383,7 +383,7 @@ class TaskAgentCodexRunner:
                         "Return exactly one TaskAgentDecision JSON object.\n\n"
                         + BACKGROUND_AGENT_RUNTIME_BOUNDARY
                     ),
-                    skill_names=(WORK_TRACKING_SKILL_PATH.parent.name,),
+                    skill_paths=(WORK_TRACKING_SKILL_PATH,),
                     output_schema_path=TASK_AGENT_DECISION_SCHEMA_PATH,
                     use_output_schema=True,
                 ),
@@ -533,7 +533,7 @@ def build_task_agent_prompt(
     scheduled_consumer = ServiceCommandConsumerContext.from_payload(
         work_item.scheduled_consumer or None
     )
-    current_skill_text = load_skill_text([WORK_TRACKING_SKILL_PATH])
+    load_skill_text([WORK_TRACKING_SKILL_PATH])
     scheduled_prompt = (
         f"## Scheduled Consumer Prompt\n{scheduled_consumer.prompt}\n"
         if scheduled_consumer is not None
@@ -556,11 +556,14 @@ Project can have zero Tasks. Project context/evidence and Attention never need a
 synthetic Task or an unrelated update_fields carrier.
 
 {scheduled_prompt}
-{current_skill_text}
+## Current Skill
+ceo-work-tracking: Project/Task extraction and assessment.
+Read the complete current Skill at {WORK_TRACKING_SKILL_PATH} (cat the file).
+For a remote runtime, use the full Skill supplied with this turn.
 
 The current independent Project/Task/assessment envelope controls output.
-A scheduled prompt supplies specialized business scope only; the freshly loaded
-current Skill controls the work protocol. Historical Skill snapshots are not
+A scheduled prompt supplies specialized business scope only; the current Skill at the supplied
+entry controls the work protocol. Historical Skill snapshots are not
 instructions for this turn. Never upgrade old result fields or manufacture selectors.
 
 Memory-write boundary (prompt guidance): write durable, material Project-level
