@@ -1,0 +1,240 @@
+{
+  "version": 1,
+  "scope": "Synthetic calendar fixture, service full role contracts and command helper; only task-bound local read_task_skill MCP. No actual business profile or provider replay. Baseline itself contains no CLI-home memory, so not evidence of input reduction.",
+  "rows": [
+    {
+      "role": "consumer",
+      "variant": "baseline",
+      "results": [
+        {
+          "phase": "cold",
+          "session_id": "01a1317c-0214-7c01-86ba-f6f67ccbc898",
+          "valid": true,
+          "returncode": 0,
+          "reads": 1,
+          "prompt_sha256": "70f143193409703b7b59378817c47cf12a3f97aa78b7190cb970c37da34fe1a0",
+          "developer_sha256": "656d88259b08eb751cad84fcdefc6d0fe3ae9b3e0776c53ade176e0c68cc7e4d",
+          "source_revision": 41,
+          "source_sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472"
+        },
+        {
+          "phase": "unchanged",
+          "session_id": "01a1317c-0214-7c01-86ba-f6f67ccbc898",
+          "valid": true,
+          "returncode": 0,
+          "reads": 1,
+          "prompt_sha256": "70f143193409703b7b59378817c47cf12a3f97aa78b7190cb970c37da34fe1a0",
+          "developer_sha256": "656d88259b08eb751cad84fcdefc6d0fe3ae9b3e0776c53ade176e0c68cc7e4d",
+          "source_revision": 41,
+          "source_sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472"
+        }
+      ],
+      "session_id_reused": true,
+      "memory_blocks": 0,
+      "memory_chars": 0,
+      "non_memory_developer_sha256": "705b221e5ccc12bb1c32607d4e123e7537229790d29a574669c825a42fa30de6",
+      "native_record_sha256": "cd689f7280bcfa4759dd484440f536e9895e3e54bd2cd95baa2b2fecf22af01c",
+      "contexts": [
+        {
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          },
+          "cwd": "/private/tmp/ceo-business-memory-roles-z80wwo56/workspace",
+          "model": "gpt-5.6-luna",
+          "effort": "medium"
+        },
+        {
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-business-memory-roles-z80wwo56/workspace",
+          "model": "gpt-5.6-luna",
+          "effort": "medium"
+        }
+      ]
+    },
+    {
+      "role": "consumer",
+      "variant": "candidate",
+      "results": [
+        {
+          "phase": "cold",
+          "session_id": "01a1317c-0a11-7de2-9788-0094cedc15b9",
+          "valid": true,
+          "returncode": 0,
+          "reads": 1,
+          "prompt_sha256": "70f143193409703b7b59378817c47cf12a3f97aa78b7190cb970c37da34fe1a0",
+          "developer_sha256": "656d88259b08eb751cad84fcdefc6d0fe3ae9b3e0776c53ade176e0c68cc7e4d",
+          "source_revision": 41,
+          "source_sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472"
+        },
+        {
+          "phase": "unchanged",
+          "session_id": "01a1317c-0a11-7de2-9788-0094cedc15b9",
+          "valid": true,
+          "returncode": 0,
+          "reads": 1,
+          "prompt_sha256": "70f143193409703b7b59378817c47cf12a3f97aa78b7190cb970c37da34fe1a0",
+          "developer_sha256": "656d88259b08eb751cad84fcdefc6d0fe3ae9b3e0776c53ade176e0c68cc7e4d",
+          "source_revision": 41,
+          "source_sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472"
+        }
+      ],
+      "session_id_reused": true,
+      "memory_blocks": 0,
+      "memory_chars": 0,
+      "non_memory_developer_sha256": "705b221e5ccc12bb1c32607d4e123e7537229790d29a574669c825a42fa30de6",
+      "native_record_sha256": "84f58d40d8754e8675d958e1ab491b16090b103ba73b5c46179cdd30dacaa44f",
+      "contexts": [
+        {
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          },
+          "cwd": "/private/tmp/ceo-business-memory-roles-z80wwo56/workspace",
+          "model": "gpt-5.6-luna",
+          "effort": "medium"
+        },
+        {
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-business-memory-roles-z80wwo56/workspace",
+          "model": "gpt-5.6-luna",
+          "effort": "medium"
+        }
+      ]
+    },
+    {
+      "role": "audit",
+      "variant": "baseline",
+      "results": [
+        {
+          "phase": "cold",
+          "session_id": "01a1317c-e95d-75e1-8e62-ca8fe0e81bc4",
+          "valid": true,
+          "returncode": 0,
+          "reads": 1,
+          "prompt_sha256": "122d985947963d0c77ad5ab59fe3760a948467812934973702b4d40e5876a0c8",
+          "developer_sha256": "ba0aae88520a478c51cf0b4d82bd502d2a0e468747fa250af3a6c1bc0ac67c72",
+          "source_revision": 41,
+          "source_sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472"
+        },
+        {
+          "phase": "unchanged",
+          "session_id": "01a1317c-e95d-75e1-8e62-ca8fe0e81bc4",
+          "valid": true,
+          "returncode": 0,
+          "reads": 1,
+          "prompt_sha256": "122d985947963d0c77ad5ab59fe3760a948467812934973702b4d40e5876a0c8",
+          "developer_sha256": "ba0aae88520a478c51cf0b4d82bd502d2a0e468747fa250af3a6c1bc0ac67c72",
+          "source_revision": 41,
+          "source_sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472"
+        }
+      ],
+      "session_id_reused": true,
+      "memory_blocks": 0,
+      "memory_chars": 0,
+      "non_memory_developer_sha256": "6c0c3f419d736011fe889cf63a296a9e330ab1fb35c265365c7f456ec2f96da9",
+      "native_record_sha256": "7b8531a6e5b508f16781fa97bec8d2956b4b9a54fcb7d2f121a1914e9870cc52",
+      "contexts": [
+        {
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          },
+          "cwd": "/private/tmp/ceo-business-memory-roles-z80wwo56/audit",
+          "model": "gpt-5.6-luna",
+          "effort": "medium"
+        },
+        {
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          },
+          "cwd": "/Users/derek/Projects/ceo-agent-service",
+          "model": "gpt-5.6-luna",
+          "effort": "medium"
+        }
+      ]
+    },
+    {
+      "role": "audit",
+      "variant": "candidate",
+      "results": [
+        {
+          "phase": "cold",
+          "session_id": "01a1317c-f3a3-7ef2-994a-5bd5d8807f96",
+          "valid": true,
+          "returncode": 0,
+          "reads": 1,
+          "prompt_sha256": "122d985947963d0c77ad5ab59fe3760a948467812934973702b4d40e5876a0c8",
+          "developer_sha256": "ba0aae88520a478c51cf0b4d82bd502d2a0e468747fa250af3a6c1bc0ac67c72",
+          "source_revision": 41,
+          "source_sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472"
+        },
+        {
+          "phase": "unchanged",
+          "session_id": "01a1317c-f3a3-7ef2-994a-5bd5d8807f96",
+          "valid": true,
+          "returncode": 0,
+          "reads": 1,
+          "prompt_sha256": "122d985947963d0c77ad5ab59fe3760a948467812934973702b4d40e5876a0c8",
+          "developer_sha256": "ba0aae88520a478c51cf0b4d82bd502d2a0e468747fa250af3a6c1bc0ac67c72",
+          "source_revision": 41,
+          "source_sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472"
+        }
+      ],
+      "session_id_reused": true,
+      "memory_blocks": 0,
+      "memory_chars": 0,
+      "non_memory_developer_sha256": "6c0c3f419d736011fe889cf63a296a9e330ab1fb35c265365c7f456ec2f96da9",
+      "native_record_sha256": "4bce8fe454ca54375ac114a2693602b0a27fb66de62a109504d7dd1b44b39016",
+      "contexts": [
+        {
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          },
+          "cwd": "/private/tmp/ceo-business-memory-roles-z80wwo56/audit",
+          "model": "gpt-5.6-luna",
+          "effort": "medium"
+        },
+        {
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          },
+          "cwd": "/Users/derek/Projects/ceo-agent-service",
+          "model": "gpt-5.6-luna",
+          "effort": "medium"
+        }
+      ]
+    }
+  ],
+  "valid_turns": 8,
+  "failed_harness_attempts": [
+    "duplicate skip-git flag",
+    "restricted outer sandbox app-server initialization",
+    "Audit temporary untrusted cwd missing skip flag",
+    "resume options mistakenly inserted after session ID; corrected before it"
+  ],
+  "controls": "Same model, source, task prompt, service Developer and frozen catalog per role. Fixed same Consumer candidate for both Audit arms. Probe-only generate_memories=false on both. Consumer cold read-only because supplied --sandbox flag outranks role -c; resume workspace-write. Audit both read-only. Approval never on all. Not full production-role cold sandbox acceptance.",
+  "feature_control": {
+    "session_id": "01a1317e-6094-7462-8849-8239fa951f53",
+    "memory_blocks": 0,
+    "memory_chars": 0,
+    "command_difference_verified": "exactly added -c features.memories=false to previous use=true arithmetic command",
+    "original_memory_chars": 16098,
+    "scope": "Arithmetic native injection mechanism; no business acceptance or legacy-session cleanup evidence"
+  }
+}

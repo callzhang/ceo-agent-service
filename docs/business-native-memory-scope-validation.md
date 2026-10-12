@@ -1,4 +1,16 @@
-# Business role native memory scope candidate
+# Candidate disposition: do not publish the redundant option
+
+The follow-up role comparison found no injected CLI-home memory in either current baseline or candidate. The existing `features.memories=false` already suppresses injection with the currently installed native client. A single-factor arithmetic control adds only this existing feature option to the earlier use=true command and changes the memory block from16,098 characters to zero. The earlier arithmetic true/false comparison omitted this role option; it cannot establish an incremental reduction for the current production role path. PR65 should therefore be withdrawn rather than deployed as a prompt reduction.
+
+Eight synthetic calendar role turns pass: Consumer/Audit, baseline/candidate, cold and same-session resume. They preserve task source reads, cross-midnight instant identity, no duplicate-event decision, typed results and Audit candidate digest/revision. Baseline and candidate use identical service Developer and task inputs per role, and actual non-memory Developer hashes match. Both arms already have zero memory blocks. This is a narrow behavioral control, not validation of removing an existing block from these roles.
+
+The fixture uses synthetic profile, short frozen source and only local read_task_skill; no actual saved business payload or provider is replayed. Probe-only generate_memories=false is on both arms. Native approval is never; Audit is read-only. Consumer cold has an explicit read-only flag from the harness, while resume is workspace-write from the role helper, so this is not full production Consumer sandbox acceptance. Harness argument/init failures are retained and excluded from the eight valid turns; no invalid cold session was resumed. Existing historical sessions and necessary user preference coverage remain unverified.
+
+Evidence: `business_native_memory_scope.roles.v1.json`. This conclusion applies to the current native-client controls, not every historical trajectory or a promise to erase memory already present in old sessions. No production configuration, service source or deployment was changed by this follow-up.
+
+The earlier candidate and observations below are retained as investigation history; their proposed incremental production benefit is superseded by this control.
+
+# Earlier candidate investigation
 
 Current production Consumer/Audit native trajectories include a16,098-character automatically injected CLI-home memory block in addition to service-owned Work Profile, common instructions and explicit task sources. This is a separate context layer containing workspace-level cross-project guidance and profile material; it is not the service's business Memory/MCP context. Removing it requires business validation rather than assuming every remembered fact is irrelevant.
 
