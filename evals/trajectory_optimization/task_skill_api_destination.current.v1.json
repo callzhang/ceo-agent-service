@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "scope": "Current configured API destination inspection and rejected diagnostic; no new API request or native acceptance result",
+  "route": "codex_api",
+  "model": "gpt-5.6-luna",
+  "configured_scheme": "https",
+  "configured_host": "api.kksj.org",
+  "configured_path": "/v1",
+  "is_direct_official_openai_endpoint": false,
+  "direct_diagnostic_requested": true,
+  "direct_diagnostic_executed": false,
+  "current_http_status": null,
+  "current_error_code": null,
+  "historical_cli_http429_root_cause_confirmed": false,
+  "first_preflight": {
+    "api_request_sent": false,
+    "cause": "First preflight assumed official OpenAI host, but actual configured codex_api host is api.kksj.org. No key sent to official or any new destination. Follow-up diagnostic uses only the existing configured relay."
+  },
+  "auto_approval_rejection": "Sending the existing credential to third-party api.kksj.org requires explicit authorization for that destination. Rejected before execution. Do not bypass through CLI/indirect requests.",
+  "user_approval_request": "One existing configured credential request to api.kksj.org/v1/responses, body Return exactly OK., no business/Profile/tools, no retries or route change. Pending.",
+  "prepared_probe_sha256": "9c832361d414ae6623272644098fce8728fd798df6dacf039e80d75e7e00c60e",
+  "prepared_probe_path": "/private/tmp/ceo-api-429-diagnosis-8xiv5iiu/probe.py",
+  "independent_review": "native_catalog_review independently confirmed prepared script hash/current-main parent/source identity and documented no-request/rejection scope without reading credentials or invoking API/model. Capacity/root cause remain unverified."
+}
