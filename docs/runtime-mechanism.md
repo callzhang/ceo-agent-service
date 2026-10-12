@@ -1,5 +1,12 @@
 # Current Runtime Mechanism
 
+Installed Skill discovery (`agent_cli.read_skill()` without a source) returns
+body-free TSV metadata using exact root aliases. The full name, description
+and reconstructed absolute read path of every authorized source are retained,
+including distinct paths sharing a name. The response includes its path joining
+and table quoting instructions. Named/path reads, source authorization and
+ambiguity checks are unchanged; no output budget or role policy is changed.
+
 The existing `read_dingtalk_drive_file` attachment reader limits downloaded bytes
 and OOXML aggregate uncompressed bytes to 20 MiB before parsing. Member parsing
 also uses bounded reads against one aggregate budget, with actual compressed

@@ -450,7 +450,7 @@ def installed_skill_catalog(
     return tuple(matches[path] for path in sorted(matches))
 
 
-def _compact_skill_catalog(catalog: tuple[BusinessSkillCatalogEntry, ...]) -> str:
+def render_skill_catalog_metadata(catalog: tuple[BusinessSkillCatalogEntry, ...]) -> str:
     candidates = dict.fromkeys(item.skill_path.parent.parent for item in catalog)
     roots = tuple(root for root in candidates if not any(parent in candidates for parent in root.parents))
     aliases = {root: f"r{index}" for index, root in enumerate(roots, start=1)}
@@ -487,7 +487,7 @@ def render_business_skill_protocol(
     ]
     return (
         "## Installed CEO business Skill catalog\n"
-        + (_compact_skill_catalog(catalog) if compact else json.dumps(inventory, ensure_ascii=False, sort_keys=True))
+        + (render_skill_catalog_metadata(catalog) if compact else json.dumps(inventory, ensure_ascii=False, sort_keys=True))
         + "\n\n## Required Skill protocol\n"
         "PROTOCOL PRECONDITION: before returning any Consumer outcome, call "
         "`agent_cli.read_skill` for at least one CEO business Skill from the exact "

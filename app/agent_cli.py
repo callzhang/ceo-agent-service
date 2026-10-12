@@ -948,7 +948,7 @@ def read_skill_tool(
 ) -> dict[str, object]:
     """Read an installed Agent skill or its referenced Markdown safely.
 
-    With no source, return body-free installed name/use/path metadata. Otherwise
+    With no source, return body-free name/use/path TSV with exact root aliases. Otherwise
     pass exactly one source. `path` identifies a Markdown file inside an
     installed Skill directory. `name` resolves one exact installed Skill's
     metadata name and reads its SKILL.md through the same path authorization.
@@ -958,21 +958,15 @@ def read_skill_tool(
     from app import agent_skill_usage
     from app.business_skills import (
         installed_skill_catalog,
+        render_skill_catalog_metadata,
         resolve_installed_skill_name,
     )
 
     if path is None and name is None:
         return {
-            "skills": [
-                {
-                    "name": entry.name,
-                    "description": entry.description,
-                    "path": str(entry.skill_path),
-                }
-                for entry in installed_skill_catalog(
-                    roots=agent_skill_usage.AGENT_SKILL_ROOTS
-                )
-            ]
+            "catalog": render_skill_catalog_metadata(
+                installed_skill_catalog(roots=agent_skill_usage.AGENT_SKILL_ROOTS)
+            )
         }
     if name is not None:
         path = str(

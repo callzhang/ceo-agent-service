@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "attempt_id": 177022,
+  "role": "audit",
+  "native_range": [
+    0,
+    145
+  ],
+  "original_mcp_rows": 343,
+  "original_unique_names": 297,
+  "original_unique_paths": 343,
+  "original_compact_json_chars": 136668,
+  "original_compact_json_sha256": "5ede907c03f25a78fcb74dd78fa0d8e9d0a7193274bf8f0435569bb87fd141d8",
+  "model_visible_chars": 124840,
+  "model_visible_clipping_marker": "3015 tokens truncated",
+  "deleted_original_characters": 11885,
+  "model_visible_rows": 313,
+  "model_visible_unique_names": 280,
+  "malformed_rows": 1,
+  "candidate_compact_chars": 108991,
+  "candidate_compact_sha256": "29761b8b31d83f9dfb42828a87772bb37ffa59d733f505131188bf9fea1430ef",
+  "all_original_fields_round_trip": true,
+  "scope": "complete original MCP content and structuredContent retained; exact model-visible clipping corroborated independently; no real metadata submitted in rejected probe"
+}

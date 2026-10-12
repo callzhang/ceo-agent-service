@@ -1,5 +1,12 @@
 # CEO Agent Service Architecture
 
+Installed Skill discovery (`agent_cli.read_skill()` without a source) returns
+body-free TSV metadata using exact root aliases. The full name, description
+and reconstructed absolute read path of every authorized source are retained,
+including distinct paths sharing a name. The response includes its path joining
+and table quoting instructions. Named/path reads, source authorization and
+ambiguity checks are unchanged; no output budget or role policy is changed.
+
 Console manual rerun loads only the terminal Agent run metadata used by the
 existing refusal check. It does not discover sessions or read/parse native
 trajectory/result files before queueing. Refusal behavior, original-input
