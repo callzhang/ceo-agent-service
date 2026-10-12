@@ -838,6 +838,23 @@ def codex_skill_config_override(
     return f"skills.config=[{','.join(items)}]" if items else ""
 
 
+def codex_inlined_skill_config_override(names: Iterable[str]) -> str:
+    """Suppress only native copies of Skills supplied by the service this turn."""
+    selected = set(names)
+    paths = sorted(
+        {
+            path
+            for root in codex_skill_roots()
+            if root.is_dir()
+            for path in root.rglob("SKILL.md")
+            if (entry := _describe_skill_file(path)) is not None
+            and entry[0] in selected
+        }
+    )
+    items = [f"{{path={json.dumps(str(path))},enabled=false}}" for path in paths]
+    return f"skills.config=[{','.join(items)}]" if items else ""
+
+
 def load_bundled_business_skills() -> tuple[BundledBusinessSkill, ...]:
     skills: list[BundledBusinessSkill] = []
     for expected_name in BUNDLED_BUSINESS_SKILL_NAMES:
