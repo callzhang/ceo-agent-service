@@ -301,8 +301,9 @@ def test_dingtalk_drive_file_downloads_exact_node_and_extracts_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     class Dws:
-        def download_drive_file(self, node, *, file_name, space_id):
+        def download_drive_file(self, node, *, file_name, space_id, max_bytes):
             assert (node, file_name, space_id) == ("node-1", "proof.pdf", "space-1")
+            assert max_bytes == agent_cli.MAX_SPREADSHEET_BYTES
             return b"pdf-bytes"
 
     monkeypatch.setattr(
