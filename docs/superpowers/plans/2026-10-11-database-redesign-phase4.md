@@ -4,11 +4,11 @@
 
 **Goal:** 将真实tasks/runs字段统一存储，取消已退休原生缓存；保留public/native/idempotency身份、状态、业务采用结果与执行回执。
 
-**Architecture:** typed tasks/runs；record_type使用实际源表名，legacy_key保存准确旧PK；公共查询/claim/FK字段为实际列，专有既有字段显式typed payload。WSI TEXT/BLOB及Workbench最小事件payload保持原字节。4A、4B、4C独立发布及配对schema逆迁，无长期双写。
+**Architecture:** typed tasks/runs；record_type使用实际源表名，legacy_key保存准确旧PK；公共查询/claim/FK字段为实际列，专有既有字段使用原scalar列（尚未细化的后续单元按实际源复核）。WSI TEXT/BLOB及Workbench最小事件payload保持原字节。4A、4B、4C独立发布及配对schema逆迁，无长期双写。
 
 **Tech Stack:** Python、SQLite、现有Store/dispatcher/routed runtime/Workbench及schema publication机制。
 
-本文件是基于真实字段的迁移执行计划，精确字段与源DDL见phase4 CSV/inventory。4A目标DDL、DAO切换和配对逆迁已实现并处于验证；4B/4C尚未实现，第四期尚未上线。正式实施每个单元前只为该单元选取新schema marker，不预占后续版本；重新核对main/生产/claims，合入他人的新主线行为。
+本文件是基于真实字段的迁移执行计划，精确字段与源DDL见phase4 CSV/inventory。4A目标DDL、DAO切换和配对逆迁已实现并处于验证；4B首单元foundation尚未接入Store，4C未实现，第四期尚未上线。正式实施每个单元前只为该单元选取新schema marker，不预占后续版本；重新核对main/生产/claims，合入他人的新主线行为。
 
 ## Task 0: 已完成分析交付
 
@@ -87,6 +87,8 @@
 
 ## 本次状态
 
-Task0完成；4A实现、副本正逆迁及独立规格/质量复审通过，远端Quality CI和正式上线尚待完成。最新真实源commit3195cd3bd24d2841f9f36d0f3063d10fb9614fea，Store11.1/Email50；45,649条原核心记录全部投影及145张其他原表全值指纹一致。新增结果/回执及分配后删除的ID在逆迁后保留，真实源302个Python文件逐一匹配Git blob，旧代码读取/领取/再次正迁通过。发布五阶段失败回退演练通过。
+Task0完成；4A代码在隔离分支，尚未上线。最新一致副本源947f4f24475e64845bbfddc80f84fa9fc2f0cceb，Store11.1/Email50；45,693条原核心记录全部投影及145张其他原表全值指纹一致。Baseline inverse恢复151张表原声明/值、named sequence和marker；replacement新增结果/回执及分配后删除的ID保留。实际源302个Python文件逐一匹配Git blob，旧代码启动/读取/领取/再次正迁通过。发布五阶段失败回退演练通过。
 
-索引修复保留原公共ID和排序；实际副本parent/workload查找已恢复范围索引，没有开放P1/P2。专项core130通过；调用方2493通过/6跳过；最新main扩大组2933通过/6跳过，其12项新fixture旧表SQL失败已修正，native/prompt26通过。独立最终复审114通过；完整远端CI仍是上线门槛。副本已用空间增加3,543,040 B（约0.886%），仅说明结构整合，尚未实现第四期容量减少。4B/4C未实施，第四期未上线。没有新的功能字段、历史状态补造、额外安全政策或正文备份。详细验收见docs/database-redesign-phase4a-validation.md。
+Source声明新增校验19个真实对象，current manifest保留SQL字面量，组合定向1,113测试通过。两轮完整远端CI各45个历史fixture失败；修复后的独立审查仍发现重复迁移和微信并发migration前提被弱化，正在恢复真实执行路径，不能据全绿数量放行。需最后规格/质量复审、集成最新main和完整远端CI后正常部署。最新副本已用空间增加3,551,232 B（约0.887%），本单元是结构整合，尚无第四期容量减少。
+
+4B第一单元仅有typed schema/paired inverse/projections foundation，未接入Store或发布。实际Task summary_input_id无声明FK，保持原scalar public值及代码关系；reply/input字段直接保存真实scalar，WSI1字节不变。4C未实施。完整验收边界见docs/database-redesign-phase4a-validation.md。
