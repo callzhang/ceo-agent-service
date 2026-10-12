@@ -1,5 +1,7 @@
 # Concurrent agent file claims
 
+| codex-database-phase4 | Isolated database-redesign-plan worktree branch codex/database-redesign-phase4-20261011: docs/superpowers/specs/2026-10-11-database-redesign-phase4-*, docs/superpowers/plans/2026-10-11-database-redesign-phase4.md, docs/agent-claims.md; read-only app/store.py, native_standalone, runtime_router, agent_cron, workbench and related APIs/tests | Phase4 exact tasks/runs schema and code dependency analysis, field mapping, evidenced deletion list and paired forward/inverse implementation plan. No invented business fields or native trajectory copies. Runtime edit claims will be narrowed after the mapping; no live migration before copy/rollback validation. | analysis completed 2026-10-11 |
+
 | codex-meeting-idle-writer-20261011 | Isolated /private/tmp/ceo-unsubscribe-recipient-form-20261011 branch codex/meeting-idle-writer-20261011: app/store.py (batch ready-to-send meeting claim only), tests/test_meeting_alignment.py (idle writer contention and competing claim), docs/runtime-mechanism.md and CHANGELOG.md | Avoid taking the shared writer lock for an ineligible meeting delivery poll; keep exact due/status/lock predicates, transactional recheck and delivery tokens. No external send, cache, schema or retry-policy change. | 2026-10-11 |
 
 
