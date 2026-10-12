@@ -20,6 +20,7 @@ from app.agent_cron.scheduler import SCHEDULED_CAPABILITY_UNAVAILABLE_KINDS
 from app.config import forbidden_path_prefixes
 from app.leak_check import contains_credential, contains_local_runtime_leak
 from app.store import SERVICE_HEALTH_STATE_PREFIX, REPLY_TASK_CURRENT_SQL
+from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
 
 
 REQUIRED_SOURCES = (
@@ -122,9 +123,10 @@ def scan_hourly_quality(
             str(row["name"])
             for row in db.execute("select name from sqlite_master where type='table'")
         }
-        missing = tuple(source for source in REQUIRED_SOURCES if source not in existing)
+        physical_source = {"agent_runs": "runs"}
+        missing = tuple(source for source in REQUIRED_SOURCES if physical_source.get(source, source) not in existing)
         checked = (
-            *(source for source in REQUIRED_SOURCES if source in existing),
+            *(source for source in REQUIRED_SOURCES if physical_source.get(source, source) in existing),
             *(source for source in OPTIONAL_QUEUE_SOURCES if source in existing),
         )
         if missing:
@@ -558,26 +560,26 @@ def _check_agent_runs(
 ) -> None:
     _add(violations, source="agent_runs", code="running_stale", count=_count(
         db,
-        "select count(*) from agent_runs where lower(status) in ('pending','running') and datetime(updated_at) < datetime(?)",
+        f"select count(*) from ({AGENT_RUN_SQL}) as agent_runs where lower(status) in ('pending','running') and datetime(updated_at) < datetime(?)",
         (_cutoff(now, REPLY_PROCESSING_STALE_SECONDS),),
     ), severity="error", detail="agent run exceeded its execution lease")
     _add(attention, source="agent_runs", code="active", count=_count(
-        db, "select count(*) from agent_runs where lower(status) in ('pending','running')"
+        db, f"select count(*) from ({AGENT_RUN_SQL}) as agent_runs where lower(status) in ('pending','running')"
     ), severity="info", detail="agent execution is in progress")
     _check_runtime_attempt_invariants(db, violations)
 
 
 def _check_runtime_attempt_invariants(db: sqlite3.Connection, violations: list[QualityIssue]) -> None:
     checks = {
-        "runtime_attempt_without_parent": "select count(*) from agent_runtime_attempts a where a.agent_run_id is not null and not exists (select 1 from agent_runs r where r.id=a.agent_run_id)",
-        "multiple_active_runtime_attempts": "select count(*) from (select workload_kind, workload_key from agent_runtime_attempts where status in ('starting','running') group by workload_kind, workload_key having count(*)>1)",
-        "completed_runtime_attempt_without_final_run": "select count(*) from agent_runtime_attempts a where a.status='completed' and a.agent_run_id is not null and not exists (select 1 from agent_runs r where r.id=a.agent_run_id and r.status in ('completed','failed','unknown'))",
+        "runtime_attempt_without_parent": f'select count(*) from ({RUNTIME_ATTEMPT_SQL}) a where a.agent_run_id is not null and not exists (select 1 from ({AGENT_RUN_SQL}) r where r.id=a.agent_run_id)',
+        "multiple_active_runtime_attempts": f"select count(*) from (select workload_kind, workload_key from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where status in ('starting','running') group by workload_kind, workload_key having count(*)>1)",
+        "completed_runtime_attempt_without_final_run": f"select count(*) from ({RUNTIME_ATTEMPT_SQL}) a where a.status='completed' and a.agent_run_id is not null and not exists (select 1 from ({AGENT_RUN_SQL}) r where r.id=a.agent_run_id and r.status in ('completed','failed','unknown'))",
     }
     for code, sql in checks.items():
         _add(violations, source="agent_runtime_attempts", code=code, count=_count(db, sql), severity="error", detail="runtime attempt invariant violated")
     leaks = 0
     path_prefixes = forbidden_path_prefixes()
-    for row in db.execute("select route_name, runtime_kind, credential_mode, model, session_id, failure_code, transcript_reference from agent_runtime_attempts"):
+    for row in db.execute(f'select route_name, runtime_kind, credential_mode, model, session_id, failure_code, transcript_reference from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts'):
         leaks += any(
             contains_credential(str(value or ""))
             or contains_local_runtime_leak(str(value or ""), path_prefixes=path_prefixes)
@@ -880,7 +882,7 @@ def _check_delivery_records(
     becomes a record of sending.
     """
     from app.native_trajectory import read_native_result_json
-    rows = db.execute("""select audit.* from agent_runs audit
+    rows = db.execute(f"""select audit.* from ({AGENT_RUN_SQL}) audit
         join reply_tasks task on task.id=audit.reply_task_id
         where audit.role='audit' and audit.status='completed'
           and task.channel='dingtalk'
@@ -1065,12 +1067,12 @@ def _check_runtime_route_pauses(
 ) -> None:
     count = _count(
         db,
-        """select count(*)
+        f"""select count(*)
            from runtime_route_pauses paused
            where datetime(paused.retry_at) > datetime(?)
              and exists (
                 select 1
-                from agent_runtime_attempts alternative
+                from ({RUNTIME_ATTEMPT_SQL}) alternative
                 where alternative.route_name <> paused.route_name
                   and alternative.status='completed'
                   and datetime(alternative.finished_at) >= datetime(paused.opened_at)

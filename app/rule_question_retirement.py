@@ -15,6 +15,7 @@ from app.agent_result import AgentError
 from app.config import worker_db_path
 from app.database_backup import backup_is_complete
 from app.store import AutoReplyStore
+from app.run_storage import AGENT_RUN_SQL
 
 
 class _RuleOption(BaseModel):
@@ -49,11 +50,11 @@ def retire_rule_question(
 
 
 def _retire_in_connection(db: sqlite3.Connection, attempt_id: int, *, authority: str, apply: bool) -> dict:
-    row = db.execute("""
+    row = db.execute(f"""
         select a.*, r.reply_task_id, r.execution_generation as run_generation,
                r.role, r.status as run_status,
                t.status as task_status, t.execution_generation as task_generation
-        from reply_attempts a join agent_runs r on r.id=a.agent_run_id
+        from reply_attempts a join ({AGENT_RUN_SQL}) r on r.id=a.agent_run_id
         join reply_tasks t on t.id=r.reply_task_id
         join business_object_tasks current_object
           on current_object.business_object_key=t.business_object_key
@@ -73,7 +74,7 @@ def _retire_in_connection(db: sqlite3.Connection, attempt_id: int, *, authority:
     ):
         raise ValueError("attempt is not an obsolete completed Consumer rule question")
     from app.native_trajectory import read_native_result_json
-    run = db.execute("select * from agent_runs where id=?", (row["agent_run_id"],)).fetchone()
+    run = db.execute(f'select * from ({AGENT_RUN_SQL}) as agent_runs where id=?', (row["agent_run_id"],)).fetchone()
     native_result = read_native_result_json(db, run)
     if not native_result:
         raise ValueError("original native Consumer result is unavailable")

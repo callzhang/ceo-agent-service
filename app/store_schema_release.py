@@ -10,7 +10,10 @@ from pathlib import Path
 import sqlite3
 import subprocess
 import sys
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from app.run_schema_release import RunSchemaRelease
 
 OLD_INPUT_VERSION = "2026-10-10.2"
 INPUT_VERSION = "2026-10-11.1"
@@ -174,7 +177,7 @@ class StoreInputSchemaRelease:
 
 def prepare_store_schema_release(
     root: Path, path: Path
-) -> StoreInputSchemaRelease | None:
+) -> StoreInputSchemaRelease | RunSchemaRelease | None:
     root, path = root.resolve(), path.resolve()
     target = _target_store_version(root)
     if target is None or not path.exists():
@@ -189,6 +192,10 @@ def prepare_store_schema_release(
         ).fetchone()
         if version is None or version[0] == target:
             return None
+        from app.run_schema_release import OLD_RUN_VERSION, RUN_VERSION, prepare_run_schema_release
+
+        if (version[0], target) == (OLD_RUN_VERSION, RUN_VERSION):
+            return prepare_run_schema_release(root, path, version)
         if (version[0], target) != (OLD_INPUT_VERSION, INPUT_VERSION):
             raise ValueError(
                 "Store schema release needs a verified inverse for this transition"

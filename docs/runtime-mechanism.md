@@ -2372,3 +2372,27 @@ current_action_plan_id 指向 email_action_plans 唯一读取；当前写入不�
 该逆迁仅适用于已验证的48→49发布，与47→48索引逆迁分别匹配。
 
 Attention 的失败回复任务查询先从 `reply_tasks` 状态覆盖索引筛选 ID，再按主键读取父任务及其 current 输入；筛选阶段不读取正文或连接输入表。现有失败条件、排序、限制和业务展示保持不变。
+
+
+## Unified core run storage (Store 2026-10-11.2)
+
+第四期4A将逻辑 Agent run、provider attempt、服务状态事件存入同一物理 `runs` 表，
+`record_type` 区分三个原有记录类型。原有公共ID、workload key、代际、revision、turn、
+父子关系和原生 session／transcript 范围保持准确；DAO仍返回原合同。逻辑 run 的物理ID
+等于公共ID，迁移后的 provider／状态事件以 `legacy_key` 返回原公共ID；新增记录从捕获
+的最大ID／序列以上分配。类型专有列只对所属类型应用原默认值和约束，其他类型为NULL。
+现有 Consumer／Audit 唯一性、provider session／lineage／lease 约束及外键的逻辑run
+类型范围保留。4A的 `task_id` 仍直接引用原 `reply_tasks`，后续4B才统一任务容器。
+
+旧 `agent_runs`、`agent_runtime_attempts`、`agent_run_state_events` 及已为空的
+`agent_run_events` 物理表删除，不创建旧表view或长期双写。`final_result_json`／
+`result_envelope_json` 不再作为物理列；准确过程及原生输出继续只从CLI trajectory／
+运行中RAM读取，缺少准确原生引用时仍返回不可用。必要服务错误状态、采用的业务结果、
+执行回执和外部动作结果继续按原合同保存。
+
+配对发布只支持已验证的Store `2026-10-11.1→2026-10-11.2` 和当前fresh初始化；
+发布前quiet读取显式支持本次旧／新源布局，运行中查询统一读取 `runs`。停止窗口捕获
+原DDL、索引、触发器、序列、schema marker和既有FK发现；逆迁恢复这些声明并保留
+replacement新增的记录、业务结果和回执，不用旧数据库文件覆盖。发布失败沿用
+停止replacement、逆迁、恢复旧代码、启动及health验证的既有顺序。Email schema50
+本单元不变，其他未验证的同时schema变化不能合并发布。

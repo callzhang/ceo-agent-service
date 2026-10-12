@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.run_storage import AGENT_RUN_SQL, insert_run
 from app.audit_web import _reply_attempt_queue_snapshot, handle_rerun_attempt_post
 from app.quality_gate import scan_hourly_quality
 from app.store import AutoReplyStore
@@ -70,12 +71,11 @@ def seed(store, *, native_home):
     with store._connect() as db:
         task_id = db.execute("select id from reply_tasks").fetchone()[0]
         db.execute("update reply_tasks set status='done' where id=?", (task_id,))
-        run_id = db.execute(
-            "insert into agent_runs(reply_task_id, execution_generation, role, status, codex_session_id, "
-            "transcript_start_line, transcript_end_line) "
-            "values (?, 'old-contract', 'consumer', 'completed', ?, 1, 2)",
-            (task_id, session_id),
-        ).lastrowid
+        run_id = insert_run(db, 'agent_runs', {
+            'task_id': task_id, 'execution_generation': 'old-contract',
+            'role': 'consumer', 'status': 'completed', 'session_id': session_id,
+            'transcript_start': 1, 'transcript_end': 2,
+        }).lastrowid
         db.execute("update reply_attempts set agent_run_id=? where id=?", (run_id, attempt_id))
     return attempt_id, task_id, run_id, result
 
@@ -89,7 +89,7 @@ def native_path(store, run_id):
     from app.native_trajectory import find_codex_session_path
 
     with store._connect() as db:
-        session = db.execute("select codex_session_id from agent_runs where id=?", (run_id,)).fetchone()[0]
+        session = db.execute(f'select codex_session_id from ({AGENT_RUN_SQL}) where id=?', (run_id,)).fetchone()[0]
     path = find_codex_session_path(session, codex_home=Path(os.environ["CODEX_HOME"]))
     assert path is not None and path.resolve().is_relative_to(Path(os.environ["CODEX_HOME"]).resolve())
     return path
@@ -146,8 +146,8 @@ def test_explicit_retirement_records_provenance_preserves_history_and_is_idempot
     assert native_path(store, run_id).read_bytes() == original_native
     assert store.get_reply_task(task_id).status == "done"
     with store._connect() as db:
-        assert db.execute("select count(*) from agent_runs").fetchone()[0] == 1
-        assert db.execute("select final_result_json from agent_runs where id=?", (run_id,)).fetchone()[0] == ""
+        assert db.execute(f'select count(*) from ({AGENT_RUN_SQL})').fetchone()[0] == 1
+        assert db.execute(f'select final_result_json from ({AGENT_RUN_SQL}) where id=?', (run_id,)).fetchone()[0] == ""
         for table in ("candidate_reviews", "candidate_selections", "candidate_executions",
                       "candidate_action_attempts", "external_action_results", "sent_replies"):
             assert db.execute(f"select count(*) from {table}").fetchone()[0] == 0

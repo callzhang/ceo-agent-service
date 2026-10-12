@@ -143,8 +143,6 @@ def compact_native_duplicates(database: Path) -> dict[str, int]:
     """
     counts = {"event_runs_cleared": 0, "payload_fields_cleared": 0, "payload_bytes_removed": 0}
     columns = {
-        "agent_runs": {"final_result_json": ""},
-        "agent_runtime_attempts": {"result_envelope_json": ""},
         "reply_attempts": {"audit_tool_events_json": "[]"},
         "okr_review_runs": {"envelope_json": "{}", "audit_summary": "", "audit_tool_events_json": "[]"},
         "meeting_alignment_runs": {"decision_json": "{}", "audit_summary": "", "audit_tool_events_json": "[]"},
@@ -157,13 +155,6 @@ def compact_native_duplicates(database: Path) -> dict[str, int]:
     }
     with closing(sqlite3.connect(database, timeout=60)) as db:
         db.execute("begin immediate")
-        counts["event_runs_cleared"] = db.execute(
-            "select count(distinct agent_run_id) from agent_run_events"
-        ).fetchone()[0]
-        counts["payload_bytes_removed"] = db.execute(
-            "select coalesce(sum(length(cast(event_json as blob))),0) from agent_run_events"
-        ).fetchone()[0]
-        db.execute("delete from agent_run_events")
         _clear_workbench_event_bodies(db, counts)
         db.execute("insert into codex_session_search_fts(codex_session_search_fts) values('delete-all')")
         for table, fields in columns.items():

@@ -5,13 +5,14 @@ import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from app.run_storage import AGENT_RUN_SQL
 
 
 REVIEWED_CANDIDATE_DDL = """
 create index if not exists idx_reply_tasks_business_object_key on reply_tasks(business_object_key);
 create table if not exists review_candidates (
  id integer primary key, task_id integer not null references reply_tasks(id),
- execution_generation text not null, consumer_run_id integer not null unique references agent_runs(id),
+ execution_generation text not null, consumer_run_id integer not null unique references runs(id),
  stage_index integer not null, proposal_revision integer not null,
  predecessor_review_id integer references candidate_reviews(id),
  candidate_digest text not null, candidate_json text not null,
@@ -21,7 +22,7 @@ create table if not exists review_candidates (
 create index if not exists idx_review_candidates_task on review_candidates(task_id,execution_generation,id);
 create table if not exists candidate_reviews (
  id integer primary key, candidate_id integer not null references review_candidates(id),
- audit_run_id integer not null unique references agent_runs(id),
+ audit_run_id integer not null unique references runs(id),
  decision text not null check(decision in ('approve','return','reject')),
  candidate_digest text not null, result_json text not null,
  created_at text not null default current_timestamp
@@ -110,7 +111,7 @@ class ReviewedCandidateStoreMixin:
         return candidate, review
 
     def _check_historical_runtime_refusal(self, db: sqlite3.Connection, business_object_key: str) -> None:
-        rows = db.execute("""select r.structured_error_json from agent_runs r
+        rows = db.execute(f"""select r.structured_error_json from ({AGENT_RUN_SQL}) r
             join reply_tasks t on t.id=r.reply_task_id
             where t.business_object_key=? and r.structured_error_json<>''""", (business_object_key,))
         for row in rows:
@@ -142,9 +143,9 @@ class ReviewedCandidateStoreMixin:
         if (task_row is None or run is None or task_row[0] != run["execution_generation"]
             or run["role"] != "consumer" or run["status"] != "completed"):
             raise ValueError("completed Consumer candidate mismatch")
-        latest = db.execute("""select id from agent_runs where reply_task_id=?
+        latest = db.execute(f"""select id from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=?
             and execution_generation=? and role='consumer' and status='completed'
-            and proposal_revision=(select max(current_run.proposal_revision) from agent_runs current_run
+            and proposal_revision=(select max(current_run.proposal_revision) from ({AGENT_RUN_SQL}) current_run
                 where current_run.reply_task_id=? and current_run.execution_generation=?
                   and current_run.role='consumer')
             order by proposal_revision desc, turn_attempt desc, id desc limit 1""",
@@ -178,17 +179,17 @@ class ReviewedCandidateStoreMixin:
         """Validate the already adopted candidate; completed turns are immutable."""
         body = _json(prepared_result)
         with self._connect() as db:
-            saved = db.execute("""select c.*, r.status as run_status, t.execution_generation as current_generation
-                from review_candidates c join agent_runs r on r.id=c.consumer_run_id
+            saved = db.execute(f"""select c.*, r.status as run_status, t.execution_generation as current_generation
+                from review_candidates c join ({AGENT_RUN_SQL}) r on r.id=c.consumer_run_id
                 join reply_tasks t on t.id=c.task_id where c.consumer_run_id=?""", (consumer_run.id,)).fetchone()
             if (saved is None or saved["task_id"] != task.id
                 or saved["execution_generation"] != task.execution_generation
                 or saved["current_generation"] != task.execution_generation
                 or saved["run_status"] != "completed" or saved["candidate_json"] != body):
                 raise ValueError("completed Consumer candidate mismatch")
-            latest = db.execute("""select r.id from agent_runs r join review_candidates c on c.consumer_run_id=r.id
+            latest = db.execute(f"""select r.id from ({AGENT_RUN_SQL}) r join review_candidates c on c.consumer_run_id=r.id
                 where r.reply_task_id=? and r.execution_generation=? and r.status='completed'
-                  and r.proposal_revision=(select max(proposal_revision) from agent_runs
+                  and r.proposal_revision=(select max(proposal_revision) from ({AGENT_RUN_SQL}) as agent_runs
                     where reply_task_id=? and execution_generation=? and role='consumer')
                 order by r.proposal_revision desc, r.turn_attempt desc, r.id desc limit 1""",
                 (task.id, task.execution_generation, task.id, task.execution_generation)).fetchone()
@@ -222,7 +223,7 @@ class ReviewedCandidateStoreMixin:
         candidate = self._candidate_context(db, candidate_id)
         if candidate["invalidated_at"]:
             raise ValueError("candidate invalidated")
-        run = db.execute("select * from agent_runs where id=?", (audit_run_id,)).fetchone()
+        run = db.execute(f'select * from ({AGENT_RUN_SQL}) as agent_runs where id=?', (audit_run_id,)).fetchone()
         if (run is None or run["status"] != "completed" or run["role"] != "audit"
             or run["reply_task_id"] != candidate["task_id"] or run["execution_generation"] != candidate["execution_generation"]
             or run["proposal_revision"] != candidate["proposal_revision"] or run["parent_agent_run_id"] != candidate["consumer_run_id"]
@@ -239,7 +240,7 @@ class ReviewedCandidateStoreMixin:
         body = _json(result)
         with self._immediate_write_transaction() as db:
             saved = db.execute("select * from candidate_reviews where audit_run_id=?", (audit_run_id,)).fetchone()
-            run = db.execute("select * from agent_runs where id=?", (audit_run_id,)).fetchone()
+            run = db.execute(f'select * from ({AGENT_RUN_SQL}) as agent_runs where id=?', (audit_run_id,)).fetchone()
             from app.native_trajectory import read_native_result_json
             persisted_body = saved["result_json"] if saved else read_native_result_json(db, run) if run else ""
             if not persisted_body or _json(json.loads(persisted_body)) != body:

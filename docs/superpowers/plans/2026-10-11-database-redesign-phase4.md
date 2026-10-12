@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python、SQLite、现有Store/dispatcher/routed runtime/Workbench及schema publication机制。
 
-本文件是基于真实字段的迁移执行计划，精确字段与源DDL见phase4 CSV/inventory。新迁移函数/目标DDL尚未实现，不能宣称测试或上线完成。正式实施每个单元前只为该单元选取新schema marker，不预占后续版本；重新核对main/生产/claims，合入他人的新主线行为。
+本文件是基于真实字段的迁移执行计划，精确字段与源DDL见phase4 CSV/inventory。4A目标DDL、DAO切换和配对逆迁已实现并处于验证；4B/4C尚未实现，第四期尚未上线。正式实施每个单元前只为该单元选取新schema marker，不预占后续版本；重新核对main/生产/claims，合入他人的新主线行为。
 
 ## Task 0: 已完成分析交付
 
@@ -24,8 +24,8 @@
 
 **Tests:** tests/test_agent_runtime_migration.py、test_agent_turn_store.py、test_native_only_core.py、test_native_only_maintenance.py、test_routed_codex_execution.py、test_agent_runtime_router.py、test_consumer_result_validation_retry.py、test_reply_task_deferral.py、test_storage_maintenance.py、test_console_attempt_detail_api.py、test_approval_history.py；只选涉及改动的case/file。
 
-- [ ] 在一致副本捕获旧实际DDL/index/trigger/序列/schema版本及所有scoped/public/native/业务fingerprint；文件只在task-specific/tmp。
-- [ ] 提交本单元精确DDL与CSV→physical/typed payload投影；既有reply_tasks仍在原位置，本单元runs.task_id直接关联它，不提前建立半成品tasks双写。
+- [x] 在一致副本捕获旧实际DDL/index/trigger/序列/schema版本及所有scoped/public/native/业务fingerprint；文件只在task-specific/tmp。
+- [x] 实现本单元精确DDL与CSV→physical scalar投影；既有reply_tasks仍在原位置，本单元runs.task_id直接关联它，不提前建立半成品tasks双写。类型专有字段采用真实列，以保留SQL约束与查询索引；不适用类型为NULL。
 - [ ] RED覆盖不同源同号ID、Consumer/Audit代际/revision/turn/parent、多个provider attempts、standalone无parent、7trigger/correction/resume约束、自然唯一和expired-lease reclaim、原生缺失、result_schema校验。
 - [ ] 一次事务迁移三表，取消final_result_json/result_envelope_json占位，保留完整校验参数、DTO/native投影、adopted结果JOIN；所有相关SQL与已有外键同版本切换。
 - [ ] 去除agent_run_events的纯退休SQL后删除该空表；若真实副本存在服务业务行，停止该删除并重新分析，不复制trajectory正文。
@@ -87,4 +87,4 @@
 
 ## 本次状态
 
-Task0完成；Task1-4尚未实施。第四期字段映射已交付，不等于第四期schema已验证或已上线。没有新的功能字段、历史状态补造、额外安全政策或正文备份。
+Task0完成；4A已实现，正在收尾专项测试和独立复核。真实一致副本正迁与逆迁验证了原45,533条核心记录的全部投影，145张其他原表内容指纹一致；新增测试记录、执行回执及业务结果在逆迁后保留，真实源代码7aec844a启动、读取和领取CAS通过，再次正迁原字段指纹一致。五阶段发布失败回退测试通过。独立复核发现新增后删除记录的allocator水位仍需修正和重验；未满足上线门槛。4B/4C未实施，第四期未上线。没有新的功能字段、历史状态补造、额外安全政策或正文备份。

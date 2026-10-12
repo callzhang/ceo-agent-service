@@ -2,6 +2,7 @@ import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from app.run_storage import insert_run
 from app.quality_gate import (
     add_channel_health,
     required_live_channels,
@@ -64,7 +65,7 @@ def _structured_needs_human_result(
     }
 
 
-def _insert_needs_human_projection(store, *, result, status="needs_human"):
+def _insert_needs_human_projection(store, *, monkeypatch, result, status="needs_human", native_available=True):
     store.enqueue_reply_task(
         conversation_id="conversation", conversation_title="group", single_chat=False,
         trigger_message_id="message", trigger_create_time="2026-08-07 00:00:00",
@@ -80,13 +81,28 @@ def _insert_needs_human_projection(store, *, result, status="needs_human"):
             "select id from reply_tasks where conversation_id='conversation' and trigger_message_id='message'"
         ).fetchone()[0]
         db.execute("update reply_tasks set status='done' where id=?", (task_id,))
-        run = db.execute(
-            """insert into agent_runs (
-                reply_task_id, execution_generation, role, status, final_result_json
-            ) values (?, 'generation', 'audit', 'completed', ?)""",
-            (task_id, json.dumps(result)),
+        # Preserve each authored result as a native assistant final, without
+        # adopting it as an approved candidate. Pretty JSON is a native format.
+        native = store.path.with_suffix('.native.jsonl')
+        native.write_text(json.dumps({"type": "response_item", "payload": {
+            "type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": json.dumps(result, indent=2)}
+            ],
+        }}) + "\n")
+        monkeypatch.setattr("app.native_trajectory.find_codex_session_path", lambda *a, **k: native)
+        run = insert_run(
+            db, 'agent_runs', {
+                'task_id': task_id,
+                'execution_generation': 'generation',
+                'role': 'audit',
+                'status': 'completed',
+                'session_id': 'quality-native' if native_available else '',
+                'transcript_end': 1 if native_available else 0,
+            },
         )
         db.execute("update reply_attempts set agent_run_id=? where id=?", (run.lastrowid, attempt_id))
+    if native_available:
+        assert json.loads(store.get_agent_run(run.lastrowid).final_result_json) == result
     return attempt_id
 
 
@@ -124,19 +140,32 @@ def test_quality_gate_runtime_attempt_invariants_use_persisted_rows(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
         db.execute("pragma foreign_keys=off")
-        db.execute(
-            """insert into agent_runtime_attempts
-            (agent_run_id, workload_kind, workload_key, attempt_number, route_name,
-             runtime_kind, credential_mode, model, status, first_effect_started_at)
-            values (999, 'agent_run', '999', 1, 'codex_oauth', 'codex_cli',
-                    'local_oauth', 'gpt-5.5', 'completed', '2026-08-07 00:00:00')"""
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'parent_id': 999,
+                'workload_kind': 'agent_run',
+                'workload_key': '999',
+                'attempt_number': 1,
+                'route_name': 'codex_oauth',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'local_oauth',
+                'model': 'gpt-5.5',
+                'status': 'completed',
+                'first_effect_started_at': '2026-08-07 00:00:00',
+            },
         )
-        db.execute(
-            """insert into agent_runtime_attempts
-            (agent_run_id, workload_kind, workload_key, attempt_number, route_name, runtime_kind,
-             credential_mode, model, status)
-            values (999, 'agent_run', '999', 2, 'codex_api', 'codex_cli', 'service_api',
-                    'gpt-5.5', 'running')"""
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'parent_id': 999,
+                'workload_kind': 'agent_run',
+                'workload_key': '999',
+                'attempt_number': 2,
+                'route_name': 'codex_api',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'service_api',
+                'model': 'gpt-5.5',
+                'status': 'running',
+            },
         )
     codes = {issue.code for issue in scan_hourly_quality(store.path, now=NOW).violations}
     assert {
@@ -151,48 +180,89 @@ def test_quality_gate_covers_every_runtime_attempt_invariant_with_persisted_rows
     seeders = {
         "runtime_attempt_without_parent": [
             "pragma foreign_keys=off",
-            """insert into agent_runtime_attempts
-               (agent_run_id, workload_kind, workload_key, attempt_number, route_name,
-                runtime_kind, credential_mode, model, status)
-               values (999, 'agent_run', '999', 1, 'codex_oauth', 'codex_cli',
-                       'local_oauth', 'gpt-5.5', 'failed')""",
+            lambda db, values=(): insert_run(
+                db, 'agent_runtime_attempts', {
+                    'parent_id': 999,
+                    'workload_kind': 'agent_run',
+                    'workload_key': '999',
+                    'attempt_number': 1,
+                    'route_name': 'codex_oauth',
+                    'runtime_kind': 'codex_cli',
+                    'credential_mode': 'local_oauth',
+                    'model': 'gpt-5.5',
+                    'status': 'failed',
+                },
+            ),
         ],
         "multiple_active_runtime_attempts": [
-            """insert into agent_runtime_attempts
-               (workload_kind, workload_key, attempt_number, route_name, runtime_kind,
-                credential_mode, model, status, lease_owner, lease_expires_at)
-               values ('task', 'active-pair', 1, 'codex_oauth', 'codex_cli',
-                       'local_oauth', 'gpt-5.5', 'running', 'worker-1',
-                       '2026-08-07 01:00:00')""",
-            """insert into agent_runtime_attempts
-               (workload_kind, workload_key, attempt_number, route_name, runtime_kind,
-                credential_mode, model, status, lease_owner, lease_expires_at)
-               values ('task', 'active-pair', 2, 'codex_api', 'codex_cli',
-                       'service_api', 'gpt-5.5', 'starting', 'worker-2',
-                       '2026-08-07 01:00:00')""",
+            lambda db, values=(): insert_run(
+                db, 'agent_runtime_attempts', {
+                    'workload_kind': 'task',
+                    'workload_key': 'active-pair',
+                    'attempt_number': 1,
+                    'route_name': 'codex_oauth',
+                    'runtime_kind': 'codex_cli',
+                    'credential_mode': 'local_oauth',
+                    'model': 'gpt-5.5',
+                    'status': 'running',
+                    'lease_owner': 'worker-1',
+                    'lease_expires_at': '2026-08-07 01:00:00',
+                },
+            ),
+            lambda db, values=(): insert_run(
+                db, 'agent_runtime_attempts', {
+                    'workload_kind': 'task',
+                    'workload_key': 'active-pair',
+                    'attempt_number': 2,
+                    'route_name': 'codex_api',
+                    'runtime_kind': 'codex_cli',
+                    'credential_mode': 'service_api',
+                    'model': 'gpt-5.5',
+                    'status': 'starting',
+                    'lease_owner': 'worker-2',
+                    'lease_expires_at': '2026-08-07 01:00:00',
+                },
+            ),
         ],
         "completed_runtime_attempt_without_final_run": [
             "pragma foreign_keys=off",
-            """insert into agent_runtime_attempts
-               (agent_run_id, workload_kind, workload_key, attempt_number,
-                route_name, runtime_kind, credential_mode, model, status)
-               values (998, 'agent_run', '998', 1, 'codex_oauth', 'codex_cli',
-                       'local_oauth', 'gpt-5.5', 'completed')""",
+            lambda db, values=(): insert_run(
+                db, 'agent_runtime_attempts', {
+                    'parent_id': 998,
+                    'workload_kind': 'agent_run',
+                    'workload_key': '998',
+                    'attempt_number': 1,
+                    'route_name': 'codex_oauth',
+                    'runtime_kind': 'codex_cli',
+                    'credential_mode': 'local_oauth',
+                    'model': 'gpt-5.5',
+                    'status': 'completed',
+                },
+            ),
         ],
         "runtime_secret_leak": [
-            """insert into agent_runtime_attempts
-               (workload_kind, workload_key, attempt_number, route_name, runtime_kind,
-                credential_mode, model, status)
-               values ('task', 'secret-row', 1,
-                       'sk-proj-abcdefghijklmnopqrstuvwxyz', 'codex_cli',
-                       'service_api', 'gpt-5.5', 'failed')""",
+            lambda db, values=(): insert_run(
+                db, 'agent_runtime_attempts', {
+                    'workload_kind': 'task',
+                    'workload_key': 'secret-row',
+                    'attempt_number': 1,
+                    'route_name': 'sk-proj-abcdefghijklmnopqrstuvwxyz',
+                    'runtime_kind': 'codex_cli',
+                    'credential_mode': 'service_api',
+                    'model': 'gpt-5.5',
+                    'status': 'failed',
+                },
+            ),
         ],
     }
     for code, statements in seeders.items():
         store = AutoReplyStore(tmp_path / f"{code}.sqlite3")
         with store._connect() as db:
             for statement in statements:
-                db.execute(statement)
+                if callable(statement):
+                    statement(db)
+                else:
+                    db.execute(statement)
         codes = {issue.code for issue in scan_hourly_quality(store.path, now=NOW).violations}
         assert code in codes
 
@@ -207,13 +277,18 @@ def test_quality_gate_treats_route_pause_as_warning_with_healthy_alternative(tmp
                        '2026-08-07 02:00:00', '2026-08-07 00:00:00',
                        '2026-08-07 00:00:00')"""
         )
-        db.execute(
-            """insert into agent_runtime_attempts
-               (workload_kind, workload_key, attempt_number, route_name, runtime_kind,
-                credential_mode, model, status, finished_at)
-               values ('task', 'healthy-alternative', 1, 'codex_api', 'codex_cli',
-                       'service_api', 'gpt-5.5', 'completed',
-                       '2026-08-07 00:01:00')"""
+        insert_run(
+            db, 'agent_runtime_attempts', {
+                'workload_kind': 'task',
+                'workload_key': 'healthy-alternative',
+                'attempt_number': 1,
+                'route_name': 'codex_api',
+                'runtime_kind': 'codex_cli',
+                'credential_mode': 'service_api',
+                'model': 'gpt-5.5',
+                'status': 'completed',
+                'finished_at': '2026-08-07 00:01:00',
+            },
         )
 
     report = scan_hourly_quality(store.path, now=NOW)
@@ -674,10 +749,10 @@ def test_quality_gate_excludes_reviewed_needs_human_attempt(tmp_path):
     assert store.count_current_unresolved_problem_attempts() == 0
 
 
-def test_quality_gate_excludes_resolved_needs_human_attempt(tmp_path):
+def test_quality_gate_excludes_resolved_needs_human_attempt(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     attempt_id = _insert_needs_human_projection(
-        store,
+        store, monkeypatch=monkeypatch,
         result={"outcome": "proposal"},
     )
     with store._connect() as db:
@@ -700,9 +775,9 @@ def test_quality_gate_excludes_resolved_needs_human_attempt(tmp_path):
     )
 
 
-def test_quality_gate_rejects_unreviewed_legacy_human_projection_when_queue_task_is_done(tmp_path):
+def test_quality_gate_rejects_unreviewed_legacy_human_projection_when_queue_task_is_done(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
-    _insert_needs_human_projection(store, result=_structured_needs_human_result())
+    _insert_needs_human_projection(store, monkeypatch=monkeypatch, result=_structured_needs_human_result())
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -717,10 +792,10 @@ def test_quality_gate_rejects_unreviewed_legacy_human_projection_when_queue_task
     assert store.count_current_unresolved_problem_attempts() == 0
 
 
-def test_quality_gate_rejects_service_generated_confirmation_options(tmp_path):
+def test_quality_gate_rejects_service_generated_confirmation_options(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     attempt_id = _insert_needs_human_projection(
-        store,
+        store, monkeypatch=monkeypatch, native_available=False,
         result={"outcome": "needs_human"},
     )
     options = _structured_needs_human_result()["decision_options"]
@@ -729,13 +804,7 @@ def test_quality_gate_rejects_service_generated_confirmation_options(tmp_path):
         send_error="confirmation_required",
         human_decision_options_json=json.dumps(options),
     )
-    with store._connect() as db:
-        db.execute(
-            "update agent_runs set final_result_json='' where id=("
-            "select agent_run_id from reply_attempts where id=?"
-            ")",
-            (attempt_id,),
-        )
+
     report = scan_hourly_quality(store.path, now=NOW)
 
     assert not any(item.code == "needs_human" for item in report.attention)
@@ -746,10 +815,11 @@ def test_quality_gate_rejects_service_generated_confirmation_options(tmp_path):
 
 def test_quality_gate_rejects_service_generated_uncertain_unsubscribe_options(
     tmp_path,
+    monkeypatch,
 ):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     attempt_id = _insert_needs_human_projection(
-        store,
+        store, monkeypatch=monkeypatch,
         result={"outcome": "proposal"},
     )
     options = _structured_needs_human_result()["decision_options"]
@@ -769,10 +839,11 @@ def test_quality_gate_rejects_service_generated_uncertain_unsubscribe_options(
 
 def test_quality_gate_rejects_service_generated_receipt_failure_without_typed_decision(
     tmp_path,
+    monkeypatch,
 ):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     attempt_id = _insert_needs_human_projection(
-        store,
+        store, monkeypatch=monkeypatch, native_available=False,
         result={"outcome": "proposal"},
     )
     store.update_reply_attempt(
@@ -783,13 +854,6 @@ def test_quality_gate_rejects_service_generated_receipt_failure_without_typed_de
         ),
         human_decision_options_json="[]",
     )
-    with store._connect() as db:
-        db.execute(
-            "update agent_runs set final_result_json='' where id=("
-            "select agent_run_id from reply_attempts where id=?"
-            ")",
-            (attempt_id,),
-        )
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -799,10 +863,10 @@ def test_quality_gate_rejects_service_generated_receipt_failure_without_typed_de
     )
 
 
-def test_quality_gate_rejects_audit_revision_failure_as_human_decision(tmp_path):
+def test_quality_gate_rejects_audit_revision_failure_as_human_decision(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     attempt_id = _insert_needs_human_projection(
-        store,
+        store, monkeypatch=monkeypatch,
         result={"outcome": "feedback_provided"},
     )
     options = _structured_needs_human_result()["decision_options"]
@@ -820,9 +884,9 @@ def test_quality_gate_rejects_audit_revision_failure_as_human_decision(tmp_path)
     )
 
 
-def test_quality_gate_requires_approved_review_even_with_structured_high_risk_options(tmp_path):
+def test_quality_gate_requires_approved_review_even_with_structured_high_risk_options(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
-    _insert_needs_human_projection(store, result=_structured_needs_human_result())
+    _insert_needs_human_projection(store, monkeypatch=monkeypatch, result=_structured_needs_human_result())
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -831,12 +895,12 @@ def test_quality_gate_requires_approved_review_even_with_structured_high_risk_op
     }
 
 
-def test_quality_gate_rejects_legacy_missing_coverage_fields(tmp_path):
+def test_quality_gate_rejects_legacy_missing_coverage_fields(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     result = _structured_needs_human_result()
     result.pop("rule_coverage")
     result.pop("information_completeness")
-    _insert_needs_human_projection(store, result=result)
+    _insert_needs_human_projection(store, monkeypatch=monkeypatch, result=result)
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -846,21 +910,21 @@ def test_quality_gate_rejects_legacy_missing_coverage_fields(tmp_path):
     )
 
 
-def test_quality_gate_does_not_report_low_risk_or_confident_needs_human_projection(tmp_path):
+def test_quality_gate_does_not_report_low_risk_or_confident_needs_human_projection(tmp_path, monkeypatch):
     for name, result in {
         "low-risk": _structured_needs_human_result(risk="low"),
         "confident": _structured_needs_human_result(confidence=0.5),
     }.items():
         store = AutoReplyStore(tmp_path / f"{name}.sqlite3")
-        _insert_needs_human_projection(store, result=result)
+        _insert_needs_human_projection(store, monkeypatch=monkeypatch, result=result)
         report = scan_hourly_quality(store.path, now=NOW)
         assert not any(item.code == "needs_human" for item in report.attention)
 
 
-def test_quality_gate_low_rule_coverage_does_not_replace_approved_review(tmp_path):
+def test_quality_gate_low_rule_coverage_does_not_replace_approved_review(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     _insert_needs_human_projection(
-        store,
+        store, monkeypatch=monkeypatch,
         result=_structured_needs_human_result(risk="low", rule_coverage=0.4),
     )
 
@@ -871,11 +935,11 @@ def test_quality_gate_low_rule_coverage_does_not_replace_approved_review(tmp_pat
     }
 
 
-def test_quality_gate_rejects_needs_human_projection_with_inconsistent_outcome(tmp_path):
+def test_quality_gate_rejects_needs_human_projection_with_inconsistent_outcome(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     result = _structured_needs_human_result()
     result.pop("outcome")
-    _insert_needs_human_projection(store, result=result)
+    _insert_needs_human_projection(store, monkeypatch=monkeypatch, result=result)
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -885,11 +949,12 @@ def test_quality_gate_rejects_needs_human_projection_with_inconsistent_outcome(t
 
 def test_quality_gate_rejects_autonomous_outcome_even_when_information_is_incomplete(
     tmp_path,
+    monkeypatch,
 ):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     result = _structured_needs_human_result(information_completeness=0.4)
     result["outcome"] = "autonomous"
-    _insert_needs_human_projection(store, result=result)
+    _insert_needs_human_projection(store, monkeypatch=monkeypatch, result=result)
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -897,10 +962,10 @@ def test_quality_gate_rejects_autonomous_outcome_even_when_information_is_incomp
     assert any(item.code == "invalid_needs_human_result" for item in report.violations)
 
 
-def test_quality_gate_never_activates_unreviewed_quality_threshold_questions(tmp_path):
+def test_quality_gate_never_activates_unreviewed_quality_threshold_questions(tmp_path, monkeypatch):
     complete = AutoReplyStore(tmp_path / "complete.sqlite3")
     _insert_needs_human_projection(
-        complete,
+        complete, monkeypatch=monkeypatch,
         result=_structured_needs_human_result(rule_coverage=0.4),
     )
     assert any(
@@ -910,7 +975,7 @@ def test_quality_gate_never_activates_unreviewed_quality_threshold_questions(tmp
 
     incomplete = AutoReplyStore(tmp_path / "incomplete.sqlite3")
     _insert_needs_human_projection(
-        incomplete,
+        incomplete, monkeypatch=monkeypatch,
         result=_structured_needs_human_result(
             rule_coverage=0.1, information_completeness=0.4
         ),
@@ -921,9 +986,9 @@ def test_quality_gate_never_activates_unreviewed_quality_threshold_questions(tmp
     )
 
 
-def test_quality_gate_marks_missing_structured_needs_human_result_invalid(tmp_path):
+def test_quality_gate_marks_missing_structured_needs_human_result_invalid(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
-    _insert_needs_human_projection(store, result={"outcome": "needs_human"})
+    _insert_needs_human_projection(store, monkeypatch=monkeypatch, result={"outcome": "needs_human"})
 
     report = scan_hourly_quality(store.path, now=NOW)
 
@@ -931,10 +996,10 @@ def test_quality_gate_marks_missing_structured_needs_human_result_invalid(tmp_pa
     assert any(item.code == "invalid_needs_human_result" for item in report.violations)
 
 
-def test_quality_gate_does_not_count_failed_projection_as_needs_human(tmp_path):
+def test_quality_gate_does_not_count_failed_projection_as_needs_human(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     _insert_needs_human_projection(
-        store,
+        store, monkeypatch=monkeypatch,
         result=_structured_needs_human_result(confidence=0.1),
         status="failed",
     )
@@ -1311,10 +1376,14 @@ def test_missing_native_delivery_evidence_is_reported_as_coverage_not_success(tm
     with store._connect() as db:
         _insert_canonical_reply_task(db, channel='dingtalk', single_chat=0, conversation_id='c', conversation_title='Group', trigger_message_id='m', trigger_create_time='2026-10-10', trigger_sender='Derek', trigger_text='reply')
         task_id = db.execute("select last_insert_rowid()").fetchone()[0]
-        db.execute(
-            "insert into agent_runs (reply_task_id, execution_generation, role, status, completed_at) "
-            "values (?, 'initial', 'audit', 'completed', datetime('now'))",
-            (task_id,),
+        insert_run(
+            db, 'agent_runs', {
+                'task_id': task_id,
+                'execution_generation': 'initial',
+                'role': 'audit',
+                'status': 'completed',
+                'completed_at': db.execute("select datetime('now')").fetchone()[0],
+            },
         )
     with store._connect() as db:
         issues: list = []

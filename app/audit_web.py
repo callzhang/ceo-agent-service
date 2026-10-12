@@ -178,6 +178,7 @@ from app.task_retrieval import (
     retrieve_project_task_details,
 )
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
+from app.run_storage import AGENT_RUN_SQL
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 LOCAL_DISPLAY_TIME_ZONE = ZoneInfo("Asia/Shanghai")
@@ -2983,7 +2984,7 @@ def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
 
 def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """Summarize the current state of each message trigger, not retry history."""
-    current_attempts = """
+    current_attempts = f"""
         with trigger_keys as (
             select channel, conversation_id, trigger_message_id
             from reply_attempts
@@ -3076,7 +3077,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
             )
             where not exists (
                   select 1
-                  from agent_runs as source_run
+                  from ({AGENT_RUN_SQL}) as source_run
                   join reply_tasks as source_task
                     on source_task.id=source_run.reply_task_id
                   where source_run.id=a.agent_run_id
@@ -3324,7 +3325,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                        coalesce(nullif(reply_tasks.conversation_title, ''), reply_tasks.conversation_id) as context,
                        coalesce(nullif(reply_tasks.trigger_text, ''), nullif(reply_tasks.conversation_title, ''), reply_tasks.trigger_message_id) as summary,
                        reply_tasks.updated_at, reply_tasks.error,
-                       (select current_run.structured_error_json from agent_runs current_run
+                       (select current_run.structured_error_json from ({AGENT_RUN_SQL}) current_run
                         where current_run.reply_task_id=reply_tasks.id
                           and current_run.execution_generation=reply_tasks.execution_generation
                         order by current_run.id desc limit 1) as current_run_error
