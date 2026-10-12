@@ -1,0 +1,194 @@
+{
+  "version": 1,
+  "scope": "Same current Task role factory, schema, service prompt instructions and canonical semantic object. Task prompt differs only by semantic JSON layout, but native Skill catalog drifts by one disabled plugin path; model-visible directory and self-selected tool calls differ. Not a strict single-factor native comparison. Entire installed Skill is already present verbatim in all four Task prompts. Synthetic project definitions then same-session project risk; fake local Memory only, isolated applications. Fixed risk ProjectContext rebuilt with current supported Store/domain service and asserted equal to delivered fixture; never old-schema fallback. Not full private production payload or configured API route acceptance.",
+  "rows": [
+    {
+      "variant": "baseline",
+      "phase": "cold",
+      "session_id": "01a13188-b9a6-7932-872f-05291fd75947",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_chars": 32096,
+      "normalized_prompt_sha256": "29a53794d933146dd90f8441ffe02ff74077810047a6b7ed4726be34f06c647a",
+      "prompt_sha256": "b5fc1372b8522deed2c58e2c9d0b815dc40d5e441cb8cf942fabe30656020f4b",
+      "events_sha256": "4c402cf6f5e11d32ef09c8ec55321aa7c14ceeebd3f1490265536ba17246a76e",
+      "command_sha256": "26d3c9f0d5e317a2d2a15a2135b8614b80e389fa69fc561d78134511961a5d5b",
+      "native_record_sha256": "aa2b4f6e83b25f0874b5b7b170634d3d90add9e053b0d0393441e3a0bdefcb93",
+      "command_contains_skill_override": true,
+      "parsed_model_valid": true,
+      "project_decisions": 1,
+      "task_decisions": 0,
+      "assessment_outcomes": [
+        "not_needed"
+      ],
+      "isolated_apply": {
+        "applied": true,
+        "projects": 1,
+        "tasks": 0
+      },
+      "attention_count": 0,
+      "native_calls_cumulative_session": [
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "phase": "cold",
+      "session_id": "01a13189-233b-7402-8b90-769a34f8a825",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_chars": 31652,
+      "normalized_prompt_sha256": "29a53794d933146dd90f8441ffe02ff74077810047a6b7ed4726be34f06c647a",
+      "prompt_sha256": "b49f662fe8edde35b14d1bedeb654af833ed7549bf69cb8e0dd76f851ded3da1",
+      "events_sha256": "3c062e9bb0d9544b24e11756bdb7b939583173bd73b7769019f7a24db1ff49fc",
+      "command_sha256": "5e52de56433c013feef941d3d4b7cb1efcda7a40aa85ed63c157bd332e8146fe",
+      "native_record_sha256": "9af856df4dcb3cb3091ef0bbddf30152ef4d5c3c03d8300da76fdcef7bdbe6b2",
+      "command_contains_skill_override": true,
+      "parsed_model_valid": true,
+      "project_decisions": 1,
+      "task_decisions": 0,
+      "assessment_outcomes": [
+        "not_needed"
+      ],
+      "isolated_apply": {
+        "applied": true,
+        "projects": 1,
+        "tasks": 0
+      },
+      "attention_count": 0,
+      "native_calls_cumulative_session": [
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        }
+      ]
+    },
+    {
+      "variant": "baseline",
+      "phase": "risk",
+      "session_id": "01a13188-b9a6-7932-872f-05291fd75947",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_chars": 35600,
+      "normalized_prompt_sha256": "07d34f15f863508a662808ffec894e89629fbebea2c52d4b6c210afc835e22bf",
+      "prompt_sha256": "2935148621930bc24cce667cd633547d39db986595bc121fd7a3deb46c704c8b",
+      "events_sha256": "8fb2fb99c3fa263b5f5358a423eaf2baea0b2ce7b5d79a7c7ec64d9f746d7185",
+      "command_sha256": "ef263599cd385bd7945dccb8069809d9a16441f1bad7a4c5c7f1fc7e0702ac83",
+      "native_record_sha256": "aa2b4f6e83b25f0874b5b7b170634d3d90add9e053b0d0393441e3a0bdefcb93",
+      "command_contains_skill_override": true,
+      "parsed_model_valid": true,
+      "project_decisions": 1,
+      "task_decisions": 1,
+      "assessment_outcomes": [
+        "needs_attention"
+      ],
+      "isolated_apply": {
+        "applied": true,
+        "projects": 1,
+        "tasks": 1
+      },
+      "attention_count": 1,
+      "native_calls_cumulative_session": [
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        }
+      ]
+    },
+    {
+      "variant": "candidate",
+      "phase": "risk",
+      "session_id": "01a13189-233b-7402-8b90-769a34f8a825",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_chars": 33866,
+      "normalized_prompt_sha256": "07d34f15f863508a662808ffec894e89629fbebea2c52d4b6c210afc835e22bf",
+      "prompt_sha256": "3050c31cc59cc8e8334347e01d6c928ff2a92249b87d833e32dd4e3324cf03c1",
+      "events_sha256": "de57ba2869bea0012c9ff08873e92bcc86f490693b88bc719317d3f3769874f8",
+      "command_sha256": "217865fb4c6c807400c1e2e80c8a272c23f18e88dcf59bd5930aa9a76e6545eb",
+      "native_record_sha256": "9af856df4dcb3cb3091ef0bbddf30152ef4d5c3c03d8300da76fdcef7bdbe6b2",
+      "command_contains_skill_override": true,
+      "parsed_model_valid": true,
+      "project_decisions": 1,
+      "task_decisions": 1,
+      "assessment_outcomes": [
+        "needs_attention"
+      ],
+      "isolated_apply": {
+        "applied": true,
+        "projects": 1,
+        "tasks": 1
+      },
+      "attention_count": 1,
+      "native_calls_cumulative_session": [
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        },
+        {
+          "name": "exec",
+          "namespace": null
+        }
+      ]
+    }
+  ],
+  "retained_harness_failures": [
+    "Old historical risk SQLite snapshot fails current supported-source bootstrap before any model result is applied",
+    "First current-schema seed derived from a different historical cold result did not equal fixed risk context; assertion stopped before risk application",
+    "Final current-schema fixture uses exact delivered expected ProjectContext via existing domain service for both arms; no model replay or output modification"
+  ],
+  "legacy_harness_field_note": "run.py inherited a hardcoded skill_config_selected=false result field; ignore it. Saved actual commands have skills.config and current Task factory selects work-tracking. Metadata reports command-derived presence rather than this stale flag.",
+  "limitations": {
+    "native_catalog_drift": "candidate has one additional disabled plugin-creator path; enabled Skill set is unchanged; directory text cold baseline2060/candidate1489 chars",
+    "risk_attention_categories": {
+      "baseline": "watch",
+      "candidate": "decision"
+    },
+    "full_skill_in_task_input": {
+      "chars": 23452,
+      "present_verbatim_in_all_four_prompts": true
+    },
+    "extra_model_tool_reads": "Models redundantly reread the same installed Skill via local commands; baseline reads1\u2013320 and combined AGENTS/Skill output is truncated, candidate reads1\u2013260. Full Skill was already in task input. These are model-selected downstream reads, not evidence that task source lost the full Skill.",
+    "native_tool_statistics": "Counts include function_call and custom_tool_call; cumulative same-session baseline4/candidate3 calls. These include local read operations/tool discovery and local fake Memory writes, not zero tools.",
+    "risk_initial_state": "Separate current-schema fixture DBs with the same asserted fixed ProjectContext, not continued cold DBs."
+  }
+}

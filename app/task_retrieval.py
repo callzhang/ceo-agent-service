@@ -404,7 +404,7 @@ def render_task_semantic_context(context: TaskSemanticContext, *, work_item: Wor
             "assessment_json": value.assessment_json, "updated_at": value.updated_at,
         } for value in context.attention_items],
     }
-    return json.dumps(payload, ensure_ascii=False, indent=2)
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 def tokenize(text: str) -> list[str]:
