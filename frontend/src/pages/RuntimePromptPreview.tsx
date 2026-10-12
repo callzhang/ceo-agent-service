@@ -126,7 +126,7 @@ export function RuntimePromptPreview() {
         {mode === "current" ? <label className="runtime-field" style={fieldStyle}>任务 ID（可选）<input style={controlStyle} aria-label="任务 ID（可选）" type="number" min="1" step="1" value={taskId} onChange={(event) => { clearPreview(); setTaskId(event.target.value); }} /></label> : <label className="runtime-field" style={fieldStyle}>运行 ID<input style={controlStyle} aria-label="运行 ID" type="number" min="1" step="1" required value={runId} onChange={(event) => { clearPreview(); setRunId(event.target.value); }} /></label>}
         {mode === "historical" && attempts.length > 0 && <label className="runtime-field" style={fieldStyle}>运行尝试<select style={controlStyle} aria-label="运行尝试" value={attemptId} onChange={(event) => { clearPreview(false); setAttemptId(event.target.value); }}>
           {!attemptId && <option value="">最后一次尝试</option>}
-          {attempts.map((attempt) => <option key={attempt.runtime_attempt_id} value={attempt.runtime_attempt_id}>{attempt.runtime_attempt_id} · {attempt.route_name} · {attempt.submission_state === "invoked" ? "已提交" : "已准备"} · {attempt.rendered_at}</option>)}
+          {attempts.map((attempt) => <option key={attempt.runtime_attempt_id} value={attempt.runtime_attempt_id}>{attempt.runtime_attempt_id} · {attempt.route_name} · {attempt.input_status === "unavailable" ? "输入不可用" : attempt.submission_state === "invoked" ? "已提交" : "已准备"} · {attempt.rendered_at}</option>)}
         </select></label>}
       </div>
       <div className="settings-save-row"><button className="primary-button" type="submit" disabled={invalidId}>查看 / 刷新</button></div>
@@ -137,7 +137,7 @@ export function RuntimePromptPreview() {
     {item && <>
       <p className="muted" style={textStyle}>{item.mode === "historical" ? "历史输入 · 已保存的运行记录" : item.task_id === null || item.status === "unavailable" ? "当前预览 · 当前已保存配置" : "当前预览 · 当前配置与已保存历史任务正文"} · {item.role === "audit" ? "Audit" : "Consumer"} · {item.route_name} · {item.runtime_kind} · {item.model} · {item.rendered_at || "时间未记录"}{item.run_id !== null && ` · 运行 ${item.run_id}`}{item.task_id !== null && ` · 任务 ${item.task_id}`}</p>
       {item.mode === "historical" && <p className="muted" style={textStyle}>
-        {item.submission_state === "prepared" ? "已准备的服务输入" : item.submission_state === "invoked" ? "已提交的服务输入" : "预览输入"}
+        {item.status === "unavailable" ? "输入记录不可用" : item.submission_state === "prepared" ? "已准备的服务输入" : item.submission_state === "invoked" ? "已提交的服务输入" : "预览输入"}
         {item.runtime_attempt_id !== null && ` · 运行尝试 ${item.runtime_attempt_id}`}
         {item.execution_generation !== null && ` · 执行批次 ${item.execution_generation}`}
         {item.proposal_revision !== null && ` · 提案版本 ${item.proposal_revision}`}

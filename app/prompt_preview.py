@@ -38,24 +38,66 @@ def _empty_item(*, mode: str, role: str) -> dict[str, object]:
             "task_source_run_id": None, "task_source_rendered_at": None, "sections": []}
 
 
+def _saved_input_snapshots(store, run, *, attempts=None):
+    """Live prepared inputs and native invocation records have distinct lifetimes."""
+    from app.native_prompt_input import read_attempt_input
+    from app.leak_check import redact_credentials
+
+    from app.native_trajectory import live_events
+    events = live_events(str(store.path.resolve()), run.id) or [] if run.status == "running" else []
+    snapshots = [event for event in events if event.get("type") == "runtime.prompt"]
+    known = {event.get("runtime_attempt_id") for event in snapshots}
+    for attempt in attempts if attempts is not None else store.list_agent_runtime_attempts(run.id):
+        if attempt.id in known:
+            continue
+        saved = read_attempt_input(attempt)
+        if saved is None:
+            continue
+        texts = {key: redact_credentials(saved[key]) for key in ("developer_instructions", "task_prompt", "submitted_input")}
+        sections = [{"name": "Developer 指令", "source": saved["developer_source"], "placement": "developer", "characters": len(texts["developer_instructions"])},
+                    {"name": "本轮 Task", "source": "选定 attempt 的原生输入", "placement": "task", "characters": len(texts["task_prompt"])}]
+        snapshots.append({"type": "runtime.prompt", "runtime_attempt_id": attempt.id,
+            "role": run.role.value, "task_id": run.reply_task_id, "runtime_kind": attempt.runtime_kind,
+            "route_name": attempt.route_name, "model": attempt.model, "rendered_at": "",
+            "execution_generation": run.execution_generation, "proposal_revision": run.proposal_revision,
+            "runtime_context": "", "invocation_facts": {}, "sections": sections,
+            "redacted": any(texts[key] != saved[key] for key in texts), "native_recorded": True,
+            "source_note": saved["developer_source"] + "；仅显示原生保存的服务输入，未重建细分配置来源或渲染时间。", **texts})
+    return sorted(snapshots, key=lambda item: item.get("runtime_attempt_id") or 0)
+
+
 def historical_prompt_preview(store: AutoReplyStore, *, run_id: int, runtime_attempt_id: int | None = None) -> dict[str, object]:
-    run = store.get_agent_run(run_id)
+    run = store.get_agent_run(run_id, load_events=False)
     if run is None:
         raise LookupError("运行不存在")
     result = _empty_item(mode="historical", role=run.role.value)
     result.update(run_id=run.id, task_id=run.reply_task_id)
-    snapshots = [event for event in run.tool_events if event.get("type") == "runtime.prompt"]
-    if not snapshots:
-        result.update(status="unavailable", reason="该运行未保存实际提交输入；不能用当前配置重建或重跑补齐。")
-        return result
-    invoked_ids = {event.get("runtime_attempt_id") for event in run.tool_events if event.get("type") == "runtime.prompt.invoked"}
-    result["attempts"] = [{"runtime_attempt_id": event["runtime_attempt_id"], "route_name": event["route_name"],
-                           "rendered_at": event["rendered_at"],
-                           "submission_state": "invoked" if event["runtime_attempt_id"] in invoked_ids else "prepared"}
-                          for event in snapshots]
-    saved = next((event for event in snapshots if event.get("runtime_attempt_id") == runtime_attempt_id), None) if runtime_attempt_id is not None else snapshots[-1]
-    if saved is None:
+    attempts = store.list_agent_runtime_attempts(run.id)
+    snapshots = _saved_input_snapshots(store, run, attempts=attempts)
+    by_id = {item.get("runtime_attempt_id"): item for item in snapshots}
+    references = {item.id: item for item in attempts}
+    ids = sorted(set(references) | set(by_id), key=lambda value: value or 0)
+    if runtime_attempt_id is not None and runtime_attempt_id not in ids:
         raise LookupError("所选运行尝试不存在")
+    from app.native_trajectory import live_events
+    events = live_events(str(store.path.resolve()), run.id) or []
+    invoked_ids = {event.get("runtime_attempt_id") for event in events if event.get("type") == "runtime.prompt.invoked"}
+    result["attempts"] = [{"runtime_attempt_id": identity,
+        "route_name": by_id[identity]["route_name"] if identity in by_id else references[identity].route_name,
+        "rendered_at": by_id[identity]["rendered_at"] if identity in by_id else "",
+        "input_status": "available" if identity in by_id else "unavailable",
+        "submission_state": ("invoked" if by_id[identity].get("native_recorded") or identity in invoked_ids else "prepared") if identity in by_id else None}
+        for identity in ids]
+    selected_id = runtime_attempt_id if runtime_attempt_id is not None else (ids[-1] if ids else None)
+    saved = by_id.get(selected_id)
+    if saved is None:
+        reference = references.get(selected_id)
+        if reference:
+            result.update(runtime_attempt_id=reference.id, route_name=reference.route_name,
+                runtime_kind=reference.runtime_kind, model=reference.model,
+                execution_generation=run.execution_generation, proposal_revision=run.proposal_revision)
+        result.update(status="unavailable", submission_state=None, reason="所选运行尝试的原生输入记录不可读取；不能用当前配置重建或重跑补齐，也不代表从未提交。")
+        return result
     for key in ("role", "runtime_kind", "route_name", "model", "rendered_at",
                 "developer_instructions", "task_prompt", "submitted_input", "runtime_context"):
         result[key] = saved[key]
@@ -67,9 +109,12 @@ def historical_prompt_preview(store: AutoReplyStore, *, run_id: int, runtime_att
     result["task_source_configuration_fingerprints"] = _saved_configuration_fingerprints(saved)
     result["task_source_run_id"] = run.id
     result["task_source_rendered_at"] = saved["rendered_at"]
-    invoked = saved.get("runtime_attempt_id") in invoked_ids
+    invoked = saved.get("native_recorded", False) or saved.get("runtime_attempt_id") in invoked_ids
     result["submission_state"] = "invoked" if invoked else "prepared"
     result["reason"] = ("运行适配器已调用；此输入记录不证明模型接收、任务完成或外部动作发生。" if invoked else "仅保存准备输入，尚无运行适配器提交记录；不能称为模型已经收到。") + (" 凭据已脱敏，标记 [REDACTED]。" if saved.get("redacted") else "")
+    if saved.get("native_recorded"):
+        result["scope"] = "选定原生 attempt 保存的 Task 与服务 Developer；续会话的 session Developer 来源单独标明，不冒充本轮配置提交回执。未包含 CLI 基础系统指令、AGENTS、环境消息、工具 schema 或会话历史。"
+        result["reason"] = saved["source_note"] + (" 凭据已脱敏，标记 [REDACTED]。" if saved.get("redacted") else "")
     return result
 
 
@@ -96,11 +141,13 @@ def current_prompt_preview(
     source_snapshot = None
     source_run = None
     if task:
-        for run in store.list_agent_runs_for_task_generation(task.id, task.execution_generation):
-            if run.role.value == role:
-                for event in run.tool_events:
-                    if event.get("type") == "runtime.prompt":
-                        source_snapshot, source_run = event, run
+        role_runs = [run for run in store.list_agent_runs_for_task_generation(task.id, task.execution_generation, load_events=False) if run.role.value == role]
+        if role_runs:
+            source_run = role_runs[-1]
+            attempts = store.list_agent_runtime_attempts(source_run.id)
+            snapshots = _saved_input_snapshots(store, source_run, attempts=attempts[-1:])
+            latest_id = attempts[-1].id if attempts else (snapshots[-1].get("runtime_attempt_id") if snapshots else None)
+            source_snapshot = next((snapshot for snapshot in snapshots if snapshot.get("runtime_attempt_id") == latest_id), None)
     facts = source_snapshot.get("invocation_facts", {}) if source_snapshot else {}
     configuration = load_prompt_configuration(create_missing=False, role=role)
     fingerprints = configuration.fingerprints()
@@ -113,7 +160,7 @@ def current_prompt_preview(
     developer = render_prompt_sections(developer_sections, placement="developer", omit_empty=role == "consumer")
     prompt = source_snapshot["task_prompt"] if source_snapshot else "未绑定任务和候选：仅预览当前角色公共指令与环境。"
     if task and source_snapshot is None:
-        result.update(status="unavailable", reason="该任务未保存所选角色的完整上下文输入；不以省略材料、反馈或回执的原触发拼装结果冒充完整 prompt，也不重跑补齐。")
+        result.update(status="unavailable", reason="该任务最新角色运行/尝试的完整输入不可读取；不使用较早输入或原触发拼装结果冒充完整 prompt，也不重跑补齐。")
         prompt = ""
     task_sections = ()
     if source_snapshot and not source_snapshot.get("sections"):
@@ -162,5 +209,5 @@ def current_prompt_preview(
     result["proposal_revision"] = source_run.proposal_revision if source_run else None
     result["stage_index"] = facts.get("stage_index")
     if not result["reason"]:
-        result["reason"] = "所选路线的当前配置预览，尚未运行或验证认证。" + (f" 完整任务正文与明确标记的任务 Skill override 来自 run {source_run.id} 于 {source_snapshot['rendered_at']} 保存的输入，不代表外部资料当前状态。" if source_run else " 未绑定任务。")
+        result["reason"] = "所选路线的当前配置预览，尚未运行或验证认证。" + (f" 完整任务正文与明确标记的任务 Skill override 来自 run {source_run.id} 于 {source_snapshot['rendered_at'] or '渲染时间未记录'} 保存的输入，不代表外部资料当前状态。" if source_run else " 未绑定任务。")
     return result

@@ -2,7 +2,7 @@ import { request } from "./console";
 
 export type PromptPreviewRole = "consumer" | "audit";
 export interface PromptPreviewRoute { name: string; runtime_kind: string; model: string; }
-export interface PromptPreviewAttempt { runtime_attempt_id: number; route_name: string; rendered_at: string; submission_state: "prepared" | "invoked"; }
+export interface PromptPreviewAttempt { runtime_attempt_id: number; route_name: string; rendered_at: string; submission_state: "prepared" | "invoked" | null; input_status?: "available" | "unavailable"; }
 export interface PromptPreviewSection {
   name: string;
   source: string;
@@ -30,7 +30,7 @@ export interface PromptPreviewItem {
   execution_generation: string | null;
   proposal_revision: number | null;
   stage_index: number | null;
-  submission_state: "preview" | "prepared" | "invoked";
+  submission_state: "preview" | "prepared" | "invoked" | null;
   developer_instructions: string;
   task_prompt: string;
   submitted_input: string;

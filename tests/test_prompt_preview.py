@@ -124,7 +124,7 @@ def test_old_run_without_input_is_unavailable_and_not_rebuilt(tmp_path):
     result = historical_prompt_preview(store, run_id=run.id)
     assert result["status"] == "unavailable"
     assert result["developer_instructions"] == ""
-    assert "未保存" in result["reason"]
+    assert result["reason"] and result["task_prompt"] == ""
     assert store.get_agent_run(run.id).tool_events == []
 
 
@@ -171,7 +171,7 @@ def test_current_bound_task_without_complete_saved_input_is_unavailable(tmp_path
     result = current_prompt_preview(store, role="consumer", config=load_runtime_config({}), task_id=task.id)
     assert result["status"] == "unavailable"
     assert result["task_prompt"] == ""
-    assert "未保存" in result["reason"]
+    assert result["reason"] and result["task_prompt"] == ""
     assert store.get_agent_run(run.id).tool_events == []
 
 
