@@ -1,5 +1,14 @@
 # Current Runtime Mechanism
 
+Email unsubscribe page judgement explicitly selects an empty task Skill catalog
+through the existing native per-path Skill configuration. Unspecified standard
+turns retain the native default catalog, while an explicit selection (including
+empty) filters the catalog through the existing per-path helper. Existing
+always-on/plugin entries may remain visible; empty does not mean zero native Skills.
+The page states, verbatim evidence contract, route, approval, sandbox and
+unsubscribe execution rules are unchanged. Native global memory and AGENTS
+instructions remain CLI-owned and are not represented as service prompt text.
+
 The existing `read_dingtalk_drive_file` attachment reader limits downloaded bytes
 and OOXML aggregate uncompressed bytes to 20 MiB before parsing. Member parsing
 also uses bounded reads against one aggregate budget, with actual compressed
