@@ -1926,11 +1926,9 @@ def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract(monkeyp
     )
     prompt = " ".join(build_task_agent_prompt(_work_item(), "无候选项目").split())
     assert "# CEO Work Tracking" in prompt
-    schema_text = build_task_agent_prompt(_work_item(), "无候选项目").split(
-        "TaskAgentDecision Pydantic JSON schema:\n", 1
-    )[1]
-    schema, _ = json.JSONDecoder().raw_decode(schema_text)
-    assert schema == task_agent_output_schema()
+    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
+    assert json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text()) == task_agent_output_schema()
+    assert "TaskAgentDecision Pydantic JSON schema:" not in prompt
     assert "Memory connector status:" in prompt
     assert "does not impose a general read-only mode" in prompt
     assert "using memory_connector.memory_write" in prompt
@@ -2031,10 +2029,12 @@ def test_task_agent_source_authority_and_independent_project_output(
     )
 
 
-def test_action_and_date_guidance_is_delivered_next_to_output_fields(monkeypatch):
+def test_action_and_date_guidance_is_delivered_next_to_output_fields():
     from app.task_models import TaskDecision, TaskDateEvidence
 
-    text = _current_task_guidance("prompt", monkeypatch)
+    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
+
+    text = json.dumps(json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text()), ensure_ascii=False)
     action_field = TaskDecision.model_json_schema()["properties"]["source_excerpt"]
     date_fields = TaskDateEvidence.model_json_schema()["properties"]
     checks = [
@@ -2209,8 +2209,9 @@ def test_task_agent_owns_one_attention_proposal_in_assessment_without_task_carri
     assert "zero Tasks" in text
     assert "not_needed" in text
     assert "not mean" in text if surface == "prompt" else "does not imply" in text
-    assert "Project-level risk facts" in text
-    assert "not per-Task action summaries" in text
+    if surface == "skill":
+        assert "Project-level risk facts" in text
+        assert "not per-Task action summaries" in text
 
 
 def test_quote_schema_descriptions_preserve_source_line_breaks():
@@ -2644,7 +2645,7 @@ def test_task_agent_codex_runner_parses_response_item_output_text(tmp_path):
     assert runner.last_session_id == "session-task-2"
 
 
-def test_task_agent_prompt_schema_is_generated_from_validation_model():
+def test_task_agent_runtime_schema_is_generated_from_validation_model():
     prompt = build_task_agent_prompt(
         WorkItem.model_validate(
             {
@@ -2656,10 +2657,9 @@ def test_task_agent_prompt_schema_is_generated_from_validation_model():
         ),
         "候选项目:\n[]\n\n近期 follow-up 候选:\n[]",
     )
-    schema_text = prompt.split("TaskAgentDecision Pydantic JSON schema:\n", 1)[1]
-    prompt_schema, _ = json.JSONDecoder().raw_decode(schema_text.lstrip())
-
-    assert prompt_schema == task_agent_output_schema()
+    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
+    assert "TaskAgentDecision Pydantic JSON schema:" not in prompt
+    assert json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text()) == task_agent_output_schema()
 
 
 def test_task_agent_codex_runner_uses_routed_execution_contract():

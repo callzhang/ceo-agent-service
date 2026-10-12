@@ -42,7 +42,6 @@ from app.task_models import (
     TaskProjectAssessment,
     TaskProjectDecisionResult,
     TaskDecisionResult,
-    task_agent_output_schema,
 )
 from app.task_agent_session import TASK_AGENT_SESSION_SCOPE_ID
 from app.task_retrieval import (
@@ -549,9 +548,6 @@ def build_task_agent_prompt(
     effective_current_time = (
         current_time.strip() or datetime.now(timezone.utc).isoformat()
     )
-    decision_schema = json.dumps(
-        task_agent_output_schema(), ensure_ascii=False, separators=(",", ":")
-    )
     return f"""You are the CEO Agent Task/Project reader. Do not reply to the source.
 Follow the current CEO Work Tracking Skill and return one TaskAgentDecision envelope:
 project_decisions, task_decisions, project_assessments are all required (each 0..N).
@@ -839,8 +835,6 @@ Apply the Skill before returning:
 - Memory is background/discovery, not original observed evidence or human acceptance.
   Keep runtime paths, credentials and diagnostics out of business fields.
 
-TaskAgentDecision Pydantic JSON schema:
-{decision_schema}
 Return only the envelope after checking every item.
 """
 
