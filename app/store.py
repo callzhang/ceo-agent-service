@@ -36,13 +36,19 @@ from app.reviewed_candidate_store import (
 )
 from app.sqlite_schema_lock import schema_initialize_lock
 from app.run_storage import (
-    AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES, TASK_AGENT_RUN_SQL, MEETING_RUN_SQL, OKR_RUN_SQL,
+    SCHEDULED_RUN_SQL, AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES, TASK_AGENT_RUN_SQL, MEETING_RUN_SQL, OKR_RUN_SQL,
     create_run_schema, install_run_child_guards, insert_run, run_schema_is_current,
 )
+
 from app.task_storage import (
     REPLY_TASK_SQL, REPLY_TASK_INPUT_SQL, WORK_SUMMARY_INPUT_SQL, MEETING_JOB_SQL, OKR_REQUEST_SQL, WEEKLY_JOB_SQL, SOURCE_COLUMNS, task_id_expression,
-    RETIRED_TASK_TABLES, create_task_schema, migrate_task_schema,
+    RETIRED_TASK_TABLES, create_task_schema,
     task_schema_is_current, insert_task, install_task_child_guards,
+)
+
+from app.workbench_storage import (
+    RETIRED_WORKBENCH_TABLES, SEARCH_RETIRED_COLUMNS, create_workbench_auxiliary_schema,
+    migrate_workbench_schema, workbench_schema_is_current,
 )
 
 from app.agent_cron.models import (
@@ -270,7 +276,7 @@ REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id
                   and canonical.reply_task_id=parent.id"""
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-11.3"
+STORE_SCHEMA_VERSION = "2026-10-12.1"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -324,9 +330,6 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "follow_up_send_attempts",
     "todo_evidence_candidates",
     "runtime_route_pauses",
-    "workbench_tasks",
-    "workbench_turns",
-    "workbench_events",
     "workbench_attachments",
     "workbench_artifacts",
     "workbench_confirmations",
@@ -335,7 +338,6 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "managed_skill_export_receipts",
     "scheduled_tasks",
     "scheduled_task_skill_refs",
-    "scheduled_task_runs",
     "scheduled_task_config_versions",
     "dispatcher_claim_leases",
     "runtime_skill_configs",
@@ -458,12 +460,15 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_business_legacy_links_task",
 )
 STORE_SCHEMA_REMOVED_TABLES = (
+    *RETIRED_WORKBENCH_TABLES,
     *RETIRED_TASK_TABLES,
     "agent_runs", "agent_runtime_attempts", "agent_run_state_events", "agent_run_events",
     "universal_plan_executions",
     "universal_action_executions",
 )
 STORE_SCHEMA_REMOVED_COLUMNS = {
+    "tasks": ("final_text",),
+    "codex_session_search_index": SEARCH_RETIRED_COLUMNS,
     "runs": ("final_result_json", "result_envelope_json", "tool_events_json",
              "decision_json", "envelope_json", "audit_tool_events_json", "audit_summary"),
     "business_task_signals": ("evidence_text",),
@@ -589,17 +594,6 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "managed_revision_id",
         "position",
     ),
-    "scheduled_task_runs": (
-        "event_id",
-        "snapshot_id",
-        "execution_kind",
-        "execution_id",
-        "lease_owner",
-        "lease_expires_at",
-        "first_scheduled_for",
-        "occurrence_count",
-        "result_summary",
-    ),
     "dispatcher_claim_leases": (
         "terminal_at",
         "last_error",
@@ -652,10 +646,6 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "consumer_run_id",
         "memories_json",
         "written_memory_ids_json",
-        "lease_owner",
-        "lease_expires_at",
-    ),
-    "workbench_turns": (
         "lease_owner",
         "lease_expires_at",
     ),
@@ -2455,7 +2445,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         malformed` arrives as `sqlite3.DatabaseError`, which the callers'
         `except sqlite3.OperationalError` does not catch.
         """
-        if "scheduled_task_runs" not in {
+        if "scheduled_task_config_versions" not in {
             str(item["name"])
             for item in db.execute(
                 "select name from sqlite_master where type='table'"
@@ -2555,8 +2545,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             and required_trigger_definitions_present
             and feedback_processing_round_storage_valid
             and required_columns_present
-            and run_schema_is_current(db, include_task_runs=True)
-            and task_schema_is_current(db)
+            and run_schema_is_current(db, include_task_runs=True, include_workbench=True)
+            and task_schema_is_current(db, include_workbench=True)
+            and workbench_schema_is_current(db)
             and reply_input_foreign_keys_present
             and not removed_columns_present
             and (
@@ -2775,8 +2766,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
 
     def _initialize(self) -> None:
         with self._connect() as db:
-            create_task_schema(db)
-            create_run_schema(db, include_task_runs=True)
+            create_task_schema(db, include_workbench=True)
+            create_run_schema(db, include_task_runs=True, include_workbench=True)
+            create_workbench_auxiliary_schema(db)
             self._migrate_business_task_source_documents(db)
             db.executescript(
                 """
@@ -2860,49 +2852,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 );
                 create unique index if not exists idx_scheduled_task_skill_refs_position
                     on scheduled_task_skill_refs(scheduled_task_id, position);
-                create table if not exists scheduled_task_runs (
-                    id integer primary key autoincrement,
-                    event_id text not null unique,
-                    scheduled_task_id integer not null,
-                    trigger_kind text not null check(trigger_kind in (
-                        'scheduled', 'manual'
-                    )),
-                    scheduled_for text not null,
-                    first_scheduled_for text not null,
-                    occurrence_count integer not null default 1
-                        check(occurrence_count > 0),
-                    dispatch_status text not null default 'pending' check(
-                        dispatch_status in (
-                            'pending', 'dispatched', 'skipped', 'failed'
-                        )
-                    ),
-                    skip_or_error_reason text not null default '',
-                    snapshot_json text not null,
-                    execution_kind text not null default '',
-                    execution_id text not null default '',
-                    lease_owner text not null default '',
-                    lease_expires_at text,
-                    created_at text not null default current_timestamp,
-                    dispatched_at text,
-                    result_summary text not null default '',
-                    foreign key(scheduled_task_id) references scheduled_tasks(id)
-                );
-                create unique index if not exists idx_scheduled_task_runs_scheduled_instant
-                    on scheduled_task_runs(scheduled_task_id, scheduled_for)
-                    where trigger_kind = 'scheduled';
-                create index if not exists idx_scheduled_task_runs_dispatch
-                    on scheduled_task_runs(
-                        dispatch_status, lease_expires_at, scheduled_for, id
-                    );
-                create index if not exists idx_scheduled_task_runs_claim
-                    on scheduled_task_runs(dispatch_status, scheduled_for, id);
-                create index if not exists idx_scheduled_task_runs_latest
-                    on scheduled_task_runs(scheduled_task_id, id desc);
-                create index if not exists idx_scheduled_task_runs_reply_execution
-                    on scheduled_task_runs(
-                        cast(execution_id as integer), scheduled_task_id, id
-                    )
-                    where execution_kind='reply_task';
                 create table if not exists dispatcher_claim_leases (
                     adapter_name text not null,
                     source_id text not null,
@@ -3434,30 +3383,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     claim_token text not null,
                     foreign key(job_id) references tasks(id) on delete cascade
                 );
-                create table if not exists codex_session_search_index (
-                    id integer primary key autoincrement,
-                    session_id text not null unique,
-                    source_type text not null default '',
-                    source_id text not null default '',
-                    title text not null default '',
-                    summary_text text not null default '',
-                    fts_text text not null default '',
-                    embedding_json text not null default '',
-                    embedding_model text not null default '',
-                    embedding_updated_at text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp
-                );
-                create index if not exists idx_codex_session_search_source
-                    on codex_session_search_index(source_type, source_id);
-                create virtual table if not exists codex_session_search_fts
-                    using fts5(
-                        title,
-                        summary_text,
-                        fts_text,
-                        content='codex_session_search_index',
-                        content_rowid='id'
-                    );
                 create table if not exists corpus_sources (
                     source_key text primary key,
                     last_collected_at text
@@ -4173,109 +4098,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     last_error text not null default '',
                     updated_at text not null default current_timestamp
                 );
-                create table if not exists workbench_tasks (
-                    id text primary key,
-                    title text not null,
-                    runtime_kind text not null,
-                    provider_session_ref text not null default '',
-                    archived_at text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp
-                );
-                create table if not exists workbench_turns (
-                    id text primary key,
-                    task_id text not null,
-                    client_request_id text not null unique,
-                    task_sequence integer not null check(task_sequence > 0),
-                    user_text text not null,
-                    status text not null check(status in (
-                        'queued', 'running', 'waiting_confirmation',
-                        'completed', 'stopped', 'failed'
-                    )),
-                    stop_requested integer not null default 0
-                        check(stop_requested in (0, 1)),
-                    final_text text not null default '',
-                    error_code text not null default '',
-                    error_detail text not null default '',
-                    resume_context text not null default '',
-                    lease_owner text not null default '',
-                    lease_expires_at text not null default '',
-                    execution_run_id text not null default '',
-                    runtime_quiesced_run_id text not null default '',
-                    started_at text not null default '',
-                    completed_at text not null default '',
-                    created_at text not null default current_timestamp,
-                    updated_at text not null default current_timestamp,
-                    foreign key(task_id) references workbench_tasks(id)
-                );
-                create unique index if not exists idx_workbench_one_active_turn
-                    on workbench_turns(task_id)
-                    where status in ('queued', 'running', 'waiting_confirmation');
-                create index if not exists idx_workbench_turns_queue
-                    on workbench_turns(status, created_at, id);
-                create table if not exists workbench_events (
-                    id integer primary key autoincrement,
-                    turn_id text not null,
-                    sequence integer not null,
-                    event_type text not null,
-                    payload_json text not null,
-                    created_at text not null default current_timestamp,
-                    unique(turn_id, sequence),
-                    foreign key(turn_id) references workbench_turns(id)
-                );
-                create table if not exists workbench_attachments (
-                    id text primary key,
-                    task_id text not null,
-                    client_request_id text not null,
-                    filename text not null,
-                    media_type text not null,
-                    size_bytes integer not null check(size_bytes >= 0),
-                    content_sha256 text not null,
-                    storage_path text not null,
-                    created_at text not null default current_timestamp,
-                    foreign key(task_id) references workbench_tasks(id)
-                );
-                create table if not exists workbench_artifacts (
-                    id text primary key,
-                    turn_id text not null,
-                    label text not null,
-                    path text not null,
-                    media_type text not null,
-                    created_at text not null default current_timestamp,
-                    foreign key(turn_id) references workbench_turns(id)
-                );
-                create table if not exists workbench_confirmations (
-                    id text primary key,
-                    turn_id text not null,
-                    action_kind text not null,
-                    target text not null,
-                    summary text not null,
-                    risk text not null,
-                    canonical_capability text not null default '',
-                    canonical_operation text not null default '',
-                    canonical_targets_json text not null default '[]',
-                    canonical_operation_digest text not null default '',
-                    canonical_arguments_digest text not null default '',
-                    arguments_json text not null,
-                    status text not null check(status in (
-                        'pending', 'confirmed', 'cancelled', 'executed', 'failed'
-                    )),
-                    result_json text not null default '',
-                    created_at text not null default current_timestamp,
-                    decided_at text not null default '',
-                    execution_owner text not null default '',
-                    execution_lease_expires_at text not null default '',
-                    execution_started_at text not null default '',
-                    authorization_consumed_at text not null default '',
-                    proposer_run_id text not null default '',
-                    proposer_owner text not null default '',
-                    proposer_lease_expires_at text not null default '',
-                    proposer_quiesced_at text not null default '',
-                    decision_requested text not null default ''
-                        check(decision_requested in ('', 'confirm', 'cancel')),
-                    decision_requested_at text not null default '',
-                    foreign key(turn_id) references workbench_turns(id)
-                );
                 """
             )
             attention_columns = {
@@ -4515,212 +4337,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                    where id not in (
                        select config_id from runtime_feedback_iteration_capabilities
                    )"""
-            )
-            workbench_turn_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(workbench_turns)").fetchall()
-            }
-            for column, definition in (
-                ("lease_owner", "text not null default ''"),
-                ("lease_expires_at", "text not null default ''"),
-            ):
-                if column not in workbench_turn_columns:
-                    db.execute(
-                        "alter table workbench_turns add column "
-                        f"{column} {definition}"
-                    )
-            if "resume_context" not in workbench_turn_columns:
-                db.execute(
-                    "alter table workbench_turns add column "
-                    "resume_context text not null default ''"
-                )
-            if "task_sequence" not in workbench_turn_columns:
-                db.execute(
-                    "alter table workbench_turns add column "
-                    "task_sequence integer not null default 0"
-                )
-            db.execute(
-                """
-                with ranked as (
-                    select rowid as row_id,
-                           row_number() over (
-                               partition by task_id order by created_at,rowid
-                           ) as sequence
-                    from workbench_turns
-                )
-                update workbench_turns
-                set task_sequence=(
-                    select sequence from ranked
-                    where ranked.row_id=workbench_turns.rowid
-                )
-                where task_sequence=0
-                """
-            )
-            for column in ("execution_run_id", "runtime_quiesced_run_id"):
-                if column not in workbench_turn_columns:
-                    db.execute(
-                        "alter table workbench_turns add column "
-                        f"{column} text not null default ''"
-                    )
-            workbench_confirmation_columns = {
-                row["name"]
-                for row in db.execute(
-                    "pragma table_info(workbench_confirmations)"
-                ).fetchall()
-            }
-            for column in (
-                "execution_owner",
-                "execution_lease_expires_at",
-                "execution_started_at",
-                "canonical_capability",
-                "canonical_operation",
-                "canonical_targets_json",
-                "canonical_operation_digest",
-                "canonical_arguments_digest",
-                "authorization_consumed_at",
-                "proposer_run_id",
-                "proposer_owner",
-                "proposer_lease_expires_at",
-                "proposer_quiesced_at",
-                "decision_requested",
-                "decision_requested_at",
-            ):
-                if column not in workbench_confirmation_columns:
-                    default = "'[]'" if column == "canonical_targets_json" else "''"
-                    db.execute(
-                        "alter table workbench_confirmations add column "
-                        f"{column} text not null default {default}"
-                    )
-            workbench_attachment_columns = {
-                row["name"]
-                for row in db.execute(
-                    "pragma table_info(workbench_attachments)"
-                ).fetchall()
-            }
-            if "client_request_id" not in workbench_attachment_columns:
-                db.execute(
-                    "alter table workbench_attachments add column "
-                    "client_request_id text not null default ''"
-                )
-            if "content_sha256" not in workbench_attachment_columns:
-                db.execute(
-                    "alter table workbench_attachments add column "
-                    "content_sha256 text not null default ''"
-                )
-            db.execute(
-                "update workbench_attachments set client_request_id=id "
-                "where client_request_id=''"
-            )
-            db.execute(
-                "create index if not exists idx_workbench_turns_queue "
-                "on workbench_turns(status, created_at, id)"
-            )
-            db.execute(
-                "create index if not exists idx_workbench_confirmations_turn_status "
-                "on workbench_confirmations(turn_id, status, result_json, created_at, id)"
-            )
-            db.execute(
-                "create index if not exists idx_workbench_turns_recovery "
-                "on workbench_turns(status, lease_expires_at)"
-            )
-            db.execute(
-                "create index if not exists idx_workbench_events_turn_id_id "
-                "on workbench_events(turn_id, id)"
-            )
-            db.execute(
-                "create index if not exists idx_workbench_artifacts_turn_created_id "
-                "on workbench_artifacts(turn_id, created_at, id)"
-            )
-            db.execute(
-                "create index if not exists idx_workbench_turns_task_created_id "
-                "on workbench_turns(task_id, created_at, id)"
-            )
-            db.execute(
-                "create unique index if not exists idx_workbench_turns_task_sequence "
-                "on workbench_turns(task_id, task_sequence desc)"
-            )
-            db.execute(
-                "create index if not exists idx_workbench_tasks_updated_id "
-                "on workbench_tasks(updated_at, id)"
-            )
-            db.execute(
-                "create index if not exists idx_workbench_events_id_turn_id "
-                "on workbench_events(id, turn_id)"
-            )
-            db.execute(
-                "create index if not exists idx_workbench_artifacts_created_id_turn "
-                "on workbench_artifacts(created_at, id, turn_id)"
-            )
-            db.execute(
-                "create index if not exists idx_workbench_confirmations_created_id_turn "
-                "on workbench_confirmations(created_at, id, turn_id)"
-            )
-            db.execute(
-                "create index if not exists idx_workbench_confirmations_turn_created_id "
-                "on workbench_confirmations(turn_id, created_at, id)"
-            )
-            db.execute(
-                "create index if not exists idx_workbench_attachments_task_created_id "
-                "on workbench_attachments(task_id, created_at, id)"
-            )
-            db.execute(
-                "create unique index if not exists idx_workbench_attachments_task_request "
-                "on workbench_attachments(task_id, client_request_id)"
-            )
-            db.execute(
-                "create index if not exists idx_workbench_events_event_type "
-                "on workbench_events(event_type)"
-            )
-            db.execute("drop index if exists idx_workbench_confirmations_recovery")
-            db.execute(
-                """
-                create index idx_workbench_confirmations_recovery
-                on workbench_confirmations(execution_lease_expires_at, id)
-                where status='confirmed' and result_json=''
-                  and execution_owner<>'' and execution_lease_expires_at<>''
-                """
-            )
-            db.execute(
-                """
-                create index if not exists idx_workbench_confirmations_ready_intents
-                on workbench_confirmations(decision_requested_at, id)
-                where status='pending' and decision_requested<>''
-                  and proposer_run_id<>'' and proposer_quiesced_at<>''
-                """
-            )
-            db.execute(
-                """
-                create index if not exists idx_workbench_confirmations_proposer_recovery
-                on workbench_confirmations(proposer_lease_expires_at, id)
-                where status='pending' and proposer_run_id<>''
-                  and proposer_quiesced_at=''
-                """
-            )
-            db.execute(
-                """
-                create index if not exists
-                    idx_workbench_confirmations_legacy_proposer_recovery
-                on workbench_confirmations(id)
-                where status='pending' and proposer_run_id=''
-                """
-            )
-            db.execute(
-                """
-                create index if not exists
-                    idx_workbench_confirmations_legacy_execution_owner_recovery
-                on workbench_confirmations(id)
-                where status='confirmed' and result_json=''
-                  and execution_owner=''
-                """
-            )
-            db.execute(
-                """
-                create index if not exists
-                    idx_workbench_confirmations_legacy_execution_lease_recovery
-                on workbench_confirmations(id)
-                where status='confirmed' and result_json=''
-                  and execution_owner<>'' and execution_lease_expires_at=''
-                """
             )
             self._reconcile_legacy_workbench_confirmations(db)
             meeting_memory_write_columns = {
@@ -5379,37 +4995,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "alter table scheduled_tasks add column "
                     "description text not null default ''"
                 )
-            scheduled_run_columns = {
-                row["name"]
-                for row in db.execute(
-                    "pragma table_info(scheduled_task_runs)"
-                ).fetchall()
-            }
-            if "first_scheduled_for" not in scheduled_run_columns:
-                db.execute(
-                    "alter table scheduled_task_runs add column "
-                    "first_scheduled_for text not null default ''"
-                )
-            if "occurrence_count" not in scheduled_run_columns:
-                db.execute(
-                    "alter table scheduled_task_runs add column "
-                    "occurrence_count integer not null default 1"
-                )
-            if "result_summary" not in scheduled_run_columns:
-                db.execute(
-                    "alter table scheduled_task_runs add column "
-                    "result_summary text not null default ''"
-                )
-            db.execute(
-                "update scheduled_task_runs set first_scheduled_for=scheduled_for "
-                "where first_scheduled_for=''"
-            )
             db.execute(
                 "update scheduled_tasks set description=coalesce(nullif(trim(prompt), ''), name) "
                 "where trim(description)=''"
             )
-            from app.scheduled_config_storage import migrate_scheduled_configs
-            migrate_scheduled_configs(db)
+            db.execute("""create table if not exists scheduled_task_config_versions (
+                id integer primary key, snapshot_json text not null unique
+            )""")
             error_columns = {
                 row["name"] for row in db.execute("pragma table_info(errors)").fetchall()
             }
@@ -6372,7 +5964,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select execution_id, scheduled_task_id
-                from scheduled_task_runs
+                from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs
                 where execution_kind='reply_task' and execution_id in ({placeholders})
                 order by id
                 """,
@@ -8497,7 +8089,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
 
             overlap_row = db.execute(
-                "select id from scheduled_task_runs "
+                f"select id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs "
                 "where scheduled_task_id=? and (dispatch_status='pending' or "
                 "(execution_kind<>'' and execution_id<>'')) "
                 "order by id desc limit 1",
@@ -8520,7 +8112,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if reason == "scheduled_task_previous_execution_active":
                 duplicate = db.execute(
                     f"select {self._scheduled_task_run_columns()} "
-                    "from scheduled_task_runs where scheduled_task_id=? "
+                    f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where scheduled_task_id=? "
                     "and trigger_kind='scheduled' and scheduled_for=?",
                     (task_id, scheduled_for_text),
                 ).fetchone()
@@ -8530,14 +8122,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         self._scheduled_task_run_from_row(duplicate),
                     )
                 previous_skip = db.execute(
-                    "select id from scheduled_task_runs "
+                    f"select id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs "
                     "where scheduled_task_id=? and trigger_kind='scheduled' "
                     "and dispatch_status='skipped' "
                     "and skip_or_error_reason=? order by id desc limit 1",
                     (task_id, reason),
                 ).fetchone()
                 latest = db.execute(
-                    "select id from scheduled_task_runs where scheduled_task_id=? "
+                    f"select id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where scheduled_task_id=? "
                     "order by id desc limit 1",
                     (task_id,),
                 ).fetchone()
@@ -8547,14 +8139,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     and int(previous_skip["id"]) == int(latest["id"])
                 ):
                     db.execute(
-                        "update scheduled_task_runs set scheduled_for=?, "
+                        "update runs set scheduled_for=?, "
                         "occurrence_count=occurrence_count + 1, dispatched_at=? "
-                        "where id=?",
+                        "where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
                         (scheduled_for_text, now_text, int(previous_skip["id"])),
                     )
                     grouped = db.execute(
                         f"select {self._scheduled_task_run_columns()} "
-                        "from scheduled_task_runs where id=?",
+                        f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?",
                         (int(previous_skip["id"]),),
                     ).fetchone()
                     assert grouped is not None
@@ -8563,31 +8155,27 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         self._scheduled_task_run_from_row(grouped),
                     )
             try:
-                cursor = db.execute(
-                    """
-                    insert into scheduled_task_runs (
-                        event_id, scheduled_task_id, trigger_kind, scheduled_for,
-                        first_scheduled_for, occurrence_count,
-                        dispatch_status, skip_or_error_reason, snapshot_id,
-                        created_at, dispatched_at
-                    ) values (?, ?, 'scheduled', ?, ?, 1, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        event_id,
-                        task_id,
-                        scheduled_for_text,
-                        scheduled_for_text,
-                        dispatch_status,
-                        reason,
-                        snapshot_id,
-                        now_text,
-                        now_text if reason else None,
-                    ),
+                cursor = insert_run(
+                    db,
+                    "scheduled_task_runs",
+                    {
+                        "event_id": event_id,
+                        "scheduled_task_id": task_id,
+                        "trigger_kind": "scheduled",
+                        "scheduled_for": scheduled_for_text,
+                        "first_scheduled_for": scheduled_for_text,
+                        "occurrence_count": 1,
+                        "dispatch_status": dispatch_status,
+                        "skip_or_error_reason": reason,
+                        "snapshot_id": snapshot_id,
+                        "created_at": now_text,
+                        "dispatched_at": now_text if reason else None,
+                    },
                 )
             except sqlite3.IntegrityError:
                 existing = db.execute(
                     f"select {self._scheduled_task_run_columns()} "
-                    "from scheduled_task_runs "
+                    f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs "
                     "where scheduled_task_id=? and trigger_kind='scheduled' "
                     "and scheduled_for=?",
                     (task_id, scheduled_for_text),
@@ -8600,7 +8188,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
             row = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where id=?",
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?",
                 (cursor.lastrowid,),
             ).fetchone()
             assert row is not None
@@ -8657,34 +8245,31 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             from app.scheduled_config_storage import intern_scheduled_config
             snapshot_id = intern_scheduled_config(db, snapshot_json)
             try:
-                cursor = db.execute(
-                    """
-                    insert into scheduled_task_runs (
-                        event_id, scheduled_task_id, trigger_kind, scheduled_for,
-                        first_scheduled_for, occurrence_count,
-                        dispatch_status, skip_or_error_reason, snapshot_id,
-                        created_at, dispatched_at
-                    ) values (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        event_id,
-                        task_id,
-                        trigger_kind,
-                        scheduled_for_text,
-                        scheduled_for_text,
-                        dispatch_status,
-                        reason,
-                        snapshot_id,
-                        now_text,
-                        now_text if dispatch_status == "skipped" else None,
-                    ),
+                cursor = insert_run(
+                    db,
+                    "scheduled_task_runs",
+                    {
+                        "event_id": event_id,
+                        "scheduled_task_id": task_id,
+                        "trigger_kind": trigger_kind,
+                        "scheduled_for": scheduled_for_text,
+                        "first_scheduled_for": scheduled_for_text,
+                        "occurrence_count": 1,
+                        "dispatch_status": dispatch_status,
+                        "skip_or_error_reason": reason,
+                        "snapshot_id": snapshot_id,
+                        "created_at": now_text,
+                        "dispatched_at": now_text
+                        if dispatch_status == "skipped"
+                        else None,
+                    },
                 )
             except sqlite3.IntegrityError:
                 if trigger_kind != "scheduled":
                     raise
                 existing = db.execute(
                     f"select {self._scheduled_task_run_columns()} "
-                    "from scheduled_task_runs "
+                    f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs "
                     "where scheduled_task_id=? and trigger_kind='scheduled' "
                     "and scheduled_for=?",
                     (task_id, scheduled_for_text),
@@ -8694,7 +8279,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return self._scheduled_task_run_from_row(existing), False
             row = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where id=?",
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?",
                 (cursor.lastrowid,),
             ).fetchone()
             assert row is not None
@@ -8724,8 +8309,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             if run_id is None:
                 candidate = db.execute(
-                    """
-                    select id from scheduled_task_runs
+                    f"""
+                    select id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs
                      where dispatch_status='pending'
                        and scheduled_for <= ?
                        and (lease_owner='' or lease_expires_at <= ?)
@@ -8739,9 +8324,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 run_id = int(candidate["id"])
             cursor = db.execute(
                 """
-                update scheduled_task_runs
+                update runs
                    set lease_owner=?, lease_expires_at=?
-                 where id=? and dispatch_status='pending'
+                 where record_type='scheduled_task_runs' and cast(legacy_key as integer)=? and dispatch_status='pending'
                    and scheduled_for <= ?
                    and (lease_owner='' or lease_expires_at <= ?)
                 """,
@@ -8751,7 +8336,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return None
             row = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where id=?",
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?",
                 (run_id,),
             ).fetchone()
             assert row is not None
@@ -8784,9 +8369,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             cursor = db.execute(
                 """
-                update scheduled_task_runs
+                update runs
                    set execution_kind=?, execution_id=?, result_summary=?
-                 where id=? and dispatch_status='pending' and lease_owner=?
+                 where record_type='scheduled_task_runs' and cast(legacy_key as integer)=? and dispatch_status='pending' and lease_owner=?
                    and lease_expires_at > ?
                    and execution_kind='' and execution_id=''
                 """,
@@ -8798,7 +8383,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 )
             row = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where id=?",
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?",
                 (run_id,),
             ).fetchone()
             assert row is not None
@@ -8825,7 +8410,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         )
         with self._immediate_write_transaction() as db:
             row = db.execute(
-                f"select {self._scheduled_task_run_columns()} from scheduled_task_runs "
+                f"select {self._scheduled_task_run_columns()} from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs "
                 "where id=? and dispatch_status='pending' and lease_owner=? and lease_expires_at>?",
                 (run_id, owner, now_text),
             ).fetchone()
@@ -8852,9 +8437,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ):
                 raise ValueError("scheduled task execution link is invalid")
             cursor = db.execute(
-                "update scheduled_task_runs set execution_kind='reply_task', execution_id=?, "
+                "update runs set execution_kind='reply_task', execution_id=?, "
                 "dispatch_status='dispatched', skip_or_error_reason='', lease_owner='', "
-                "lease_expires_at=null, dispatched_at=? where id=? and dispatch_status='pending' "
+                "lease_expires_at=null, dispatched_at=? where record_type='scheduled_task_runs' and cast(legacy_key as integer)=? and dispatch_status='pending' "
                 "and lease_owner=? and lease_expires_at>?",
                 (str(task.id), now_text, run.id, owner, now_text),
             )
@@ -8870,7 +8455,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if ledger.rowcount != 1:
                 raise ValueError("scheduled dispatcher ledger claim changed")
             linked = db.execute(
-                f"select {self._scheduled_task_run_columns()} from scheduled_task_runs where id=?",
+                f"select {self._scheduled_task_run_columns()} from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?",
                 (run.id,),
             ).fetchone()
             assert linked is not None
@@ -8900,9 +8485,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         )
         with self._immediate_write_transaction() as db:
             row = db.execute(
-                """
+                f"""
                 select execution_kind, execution_id
-                 from scheduled_task_runs
+                 from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs
                  where id=? and dispatch_status='pending' and lease_owner=?
                    and lease_expires_at > ?
                 """,
@@ -8918,17 +8503,17 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise ValueError("dispatched scheduled task run requires execution link")
             db.execute(
                 """
-                update scheduled_task_runs
+                update runs
                    set dispatch_status=?, skip_or_error_reason=?,
                        lease_owner='', lease_expires_at=null, dispatched_at=?
-                 where id=? and dispatch_status='pending' and lease_owner=?
+                 where record_type='scheduled_task_runs' and cast(legacy_key as integer)=? and dispatch_status='pending' and lease_owner=?
                    and lease_expires_at > ?
                 """,
                 (status, reason.strip(), now_text, run_id, owner, now_text),
             )
             finished = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where id=?",
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?",
                 (run_id,),
             ).fetchone()
             assert finished is not None
@@ -8941,7 +8526,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             rows = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where scheduled_task_id=? order by id",
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where scheduled_task_id=? order by id",
                 (task_id,),
             ).fetchall()
         return tuple(self._scheduled_task_run_from_row(row) for row in rows)
@@ -8952,7 +8537,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             row = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where id=?", (run_id,),
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?", (run_id,),
             ).fetchone()
         return self._scheduled_task_run_from_row(row) if row is not None else None
 
@@ -8964,7 +8549,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             row = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where execution_kind='reply_task' "
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where execution_kind='reply_task' "
                 "and execution_id=? order by id desc limit 1",
                 (str(reply_task_id),),
             ).fetchone()
@@ -8978,7 +8563,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             row = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where scheduled_task_id=? and ("
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where scheduled_task_id=? and ("
                 "dispatch_status='pending' or "
                 "(execution_kind<>'' and execution_id<>'')) "
                 "order by id desc limit 1",
@@ -9000,11 +8585,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select {self._scheduled_task_run_columns("run")}
-                  from scheduled_task_runs as run
+                  from ({SCHEDULED_RUN_SQL}) as run
                  where run.scheduled_task_id in ({placeholders})
                    and run.id = (
                        select max(latest.id)
-                         from scheduled_task_runs as latest
+                         from ({SCHEDULED_RUN_SQL}) as latest
                         where latest.scheduled_task_id=run.scheduled_task_id
                    )
                  order by run.scheduled_task_id
@@ -9036,7 +8621,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._connect() as db:
             rows = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
-                "from scheduled_task_runs where scheduled_task_id=?"
+                f"from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where scheduled_task_id=?"
                 f"{cursor_sql} order by id desc limit ?",
                 parameters,
             ).fetchall()
@@ -9095,7 +8680,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 f"""
                 select run.*, config.snapshot_json
                   from ({REPLY_TASK_INPUT_SQL}) as inputs
-                  join scheduled_task_runs as run
+                  join ({SCHEDULED_RUN_SQL}) as run
                     on run.id=cast(
                         {_SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL} as integer
                     )
@@ -9594,7 +9179,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             sort_keys=True,
             separators=(",", ":"),
         )
-        affected_turn_ids: list[str] = []
+        affected_turn_ids: list[int] = []
         for row in rows:
             changed = db.execute(
                 """
@@ -9614,7 +9199,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 affected_turn_ids.append(row["turn_id"])
         for turn_id in affected_turn_ids:
             turn = db.execute(
-                "select status from workbench_turns where id=?", (turn_id,)
+                "select status from tasks where record_type='workbench_turns' and id=?", (turn_id,)
             ).fetchone()
             if turn is None or turn["status"] not in {
                 "queued",
@@ -9624,38 +9209,23 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 continue
             sequence = int(
                 db.execute(
-                    "select coalesce(max(sequence), 0) + 1 from workbench_events where turn_id=?",
+                    "select coalesce(max(sequence), 0) + 1 from runs where record_type='workbench_events' and task_id=?",
                     (turn_id,),
                 ).fetchone()[0]
             )
+            insert_run(db, "workbench_events", {
+                "task_id": turn_id, "sequence": sequence, "event_type": "turn_failed",
+                "payload_json": json.dumps({"code": "legacy_proposer_state_unknown", "status": "failed"}, sort_keys=True, separators=(",", ":")),
+            })
             db.execute(
                 """
-                insert into workbench_events (
-                    turn_id, sequence, event_type, payload_json
-                ) values (?, ?, 'turn_failed', ?)
-                """,
-                (
-                    turn_id,
-                    sequence,
-                    json.dumps(
-                        {
-                            "code": "legacy_proposer_state_unknown",
-                            "status": "failed",
-                        },
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ),
-                ),
-            )
-            db.execute(
-                """
-                update workbench_turns
+                update tasks
                 set status='failed', lease_owner='', lease_expires_at='',
                     error_code='legacy_proposer_state_unknown',
                     error_detail='Legacy confirmation proposer state is unknown.',
                     completed_at=case when completed_at='' then current_timestamp else completed_at end,
                     updated_at=current_timestamp
-                where id=? and status in ('queued', 'running', 'waiting_confirmation')
+                where record_type='workbench_turns' and id=? and status in ('queued', 'running', 'waiting_confirmation')
                 """,
                 (turn_id,),
             )
@@ -10074,13 +9644,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 db.execute("select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
                 if "service_state" in tables else None
             )
-            store_tables = {"tasks", "runs", *RETIRED_TASK_TABLES, *RETIRED_RUN_TABLES}
-            if marker is not None and marker[0] == STORE_SCHEMA_VERSION and run_schema_is_current(db, allow_missing_objects=True, include_task_runs=True) and task_schema_is_current(db, allow_missing_objects=True):
+            store_tables = {"tasks", "runs", *RETIRED_TASK_TABLES, *RETIRED_RUN_TABLES, *RETIRED_WORKBENCH_TABLES}
+            if marker is not None and marker[0] == STORE_SCHEMA_VERSION and run_schema_is_current(db, allow_missing_objects=True, include_task_runs=True, include_workbench=True) and task_schema_is_current(db, allow_missing_objects=True, include_workbench=True) and workbench_schema_is_current(db, allow_missing_objects=True):
                 return
             if marker is not None or tables.intersection(store_tables):
                 raise sqlite3.IntegrityError(
                     "unsupported or malformed Store source schema; expected a fresh Store, "
-                    "the exact 2026-10-11.2 source, or the current 2026-10-11.3 schema"
+                    "the exact 2026-10-11.3 source, or the current 2026-10-12.1 schema"
                 )
         finally:
             db.close()
@@ -10092,11 +9662,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if db.execute("select 1 from sqlite_master where name='service_state'").fetchone() is None:
                 return False
             marker = db.execute("select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
-            if marker is None or marker[0] != "2026-10-11.2":
+            if marker is None or marker[0] != "2026-10-11.3":
                 return False
             db.execute("pragma foreign_keys=off")
             db.execute("begin immediate")
-            migrate_task_schema(db)
+            migrate_workbench_schema(db)
             if not self._schema_manifest_is_current_in_connection(db, include_run_snapshots=True):
                 raise RuntimeError("typed task migration manifest differs")
             db.execute("update service_state set value=? where key=?", (STORE_SCHEMA_VERSION, STORE_SCHEMA_VERSION_KEY))
@@ -11879,7 +11449,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             args = (snapshot_id,)
         elif workload_kind == "workbench":
-            query = "select 1 from workbench_turns where id=? and status='running'"
+            query = "select 1 from tasks where record_type='workbench_turns' and legacy_key=? and status='running'"
             args = (workload_key,)
         else:
             source, _, source_key = workload_key.partition(":")
@@ -17713,7 +17283,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 for row in db.execute(
                     """
                     with missing as materialized (
-                        select cast(jobs.legacy_key as integer) as id
+                        select jobs.id
                         from tasks as jobs
                         where jobs.record_type='meeting_alignment_jobs'
                           and jobs.status='sent'
@@ -17722,10 +17292,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                               where events.meeting_job_id=jobs.id
                           )
                     )
-                    select cast(jobs.legacy_key as integer) as id
+                    select jobs.id
                     from missing
-                    join tasks as jobs on jobs.record_type='meeting_alignment_jobs'
-                      and cast(jobs.legacy_key as integer)=missing.id
+                    join tasks as jobs on jobs.id=missing.id
+                      and jobs.record_type='meeting_alignment_jobs'
                     where trim(jobs.final_message)<>''
                     """
                 )
@@ -17742,7 +17312,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 select jobs.id, lower(hex(randomblob(16))), '{{}}'
                 from tasks as jobs
                 where jobs.record_type='meeting_alignment_jobs'
-                  and cast(jobs.legacy_key as integer) in ({placeholders})
+                  and jobs.id in ({placeholders})
                   and jobs.status='sent'
                   and trim(jobs.final_message)<>''
                   and not exists (
@@ -19531,8 +19101,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).rowcount
             runs = 0
             for row in db.execute(
-                """
-                select runs.id, configs.snapshot_json from scheduled_task_runs as runs
+                f"""
+                select runs.id, configs.snapshot_json from ({SCHEDULED_RUN_SQL}) as runs
                  join scheduled_task_config_versions as configs on configs.id=runs.snapshot_id
                  where dispatch_status in ('pending', 'dispatched')
                    and json_valid(snapshot_json)
@@ -19542,7 +19112,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchall():
                 snapshot = ScheduledTaskSnapshot.from_json(str(row["snapshot_json"]))
                 db.execute(
-                    "update scheduled_task_runs set snapshot_id=? where id=?",
+                    "update runs set snapshot_id=? where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
                     (
                         intern_scheduled_config(db, dataclass_replace(snapshot, runtime_id=new_name).to_json()),
                         int(row["id"]),
@@ -27112,54 +26682,20 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         if not session_id.strip():
             return
         with self._connect() as db:
-            row = db.execute(
-                """
-                select id from codex_session_search_index
-                where session_id=?
-                """,
-                (session_id,),
-            ).fetchone()
+            row = db.execute("select id,title from codex_session_search_index where session_id=?", (session_id,)).fetchone()
             if row is None:
-                cursor = db.execute(
-                    """
-                    insert into codex_session_search_index (
-                        session_id,
-                        source_type,
-                        source_id,
-                        title,
-                        summary_text,
-                        fts_text,
-                        embedding_json,
-                        embedding_model,
-                        embedding_updated_at
-                    )
-                    values (?, ?, ?, ?, '', '', '', '', '')
-                    """,
-                    (session_id, source_type, source_id, title),
-                )
-                row_id = int(cursor.lastrowid)
+                row_id = db.execute(
+                    "insert into codex_session_search_index(session_id,source_type,source_id,title) values (?,?,?,?)",
+                    (session_id,source_type,source_id,title),
+                ).lastrowid
             else:
-                row_id = int(row["id"])
+                row_id = row["id"]
+                db.execute("insert into codex_session_search_fts(codex_session_search_fts,rowid,title) values('delete',?,?)", (row_id,row["title"]))
                 db.execute(
-                    """
-                    update codex_session_search_index
-                    set source_type=?,
-                        source_id=?,
-                        title=?,
-                        summary_text='',
-                        fts_text='',
-                        embedding_json='',
-                        embedding_model='',
-                        embedding_updated_at='',
-                        updated_at=current_timestamp
-                    where id=?
-                    """,
-                    (source_type, source_id, title, row_id),
+                    "update codex_session_search_index set source_type=?,source_id=?,title=?,updated_at=current_timestamp where id=?",
+                    (source_type,source_id,title,row_id),
                 )
-                db.execute(
-                    "delete from codex_session_search_fts where rowid=?",
-                    (row_id,),
-                )
+            db.execute("insert into codex_session_search_fts(rowid,title) values(?,?)", (row_id,title))
             # Native-derived corpus is assembled only for an in-memory search.
 
     def search_codex_sessions(
@@ -30401,9 +29937,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """
         with self._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select dispatch_status, created_at
-                from scheduled_task_runs
+                from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs
                 where scheduled_task_id=?
                   and dispatch_status in ('failed', 'dispatched')
                 order by id desc
@@ -30627,7 +30163,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Close scheduled command incidents after the same task succeeds later."""
         with self._connect() as db:
             cursor = db.execute(
-                """
+                f"""
                 update errors as error_event
                 set resolved_at=current_timestamp,
                     resolution='recovered by later successful scheduled service command'
@@ -30636,7 +30172,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and coalesce(error_event.conversation_id, '') like 'scheduled-task:%'
                   and exists (
                       select 1
-                      from scheduled_task_runs as run
+                      from ({SCHEDULED_RUN_SQL}) as run
                       where run.scheduled_task_id=cast(
                             substr(error_event.conversation_id, length('scheduled-task:') + 1)
                             as integer
@@ -30665,7 +30201,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                   and coalesce(error_event.conversation_id, '') like 'scheduled-task:%'
                   and exists (
                       select 1
-                      from scheduled_task_runs as run
+                      from ({SCHEDULED_RUN_SQL}) as run
                       join ({REPLY_TASK_SQL}) as task
                         on run.execution_kind='reply_task'
                        and cast(run.execution_id as integer)=task.id
@@ -31408,10 +30944,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     0 as todo_id,
                     0 as follow_up_id
                 from reply_attempts
-                where {(
-                    'id in (' + ', '.join(str(int(i)) for i in reply_attempt_ids) + ') and '
-                    if reply_attempt_ids is not None else ''
-                )}not exists (
+                where {
+            (
+                "id in (" + ", ".join(str(int(i)) for i in reply_attempt_ids) + ") and "
+                if reply_attempt_ids is not None
+                else ""
+            )
+        }not exists (
                     select 1 from ({AGENT_RUN_SQL}) as attempt_run
                     join ({REPLY_TASK_SQL}) as current_task
                       on current_task.id=attempt_run.reply_task_id
@@ -31592,7 +31131,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                         -- recovery: the service resolves this failure's
                         -- Attention entry on that success.
                         when exists (
-                            select 1 from scheduled_task_runs as later_runs
+                            select 1 from ({SCHEDULED_RUN_SQL}) as later_runs
                             where later_runs.scheduled_task_id=runs.scheduled_task_id
                               and later_runs.id>runs.id
                               and later_runs.dispatch_status='dispatched'
@@ -31623,7 +31162,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id
-                from scheduled_task_runs as runs
+                from ({SCHEDULED_RUN_SQL}) as runs
                 join scheduled_task_config_versions as configs on configs.id=runs.snapshot_id
                 where {history_types.scheduled_run_filter_sql("runs")}
         """

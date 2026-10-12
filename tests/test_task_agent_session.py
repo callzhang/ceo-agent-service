@@ -1,3 +1,4 @@
+import json
 import threading
 
 import pytest
@@ -88,8 +89,18 @@ def test_task_agent_runtime_prompt_keeps_current_shared_source_body_once(
     process_work_item(store, TaskAgentRunner(codex), work_input)
     assert len(codex.prompts) == 1
     assert codex.prompts[0].count(item.summary) == 1
-    assert '"sender_user_id": "u1"' in codex.prompts[0]
-    assert '"document_count": 1' in codex.prompts[0]
+    semantic_text = codex.prompts[0].split(
+        "Current semantic Project/Task context (rank is context, never authority):",
+        1,
+    )[1].lstrip()
+    semantic, _ = json.JSONDecoder().raw_decode(semantic_text)
+    assert semantic["current_work_item"]["context"]["sender_user_id"] == "u1"
+    assert semantic["source_metrics"]["document_count"] == 1
+    assert len(semantic["source_documents"]) == 1
+    document = semantic["source_documents"][0]
+    assert document["document_id"] == semantic["current_work_item"]["document_id"]
+    assert semantic["source_signals"][0]["document_id"] == document["document_id"]
+    assert "".join(span["text"] for span in document["visible_ranges"]) == item.summary
     assert store.get_work_summary_input(id).status.value != "failed"
 
 

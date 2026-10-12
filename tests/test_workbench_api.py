@@ -20,6 +20,8 @@ from app.setup_wizard import SETUP_WIZARD_STEPS
 from app.store import AutoReplyStore
 from app.workbench.api import WorkbenchScheduler
 from app.workbench.models import TurnStatus
+from app.task_storage import insert_task, task_physical_id, task_id_expression
+from app.run_storage import insert_run
 from app.workbench.store import WorkbenchStore
 
 
@@ -356,28 +358,23 @@ def test_timeline_turn_cursor_keeps_nested_resources_on_the_selected_page(
             turn_id = str(uuid4())
             turn_ids.append(turn_id)
             created_at = f"2026-08-13 00:{index // 60:02d}:{index % 60:02d}"
-            db.execute(
-                """insert into workbench_turns
-                   (id,task_id,client_request_id,task_sequence,user_text,status,
-                    created_at,updated_at)
-                   values(?,?,?,?,?,?,?,?)""",
-                (
-                    turn_id,
-                    task.id,
-                    f"page-{index}",
-                    index + 1,
-                    f"turn {index}",
-                    "completed",
-                    created_at,
-                    created_at,
-                ),
-            )
-            db.execute(
-                """insert into workbench_events
-                   (turn_id,sequence,event_type,payload_json,created_at)
-                   values(?,1,'turn_completed','{"status":"completed"}',?)""",
-                (turn_id, created_at),
-            )
+            insert_task(db, 'workbench_turns', {
+                "legacy_key": turn_id,
+                "parent_id": task_physical_id(db, "workbench_tasks", task.id),
+                "client_request_id": f"page-{index}",
+                "task_sequence": index + 1,
+                "user_text": f"turn {index}",
+                "status": "completed",
+                "created_at": created_at,
+                "updated_at": created_at,
+            })
+            insert_run(db, 'workbench_events', {
+                "task_id": task_physical_id(db, "workbench_turns", turn_id),
+                "sequence": 1,
+                "event_type": 'turn_completed',
+                "payload_json": '{"status":"completed"}',
+                "created_at": created_at,
+            })
         for index in (0, 100):
             db.execute(
                 """insert into workbench_artifacts
@@ -385,7 +382,7 @@ def test_timeline_turn_cursor_keeps_nested_resources_on_the_selected_page(
                    values(?,?,?,?,?,?)""",
                 (
                     str(uuid4()),
-                    turn_ids[index],
+                    task_physical_id(db, "workbench_turns", turn_ids[index]),
                     f"artifact {index}",
                     str(tmp_path / f"artifact-{index}.txt"),
                     "text/plain",
@@ -443,8 +440,7 @@ def test_same_timestamp_public_turns_keep_creation_order_and_latest_state(
         store = WorkbenchStore(tmp_path / "worker.sqlite3")
         with store._connect() as db:
             db.execute(
-                """update workbench_turns set created_at='2026-08-13 00:00:00'
-                   where task_id=?""",
+                f"update tasks set created_at='2026-08-13 00:00:00' where record_type='workbench_turns' and parent_id={task_id_expression('workbench_tasks', '?')}",
                 (task["id"],),
             )
         summary = client.get(f"/api/workbench/tasks/{task['id']}")
@@ -520,12 +516,12 @@ def test_timeline_exposes_usable_resource_cursors(tmp_path: Path):
     store.request_stop(turn.id)
     with store._connect() as db:
         for sequence in range(3, 105):
-            db.execute(
-                """insert into workbench_events
-                   (turn_id,sequence,event_type,payload_json)
-                   values(?,?,'text_delta',?)""",
-                (turn.id, sequence, json.dumps({"text": str(sequence)})),
-            )
+            insert_run(db, 'workbench_events', {
+                "task_id": task_physical_id(db, "workbench_turns", turn.id),
+                "sequence": sequence,
+                "event_type": 'text_delta',
+                "payload_json": json.dumps({"text": str(sequence)}),
+            })
 
     with _client(tmp_path) as client:
         first = client.get(
@@ -551,8 +547,12 @@ def test_timeline_exposes_usable_resource_cursors(tmp_path: Path):
 
 
 def test_all_timeline_public_strings_preserve_exact_local_evidence(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ):
+    monkeypatch.setattr(
+        "app.workbench.store.hydrate_turn",
+        lambda _db, value: value.model_copy(update={"final_text": 'result=/custom/mount/result.txt'}),
+    )
     store = WorkbenchStore(tmp_path / "worker.sqlite3")
     _complete_setup(store)
     task = store.create_task(title="safe", runtime_kind="codex")
@@ -565,8 +565,7 @@ def test_all_timeline_public_strings_preserve_exact_local_evidence(
     confirmation_id = str(uuid4())
     with store._connect() as db:
         db.execute(
-            """update workbench_tasks
-               set title=?,runtime_kind=?,created_at=?,updated_at=? where id=?""",
+            "update tasks\n               set title=?,runtime_kind=?,created_at=?,updated_at=? where record_type='workbench_tasks' and legacy_key=?",
             (
                 "Bearer legacy-secret /private/task.db",
                 "runtime=/opt/provider/config",
@@ -576,14 +575,11 @@ def test_all_timeline_public_strings_preserve_exact_local_evidence(
             ),
         )
         db.execute(
-            """update workbench_turns
-               set client_request_id=?,user_text=?,final_text=?,error_code=?,error_detail=?,
-                   started_at=?,completed_at=?,created_at=?,updated_at=?
-               where id=?""",
+            "update tasks\n               set client_request_id=?,user_text=?,error_code=?,error_detail=?,\n                   started_at=?,completed_at=?,created_at=?,updated_at=?\n               where record_type='workbench_turns' and legacy_key=?",
             (
                 "Bearer client-secret",
                 "read /Users/derek/private.txt",
-                "result=/custom/mount/result.txt",
+
                 "token=legacy-secret",
                 "failed at C:\\private\\secret.txt",
                 "started=/root/secret",
@@ -599,7 +595,7 @@ def test_all_timeline_public_strings_preserve_exact_local_evidence(
                values(?,?,?,?,?,?,?,?)""",
             (
                 attachment_id,
-                task.id,
+                task_physical_id(db, "workbench_tasks", task.id),
                 attachment_id,
                 "/etc/private.txt",
                 "text/plain",
@@ -614,7 +610,7 @@ def test_all_timeline_public_strings_preserve_exact_local_evidence(
                values(?,?,?,?,?)""",
             (
                 artifact_id,
-                turn.id,
+                task_physical_id(db, "workbench_turns", turn.id),
                 "Bearer artifact-secret /root/report.txt",
                 str(tmp_path / "internal-artifact"),
                 "text/plain",
@@ -628,7 +624,7 @@ def test_all_timeline_public_strings_preserve_exact_local_evidence(
                values(?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 confirmation_id,
-                turn.id,
+                task_physical_id(db, "workbench_turns", turn.id),
                 "tool=/usr/bin/send",
                 "Bearer target-secret",
                 "write /home/private/message.txt",
@@ -671,8 +667,12 @@ def test_all_timeline_public_strings_preserve_exact_local_evidence(
 
 
 def test_public_turn_preserves_exact_local_paths_and_credential_shaped_text(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ):
+    monkeypatch.setattr(
+        "app.workbench.store.hydrate_turn",
+        lambda _db, value: value.model_copy(update={"final_text": '检查结果位于 /private/tmp/ceo-agent/report.json'}),
+    )
     store = WorkbenchStore(tmp_path / "worker.sqlite3")
     _complete_setup(store)
     task = store.create_task(title="White box paths", runtime_kind="codex")
@@ -683,12 +683,7 @@ def test_public_turn_preserves_exact_local_paths_and_credential_shaped_text(
     )
     with store._connect() as db:
         db.execute(
-            """update workbench_turns
-               set status='failed',
-                   final_text='检查结果位于 /private/tmp/ceo-agent/report.json',
-                   error_code='provider_failed',
-                   error_detail='执行 /usr/bin/printf 失败；api_key=credential-value-1234'
-               where id=?""",
+            "update tasks\n               set status='failed',\n                   \n                   error_code='provider_failed',\n                   error_detail='执行 /usr/bin/printf 失败；api_key=credential-value-1234'\n               where record_type='workbench_turns' and legacy_key=?",
             (turn.id,),
         )
 
@@ -1082,7 +1077,7 @@ def test_artifact_download_checks_nested_ownership_and_does_not_expose_path(
             """,
             (
                 artifact_id,
-                turn.id,
+                task_physical_id(db, "workbench_turns", turn.id),
                 "Bearer artifact-download-secret",
                 str(artifact_path),
                 "text/💥",
@@ -1125,7 +1120,7 @@ def test_artifact_download_rejects_symlink(tmp_path: Path):
             insert into workbench_artifacts (id, turn_id, label, path, media_type)
             values (?, ?, ?, ?, ?)
             """,
-            (artifact_id, turn.id, "Report", str(link), "text/plain"),
+            (artifact_id, task_physical_id(db, "workbench_turns", turn.id), "Report", str(link), "text/plain"),
         )
 
     with _client(tmp_path) as client:
@@ -1157,7 +1152,7 @@ def test_artifact_download_rejects_symlinked_parent(tmp_path: Path):
             """,
             (
                 artifact_id,
-                turn.id,
+                task_physical_id(db, "workbench_turns", turn.id),
                 "Report",
                 str(linked_directory / "report.txt"),
                 "text/plain",
@@ -1191,7 +1186,7 @@ def test_artifact_download_streams_opened_descriptor_across_path_swap(
             insert into workbench_artifacts (id, turn_id, label, path, media_type)
             values (?, ?, ?, ?, ?)
             """,
-            (artifact_id, turn.id, "Report", str(artifact_path), "text/plain"),
+            (artifact_id, task_physical_id(db, "workbench_turns", turn.id), "Report", str(artifact_path), "text/plain"),
         )
 
     opened_fd = []

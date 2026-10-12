@@ -514,14 +514,85 @@ TASK_TRIGGER_DDL = (
 )
 
 
+# 4C extends this same container. The 11.3 declaration above remains the
+# explicit historical boundary used by the preceding publication and inverse.
+WORKBENCH_TASK_COLUMNS = {
+    "workbench_tasks": ("id", "title", "runtime_kind", "provider_session_ref",
+        "archived_at", "created_at", "updated_at"),
+    "workbench_turns": ("id", "task_id", "client_request_id", "task_sequence",
+        "user_text", "status", "stop_requested", "final_text", "error_code",
+        "error_detail", "resume_context", "lease_owner", "lease_expires_at",
+        "execution_run_id", "runtime_quiesced_run_id", "started_at",
+        "completed_at", "created_at", "updated_at"),
+}
+TEXT_TASK_TYPES = tuple(WORKBENCH_TASK_COLUMNS)
+WORKBENCH_TASK_COLUMN_MAP = {"task_id": "parent_id"}
+WORKBENCH_TASK_FIELDS = {
+    kind: {WORKBENCH_TASK_COLUMN_MAP.get(c, c) for c in columns
+           if c not in ("id", "final_text")}
+    for kind, columns in WORKBENCH_TASK_COLUMNS.items()
+}
+_WORKBENCH_NEW_FIELDS = tuple(dict.fromkeys(
+    WORKBENCH_TASK_COLUMN_MAP.get(c, c)
+    for columns in WORKBENCH_TASK_COLUMNS.values() for c in columns
+    if c not in ("id", "final_text")
+    and WORKBENCH_TASK_COLUMN_MAP.get(c, c) not in PHYSICAL_COLUMNS
+))
+WORKBENCH_TASK_TABLE_DDL = TASK_TABLE_DDL.replace(
+    "'weekly_okr_analysis_jobs'))",
+    "'weekly_okr_analysis_jobs','workbench_tasks','workbench_turns'))", 1,
+).replace(
+    ",foreign key(parent_id)",
+    "," + ",".join(c + (" integer" if c in ("task_sequence", "stop_requested") else " text")
+        for c in _WORKBENCH_NEW_FIELDS) + ",foreign key(parent_id)", 1,
+).removesuffix(")") + "," + ",".join(
+    "check(record_type<>'" + kind + "' or ("
+    + " and ".join(c + " is not null" for c in sorted(fields)) + "))"
+    for kind, fields in WORKBENCH_TASK_FIELDS.items()
+) + "," + ",".join(
+    "check(record_type<>'" + kind + "' or ("
+    + " and ".join(c + " is null" for c in sorted(
+        (set(PHYSICAL_COLUMNS) | set(_WORKBENCH_NEW_FIELDS)) - fields)) + "))"
+    for kind, fields in WORKBENCH_TASK_FIELDS.items()
+) + ",check(record_type in ('workbench_tasks','workbench_turns') or (" + " and ".join(
+    c + " is null" for c in _WORKBENCH_NEW_FIELDS
+) + "))" + ",check(record_type<>'workbench_turns' or (task_sequence>0 and stop_requested in (0,1) and status in ('queued','running','waiting_confirmation','completed','stopped','failed'))))"
+WORKBENCH_TASK_INDEX_DDL = (
+    TASK_INDEX_DDL[0] + " where record_type not in ('workbench_tasks','workbench_turns')",
+    "create unique index idx_tasks_text_public_id on tasks(legacy_key,record_type) where record_type in ('workbench_tasks','workbench_turns')",
+    *TASK_INDEX_DDL[1:],
+    "create index idx_workbench_tasks_updated_id on tasks(updated_at,legacy_key) where record_type='workbench_tasks'",
+    "create unique index idx_workbench_turns_client_request on tasks(client_request_id) where record_type='workbench_turns'",
+    "create unique index idx_workbench_one_active_turn on tasks(parent_id) where record_type='workbench_turns' and status in ('queued','running','waiting_confirmation')",
+    "create index idx_workbench_turns_queue on tasks(status,created_at,legacy_key) where record_type='workbench_turns'",
+    "create index idx_workbench_turns_recovery on tasks(status,lease_expires_at) where record_type='workbench_turns'",
+    "create index idx_workbench_turns_task_created_id on tasks(parent_id,created_at,legacy_key) where record_type='workbench_turns'",
+    "create unique index idx_workbench_turns_task_sequence on tasks(parent_id,task_sequence desc) where record_type='workbench_turns'",
+)
+WORKBENCH_TASK_TRIGGER_DDL = tuple(
+    sql.replace("when new.legacy_key is null", "when new.legacy_key is null and new.record_type not in ('workbench_tasks','workbench_turns')")
+       .replace("record_type<>'reply_tasks')", "record_type<>case when new.record_type='workbench_turns' then 'workbench_tasks' else 'reply_tasks' end)")
+    for sql in TASK_TRIGGER_DDL
+)
+TASK_DEFAULT_SQL.update({
+    "workbench_tasks": dict(provider_session_ref="''", archived_at="''",
+        created_at="current_timestamp", updated_at="current_timestamp"),
+    "workbench_turns": dict(stop_requested="0", error_code="''", error_detail="''",
+        resume_context="''", lease_owner="''", lease_expires_at="''",
+        execution_run_id="''", runtime_quiesced_run_id="''", started_at="''",
+        completed_at="''", created_at="current_timestamp", updated_at="current_timestamp"),
+})
+
+
 def task_id_expression(record_type: str, public_expression: str) -> str:
-    if record_type not in TASK_TYPES:
+    if record_type not in (*TASK_TYPES, *TEXT_TASK_TYPES):
         raise ValueError("unknown task record type")
-    return f"(select id from tasks where record_type='{record_type}' and cast(legacy_key as integer)={public_expression})"
+    identity = "legacy_key" if record_type in TEXT_TASK_TYPES else "cast(legacy_key as integer)"
+    return f"(select id from tasks where record_type='{record_type}' and {identity}={public_expression})"
 
 
 def task_physical_id(
-    db: sqlite3.Connection, record_type: str, public_id: int | None
+    db: sqlite3.Connection, record_type: str, public_id: int | str | bytes | None
 ) -> int | None:
     if public_id is None:
         return None
@@ -535,15 +606,23 @@ def task_physical_id(
 
 def _projection(record_type: str) -> str:
     fields = []
-    for field in SOURCE_COLUMNS[record_type]:
+    for field in (WORKBENCH_TASK_COLUMNS[record_type] if record_type in TEXT_TASK_TYPES else SOURCE_COLUMNS[record_type]):
         if field == "id":
-            value = "cast(t.legacy_key as integer)"
+            value = "t.legacy_key" if record_type in TEXT_TASK_TYPES else "cast(t.legacy_key as integer)"
+        elif record_type == "workbench_turns" and field == "task_id":
+            value = "(select p.legacy_key from tasks p where p.id=t.parent_id)"
+        elif record_type == "workbench_turns" and field == "final_text":
+            value = "''"
         elif field in ("current_input_id", "claimed_input_id"):
             value = f"(select cast(i.legacy_key as integer) from tasks i where i.id=t.{field})"
         else:
             value = "t." + COLUMN_MAP.get(field, field)
         fields.append(value + " as " + field)
-    return f"select {','.join(fields)} from tasks t where t.record_type='{record_type}'"
+    predicate = f"t.record_type='{record_type}'"
+    if record_type not in TEXT_TASK_TYPES:
+        # SQLite cannot infer this partial-index predicate from one type equality.
+        predicate += " and t.record_type not in ('workbench_tasks','workbench_turns')"
+    return f"select {','.join(fields)} from tasks t where {predicate}"
 
 
 TASK_PROJECTIONS = {record_type: _projection(record_type) for record_type in TASK_TYPES}
@@ -553,13 +632,15 @@ WORK_SUMMARY_INPUT_SQL = TASK_PROJECTIONS["work_summary_inputs"]
 MEETING_JOB_SQL = TASK_PROJECTIONS["meeting_alignment_jobs"]
 OKR_REQUEST_SQL = TASK_PROJECTIONS["okr_review_requests"]
 WEEKLY_JOB_SQL = TASK_PROJECTIONS["weekly_okr_analysis_jobs"]
+WORKBENCH_TASK_SQL = _projection("workbench_tasks")
+WORKBENCH_TURN_SQL = _projection("workbench_turns")
 
 
 def insert_task(
     db: sqlite3.Connection, record_type: str, values: dict, *, ignore: bool = False
 ) -> sqlite3.Cursor:
     """Values are physical scalars; omitted defaults apply only to this type."""
-    if values.get("legacy_key") is not None:
+    if record_type not in TEXT_TASK_TYPES and values.get("legacy_key") is not None:
         values = values | {"legacy_key": str(int(values["legacy_key"]))}
     defaults = {
         field: sql
@@ -575,13 +656,13 @@ def insert_task(
     )
 
 
-def create_task_schema(db: sqlite3.Connection) -> None:
+def create_task_schema(db: sqlite3.Connection, *, include_workbench: bool = False) -> None:
     db.execute(
-        TASK_TABLE_DDL.replace(
+        (WORKBENCH_TASK_TABLE_DDL if include_workbench else TASK_TABLE_DDL).replace(
             "create table tasks", "create table if not exists tasks", 1
         )
     )
-    for sql in (*TASK_INDEX_DDL, *TASK_TRIGGER_DDL):
+    for sql in ((*WORKBENCH_TASK_INDEX_DDL, *WORKBENCH_TASK_TRIGGER_DDL) if include_workbench else (*TASK_INDEX_DDL, *TASK_TRIGGER_DDL)):
         kind = (
             "unique index"
             if sql.startswith("create unique")
@@ -594,11 +675,11 @@ def create_task_schema(db: sqlite3.Connection) -> None:
         )
 
 
-@lru_cache(maxsize=1)
-def _declared_task_objects() -> dict[str, str]:
+@lru_cache(maxsize=2)
+def _declared_task_objects(include_workbench: bool = False) -> dict[str, str]:
     """Read SQLite's canonical declarations without changing SQL literals."""
     with closing(sqlite3.connect(":memory:")) as reference:
-        create_task_schema(reference)
+        create_task_schema(reference, include_workbench=include_workbench)
         return dict(
             reference.execute(
                 "select name,sql from sqlite_master where tbl_name='tasks' and sql is not null"
@@ -607,13 +688,15 @@ def _declared_task_objects() -> dict[str, str]:
 
 
 def task_schema_is_current(
-    db: sqlite3.Connection, *, allow_missing_objects: bool = False
+    db: sqlite3.Connection, *, allow_missing_objects: bool = False, include_workbench: bool = False
 ) -> bool:
     if db.execute(
         "select 1 from sqlite_master where type in ('table','view') and name in ("
         + ",".join("?" for _ in RETIRED_TASK_TABLES) + ")",
         RETIRED_TASK_TABLES,
     ).fetchone():
+        return False
+    if include_workbench and db.execute("select 1 from sqlite_master where name in ('workbench_tasks','workbench_turns')").fetchone():
         return False
     objects = {
         row[0]: row[1]
@@ -622,7 +705,7 @@ def task_schema_is_current(
         )
     }
 
-    expected = _declared_task_objects()
+    expected = _declared_task_objects(include_workbench)
     if (objects.get("tasks") or "").strip() != expected["tasks"].strip():
         return False
     for name, sql in expected.items():
@@ -761,9 +844,16 @@ def install_task_child_guards(db: sqlite3.Connection) -> None:
                     ("meeting_memory_write_events", "meeting_job_id"),
                     ("meeting_alignment_delivery_claims", "job_id"),
                 }
+                else "workbench_tasks" if table == "workbench_attachments"
+                else "workbench_turns" if table in ("workbench_artifacts", "workbench_confirmations")
                 else "reply_tasks"
             )
-            parent_label = "meeting job" if parent_type == "meeting_alignment_jobs" else "reply task"
+            parent_label = {
+                "meeting_alignment_jobs": "meeting job",
+                "reply_tasks": "reply task",
+                "workbench_tasks": "workbench task",
+                "workbench_turns": "workbench turn",
+            }[parent_type]
             for event, suffix in (
                 ("insert", "insert"),
                 (f'update of "{column}"', "update"),

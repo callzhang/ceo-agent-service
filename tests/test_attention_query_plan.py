@@ -5,6 +5,7 @@ import pytest
 
 from app.audit_web import _queue_attention_rows, _reply_task_queue_snapshot, _work_summary_input_queue_snapshot
 from app.store import AutoReplyStore
+from app.task_storage import insert_task
 from app.work_summary_payload import decode_work_summary_payload
 
 
@@ -26,11 +27,29 @@ def _failed_task(store: AutoReplyStore, status: str):
     return task
 
 
+@pytest.mark.parametrize("unrelated_count", [0, 2000])
 def test_attention_selects_failed_ids_without_scanning_task_payloads(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unrelated_count: int
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = _failed_task(store, "failed")
+    with store._connect() as db:
+        for index in range(unrelated_count):
+            parent = insert_task(db, "reply_tasks", {
+                "conversation_id": f"irrelevant-{index}", "trigger_message_id": str(index),
+                "status": "done", "conversation_title": "Unrelated", "single_chat": 1,
+                "trigger_create_time": "2026-10-12T00:00:00Z", "trigger_sender": "sender",
+            }).lastrowid
+            canonical = insert_task(db, "reply_task_inputs", {
+                "legacy_key": 100000 + index, "parent_id": parent, "channel": "dingtalk",
+                "conversation_id": f"unrelated-input-{index}", "conversation_title": "Unrelated",
+                "single_chat": 1, "trigger_message_id": str(index),
+                "trigger_create_time": "2026-10-12T00:00:00Z", "trigger_sender": "sender",
+                "business_object_key": "",
+                "trigger_text": "irrelevant body " * 200,
+                "trigger_message_json": '{"body":"unrelated"}',
+            }).lastrowid
+            db.execute("update tasks set current_input_id=? where id=?", (canonical, parent))
     statements: list[str] = []
     original_open = store._open_connection
 
@@ -57,6 +76,18 @@ def test_attention_selects_failed_ids_without_scanning_task_payloads(
         and "USING INDEX" not in step
         for step in plan
     ), plan
+    steps = 0
+
+    def progress():
+        nonlocal steps
+        steps += 100
+        return int(steps >= 100000)
+
+    with store._connect() as db:
+        db.set_progress_handler(progress, 100)
+        selected = db.execute(query).fetchall()
+    assert [row["id"] for row in selected] == [task.id]
+    assert steps < 100000
     with store._connect() as db:
         selector_reads: set[tuple[str, str]] = set()
 
@@ -159,7 +190,22 @@ def test_failure_diagnostics_do_not_scan_queue_payloads(
         return
     if surface == 'work_attention':
         assert any("SEARCH t USING INDEX idx_tasks_public_id" in step for step in plan), plan
-        assert any("SCAN t USING INDEX idx_work_summary_inputs_updated" in step for step in plan), plan
+        assert any("SCAN tasks USING INDEX idx_work_summary_inputs_updated" in step for step in plan), plan
+        with store._connect() as db:
+            selector_reads = set()
+
+            def capture_selector(action, name, column, *_):
+                if action == sqlite3.SQLITE_READ:
+                    selector_reads.add((name, column))
+                return sqlite3.SQLITE_OK
+
+            db.set_authorizer(capture_selector)
+            db.execute("select cast(legacy_key as integer) from tasks "
+                       "where record_type='work_summary_inputs' "
+                       "and lower(status)='failed'").fetchall()
+        assert {column for name, column in selector_reads if name == 'tasks'} <= {
+            "legacy_key", "record_type", "status",
+        }
     else:
         assert ('tasks', 'error') in read_columns
         assert ('tasks', 'payload_json') not in read_columns
@@ -233,3 +279,61 @@ def test_reply_queue_snapshot_reads_metadata_in_one_source_pass(
     }
     assert not any(name == "reply_task_inputs" for name, column in read_columns)
     assert any("MATERIALIZE current" in step for step in plan), plan
+
+
+def test_work_attention_scalar_scan_ignores_unrelated_task_growth(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "work-cost.sqlite3")
+    failed = store.enqueue_work_summary_input("test", "failed", '{"summary":"exact failed body"}')
+    store.mark_work_summary_input_failed(failed, "work failure")
+    with store._connect() as db:
+        for index in range(2000):
+            insert_task(db, "work_summary_inputs", {
+                "source_type": "test", "source_ref": str(index), "status": "done",
+                "payload_json": '{"summary":"' + "unrelated body " * 200 + '"}',
+            })
+    statements = []
+    original_open = store._open_connection
+
+    def traced_connection():
+        db = original_open()
+        db.set_trace_callback(statements.append)
+        return db
+
+    monkeypatch.setattr(store, "_open_connection", traced_connection)
+    with store.read_snapshot():
+        rows = _queue_attention_rows(store)
+    assert [(row["id"], row["summary"]) for row in rows] == [(str(failed), "exact failed body")]
+    query = next(sql for sql in statements if "select id, status as status, case when lower(source_type)" in sql)
+
+    def measured_query():
+        steps = 0
+        decoded = []
+
+        def progress():
+            nonlocal steps
+            steps += 10
+            return int(steps >= 400000)
+
+        def decode(value):
+            decoded.append(value)
+            return decode_work_summary_payload(value)
+
+        with store._connect() as db:
+            db.create_function("decode_work_summary_payload", 1, decode, deterministic=True)
+            db.set_progress_handler(progress, 10)
+            selected = db.execute(query).fetchall()
+        assert [row["id"] for row in selected] == [failed]
+        assert decoded == ['{"summary":"exact failed body"}']
+        assert steps < 400000
+        return steps
+
+    before = measured_query()
+    with store._connect() as db:
+        for index in range(2000):
+            insert_task(db, "reply_tasks", {
+                "conversation_id": f"unrelated-{index}", "conversation_title": "Unrelated",
+                "single_chat": 1, "trigger_message_id": str(index),
+                "trigger_create_time": "2026-10-12T00:00:00Z", "trigger_sender": "sender",
+                "status": "done",
+            })
+    assert measured_query() == before
