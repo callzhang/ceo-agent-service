@@ -16535,9 +16535,12 @@ class EmailStore:
         eligible: list[sqlite3.Row] = []
         candidate_classifications = db.execute(
             """
-            select distinct classification_id
-            from email_actions
-            where status in ('pending', 'failed')
+            select distinct a.classification_id
+            from email_actions as a
+            cross join email_classifications as c on c.id=a.classification_id
+            where a.status in ('pending', 'failed')
+              and c.status='processed'
+              and c.current_action_plan_id=a.action_plan_id
             """
         ).fetchall()
         for candidate_classification in candidate_classifications:

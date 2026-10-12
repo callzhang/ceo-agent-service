@@ -277,7 +277,11 @@ write transaction. A negative probe does not acquire the writer lock. A
 positive probe is not a reservation: BEGIN IMMEDIATE must recompute eligibility
 before the unchanged conditional update. New work arriving after a negative
 probe waits for the next poll; no queue result is cached. Each pass starts from
-the indexed pending/failed statuses, then reads sibling actions through the
+the indexed pending/failed statuses and primary-key checks that each action
+belongs to the processed classification's exact current plan. Classifications
+with only retired-plan pending/failed rows do not hydrate historical plan
+bodies. Remaining candidates still read all sibling actions, preserving the
+block from any historical processing action, through the
 `(classification_id, action_plan_id)` index; it does not scan every action while
 holding the SQLite writer lock. Candidate order and the existing action,
 dependency and retry rules are unchanged.
