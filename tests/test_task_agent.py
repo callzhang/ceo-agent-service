@@ -495,33 +495,10 @@ def test_independent_project_prompt_and_skill_have_one_current_contract():
     assert "They remain top-level fields" in prompt
     assert "New, record_candidate and skip decisions must leave status and business_relevance unset" in prompt
     assert "When promoting a suggestion, omit the suggestion field" in prompt
-    assert "requires that Project selector" in prompt
-    assert "return the complete current ProjectContext whenever new facts or roles are learned" in prompt
-    assert "A Project risk may need Attention without a Task" in prompt
-    assert "saved, sourced Project responsibility supports the suggested person" in prompt
-    assert "meeting action item is an actual assignment only when" in prompt
-    assert "assignment_authorized=true" in prompt
-    assert "A Project role or responsibility is not itself a Task" in prompt
-    assert "A bare responsibility clause (" in prompt
-    assert "For reports containing multiple Projects, assess each Project separately" in prompt
-    assert "Project registration.source_excerpt must itself be an exact contiguous quote" in prompt
-    assert "Unaccepted status alone is not a material Project risk" in prompt
-    assert "Do not reclassify the competing overall-owner candidates as responsibilities" in prompt
-    assert "explicitly identified as the Project's overall accountable owner belongs in overall_owner" in prompt
-    assert "an existing actionable Task already addresses that risk" in prompt
-    assert "The clause X负责Y remains a Project responsibility when Y is only a duty area" in prompt
-    assert "`owner_kind` and `owner_relation` unset" in prompt
-    assert "Return every list-valued field as a JSON array" in prompt
-    assert "current source itself states a concrete action and expected result" in prompt
-    assert "state the unresolved conflict directly in a Project fact" in prompt
-    assert "Missing ownership alone is not a material risk" in prompt
-    assert "trailing rank/honorific" in prompt
-    assert "task_ids must be copied only from that card's actual stored member IDs" in prompt
-    assert "directly supports this specific Project assessment" in prompt
-    assert "When a Task decision updates the same concrete Project work described by the assessment" in prompt
-    assert "completed or unrelated Project Tasks are not members" in prompt
-    assert "explicit unresolved dispute over who" in prompt
-    assert "Missing overall ownership without a stated impact or dispute" in prompt
+    from app.task_agent import WORK_TRACKING_SKILL_PATH
+
+    # Shared business guidance is owned by the complete current Skill.
+    assert " ".join(WORK_TRACKING_SKILL_PATH.read_text().split()) in prompt
 
 
 def test_independent_project_process_marks_project_only_input_done(tmp_path):
@@ -1891,7 +1868,7 @@ def test_process_work_item_continues_when_memory_connector_unavailable(
     assert run_count == 1
     assert "不可用：memory connector token is expired" in codex.prompts[0]
     assert (
-        "Memory is background/discovery, not original observed evidence or human acceptance"
+        "Memory is discovery/background, not observed source proof"
         in codex.prompts[0]
     )
 
@@ -1928,11 +1905,9 @@ def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract(monkeyp
     )
     prompt = " ".join(build_task_agent_prompt(_work_item(), "无候选项目").split())
     assert "# CEO Work Tracking" in prompt
-    schema_text = build_task_agent_prompt(_work_item(), "无候选项目").split(
-        "TaskAgentDecision Pydantic JSON schema:\n", 1
-    )[1]
-    schema, _ = json.JSONDecoder().raw_decode(schema_text)
-    assert schema == task_agent_output_schema()
+    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
+    assert json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text()) == task_agent_output_schema()
+    assert "TaskAgentDecision Pydantic JSON schema:" not in prompt
     assert "Memory connector status:" in prompt
     assert "does not impose a general read-only mode" in prompt
     assert "using memory_connector.memory_write" in prompt
@@ -1941,15 +1916,15 @@ def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract(monkeyp
     assert "individual Task/TODO records" in prompt
     assert "must never call memory_connector.memory_write" not in prompt
     assert "memory_connector.document_upload" not in prompt
-    assert "include that exact same citation in the Project's evidence list" in prompt
-    assert "routine milestones and next steps are Project facts, not Task candidates" in prompt
-    assert "Project title contains only the entity name, not its status or action" in prompt
-    assert "current_project_attention.assessment_json.evidence" in prompt
-    assert "newer evidence may supplement but cannot replace that proof" in prompt
+    assert "repeat that identical citation in the Project's `evidence` list" in prompt
+    assert "routine milestones and next steps are Project facts" in prompt
+    assert "title contains only the entity name, not a status or action" in prompt
+    assert "assessment_json.evidence" in prompt
+    assert "Cite at least one stored assessment_json.evidence triple unchanged" in prompt
     assert "not an enforced" in prompt
-    assert "not original observed evidence or human acceptance" in prompt
+    assert "cannot authorize formal creation, promotion, acceptance" in prompt
     assert "source-derived typed deadlines" in prompt
-    assert "exact named person" in prompt
+    assert "named owner" in prompt
     assert "Memory is discovery/background, not observed source proof" in " ".join(
         prompt.split()
     )
@@ -1958,7 +1933,10 @@ def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract(monkeyp
 def _current_task_guidance(surface, monkeypatch):
     import app.task_agent as task_agent
 
-    monkeypatch.setattr(task_agent, "load_skill_text", lambda paths: "")
+    monkeypatch.setattr(
+        task_agent, "WORK_TRACKING_SKILL_PATH",
+        Path(__file__).parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md",
+    )
     text = (
         build_task_agent_prompt(_work_item(), "候选上下文为空。")
         if surface == "prompt"
@@ -1997,20 +1975,14 @@ def test_task_agent_source_authority_and_independent_project_output(
     assert "same unresolved risk" in text
     assert "State explicitly in a Project fact: 总体负责人存在冲突" in text
     assert (
-        "same-risk candidate was suggested on an earlier turn" in text
-        if surface == "prompt"
-        else "same-risk candidate suggested on an earlier turn" in text
+        "same-risk candidate suggested on an earlier turn" in text
     )
     assert (
-        "work progress or continued handling is not acceptance" in text
-        if surface == "prompt"
-        else "Work progress, continued handling or receiving materials does not prove acceptance" in text
+        "Work progress, continued handling or receiving materials does not prove acceptance" in text
     )
     assert "Do not reconstruct an earlier quotation from a later summary" in text
     assert (
-        "keep task_ids and decision_indexes empty" in text
-        if surface == "prompt"
-        else "keep both `task_ids` and `decision_indexes` empty" in text
+        "keep both `task_ids` and `decision_indexes` empty" in text
     )
     assert "only independently evidenced, distinct work" in text
     assert "X负责Y" in text
@@ -2018,25 +1990,23 @@ def test_task_agent_source_authority_and_independent_project_output(
     assert "If an existing actionable Task already addresses that risk" in text
     assert "X负责Y" in text
     assert (
-        "only a duty area" in text
-        if surface == "prompt"
-        else "a duty-area description" in text
+        "a duty-area description" in text
     )
     assert "concrete action and expected result" in text
     assert "owner_kind" in text and "owner_relation" in text
     assert "Return every list-valued field as a JSON array" in text
     assert "Project fact" in text and "conflict" in text
     assert (
-        "one overall owner" in text
-        if surface == "prompt"
-        else "one `overall_owner`" in text
+        "one `overall_owner`" in text
     )
 
 
-def test_action_and_date_guidance_is_delivered_next_to_output_fields(monkeypatch):
+def test_action_and_date_guidance_is_delivered_next_to_output_fields():
     from app.task_models import TaskDecision, TaskDateEvidence
 
-    text = _current_task_guidance("prompt", monkeypatch)
+    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
+
+    text = json.dumps(json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text()), ensure_ascii=False)
     action_field = TaskDecision.model_json_schema()["properties"]["source_excerpt"]
     date_fields = TaskDateEvidence.model_json_schema()["properties"]
     checks = [
@@ -2074,9 +2044,7 @@ def test_task_agent_original_history_and_current_evidence_guidance(
     assert "positive" in text
     assert "original" in text
     assert (
-        "not session or Memory provenance" in text
-        if surface == "prompt"
-        else "not memory_provenance or session_provenance" in text
+        "not memory_provenance or session_provenance" in text
     )
     assert "uncertainty" in text
     assert "current_project_attention" in text
@@ -2093,14 +2061,14 @@ def test_task_agent_existing_project_link_contract_is_distinct_from_registration
     assert "project_decision_index" in text
     assert (
         "confirmed links" in text
-        if surface == "skill"
+        if surface != "schema"
         else "existing confirmed association" in text
     )
     assert "registration" in text
     assert (
         "`Task.project` selects an actual `anchor_id` or `project_decision_index`"
         in text
-        if surface == "skill"
+        if surface != "schema"
         else "Task.project uses anchor_id or project_decision_index" in text
     )
     assert "new or re-registered Project" in text
@@ -2114,7 +2082,7 @@ def test_task_agent_existing_project_link_contract_is_distinct_from_registration
     assert (
         "Do not use `anchor_id` when a matching `project_decisions` entry exists"
         in text
-        if surface == "skill"
+        if surface != "schema"
         else "Do not use anchor_id when a matching project_decisions entry exists"
         in text
     )
@@ -2165,8 +2133,6 @@ def test_negative_assessment_guidance_distinguishes_normal_progress_from_missing
     )
     assert (
         "normal progress" in text
-        if surface != "prompt"
-        else "routine progress is not_needed" in text
     )
     assert "insufficient_evidence" in text
     assert (
@@ -2174,7 +2140,7 @@ def test_negative_assessment_guidance_distinguishes_normal_progress_from_missing
         if surface == "schema"
         else (
             "No reported risk or zero Tasks alone is not missing evidence" in text
-            if surface == "skill"
+            if surface != "schema"
             else "No Task is not insufficient evidence" in text
         )
     )
@@ -2201,16 +2167,14 @@ def test_task_agent_owns_one_attention_proposal_in_assessment_without_task_carri
     text = _current_task_guidance(surface, monkeypatch)
     assert "attention_proposal" in text
     assert (
-        "one assessment" in text if surface == "skill" else "one factual reason" in text
+        "one assessment" in text
     )
     assert (
         "never copy it onto Task decisions" in text
-        if surface == "skill"
-        else "Attention belongs once to its assessment" in text
     )
     assert "zero Tasks" in text
     assert "not_needed" in text
-    assert "not mean" in text if surface == "prompt" else "does not imply" in text
+    assert "does not imply" in text
     assert "Project-level risk facts" in text
     assert "not per-Task action summaries" in text
 
@@ -2237,34 +2201,14 @@ def test_attention_current_state_schema_describes_shared_project_facts():
     assert "one Project assessment, not each supporting Task" in description
 
 
-def test_task_agent_prompt_allows_initial_risk_with_project_registered_this_turn(
-    monkeypatch,
-):
+def test_task_agent_prompt_allows_initial_risk_with_project_registered_this_turn(monkeypatch):
     text = _current_task_guidance("prompt", monkeypatch)
-    assert "meeting decision, or updates an existing active anchor" in text
-    assert (
-        "First assessment of a source-observed unresolved material business risk"
-        in text
-    )
-    assert (
-        "require a prior card or a fresh delta against a nonexistent assessment" in text
-    )
-    assert (
-        "An existing card already reflecting the same facts does not need a new proposal"
-        in text
-    )
-    assert (
-        "Tasks may support Attention without a formal owner or accepted commitment"
-        in text
-    )
-    assert (
-        "Labels, relevance, routine progress, and date proximity alone do not explain material impact"
-        in text
-    )
-    assert (
-        "Never invent a Task, owner, assignment, commitment, or date to fill a card"
-        in text
-    )
+    assert "meeting Project decision" in text
+    assert "A first current risk may be watch without a previous card" in text
+    assert "An existing card already reflecting the same facts does not need a new proposal" in text
+    assert "A real Project can need Attention with zero Tasks" in text
+    assert "Routine progress, relevance, acceptance, labels or date proximity alone are not a material trigger" in text
+    assert "Do not invent a Task update, next_check, owner or deadline" in text
 
 
 def test_fresh_task_agent_loads_current_project_contract_from_selected_skill_root(
@@ -2646,7 +2590,7 @@ def test_task_agent_codex_runner_parses_response_item_output_text(tmp_path):
     assert runner.last_session_id == "session-task-2"
 
 
-def test_task_agent_prompt_schema_is_generated_from_validation_model():
+def test_task_agent_runtime_schema_is_generated_from_validation_model():
     prompt = build_task_agent_prompt(
         WorkItem.model_validate(
             {
@@ -2658,10 +2602,9 @@ def test_task_agent_prompt_schema_is_generated_from_validation_model():
         ),
         "候选项目:\n[]\n\n近期 follow-up 候选:\n[]",
     )
-    schema_text = prompt.split("TaskAgentDecision Pydantic JSON schema:\n", 1)[1]
-    prompt_schema, _ = json.JSONDecoder().raw_decode(schema_text.lstrip())
-
-    assert prompt_schema == task_agent_output_schema()
+    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
+    assert "TaskAgentDecision Pydantic JSON schema:" not in prompt
+    assert json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text()) == task_agent_output_schema()
 
 
 def test_task_agent_codex_runner_uses_routed_execution_contract():
@@ -7192,12 +7135,12 @@ def test_task_agent_prompt_reads_minutes_owners_from_the_conversation_around_eac
     assert "speaker label included" in prompt
     assert '"excerpt"' in prompt  # the owner_evidence key the service reads
     assert (
-        "发言人 N" in prompt
+        "Generic speaker placeholders" in prompt
     )  # DingTalk's placeholder for an unnamed speaker is not an owner
     # Derek 2026-09-28: a narrow transcript window can miss the sentence that names the owner;
     # the meeting's own DingTalk summary is a second source and must be checked too.
     assert "meeting_summary" in prompt
-    assert "nor is a team or department" in prompt
+    assert "A team, department, participant, speaker" in prompt
 
 
 def test_update_restating_current_fields_adds_the_owner_and_an_unchanged_item_is_skipped_not_fatal(

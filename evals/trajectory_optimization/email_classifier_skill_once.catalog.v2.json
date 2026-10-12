@@ -1,0 +1,43 @@
+{
+  "version": 2,
+  "raw_metadata_evidence": "/private/tmp/ceo-email-catalog-metadata-rv3bx4u_/catalog_names.json",
+  "raw_metadata_sha256": "d080ba4083fc62bd0c01e5c3cba4265b531f7d5c30758b2fdd759630ce73c3b3",
+  "rows": [
+    {
+      "variant": "baseline",
+      "names_sha256": "45c899e5378995c4e5f8c3097592bdff0146f06d55a31f3dd5f21b4e79133ced",
+      "catalog_names": 164
+    },
+    {
+      "variant": "candidate",
+      "names_sha256": "b0dbc3e14f63667136fbd70b22eaeb2d7d7e06eb00b811c1f378ad1425275bf6",
+      "catalog_names": 163
+    },
+    {
+      "variant": "baseline",
+      "names_sha256": "45c899e5378995c4e5f8c3097592bdff0146f06d55a31f3dd5f21b4e79133ced",
+      "catalog_names": 164
+    },
+    {
+      "variant": "candidate",
+      "names_sha256": "b0dbc3e14f63667136fbd70b22eaeb2d7d7e06eb00b811c1f378ad1425275bf6",
+      "catalog_names": 163
+    }
+  ],
+  "pair_differences": [
+    {
+      "pair": 1,
+      "removed": [
+        "ceo-email-classifier"
+      ],
+      "added": []
+    },
+    {
+      "pair": 2,
+      "removed": [
+        "ceo-email-classifier"
+      ],
+      "added": []
+    }
+  ]
+}
