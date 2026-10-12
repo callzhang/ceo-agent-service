@@ -1,6 +1,6 @@
 # Database Redesign Phase4: exact tasks/runs mapping
 
-本文件是第四期分析交付与实施范围，尚未改运行代码、迁移或部署。总体 tasks/runs 方向已由 Derek 批准；本次把它落实到真实字段、身份和读取方，不新增业务事实。当前基线为 `f59a41d7a4f840ead657722985f949a602e41496`，生产 Store `2026-10-11.1`、Email `50`。元数据/行数是只读观察快照，会随业务变化；正式副本及发布前必须重新核对。第三期验收不是第四期验证。
+本文件是第四期分析交付与实施范围。4A运行代码、副本正逆迁和独立复审已完成，PR50完整CI及上线尚待完成；4B第一子单元在独立分支实施，4C尚未实施。总体 tasks/runs 方向已由 Derek 批准；本次把它落实到真实字段、身份和读取方，不新增业务事实。当前基线为 `f59a41d7a4f840ead657722985f949a602e41496`，生产 Store `2026-10-11.1`、Email `50`。元数据/行数是只读观察快照，会随业务变化；正式副本及发布前必须重新核对。第三期验收不是第四期验证。
 
 ## 1. 交付与覆盖
 
@@ -72,7 +72,7 @@ tasks候选原表页合计48,447,488B，runs候选原表页合计53,882,880B，�
 | agent run.parent_agent_run_id | runs.parent_id -> runs[agent_runs]，role/generation/revision关系不变|
 | runtime attempt.agent_run_id / state event.agent_run_id | runs.parent_id -> runs[agent_runs] |
 | meeting run.job_id | runs.task_id -> tasks[meeting_alignment_jobs] |
-| task run.summary_input_id | runs.task_id -> tasks[work_summary_inputs]，既有代码关系明确|
+| task run.summary_input_id | runs.summary_input_id保持原WSI public key；按tasks[work_summary_inputs] legacy_key读取；原源无声明FK，不新增 |
 | OKR run.request_id | runs.task_id -> tasks[okr_review_requests]，原多run关系保留|
 | workbench event.turn_id | runs.task_id -> tasks[workbench_turns] |
 | scheduled trigger.scheduled_task_id/snapshot_id | 原scheduled_tasks/config_versions FK不变|
@@ -125,3 +125,11 @@ Meeting发送键`meeting-alignment:{OLD job.id}:{meeting_id}[:sensitive]`原样�
 4A已实现准确DDL、类型投影、DAO和调用方切换及配对逆迁，正在专项测试和独立复核。4A的类型专有字段使用原字段的直接SQL列，保留自然唯一、索引和约束；不适用的字段保持NULL，CSV已更新为实际映射。真实副本的原45,560条核心记录逐列指纹一致，145张其他原表指纹一致，已演练保留新增回执的逆迁、实际旧代码启动／领取和再次正迁。分配后删除记录的逆迁水位问题已修正，实际源版本0e6f0e46验证了ID不复用；有效当前schema缺非核心表／索引的既有修复路径已恢复，原回归保持不变；完成剩余专项测试和独立复核后才发布。4B/4C未实现，尚未改生产或部署第四期。
 
 副本验证需保留所有原业务行、原API、public身份、native选择、结果/回执及状态。加入新input/run/provider attempt/receipt/Workbench事件后逆迁，验证新事实仍在，旧代码真实启动；不能覆盖旧DB备份。quiet正式部署前单元逆迁和相关定向测试、独立复核必须通过。每单元发布后读回PID、health、queues、Attention、History、原生缺失显示和新增失败/卡住记录，最后报告实际DB/WAL/页占用。
+
+## 9. 4B首单元代码核对与源字段调整
+
+27a18e24代码快照确认reply DDL位于store.py:3275-3340，WSI与Task run DDL位于4254-4289，DAO分别位于28300与30495附近；CSV相关证据行号据此刷新。后续代码行号会移动，必须按真实函数/DDL核对。4A最新源29e01567副本验证45,573条原核心投影和145张其他原表全值指纹一致，旧代码302文件逐一匹配Git blob；独立最终复审114测试通过，无开放P1/P2。完整远端CI尚待完成，生产未迁4A。
+
+4B第一子单元的reply父/输入显示及正文/provenance字段直接保存为真实源scalar列，与4A取舍一致，取消固定键外层JSON包装和json_set/类型转换。这不增加业务字段；原source默认值、NULL、不可变输入身份和终态精简规则保持，不适用类型列为NULL。WSI payload_json仍保持原TEXT/BLOB，不包裹、重压缩或base64。
+
+真实生产Task run没有summary_input_id FK或status CHECK。该字段保留原名和原public WSI值，作为既有代码关系；读取WSI时指定record_type及legacy身份，不能套用共享runs.task_id FK。Task类型task_id保持NULL；逻辑Agent类型task_id仍有实际reply父FK，映到typed tasks。Task error和projection_json也保留原scalar及原字符串。明确取消的三个缓存列不变。原自然running唯一和source索引继续按summary_input_id保持。后续Meeting/OKR真实有声明FK的父关系独立核对与映射，不据此取消其源约束。

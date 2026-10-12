@@ -4,7 +4,7 @@
 
 **Goal:** 将真实tasks/runs字段统一存储，取消已退休原生缓存；保留public/native/idempotency身份、状态、业务采用结果与执行回执。
 
-**Architecture:** typed tasks/runs；record_type使用实际源表名，legacy_key保存准确旧PK；公共查询/claim/FK字段为实际列，专有既有字段显式typed payload。WSI TEXT/BLOB及Workbench最小事件payload保持原字节。4A、4B、4C独立发布及配对schema逆迁，无长期双写。
+**Architecture:** typed tasks/runs；record_type使用实际源表名，legacy_key保存准确旧PK；公共查询/claim/FK字段为实际列。4B首单元专有字段采用准确source scalar，避免JSON包装与类型转换；其他类型按其逐列映射核对。WSI TEXT/BLOB及Workbench最小事件payload保持原字节。4A、4B、4C独立发布及配对schema逆迁，无长期双写。
 
 **Tech Stack:** Python、SQLite、现有Store/dispatcher/routed runtime/Workbench及schema publication机制。
 
@@ -90,3 +90,5 @@
 Task0完成；4A实现、副本正逆迁及独立规格/质量复审通过，远端Quality CI和正式上线尚待完成。最新真实源commit29e0156775b8bb697b2c55484d879193011931cf，Store11.1/Email50；45,573条原核心记录全部投影及145张其他原表全值指纹一致。新增结果/回执及分配后删除的ID在逆迁后保留，真实源302个Python文件逐一匹配Git blob，旧代码读取/领取/再次正迁通过。发布五阶段失败回退演练通过。
 
 索引修复保留原公共ID和排序；实际副本parent/workload查找已恢复范围索引，没有开放P1/P2。专项core130通过；调用方2493通过/6跳过；最新main扩大组2933通过/6跳过，其12项新fixture旧表SQL失败已修正，native/prompt26通过。独立最终复审114通过；完整远端CI仍是上线门槛。副本已用空间增加3,543,040 B（约0.888%），仅说明结构整合，尚未实现第四期容量减少。4B/4C未实施，第四期未上线。没有新的功能字段、历史状态补造、额外安全政策或正文备份。详细验收见docs/database-redesign-phase4a-validation.md。
+
+4B首单元已开始本地开发；正式副本源为实际上线后的4A，不以尚未上线candidate冒充生产。reply父物理/公共ID保持相等；输入与WSI采用独立typed公共身份。Task summary_input_id原无FK，保留原public scalar code relation，不新增source不存在的FK或status CHECK。准确字段调整已更新CSV/design；不增业务字段。
