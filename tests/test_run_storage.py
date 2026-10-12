@@ -753,3 +753,121 @@ def test_logical_public_lookup_keeps_original_integer_primary_key_plan(tmp_path)
         )
         assert "INTEGER PRIMARY KEY" in plan
         assert "SCAN" not in plan
+
+
+@pytest.mark.parametrize(
+    "kind,name",
+    [
+        ("index", "idx_runs_public_id"),
+        ("trigger", "trg_runs_public_key"),
+        ("trigger", "trg_runs_record_type_immutable"),
+    ],
+)
+def test_current_core_manifest_detects_and_repairs_missing_objects_without_changing_rows(
+    tmp_path, kind, name
+):
+    from app.store import _INITIALIZED_STORE_PATHS
+
+    path = tmp_path / "missing-core-object.db"
+    store = AutoReplyStore(path)
+    store.enqueue_reply_task(
+        conversation_id="cid",
+        conversation_title="title",
+        single_chat=False,
+        trigger_message_id="msg",
+        trigger_create_time="time",
+        trigger_sender="sender",
+        trigger_text="task",
+        execution_generation="generation",
+    )
+    with store._connect() as db:
+        insert_run(
+            db,
+            "agent_runs",
+            dict(
+                task_id=1,
+                execution_generation="generation",
+                role="consumer",
+                status="completed",
+            ),
+        )
+        before = db.execute("select * from runs").fetchall()
+        db.execute(f"drop {kind} {name}")
+    assert store._schema_is_current() is False
+    _INITIALIZED_STORE_PATHS.discard(path.resolve())
+    reopened = AutoReplyStore(path)
+    assert reopened._schema_is_current() is True
+    with reopened._connect() as db:
+        assert [tuple(row) for row in db.execute("select * from runs")] == [
+            tuple(row) for row in before
+        ]
+        assert (
+            db.execute(
+                "select 1 from sqlite_master where type=? and name=?", (kind, name)
+            ).fetchone()
+            is not None
+        )
+
+
+def test_current_layout_with_changed_core_definition_is_not_repaired_as_fresh(tmp_path):
+    from app.store import _INITIALIZED_STORE_PATHS
+
+    path = tmp_path / "changed-core-definition.db"
+    store = AutoReplyStore(path)
+    with store._connect() as db:
+        db.execute("drop index idx_runs_public_id")
+        db.execute("create index idx_runs_public_id on runs(status)")
+        before = db.execute(
+            "select type,name,tbl_name,sql from sqlite_master order by type,name"
+        ).fetchall()
+    assert store._schema_is_current() is False
+    _INITIALIZED_STORE_PATHS.discard(path.resolve())
+    with pytest.raises(
+        sqlite3.IntegrityError, match="unsupported or malformed Store source"
+    ):
+        AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        assert db.execute(
+            "select type,name,tbl_name,sql from sqlite_master order by type,name"
+        ).fetchall() == [tuple(row) for row in before]
+
+
+@pytest.mark.parametrize("mixed_runs_ddl", ["current", "unknown"])
+def test_preceding_source_with_runs_table_is_rejected_without_adopting_mixed_layout(
+    tmp_path, mixed_runs_ddl
+):
+    from app.run_storage import RUN_TABLE_DDL
+    from tests.run_schema_fixtures import previous_run_schema_store
+
+    path = tmp_path / "mixed-layout.db"
+    previous_run_schema_store(path)
+    with sqlite3.connect(path) as db:
+        db.execute(
+            RUN_TABLE_DDL
+            if mixed_runs_ddl == "current"
+            else "create table runs(id integer)"
+        )
+        before_schema = db.execute(
+            "select type,name,tbl_name,sql from sqlite_master order by type,name"
+        ).fetchall()
+        tables = [
+            row[0]
+            for row in db.execute("select name from sqlite_master where type='table'")
+        ]
+        before_rows = {
+            table: db.execute(f'select * from "{table}"').fetchall() for table in tables
+        }
+    with pytest.raises(
+        ValueError, match="unsupported 11.1 source schema: runs already exists"
+    ):
+        AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        assert (
+            db.execute(
+                "select type,name,tbl_name,sql from sqlite_master order by type,name"
+            ).fetchall()
+            == before_schema
+        )
+        assert {
+            table: db.execute(f'select * from "{table}"').fetchall() for table in tables
+        } == before_rows

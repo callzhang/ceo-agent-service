@@ -37,7 +37,7 @@ from app.reviewed_candidate_store import (
 from app.sqlite_schema_lock import schema_initialize_lock
 from app.run_storage import (
     AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES,
-    create_run_schema, migrate_run_schema, install_run_child_guards, insert_run,
+    create_run_schema, migrate_run_schema, install_run_child_guards, insert_run, run_schema_is_current,
 )
 from app.agent_cron.models import (
     ScheduledTask,
@@ -1961,7 +1961,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 if self._migrate_known_run_schema():
                     _INITIALIZED_STORE_PATHS.add(path_key)
                     return
-                self._require_fresh_store_schema_source()
+                self._require_supported_store_bootstrap_source()
                 self._initialize()
                 if not self._schema_manifest_is_current_after_lock_retry():
                     raise FeedbackProcessingSchemaIntegrityError(
@@ -2569,6 +2569,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             and required_trigger_definitions_present
             and feedback_processing_round_storage_valid
             and required_columns_present
+            and run_schema_is_current(db)
             and reply_input_foreign_keys_present
             and not removed_columns_present
             and (
@@ -10776,8 +10777,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "trigger_text_provenance_json text not null default '{}'"
             )
 
-    def _require_fresh_store_schema_source(self) -> None:
-        """Bootstrap only a fresh Store; preceding/current schemas have explicit paths."""
+    def _require_supported_store_bootstrap_source(self) -> None:
+        """Allow fresh bootstrap or the existing repair path for a valid current core."""
         db = self._open_connection()
         try:
             tables = {row[0] for row in db.execute("select name from sqlite_master where type='table'")}
@@ -10786,6 +10787,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 if "service_state" in tables else None
             )
             store_tables = {"reply_tasks", "reply_task_inputs", "runs", *RETIRED_RUN_TABLES}
+            if marker is not None and marker[0] == STORE_SCHEMA_VERSION and run_schema_is_current(db, allow_missing_objects=True):
+                return
             if marker is not None or tables.intersection(store_tables):
                 raise sqlite3.IntegrityError(
                     "unsupported or malformed Store source schema; expected a fresh Store, "
@@ -12252,14 +12255,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         event_attempts = db.execute(
             "select runtime_kind, session_id, transcript_reference, "
             "transcript_start, transcript_end, started_at, finished_at "
-            "from agent_runtime_attempts "
+            f"from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts "
             "where agent_run_id=? and session_id<>'' order by id",
             (run.id,),
         ).fetchall()
         result_attempt = (
             db.execute(
                 "select runtime_kind, session_id, transcript_start, transcript_end "
-                "from agent_runtime_attempts "
+                f"from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts "
                 "where agent_run_id=? and status='completed' "
                 "order by id desc limit 1",
                 (run.id,),

@@ -329,9 +329,57 @@ RUN_TRIGGER_DDL = (
 
 
 def create_run_schema(db: sqlite3.Connection) -> None:
-    db.execute(RUN_TABLE_DDL)
+    db.execute(
+        RUN_TABLE_DDL.replace("create table runs", "create table if not exists runs", 1)
+    )
     for sql in (*RUN_INDEX_DDL, *RUN_TRIGGER_DDL):
+        if sql.startswith("create unique index "):
+            sql = sql.replace(
+                "create unique index ", "create unique index if not exists ", 1
+            )
+        elif sql.startswith("create index "):
+            sql = sql.replace("create index ", "create index if not exists ", 1)
+        else:
+            sql = sql.replace("create trigger ", "create trigger if not exists ", 1)
         db.execute(sql)
+
+
+def run_schema_is_current(
+    db: sqlite3.Connection, *, allow_missing_objects: bool = False
+) -> bool:
+    """Match the current core layout and its declared indexes/triggers.
+
+    Missing objects can be recreated by the existing Store initialization path.
+    A changed definition or an old core layout is not that repair case.
+    """
+    retired_names = ",".join("?" for _ in RETIRED_RUN_TABLES)
+    if db.execute(
+        f"select 1 from sqlite_master where type in ('table','view') and name in ({retired_names}) limit 1",
+        RETIRED_RUN_TABLES,
+    ).fetchone():
+        return False
+    objects = {
+        row[0]: str(row[1] or "")
+        for row in db.execute(
+            "select name,sql from sqlite_master where tbl_name='runs'"
+        )
+    }
+
+    def normalized(sql: str) -> str:
+        return " ".join(sql.strip().rstrip(";").split()).casefold()
+
+    if normalized(objects.get("runs", "")) != normalized(RUN_TABLE_DDL):
+        return False
+    for sql in (*RUN_INDEX_DDL, *RUN_TRIGGER_DDL):
+        words = sql.split()
+        name = words[3] if words[1] == "unique" else words[2]
+        if name not in objects:
+            if allow_missing_objects:
+                continue
+            return False
+        if normalized(objects[name]) != normalized(sql):
+            return False
+    return True
 
 
 def _schema_objects(db, table):
@@ -470,6 +518,8 @@ def migrate_run_schema(db: sqlite3.Connection) -> dict:
         and db.execute("select 1 from agent_run_events limit 1").fetchone()
     ):
         raise ValueError("agent_run_events contains native events; migration stopped")
+    if "runs" in tables:
+        raise ValueError("unsupported 11.1 source schema: runs already exists")
     state = capture_run_schema(db)
     for table in RUN_TYPES:
         if table not in state["tables"] or set(
