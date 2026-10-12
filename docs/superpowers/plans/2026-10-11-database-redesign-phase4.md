@@ -87,8 +87,8 @@
 
 ## 本次状态
 
-Task0完成；4A代码在隔离分支，尚未上线。最新一致副本源947f4f24475e64845bbfddc80f84fa9fc2f0cceb，Store11.1/Email50；45,693条原核心记录全部投影及145张其他原表全值指纹一致。Baseline inverse恢复151张表原声明/值、named sequence和marker；replacement新增结果/回执及分配后删除的ID保留。实际源302个Python文件逐一匹配Git blob，旧代码启动/读取/领取/再次正迁通过。发布五阶段失败回退演练通过。
+Task0完成；4A已通过完整CI并正常部署7baa1f0e，Store11.2/Email50，PID16960；readback及115原回执一致。最新一致副本源947f4f24475e64845bbfddc80f84fa9fc2f0cceb，Store11.1/Email50；45,693条原核心记录全部投影及145张其他原表全值指纹一致。Baseline inverse恢复151张表原声明/值、named sequence和marker；replacement新增结果/回执及分配后删除的ID保留。实际源302个Python文件逐一匹配Git blob，旧代码启动/读取/领取/再次正迁通过。发布五阶段失败回退演练通过。
 
-Source声明新增校验19个真实对象，current manifest保留SQL字面量，组合定向1,113测试通过。两轮完整远端CI各45个历史fixture失败；修复后的独立审查仍发现重复迁移和微信并发migration前提被弱化，已恢复真实执行路径，610个三文件测试及独立4case/profiler通过，最终规格/质量复审通过。仍需集成最新main和完整远端CI后正常部署。最新副本已用空间增加3,551,232 B（约0.887%），本单元是结构整合，尚无第四期容量减少。
+Source声明新增校验19个真实对象，current manifest保留SQL字面量，组合定向1,113测试通过。两轮完整远端CI各45个历史fixture失败；修复后的独立审查仍发现重复迁移和微信并发migration前提被弱化，已恢复真实执行路径，610个三文件测试及独立4case/profiler通过，最终规格/质量复审通过。最新main已集成；完整远端CI通过11,808 Python/723前端/2浏览器，正常部署完成。最新副本已用空间增加3,551,232 B（约0.887%），本单元是结构整合，尚无第四期容量减少。
 
-4B第一单元仅有typed schema/paired inverse/projections foundation，未接入Store或发布。实际Task summary_input_id无声明FK，保持原scalar public值及代码关系；reply/input字段直接保存真实scalar，WSI1字节不变。4C未实施。完整验收边界见docs/database-redesign-phase4a-validation.md。
+4B首单元在另一个隔离分支接线，Store core40+dependent66限定复审通过；外部18模块及完整副本验证仍进行中，未发布。实际Task summary_input_id无声明FK，保持原scalar public值及代码关系；reply/input字段直接保存真实scalar，WSI1字节不变。4C未实施。完整验收边界见docs/database-redesign-phase4a-validation.md。
