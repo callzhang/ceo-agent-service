@@ -34,7 +34,10 @@ def _command(role: str) -> list[str]:
 
 
 def test_catalog_is_generated_from_every_canonical_capability_and_operation() -> None:
-    from app.action_contract_catalog import action_contract_catalog, parse_action_contracts
+    from app.action_contract_catalog import (
+        action_contract_catalog,
+        parse_action_contracts,
+    )
 
     document = CONTRACT_PATH.read_text(encoding="utf-8").strip()
     entries = parse_action_contracts(document)
@@ -65,25 +68,63 @@ def test_catalog_is_generated_from_every_canonical_capability_and_operation() ->
     assert "capability" in catalog and "operation" in catalog
 
 
-def test_lookup_returns_the_complete_original_contract_for_an_exact_operation() -> None:
-    from app.action_contract_catalog import read_system_action_contract
+def test_lookup_returns_shared_rules_and_only_the_exact_action_contract() -> None:
+    from app.action_contract_catalog import (
+        parse_action_contracts,
+        read_system_action_contract,
+    )
 
     original = CONTRACT_PATH.read_text(encoding="utf-8").strip()
     result = read_system_action_contract(
         capability="dingtalk-calendar",
         operation="respond_calendar_event",
     )
+    assert result["capability"] == "dingtalk-calendar"
+    assert result["operation"] == "respond_calendar_event"
+    assert result["supported_operations"] == ["respond_calendar_event"]
+    assert [
+        (entry.capability, entry.operation)
+        for entry in parse_action_contracts(result["contract"])
+    ] == [("dingtalk-calendar", "respond_calendar_event")]
+    assert [
+        line for line in result["contract"].splitlines() if not line.startswith("|")
+    ] == [line for line in original.splitlines() if not line.startswith("|")]
+    assert "`event_id` | `response_status`" in result["contract"]
+    assert (
+        "Exact event's `self_response_status` after native response"
+        in result["contract"]
+    )
+    assert len(result["contract"]) < len(original)
 
-    assert result == {
-        "capability": "dingtalk-calendar",
-        "operation": "respond_calendar_event",
-        "supported_operations": ["respond_calendar_event"],
-        "contract": original,
-    }
-    assert "Consumer cannot directly dispatch" in result["contract"]
-    assert "stable `action_identity`" in result["contract"]
-    assert "Completion evidence" in result["contract"]
-    assert "An unsupported operation fails explicitly." in result["contract"]
+
+def test_each_registered_operation_keeps_its_fields_and_all_shared_rules() -> None:
+    from app.action_contract_catalog import (
+        parse_action_contracts,
+        read_system_action_contract,
+    )
+
+    original = CONTRACT_PATH.read_text(encoding="utf-8").strip()
+    for entry in parse_action_contracts(original):
+        result = read_system_action_contract(entry.capability, entry.operation)
+        assert [
+            (item.capability, item.operation)
+            for item in parse_action_contracts(result["contract"])
+        ] == [(entry.capability, entry.operation)]
+        original_row = next(
+            line
+            for line in original.splitlines()
+            if line.startswith(f"| `{entry.capability}` |")
+            and f"`{entry.operation}`" in line
+        )
+        selected_row = next(
+            line
+            for line in result["contract"].splitlines()
+            if line.startswith(f"| `{entry.capability}` |")
+        )
+        assert selected_row.split("|")[3:] == original_row.split("|")[3:]
+        assert [
+            line for line in result["contract"].splitlines() if not line.startswith("|")
+        ] == [line for line in original.splitlines() if not line.startswith("|")]
 
 
 def test_lookup_lists_capability_operations_and_rejects_unknown_names() -> None:
@@ -95,6 +136,12 @@ def test_lookup_lists_capability_operations_and_rejects_unknown_names() -> None:
         "create_document",
         "create_doc_comment",
     ]
+    from app.action_contract_catalog import parse_action_contracts
+
+    assert [
+        (entry.capability, entry.operation)
+        for entry in parse_action_contracts(result["contract"])
+    ] == [("dingtalk-doc", "create_document"), ("dingtalk-doc", "create_doc_comment")]
 
     with pytest.raises(ValueError, match="unknown system action capability: unknown"):
         read_system_action_contract(capability="unknown")
@@ -121,7 +168,12 @@ def test_exact_contract_lookup_is_declared_read_only_for_both_roles(role: str) -
         operation="approve",
     )
     assert result["operation"] == "approve"
-    assert result["contract"] == CONTRACT_PATH.read_text(encoding="utf-8").strip()
+    from app.action_contract_catalog import parse_action_contracts
+
+    assert [
+        (entry.capability, entry.operation)
+        for entry in parse_action_contracts(result["contract"])
+    ] == [("dingtalk-oa", "approve")]
 
 
 @pytest.mark.parametrize("role", ["consumer", "audit"])
@@ -172,3 +224,32 @@ def test_consumer_prompt_uses_short_generated_catalog() -> None:
     assert len(catalog) < len(original) // 2
     assert "agent_cli.read_system_action_contract" in catalog
     assert "| Capability | Operation |" not in catalog
+
+
+@pytest.mark.parametrize("operation", [None, "inspect"])
+def test_lookup_selects_new_canonical_names_without_changing_shared_text(
+    monkeypatch, operation
+) -> None:
+    from app import action_contract_catalog as catalog
+
+    document = """Shared rule before the table.
+
+| Capability | Operation | target | payload | Completion evidence |
+| --- | --- | --- | --- | --- |
+| `fresh-capability` | `inspect`, `compare` | exact object | preserved data | exact receipt |
+| `other-capability` | `send` | another object | other data | other receipt |
+
+Shared rule after the table.
+""".strip()
+    monkeypatch.setattr(catalog, "_contract_document", lambda: document)
+    result = catalog.read_system_action_contract("fresh-capability", operation)
+    expected_operations = ["inspect", "compare"] if operation is None else [operation]
+    assert result["supported_operations"] == expected_operations
+    assert [
+        (entry.capability, entry.operation)
+        for entry in catalog.parse_action_contracts(result["contract"])
+    ] == [("fresh-capability", name) for name in expected_operations]
+    assert "exact object | preserved data | exact receipt" in result["contract"]
+    assert "Shared rule before the table." in result["contract"]
+    assert "Shared rule after the table." in result["contract"]
+    assert "other-capability" not in result["contract"]

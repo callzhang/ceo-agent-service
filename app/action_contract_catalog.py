@@ -40,31 +40,32 @@ def _code_names(cell: str, *, field: str) -> tuple[str, ...]:
 
 
 def _is_separator(cells: list[str]) -> bool:
-    return bool(cells) and all(
-        cell and not (set(cell) - {"-", ":"}) for cell in cells
-    )
+    return bool(cells) and all(cell and not (set(cell) - {"-", ":"}) for cell in cells)
 
 
-def parse_action_contracts(document: str) -> tuple[ActionContractEntry, ...]:
-    """Read executable capability/operation pairs from the canonical table."""
-    lines = document.splitlines()
-    table_start = None
+def _action_table_range(lines: list[str]) -> tuple[int, int]:
     for index, line in enumerate(lines[:-1]):
         cells = _markdown_cells(line)
         if [cell.casefold() for cell in cells[:2]] == ["capability", "operation"]:
             separator = _markdown_cells(lines[index + 1])
             if len(separator) == len(cells) and _is_separator(separator):
-                table_start = index + 2
-                break
-    if table_start is None:
-        raise ValueError("system action contract table is missing")
+                start = index + 2
+                end = start
+                while end < len(lines) and _markdown_cells(lines[end]):
+                    end += 1
+                return start, end
+    raise ValueError("system action contract table is missing")
+
+
+def parse_action_contracts(document: str) -> tuple[ActionContractEntry, ...]:
+    """Read executable capability/operation pairs from the canonical table."""
+    lines = document.splitlines()
+    start, end = _action_table_range(lines)
 
     entries: list[ActionContractEntry] = []
     seen: set[tuple[str, str]] = set()
-    for line in lines[table_start:]:
+    for line in lines[start:end]:
         cells = _markdown_cells(line)
-        if not cells:
-            break
         if len(cells) < 2:
             raise ValueError("system action contract row is incomplete")
         capability = _code_name(cells[0], field="capability")
@@ -92,9 +93,34 @@ def system_action_contract_document() -> str:
     return _contract_document()
 
 
+def _selected_contract_document(
+    document: str,
+    capability: str,
+    operation: str | None,
+) -> str:
+    """Preserve all shared prose and select only the requested executable rows."""
+    lines = document.splitlines(keepends=True)
+    start, end = _action_table_range(lines)
+    selected = []
+    for line in lines[start:end]:
+        cells = _markdown_cells(line)
+        if _code_name(cells[0], field="capability") != capability:
+            continue
+        if operation is None:
+            selected.append(line)
+        elif operation in _code_names(cells[1], field="operation"):
+            cells[1] = f"`{operation}`"
+            selected.append(
+                "| " + " | ".join(cells) + " |" + ("\n" if line.endswith("\n") else "")
+            )
+    return "".join(lines[:start] + selected + lines[end:])
+
+
 def action_contract_catalog(document: str | None = None) -> str:
     """Render the prompt-sized catalog from the canonical contract table."""
-    entries = parse_action_contracts(document if document is not None else _contract_document())
+    entries = parse_action_contracts(
+        document if document is not None else _contract_document()
+    )
     operations: dict[str, list[str]] = defaultdict(list)
     for entry in entries:
         operations[entry.capability].append(entry.operation)
@@ -102,7 +128,7 @@ def action_contract_catalog(document: str | None = None) -> str:
     lines = [
         "## System Action Capability Catalog",
         "Consumer proposes these registered reviewed actions; Audit reviews them and system code executes approved actions.",
-        "Before proposing or reviewing one, call `agent_cli.read_system_action_contract` with exact `capability` and `operation` values below. Omit `operation` to validate a capability and list its operations. The lookup returns the complete canonical contract, including shared role, action_identity, target, payload, and completion requirements.",
+        "Before proposing or reviewing one, call `agent_cli.read_system_action_contract` with exact `capability` and `operation` values below. Omit `operation` to validate a capability and list its operations. The lookup preserves all canonical shared rules and returns only the requested capability/operation rows, including action_identity, target, payload, and completion requirements.",
     ]
     lines.extend(
         f"- `{capability}`: " + ", ".join(f"`{operation}`" for operation in names)
@@ -115,7 +141,7 @@ def read_system_action_contract(
     capability: str,
     operation: str | None = None,
 ) -> dict[str, object]:
-    """Return the complete canonical contract after exact name validation."""
+    """Return shared rules and selected action rows after exact name validation."""
     document = _contract_document()
     entries = parse_action_contracts(document)
     by_capability: dict[str, list[str]] = defaultdict(list)
@@ -147,5 +173,7 @@ def read_system_action_contract(
         "capability": selected_capability,
         "operation": selected_operation,
         "supported_operations": supported,
-        "contract": document,
+        "contract": _selected_contract_document(
+            document, selected_capability, selected_operation
+        ),
     }
