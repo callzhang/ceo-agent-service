@@ -6,6 +6,11 @@ of the current field value. Quoted numeric identifiers remain strings; an
 already-applied correction must not be requested again. This evidence rule does
 not waive actual action-contract violations or authorize external execution.
 
+Manual rerun reads its terminal run with `load_events=False`: the existing
+refusal check consumes only structured error metadata. Native trajectory and
+result hydration is excluded from this queueing request. The existing refusal,
+original-trigger verification and new-generation enqueue flow are unchanged.
+
 Dispatcher queue claims first probe using a read-only connection. The existing
 candidate scanners still apply source order, due time and live-owner protection;
 positive probes are repeated after acquiring the immediate write transaction
