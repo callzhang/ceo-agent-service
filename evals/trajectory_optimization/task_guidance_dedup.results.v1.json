@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "scope": "Task full-Skill duplicate wrapper guidance; anonymous normal-progress fixed case",
+  "model": "gpt-5.6-luna",
+  "thinking": "medium",
+  "schema_sha256": "437dcf19cec6fdb8bd0abcce5fb938d0a18a903d83838e56d7f0486638f17952",
+  "skill_sha256": "2db7c6bfb1a8dc8f64863d2e97f78fc3378400b3ff3df43ed22414a47d7edd3e",
+  "mcp_disabled_in_eval": true,
+  "production_changed": false,
+  "rows": [
+    {
+      "variant": "baseline",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12f41-a506-7970-ba32-b4c8c9d8edd0",
+      "prompt_characters": 47109,
+      "prompt_sha256": "42d01b1ed314764bb8f3733e8d35ba4303951d1fe947136b06faf08b992d276f",
+      "phase": "cold",
+      "criteria_pass": true,
+      "application_pass": true
+    },
+    {
+      "variant": "candidate",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12f44-092e-7331-8e0d-007ef6432d8e",
+      "prompt_characters": 31557,
+      "prompt_sha256": "585524a3472d72fdd4804d0b2b8dfaaf63d48c83cb9afd81a1a8b9115b7d7e95",
+      "phase": "cold",
+      "criteria_pass": true,
+      "application_pass": true
+    },
+    {
+      "variant": "baseline",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12f41-a506-7970-ba32-b4c8c9d8edd0",
+      "prompt_characters": 52776,
+      "prompt_sha256": "d1794ffec4b59ca672d51d33841164d958333f032e6b14d2942f3ab7373f1fe5",
+      "phase": "resume",
+      "application_pass": true,
+      "reused_project_id": 1,
+      "task_count": 0,
+      "owner_evidence_exact": true,
+      "assessment": "not_needed",
+      "attention": false,
+      "criteria_pass": true
+    },
+    {
+      "variant": "candidate",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12f44-092e-7331-8e0d-007ef6432d8e",
+      "prompt_characters": 37224,
+      "prompt_sha256": "ee9e18bf5b1beb383ce8212a19b5e9076c4b7a7a7d64ff2a682fedc55d0ba521",
+      "phase": "resume",
+      "application_pass": true,
+      "reused_project_id": 1,
+      "task_count": 0,
+      "owner_evidence_exact": true,
+      "assessment": "not_needed",
+      "attention": false,
+      "criteria_pass": true
+    }
+  ],
+  "limits": [
+    "Cold context is a minimal full-source fixture; resume context uses actual service retrieval/rendering.",
+    "No risk-suggestion or other-provider acceptance claim.",
+    "Baseline cold also read shared AGENTS.md; inherited native context is not fully equal.",
+    "Native Skill catalog truncation warning remains.",
+    "Startup invalid-transport runs excluded; superseded pre-review candidate excluded."
+  ],
+  "artifact_root": "/private/tmp/ceo-task-guidance-eval-7_xd_p6r"
+}
