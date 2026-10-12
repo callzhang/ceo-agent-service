@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "baseline_ref": "cc753454f6175ed70dc70943d4bfb60bbd702370",
+  "candidate_ref": "294d3673",
+  "route": "codex_oauth",
+  "model": "gpt-5.6-luna",
+  "reasoning": "medium",
+  "skill": "complete installed current body in both service inputs",
+  "raw_evidence": "/private/tmp/ceo-task-guidance-risk-ff5sfwxb",
+  "turns": [
+    {
+      "variant": "baseline",
+      "phase": "cold",
+      "session_id": "01a13037-0d74-7540-9bf9-7ce64dc0b349",
+      "actual_native_input_exact": true,
+      "prompt_chars": 47648,
+      "prompt_sha256": "cce645de3f086861a72fd74160c19d7b5ee49b48abf903b5400fd0f5e123c789",
+      "events_sha256": "c489dc25a7c4ee54701e83706232801d7e9aa7f8e9eb7597c9ac59f2985fb9c5",
+      "native_turn_completed": true,
+      "model_business_valid": true,
+      "decision_sha256": "6b813ebc542bc6614a87b6e9ea1e49ee1e04641c61f47aca7484a9141772e941"
+    },
+    {
+      "variant": "candidate",
+      "phase": "cold",
+      "session_id": "01a13037-9180-7a31-8242-5859ed06a37c",
+      "actual_native_input_exact": true,
+      "prompt_chars": 32096,
+      "prompt_sha256": "b5fc1372b8522deed2c58e2c9d0b815dc40d5e441cb8cf942fabe30656020f4b",
+      "events_sha256": "1297ea1ad03322ac32d9f9fad47c07037f80df3b218566c58effd3173a15b523",
+      "native_turn_completed": true,
+      "model_business_valid": true,
+      "decision_sha256": "984eac6ed6aee957cf859ed289e9cd4a9dd212298acc84c668208229b9a6c211"
+    },
+    {
+      "variant": "baseline",
+      "phase": "risk",
+      "session_id": "01a13037-0d74-7540-9bf9-7ce64dc0b349",
+      "actual_native_input_exact": true,
+      "prompt_chars": 51152,
+      "prompt_sha256": "f9ed30b083115e7221605331dd813b846d795c6c03d24a76d38a08443d7f04fb",
+      "events_sha256": "8afce7b3206b868d0ac56e7a70959034e197e8c22484f6a2bda43179eacead39",
+      "native_turn_completed": true,
+      "model_business_valid": false,
+      "failure": "Task.project null with nonempty project_link_evidence; first output preserved, no application"
+    },
+    {
+      "variant": "candidate",
+      "phase": "risk",
+      "session_id": "01a13037-9180-7a31-8242-5859ed06a37c",
+      "actual_native_input_exact": true,
+      "prompt_chars": 35600,
+      "prompt_sha256": "2935148621930bc24cce667cd633547d39db986595bc121fd7a3deb46c704c8b",
+      "events_sha256": "48d6bb83114db867fbbb5d648ec21274f8f95c564c63394240f4d984750d9b5d",
+      "native_turn_completed": true,
+      "model_business_valid": true,
+      "decision_sha256": "ae01607731e128a2b865abeaff1029b010aa9f172dd11b3241cc76013fe86014"
+    },
+    {
+      "variant": "baseline",
+      "phase": "repair",
+      "session_id": "01a13037-0d74-7540-9bf9-7ce64dc0b349",
+      "actual_native_input_exact": true,
+      "prompt_chars": 11564,
+      "prompt_sha256": "bb704db0504f9056c5bb38e32538b098b9931ac1496b8f3b01ccd7764fd972af",
+      "events_sha256": "fef35a22ef90be20f7c2caa100c848cbcb36348215073d37e27ed57457a11d45",
+      "native_turn_completed": true,
+      "model_business_valid": true,
+      "decision_sha256": "0fcc896f67810a45f525eebbf0f21c9cfe258b17d002f3c8542ea7b2883f57ae"
+    }
+  ],
+  "applications": [
+    {
+      "variant": "candidate",
+      "phase": "risk",
+      "seed": "current baseline cold DB",
+      "applied": true,
+      "projects": 1,
+      "tasks": 1,
+      "attention": 1,
+      "categories": [
+        "watch"
+      ],
+      "owner": "陈明"
+    },
+    {
+      "variant": "baseline",
+      "phase": "risk_repaired",
+      "seed": "same current baseline cold DB",
+      "applied": true,
+      "projects": 1,
+      "tasks": 1,
+      "attention": 1,
+      "categories": [
+        "decision"
+      ],
+      "owner": "陈明"
+    }
+  ],
+  "initial_application_fixture_failure": "old shared risk-fixed sqlite seed rejected by current Task source-declaration validator; retained as candidate-risk-verified.sqlite3; no migration change",
+  "current_application_seed": "same baseline-cold-verified.sqlite3 freshly built and applied with current source in both risk arms",
+  "retry": "one baseline same-session correction using existing service repair function; not full routed executor scheduler",
+  "semantic_cause_boundary": "cross-field invalid result observed; no proof of missing facts/instructions or clipped Skill. Existing JSON schema admits null project; local model validation enforces project_link_evidence dependency. Internal model cause unconfirmed.",
+  "business_comparison": "candidate watch vs repaired baseline decision; no general quality superiority claim",
+  "cold_applications": [
+    {
+      "variant": "baseline",
+      "phase": "cold",
+      "applied": true,
+      "projects": 1,
+      "tasks": 0,
+      "attention": [],
+      "task_results": []
+    },
+    {
+      "variant": "candidate",
+      "phase": "cold",
+      "applied": true,
+      "projects": 1,
+      "tasks": 0,
+      "attention": [],
+      "task_results": []
+    }
+  ],
+  "baseline_invalid_output_satisfies_declared_json_schema": true
+}
