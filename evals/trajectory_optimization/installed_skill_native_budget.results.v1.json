@@ -135,11 +135,25 @@
   "same_consumer_cold_source": true,
   "candidate_cold_and_resume_all_valid": true,
   "business_acceptance": false,
-  "production_release": false,
+  "production_release": true,
   "independent_review": {
     "reviewer": "readonly_business_matrix_review",
     "accepted": true,
     "verified": "five native turns: exact source, hash, marker, tool arguments, per-turn boundaries, valid candidate cold/resume",
     "boundary": "isolated fake MCP catalog; Audit probe schema on; production defaults unchanged; no OA business or production readback acceptance"
+  },
+  "production_readback": {
+    "deployed_commit": "a797118d",
+    "deployment_command": "python -m app.deploy",
+    "pid": 28815,
+    "health_http": 200,
+    "status_http": 200,
+    "attention_http": 200,
+    "history_http": 200,
+    "public_settings_http": 200,
+    "reply_work_meeting_processing": 0,
+    "existing_failed_task": 386349,
+    "existing_failed_task_updated_at_utc": "2026-10-11 23:15:42",
+    "live_private_skill_model_readback": "not executed; automatic approval rejected; exact authorization pending"
   }
 }
