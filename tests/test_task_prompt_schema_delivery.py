@@ -1,6 +1,7 @@
 """The Task decision schema reaches each runtime exactly once."""
 
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -96,8 +97,12 @@ def test_codex_task_schema_is_out_of_band_and_business_input_remains(
     assert "TaskAgentDecision Pydantic JSON schema:" not in prompt
 
 
-def test_task_factory_forwards_its_native_skill_selection(monkeypatch, tmp_path):
+@pytest.mark.parametrize("extra_skill_names", [(), ("ceo-calendar-invite",)])
+def test_task_factory_forwards_its_native_skill_selection(
+    monkeypatch, tmp_path, extra_skill_names
+):
     prompt, factory = prompt_and_factory(monkeypatch, tmp_path)
+    factory = replace(factory, skill_names=extra_skill_names)
     calls = []
     adapter = SimpleNamespace(
         build_command=lambda **kwargs: calls.append(kwargs) or ["codex"],
@@ -109,4 +114,4 @@ def test_task_factory_forwards_its_native_skill_selection(monkeypatch, tmp_path)
         prompt=prompt,
         session_id=None,
     )
-    assert calls[0]["skill_names"] == ("ceo-work-tracking",)
+    assert calls[0]["skill_names"] == extra_skill_names + ("ceo-work-tracking",)
