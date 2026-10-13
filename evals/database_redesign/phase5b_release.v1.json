@@ -57,7 +57,7 @@
   "freelist_count": 8138,
   "old_three_remaining": 0,
   "latest_backup": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-13.sqlite3",
-  "latest_backup_store_version": "2026-10-13.1",
+  "latest_backup_store_version": "2026-10-13.2",
   "latest_backup_integrity": "ok",
   "backup_replacement_after_verification": true,
   "no_vacuum_claim": true,
@@ -158,5 +158,7 @@
     "Historical native process unavailable shown explicitly",
     "Attention loaded 3 existing unresolved issue groups"
   ],
-  "ui_real_external_actions": 0
+  "ui_real_external_actions": 0,
+  "predeployment_backup_store_version": "2026-10-13.1",
+  "latest_backup_after_stable_release": "refreshed and verified before replacing predeployment daily copy"
 }

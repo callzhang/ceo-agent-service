@@ -41,3 +41,5 @@ Quality CI38422492340在f799ae3f完整通过：12,374项Python检查、46个前�
 最新已验证的Store15备份先完整性／FK验证，再原子替换旧日备份。发布后只读逐字段值和类型比对确认三类回执及旧六类型与该来源一致；原runs→tasks的一条FK诊断保留，未新增失败reply任务。健康、队列、Attention和History读取正常，核对时九条dispatcher队列pending/running均0、latest_error为空。History列表、代表执行15020、展开详情及Attention页面已实际打开；历史原生过程缺失显示不可用，未制造过程记录或测试真实发送。
 
 详细回执见evals/database_redesign/phase5b_release.v1.json。读取时主文件471,347,200字节、WAL17,967,352字节、freelist8138页；没有执行VACUUM，不宣称物理文件已缩小。完整10+1尚未完成，后续C运行接入、剩余actions家族和第六至八期继续实施。
+
+稳定发布读回完成后，日备份再次由当前Store16在线生成，完整性／原FK验证通过后才替换前版Store15副本；仅保留最新已验证日备份。前版备份到生产的字段比对证据已记录在release回执中。一次性B证明数据库／旧代码目录已完成验收并清理，保留仓库脚本及简明证明。
