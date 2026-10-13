@@ -1,0 +1,233 @@
+{
+  "version": 2,
+  "scope": "Offline typed source-bound Audit input and anonymous original mail leaf reads; actual role stdio boot; not native model/business acceptance",
+  "model_calls": 0,
+  "files": {
+    "native_contract_compaction.business_cases.v4.json": "7ad9c520921d61433273af4ae6468ce63c0d388926fe3e00ba0ce2222f2ae4e0",
+    "native_contract_compaction.business_fixture.py": "9467926ff1d508719e6846d3abdd90c1038d937c2f0902c9fc4a82da3ca02bd7",
+    "native_contract_compaction.business_preflight.py": "1a830b5b4b27c32a16f4b3104c044ada1226909287eca14d699d589e2f8b084c",
+    "native_contract_compaction.business_inputs.py": "92b5e8f9e979c3b8d7ec343c4f0e561f183d9c11db5959c52740558fdd44d405",
+    "native_contract_compaction.business_mail_fixture.py": "fa7e8104162f335cdc4530cd14cbab5fc0427331c8c4542dec72a5d894e49c11"
+  },
+  "records": [
+    {
+      "case": "calendar-cross-midnight",
+      "role": "consumer",
+      "task_id": 1,
+      "generation": "probe",
+      "tool_count": 42,
+      "skill_sha256": "cdf7ff9e1cc1481a098ef859d3f77721b38bbf9a04d61d5450a06ba0194e02a7",
+      "operation_skill_reads": [
+        {
+          "name": "dingtalk-calendar",
+          "sha256": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c"
+        },
+        {
+          "name": "dingtalk-shared",
+          "sha256": "7c3f6231072cd0e038b69a94b94957e99a1b1b82b961882413e08a1cf56336fb"
+        }
+      ],
+      "inference_ready": true,
+      "missing_evidence": [],
+      "checks": [
+        "actual frozen task Skill read matches complete original bytes",
+        "exact event identity",
+        "timezone-aware windows filter actual event timestamps"
+      ],
+      "audit_candidate": null
+    },
+    {
+      "case": "calendar-real-overlap",
+      "role": "consumer",
+      "task_id": 1,
+      "generation": "probe",
+      "tool_count": 42,
+      "skill_sha256": "cdf7ff9e1cc1481a098ef859d3f77721b38bbf9a04d61d5450a06ba0194e02a7",
+      "operation_skill_reads": [
+        {
+          "name": "dingtalk-calendar",
+          "sha256": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c"
+        },
+        {
+          "name": "dingtalk-shared",
+          "sha256": "7c3f6231072cd0e038b69a94b94957e99a1b1b82b961882413e08a1cf56336fb"
+        }
+      ],
+      "inference_ready": true,
+      "missing_evidence": [],
+      "checks": [
+        "actual frozen task Skill read matches complete original bytes",
+        "exact event identity",
+        "timezone-aware windows filter actual event timestamps"
+      ],
+      "audit_candidate": null
+    },
+    {
+      "case": "mail-already-handled",
+      "role": "consumer",
+      "task_id": 1,
+      "generation": "probe",
+      "tool_count": 42,
+      "skill_sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+      "operation_skill_reads": [
+        {
+          "name": "dingtalk-mail",
+          "sha256": "664f31a00f46245c270049129da4d25475ccc561b04d9897e7cd634b2c4a6f18"
+        },
+        {
+          "name": "dingtalk-shared",
+          "sha256": "7c3f6231072cd0e038b69a94b94957e99a1b1b82b961882413e08a1cf56336fb"
+        }
+      ],
+      "inference_ready": false,
+      "missing_evidence": [
+        "Native model invocation must route dws business reads exclusively to the anonymous readonly fixture; metadata remains native local schema",
+        "Actual native trajectory must prove mailbox/thread/original messages and sent state were read before business acceptance"
+      ],
+      "checks": [
+        "actual frozen task Skill read matches complete original bytes",
+        "chat is locator only; exact original mailbox/thread/messages and sent receipt read",
+        "wrong mailbox, wrong message identity and write leaf rejected by eval fixture"
+      ],
+      "audit_candidate": null
+    },
+    {
+      "case": "document-material-conflicts",
+      "role": "consumer",
+      "task_id": 1,
+      "generation": "probe",
+      "tool_count": 42,
+      "skill_sha256": "99185770c11339be2273c727e59c627bae806f97bd1a499f59918a73ac184f2f",
+      "operation_skill_reads": [
+        {
+          "name": "dingtalk-doc",
+          "sha256": "c0ba5d0143f3fe0421f07c361c9bc18f2147a8800ae54d043df369bdfbcb5f40"
+        },
+        {
+          "name": "dingtalk-shared",
+          "sha256": "7c3f6231072cd0e038b69a94b94957e99a1b1b82b961882413e08a1cf56336fb"
+        }
+      ],
+      "inference_ready": true,
+      "missing_evidence": [],
+      "checks": [
+        "actual frozen task Skill read matches complete original bytes",
+        "exact document identity and revision"
+      ],
+      "audit_candidate": null
+    },
+    {
+      "case": "work-tracking-existing-remediation",
+      "role": "consumer",
+      "task_id": 1,
+      "generation": "probe",
+      "tool_count": 42,
+      "skill_sha256": "99185770c11339be2273c727e59c627bae806f97bd1a499f59918a73ac184f2f",
+      "operation_skill_reads": [
+        {
+          "name": "dingtalk-doc",
+          "sha256": "c0ba5d0143f3fe0421f07c361c9bc18f2147a8800ae54d043df369bdfbcb5f40"
+        },
+        {
+          "name": "dingtalk-shared",
+          "sha256": "7c3f6231072cd0e038b69a94b94957e99a1b1b82b961882413e08a1cf56336fb"
+        }
+      ],
+      "inference_ready": true,
+      "missing_evidence": [],
+      "checks": [
+        "actual frozen task Skill read matches complete original bytes",
+        "exact document identity and revision"
+      ],
+      "audit_candidate": null
+    },
+    {
+      "case": "audit-document-feedback",
+      "role": "audit",
+      "task_id": 1,
+      "generation": "probe",
+      "tool_count": 38,
+      "skill_sha256": "99185770c11339be2273c727e59c627bae806f97bd1a499f59918a73ac184f2f",
+      "operation_skill_reads": [
+        {
+          "name": "dingtalk-doc",
+          "sha256": "c0ba5d0143f3fe0421f07c361c9bc18f2147a8800ae54d043df369bdfbcb5f40"
+        },
+        {
+          "name": "dingtalk-shared",
+          "sha256": "7c3f6231072cd0e038b69a94b94957e99a1b1b82b961882413e08a1cf56336fb"
+        }
+      ],
+      "inference_ready": true,
+      "missing_evidence": [],
+      "checks": [
+        "actual frozen task Skill read matches complete original bytes",
+        "exact document identity and revision"
+      ],
+      "audit_candidate": {
+        "candidate_digest": "d58a5899f186944099c708dfc333555530821239a870398f594ef4702d86f452",
+        "proposal_revision": 0,
+        "canonical_valid": true,
+        "context_sha256": "a975a3d9d4343967bc98a5fc9433fbf9404e2f1a298340e37a9f8afab5a82f89",
+        "source_bound_reply": true
+      }
+    }
+  ],
+  "stdio_records": [
+    {
+      "case": "mail-already-handled",
+      "role": "consumer",
+      "tool_count": 42,
+      "skill_sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+      "transport": "actual stdio MCP",
+      "passed": true
+    },
+    {
+      "case": "audit-document-feedback",
+      "role": "audit",
+      "tool_count": 38,
+      "skill_sha256": "99185770c11339be2273c727e59c627bae806f97bd1a499f59918a73ac184f2f",
+      "transport": "actual stdio MCP",
+      "passed": true
+    }
+  ],
+  "logs_sha256": {
+    "audit-document-feedback/preflight.calls.jsonl": "029e8dfebeaa876cefd7afac87d5bfa2246bf3d3b7c06190ac2810104fda00d8",
+    "audit-document-feedback/stdio-preflight.calls.jsonl": "8db427d8413fce84885e57c5b6000b47cfe1103d68264e31d97a8aac8e7f5daf",
+    "calendar-cross-midnight/preflight.calls.jsonl": "d389473f8e0370469e5bda3e943fc865207e2c483d5f5f25d6af6ef9909c344b",
+    "calendar-real-overlap/preflight.calls.jsonl": "48730e2c08aa19baf9904b9ef1347611b98c4ff2ca66ddd6ec41df2a96776c45",
+    "document-material-conflicts/preflight.calls.jsonl": "84dc19d03152851c01330f3e502ae61ea815ff7bb83190fde8dbf092bd2721cb",
+    "mail-already-handled/mail.calls.jsonl": "303dceaa1cc38adce3d155a4498ddc0425f6217a0751b5784729accf4c150141",
+    "mail-already-handled/preflight.calls.jsonl": "94c4cd6466bc132c7f505c5311fde564819f9cc4b7176e26eff7f06039b1d015",
+    "mail-already-handled/stdio-preflight.calls.jsonl": "12db8daa18a3671b655e58beefb35a700d8f0ff5a4f730f49952d4a47d8092ce",
+    "work-tracking-existing-remediation/preflight.calls.jsonl": "7e37a4239d7519f2ba9996ab2358436a418351a49767f08da853f1b2701d0225"
+  },
+  "independent_review": {
+    "reviewer": "native_catalog_review",
+    "finding": "No typed candidate or source-binding format defect. Corrected stale original-mail finding. Native CLI fixture binding, exact shortcut output envelope and actual model reads still require proof."
+  },
+  "installed_native_cli": {
+    "version": "v1.0.63",
+    "commit": "4cd5d05393a8748e89d9265eb9f7ec85745a0331"
+  },
+  "next_required": [
+    "Verify mail shortcut/native output envelopes and bind dws fixture in actual native invocation",
+    "Run paired business trajectories and independently evaluate all MCP and mail CLI reads",
+    "Standalone Task Agent acceptance",
+    "Service release and production readback"
+  ],
+  "temporary_cleanup": [
+    {
+      "path": "/tmp/ceo-native-business-mail-audit.dcXbu7",
+      "removed": true,
+      "bytes_removed": 9866362,
+      "open_handles_before_cleanup": 0
+    },
+    {
+      "path": "/tmp/ceo-native-business-input-final.lc22RN",
+      "removed": true,
+      "bytes_removed": 9883107,
+      "open_handles_before_cleanup": 0
+    }
+  ]
+}

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from app.agent_cli import build_role_server
 
 
@@ -64,7 +66,7 @@ def build_fixture(
                 }
             elif name in ("read_dingtalk_document", "read_dingtalk_document_full"):
                 document = facts["document"]
-                if kwargs["node_id"] != document["document_id"]:
+                if kwargs["node_id"] != document["node_id"]:
                     raise ValueError("fixture document identity unavailable")
                 result = document
             else:
@@ -88,3 +90,20 @@ def build_fixture(
             update={"fn": replace(tool.name), "is_async": False}
         )
     return server
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--case", required=True)
+    parser.add_argument("--phase", required=True)
+    parser.add_argument("--log-label")
+    args = parser.parse_args()
+    manifest = json.loads(args.manifest.read_text())
+    case = next(case for case in manifest["cases"] if case["id"] == args.case)
+    build_fixture(args.root, case, args.phase, log_label=args.log_label).run(
+        transport="stdio"
+    )

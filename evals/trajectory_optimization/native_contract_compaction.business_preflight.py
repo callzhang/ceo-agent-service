@@ -6,20 +6,21 @@ import hashlib
 import importlib.util
 import json
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from app.config import load_env_file
 from app.agent_runtime_config import load_runtime_config
-from app.agent_context import AgentTaskContext
 from app.agent_cron.context import ScheduledAgentContext
 from app.agent_cron.commands import ServiceCommandSkillMaterial
 from app.store import AutoReplyStore
 
 base = Path(__file__).resolve().parent
 manifest = json.loads(
-    (base / "native_contract_compaction.business_cases.v3.json").read_text()
+    Path(sys.argv[2]).read_text()
 )
 root = Path(sys.argv[1]).resolve()
 assert root.is_dir() and not list(root.iterdir()), (
@@ -37,6 +38,11 @@ spec = importlib.util.spec_from_file_location(
 )
 fixture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixture)
+input_spec = importlib.util.spec_from_file_location(
+    "business_inputs", base / "native_contract_compaction.business_inputs.py"
+)
+inputs = importlib.util.module_from_spec(input_spec)
+input_spec.loader.exec_module(inputs)
 records = []
 for case in manifest["cases"]:
     work = root / case["id"]
@@ -45,22 +51,7 @@ for case in manifest["cases"]:
     body = Path(skill["path"]).read_text()
     assert hashlib.sha256(body.encode()).hexdigest() == skill["sha256"]
     trigger = case["trigger"]
-    context = AgentTaskContext(
-        task_id=1,
-        channel=trigger["channel"],
-        conversation_id=trigger["conversation_id"],
-        conversation_title=trigger["conversation_title"],
-        single_chat=False,
-        trigger_message_id=trigger["message_id"],
-        trigger_sender=trigger["sender"],
-        trigger_text=trigger["text"],
-        trigger_create_time=trigger["create_time"],
-        messages=(),
-        materials=(),
-        prior_receipts=(),
-        trigger_raw_payload=trigger.get("raw_payload", {}),
-        skill_names=(case["skill_name"],),
-    )
+    context = inputs.task_context(case)
     frozen = ScheduledAgentContext(
         context=context,
         route=route,
@@ -129,13 +120,82 @@ for case in manifest["cases"]:
             ]
             == case["phases"]["cold"]["messages"]
         )
-        checks += ["chat locator at exact conversation; original mail evidence incomplete"]
+        mail = case["phases"]["cold"]["mail"]
+        (work / "mail.json").write_text(json.dumps(mail))
+        native_cli = shutil.which("dws")
+        assert native_cli is not None
+        (work / "native-dws-path.txt").write_text(native_cli)
+        fixture_path = base / "native_contract_compaction.business_mail_fixture.py"
+
+        def mail_read(*argv):
+            completed = subprocess.run(
+                [sys.executable, str(fixture_path), str(work), *argv],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return json.loads(completed.stdout)
+
+        assert mail_read("mail", "mailbox", "list", "--format", "json")["result"][
+            "mailboxes"
+        ] == mail["mailboxes"]
+        email = mail["mailboxes"][0]["email"]
+        assert mail_read(
+            "mail", "+thread", "--email", email,
+            "--id", mail["conversation"]["id"], "--format", "json",
+        )["result"]["value"] == mail["conversation"]
+        for message in mail["messages"]:
+            assert mail_read(
+                "mail", "+message", "--email", email,
+                "--id", message["id"], "--format", "json",
+            )["result"]["value"] == message
+        assert mail_read(
+            "mail", "message", "verify", "--email", email,
+            "--internet-message-id", mail["sent_receipt"]["internetMessageId"],
+            "--format", "json",
+        )["result"] == mail["sent_receipt"]
+        for argv in (
+            ["mail", "+thread", "--email", "wrong@example.test", "--id", "mail-thread-1", "--format", "json"],
+            ["mail", "+message", "--email", email, "--id", "wrong-message", "--format", "json"],
+            ["mail", "message", "send"],
+        ):
+            failed = subprocess.run(
+                [sys.executable, str(fixture_path), str(work), *argv],
+                capture_output=True,
+            )
+            assert failed.returncode != 0
+        checks += [
+            "chat is locator only; exact original mailbox/thread/messages and sent receipt read",
+            "wrong mailbox, wrong message identity and write leaf rejected by eval fixture",
+        ]
     else:
         document = case["phases"]["cold"]["document"]
         assert (
-            read("read_dingtalk_document", node_id=document["document_id"]) == document
+            read("read_dingtalk_document", node_id=document["node_id"]) == document
         )
         checks += ["exact document identity and revision"]
+    candidate_receipt = None
+    if case["role"] == "audit":
+        from app.audit_rules import render_audit_rules
+        from app.store import AgentRole
+        from app.reviewed_candidates import candidate_digest
+
+        audit = inputs.audit_context(
+            case, audit_rules=render_audit_rules(AgentRole.AUDIT, create_missing=False)
+        )
+        assert audit.candidate_digest == candidate_digest(audit.candidate)
+        rendered = audit.render(current_time=manifest["fixed_runtime_time"])
+        assert audit.candidate_digest in rendered
+        action = audit.candidate.proposal.actions[0]
+        assert action.target["message_id"] == trigger["message_id"]
+        assert action.payload["content"] == case["phases"]["cold"]["candidate"]["reply_body"]
+        candidate_receipt = {
+            "candidate_digest": audit.candidate_digest,
+            "proposal_revision": audit.proposal_revision,
+            "canonical_valid": True,
+            "context_sha256": hashlib.sha256(rendered.encode()).hexdigest(),
+            "source_bound_reply": True,
+        }
     records.append(
         {
             "case": case["id"],
@@ -148,6 +208,7 @@ for case in manifest["cases"]:
             "inference_ready": case["inference_ready"],
             "missing_evidence": case.get("missing_evidence", []),
             "checks": checks,
+            "audit_candidate": candidate_receipt,
         }
     )
 (root / "preflight.json").write_text(
@@ -159,7 +220,7 @@ print(
             "cases": len(records),
             "skill_reads_exact": True,
             "source_reads_exact": True,
-            "mail_business_evidence_complete": False,
+            "mail_original_fixture_complete": True,
             "model_calls": 0,
         }
     )
