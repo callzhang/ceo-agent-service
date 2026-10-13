@@ -16,7 +16,9 @@ def test_actual_source_declarations_initialize_transactionally_and_idempotently(
     migrate_workbench_schema(db)
     from app.action_storage import migrate_action_schema
     migrate_action_schema(db)
-    db.execute("update service_state set value='2026-10-13.1' where key='store_schema_version'")
+    from app.action_receipt_storage import migrate_action_receipt_schema
+    migrate_action_receipt_schema(db)
+    db.execute("update service_state set value='2026-10-13.2' where key='store_schema_version'")
     db.commit()
     db.close()
     store = AutoReplyStore(path)

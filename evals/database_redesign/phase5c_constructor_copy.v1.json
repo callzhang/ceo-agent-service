@@ -1,0 +1,61 @@
+{
+  "scope": "real production Store16 online backup; real constructor17 publication/current-fact inverse/actual old constructor16/republication",
+  "source_version": "2026-10-13.2",
+  "target_version": "2026-10-13.3",
+  "source_physical_tables": 129,
+  "target_physical_tables": 126,
+  "source_postfix_facts": {
+    "outbound_postfixes": {
+      "rows": 1079,
+      "sha256_values_types": "bfda70d6cf046346d01b9f6c17c9624e9feb7229d7199b0541bd3aa608ac099a"
+    },
+    "outbound_postfix_receipts": {
+      "rows": 613,
+      "sha256_values_types": "86a1af91461df6563b0229b8dfceeb311fbd841c4f5b969fe1c8a19ed2c1eae0"
+    },
+    "native_reply_dispatches": {
+      "rows": 67,
+      "sha256_values_types": "5c0b968cc72318fb79dbe3e5d7027b42a44f8ed4fd79a5c000c886277ce7bf99"
+    }
+  },
+  "current_postfix_facts": {
+    "outbound_postfixes": {
+      "rows": 1080,
+      "sha256_values_types": "890eae80673f4dcc0eb61c31b0014aa4a111a509932e8094a0101b1a92b590cb"
+    },
+    "outbound_postfix_receipts": {
+      "rows": 614,
+      "sha256_values_types": "e0bd2754e79cb2cb0951cd59ebf28aba637ba1b3412b48c7aeb21930b5141c89"
+    },
+    "native_reply_dispatches": {
+      "rows": 68,
+      "sha256_values_types": "37698128c97bad2ec0b5a7a6b595ef4584d359d1f1b9041ab33bbb3db1c6186e"
+    }
+  },
+  "unchanged_tables": 123,
+  "source_fk_findings": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "real_constructor_forward": true,
+  "current_fact_inverse": true,
+  "repeated_inverse": true,
+  "original_marker_restored": true,
+  "actual_old_constructor_readback": true,
+  "forward_inverse_forward": true,
+  "real_sends": 0,
+  "code_sha256": {
+    "app/store.py": "a0d9ffd123f7cd50ff09c44be2831178f3642da395ef70d162bae57c792979bf",
+    "app/action_storage.py": "ba2216cbd2c554a5f85d78bdc0e5c593ab5daaa64db792a66cb59875fd92f496",
+    "app/action_postfix_storage.py": "123706c686b7a54bab6976068e49d17aa7d9ed4249f0843102086ae8d77bd8f0",
+    "app/action_postfix_schema_release.py": "1e2cac54525be36e17d04601f0cdfb4a856cd458de89fc67d80f31f4abb1f5a4",
+    "app/store_schema_release.py": "91a59e89629e413a6738bf011923f56d9344ab60b9539223984ec5ca32a70235"
+  },
+  "old_constructor_commit": "ebaf0d966ab21fd328be577c0fb8e65a519bd009",
+  "observed_production_commit_after_copy": "beb62413f3da51fad5088b4553bb4e39be69a986",
+  "source_commit_binding": "online source16 schema validated; production code advanced concurrently; old constructor proof uses earlier published Store16 ebaf"
+}

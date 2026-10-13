@@ -2,8 +2,7 @@
 
 本阶段属于已批准的十张业务／运行表加一张迁移表设计。这里只完成
 `outbound_postfixes`、`outbound_postfix_receipts`、`native_reply_dispatches`
-三张表合入 `actions` 的独立基础层及正逆迁移，尚未激活 Store、调用方、
-bootstrap 或发布机制，也不代表完整数据库设计已经完成。
+三张表合入 `actions` 的基础层、正逆迁移和 Store17 开发候选调用／bootstrap／配对发布机制。尚未发布，也不代表完整数据库设计已经完成。
 
 ## 精确源与映射
 
@@ -62,3 +61,21 @@ fresh layout、manifest、版本及配对 release；用最新生产副本完成�
 ## 已发布来源重新核对
 
 第五期B正式部署到ebaf0d96后，当前生产Store16／Email51的九类型actions与postfix三表准确声明通过capture_action_postfix_schema只读校验；水位560／115，postfix行数1079／613／67。简明schema-only evidence见phase5c_published_source.v1.json。C worktree已合并已发布B及其历史fixture修正，合并后268项定向通过，包含C独立迁移、既有action回归、D source oracle及真实source-chain回归；选集有重叠，不与既往总数相加。允许继续Store17接入，仍不表示目标运行、正式生产副本或部署验收完成。
+
+## 实际构造函数与生产副本验证（开发候选）
+
+fresh Store17 与现有 prepare／claim／receipt／echo API 定向回归 RED→GREEN；
+包括重复调用保留首次值、真实第二次构造及 meeting 恢复。相关调用和业务检查
+136 项通过，其他 foundation／migration 组合 93 项通过，组合有重叠不累计。
+Ruff 和 diff 检查通过。
+
+phase5c_constructor_copy.v1.json 记录当前生产在线副本，经正式 factory 和新进程
+Store17 构造函数迁移 129→126；123 张其他表（不计本次应改变的版本记录表）
+值及类型不变。替身新增 parent、dispatch、receipt 后当前事实逆迁与重复逆迁通过；
+原 marker 值和时间完整恢复，已发布旧 Store16 ebaf 新进程能够读取这些新增事实，
+再正迁与 integrity_check 通过；保留既有 FK finding。真实发送为零。
+私有副本及临时代码在验证后已清理，仅保存摘要证据。
+
+生产代码并行前进到 beb62413，但 Store 来源仍为16；旧构造函数证明绑定 earlier
+published ebaf，不冒充当前生产完整代码。发布前需合并最新 main 并重新绑定证据，
+完成独立审查／CLI 替身业务检查／CI。完整十表目标尚未完成。

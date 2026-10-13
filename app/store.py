@@ -178,11 +178,12 @@ from app.work_summary_payload import (
 from app.task_source_documents import source_document_key, source_is_observed
 from app.wechat.models import WechatReplyScope
 
-from app.action_receipt_storage import migrate_action_receipt_schema
+from app.action_postfix_storage import migrate_action_postfix_schema
 
 from app.action_storage import (
     _current_objects as action_schema_objects,
     ACTION_TYPES,
+    POSTFIX_ACTION_TYPES, OUTBOUND_POSTFIX_SQL, OUTBOUND_POSTFIX_RECEIPT_SQL,
     create_action_schema,
     RECEIPT_ACTION_TYPES,
     action_schema_is_current,
@@ -291,7 +292,7 @@ REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id
                   and canonical.reply_task_id=parent.id"""
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-13.2"
+STORE_SCHEMA_VERSION = "2026-10-13.3"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -359,9 +360,6 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "runtime_feedback_iteration_capabilities",
     "feedback_iteration_decisions",
     "feedback_iteration_decision_items",
-    "outbound_postfixes",
-    "outbound_postfix_receipts",
-    "native_reply_dispatches",
     "business_source_documents",
     "business_task_signals",
     "business_tasks",
@@ -470,6 +468,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_business_legacy_links_task",
 )
 STORE_SCHEMA_REMOVED_TABLES = (
+    *POSTFIX_ACTION_TYPES,
     *RECEIPT_ACTION_TYPES,
     *RETIRED_WORKBENCH_TABLES,
     *RETIRED_TASK_TABLES,
@@ -2558,7 +2557,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             and run_schema_is_current(db, include_task_runs=True, include_workbench=True)
             and task_schema_is_current(db, include_workbench=True)
             and workbench_schema_is_current(db)
-            and action_schema_is_current(db, include_receipts=True)
+            and action_schema_is_current(db, include_postfix=True)
             and reply_input_foreign_keys_present
             and not removed_columns_present
             and (
@@ -4342,7 +4341,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "where payload_json<>'{}'"
             )
             db.execute("create index if not exists idx_reply_tasks_business_object_key on tasks(business_object_key) where record_type='reply_tasks'")
-            create_action_schema(db, include_receipts=True)
+            create_action_schema(db, include_postfix=True)
             self._migrate_oa_notification_events(db)
             sent_reply_columns = {
                 row["name"]
@@ -4960,49 +4959,13 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 where codex_session_id is not null and codex_session_id <> ''
                 """
             )
-            db.execute(
-                """
-                create table if not exists outbound_postfixes (
-                    channel text not null check(channel in ('dingtalk', 'wechat')),
-                    delivery_key text not null check(trim(delivery_key) <> ''),
-                    final_body text not null check(trim(final_body) <> ''),
-                    feedback_token text not null default '',
-                    postfix_version text not null,
-                    created_at text not null default current_timestamp,
-                    primary key(channel, delivery_key)
-                )
-                """
-            )
-            db.execute(
-                """
-                create table if not exists outbound_postfix_receipts (
-                    channel text not null check(channel in ('dingtalk', 'wechat')),
-                    delivery_key text not null check(trim(delivery_key) <> ''),
-                    provider_result_json text not null,
-                    created_at text not null default current_timestamp,
-                    primary key(channel, delivery_key),
-                    foreign key(channel, delivery_key)
-                        references outbound_postfixes(channel, delivery_key)
-                )
-                """
-            )
-            db.execute(
-                """create table if not exists native_reply_dispatches (
-                    channel text not null,
-                    delivery_key text not null,
-                    created_at text not null default current_timestamp,
-                    primary key(channel, delivery_key),
-                    foreign key(channel, delivery_key)
-                        references outbound_postfixes(channel, delivery_key)
-                )"""
-            )
             reply_source = f"({REPLY_TASK_CURRENT_SQL})"
             legacy_ready_deliveries = db.execute(
                 f"""
                 select deliveries.id, deliveries.reply_text, tasks.trigger_text
                 from wechat_deliveries as deliveries
                 join {reply_source} as tasks on tasks.id=deliveries.reply_task_id
-                left join outbound_postfixes as postfixes
+                left join ({OUTBOUND_POSTFIX_SQL}) as postfixes
                   on postfixes.channel='wechat'
                  and postfixes.delivery_key=('wechat:' || deliveries.id)
                 where deliveries.execution_generation=tasks.execution_generation
@@ -5074,7 +5037,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             target = db.execute("select value from service_state where key=?", (state_key,)).fetchone()
             prepared = db.execute(
-                "select 1 from outbound_postfixes where channel='dingtalk' and delivery_key=?", (key,)
+                f"select 1 from ({OUTBOUND_POSTFIX_SQL}) where channel='dingtalk' and delivery_key=?", (key,)
             ).fetchone()
             if target is not None:
                 if str(target["value"]) != target_json or prepared is None:
@@ -5133,9 +5096,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             body=body,
         )
         row = db.execute(
-            """select channel, delivery_key, final_body, feedback_token, postfix_version
-               from outbound_postfixes
-               where channel=? and delivery_key=?""",
+            f'select channel, delivery_key, final_body, feedback_token, postfix_version\n               from ({OUTBOUND_POSTFIX_SQL})\n               where channel=? and delivery_key=?',
             (normalized_channel, normalized_delivery_key),
         ).fetchone()
         if row is not None:
@@ -5157,18 +5118,11 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 else feedback_base_url
             ),
         )
-        db.execute(
-            """insert into outbound_postfixes (
-                   channel, delivery_key, final_body, feedback_token, postfix_version
-               ) values (?, ?, ?, ?, ?)""",
-            (
-                prepared.channel,
-                prepared.delivery_key,
-                prepared.final_body,
-                prepared.feedback_token,
-                prepared.postfix_version,
-            ),
-        )
+        insert_action(db, "outbound_postfixes", {
+            "channel": prepared.channel, "delivery_key": prepared.delivery_key,
+            "final_body": prepared.final_body, "feedback_token": prepared.feedback_token,
+            "postfix_version": prepared.postfix_version,
+        })
         return prepared
 
     def get_outbound_postfix(
@@ -5185,9 +5139,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("delivery key is required")
         with self._connect() as db:
             row = db.execute(
-                """select channel, delivery_key, final_body, feedback_token, postfix_version
-                   from outbound_postfixes
-                   where channel=? and delivery_key=?""",
+                f'select channel, delivery_key, final_body, feedback_token, postfix_version\n                   from ({OUTBOUND_POSTFIX_SQL})\n                   where channel=? and delivery_key=?',
                 (normalized_channel, normalized_delivery_key),
             ).fetchone()
         if row is None:
@@ -5213,8 +5165,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             raise ValueError("unsupported outbound channel")
         with self._connect() as db:
             rows = db.execute(
-                """select final_body from outbound_postfixes
-                   where channel=? and created_at>=?""",
+                f'select final_body from ({OUTBOUND_POSTFIX_SQL})\n                   where channel=? and created_at>=?',
                 (normalized_channel, since),
             ).fetchall()
         return {outbound_body_echo_key(str(row["final_body"])) for row in rows}
@@ -5222,11 +5173,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
     def claim_native_reply_dispatch(self, channel: str, delivery_key: str) -> bool:
         """Commit the possible-effect boundary before calling the provider."""
         with self._immediate_write_transaction() as db:
-            cursor = db.execute(
-                "insert or ignore into native_reply_dispatches (channel, delivery_key) "
-                "values (?, ?)",
-                (channel, delivery_key),
-            )
+            cursor = insert_action(db, "native_reply_dispatches", {
+                "channel": channel, "delivery_key": delivery_key,
+            }, ignore=True)
             return cursor.rowcount == 1
 
     def get_outbound_postfix_receipt(
@@ -5242,8 +5191,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         )
         with self._connect() as db:
             row = db.execute(
-                """select provider_result_json from outbound_postfix_receipts
-                   where channel=? and delivery_key=?""",
+                f'select provider_result_json from ({OUTBOUND_POSTFIX_RECEIPT_SQL})\n                   where channel=? and delivery_key=?',
                 (normalized_channel, normalized_delivery_key),
             ).fetchone()
         return None if row is None else json.loads(str(row["provider_result_json"]))
@@ -5262,15 +5210,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         )
         serialized = json.dumps(provider_result, ensure_ascii=False, default=str)
         with self._immediate_write_transaction() as db:
-            db.execute(
-                """insert or ignore into outbound_postfix_receipts (
-                       channel, delivery_key, provider_result_json
-                   ) values (?, ?, ?)""",
-                (normalized_channel, normalized_delivery_key, serialized),
-            )
+            insert_action(db, "outbound_postfix_receipts", {
+                "channel": normalized_channel, "delivery_key": normalized_delivery_key,
+                "provider_result_json": serialized,
+            }, ignore=True)
             row = db.execute(
-                """select provider_result_json from outbound_postfix_receipts
-                   where channel=? and delivery_key=?""",
+                f'select provider_result_json from ({OUTBOUND_POSTFIX_RECEIPT_SQL})\n                   where channel=? and delivery_key=?',
                 (normalized_channel, normalized_delivery_key),
             ).fetchone()
         assert row is not None
@@ -9568,10 +9513,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 db.execute("select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
                 if "service_state" in tables else None
             )
-            store_tables = {"tasks", "runs", "actions", *ACTION_TYPES, *RECEIPT_ACTION_TYPES,
-                            *(obj["name"] for obj in action_schema_objects(True)),
+            store_tables = {"tasks", "runs", "actions", *ACTION_TYPES, *RECEIPT_ACTION_TYPES, *POSTFIX_ACTION_TYPES,
+                            *(obj["name"] for obj in action_schema_objects(True, include_postfix=True)),
                             *RETIRED_TASK_TABLES, *RETIRED_RUN_TABLES, *RETIRED_WORKBENCH_TABLES}
-            if marker is not None and marker[0] == STORE_SCHEMA_VERSION and run_schema_is_current(db, allow_missing_objects=True, include_task_runs=True, include_workbench=True) and task_schema_is_current(db, allow_missing_objects=True, include_workbench=True) and workbench_schema_is_current(db, allow_missing_objects=True) and action_schema_is_current(db, allow_missing_objects=True, include_receipts=True):
+            if marker is not None and marker[0] == STORE_SCHEMA_VERSION and run_schema_is_current(db, allow_missing_objects=True, include_task_runs=True, include_workbench=True) and task_schema_is_current(db, allow_missing_objects=True, include_workbench=True) and workbench_schema_is_current(db, allow_missing_objects=True) and action_schema_is_current(db, allow_missing_objects=True, include_postfix=True):
                 return
             collision = db.execute(
                 "select 1 from sqlite_master where name collate nocase in ("
@@ -9581,7 +9526,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if marker is not None or collision is not None:
                 raise sqlite3.IntegrityError(
                     "unsupported or malformed Store source schema; expected a fresh Store, "
-                    "the exact 2026-10-13.1 source, or the current 2026-10-13.2 schema"
+                    "the exact 2026-10-13.2 source, or the current 2026-10-13.3 schema"
                 )
         finally:
             db.close()
@@ -9593,7 +9538,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if db.execute("select 1 from sqlite_master where name='service_state'").fetchone() is None:
                 return False
             marker = db.execute("select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
-            if marker is None or marker[0] != "2026-10-13.1":
+            if marker is None or marker[0] != "2026-10-13.2":
                 return False
             db.execute("pragma foreign_keys=off")
             db.execute("begin immediate")
@@ -9601,7 +9546,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     and task_schema_is_current(db, include_workbench=True)
                     and workbench_schema_is_current(db)):
                 raise sqlite3.IntegrityError("invalid preceding Store core schema")
-            migrate_action_receipt_schema(db)
+            migrate_action_postfix_schema(db)
             if not self._schema_manifest_is_current_in_connection(db, include_run_snapshots=True):
                 raise RuntimeError("typed task migration manifest differs")
             db.execute("update service_state set value=? where key=?", (STORE_SCHEMA_VERSION, STORE_SCHEMA_VERSION_KEY))
@@ -18029,7 +17974,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                       and coalesce(locked_at,'')=''
                       and send_result_json='{{}}'
                       and not exists (
-                        select 1 from outbound_postfixes outbound
+                        select 1 from ({OUTBOUND_POSTFIX_SQL}) outbound
                         where outbound.channel='dingtalk' and outbound.delivery_key in (
                           'meeting-alignment:' || meeting_alignment_jobs.legacy_key || ':' || meeting_alignment_jobs.meeting_id,
                           'meeting-alignment:' || meeting_alignment_jobs.legacy_key || ':' || meeting_alignment_jobs.meeting_id || ':sensitive'
@@ -18165,8 +18110,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 or result.sensitive_private_delivery is not None or result.sensitive_private_merged):
             return False
         with self._immediate_write_transaction() as db:
-            body = db.execute("select final_body from outbound_postfixes where channel='dingtalk' and delivery_key=?", (key,)).fetchone()
-            saved = db.execute("select provider_result_json from outbound_postfix_receipts where channel='dingtalk' and delivery_key=?", (key,)).fetchone()
+            body = db.execute(f"select final_body from ({OUTBOUND_POSTFIX_SQL}) where channel='dingtalk' and delivery_key=?", (key,)).fetchone()
+            saved = db.execute(f"select provider_result_json from ({OUTBOUND_POSTFIX_RECEIPT_SQL}) where channel='dingtalk' and delivery_key=?", (key,)).fetchone()
             if body is None or saved is None or body["final_body"] != prepared.final_body or json.loads(saved["provider_result_json"]) != receipt:
                 return False
             target = db.execute("select value from service_state where key=?",
@@ -18174,7 +18119,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             expected_target = {"kind": "group" if job.target_kind == "group" else "user", "id": job.target_id}
             if target is None or json.loads(target["value"]) != expected_target:
                 return False
-            if db.execute("select 1 from outbound_postfixes where channel='dingtalk' and delivery_key=?", (f"{key}:sensitive",)).fetchone():
+            if db.execute(f"select 1 from ({OUTBOUND_POSTFIX_SQL}) where channel='dingtalk' and delivery_key=?", (f"{key}:sensitive",)).fetchone():
                 return False
             if db.execute("select 1 from dispatcher_claim_leases where adapter_name='meeting' and source_id=? "
                 "and coalesce(terminal_at,'')='' and julianday(lease_expires_at)>julianday('now')",
@@ -18195,22 +18140,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """Resume a reviewed unsent delivery after independent provider readback."""
         with self._connect() as db:
             row = db.execute(
-                """update tasks as meeting_alignment_jobs
-                   set status='ready_to_send', locked_at=null,
-                       available_at='', error='', updated_at=current_timestamp
-                   where meeting_alignment_jobs.record_type='meeting_alignment_jobs'
-                     and cast(meeting_alignment_jobs.legacy_key as integer)=?
-                     and status='failed' and locked_at is null
-                     and decision_json!='{}' and target_id!=''
-                     and send_result_json='{}'
-                     and not exists (
-                       select 1 from outbound_postfix_receipts
-                       where channel='dingtalk'
-                         and delivery_key=('meeting-alignment:' ||
-                           meeting_alignment_jobs.legacy_key || ':' ||
-                           meeting_alignment_jobs.meeting_id)
-                     )
-                   returning *""",
+                f"update tasks as meeting_alignment_jobs\n                   set status='ready_to_send', locked_at=null,\n                       available_at='', error='', updated_at=current_timestamp\n                   where meeting_alignment_jobs.record_type='meeting_alignment_jobs'\n                     and cast(meeting_alignment_jobs.legacy_key as integer)=?\n                     and status='failed' and locked_at is null\n                     and decision_json!='{{}}' and target_id!=''\n                     and send_result_json='{{}}'\n                     and not exists (\n                       select 1 from ({OUTBOUND_POSTFIX_RECEIPT_SQL})\n                       where channel='dingtalk'\n                         and delivery_key=('meeting-alignment:' ||\n                           meeting_alignment_jobs.legacy_key || ':' ||\n                           meeting_alignment_jobs.meeting_id)\n                     )\n                   returning *",
                 (job_id,),
             ).fetchone()
             return self._meeting_alignment_job_from_row(row) if row else None
