@@ -124,8 +124,8 @@ def test_fresh_fk_children_retain_logical_parent_namespace(tmp_path):
             r[0]
             for r in db.execute("select name from sqlite_master where type='trigger'")
         }
-        assert "trg_runs_child_agent_execution_receipts_agent_run_id_insert" in guards
-        assert "trg_runs_child_review_candidates_consumer_run_id_update" in guards
+        assert "trg_actions_agent_run_id_insert" in guards
+        assert "trg_actions_consumer_run_id_update" in guards
 
 
 def test_public_id_lookup_is_indexed(tmp_path):
@@ -325,7 +325,7 @@ def test_migrated_attempt_public_lookup_and_mutation_use_legacy_namespace(tmp_pa
             db.execute(
                 "select value from service_state where key='store_schema_version'"
             ).fetchone()[0]
-            == "2026-10-12.1"
+            == "2026-10-13.3"
         )
     reopened = AutoReplyStore(store.path)
     assert reopened.get_agent_runtime_attempt(7).status == "failed"
@@ -762,7 +762,7 @@ def test_fresh_store_bootstrap_on_email_only_database_keeps_email_schema_and_row
             db.execute(
                 "select value from service_state where key='store_schema_version'"
             ).fetchone()[0]
-            == "2026-10-12.1"
+            == "2026-10-13.3"
         )
 
 

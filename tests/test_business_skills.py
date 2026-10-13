@@ -675,12 +675,11 @@ def _compact_catalog_records(protocol):
     import io
 
     body = protocol.split('## Installed CEO business Skill catalog\n', 1)[1].split('\n\n## Required Skill protocol', 1)[0]
-    roots_body, entries_body = body.split('\n\nName\tRead path\tDescription', 1)
+    roots_body, entries_body = body.split('\n\nName\tRoot\tRelative path\tDescription', 1)
     entries_body = entries_body.removeprefix('\n')
     roots = dict(csv.reader(io.StringIO(roots_body.split('Root\tPath', 1)[1].removeprefix('\n')), delimiter='\t'))
     entries = []
-    for name, read_path, description in csv.reader(io.StringIO(entries_body), delimiter='\t'):
-        alias, relative = read_path.split(':', 1)
+    for name, alias, relative, description in csv.reader(io.StringIO(entries_body), delimiter='\t'):
         entries.append((name, Path(roots[alias]) / relative, description))
     return roots, entries
 

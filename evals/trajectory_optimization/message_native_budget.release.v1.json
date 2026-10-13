@@ -1,0 +1,276 @@
+{
+  "version": 1,
+  "production_commit": "06c08020773978b613d3a94dc4b9642e4b0cc2ef",
+  "production_dirty": false,
+  "pid": [
+    "43583"
+  ],
+  "deployment_receipt": {
+    "operation_id": "deploy-92e67a59-d7d2-4c4b-9d0f-5ba05f0e34b4",
+    "status": "succeeded",
+    "original_commit": "5743f01e3a3e392d70ae523e6beb9201e774d967",
+    "target_commit": "06c08020773978b613d3a94dc4b9642e4b0cc2ef",
+    "installed_commit": "06c08020773978b613d3a94dc4b9642e4b0cc2ef",
+    "error": "",
+    "updated_at": "2026-10-13T05:05:56.723166+00:00"
+  },
+  "backup": {
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-12.sqlite3",
+    "exists": true,
+    "bytes": 471347200
+  },
+  "deployed_command_controls": [
+    {
+      "role": "consumer",
+      "resume": false,
+      "budget_count": 1,
+      "global_budget_override": false
+    },
+    {
+      "role": "consumer",
+      "resume": true,
+      "budget_count": 1,
+      "global_budget_override": false
+    },
+    {
+      "role": "audit",
+      "resume": false,
+      "budget_count": 1,
+      "global_budget_override": false
+    },
+    {
+      "role": "audit",
+      "resume": true,
+      "budget_count": 1,
+      "global_budget_override": false
+    }
+  ],
+  "http_readbacks": [
+    {
+      "path": "/healthz",
+      "http_status": 200,
+      "health": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    {
+      "path": "/api/workers/status",
+      "http_status": 200,
+      "summary": {
+        "queue_count": 13,
+        "pending": 3,
+        "processing": 1,
+        "failed": 2,
+        "retryable": 0
+      }
+    },
+    {
+      "path": "/api/console/attention",
+      "http_status": 200,
+      "meta": {
+        "snapshot_at": "2026-10-13T05:07:22.398780Z",
+        "page": null,
+        "page_size": null,
+        "total": 1,
+        "next_cursor": "",
+        "has_more": false
+      }
+    },
+    {
+      "path": "/api/console/history?page_size=1&include_chart=false",
+      "http_status": 200,
+      "meta": {
+        "snapshot_at": "2026-10-13T05:07:24.433194Z",
+        "page": 1,
+        "page_size": 1,
+        "total": 34850,
+        "next_cursor": "2",
+        "has_more": true
+      }
+    },
+    {
+      "path": "/api/console/settings/prompt-preview?role=consumer",
+      "http_status": 200,
+      "role": "consumer",
+      "mode": "current",
+      "runtime_chars": 2699,
+      "runtime_sha256": "97e1b7e0b074928c4c95489cee908af2a10dc39e6e09de8a81c3eef7af663978",
+      "sections": [
+        {
+          "name": "角色合同",
+          "source": "服务角色合同",
+          "placement": "developer",
+          "characters": 785
+        },
+        {
+          "name": "Skill 使用约定",
+          "source": "服务角色合同",
+          "placement": "developer",
+          "characters": 310
+        },
+        {
+          "name": "共同工作原则",
+          "source": "已保存 Developer 模板",
+          "placement": "developer",
+          "characters": 625
+        },
+        {
+          "name": "系统动作目录",
+          "source": "系统动作合同",
+          "placement": "developer",
+          "characters": 922
+        },
+        {
+          "name": "输出契约",
+          "source": "Pydantic 业务模型",
+          "placement": "developer",
+          "characters": 9079
+        },
+        {
+          "name": "能力边界",
+          "source": "服务能力合同",
+          "placement": "developer",
+          "characters": 3529
+        },
+        {
+          "name": "后台记忆说明",
+          "source": "服务运行合同",
+          "placement": "developer",
+          "characters": 350
+        },
+        {
+          "name": "角色边界",
+          "source": "服务角色合同",
+          "placement": "developer",
+          "characters": 2741
+        },
+        {
+          "name": "决策证据",
+          "source": "服务决策质量合同",
+          "placement": "developer",
+          "characters": 1761
+        },
+        {
+          "name": "应用结果合同",
+          "source": "服务应用合同",
+          "placement": "developer",
+          "characters": 891
+        },
+        {
+          "name": "工作人格",
+          "source": "已保存 Work Profile",
+          "placement": "developer",
+          "characters": 8532
+        },
+        {
+          "name": "运行上下文",
+          "source": "实际运行配置",
+          "placement": "developer",
+          "characters": 2699
+        },
+        {
+          "name": "任务输入",
+          "source": "当前任务正文",
+          "placement": "task",
+          "characters": 24
+        }
+      ]
+    },
+    {
+      "path": "/api/console/settings/prompt-preview?role=audit",
+      "http_status": 200,
+      "role": "audit",
+      "mode": "current",
+      "runtime_chars": 2469,
+      "runtime_sha256": "60dffbc8a0654fc7cc29d86d4ce035dfac1ea84c437a488d9b4148a0580cebc3",
+      "sections": [
+        {
+          "name": "审核规则",
+          "source": "已保存 Audit Rules",
+          "placement": "developer",
+          "characters": 7608
+        },
+        {
+          "name": "角色合同",
+          "source": "服务角色合同",
+          "placement": "developer",
+          "characters": 785
+        },
+        {
+          "name": "Skill 使用约定",
+          "source": "服务角色合同",
+          "placement": "developer",
+          "characters": 335
+        },
+        {
+          "name": "共同工作原则",
+          "source": "已保存 Developer 模板",
+          "placement": "developer",
+          "characters": 625
+        },
+        {
+          "name": "系统动作目录",
+          "source": "系统动作合同",
+          "placement": "developer",
+          "characters": 922
+        },
+        {
+          "name": "输出契约",
+          "source": "Pydantic 业务模型",
+          "placement": "developer",
+          "characters": 1575
+        },
+        {
+          "name": "能力边界",
+          "source": "服务能力合同",
+          "placement": "developer",
+          "characters": 828
+        },
+        {
+          "name": "后台记忆说明",
+          "source": "服务运行合同",
+          "placement": "developer",
+          "characters": 350
+        },
+        {
+          "name": "决策证据",
+          "source": "服务决策质量合同",
+          "placement": "developer",
+          "characters": 1761
+        },
+        {
+          "name": "应用结果合同",
+          "source": "服务应用合同",
+          "placement": "developer",
+          "characters": 3007
+        },
+        {
+          "name": "响应完整性",
+          "source": "审核角色合同",
+          "placement": "developer",
+          "characters": 423
+        },
+        {
+          "name": "工作人格",
+          "source": "已保存 Work Profile",
+          "placement": "developer",
+          "characters": 8532
+        },
+        {
+          "name": "运行上下文",
+          "source": "实际运行配置",
+          "placement": "developer",
+          "characters": 2469
+        },
+        {
+          "name": "任务输入",
+          "source": "当前任务正文",
+          "placement": "task",
+          "characters": 24
+        }
+      ]
+    }
+  ],
+  "scope": "Formal deployment and local installed-builder controls/operational readback only; no new actual business/provider/model replay."
+}

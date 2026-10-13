@@ -76,7 +76,7 @@ DYNAMIC_SKILL_MARKER = "[dynamic-skill]"
 CONSUMER_UNREVIEWED_EFFECT = "consumer_unreviewed_provider_effect"
 
 CONSUMER_DYNAMIC_SKILL_SENTENCE = (
-    "Consumer Agent A independently selects and reads every applicable business and operation Skill before forming the candidate. Provider command names, MCP tools, receipts, and readback procedures belong to the Agent/runtime capability and are not application review conditions."
+    "Consumer Agent A independently selects and applies every applicable business and operation Skill before forming the candidate. Provider command names, MCP tools, receipts, and readback procedures belong to the Agent/runtime capability and are not application review conditions."
 )
 AUDIT_DYNAMIC_SKILL_SENTENCE = (
     "Audit Agent B independently selects and applies every applicable business and operation Skill to the typed candidate. Review the whole candidate with approve, return or reject; execution is owned by system code. Provider command names, MCP tools, receipts, and readback procedures remain runtime-owned."

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from app.run_schema_release import RunSchemaRelease
     from app.task_schema_release import TaskSchemaRelease
     from app.workbench_schema_release import WorkbenchSchemaRelease
+    from app.action_schema_release import ActionSchemaRelease
 
 VERSION_KEY = "store_schema_version"
 
@@ -58,7 +59,7 @@ def _migrate_store(root: Path, path: Path) -> None:
 
 def prepare_store_schema_release(
     root: Path, path: Path
-) -> RunSchemaRelease | TaskSchemaRelease | WorkbenchSchemaRelease | None:
+) -> RunSchemaRelease | TaskSchemaRelease | WorkbenchSchemaRelease | ActionSchemaRelease | None:
     root, path = root.resolve(), path.resolve()
     target = _target_store_version(root)
     if target is None or not path.exists():
@@ -84,6 +85,21 @@ def prepare_store_schema_release(
         if (version[0], target) == (SOURCE_VERSION, WORKBENCH_VERSION):
             from app.workbench_schema_release import prepare_workbench_schema_release
             return prepare_workbench_schema_release(root, path, version)
+        from app.action_schema_release import SOURCE_ACTION_VERSION, ACTION_VERSION, prepare_action_schema_release
+        if (version[0], target) == (SOURCE_ACTION_VERSION, ACTION_VERSION):
+            return prepare_action_schema_release(root, path, version)
+        from app.action_receipt_schema_release import (
+            SOURCE_ACTION_RECEIPT_VERSION, ACTION_RECEIPT_VERSION,
+            prepare_action_receipt_schema_release,
+        )
+        if (version[0], target) == (SOURCE_ACTION_RECEIPT_VERSION, ACTION_RECEIPT_VERSION):
+            return prepare_action_receipt_schema_release(root, path, version)
+        from app.action_postfix_schema_release import (
+            SOURCE_ACTION_POSTFIX_VERSION, ACTION_POSTFIX_VERSION,
+            prepare_action_postfix_schema_release,
+        )
+        if (version[0], target) == (SOURCE_ACTION_POSTFIX_VERSION, ACTION_POSTFIX_VERSION):
+            return prepare_action_postfix_schema_release(root, path, version)
         raise ValueError(
             "Store schema release needs a verified inverse for this transition"
         )

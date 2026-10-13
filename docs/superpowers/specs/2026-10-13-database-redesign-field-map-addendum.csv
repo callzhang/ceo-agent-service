@@ -1,0 +1,8 @@
+old_table,old_column,sql_type,not_null,primary_key_position,target_table,target_field_or_disposition,reason
+email_unsubscribe_cancellations,action_identity,TEXT,0,1,actions,actions.payload.action_identity,来自当前生产实际字段；保留现有决定/重试事实与约束，不新增取消、重试或审批策略。精确生成列、复合身份与FK在邮件actions迁移单元冻结。
+email_unsubscribe_cancellations,decision_json,TEXT,1,0,actions,actions.payload.decision_json,来自当前生产实际字段；保留现有决定/重试事实与约束，不新增取消、重试或审批策略。精确生成列、复合身份与FK在邮件actions迁移单元冻结。
+email_direct_retry_requests,action_id,TEXT,1,1,actions,actions.action_id（直接 FK/既有关系字段）,来自当前生产实际字段；保留现有决定/重试事实与约束，不新增取消、重试或审批策略。精确生成列、复合身份与FK在邮件actions迁移单元冻结。
+email_direct_retry_requests,attempt_number,INTEGER,1,2,actions,actions.payload.attempt_number,来自当前生产实际字段；保留现有决定/重试事实与约束，不新增取消、重试或审批策略。精确生成列、复合身份与FK在邮件actions迁移单元冻结。
+email_direct_retry_requests,source_readback_digest,TEXT,1,0,actions,actions.payload.source_readback_digest,来自当前生产实际字段；保留现有决定/重试事实与约束，不新增取消、重试或审批策略。精确生成列、复合身份与FK在邮件actions迁移单元冻结。
+email_direct_retry_requests,account_configuration_snapshot,TEXT,1,0,actions,actions.payload.account_configuration_snapshot,来自当前生产实际字段；保留现有决定/重试事实与约束，不新增取消、重试或审批策略。精确生成列、复合身份与FK在邮件actions迁移单元冻结。
+email_direct_retry_requests,requested_at,TEXT,1,0,actions,actions.payload.requested_at,来自当前生产实际字段；保留现有决定/重试事实与约束，不新增取消、重试或审批策略。精确生成列、复合身份与FK在邮件actions迁移单元冻结。

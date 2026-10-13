@@ -1,6 +1,7 @@
 from __future__ import annotations
 from app.run_storage import SCHEDULED_RUN_SQL
 from app.task_storage import REPLY_TASK_SQL
+from app.action_storage import EXTERNAL_ACTION_RESULT_SQL
 
 from datetime import datetime, timezone
 
@@ -107,7 +108,7 @@ def close_superseded_scheduled_reply_tasks(
               )
               and not exists (
                   select 1
-                  from external_action_results as external_result
+                  from ({EXTERNAL_ACTION_RESULT_SQL}) as external_result
                   where external_result.business_object_key=task.business_object_key
               )
             order by task.id

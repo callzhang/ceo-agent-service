@@ -1,0 +1,519 @@
+{
+  "version": 1,
+  "accepted": false,
+  "scope": "Unaccepted synthetic continuation diagnostics, not production lifecycle or directory format acceptance",
+  "initial_cwd_confounded_control": {
+    "version": 1,
+    "accepted": false,
+    "reason": "Cold CLI --cd points to fixture; exec resume has no --cd and process runner inherits caller development repo cwd. Extra shared AGENTS reads and new environment-context User records confound the control. Correct results retained; not same-directory acceptance.",
+    "runs": [
+      {
+        "role": "consumer",
+        "arm": "baseline",
+        "session_id": "01a131e3-0842-70f3-8d35-257d74aae27b",
+        "canonical_valid": true,
+        "cwd": [
+          "/Users/derek/Projects/ceo-agent-service"
+        ],
+        "initial_cwd": "/private/tmp/ceo-skill-columns-document-yi0b0wap",
+        "custom_call_count": 1,
+        "custom_call_kinds": [
+          "shared AGENTS read"
+        ],
+        "before_sha256": "20227cd2a1c7834a8d2c376f4430d3dd8555ad0c00c08cff1c143ab239dcc062",
+        "before_bytes": 493970,
+        "events_sha256": "294834760a87f5825e528b1539471e9e3cbd9cac724239d28fe036e6f5e8e8cf",
+        "result": {
+          "outcome": "no_action",
+          "summary": "已完成对更新后草稿预算文档的事实与算术审查。文档标题所述总额为110单位；三条且仅有的完整项目行分别为40、50、20单位，实际合计为110单位（40+50+20=110）。标题总额与完整项目行合计一致，差异为0单位。当前材料未提供任何“修正已获批准”的证据，因此仅确认数值一致，不声称存在已批准的修正；未改写源文档，也未执行任何外部变更。审查依据为原始触发消息synthetic-document及适用的synthetic-guide-150。",
+          "proposal": null,
+          "decision_options": [],
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "requested_input": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false,
+          "source_bindings": [],
+          "durable_memories": []
+        }
+      },
+      {
+        "role": "consumer",
+        "arm": "candidate",
+        "session_id": "01a131e3-5f1d-7373-b0ee-eebc794150b3",
+        "canonical_valid": true,
+        "cwd": [
+          "/Users/derek/Projects/ceo-agent-service"
+        ],
+        "initial_cwd": "/private/tmp/ceo-skill-columns-document-yi0b0wap",
+        "custom_call_count": 1,
+        "custom_call_kinds": [
+          "shared AGENTS read"
+        ],
+        "before_sha256": "6e8a41556918e5e0f6e2922f354518578ca8c732d40904bc48ea6e5ea24c4646",
+        "before_bytes": 493730,
+        "events_sha256": "c4c6365893eee28ac08227980fc1915d6323359b5e8087757035dfd5bc692914",
+        "result": {
+          "outcome": "no_action",
+          "summary": "已完成只读预算文档审查。更新后的草稿标题声明总额为 110 单位；三个完整项目行分别为 40、50 和 20 单位，实际合计为 110 单位（40 + 50 + 20）。声明总额与完整项目行合计一致，未发现算术差异。材料未提供其他行，也未声称或证明任何更正已获批准；本次仅报告审查结果，未改写源文档。",
+          "proposal": null,
+          "decision_options": [],
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "requested_input": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false,
+          "source_bindings": [],
+          "durable_memories": []
+        }
+      },
+      {
+        "role": "audit",
+        "arm": "baseline",
+        "session_id": "01a131e3-8815-7851-b130-1aa93ee5ccfe",
+        "canonical_valid": true,
+        "cwd": [
+          "/Users/derek/Projects/ceo-agent-service"
+        ],
+        "initial_cwd": "/private/tmp/ceo-skill-columns-document-yi0b0wap",
+        "custom_call_count": 1,
+        "custom_call_kinds": [
+          "shared AGENTS read"
+        ],
+        "before_sha256": "d4d894a4161c1c1bfa2d43d26b3ac146ee9e135344936b0fe555b43481225f19",
+        "before_bytes": 489143,
+        "events_sha256": "631dab4c3ab6c31198a5ecdd5289f3bb7e24a6e440c65d119a7cbaccc0d6c837",
+        "result": {
+          "outcome": "approve",
+          "summary": "Approved. Revision 1 faithfully fulfills the current authoritative trigger and the applicable synthetic-guide-150 guidance. It preserves the current stated total of 110 units, calculates the three and only three complete rows as 40 + 50 + 20 = 110 units, correctly reports a discrepancy of 0 units, and distinguishes numerical consistency from evidence of an approved correction. It performs no source rewrite, proposes no external change, and makes no unsupported approval or execution claim.",
+          "proposal_revision": 1,
+          "candidate_digest": "f486a6a724a6f59ef7bafbca6a8ce54baadb0ecc5a0d0375412216f2fd2cad06",
+          "evidence_refs": [
+            "synthetic-document",
+            "synthetic-guide-150"
+          ],
+          "feedback": null,
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0
+        }
+      },
+      {
+        "role": "audit",
+        "arm": "candidate",
+        "session_id": "01a131e3-c0bd-79e1-800f-da1481d51b63",
+        "canonical_valid": true,
+        "cwd": [
+          "/Users/derek/Projects/ceo-agent-service"
+        ],
+        "initial_cwd": "/private/tmp/ceo-skill-columns-document-yi0b0wap",
+        "custom_call_count": 1,
+        "custom_call_kinds": [
+          "shared AGENTS read"
+        ],
+        "before_sha256": "23f9bb5191bdc7648d7a6f01e352c32e11ad1a6dd134cacb9ff433c98947bd1d",
+        "before_bytes": 485292,
+        "events_sha256": "e7dbad450d28373f7c348361572b8095244b7be5f9305ef316a74e3fbe7e042c",
+        "result": {
+          "outcome": "approve",
+          "summary": "Approved. Revision 1 accurately fulfills the authoritative synthetic-document trigger and the applicable synthetic-guide-150 guidance. It preserves the current stated total of 110 units and the three complete row values of 40, 50, and 20 units; the arithmetic 40+50+20=110 is correct, so the discrepancy is 0 units. It correctly distinguishes numerical consistency from an approved correction, makes no unsupported approval claim, and states that the source document and external state were not changed.",
+          "proposal_revision": 1,
+          "candidate_digest": "f486a6a724a6f59ef7bafbca6a8ce54baadb0ecc5a0d0375412216f2fd2cad06",
+          "evidence_refs": [
+            "synthetic-document",
+            "synthetic-guide-150"
+          ],
+          "feedback": null,
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0
+        }
+      }
+    ]
+  },
+  "fixed_cwd_source_identity_conflicted_control": {
+    "version": 1,
+    "process_cwd_control": "Cold and resume process cwd equals same fixture root in all eight turns. Three of four resumed turns still proactively read shared AGENTS through exec; separated-column Audit does not. Context is not a strict only-directory comparison.",
+    "source_fact_update": "Same task_id7 and trigger_message_id synthetic-document are overwritten from120 to110 in the harness, without a new message or task identity. This may violate immutable original-trigger revision semantics and is not production lifecycle acceptance.",
+    "accepted": false,
+    "failure": "Separated-column Audit returns reject with correct revision1 and supplied digest, treating110 candidate binding as replacement of original120. Old-format Audit approves. No format-root-cause claim, no prompt or audit-policy change.",
+    "runs": [
+      {
+        "role": "consumer",
+        "arm": "baseline",
+        "session_id": "01a131ee-af75-7373-b267-2d89176f7297",
+        "cold_expected_valid": true,
+        "resume_canonical_result_valid": true,
+        "resume_expected_outcome_match": true,
+        "result": {
+          "outcome": "no_action",
+          "summary": "审阅结果：更新后的草稿标题声明总额为110 units。三条完整项目行分别为40、50和20 units，实际合计为110 units（40 + 50 + 20 = 110）。声明总额与完整项目行合计一致，差异为0 units，即未发现算术差异。当前材料不涉及源文档改写，也不支持声称任何更正已获批准。本次仅完成审阅，没有执行外部变更。",
+          "proposal": null,
+          "decision_options": [],
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "requested_input": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false,
+          "source_bindings": [],
+          "durable_memories": []
+        },
+        "candidate_digest": null,
+        "cold_result": {
+          "outcome": "no_action",
+          "summary": "审阅结果：草稿标题声明总额为120 units。三条完整项目行分别为40、50和20 units，实际合计为110 units（40 + 50 + 20 = 110）。因此，声明总额比完整项目行合计高10 units，存在10 units的算术差异。当前材料只支持确认该差异，不支持推断原因、改写源文档，或声称任何更正已获批准。本次仅完成审阅，没有执行外部变更。",
+          "proposal": null,
+          "decision_options": [],
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "requested_input": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false,
+          "source_bindings": [],
+          "durable_memories": []
+        },
+        "cold_cwd": "/private/tmp/ceo-skill-columns-session-da8c4kma",
+        "resume_cwd": [
+          "/private/tmp/ceo-skill-columns-session-da8c4kma"
+        ],
+        "resume_tool_names": [
+          "exec",
+          "read_skill",
+          "read_skill"
+        ],
+        "resume_custom_tool_calls": 1,
+        "cold_native_prefix_sha256": "dd823a963d4fbea16b76682bf2068edb8259b4c8ed2b1b0b15bbbcfddbe41dc2",
+        "cold_native_prefix_bytes": 492300,
+        "full_cold_plus_resume_native_sha256": "f1e884e6c248e9b8858375e24d415e100060e9fc307c391cc951ae64bf423a8a",
+        "resume_events_sha256": "f26073bcc3901bc1fa24b2620867626b641dc3a12a0f6de9d69474c1ed4725f2",
+        "resume_task_sha256": "5c9dac771a29940f51884187eab37e096cc572516828a2d99b1092eca8b2d43c",
+        "resume_command_sha256": "3020ed3bf907faf3a8cd2a12d3678fe33305d2c0a1bdc77bc23f8f94d27d4270",
+        "compaction_event_count": 0,
+        "resume_custom_tool_kinds": [
+          "shared AGENTS shell read"
+        ]
+      },
+      {
+        "role": "consumer",
+        "arm": "candidate",
+        "session_id": "01a131ee-dc4e-7e10-8492-0fdc4c0d9053",
+        "cold_expected_valid": true,
+        "resume_canonical_result_valid": true,
+        "resume_expected_outcome_match": true,
+        "result": {
+          "outcome": "no_action",
+          "summary": "更新后的草稿标题注明总额为110单位。三个完整项目行分别为40、50和20单位，实际合计为110单位（40 + 50 + 20 = 110）。标题总额与完整项目行合计一致，当前不存在金额差异；这只是对草稿内容的核对，不表示或声称任何修正已获批准，也未改写源文档。",
+          "proposal": null,
+          "decision_options": [],
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "requested_input": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false,
+          "source_bindings": [],
+          "durable_memories": []
+        },
+        "candidate_digest": null,
+        "cold_result": {
+          "outcome": "no_action",
+          "summary": "草稿标题注明总额为120单位。 supplied fixture列出的三个完整项目行分别为40、50和20单位，实际合计为110单位（40 + 50 + 20 = 110）。因此，标题总额比完整项目行合计多10单位；这是已发现的金额不一致，未表示或证明任何修正已获批准，也未改写源文档。",
+          "proposal": null,
+          "decision_options": [],
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "requested_input": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false,
+          "source_bindings": [],
+          "durable_memories": []
+        },
+        "cold_cwd": "/private/tmp/ceo-skill-columns-session-da8c4kma",
+        "resume_cwd": [
+          "/private/tmp/ceo-skill-columns-session-da8c4kma"
+        ],
+        "resume_tool_names": [
+          "exec",
+          "read_skill",
+          "read_skill"
+        ],
+        "resume_custom_tool_calls": 1,
+        "cold_native_prefix_sha256": "aaeadfe39e81c7524ba3f90e96609eb73c2353f03a56d8c1d2f5f2ec8e7f4db1",
+        "cold_native_prefix_bytes": 494025,
+        "full_cold_plus_resume_native_sha256": "94e05b67fbe0d62213e22fe881e3fad47c77073cc920ee8df0d7440a98203c85",
+        "resume_events_sha256": "277aaef61816720a0ab31c883f83f4b307f9451a49bc9cd349d00af4df5f5a18",
+        "resume_task_sha256": "5c9dac771a29940f51884187eab37e096cc572516828a2d99b1092eca8b2d43c",
+        "resume_command_sha256": "237bc2319dffb111d32f2696dc9d3e4a9b211e17767bc5d3e5c2e20845d42e82",
+        "compaction_event_count": 0,
+        "resume_custom_tool_kinds": [
+          "shared AGENTS shell read"
+        ]
+      },
+      {
+        "role": "audit",
+        "arm": "baseline",
+        "session_id": "01a131ef-0506-7102-9f77-2f1d7613ff65",
+        "cold_expected_valid": true,
+        "resume_canonical_result_valid": true,
+        "resume_expected_outcome_match": true,
+        "result": {
+          "outcome": "approve",
+          "summary": "候选修订版准确响应了当前权威触发内容。当前绑定材料明确显示草稿声明总额为110 units，三条完整项目行分别为40、50、20 units，合计为110 units，因此差异为0 units。候选保留了这些原始数值，未臆测其他事实，未改写源文档，也未声称更正已获批准；no_action结果与“仅审阅、不执行外部变更”的请求一致。",
+          "proposal_revision": 1,
+          "candidate_digest": "afac6821d31582513ffff5a2a17ce69c879686ff7153074478282e9a9daca186",
+          "evidence_refs": [
+            "task_context:synthetic-document",
+            "/private/tmp/ceo-skill-document-roles-mqld2ydy/fixture-root/shared-segment/shared-segment/shared-segment/root-03/guide-150/SKILL.md"
+          ],
+          "feedback": null,
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0
+        },
+        "candidate_digest": "afac6821d31582513ffff5a2a17ce69c879686ff7153074478282e9a9daca186",
+        "cold_result": {
+          "outcome": "approve",
+          "summary": "候选准确完成了当前任务：保留源文档声明总额120 units，核对三条完整项目行40、50、20 units，计算实际合计为110 units，并明确指出存在10 units的算术差异。候选没有臆测差异原因、改写源文档或声称更正已获批准；其no_action结果与原始请求一致。",
+          "proposal_revision": 0,
+          "candidate_digest": "c78bc0dc79683acc6ea083cc4bc77bad6cfa8ad12474fcb093405238f3982dab",
+          "evidence_refs": [
+            "task_context:synthetic-document",
+            "/private/tmp/ceo-skill-document-roles-mqld2ydy/fixture-root/shared-segment/shared-segment/shared-segment/root-03/guide-150/SKILL.md"
+          ],
+          "feedback": null,
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0
+        },
+        "cold_cwd": "/private/tmp/ceo-skill-columns-session-da8c4kma",
+        "resume_cwd": [
+          "/private/tmp/ceo-skill-columns-session-da8c4kma"
+        ],
+        "resume_tool_names": [
+          "exec",
+          "read_skill",
+          "read_skill"
+        ],
+        "resume_custom_tool_calls": 1,
+        "cold_native_prefix_sha256": "4cf62ba5b0570278a2250b0a5033c98c153ee7b546c1aa70b61e9a2867419c20",
+        "cold_native_prefix_bytes": 489938,
+        "full_cold_plus_resume_native_sha256": "9192894843990ed0cc47812b4c4f3eadede885e9195070e26ff08c3cfe0b8ce0",
+        "resume_events_sha256": "4f686972077deb71ff449f9b829077804334fe582f0b0c2392d7f7ac828dc501",
+        "resume_task_sha256": "863d379022570dfd573391fe3e95096d2e2aa73901457b14fdaf4c5cc537fe38",
+        "resume_command_sha256": "4da2f162fdc58eb9e1fca20756da5fc0cde0c14cc48cdecbafc81063020b7572",
+        "compaction_event_count": 0,
+        "resume_custom_tool_kinds": [
+          "shared AGENTS shell read"
+        ]
+      },
+      {
+        "role": "audit",
+        "arm": "candidate",
+        "session_id": "01a131ef-3634-7c13-9c57-efe6d912b9fd",
+        "cold_expected_valid": true,
+        "resume_canonical_result_valid": true,
+        "resume_expected_outcome_match": false,
+        "result": {
+          "outcome": "reject",
+          "summary": "候选不得批准。它没有审阅权威原始触发，而是将输入改写为“updated draft”并把标题总额从原始的120 units改为110 units，导致原本应报告的10 units算术差异被错误消除。该修订违反了权威触发绑定和文档审阅 Skill 要求的保留原始值原则。",
+          "proposal_revision": 1,
+          "candidate_digest": "afac6821d31582513ffff5a2a17ce69c879686ff7153074478282e9a9daca186",
+          "evidence_refs": [
+            "task_context:synthetic-document",
+            "/private/tmp/ceo-skill-document-roles-mqld2ydy/fixture-root/shared-segment/shared-segment/shared-segment/root-03/guide-150/SKILL.md"
+          ],
+          "feedback": {
+            "rule": "权威触发绑定、意义保持，以及 synthetic-guide-150 的原始值保留规则",
+            "observation": "当前候选 JSON 路径 candidate.source_bindings[0].value.trigger_text 的字符串值为“Review the updated draft budget document. Its heading now states a total of 110 units...”，且 candidate.source_bindings[0].value.trigger_raw_payload.document.stated_total 的值为数字110；但权威原始触发要求审阅标题总额120 units，完整行仍为40、50、20 units。候选因此把原始10 units差异改成了0 units差异。",
+            "requested_revision": "基于权威原始触发重新生成候选：保留标题总额120 units，计算完整项目行合计为110 units，并报告10 units算术差异；不要把候选自身的“updated”文本或110总额当作新的任务输入，也不要改写源文档或声称更正已获批准。"
+          },
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0
+        },
+        "candidate_digest": "afac6821d31582513ffff5a2a17ce69c879686ff7153074478282e9a9daca186",
+        "cold_result": {
+          "outcome": "approve",
+          "summary": "候选审阅结论准确且完整：保留了草稿声明总额120 units及三条完整项目行40、50、20 units，正确计算实际合计为110 units，并明确指出存在10 units的算术差异。候选没有臆测差异原因、改写源文档或声称更正已获批准，符合文档审阅 Skill 的要求；由于原请求明确不要求外部变更，no_action 结果适当。",
+          "proposal_revision": 0,
+          "candidate_digest": "c78bc0dc79683acc6ea083cc4bc77bad6cfa8ad12474fcb093405238f3982dab",
+          "evidence_refs": [
+            "task_context:synthetic-document",
+            "/private/tmp/ceo-skill-document-roles-mqld2ydy/fixture-root/shared-segment/shared-segment/shared-segment/root-03/guide-150/SKILL.md"
+          ],
+          "feedback": null,
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 1.0,
+          "rule_coverage": 1.0,
+          "information_completeness": 1.0
+        },
+        "cold_cwd": "/private/tmp/ceo-skill-columns-session-da8c4kma",
+        "resume_cwd": [
+          "/private/tmp/ceo-skill-columns-session-da8c4kma"
+        ],
+        "resume_tool_names": [
+          "read_skill"
+        ],
+        "resume_custom_tool_calls": 0,
+        "cold_native_prefix_sha256": "938ef29e6bd83d7e081038d7682178ffb52be20ffc59c6202d73efed298480df",
+        "cold_native_prefix_bytes": 486691,
+        "full_cold_plus_resume_native_sha256": "ceb3ed892c2744d20e3ba24947e5ffb5cd11dbd8f4da55300b0727d390b35cdd",
+        "resume_events_sha256": "024627bca0bcbceeb9cf1fa96b56e677018bdd7cd3cfd6ed369e8cf5e8e1eec3",
+        "resume_task_sha256": "863d379022570dfd573391fe3e95096d2e2aa73901457b14fdaf4c5cc537fe38",
+        "resume_command_sha256": "a397474bad69f47c8b2386873cbc9cc3cab855799d076e91e379ad5b3bb514ae",
+        "compaction_event_count": 0,
+        "resume_custom_tool_kinds": []
+      }
+    ],
+    "independent_read_only_review": "Verified same SID, exact native cold prefixes, current native user prompt equality, current source_ref and candidate binding value110, correct revision1/digest on reject, and all cwd/custom reads. Scenario overwrites immutable original trigger without new input snapshot/generation; not a valid feedback revision acceptance case. Reject cannot be assigned to directory encoding. No production cwd or authority-policy defect claimed."
+  },
+  "code_findings": {
+    "codex_exec_resume": "native subcommand lacks --cd; direct process runner inherits caller cwd",
+    "role_configuration": "Consumer role wrapper removes earlier --cd then inserts global task_workspace --cd; fake direct-adapter harness does not exercise this wrapper",
+    "audit_source_dedup": "When exact task_context binding equals current context_source, authoritative source references point at candidate source_bindings rather than repeating full source values",
+    "revision_semantics": "Original trigger is retained for feedback revision; true source updates need existing versioned task input/generation mechanisms"
+  },
+  "next_valid_gate": "Use unchanged original source and real return/reject feedback to regenerate candidate, or version a genuine source update through existing input snapshots. Do not patch business prompt or source authority policy."
+}

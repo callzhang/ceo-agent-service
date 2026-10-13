@@ -51,3 +51,39 @@
 第1期索引精简和第2期 current-plan 指针读取已上线，第2期650项定向测试、149表副本/逆迁/实际旧48启动及生产读回完成，见 docs/storage-phase2-validation.md。第3期 reply_tasks／reply_task_inputs canonical 输入及未来 Task WSI 包精简已上线于5d25497e，Store2026-10-11.1、Email49；150表副本、精确逆迁、旧b998启动／恢复、生产读回及全量Quality CI38140069414完成，见 docs/storage-phase3-validation.md。本期保持现有WSI结构和原有回收条件，其他业务来源表不在此次范围。后续第4期起仍需先核对最新生产与读者依赖，分别制定逐任务计划；未实施 tasks/runs 或 actions 的表合并，也未新增保留期限。
 
 第四期已开始分析：以f59a41d7/Store2026-10-11.1/Email50为新基线，完成17表258字段及退休/延期结构总319字段的准确映射。第四期计划分4A core runs、4B任务/领域、4C定时/工作台；16表拟合并，搜索metadata原表只取消5空缓存，合表与FTS退休留第8期组合验证。详见phase4设计/field-map/inventory及计划。尚未改runtime、数据库副本、schema逆迁或上线；禁止把第三期验收套用到第四期。
+
+
+## 2026-10-13 全目标执行状态（覆盖上文阶段性时间说明）
+
+原目标保持10张业务/运行表加1张迁移表；第1–4期已上线不等于整个设计完成。生产当前Store2026-10-13.2、Email51，第四期最终发布与副本/逆迁证据见database-redesign-phase4a/4b/4c-validation.md；后续真实CLI验收见database-native-copy-lifecycle/branches-20261012.md。第5A已于31d95f4e上线，第5B已于ebaf0d96上线；其余第5期单元及第6–8期尚未上线。
+
+| 期 | 当前证据/剩余完成条件 | 状态 |
+| --- | --- | --- |
+| 1–3 | 指针、输入引用、已实现终态正文精简；原验收文档 | 已发布 |
+| 4 | tasks/runs、定时/工作台核心合并，source/inverse/new-fact/旧代码和CI/发布；原验收文档 | 已发布 |
+| 5 | actions统一：采用候选/审核/选项/补充/执行/尝试，随后独立回执、消息/OA/邮件/WeChat/跟进/同步；所有读写调用、约束及配对逆迁 | 5A六类型、5B三类独立回执已发布；其余开发中 |
+| 6 | business及signal/evidence/date/实际关联；legacy不升格、准确来源版本、原文不复制 | 未实施 |
+| 7 | emails/configs/provider_state/schedules/state；当前库存、模型真实输入依赖、水位/锁/CAS | 未实施 |
+| 8 | 全部旧物理结构及旧写入器退休，FTS取消、字段与来源规则逐项审计；副本/回退/CI/部署/UI与实际容量 | 未实施 |
+
+本目标完成门槛以最终物理表、读写路径、字段删除清单、来源引用、现有业务合同与执行回执为准。不得以一组测试或阶段发布宣称全目标完成。未经确认的成功轮询30天删除政策仍排除；无需再次设计或确认已接受的十表结构。
+
+### 2026-10-13 Phase5A release
+
+PR72/31d95f4e formal deployment passed, Store2026-10-13.1/Email51,132 physical/126 ordinary application tables. actions six-type manifest, paired inverse with actual current production code, full CI, substitute native approval/revision, operational/API/UI reads and latest verified backup complete. Evidence:database-redesign-phase5a-validation.md and evals/database_redesign/phase5a_release.v1.json. Current targets present:tasks/runs/actions; full10+1 still incomplete. Next unit:phase5b independent receipts, exact plan/source oracle already prepared. Original1611-field map has7 actual current email fields in a separate2026-10-13 addendum; cancellation and explicit retry facts join the future email actions unit, no policy additions.
+
+### 2026-10-13 Phase5B release
+
+PR76／ebaf0d96正式部署通过，Store2026-10-13.2／Email51，129物理表／123普通应用表。完整CI38422492340、当前事实配对逆迁、实际旧代码及真实CLI替身批准／修订证据完成；上线源备份字段值／类型、原六类型、FK诊断、队列、History／Attention读回通过，未测试真实对外发送。证据：database-redesign-phase5b-validation.md及phase5b_release.v1.json。完整10+1仍未完成。C的opt-in十二类型基础与独立当前事实迁移已完成预验证，尚未运行发布；D的18字段源声明及76项独立oracle准备完成，目标存储未实施。下一步以实际已部署Store16来源完成C的caller/bootstrap/release接入与正式副本验收，不重新设计已批准十表目标。
+
+### 2026-10-13 Phase5C integration candidate
+
+PR77开发候选已完成postfix三表十三字段合入十二类型actions、Store17 fresh/bootstrap、
+全部prepare/claim/receipt/echo/meeting/WeChat调用和配对release。合并最新OA改动后
+212项定向检查、100项恢复／发送检查通过（11项明确环境跳过）；3处current marker
+断言RED后校准，128项邻接检查通过。独立SPEC／QUALITY已通过，范围仅5C。
+当前生产仍Store16；目标未发布，CLI替身验收和完整CI仍是发布前门槛。
+实际最新生产副本配对constructor／current-fact inverse／实际旧代码启动／再正迁
+见phase5c_constructor_copy.v1.json；独立所有原九类型值／类型／水位／改绑／删除
+证明见phase5c_current_source_storage_copy.v1.json。临时副本已清理。
+完整10+1仍未完成；5D等其余actions家族与第6–8期仍需实施。

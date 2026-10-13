@@ -1046,7 +1046,7 @@ def _install_child_guards(db: sqlite3.Connection, table: str) -> None:
 def install_run_child_guards(db: sqlite3.Connection) -> None:
     """Retain each old declared FK's logical-run parent namespace."""
     for row in db.execute(
-        "select name from sqlite_master where type='table' and name<>'runs'"
+        "select name from sqlite_master where type='table' and name not in ('runs','actions')"
     ).fetchall():
         _install_child_guards(db, row[0])
 

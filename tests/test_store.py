@@ -18,6 +18,7 @@ import pytest
 import app.store as store_module
 from tests.reply_schema_fixtures import assert_store_reopen_rejected_without_mutation
 from tests.run_reader_fixtures import assert_no_core_native_storage, insert_native_run_fixture
+from app.action_storage import EXTERNAL_ACTION_RESULT_SQL
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RUN_STATE_EVENT_SQL, SCHEDULED_RUN_SQL, TASK_AGENT_RUN_SQL, insert_run
 from app.task_storage import WORK_SUMMARY_INPUT_SQL, create_task_schema, insert_task, task_id_expression, task_physical_id
 from app.store import (
@@ -5949,7 +5950,7 @@ def test_completed_message_delivery_persists_action_result_and_history_atomicall
     assert sent.external_action_key == "external-send-result"
     with store._connect() as db:
         assert db.execute(
-            "select count(*) from external_action_results where external_action_key=?",
+            f"select count(*) from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
             ("external-send-result",),
         ).fetchone()[0] == 1
         assert db.execute(
@@ -6186,7 +6187,7 @@ def test_reconcile_failed_agent_message_requires_send_receipt_and_readback(
     assert attempt.send_error == ""
     with store._connect() as db:
         assert db.execute(
-            "select count(*) from external_action_results where external_action_key='external-1'"
+            f"select count(*) from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key='external-1'"
         ).fetchone()[0] == 1
 
 

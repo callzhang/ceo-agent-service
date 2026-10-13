@@ -1,0 +1,139 @@
+{
+  "scope": "phase5A release only; full 10+1 target remains incomplete",
+  "commit": "31d95f4edcd0d15b5c87841ddee820b45c17e2ba",
+  "pr": 72,
+  "ci_run": 38393946209,
+  "ci_head": "35baa6666ae00b8824eeb063430fd1a1c23b337f",
+  "ci": {
+    "python_passed": 12205,
+    "python_skipped": 110,
+    "python_deselected": 44,
+    "frontend_passed": 723,
+    "frontend_skipped": 2,
+    "browser_passed": 2
+  },
+  "readback_at": "2026-10-13T12:47:45.051051+00:00",
+  "store_version": "2026-10-13.1",
+  "email_schema": 51,
+  "pid": "75674",
+  "health": "healthy",
+  "action_manifest_current": true,
+  "old_six_remaining": [],
+  "physical_tables": 132,
+  "ordinary_application_tables": 126,
+  "counts": {
+    "candidate_action_attempts": 152,
+    "candidate_executions": 158,
+    "candidate_reviews": 585,
+    "candidate_supplements": 3,
+    "review_candidates": 593
+  },
+  "queue_summary": {
+    "queue_count": 13,
+    "pending": 3,
+    "processing": 0,
+    "failed": 6,
+    "retryable": 0,
+    "attention": 4
+  },
+  "dispatcher_queues": [
+    {
+      "name": "scheduled",
+      "pending": 0,
+      "due": 0,
+      "running": 0
+    },
+    {
+      "name": "scheduled_execution",
+      "pending": 0,
+      "due": 0,
+      "running": 0
+    },
+    {
+      "name": "reply",
+      "pending": 0,
+      "due": 0,
+      "running": 0
+    },
+    {
+      "name": "meeting",
+      "pending": 0,
+      "due": 0,
+      "running": 0
+    },
+    {
+      "name": "work_summary",
+      "pending": 0,
+      "due": 0,
+      "running": 0
+    },
+    {
+      "name": "okr_review",
+      "pending": 0,
+      "due": 0,
+      "running": 0
+    },
+    {
+      "name": "task_todo_sync_outbox",
+      "pending": 0,
+      "due": 0,
+      "running": 0
+    },
+    {
+      "name": "business_task_todo_sync_outbox",
+      "pending": 0,
+      "due": 0,
+      "running": 0
+    },
+    {
+      "name": "task_memory_write",
+      "pending": 0,
+      "due": 0,
+      "running": 0
+    }
+  ],
+  "failed_reply_ids_and_update_times": [
+    [
+      "404427",
+      "2026-10-13 09:25:28"
+    ],
+    [
+      "404326",
+      "2026-10-13 10:01:06"
+    ],
+    [
+      "404510",
+      "2026-10-13 10:48:19"
+    ]
+  ],
+  "quick_check": "ok",
+  "fk_findings_count": 1,
+  "http_readback": [
+    "healthz",
+    "status",
+    "Attention",
+    "History"
+  ],
+  "ui_readback": [
+    "History list",
+    "Attempt15404 details",
+    "Audit execution details",
+    "native Codex session timeline15 records"
+  ],
+  "ui_actions": "read-only; no submit/retry/send/feedback action",
+  "latest_backup": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-13.sqlite3",
+  "latest_backup_store_version": "2026-10-13.1",
+  "latest_backup_integrity": "ok; replacement only after verification",
+  "file_bytes": 471347200,
+  "no_vacuum_claim": true,
+  "remaining": "other actions families and phases6-8",
+  "fk_findings_equal_retained_source": true,
+  "fk_findings": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ]
+}

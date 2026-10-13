@@ -182,6 +182,12 @@ from app.task_retrieval import (
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
 from app.run_storage import AGENT_RUN_SQL
 
+from app.action_storage import (
+    REVIEW_CANDIDATE_SQL,
+    CANDIDATE_REVIEW_SQL,
+    CANDIDATE_SELECTION_SQL,
+)
+
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 LOCAL_DISPLAY_TIME_ZONE = ZoneInfo("Asia/Shanghai")
 # A due Meeting Memory write has missed its service objective after 30 minutes.
@@ -3375,7 +3381,37 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
     ]
     rows: list[dict[str, str]] = []
     active_reply_task_triggers: set[tuple[str, str, str]] = set()
+    pending_oa_rows: list[dict[str, str]] = []
     with store._connect() as db:
+        state = db.execute(
+            "select cursor_json,last_success_at,last_error from daily_scan_state where scanner_name='oa_pending'"
+        ).fetchone() if _sqlite_table_exists(db, "daily_scan_state") else None
+        pending_keys = json.loads(state["cursor_json"]).get(
+            "pending_business_object_keys", []
+        ) if state is not None else []
+        for key in pending_keys:
+            task = db.execute(
+                f"select id,conversation_title,trigger_text,updated_at,error,status "
+                f"from ({REPLY_TASK_CURRENT_SQL}) where business_object_key=? "
+                "order by id desc limit 1", (key,),
+            ).fetchone()
+            if task is not None:
+                pending_oa_rows.append({
+                    "category": "OA approval", "id": str(task["id"]),
+                    "status": "pending", "context": str(task["conversation_title"]),
+                    "summary": str(task["trigger_text"]),
+                    "updated_at": str(task["updated_at"]),
+                    "error": str(task["error"] or
+                        "OA process remains unresolved; no final approval or return receipt is recorded."),
+                })
+            else:
+                pending_oa_rows.append({
+                    "category": "OA approval", "id": key, "status": "pending",
+                    "context": "OA approval", "summary": key,
+                    "updated_at": str(state["last_success_at"]),
+                    "error": str(state["last_error"] or
+                        "OA process remains unresolved; no final approval or return receipt is recorded."),
+                })
         db.create_function(
             "decode_work_summary_payload",
             1,
@@ -3791,6 +3827,10 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 "error": attempt["send_error"],
             }
         )
+    pending_oa_ids = {row["id"] for row in pending_oa_rows}
+    rows = [row for row in rows
+            if not (row["category"] == "Reply task" and row["id"] in pending_oa_ids)]
+    rows.extend(pending_oa_rows)
     rows.sort(key=lambda row: row["updated_at"], reverse=True)
     return rows if limit is None else rows[:limit]
 
@@ -3803,9 +3843,9 @@ def _human_decision_attention_rows(
         select attempts.id, attempts.conversation_title, attempts.updated_at,
                c.candidate_json
         from reply_attempts attempts
-        join candidate_reviews review on review.audit_run_id=attempts.agent_run_id
+        join ({CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=attempts.agent_run_id
           and review.decision='approve'
-        join review_candidates c on c.id=review.candidate_id
+        join ({REVIEW_CANDIDATE_SQL}) c on c.id=review.candidate_id
           and c.candidate_digest=review.candidate_digest and c.invalidated_at=''
         join ({REPLY_TASK_SQL}) task on task.id=c.task_id
           and task.execution_generation=c.execution_generation
@@ -3813,12 +3853,12 @@ def _human_decision_attention_rows(
         join business_object_tasks current_object
           on current_object.business_object_key=task.business_object_key
           and current_object.reply_task_id=task.id
-        left join candidate_selections choice on choice.candidate_id=c.id
+        left join ({CANDIDATE_SELECTION_SQL}) choice on choice.candidate_id=c.id
         where attempts.send_status='needs_human'
           and attempts.reviewed_at is null
           and trim(coalesce(attempts.resolved_at,''))=''
           and choice.id is null
-          and c.id=(select max(newest.id) from review_candidates newest
+          and c.id=(select max(newest.id) from ({REVIEW_CANDIDATE_SQL}) newest
               where newest.task_id=task.id
                 and newest.execution_generation=task.execution_generation)
           and attempts.id=(select max(latest.id) from reply_attempts latest
