@@ -148,7 +148,7 @@ def source_bundle(
     references: list[dict] = []
     before = 0
     for signal in signals:
-        payload = signal.model_dump(mode="json")
+        payload = signal.model_dump(mode="json", exclude={"dedupe_key"})
         body = payload.pop("evidence_text")
         id = signal.source_document_id
         payload["document_id"] = id

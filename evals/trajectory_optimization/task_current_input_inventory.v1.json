@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "production_ref": "dc6abe2d42ec9e21320589a11248a5a2a0c89e9e",
+  "native_session_id": "01a135ff-083f-7d23-b64d-5abd845f7cc8",
+  "task_run_ids": [
+    353013,
+    353021
+  ],
+  "native_lines": 169,
+  "service_task_line": 158,
+  "service_task_chars": 345116,
+  "semantic_context_actual_json_chars": 314573,
+  "field_size_encoding": "json.dumps(value, ensure_ascii=False) with default separators; not summable to original indented Task length",
+  "context_fields": {
+    "notice": {
+      "items": null,
+      "json_chars": 231
+    },
+    "official_project_registry": {
+      "items": 21,
+      "json_chars": 9879
+    },
+    "project_contexts": {
+      "items": 5,
+      "json_chars": 11706
+    },
+    "project_evidence": {
+      "items": 29,
+      "json_chars": 2165
+    },
+    "task_candidates": {
+      "items": 20,
+      "json_chars": 12892
+    },
+    "existing_formal_tasks": {
+      "items": 20,
+      "json_chars": 18983
+    },
+    "unverified_formal_tasks": {
+      "items": 20,
+      "json_chars": 19421
+    },
+    "task_evidence": {
+      "items": 114,
+      "json_chars": 11780
+    },
+    "source_documents": {
+      "items": 50,
+      "json_chars": 124024
+    },
+    "source_signals": {
+      "items": 98,
+      "json_chars": 84926
+    },
+    "current_work_item": {
+      "items": 5,
+      "json_chars": 1264
+    },
+    "source_metrics": {
+      "items": 5,
+      "json_chars": 139
+    },
+    "task_relations": {
+      "items": 0,
+      "json_chars": 2
+    },
+    "task_anchor_links": {
+      "items": 34,
+      "json_chars": 7264
+    },
+    "work_clusters": {
+      "items": 16,
+      "json_chars": 1066
+    },
+    "cluster_memberships": {
+      "items": 16,
+      "json_chars": 1159
+    },
+    "registered_anchors": {
+      "items": 41,
+      "json_chars": 8842
+    },
+    "current_project_attention": {
+      "items": 7,
+      "json_chars": 8394
+    }
+  },
+  "source_metrics": {
+    "signal_count": 98,
+    "document_count": 50,
+    "body_chars_before_sharing": 1244930,
+    "unique_body_chars": 634397,
+    "visible_body_chars": 102931
+  },
+  "skill_body_chars": 23452,
+  "skill_body_sha256": "99f2c30ed48cb1734d4ee859f0633f504562257be103136e8de7b96d0fbc3d05",
+  "skill_full_body_in_service_task": true,
+  "skill_full_body_in_native_selected_message": true,
+  "native_selected_skill_line": 160,
+  "boundary": "Read-only production Task input inventory. No new model run, code change, source-body truncation or external action. Does not prove business quality or PR57 publication. Historical source bodies are already shared; context-field size alone does not justify deleting necessary facts."
+}
