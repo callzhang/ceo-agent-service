@@ -1,0 +1,368 @@
+{
+  "version": 3,
+  "main_canonical": "d7397203df678fd4137c237eb7eb84a671e084f3",
+  "native_schema_base": "57f34f94",
+  "compaction_integration_commit": "d33e90a8",
+  "scope": "Current canonical/native schema actual OAuth Audit cold pair only. Not Consumer domains, session continuation, provider publication or production acceptance.",
+  "model_calls": 2,
+  "case_manifest": "native_contract_compaction.business_cases.v7.json",
+  "case_manifest_sha256": "0b9b6174128344f196cc5b13bb17d4e1dfc43be8efc3bcda8c8116042ec01d69",
+  "records": [
+    {
+      "case": "audit-document-feedback",
+      "variant": "full",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "phase": "cold",
+      "exit_code": 0,
+      "session_id": "01a13699-d794-7063-9d50-0f5318e08420",
+      "turn_completed": true,
+      "candidate_digest": "d58a5899f186944099c708dfc333555530821239a870398f594ef4702d86f452",
+      "proposal_revision": 0,
+      "canonical": {
+        "outcome": "return",
+        "summary": "Return for revision: the current source contains explicit capacity and launch-date conflicts and says approval is pending reconciliation, but the candidate proposes an approval-ready reply and labels the document internally consistent. The target is identifiable and the document was reread at the current revision, but the proposed business conclusion and message content are unsuitable.",
+        "proposal_revision": 0,
+        "candidate_digest": "d58a5899f186944099c708dfc333555530821239a870398f594ef4702d86f452",
+        "evidence_refs": [
+          "node-doc-audit-1",
+          "trigger-audit-document-review"
+        ],
+        "feedback": {
+          "rule": "Document review must accurately reflect the current source and must not approve an unresolved factual conflict.",
+          "observation": "The current document explicitly reports conflicting capacity and launch dates: the executive summary says 120 units and October 15, while the implementation table says 80 units and October 22. It also states that approval has not been granted and that the conflicts must be reconciled first. The candidate's proposed reply says no material issues were found and that the proposal is ready for approval, which contradicts both the source facts and the candidate's own sourced-facts entry.",
+          "requested_revision": "Regenerate the candidate while preserving the original objective of replying to the document review request. Replace the approval-ready conclusion and reply with an evidence-based statement of the two conflicts, retain the not-approved status, and request reconciliation or correction before approval. Recompute the summary, authored judgment, risk, confidence, and information_completeness so they reflect the unresolved conflict. Keep the action target bound to the original conversation and message unless refreshed source evidence establishes a different target.",
+          "observation_basis": "candidate_fields",
+          "candidate_field_assertions": [
+            {
+              "path": [
+                "proposal",
+                "sourced_facts",
+                0,
+                "assertion"
+              ],
+              "value": "Executive summary: capacity is 120 units and launch is October 15.\nImplementation table: capacity is 80 units and launch is October 22.\nApproval status: not approved; factual conflicts must be reconciled first.",
+              "json_type": "string"
+            },
+            {
+              "path": [
+                "proposal",
+                "authored_judgment"
+              ],
+              "value": "The document is internally consistent and ready for approval.",
+              "json_type": "string"
+            },
+            {
+              "path": [
+                "proposal",
+                "actions",
+                0,
+                "payload",
+                "content"
+              ],
+              "value": "No material issues found. The proposal is ready for approval.",
+              "json_type": "string"
+            }
+          ]
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "wire": {
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "outcome": "return",
+        "proposal_revision": 0,
+        "candidate_digest": "d58a5899f186944099c708dfc333555530821239a870398f594ef4702d86f452",
+        "evidence_refs": [
+          "node-doc-audit-1",
+          "trigger-audit-document-review"
+        ],
+        "feedback": {
+          "rule": "Document review must accurately reflect the current source and must not approve an unresolved factual conflict.",
+          "observation": "The current document explicitly reports conflicting capacity and launch dates: the executive summary says 120 units and October 15, while the implementation table says 80 units and October 22. It also states that approval has not been granted and that the conflicts must be reconciled first. The candidate's proposed reply says no material issues were found and that the proposal is ready for approval, which contradicts both the source facts and the candidate's own sourced-facts entry.",
+          "requested_revision": "Regenerate the candidate while preserving the original objective of replying to the document review request. Replace the approval-ready conclusion and reply with an evidence-based statement of the two conflicts, retain the not-approved status, and request reconciliation or correction before approval. Recompute the summary, authored judgment, risk, confidence, and information_completeness so they reflect the unresolved conflict. Keep the action target bound to the original conversation and message unless refreshed source evidence establishes a different target.",
+          "observation_basis": "candidate_fields",
+          "candidate_field_assertions": [
+            {
+              "path": [
+                "proposal",
+                "sourced_facts",
+                0,
+                "assertion"
+              ],
+              "value": "Executive summary: capacity is 120 units and launch is October 15.\nImplementation table: capacity is 80 units and launch is October 22.\nApproval status: not approved; factual conflicts must be reconciled first.",
+              "json_type": "string"
+            },
+            {
+              "path": [
+                "proposal",
+                "authored_judgment"
+              ],
+              "value": "The document is internally consistent and ready for approval.",
+              "json_type": "string"
+            },
+            {
+              "path": [
+                "proposal",
+                "actions",
+                0,
+                "payload",
+                "content"
+              ],
+              "value": "No material issues found. The proposal is ready for approval.",
+              "json_type": "string"
+            }
+          ]
+        },
+        "summary": "Return for revision: the current source contains explicit capacity and launch-date conflicts and says approval is pending reconciliation, but the candidate proposes an approval-ready reply and labels the document internally consistent. The target is identifiable and the document was reread at the current revision, but the proposed business conclusion and message content are unsuitable."
+      },
+      "bound_candidate_field_validation": true,
+      "task_sha256": "c7251b0577b501daf75b3e0f6fbb7946e6c68b38235869cd919fccdfdc11f386",
+      "developer_sha256": "b6889fad04ed9a929a257b7d0a43755405319e83fa738f03a474dde17c597fff",
+      "developer_characters": 28046,
+      "native_schema_sha256": "423a2b6ed633232aa279c041cc9b39218d726ab8d4e529d9846951aa99677104",
+      "native_original": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T11-50-14-01a13699-d794-7063-9d50-0f5318e08420.jsonl",
+        "sha256": "07fb27f8c00ff50d01c0ecedd1f5baedda9a296f715111f43c8a42e9ceb11ea1",
+        "developer_exact_text_present": true,
+        "task_exact_text_present": true
+      },
+      "candidate_assertions_checked": 3,
+      "digest_revision_binding_valid": true,
+      "reject_label_passed": false,
+      "task_characters": 9030,
+      "actual_tool_calls": [
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "result_sha256": "3c0c57c83ff9bd7bc93a806b47136719b6a5c58cdecfe17fa0455498b1b770ce"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-doc"
+          },
+          "result_sha256": "948b589315d22ae5d65905b2cdff054f0935d0b31ae19a1dcdf56673e45bfc1a"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-chat"
+          },
+          "result_sha256": "3d8be3bb03f0b097531ada65989cedb68ac6cfcc648afc3b00cae0e778ae3e0c"
+        },
+        {
+          "name": "read_dingtalk_document",
+          "arguments": {
+            "node_id": "node-doc-audit-1"
+          },
+          "result_sha256": "71b94ee5c8ed73a7198ecd73b275210fdd2967bdde3c116812510ad1bcb7898b"
+        }
+      ],
+      "required_action_contract_read": false
+    },
+    {
+      "case": "audit-document-feedback",
+      "variant": "compact",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "phase": "cold",
+      "exit_code": 0,
+      "session_id": "01a1369a-ce0e-7cd2-9e47-0cc4afe550b8",
+      "turn_completed": true,
+      "candidate_digest": "d58a5899f186944099c708dfc333555530821239a870398f594ef4702d86f452",
+      "proposal_revision": 0,
+      "canonical": {
+        "outcome": "return",
+        "summary": "Return for revision: the proposed judgment and reply contradict the current document and introduce an unsupported approval-ready conclusion despite an explicit unresolved factual conflict and not-approved status.",
+        "proposal_revision": 0,
+        "candidate_digest": "d58a5899f186944099c708dfc333555530821239a870398f594ef4702d86f452",
+        "evidence_refs": [
+          "node-doc-audit-1",
+          "trigger-audit-document-review"
+        ],
+        "feedback": {
+          "rule": "ceo-document-review; sourced-facts and meaning-preservation rules",
+          "observation": "The current document explicitly contains an unresolved factual conflict: the executive summary states capacity is 120 units and launch is October 15, while the implementation table states capacity is 80 units and launch is October 22. The document also states that approval is not approved and that the factual conflicts must be reconciled first. The candidate instead judges the document internally consistent and ready for approval, and proposes publishing “No material issues found. The proposal is ready for approval.”",
+          "requested_revision": "Regenerate the complete candidate to preserve the document's unresolved-conflict finding. Do not approve or characterize the proposal as internally consistent or approval-ready. If the requested workflow remains a reply, prepare a factual reply identifying the conflicting capacity and launch values and requesting reconciliation before approval. Retain the verified conversation and trigger targets unless refreshed evidence requires a target change.",
+          "observation_basis": "business",
+          "candidate_field_assertions": []
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "wire": {
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "outcome": "return",
+        "proposal_revision": 0,
+        "candidate_digest": "d58a5899f186944099c708dfc333555530821239a870398f594ef4702d86f452",
+        "evidence_refs": [
+          "node-doc-audit-1",
+          "trigger-audit-document-review"
+        ],
+        "feedback": {
+          "rule": "ceo-document-review; sourced-facts and meaning-preservation rules",
+          "observation": "The current document explicitly contains an unresolved factual conflict: the executive summary states capacity is 120 units and launch is October 15, while the implementation table states capacity is 80 units and launch is October 22. The document also states that approval is not approved and that the factual conflicts must be reconciled first. The candidate instead judges the document internally consistent and ready for approval, and proposes publishing “No material issues found. The proposal is ready for approval.”",
+          "requested_revision": "Regenerate the complete candidate to preserve the document's unresolved-conflict finding. Do not approve or characterize the proposal as internally consistent or approval-ready. If the requested workflow remains a reply, prepare a factual reply identifying the conflicting capacity and launch values and requesting reconciliation before approval. Retain the verified conversation and trigger targets unless refreshed evidence requires a target change.",
+          "observation_basis": "business",
+          "candidate_field_assertions": []
+        },
+        "summary": "Return for revision: the proposed judgment and reply contradict the current document and introduce an unsupported approval-ready conclusion despite an explicit unresolved factual conflict and not-approved status."
+      },
+      "bound_candidate_field_validation": true,
+      "task_sha256": "c7251b0577b501daf75b3e0f6fbb7946e6c68b38235869cd919fccdfdc11f386",
+      "developer_sha256": "f6a939ab1c3907055bb8f910c92a039bb93ffaa25a66e8bd4bd166db68a10ab2",
+      "developer_characters": 25739,
+      "native_schema_sha256": "423a2b6ed633232aa279c041cc9b39218d726ab8d4e529d9846951aa99677104",
+      "native_original": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T11-51-17-01a1369a-ce0e-7cd2-9e47-0cc4afe550b8.jsonl",
+        "sha256": "913f7fb439f22d72dedd5d36d69ffce00468892046f07a5538320f9e88de4b1f",
+        "developer_exact_text_present": true,
+        "task_exact_text_present": true
+      },
+      "candidate_assertions_checked": 0,
+      "digest_revision_binding_valid": true,
+      "reject_label_passed": false,
+      "task_characters": 9030,
+      "actual_tool_calls": [
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "result_sha256": "3c0c57c83ff9bd7bc93a806b47136719b6a5c58cdecfe17fa0455498b1b770ce"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-doc"
+          },
+          "result_sha256": "948b589315d22ae5d65905b2cdff054f0935d0b31ae19a1dcdf56673e45bfc1a"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-chat"
+          },
+          "result_sha256": "3d8be3bb03f0b097531ada65989cedb68ac6cfcc648afc3b00cae0e778ae3e0c"
+        },
+        {
+          "name": "read_dingtalk_document",
+          "arguments": {
+            "node_id": "node-doc-audit-1"
+          },
+          "result_sha256": "71b94ee5c8ed73a7198ecd73b275210fdd2967bdde3c116812510ad1bcb7898b"
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "reply_to_message"
+          },
+          "result_sha256": "92bf6ccd04c1e662718635ae55f6da5e84c042d5d9222404adfc8c65cb31d527"
+        }
+      ],
+      "required_action_contract_read": true
+    }
+  ],
+  "independent_review": {
+    "reviewer": "native_catalog_review",
+    "result": "Exact native inputs/callbacks, full3 literal/type/path assertions valid, compact business0 legal but not a field-level assertion demonstration; both reject label fail, full lacks action contract read, no causal claim or complete business pass"
+  },
+  "business_acceptance": false,
+  "raw_hashes": {
+    "audit-validated-results.json": "b478f08bcdf8dcc0c22cf9e9ad34a45d438eba186b54e642e091b0872d515bcf",
+    "audit-results.json": "623ff339d783d0767449eeb143394d6f1e2e8811ec989493d08c19314b14cb28",
+    "preflight.json": "f7f4a322d51c4bc292fdff7170c21bf476408ba04c9b6b8f524d74e18ef8e784",
+    "mail-already-handled/mail.calls.jsonl": "cab43090b0e960429b425c6b2bd2c609f5a22d3740ae1bb1aa2358cda1aee407",
+    "mail-already-handled/fixture.sqlite3-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+    "mail-already-handled/fixture.sqlite3-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "mail-already-handled/preflight.calls.jsonl": "94c4cd6466bc132c7f505c5311fde564819f9cc4b7176e26eff7f06039b1d015",
+    "mail-already-handled/.fixture.sqlite3.initialize.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "mail-already-handled/mail.json": "5ff1685d7af988552215e66b4dedcd8d13d661fd474a6a54c549e3e8b39c02bd",
+    "mail-already-handled/native-dws-path.txt": "080c6412039a58cd85942fd034223f218ae78cb9a82d53dc71c22fee9b33b3b2",
+    "calendar-cross-midnight/fixture.sqlite3-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+    "calendar-cross-midnight/fixture.sqlite3-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "calendar-cross-midnight/preflight.calls.jsonl": "d389473f8e0370469e5bda3e943fc865207e2c483d5f5f25d6af6ef9909c344b",
+    "calendar-cross-midnight/.fixture.sqlite3.initialize.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "calendar-real-overlap/fixture.sqlite3-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+    "calendar-real-overlap/fixture.sqlite3-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "calendar-real-overlap/preflight.calls.jsonl": "48730e2c08aa19baf9904b9ef1347611b98c4ff2ca66ddd6ec41df2a96776c45",
+    "calendar-real-overlap/.fixture.sqlite3.initialize.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "document-material-conflicts/fixture.sqlite3-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+    "document-material-conflicts/fixture.sqlite3-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "document-material-conflicts/preflight.calls.jsonl": "184f7a24710dfa95de97d106ad5f80f128f343c77dab29727b8cfbe8d0f1e658",
+    "document-material-conflicts/.fixture.sqlite3.initialize.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "audit-document-feedback/fixture.sqlite3-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+    "audit-document-feedback/full.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "audit-document-feedback/compact.output.json": "08fba1ad0b00afb6d177c8bcbd7d45d9896cfa86d3e4bbd9103f8b8fb9403c2f",
+    "audit-document-feedback/fixture.sqlite3-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "audit-document-feedback/preflight.calls.jsonl": "1727ee41f07e23179607bc2e03f6ecfeb6972d7ace1d51dceb98669ce954a7fa",
+    "audit-document-feedback/full.trajectory.jsonl": "62a27083c912eb1e10fe4d83475420ceafdbf6a5965bfcffcedba22e6856db78",
+    "audit-document-feedback/candidate.json": "03947ded018150d48d063a7948cdde707966f2d9b69501daee2701d45d34a376",
+    "audit-document-feedback/full.calls.jsonl": "0ec4eed83fecce824a8aebaf21ec217bf1a5d3bf483fcd992ce0d0b5cd281532",
+    "audit-document-feedback/full.developer.txt": "b6889fad04ed9a929a257b7d0a43755405319e83fa738f03a474dde17c597fff",
+    "audit-document-feedback/compact.developer.txt": "f6a939ab1c3907055bb8f910c92a039bb93ffaa25a66e8bd4bd166db68a10ab2",
+    "audit-document-feedback/.fixture.sqlite3.initialize.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "audit-document-feedback/compact.trajectory.jsonl": "ce3d1cc81a9334e6d956c6ba0bf17535b3e7aafd27b3058ef05ef9dac6d7745c",
+    "audit-document-feedback/compact.calls.jsonl": "3f98ba315351cc4ae6c1029f617b388e5d969b338345bfc1bea8f95285aa299e",
+    "audit-document-feedback/compact.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "audit-document-feedback/submitted-task.txt": "c7251b0577b501daf75b3e0f6fbb7946e6c68b38235869cd919fccdfdc11f386",
+    "audit-document-feedback/full.output.json": "5a93dec5b1281cbe6554ab98d0f9c36422ab64422bf86c3eae97e56532e1d6ba",
+    "work-tracking-existing-remediation/fixture.sqlite3-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+    "work-tracking-existing-remediation/fixture.sqlite3-wal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "work-tracking-existing-remediation/preflight.calls.jsonl": "a4d47a94a46c7934525678c3bcb3ccd211e803db64063e100de1ce62442e64fd",
+    "work-tracking-existing-remediation/.fixture.sqlite3.initialize.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "next_required": [
+    "Inspect existing rule wording/complete production trajectories before any semantic change; no prompt patch added",
+    "Native Consumer four-domain and standalone TaskAgent business acceptance",
+    "Current configured provider cold/resume and formal release/readback"
+  ],
+  "temporary_cleanup": {
+    "path": "/private/tmp/ceo-native-current-feedback-pair.KdCTre",
+    "open_handle_check": "lsof +D returned 1 with empty output before removal",
+    "removed": true,
+    "native_original_sessions_retained": true
+  }
+}

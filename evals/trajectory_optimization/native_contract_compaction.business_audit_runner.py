@@ -14,6 +14,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from app.agent_runtime_config import load_runtime_config
 from app.agent_wire_contracts import AuditAgentWireResult
+from app.audit_agent import validate_audit_candidate_fields
 from app.audit_rules import render_audit_rules
 from app.business_skills import render_task_skill_discovery
 from app.codex_runtime_adapter import CodexRuntimeAdapter
@@ -110,10 +111,10 @@ def main():
             )
         raw = stem.with_suffix(".trajectory.jsonl").read_text()
         wire = json.loads(parse_native_output(raw, "audit")) if raw else None
-        canonical = (
-            AuditAgentWireResult.model_validate(wire).to_result().model_dump(mode="json")
-            if wire else None
-        )
+        result = AuditAgentWireResult.model_validate(wire).to_result() if wire else None
+        if result is not None:
+            validate_audit_candidate_fields(result, context.candidate)
+        canonical = result.model_dump(mode="json") if result else None
         events = [json.loads(line) for line in stem.with_suffix(".trajectory.jsonl").read_text().splitlines() if line.startswith("{")]
         session = next((e.get("thread_id") for e in events if e.get("type") == "thread.started"), None)
         record = {
@@ -125,6 +126,7 @@ def main():
             "proposal_revision": context.proposal_revision,
             "canonical": canonical,
             "wire": wire,
+            "bound_candidate_field_validation": result is not None,
             "task_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
             "developer_sha256": hashlib.sha256(developer.encode()).hexdigest(),
             "developer_characters": len(developer),
