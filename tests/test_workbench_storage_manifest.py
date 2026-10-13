@@ -4,6 +4,7 @@ import pytest
 
 from app.store import AutoReplyStore, _INITIALIZED_STORE_PATHS, STORE_SCHEMA_VERSION
 from app.workbench_storage import workbench_schema_is_current, migrate_workbench_schema
+from tests.test_sent_delivery_source import SOURCE as SENT_SOURCE
 from tests.workbench_schema_fixtures import full_source_database, fingerprint, SOURCE
 
 
@@ -18,7 +19,15 @@ def test_actual_source_declarations_initialize_transactionally_and_idempotently(
     migrate_action_schema(db)
     from app.action_receipt_storage import migrate_action_receipt_schema
     migrate_action_receipt_schema(db)
-    db.execute("update service_state set value='2026-10-13.2' where key='store_schema_version'")
+    from app.action_postfix_storage import migrate_action_postfix_schema
+    migrate_action_postfix_schema(db)
+    for definition in SENT_SOURCE["fresh_candidate"].values():
+        db.execute(next(obj["sql"] for obj in definition["objects"] if obj["type"] == "table"))
+    for definition in SENT_SOURCE["fresh_candidate"].values():
+        for obj in definition["objects"]:
+            if obj["type"] != "table":
+                db.execute(obj["sql"])
+    db.execute("update service_state set value='2026-10-13.3' where key='store_schema_version'")
     db.commit()
     db.close()
     store = AutoReplyStore(path)

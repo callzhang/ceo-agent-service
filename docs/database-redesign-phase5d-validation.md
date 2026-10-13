@@ -70,6 +70,16 @@ database-copy, provider delivery or release evidence.
 
 ## Remaining acceptance
 
+The legacy fixture alignment now passes all 142 cases across the five affected
+test files. The workbench historical fixture explicitly advances its nine-type
+actions through the Store17 postfix transition and creates the captured sent
+source declarations before opening with the Store18 constructor. The Phase5C
+paired release test reconstructs a genuine Store17 and Store16 layout through
+the two inverses, then uses its historical migration callback; the current
+router is exercised separately by a Phase5D full-constructor test that proves
+default publication, current-fact inverse and republication in a fresh process.
+This is isolated test evidence and does not establish production publication.
+
 Next finish all existing caller paths and integrate the paired release with the
 Store18 bootstrap, after refreshing the actual published source again.
 The standalone transition below already supports both captured literal source

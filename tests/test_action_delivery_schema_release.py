@@ -8,7 +8,10 @@ import pytest
 
 from app import action_delivery_schema_release as release_module
 from app import action_storage as storage
-from app.action_delivery_storage import capture_action_delivery_schema, migrate_action_delivery_schema
+from app.action_delivery_storage import (
+    capture_action_delivery_schema, migrate_action_delivery_schema,
+    restore_action_delivery_schema,
+)
 from app.task_schema_release import _foreign_keys
 from tests.test_action_delivery_migration import (
     action_snapshot, delivery_snapshot, delivery_source,
@@ -64,6 +67,62 @@ def _snapshot(db, *, target):
             "select name,seq from sqlite_sequence where name like 'actions:%' "
             "or name='sent_replies' order by name")],
     }
+
+
+def test_real_store18_factory_publication_inverse_and_republication(tmp_path, target_db):
+    """The current default publisher runs against a full constructor database."""
+    from pathlib import Path
+
+    from app.run_storage import insert_run
+    from app.store import AutoReplyStore
+    from app.store_schema_release import prepare_store_schema_release
+    from app.task_storage import insert_task
+
+    delivery_source(target_db, "actual")
+    source_schema = capture_action_delivery_schema(target_db)
+    path = tmp_path / "full-store.sqlite3"
+    AutoReplyStore(path)
+    with closing(sqlite3.connect(path)) as db:
+        insert_task(db, "reply_tasks", dict(id=1, conversation_id="chat", conversation_title="source",
+                    single_chat=0, trigger_message_id="message", trigger_create_time="time",
+                    trigger_sender="sender"))
+        insert_run(db, "agent_runs", dict(id=1, task_id=1,
+                   execution_generation="generation", role="consumer"))
+        storage.insert_action(db, "sent_replies", dict(id=701, conversation_id="raw\0chat",
+                              trigger_message_id="message", reply_text="raw\0body"))
+        storage.insert_action(db, "sent_reply_observers", dict(sent_reply_id=701,
+                              agent_run_id=1, reply_task_id=1, created_at="source\0time"))
+        db.commit()
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        restore_action_delivery_schema(db, source_schema)
+        db.execute("update service_state set value=?,updated_at=? "
+                   "where key='store_schema_version'", ORIGINAL)
+        db.commit()
+        assert capture_action_delivery_schema(db)["tables"] == source_schema["tables"]
+        before = delivery_snapshot(db)
+
+    release = prepare_store_schema_release(Path(__file__).parents[1], path)
+    assert isinstance(release, release_module.ActionDeliverySchemaRelease)
+    assert release.migrate is release_module._migrate_store
+    release.publish()
+    with closing(sqlite3.connect(path)) as db:
+        assert _marker(db)[0] == TARGET
+        assert delivery_snapshot(db, True) == before
+        storage.update_action(db, "sent_replies", 701, {"recall_error": "current\0error"})
+        storage.insert_action(db, "sent_replies", dict(conversation_id="new",
+                              trigger_message_id="new", reply_text="new\0body"))
+        current = delivery_snapshot(db, True)
+        db.commit()
+    release.rollback()
+    with closing(sqlite3.connect(path)) as db:
+        assert _marker(db) == ORIGINAL
+        assert delivery_snapshot(db) == current
+    release.publish()
+    release.finalize()
+    with closing(sqlite3.connect(path)) as db:
+        assert _marker(db)[0] == TARGET
+        assert delivery_snapshot(db, True) == current
 
 
 @pytest.mark.parametrize("variant", tuple(SOURCE))
