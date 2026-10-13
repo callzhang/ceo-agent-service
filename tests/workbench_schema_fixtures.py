@@ -137,7 +137,7 @@ def full_source_database(path, auxiliary_path):
     AutoReplyStore(auxiliary_path)
     with sqlite3.connect(auxiliary_path) as auxiliary:
         objects = auxiliary.execute(
-            "select type,name,sql from sqlite_master where sql is not null order by case type when 'table' then 0 when 'index' then 1 else 2 end,name"
+            "select type,name,sql from sqlite_master where sql is not null and tbl_name<>'actions' order by case type when 'table' then 0 when 'index' then 1 else 2 end,name"
         ).fetchall()
     db = source_database(path)
     names = {row[0] for row in db.execute("select name from sqlite_master")}
@@ -160,6 +160,18 @@ def full_source_database(path, auxiliary_path):
                 for table in SOURCE["tables"]
             ):
                 db.execute(sql)
+    # The current auxiliary Store owns actions, but source13 still used the
+    # six independently captured candidate declarations. Keep this a real old
+    # schema instead of copying a new table into a database with an old marker.
+    candidate_source = json.loads((Path(__file__).parents[1] / 'docs/superpowers/specs/2026-10-13-database-redesign-phase5a-inventory.json').read_text())['tables']
+    for state in candidate_source.values():
+        for obj in state['objects']:
+            if obj['type'] == 'table':
+                db.execute(obj['sql'])
+    for state in candidate_source.values():
+        for obj in state['objects']:
+            if obj['type'] != 'table' and obj['sql']:
+                db.execute(obj['sql'])
     db.commit()
     _INITIALIZED_STORE_PATHS.discard(path.resolve())
     return db

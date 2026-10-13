@@ -11,6 +11,8 @@ from app.reviewed_candidates import candidate_digest
 from app.store import AgentRole, AutoReplyStore
 from app.web_api.attempts import build_attempt_detail
 
+from app.action_storage import CANDIDATE_EXECUTION_SQL, CANDIDATE_SELECTION_SQL, CANDIDATE_SUPPLEMENT_SQL
+
 
 def _question():
     fact = {"assertion": "Applicant asked for a reply", "references": ["message:1"]}
@@ -188,8 +190,8 @@ def test_unbound_legacy_task_class_choices_survive_restart_without_becoming_exec
     with reopened._connect() as db:
         assert db.execute(f'select final_result_json from ({AGENT_RUN_SQL}) where id=?', (run.id,)).fetchone()[0] == ""
     with reopened._connect() as db:
-        assert db.execute("select count(*) from candidate_selections").fetchone()[0] == 0
-        assert db.execute("select count(*) from candidate_executions").fetchone()[0] == 0
+        assert db.execute(f"select count(*) from ({CANDIDATE_SELECTION_SQL})").fetchone()[0] == 0
+        assert db.execute(f"select count(*) from ({CANDIDATE_EXECUTION_SQL})").fetchone()[0] == 0
 
 
 def test_supplement_missing_execution_source_does_not_change_choice(tmp_path):
@@ -202,7 +204,7 @@ def test_supplement_missing_execution_source_does_not_change_choice(tmp_path):
     assert store.get_review_candidate(candidate["id"])["invalidated_at"] == ""
     assert store.get_reply_task(task.id).execution_generation == task.execution_generation
     with store._connect() as db:
-        assert db.execute("select count(*) from candidate_supplements").fetchone()[0] == 0
+        assert db.execute(f"select count(*) from ({CANDIDATE_SUPPLEMENT_SQL})").fetchone()[0] == 0
 
 
 def test_supplement_and_generation_rerun_commit_together(tmp_path, monkeypatch):
@@ -219,14 +221,14 @@ def test_supplement_and_generation_rerun_commit_together(tmp_path, monkeypatch):
     assert store.get_review_candidate(candidate["id"])["invalidated_at"] == ""
     assert store.get_reply_task(task.id).execution_generation == task.execution_generation
     with store._connect() as db:
-        assert db.execute("select count(*) from candidate_supplements").fetchone()[0] == 0
+        assert db.execute(f"select count(*) from ({CANDIDATE_SUPPLEMENT_SQL})").fetchone()[0] == 0
 
     monkeypatch.setattr(store, "_enqueue_manual_rerun_reply_task_in_connection", original)
     assert _submit(store, attempt_id, **fields)[0] == 303
     assert store.get_review_candidate(candidate["id"])["invalidated_at"]
     assert store.get_reply_task(task.id).execution_generation != task.execution_generation
     with store._connect() as db:
-        assert db.execute("select instruction from candidate_supplements").fetchone()[0] == "One new fact"
+        assert db.execute(f"select instruction from ({CANDIDATE_SUPPLEMENT_SQL})").fetchone()[0] == "One new fact"
 
 
 def test_scheduled_reviewed_question_accepts_exact_selection_and_new_facts(tmp_path):

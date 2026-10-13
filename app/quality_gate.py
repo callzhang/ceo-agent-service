@@ -23,6 +23,12 @@ from app.leak_check import contains_credential, contains_local_runtime_leak
 from app.store import SERVICE_HEALTH_STATE_PREFIX, REPLY_TASK_CURRENT_SQL
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
 
+from app.action_storage import (
+    REVIEW_CANDIDATE_SQL,
+    CANDIDATE_REVIEW_SQL,
+    CANDIDATE_SELECTION_SQL,
+)
+
 
 REQUIRED_SOURCES = (
     "reply_tasks",
@@ -488,16 +494,16 @@ def _check_structured_needs_human(
             select c.candidate_json as reviewed_candidate_json,
                    choice.id as selection_id
             from latest a
-            left join candidate_reviews review on review.audit_run_id=a.agent_run_id
+            left join ({CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=a.agent_run_id
               and review.decision='approve'
-            left join review_candidates c on c.id=review.candidate_id
+            left join ({REVIEW_CANDIDATE_SQL}) c on c.id=review.candidate_id
               and c.invalidated_at='' and c.candidate_digest=review.candidate_digest
-              and c.id=(select max(newest.id) from review_candidates newest
+              and c.id=(select max(newest.id) from ({REVIEW_CANDIDATE_SQL}) newest
                   where newest.task_id=c.task_id and newest.execution_generation=c.execution_generation)
               and exists(select 1 from ({REPLY_TASK_SQL}) task where task.id=c.task_id
                   and task.execution_generation=c.execution_generation
                   and task.status='needs_human')
-            left join candidate_selections choice on choice.candidate_id=c.id
+            left join ({CANDIDATE_SELECTION_SQL}) choice on choice.candidate_id=c.id
             where a.ordinal=1 and lower(a.send_status)='needs_human'
               and a.reviewed_at is null
               and trim(coalesce(a.resolved_at, ''))=''
