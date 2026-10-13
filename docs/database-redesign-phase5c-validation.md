@@ -132,3 +132,10 @@ Codex home；未复制 auth、配置或 trajectory。核对证据写入后，已
 最新 main d7397203 已合并到 d8c2afcd，89项 OA／postfix release／caller／native recovery 定向检查通过。
 native验收绑定较早候选的完整app哈希；新main只改变独立OA函数。下列AST和模块hash
 核对将其与当前候选关联，不宣称对无关OA改动重跑同一native案例。
+
+## 微信旧表夹具闭包
+
+现有缺少准备正文的发送拒绝用例仍直接删除旧outbound_postfixes表，真实Store17下
+RED为no such table。夹具改用typed delete_action后保留同一非法状态、拒绝发送及
+runner零调用断言，整文件44项通过；Ruff/diff通过。没有改运行代码或发送规则。
+此前CI版本因此被新提交取代，最终完整CI必须绑定本修正后的提交。
