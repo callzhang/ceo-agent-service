@@ -10,3 +10,9 @@ Lengths distinguish flattened visible text from serialized native blocks: text-o
 
 
 Current-main reconciliation preserves both appended claim rows and the independent three-test alignment. Seven affected/adjacent suites pass127 in8.35s after merge0b6bd3d4; no new runtime source change. Independent scoped review reports no code-level publication blocker for this per-tool delivery fix, retaining all stated fixture limitations.
+
+## Production release readback
+
+PR68 merged as06c08020773978b613d3a94dc4b9642e4b0cc2ef. Formal deploy deploy-92e67a59-d7d2-4c4b-9d0f-5ba05f0e34b4 succeeded2026-10-12 22:05:56 America/Los_Angeles (2026-10-13T05:05:56Z). Verified database backup exists, production checkout is clean, and new PID43583 runs the installed commit. Health, queue, Attention, History and both Settings role previews returnHTTP200. Queue readback still contains pending, processing and failed items; HTTP availability does not establish their business success.
+
+Local inspection of the actual installed launcher confirms Consumer/Audit cold/resume all carry exactly one read_dingtalk_messages.output_token_limit=30000 setting and no global budget override. This readback makes no provider/model request. No fresh post-release business trajectory has been accepted yet. Versioned evidence: message_native_budget.release.v1.json; preceding127 focused passes and seven bounded source probes retain their documented limitations.
