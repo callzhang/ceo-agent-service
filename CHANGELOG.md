@@ -31,6 +31,10 @@
   text that may combine multiple messages, preserving origin, path, query,
   rating, token and attempt checks. Strict outgoing-body validation is unchanged.
 
+- Include deterministic JSON Pointer paths, exact scalar literals and JSON
+  types derived from the current adopted candidate in Audit's task input, so
+  field-type feedback can be checked against the candidate under review.
+
 - Avoid SQLite writer-lock waits during idle meeting delivery batch polls.
   Probe the existing ready/unlocked/due predicate read-only, retaining the
   original transactional recheck and claim-token mutation. Cover empty,
