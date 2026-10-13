@@ -353,6 +353,7 @@ def build_parser() -> argparse.ArgumentParser:
         "consume",
         "process-work-items",
         "retry-work-summary-input",
+        "reconcile-confirmed-meeting-delivery",
         "retry-failed-email-unsubscribe",
         "release-failed-email-unsubscribe",
         "cancel-failed-email-unsubscribe",
@@ -549,6 +550,9 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--limit", type=_positive_int)
         if command == "retry-work-summary-input":
             subparser.add_argument("--input-id", type=_positive_int, required=True)
+        if command == "reconcile-confirmed-meeting-delivery":
+            subparser.add_argument("--job-id", type=_positive_int, required=True)
+            subparser.add_argument("--apply", action="store_true")
         if command == "cancel-failed-email-unsubscribe":
             subparser.add_argument("--task-id", type=_positive_int, required=True)
             subparser.add_argument("--action-identity", type=_non_blank, required=True)
@@ -4951,6 +4955,28 @@ def main() -> None:
         process_work_items_command(settings)
     elif args.command == "retry-work-summary-input":
         retry_work_summary_input_command(settings, input_id=args.input_id)
+    elif args.command == "reconcile-confirmed-meeting-delivery":
+        from app.meeting_alignment import reconcile_confirmed_meeting_delivery
+        if args.apply and settings.dry_run:
+            raise SystemExit("--apply refused: dry-run is on")
+        if args.apply:
+            report = reconcile_confirmed_meeting_delivery(
+                AutoReplyStore(settings.db_path), DwsClient(), args.job_id, apply=True,
+            )
+        else:
+            import sqlite3
+            from contextvars import ContextVar
+            # Preview must not initialize or migrate the production schema.
+            db = sqlite3.connect(f"file:{settings.db_path.resolve()}?mode=ro", uri=True)
+            db.row_factory = sqlite3.Row
+            try:
+                inspected_store = AutoReplyStore.__new__(AutoReplyStore)
+                inspected_store.path = settings.db_path
+                inspected_store._read_snapshot_connection = ContextVar("meeting_recovery_preview", default=db)
+                report = reconcile_confirmed_meeting_delivery(inspected_store, DwsClient(), args.job_id)
+            finally:
+                db.close()
+        print(json.dumps(report, ensure_ascii=False), flush=True)
     elif args.command == "retry-failed-email-unsubscribe":
         retry_failed_email_unsubscribe_command(settings)
     elif args.command == "release-failed-email-unsubscribe":
