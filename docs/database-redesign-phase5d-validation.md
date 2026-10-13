@@ -18,11 +18,12 @@ The current opt-in foundation is `64a5c1105a01fd37a1da2c88e63688322ea342ac`.
 It passed final independent SPEC and QUALITY re-review. Its predecessor
 `b895dcd9` passed SPEC, then QUALITY found a Python native-autocommit
 transaction discrepancy; the final repair closes that reproduced gap.
-No new Store version is reserved and the Store bootstrap and production
-continue to use the twelve-type actions declaration plus the original sent
-tables. The standalone storage migration, current-fact inverse and latest
-source-copy evidence below are verified. Caller conversion, target Store
-constructor acceptance, paired schema release and deployment remain unverified.
+Production continues to use Store17, twelve-type actions and the original sent
+tables. The current isolated candidate reserves Store18 `2026-10-13.4` and its
+fresh/current bootstrap uses fourteen types. The standalone migration/inverse,
+latest source-copy proof and four cold/fresh bootstrap checks below are verified.
+Caller conversion, integrated target constructor acceptance against production
+data, paired release acceptance and deployment remain unverified.
 
 ## Opt-in foundation evidence
 
@@ -69,9 +70,8 @@ database-copy, provider delivery or release evidence.
 
 ## Remaining acceptance
 
-Next integrate the independently reviewed storage transition into the Store
-bootstrap and all existing caller paths, after refreshing the actual published
-source again. Reserve a target version only at that integration boundary.
+Next finish all existing caller paths and integrate the paired release with the
+Store18 bootstrap, after refreshing the actual published source again.
 The standalone transition below already supports both captured literal source
 variants, current-fact inverse and the required identity/value/type/watermark
 checks; target constructor and release checks must repeat them.

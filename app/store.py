@@ -178,11 +178,11 @@ from app.work_summary_payload import (
 from app.task_source_documents import source_document_key, source_is_observed
 from app.wechat.models import WechatReplyScope
 
-from app.action_postfix_storage import migrate_action_postfix_schema
+from app.action_delivery_storage import migrate_action_delivery_schema
 
 from app.action_storage import (
     _current_objects as action_schema_objects,
-    ACTION_TYPES,
+    ACTION_TYPES, DELIVERY_ACTION_TYPES,
     POSTFIX_ACTION_TYPES, OUTBOUND_POSTFIX_SQL, OUTBOUND_POSTFIX_RECEIPT_SQL,
     create_action_schema,
     RECEIPT_ACTION_TYPES,
@@ -292,7 +292,7 @@ REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id
                   and canonical.reply_task_id=parent.id"""
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-13.3"
+STORE_SCHEMA_VERSION = "2026-10-13.4"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -337,7 +337,6 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "conversation_runtime_sessions",
     "wechat_memory_import_jobs",
     "meeting_memory_write_events",
-    "sent_reply_observers",
     "business_object_tasks",
     "tasks",
     "oa_notification_events",
@@ -403,8 +402,6 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_agent_runtime_attempts_run",
     "idx_task_agent_runs_active_input",
     "idx_agent_run_state_events_run",
-    "idx_sent_replies_external_action",
-    "idx_sent_replies_external_action_lookup",
     "idx_errors_reply_task_settlement",
     "idx_meeting_alignment_runs_active_job",
     "idx_weekly_okr_analysis_jobs_identity",
@@ -468,6 +465,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_business_legacy_links_task",
 )
 STORE_SCHEMA_REMOVED_TABLES = (
+    *DELIVERY_ACTION_TYPES,
     *POSTFIX_ACTION_TYPES,
     *RECEIPT_ACTION_TYPES,
     *RETIRED_WORKBENCH_TABLES,
@@ -622,7 +620,6 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "skill_update_receipts_json",
         "trigger_text_provenance_json",
     ),
-    "sent_replies": ("agent_run_id", "external_action_key"),
     "runs": (
         "record_type", "legacy_key", "task_id", "parent_id",
         "summary_input_id", "error", "projection_json", "job_id", "request_id",
@@ -2557,7 +2554,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             and run_schema_is_current(db, include_task_runs=True, include_workbench=True)
             and task_schema_is_current(db, include_workbench=True)
             and workbench_schema_is_current(db)
-            and action_schema_is_current(db, include_postfix=True)
+            and action_schema_is_current(db, include_delivery=True)
             and reply_input_foreign_keys_present
             and not removed_columns_present
             and (
@@ -2927,31 +2924,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     message_id text primary key,
                     conversation_id text not null,
                     seen_at text not null default current_timestamp
-                );
-                create table if not exists sent_replies (
-                    id integer primary key autoincrement,
-                    conversation_id text not null,
-                    trigger_message_id text not null,
-                    reply_text text not null,
-                    send_result_json text not null default '',
-                    recall_key text not null default '',
-                    recall_status text not null default '',
-                    recall_error text not null default '',
-                    recalled_at text,
-                    feedback_token text not null default '',
-                    agent_run_id integer not null default 0,
-                    external_action_key text not null default '',
-                    sent_at text not null default current_timestamp
-                );
-                create table if not exists sent_reply_observers (
-                    sent_reply_id integer not null,
-                    agent_run_id integer not null,
-                    reply_task_id integer not null,
-                    created_at text not null default current_timestamp,
-                    primary key(sent_reply_id, agent_run_id),
-                    foreign key(sent_reply_id) references sent_replies(id),
-                    foreign key(agent_run_id) references runs(id),
-                    foreign key(reply_task_id) references tasks(id)
                 );
                 create table if not exists feedback_events (
                     key text primary key,
@@ -4341,41 +4313,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "where payload_json<>'{}'"
             )
             db.execute("create index if not exists idx_reply_tasks_business_object_key on tasks(business_object_key) where record_type='reply_tasks'")
-            create_action_schema(db, include_postfix=True)
+            create_action_schema(db, include_delivery=True)
             self._migrate_oa_notification_events(db)
-            sent_reply_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(sent_replies)").fetchall()
-            }
-            for column, definition in (
-                ("send_result_json", "text not null default ''"),
-                ("recall_key", "text not null default ''"),
-                ("recall_status", "text not null default ''"),
-                ("recall_error", "text not null default ''"),
-                ("recalled_at", "text"),
-                ("feedback_token", "text not null default ''"),
-                ("agent_run_id", "integer not null default 0"),
-                ("external_action_key", "text not null default ''"),
-            ):
-                if column not in sent_reply_columns:
-                    try:
-                        db.execute(
-                            f"alter table sent_replies add column {column} {definition}"
-                        )
-                    except sqlite3.OperationalError as exc:
-                        if "duplicate column name" not in str(exc):
-                            raise
-            db.execute(
-                "create unique index if not exists "
-                "idx_sent_replies_external_action "
-                "on sent_replies(external_action_key) "
-                "where external_action_key<>''"
-            )
-            db.execute(
-                "create index if not exists "
-                "idx_sent_replies_external_action_lookup "
-                "on sent_replies(external_action_key)"
-            )
             feedback_event_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(feedback_events)").fetchall()
@@ -4561,7 +4500,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 where send_status='needs_authorization'
                 """
             )
-            for table_name in ("reply_attempts", "sent_replies"):
+            for table_name in ("reply_attempts",):
                 existing = {
                     row["name"]
                     for row in db.execute(f"pragma table_info({table_name})").fetchall()
@@ -4763,14 +4702,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 """
                 create index if not exists idx_reply_attempts_agent_run_recovery
                     on reply_attempts(agent_run_id, send_error, id)
-                """
-            )
-            db.execute(
-                """
-                create index if not exists idx_sent_replies_history
-                    on sent_replies(
-                        conversation_id, trigger_message_id, sent_at
-                    )
                 """
             )
             db.execute(
@@ -9513,10 +9444,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 db.execute("select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
                 if "service_state" in tables else None
             )
-            store_tables = {"tasks", "runs", "actions", *ACTION_TYPES, *RECEIPT_ACTION_TYPES, *POSTFIX_ACTION_TYPES,
-                            *(obj["name"] for obj in action_schema_objects(True, include_postfix=True)),
+            store_tables = {"tasks", "runs", "actions", *ACTION_TYPES, *RECEIPT_ACTION_TYPES, *POSTFIX_ACTION_TYPES, *DELIVERY_ACTION_TYPES,
+                            *(obj["name"] for obj in action_schema_objects(True, include_delivery=True)),
                             *RETIRED_TASK_TABLES, *RETIRED_RUN_TABLES, *RETIRED_WORKBENCH_TABLES}
-            if marker is not None and marker[0] == STORE_SCHEMA_VERSION and run_schema_is_current(db, allow_missing_objects=True, include_task_runs=True, include_workbench=True) and task_schema_is_current(db, allow_missing_objects=True, include_workbench=True) and workbench_schema_is_current(db, allow_missing_objects=True) and action_schema_is_current(db, allow_missing_objects=True, include_postfix=True):
+            if marker is not None and marker[0] == STORE_SCHEMA_VERSION and run_schema_is_current(db, allow_missing_objects=True, include_task_runs=True, include_workbench=True) and task_schema_is_current(db, allow_missing_objects=True, include_workbench=True) and workbench_schema_is_current(db, allow_missing_objects=True) and action_schema_is_current(db, allow_missing_objects=True, include_delivery=True):
                 return
             collision = db.execute(
                 "select 1 from sqlite_master where name collate nocase in ("
@@ -9526,7 +9457,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if marker is not None or collision is not None:
                 raise sqlite3.IntegrityError(
                     "unsupported or malformed Store source schema; expected a fresh Store, "
-                    "the exact 2026-10-13.2 source, or the current 2026-10-13.3 schema"
+                    "the exact 2026-10-13.3 source, or the current 2026-10-13.4 schema"
                 )
         finally:
             db.close()
@@ -9538,7 +9469,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if db.execute("select 1 from sqlite_master where name='service_state'").fetchone() is None:
                 return False
             marker = db.execute("select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
-            if marker is None or marker[0] != "2026-10-13.2":
+            if marker is None or marker[0] != "2026-10-13.3":
                 return False
             db.execute("pragma foreign_keys=off")
             db.execute("begin immediate")
@@ -9546,7 +9477,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     and task_schema_is_current(db, include_workbench=True)
                     and workbench_schema_is_current(db)):
                 raise sqlite3.IntegrityError("invalid preceding Store core schema")
-            migrate_action_postfix_schema(db)
+            migrate_action_delivery_schema(db)
             if not self._schema_manifest_is_current_in_connection(db, include_run_snapshots=True):
                 raise RuntimeError("typed task migration manifest differs")
             db.execute("update service_state set value=? where key=?", (STORE_SCHEMA_VERSION, STORE_SCHEMA_VERSION_KEY))

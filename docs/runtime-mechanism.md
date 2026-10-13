@@ -1,5 +1,13 @@
 # Current Runtime Mechanism
 
+The isolated Store18 candidate (`2026-10-13.4`) bootstraps the finite delivery
+action layout and accepts only exact published Store17 as its migration source.
+It does not recreate retired sent/observer tables during auxiliary repair.
+Four cold/fresh bootstrap checks cover both captured source declarations, raw
+sent TEXT and deleted-ID watermark progress. Business delivery callers and the
+integrated paired release are not yet accepted; production remains Store17.
+The published Store17 contract below continues to describe the live service.
+
 OA return uses its own effect verification, not the approval/rejection node
 completion predicate. The exact pending-node ownership check still precedes a
 new return. System first saves the actual response, principal, action digest and

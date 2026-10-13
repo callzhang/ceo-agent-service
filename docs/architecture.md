@@ -1,5 +1,15 @@
 # CEO Agent Service Architecture
 
+Store18 delivery integration is an isolated development candidate, not a
+published runtime. Its fresh bootstrap and exact Store17 migration use fourteen
+finite `actions` types and retire physical `sent_replies` and
+`sent_reply_observers`. Sent public IDs and their native allocation watermark
+remain independent; sent `agent_run_id` is the existing scalar field, while
+observer run/task/delivery endpoints remain actual foreign keys. Current-fact
+inverse and published-old-code copy evidence are in the Phase5D validation.
+Caller conversion and integrated release acceptance are still pending; the
+candidate must not be reported as a production migration or the full10+1 goal.
+
 Installed Skill discovery (`agent_cli.read_skill()` without a source) returns
 body-free TSV metadata with separate Root and Relative path columns. Joining
 the referenced root directory with the relative component reconstructs the
