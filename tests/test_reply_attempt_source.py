@@ -101,6 +101,7 @@ def test_exact_source_declarations_and_metadata(db, source):
 
 
 def test_attempt_required_fields_and_original_defaults(db, source):
+    before = db.execute("select current_timestamp").fetchone()[0]
     attempt_id = _attempt(db).lastrowid
     columns = {column["name"]: column for column in CAPTURE[source]["tables"]["reply_attempts"]["columns"]}
     values = dict(zip(
@@ -108,8 +109,11 @@ def test_attempt_required_fields_and_original_defaults(db, source):
     ))
     assert {name: values.pop(name) for name in REQUIRED_ATTEMPT} == REQUIRED_ATTEMPT
     assert values.pop("id") == attempt_id
-    for name in ("created_at", "updated_at"):
-        assert values.pop(name) == db.execute("select current_timestamp").fetchone()[0]
+    after = db.execute("select current_timestamp").fetchone()[0]
+    created_at = values.pop("created_at")
+    updated_at = values.pop("updated_at")
+    assert created_at == updated_at
+    assert before <= created_at <= after
     assert values.pop("reviewed_at") is None
     assert values.pop("agent_run_id") is None
     if source == "actual":
