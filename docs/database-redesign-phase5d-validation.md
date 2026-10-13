@@ -80,6 +80,15 @@ router is exercised separately by a Phase5D full-constructor test that proves
 default publication, current-fact inverse and republication in a fresh process.
 This is isolated test evidence and does not establish production publication.
 
+Five adjacent current-store fixtures now read sent deliveries through the
+fourteen-type projection, update a sent timestamp through the finite action
+writer, or compare that projection when checking read-only Attention behavior.
+The historical caller fixture advances source16 through the real postfix
+migration, creates captured sent source declarations, and then opens Store18;
+its original candidate, receipt, identity and allocator assertions remain.
+Thirteen affected local cases pass. The copied-database acceptance case needs
+its separately supplied owned snapshot and was not executed in this fixture run.
+
 Next finish all existing caller paths and integrate the paired release with the
 Store18 bootstrap, after refreshing the actual published source again.
 The standalone transition below already supports both captured literal source
