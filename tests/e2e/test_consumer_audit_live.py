@@ -25,6 +25,7 @@ from app.system_executor import SystemExecutor
 from app.wechat.codex_safety import make_audit_agent_command
 from tests.support.audit_sink_mcp import AuditSink
 from tests.support.native_protocol import install_protocol_native_trajectories
+from tests.support.native_schema import native_wire_fixture
 
 
 QUESTION = "What specific decision or input do you need from Derek in this meeting?"
@@ -239,7 +240,7 @@ def _consumer_result_record(proposal: dict[str, object]) -> dict[str, object]:
     }
     return {
         "type": "item.completed",
-        "item": {"type": "agent_message", "text": json.dumps(wire)},
+        "item": {"type": "agent_message", "text": json.dumps(native_wire_fixture(wire, role="consumer"))},
     }
 
 
@@ -261,7 +262,7 @@ def _audit_result_record(candidate: dict[str, object]) -> dict[str, object]:
     }
     return {
         "type": "item.completed",
-        "item": {"type": "agent_message", "text": json.dumps(wire)},
+        "item": {"type": "agent_message", "text": json.dumps(native_wire_fixture(wire, role="audit"))},
     }
 
 
@@ -572,7 +573,7 @@ def test_deterministic_native_runner_calendar_clarification_contract(
     assert system_dws.sent[0][0] == "cid-1"
     assert system_dws.sent[0][1].startswith(MESSAGE_TEXT)
     assert len(executor.commands) == 2
-    assert all("--output-schema" not in command for command in executor.commands)
+    assert all("--output-schema" in command for command in executor.commands)
     assert "tools.enabled_tools" not in " ".join(executor.commands[0])
     assert "codex" == executor.commands[1][0]
     assert "Raw material references and exact read commands" in executor.prompts[0]

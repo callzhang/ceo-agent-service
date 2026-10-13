@@ -323,3 +323,32 @@ PR31 merges deployed main d7397203 without changing its AuditFeedback policy, ca
 Three parameterized transport regressions exercise native JSON to canonical Wire to domain result and the existing bound-candidate validator. Nested values retain literal entries keys, special/empty keys, Unicode, null, booleans and numbers; null and leading-zero strings remain exact. Correct assertions pass, changed candidate values fail, and empty candidate_fields assertions are still rejected by canonical validation even though the structural native grammar permits the array. No new policy or feedback fallback is added.
 
 Focused coverage: the expanded current-main contract/role/preview set validates426 tests with4 intentional skips; three new negative assertions initially mismatched the parser's existing outer schema-error message, then the unchanged rejection invariant passes in the final22-test native file. Combined affected behavior coverage is429 passing cases/4 skips, with no full-suite run or production change. Independent readonly review confirms generated schema equality and unchanged main audit policy. Provider-native model and business release gates remain pending; historical old-schema probes are not relabeled as current-contract evidence.
+
+## Store17 integration and scripted native protocol regression
+
+PR31 integrates current main `dc6abe2d` in `fad2915e`; independent documentation
+appendices are both preserved. Existing CI run38449177442 at57f34f94 failed30
+cases. The same failure set appears in PR78 run38456452848. These are terminal
+check results, not evidence of successful publication. Main already fixes the
+waiting-OA daily-report fixture; the remaining scripted native fixtures still
+emitted canonical JSON where the approved Codex native transport requires
+recursive entries objects. Three representative tests reproduced the failures
+locally before correction, including the exact native-object rejection.
+
+The shared test-only encoder first validates the canonical fixture, then
+represents open JSON maps and nested values in the native format. Consumer/Audit
+scripted final events use it; their simulated tools, candidate facts, business
+results, errors, retry assertions and executor checks are unchanged. Calendar
+e2e now checks the native schema argument is present; the three-route test
+checks the Codex format appendix and the existing unchanged Claude input.
+No runtime, fallback, authorization, audit policy or provider change is made.
+
+Four affected test files: **172 passed,1 deselected**. Native codec, canonical
+schema snapshots and identifier tests: **113 passed**. Ruff and diff check pass.
+A read-only reviewer checked both minimal native results against the projected
+schema and real parser and found no lost defaults or weakened business or retry
+oracles. Fixture key order follows the canonical model, whereas real constrained
+generation uses the native schema order with summary last. These are service
+protocol regression fixtures, not a model-generation-order evaluation. New full
+CI has not yet completed, and all outstanding provider/business/production
+gates remain unchanged.
