@@ -21,6 +21,20 @@ def test_source_callback_identity_is_opaque_not_a_new_outgoing_token():
     assert "historical-source-identity" not in inspected
 
 
+def test_source_callback_validation_accepts_multiple_pairs_in_one_value():
+    source = "\n\n".join((
+        _source("historical-source-identity-one"),
+        _source("historical-source-identity-two"),
+    ))
+
+    inspected = sanitize_source_feedback_links(source,
+        vercel_base_url="https://feedback.example.com")
+
+    assert "Historical source" in inspected
+    assert "/api/dingtalk-feedback-spike" not in inspected
+    assert inspected.count("[service-generated feedback callback]") == 4
+
+
 def test_source_callback_does_not_trust_foreign_origin_or_unpaired_identity():
     for source in (_source("historical", host="https://foreign.example.com"),
                    _source("historical").replace("feedback_token=historical&rating=down",
@@ -28,3 +42,14 @@ def test_source_callback_does_not_trust_foreign_origin_or_unpaired_identity():
         with pytest.raises(ValueError, match="feedback_callback_pair_invalid"):
             sanitize_source_feedback_links(source,
                 vercel_base_url="https://feedback.example.com")
+
+
+def test_source_callback_validation_rejects_an_incomplete_pair_among_valid_pairs():
+    source = "\n\n".join((
+        _source("historical-one"),
+        _source("historical-two").replace("&rating=down", "&rating=up"),
+    ))
+
+    with pytest.raises(ValueError, match="feedback_callback_pair_invalid"):
+        sanitize_source_feedback_links(source,
+            vercel_base_url="https://feedback.example.com")

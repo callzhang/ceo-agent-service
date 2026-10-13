@@ -27,6 +27,10 @@
 
 ## Unreleased
 
+- Validate every complete historical feedback callback pair in captured source
+  text that may combine multiple messages, preserving origin, path, query,
+  rating, token and attempt checks. Strict outgoing-body validation is unchanged.
+
 - Avoid SQLite writer-lock waits during idle meeting delivery batch polls.
   Probe the existing ready/unlocked/due predicate read-only, retaining the
   original transactional recheck and claim-token mutation. Cover empty,
