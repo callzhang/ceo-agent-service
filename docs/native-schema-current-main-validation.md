@@ -284,3 +284,9 @@ and parser boundary, then repeat complete source/token/stream/role verification.
 No prompt rule, model route, CodeMode toggle or fallback was adopted.
 
 The exact owned prototype directory `/private/tmp/ceo-qwen-custom-tools.T8SsIm` was removed after a zero-open-handle check and preservation of the patch, checkers, anonymous results, and hashes. Installed provider source hashes were reread unchanged. Independent read-only review verified the saved artifact hashes and result counts; this review approves the evidence checkpoint, not provider publication.
+
+### Framing diagnostic: generation and parsing disagree
+
+The installed `vllm/parser/qwen3.py` converter trims one wrapping newline and extracts parameter values with markup delimiters; the engine also treats function/tool delimiters as transitions. A CPU-only actual-parser comparison now includes all six parameter/function/tool boundary strings obtained from that module. Ordinary JSON-object framing preserves 3/5 inputs; encoding every UTF-16 code unit inside the JSON string preserves 5/5, including Unicode, boundary newlines, and protocol markers. The actual required-tool xgrammar constraint accepts all ten outputs, including the two ordinary JSON outputs that the parser truncates. See `qwen_custom_tool_transport.framing_diagnostic.cpu.py` and its v1 result.
+
+This establishes a generation/parser contract mismatch. Fully escaped encoding is a diagnostic, not the adopted repair: the present grammar does not require it, and no model behavior or streaming fidelity has been established. A permanent repair must align framing constraints and parsing rather than instructing the Agent to avoid marker text. No installed file, route, prompt or service was changed. Two initial fixture setup failures (absent auto constraint and unconverted Responses declarations) were corrected before the recorded successful run and are excluded from result counts.
