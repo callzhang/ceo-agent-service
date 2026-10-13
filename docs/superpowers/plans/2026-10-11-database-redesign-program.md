@@ -82,8 +82,25 @@ PR77开发候选已完成postfix三表十三字段合入十二类型actions、St
 全部prepare/claim/receipt/echo/meeting/WeChat调用和配对release。合并最新OA改动后
 212项定向检查、100项恢复／发送检查通过（11项明确环境跳过）；3处current marker
 断言RED后校准，128项邻接检查通过。独立SPEC／QUALITY已通过，范围仅5C。
-当前生产仍Store16；目标未发布，CLI替身验收和完整CI仍是发布前门槛。
+当前生产仍Store16；目标未发布。真实CLI替身批准验收已完成，见
+phase5c_native_copy.v1.json：Consumer／Audit及业务结果／替身回执链通过，
+group-send案例未覆盖native dispatch claim，后者由caller／copy检查覆盖。
+完整CI与正常发布／生产读回仍是门槛，不将来源副本或模型验收当作上线证明。
 实际最新生产副本配对constructor／current-fact inverse／实际旧代码启动／再正迁
 见phase5c_constructor_copy.v1.json；独立所有原九类型值／类型／水位／改绑／删除
 证明见phase5c_current_source_storage_copy.v1.json。临时副本已清理。
 完整10+1仍未完成；5D等其余actions家族与第6–8期仍需实施。
+
+### 2026-10-13 Phase5D／5E及邮件动作来源准备
+
+D的发送记录18字段和76项独立来源行为检查已准备；E实际生产58列Attempt／
+10列Memory与fresh54／10变体、54项来源检查及2项变体跳过已准备。
+E实施计划6ee59d29通过独立SPEC和QUALITY核对，包含当前queued审查标记的
+配对逆迁和页面／helper／runtime三种既有native范围行为；两项对应回归通过。
+这些结果不证明D／E目标存储、迁移或发布。实施前必须刷新实际已发布来源。
+
+邮件动作来源551cacf0捕获实际Store16／Email51的9表103字段及4张外部子表
+依赖，3,265项元数据断言通过，未保留私有原始行。准确DDL／字段／调用路径见
+2026-10-13-database-redesign-email-actions-source.json及同名前缀source-map.md。
+这是来源盘点；独立来源行为、目标映射／调用转换及配对迁移尚需完成，不占用版本。
+所有来源测试均无真实发送、provider回放或生产写入；完整10+1目标仍未完成。
