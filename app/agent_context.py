@@ -345,6 +345,7 @@ class AuditTurnContext:
 
     def render(self, *, current_time: str | None = None) -> str:
         from app.reviewed_sources import context_source
+        from app.audit_candidate_field_evidence import render_candidate_field_evidence
 
         source_reference = ""
         actual = json.dumps(context_source(self.task), ensure_ascii=False, sort_keys=True)
@@ -368,6 +369,15 @@ class AuditTurnContext:
                         "candidate_digest": self.candidate_digest,
                         "candidate": self.candidate.model_dump(mode="json"),
                     }
+                ),
+                "Current candidate scalar field evidence, computed from the exact candidate JSON above\n"
+                + render_candidate_field_evidence(
+                    self.candidate.model_dump(mode="json")
+                )
+                + (
+                    "\nUse this evidence to verify a reported current-candidate field value or JSON type. "
+                    "A field-type observation must match its exact JSON Pointer path, literal value, "
+                    "and JSON type here; do not infer the type from identifier appearance."
                 ),
             )
         )
