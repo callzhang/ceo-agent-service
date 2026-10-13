@@ -1,6 +1,6 @@
 # 第五期B验证记录
 
-当前为隔离 worktree 开发和生产数据库副本验证，未上线。
+PR76已于2026-10-13正式部署到ebaf0d96，生产Store2026-10-13.2／Email51；以下离线证据与末节发布读回分别标明范围。
 
 源 Store2026-10-13.1，目标 Store2026-10-13.2；Email51不变。生产副本132张物理表迁至129，三类来源分别336条全局回执、214条effect intent、115条execution receipt。实际字段值、SQLite类型、原六类型actions公开/物理ID与正文、126张非受影响表数据一致。全局回执按文本主键核对，隐式rowid不属于业务身份。
 
@@ -33,3 +33,11 @@ main/实际生产已推进到f1377ab8（OA field facts与return恢复）；已me
 修正已提交34c37699，非空回归包含原candidate原始TEXT、三类独立回执和删除后的高水位50，并分别检查准确Store15中间态及Store16当前态。root新鲜运行task/meeting/Workbench/Store来源案例与该回归，81项通过；此数不与前述选集合计。root逐项重新核对copy/native批准/native修订三份证明所绑定的326个app Python/JSON文件SHA256，均与当前代码匹配；此次fixture修正不改变已接受的副本及真实CLI运行代码范围。
 
 该fixture修正独立SPEC和QUALITY均通过。QUALITY另填满六类actions及三类receipt，对全部字段值和存储类型、NUL原文、非JSON字符串、公开／物理身份和删除后分配器水位做13→14→15→16核对；新分配ID61／51符合保留的水位。故障注入确认两段迁移处于同一FK-off事务，异常时另一连接仍见已提交source13声明／marker，不会留下伪中间版本。此为测试构造质量证据，不扩大生产迁移来源。
+
+## 正式发布读回
+
+Quality CI38422492340在f799ae3f完整通过：12,374项Python检查、46个前端测试文件、构建及浏览器检查通过。PR76合并为ebaf0d96，正常app.deploy由f1377ab8推进到该提交，PID98276，production checkout干净。生产Store16／Email51、九类型actions manifest正确，旧三表为零，129张物理表／123张普通应用表。
+
+最新已验证的Store15备份先完整性／FK验证，再原子替换旧日备份。发布后只读逐字段值和类型比对确认三类回执及旧六类型与该来源一致；原runs→tasks的一条FK诊断保留，未新增失败reply任务。健康、队列、Attention和History读取正常，核对时九条dispatcher队列pending/running均0、latest_error为空。History列表、代表执行15020、展开详情及Attention页面已实际打开；历史原生过程缺失显示不可用，未制造过程记录或测试真实发送。
+
+详细回执见evals/database_redesign/phase5b_release.v1.json。读取时主文件471,347,200字节、WAL17,967,352字节、freelist8138页；没有执行VACUUM，不宣称物理文件已缩小。完整10+1尚未完成，后续C运行接入、剩余actions家族和第六至八期继续实施。

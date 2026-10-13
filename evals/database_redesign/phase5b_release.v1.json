@@ -1,0 +1,162 @@
+{
+  "scope": "Phase5B production release; full10+1 incomplete",
+  "commit": "ebaf0d966ab21fd328be577c0fb8e65a519bd009",
+  "pr": 76,
+  "ci_run": 38422492340,
+  "ci_head": "f799ae3ff806a13b7a41e414df01dd32bc2789da",
+  "ci": "success",
+  "python_tests_passed": 12374,
+  "frontend_test_files_passed": 46,
+  "browser_ci": "success",
+  "readback_at": "2026-10-13T16:20:55.821153+00:00",
+  "store_version": "2026-10-13.2",
+  "email_schema": 51,
+  "action_manifest_current": true,
+  "physical_tables": 129,
+  "ordinary_application_tables": 123,
+  "counts": {
+    "review_candidates": 594,
+    "candidate_reviews": 586,
+    "candidate_selections": 0,
+    "candidate_supplements": 3,
+    "candidate_executions": 159,
+    "candidate_action_attempts": 153,
+    "external_action_results": 336,
+    "agent_effect_intents": 214,
+    "agent_execution_receipts": 115
+  },
+  "receipt_source_values_types_equal": {
+    "external_action_results": true,
+    "agent_effect_intents": true,
+    "agent_execution_receipts": true
+  },
+  "original_six_values_types_equal": true,
+  "failed_reply_ids_and_update_times": [
+    [
+      404326,
+      "2026-10-13 10:01:06"
+    ],
+    [
+      404510,
+      "2026-10-13 10:48:19"
+    ]
+  ],
+  "no_new_failed_reply_tasks": true,
+  "fk_findings": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "fk_findings_equal_latest_source_backup": true,
+  "quick_check": "ok",
+  "page_size": 4096,
+  "page_count": 115075,
+  "freelist_count": 8138,
+  "old_three_remaining": 0,
+  "latest_backup": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-13.sqlite3",
+  "latest_backup_store_version": "2026-10-13.1",
+  "latest_backup_integrity": "ok",
+  "backup_replacement_after_verification": true,
+  "no_vacuum_claim": true,
+  "remaining": "Phase5C runtime release, remaining actions families and phases6-8",
+  "http_readback": {
+    "/healthz": 200,
+    "/api/workers/status": 200,
+    "/api/attention/status": 200,
+    "/history": 200
+  },
+  "dispatcher_queues": [
+    {
+      "name": "scheduled",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "scheduled_execution",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "reply",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "meeting",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "work_summary",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "okr_review",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "task_todo_sync_outbox",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "business_task_todo_sync_outbox",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "task_memory_write",
+      "pending": 0,
+      "due": 0,
+      "oldest_available_at": null,
+      "running": 0,
+      "latest_error": ""
+    }
+  ],
+  "attention_api_count": 4,
+  "no_pending_running_or_latest_dispatcher_error": true,
+  "pid": "98276",
+  "production_checkout_clean": true,
+  "file_bytes": {
+    "main": 471347200,
+    "-wal": 17967352,
+    "-shm": 65536
+  },
+  "ui_readback": [
+    "History list loaded 34992 entries",
+    "Attempt15020 completed adopted reply and delivery conclusion",
+    "Expand detail button opened",
+    "Historical native process unavailable shown explicitly",
+    "Attention loaded 3 existing unresolved issue groups"
+  ],
+  "ui_real_external_actions": 0
+}
