@@ -684,9 +684,17 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
     assert "procInstId=proc-1&taskId=102648910080" in task.oa_url
     assert '"source":"oa_pending_scan"' in task.trigger_message_json
     payload = json.loads(task.trigger_message_json)
-    expected_context = context.to_payload()
-    expected_context.pop("skill_materials")
-    assert payload["raw_payload"]["scheduled_consumer"] == expected_context
+    assert payload["raw_payload"]["scheduled_consumer"] == context.to_payload()
+    from app.agent_cli import build_role_server
+
+    for role in ("consumer", "audit"):
+        server = build_role_server(
+            role, task_id=task.id, db_path=tmp_path / "task.sqlite3",
+            execution_generation=task.execution_generation,
+        )
+        read = server._tool_manager.get_tool("read_task_skill").fn
+        for material in context.skill_materials:
+            assert read(material.name)["content"] == material.content
 
 
 def test_scan_pending_oa_approvals_closes_completed_oa_needs_human_attempt(tmp_path):
