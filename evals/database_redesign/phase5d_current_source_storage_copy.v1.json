@@ -1,0 +1,583 @@
+{
+  "scope": "standalone storage transition/current-fact inverse; no Store target bootstrap or publication",
+  "production_commit": "dc6abe2d42ec9e21320589a11248a5a2a0c89e9e",
+  "candidate_commit": "25ed876c382caeb43219d813e8f1cea5f795da0a",
+  "source_store_marker": "2026-10-13.3",
+  "source_physical_tables": 126,
+  "target_physical_tables": 124,
+  "source_original_twelve": {
+    "count": 3928,
+    "value_type_sha256": "ee84ef6225371431789102a17e8ab4d03e57a443f2a985936a840262e4c491c7"
+  },
+  "source_delivery": {
+    "sent_replies": {
+      "count": 2341,
+      "value_type_sha256": "bf15c870b8f2b0e5250f5cfd48a6a1b8047a6f97e06ffc786c175e910173cdad"
+    },
+    "sent_reply_observers": {
+      "count": 320,
+      "value_type_sha256": "1128c00e07c60ff1803dc53b1b6ff276e606730edaa5d3c7d8b88a55a9e6a35b"
+    }
+  },
+  "unrelated_tables_checked": 122,
+  "unrelated_table_facts": {
+    "business_anchors": {
+      "count": 50,
+      "value_type_sha256": "0704989f7f06baadecae8e05b4d1d14a32cef5b7f443f703efedabb406425f63"
+    },
+    "business_attention_events": {
+      "count": 13,
+      "value_type_sha256": "3eeb90d0228c97f4b5a93f15187bc5f7ba74859149a14691432898bbc546a133"
+    },
+    "business_attention_items": {
+      "count": 8,
+      "value_type_sha256": "6cd66022826c92db297e194e1c052bb68d1bc616223456aa9b8403dd65ad111a"
+    },
+    "business_attention_proposal_tasks": {
+      "count": 17,
+      "value_type_sha256": "c6ae663abaa63b8efc8645d02c819e654b9ed281d32f66cc321fc399ad67d8f8"
+    },
+    "business_attention_tasks": {
+      "count": 17,
+      "value_type_sha256": "c6ae663abaa63b8efc8645d02c819e654b9ed281d32f66cc321fc399ad67d8f8"
+    },
+    "business_legacy_links": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_object_tasks": {
+      "count": 7210,
+      "value_type_sha256": "e608748627b6370b43ec78b654df877c7e0ee9d31f36ef98784e33da53a7e596"
+    },
+    "business_project_candidates": {
+      "count": 10,
+      "value_type_sha256": "7053c1fd99f39e90efb71ef979b8de8984db0582df14913a378908a0a99e54c1"
+    },
+    "business_project_context_revisions": {
+      "count": 6,
+      "value_type_sha256": "08ada85381688492283179519b689115ef15adada027e2aafdb8727362f43497"
+    },
+    "business_project_evidence": {
+      "count": 30,
+      "value_type_sha256": "81705fa489b1668d04ba12fcab4ed934b065b8f69c9ca94766ff56ede5942c67"
+    },
+    "business_projects": {
+      "count": 32,
+      "value_type_sha256": "57d71f7d2d24c1e9f0dcee7bf3b20f8a49e080828b287b03a55cbe61da1472dd"
+    },
+    "business_source_documents": {
+      "count": 181,
+      "value_type_sha256": "b845fdf9ecbcb1ef3bca8c8c69d323f65777ad51cf568782bae3d8076bc51629"
+    },
+    "business_task_anchor_links": {
+      "count": 96,
+      "value_type_sha256": "7a1428b77fef5daf0f893c5fde8d29ad74ba5a4b9a378b205bcc50ad1cbee871"
+    },
+    "business_task_date_evidence": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_dingtalk_links": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_events": {
+      "count": 881,
+      "value_type_sha256": "a27a9868aae16755940c68293293c5dd7fa22324d10cbd908d1e791d95efe321"
+    },
+    "business_task_evidence": {
+      "count": 885,
+      "value_type_sha256": "41e71bf99771b035dbe40499d14339303140749980e29a66583651b81e486d61"
+    },
+    "business_task_follow_up_send_attempts": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_follow_ups": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_relations": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_task_signals": {
+      "count": 818,
+      "value_type_sha256": "75c7791c3a3da142906a1b7ca1a07ce30a962f3b5db23ca33a36bbcbffc13e3f"
+    },
+    "business_task_todo_sync_outbox": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "business_tasks": {
+      "count": 584,
+      "value_type_sha256": "8f98105867d4d0690330ec4c183ffc7efff3d12e57dcb4e8d05f982b3bc771b2"
+    },
+    "business_work_cluster_tasks": {
+      "count": 16,
+      "value_type_sha256": "58604c7425fed744910f7105af2d0092f20f8e582efbf6b0c803b86a00716c40"
+    },
+    "business_work_clusters": {
+      "count": 16,
+      "value_type_sha256": "07ec7268e58ec868d5f04a630818f3fcb31cfc7289bb146a362a752edb59507c"
+    },
+    "channel_login_reservations": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "codex_session_locks": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "codex_session_search_fts": {
+      "count": 683,
+      "value_type_sha256": "4b9f0d553f3e4e05780bc34691dfa3226ffa2701fdc15d25373d954a06d6c0c8"
+    },
+    "codex_session_search_fts_config": {
+      "count": 1,
+      "value_type_sha256": "83849489861e74ec0d03207954ca7cff45815b8cf0d01bbfcb0a0c159d2fafff"
+    },
+    "codex_session_search_fts_data": {
+      "count": 14,
+      "value_type_sha256": "2e09a52dbd34df35ab367a73f15b47202a5095c7ea19eef3f97f9e0daf6d0f77"
+    },
+    "codex_session_search_fts_docsize": {
+      "count": 683,
+      "value_type_sha256": "f2398f594c198ba3f79b71013334d4f7ec97465449d6727548a4b17557fabbde"
+    },
+    "codex_session_search_fts_idx": {
+      "count": 12,
+      "value_type_sha256": "d69cf6500442f1140122bfc16e55d203635048e05cdb8297967dd3e29a8ec33f"
+    },
+    "codex_session_search_index": {
+      "count": 683,
+      "value_type_sha256": "879e125fe32158de57a36c10ac1b7a731136e2404ef6e32edbb5a6f88e4280a3"
+    },
+    "conversation_runtime_sessions": {
+      "count": 5296,
+      "value_type_sha256": "decf52e0e08042e9d1526cf17db2f0d8cce2e4df70c04e8acbbca78ff4d22f4f"
+    },
+    "conversations": {
+      "count": 509,
+      "value_type_sha256": "c2a20077f697b0237354680eabdcef8893bf807f13d909afd61247570a3b69cf"
+    },
+    "corpus_sources": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "daily_scan_state": {
+      "count": 9,
+      "value_type_sha256": "f71d6eca1d53eca6b6c57cf12a75920daedf9db6722b93e4cd32900811ec6324"
+    },
+    "dispatcher_claim_leases": {
+      "count": 10055,
+      "value_type_sha256": "645ec3481b733b7737696b6109aafa4e527463d540b707837a7e10b1d2c85110"
+    },
+    "email_accounts": {
+      "count": 2,
+      "value_type_sha256": "25c92f06b9841544d43e9ce00eb820b049e0c2866e19482fd87b9ab6743020a3"
+    },
+    "email_action_attempts": {
+      "count": 12167,
+      "value_type_sha256": "7d2b7c4d14b40fb307d87fec4593a2cade2b019102d3f6c435f5b94476ce0987"
+    },
+    "email_action_plans": {
+      "count": 9794,
+      "value_type_sha256": "e7f6a6cea705145a89c3c65b15c135544dd43fbd378f685254f1705d89146325"
+    },
+    "email_actions": {
+      "count": 10176,
+      "value_type_sha256": "745c235882baef4860faddd7e82d553a507c8ad3c74d6478872260a8660fc286"
+    },
+    "email_agent_classification_tasks": {
+      "count": 1356,
+      "value_type_sha256": "95e10ede3356eb31abde391d32990d76582e1c91741aadf9cceb9bcc6f2813d6"
+    },
+    "email_category_configs": {
+      "count": 11,
+      "value_type_sha256": "5b01fd62e020988f4031a831503ff6a4e2180809db1387d66191740b08e26f8b"
+    },
+    "email_category_description_revisions": {
+      "count": 24,
+      "value_type_sha256": "32b1296abf78ba2d03c12e564e83b366e535ba84d8aee53f0ede880f5356a617"
+    },
+    "email_category_folder_bindings": {
+      "count": 22,
+      "value_type_sha256": "0644057c6d6edc072ee8168bfb1f2cd0489ab04e19d7851ab030779f34cf8d4d"
+    },
+    "email_classifications": {
+      "count": 8760,
+      "value_type_sha256": "428229477ef09a2f8460374db2e2ce89c229a13f1025d45af81c595528af5a5a"
+    },
+    "email_classifier_runtime_samples": {
+      "count": 2048,
+      "value_type_sha256": "c4be5ff8ec6097506ce909e1e8f1d9203b00fd1c062ac8c056fdf7038ba2f5e6"
+    },
+    "email_direct_retry_requests": {
+      "count": 1,
+      "value_type_sha256": "4fb684181516f4bd05f0789898e5256a961b67c0496daffc81c1901400b9b0d7"
+    },
+    "email_feedback_requests": {
+      "count": 1413,
+      "value_type_sha256": "c8e93a2171a198db4b529f3261a081541cabccb3203d7d8f7211a91447a97c7c"
+    },
+    "email_historical_candidates": {
+      "count": 924,
+      "value_type_sha256": "c627dc3a59d85ab49dcfd6a5a329922640b7ec855c3d09db0bf7299e0f9356dc"
+    },
+    "email_historical_classification_history": {
+      "count": 183,
+      "value_type_sha256": "b523e377ed8fe5ac7888052ee9815ba1ca3dab281b456b258b487788d5a567d5"
+    },
+    "email_historical_operations": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_historical_traversals": {
+      "count": 2,
+      "value_type_sha256": "02e8e6456434bc03d725225e8e6e8322b35507d2338d148a676f2cbf531c1337"
+    },
+    "email_messages": {
+      "count": 8760,
+      "value_type_sha256": "cbab2c9657b55cb2bc8eba6523772756a04e18990b37a96aed5ea3c4f1da04ce"
+    },
+    "email_model_mode_transitions": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_model_promotion_configs": {
+      "count": 4,
+      "value_type_sha256": "ec7b299180312d45c1aa595dd7fe87ba5d0a1584ddcc7ef258b93ec12cd58a88"
+    },
+    "email_provider_folder_observation_generations": {
+      "count": 55,
+      "value_type_sha256": "f8b3c94559bfb0808aae4875a4ddb2fffae9410b32bb266a1d3239186c282889"
+    },
+    "email_provider_observations": {
+      "count": 72073,
+      "value_type_sha256": "3039de08dfd95ec5a648ad4c31e6d096430cccd446a66d12e76790b4db476c89"
+    },
+    "email_reply_dispatch_claims": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_reply_receipts": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_scan_cursors": {
+      "count": 2,
+      "value_type_sha256": "8fe3e90e963057970157a8da99faf610429d60ee78b01f18e57c3840c4c79202"
+    },
+    "email_schema_migrations": {
+      "count": 38,
+      "value_type_sha256": "2132d3fecd37767339356ad42381016287626815f625e737d7b5b2458105a728"
+    },
+    "email_training_snapshot_observations": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_training_snapshots": {
+      "count": 122,
+      "value_type_sha256": "6e4b33d6b6a4d52bdab2320c631a3a3bbd8a8a0f23994da36b22f09bd1e2dae6"
+    },
+    "email_unsubscribe_cancellations": {
+      "count": 1,
+      "value_type_sha256": "065dc9fecd984556113396aa2fd9de6090882c45c61cc5fdbcb95c286f184c3c"
+    },
+    "email_unsubscribe_claims": {
+      "count": 1077,
+      "value_type_sha256": "b9f70f61c9bf62058d649e27936a479456bb786797715b299b1252578e2eaaf8"
+    },
+    "email_unsubscribe_continuations": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "email_unsubscribe_effects": {
+      "count": 1164,
+      "value_type_sha256": "dd88f556ace35dd09e3d596705cb985f2d0709b7d078566754b34d41feed7a87"
+    },
+    "email_unsubscribe_receipts": {
+      "count": 1077,
+      "value_type_sha256": "a71994716ea94975d9339715cb97b343a928881b7bdd92119fec2b7b496d803a"
+    },
+    "email_unsubscribe_steps": {
+      "count": 823,
+      "value_type_sha256": "79e7ff93fcfc656a5b80e365eee1b60ce8aac05f983467b8b353c8bc44b52f3b"
+    },
+    "errors": {
+      "count": 15275,
+      "value_type_sha256": "bf8705f1f596495d0045ffddc5ac5603fbf81305683495025a3dd21a40bc502f"
+    },
+    "feedback_events": {
+      "count": 48,
+      "value_type_sha256": "2ac54e3bafc2875b0d92676b5b20f4e2cf93e793231df528dbba1665b11dc903"
+    },
+    "feedback_iteration_decision_items": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "feedback_iteration_decisions": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "feedback_processing_batches": {
+      "count": 3,
+      "value_type_sha256": "c810909aad99ac8e4910f93cd6623a01f5537b81abaa2c42bf5364849e97012b"
+    },
+    "feedback_processing_items": {
+      "count": 48,
+      "value_type_sha256": "5af580dc52136b37b9d454084ddfb94892f401e3ba19c19532f9bb30695e3a36"
+    },
+    "feedback_processing_rounds": {
+      "count": 3,
+      "value_type_sha256": "a44003d4b81ecd98c0b2010b0e09dfa0d9f6803f0780c626ffaa1bd4afa3fa4e"
+    },
+    "feedback_processing_transitions": {
+      "count": 5,
+      "value_type_sha256": "1c9ef2ef60ae63876ea654cfbb2531c1bee46803ab456f0bb2a15de548507bbe"
+    },
+    "follow_up_drafts": {
+      "count": 2477,
+      "value_type_sha256": "35a48ce72198f7c722208246df75b1a53c6cb191f725637afd4852e7ccecda28"
+    },
+    "follow_up_send_attempts": {
+      "count": 65,
+      "value_type_sha256": "ee2e8afc81f632ee41f492bdb3cfeab22193e3c460164f34682339ec529e2619"
+    },
+    "managed_skill_export_receipts": {
+      "count": 1927,
+      "value_type_sha256": "d21338238151cf8074548138271ef1612f575dcea0013d6086aca31fec0a91c1"
+    },
+    "managed_skill_revisions": {
+      "count": 152,
+      "value_type_sha256": "82a768f2d288fb4305f9589a2cbfeb87d8c23bd427ad797e9d50a2a85edbb27e"
+    },
+    "managed_skills": {
+      "count": 21,
+      "value_type_sha256": "ed62754674ad9ff8fae14dbc74caf8c6c20cf1b3b89702ca4d5bcb40e81bf9f1"
+    },
+    "meeting_alignment_delivery_claims": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "meeting_memory_write_events": {
+      "count": 556,
+      "value_type_sha256": "81811001f4b87d82622d74f04fab7477d806160da4e32fecaaa1825ad16dca93"
+    },
+    "memory_write_events": {
+      "count": 476,
+      "value_type_sha256": "943b9cbab6c5e584b4770d05160acef789cb0549c098eff25227304602b64a4b"
+    },
+    "oa_notification_events": {
+      "count": 17,
+      "value_type_sha256": "b85ffaf26cb871e8db600361ce1b0b07bfb9699f222eafcc149fc984154f4739"
+    },
+    "okr_review_items": {
+      "count": 413,
+      "value_type_sha256": "4344c5868bb9d7dcfa1facc353ed763679d59984b420ab64fcea9237447551ed"
+    },
+    "org_cache_metadata": {
+      "count": 2,
+      "value_type_sha256": "ac5c5f9c5d90a0362c0748984851900e50ce23775ae836c006c8d5b8e6e4dca5"
+    },
+    "org_user_profiles": {
+      "count": 76,
+      "value_type_sha256": "862f3057c6123f6b20d13ce52bb9b4537f384c9d3eecf710cfec3a943e5fb7f4"
+    },
+    "reply_attempts": {
+      "count": 14821,
+      "value_type_sha256": "1289ebeaeaefc525881137a11b1c8913f37727122574b8e6079da8835b016d9c"
+    },
+    "runs": {
+      "count": 222775,
+      "value_type_sha256": "a10a54e7200bbbbb2a1592132b2eb214e38bc84e17e7e6cc3a6b9e77378e720c"
+    },
+    "runtime_feedback_iteration_capabilities": {
+      "count": 18,
+      "value_type_sha256": "ee74701afcb3ce4eab1275dccaf08634bb9d4ddbd65405b95131dfcb66cbe88c"
+    },
+    "runtime_route_pauses": {
+      "count": 2,
+      "value_type_sha256": "7479b2b0e0e4a8068adc6d2a67fb5d11a0fda000652ec76ce9c1b26e0c911863"
+    },
+    "runtime_skill_bindings": {
+      "count": 227,
+      "value_type_sha256": "2990c02a3b9e9a743ae731d864187992b5f8bebaa7fc028a819a2c766074754d"
+    },
+    "runtime_skill_configs": {
+      "count": 18,
+      "value_type_sha256": "2c2c31a20329fe8d2aeb406cc80e4dade745edb859097cb7003fd4d44d43b02f"
+    },
+    "runtime_skill_load_receipts": {
+      "count": 3989,
+      "value_type_sha256": "46740b76e94aaa80d45537b0c0b02a49f18c7591279feb73c2fd817fbc1c1241"
+    },
+    "scheduled_task_config_versions": {
+      "count": 68,
+      "value_type_sha256": "4f4a32174e9a3589e63822237ad2fe318acb3ffdd97fa59a2a06653c25567ddc"
+    },
+    "scheduled_task_skill_refs": {
+      "count": 34,
+      "value_type_sha256": "8eac706501d17cbf7b54bbf15191d682992db29d178116952a5994a3be256ad0"
+    },
+    "scheduled_tasks": {
+      "count": 15,
+      "value_type_sha256": "4b89b59c2521f5e402a58c729196e4d8799c1819c2f852bbcb0c5f44acd513e6"
+    },
+    "seen_messages": {
+      "count": 7094,
+      "value_type_sha256": "b32d51b47e23520a8985decd3d8da51350148e7aede2a3dfb0743df6982eb329"
+    },
+    "service_bugfix_candidates": {
+      "count": 3,
+      "value_type_sha256": "b384bbbd31394a68caa87331681b3f39b12481769c882df8555370bc784d6301"
+    },
+    "service_state": {
+      "count": 235,
+      "value_type_sha256": "6b456c27a51392a953d071096d139a7594ab6ccada34cc71e2906b5f099a36c1"
+    },
+    "setup_wizard_events": {
+      "count": 22,
+      "value_type_sha256": "84494fa463faf63aa81c9c20c89235c86c3e4fb6d7fc6f3312b05090030b3cc5"
+    },
+    "setup_wizard_steps": {
+      "count": 12,
+      "value_type_sha256": "51e2315d7ec7fc70231323a22dd765a1767a7758f242979e4b8e00cb650b3ba3"
+    },
+    "task_memory_write_events": {
+      "count": 465,
+      "value_type_sha256": "3d8ebce3bea03ba760dbb775287df36ed985a0ca2b2d8bc84d693373c92bf08e"
+    },
+    "task_todo_sync_outbox": {
+      "count": 242,
+      "value_type_sha256": "cad4a56c2bba7dfd72a3cc5924b8e4b5ff1131c32c5730960a360d01d38affab"
+    },
+    "tasks": {
+      "count": 25465,
+      "value_type_sha256": "b674cd1a5b9fdcef8cd1f8759c31e29a50efd9277dcf412f3b09cc00d485ac63"
+    },
+    "todo_evidence_candidates": {
+      "count": 3,
+      "value_type_sha256": "baabb1cba48e9bf31e369ef30acf45c9eb1d99ef74e0e60daa8c9eb39b25d913"
+    },
+    "wechat_deliveries": {
+      "count": 132,
+      "value_type_sha256": "2b4181fb771da0ff0f753545a89597ceaac756e6426fb7bb83b6dc8c313dfdc2"
+    },
+    "wechat_memory_candidates": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "wechat_memory_import_jobs": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "wechat_read_state": {
+      "count": 1,
+      "value_type_sha256": "c01c022a2d8670196baa0f7d4e2cbefb2cc7a78a225d00a74dd8c227327b2827"
+    },
+    "wechat_reply_scopes": {
+      "count": 4,
+      "value_type_sha256": "e7b2491843b87abdcffff195de64945225eefd3b0483aeb9f927ec93006fae4d"
+    },
+    "work_projects": {
+      "count": 975,
+      "value_type_sha256": "dca9f6bd5d548a72b84fd793e4b0ee7c9187b4231607565d37c1312b0f1bebf1"
+    },
+    "work_todo_dingtalk_links": {
+      "count": 875,
+      "value_type_sha256": "7844d19aa530a7c0618fe7fc73aba9c337a468344f19a2d3bbe300a9fd636822"
+    },
+    "work_todos": {
+      "count": 3327,
+      "value_type_sha256": "dcf933a0d5879231e02ab50fa361f75a84abfed86cd59da7f824aedc142f0c2c"
+    },
+    "work_updates": {
+      "count": 5468,
+      "value_type_sha256": "ccf6d091954c85ee21941a338b09cba58ed3a6f1f031be4dbc4008e47e0546d0"
+    },
+    "workbench_artifacts": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "workbench_attachments": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "workbench_confirmations": {
+      "count": 0,
+      "value_type_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "current_twelve_after_mutations": {
+    "count": 3930,
+    "value_type_sha256": "53e4e9aa16fc04900ae17fefd90ca29300b12bf4c09be75659a6aff037bfe4fc"
+  },
+  "current_delivery_after_mutations": {
+    "sent_replies": {
+      "count": 2342,
+      "value_type_sha256": "c48d14117dbed4fa2dd2dcb3d91c753acb2dbd5ab8d5ac9e2a07dad75560a6d2"
+    },
+    "sent_reply_observers": {
+      "count": 321,
+      "value_type_sha256": "a5fbc5f6163b59060dec4c42be7de3c29126e83fd9bf9efbae283f99e5135dfe"
+    }
+  },
+  "original_watermarks": {
+    "sent_replies": [
+      [
+        2358
+      ]
+    ],
+    "actions:sent_replies": [],
+    "actions:agent_effect_intents": [
+      [
+        560
+      ]
+    ],
+    "actions:agent_execution_receipts": [
+      [
+        115
+      ]
+    ]
+  },
+  "current_watermarks": {
+    "sent_replies": [],
+    "actions:sent_replies": [
+      [
+        2360
+      ]
+    ],
+    "actions:agent_effect_intents": [
+      [
+        560
+      ]
+    ],
+    "actions:agent_execution_receipts": [
+      [
+        116
+      ]
+    ]
+  },
+  "source_fk_diagnostic_count": 1,
+  "proofs": {
+    "initial_forward_exact_values_types_ids": true,
+    "source_tables_removed": true,
+    "surviving_and_deleted_new_delivery": true,
+    "recall_and_observer_rebinding": true,
+    "twelve_postfix_updates_adds_deletes": true,
+    "current_fact_inverse_exact": true,
+    "actual_published_old_constructor_new_process": true,
+    "reforward_repeat_inverse": true,
+    "unrelated_tables_unchanged": true,
+    "native_allocation_progress_retained": true,
+    "fk_diagnostics_unchanged": true,
+    "integrity_check": "ok"
+  },
+  "no_provider_operations": true,
+  "no_native_home_or_trajectory_copy": true,
+  "verified_at_utc": "2026-10-13T19:58:15.281666+00:00",
+  "temporary_artifacts_removed": true,
+  "owned_temporary_bytes_removed": 508825373
+}

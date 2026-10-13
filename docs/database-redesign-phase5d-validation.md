@@ -20,8 +20,9 @@ It passed final independent SPEC and QUALITY re-review. Its predecessor
 transaction discrepancy; the final repair closes that reproduced gap.
 No new Store version is reserved and the Store bootstrap and production
 continue to use the twelve-type actions declaration plus the original sent
-tables. Migration, current-fact inverse, caller conversion, real database
-copy acceptance, paired schema release and deployment remain unverified.
+tables. The standalone storage migration, current-fact inverse and latest
+source-copy evidence below are verified. Caller conversion, target Store
+constructor acceptance, paired schema release and deployment remain unverified.
 
 ## Opt-in foundation evidence
 
@@ -68,17 +69,63 @@ database-copy, provider delivery or release evidence.
 
 ## Remaining acceptance
 
-Next implement the paired twelve-to-fourteen-type storage migration and
-current-fact inverse. Both captured literal source variants must be supported;
-unknown declarations, unexpected dependencies and unrepresentable data must
-be rejected before mutation. Preserve original twelve-type physical/public
-identities, references, persisted values/types and both receipt watermarks;
-preserve sent public IDs and its independent native allocation watermark.
+Next integrate the independently reviewed storage transition into the Store
+bootstrap and all existing caller paths, after refreshing the actual published
+source again. Reserve a target version only at that integration boundary.
+The standalone transition below already supports both captured literal source
+variants, current-fact inverse and the required identity/value/type/watermark
+checks; target constructor and release checks must repeat them.
 
-After target mutations, inverse must reconstruct current sent/observer facts
-and the original twelve-type actions layout. It must retain new deliveries,
-recall changes, deletes and observer rebindings, rather than restore a stale
-business snapshot. Actual previously published code must open that restored
-database in a new process before re-forwarding. Caller, schema release,
-production-copy, native CLI with substitute senders, CI and release checks
-follow the approved Phase5D plan. No real test send or recall is authorized.
+The integrated target must retain new deliveries, recall changes, deletes and
+observer rebindings on rollback, as the standalone proof does. Paired release,
+actual constructor-to-constructor production-copy, native CLI with substitute
+senders, CI and deployment checks follow the approved Phase5D plan. No real
+test send or recall is authorized.
+
+## Standalone storage migration and current-production copy
+
+Commit `25ed876c382caeb43219d813e8f1cea5f795da0a` implements the bounded
+twelve-to-fourteen-type migration and its current-fact inverse. The implementer
+ran153 focused checks. Independent SPEC passed:125 focused tests,36 forward
+and28 inverse refusal probes with unchanged dumps and no live DDL, four
+MAX_INT cycles, and four rich sources covering all twelve original types.
+Independent QUALITY also passed:125 focused checks,16 refusal probes with no
+live DDL, and four additional current-fact cycles. No Store bootstrap, caller
+or version is activated by this commit.
+
+Root's initial source-commit check stopped before copying when another session
+published `dc6abe2d42ec9e21320589a11248a5a2a0c89e9e`. That increment changes OA
+status descriptions; the Store/action/task/run source files are unchanged from
+the previously verified `46bfdbe0`. The actual current online source for this
+proof is therefore dc6abe2d, Store17/Email51. Evidence is
+`evals/database_redesign/phase5d_current_source_storage_copy.v1.json`.
+
+The latest online copy passed full integrity checking. Original3928 actions,
+2341 sent records and320 observers retained exact canonical field values,
+Python/SQLite value types, public/physical identities and references after
+forward migration. Twelve-type persistent columns, including raw payload
+envelope bytes, were copied directly. The three native watermarks remained
+560/115/2358. Persisted fields of all122 other tables matched their original
+typed hashes; the existing single FK diagnostic was unchanged.
+
+The copy then received a surviving new delivery and a separate allocated then
+deleted delivery, recall status/time/error changes, observer sent/run/task
+rebinding and an additional observer, changed/new postfix facts, deleted native
+dispatch, and a new original-family receipt. Inverse retained every current
+fact and allocator progress, rebuilt the exact source declarations, and removed
+the owned custom sent sequence. Actual dc6abe2d code was extracted from Git
+into the owned temporary directory and opened that inverse-derived Store17
+copy in a new Python process. The Store marker and current/unrelated facts
+remained equal. Reforward and repeat inverse also passed full integrity and
+unchanged FK diagnostics.
+
+This proof preserves the original Store17 marker deliberately and exercises
+standalone storage functions. The temporary fourteen-type layout is not
+claimed to be a valid Store17 constructor schema. Only the inverse-derived
+twelve-type layout was opened with the published constructor. Production
+remains unchanged; its126 physical tables became124 only in the test copy.
+No target Store version, target constructor, paired release protocol, native
+CLI integration, production migration, provider send/recall or VACUUM is proved
+by this artifact. The owned database/code/script directory was removed after
+evidence retention, freeing508825373 bytes. Only aggregate counts and typed
+hashes remain in the artifact; no copied business rows or native files remain.

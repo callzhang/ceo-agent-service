@@ -126,3 +126,16 @@ D来源已绑定实际已发布46bfdbe0／Store17，发送记录14字段与观�
 证据见database-redesign-phase5d-validation.md。这仅是opt-in存储基础，未激活、
 未保留D目标版本号、未上线；下一步实施成对正迁／当前事实逆迁，再做caller、
 真实副本、旧代码重开、release及上线验收。完整10+1目标仍未完成。
+
+### 2026-10-13 Phase5D standalone migration/copy acceptance
+
+成对存储迁移25ed876c通过独立SPEC／QUALITY；两个审查各125项定向检查通过，
+额外拒绝／MAX／全十二类型当前事实循环按D验证文档记录。最新生产来源已跟进
+到dc6abe2d／Store17（主线增量仅OA状态描述，无本期存储代码变化）。真实在线
+副本3928原actions、2341发送及320观察者保留值／类型／身份／关系／水位，
+122其他表持久字段一致，原单项FK诊断不变；修改后事实逆迁、实际已发布代码
+新进程重开、再正迁及二次逆迁通过。证据phase5d_current_source_storage_copy.v1.json。
+副本126→124物理表仅证明存储函数；Store marker有意保持17，不是新构造器／
+发布证明。508825373字节任务临时副本／代码已清理。下一步合入最新主线，
+接入Store/bootstrap、全部调用方及配对release，再做真实构造器副本／CLI／CI／
+生产验收。D未上线，完整10+1仍未完成。

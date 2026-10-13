@@ -1,6 +1,8 @@
 | codex-phase5d-delivery-migration | Isolated phase5d worktree: app/action_delivery_storage.py; tests/test_action_delivery_migration.py; own claim row | Finite opt-in twelve-type plus sent-reply/observer source to fourteen-type actions and inverse, preserving current facts and native watermarks; no Store, release, provider, push or deploy. | active 2026-10-13 |
 # Concurrent agent file claims
 
+| codex-phase5d-storage-copy-evidence | Phase5D worktree: evals/database_redesign/phase5d_current_source_storage_copy.v1.json; Phase5D validation and program status; own claim row only | Root verifies latest production online copy, twelve-type persisted values/types/IDs, delivery facts and current-fact inverse/actual published old constructor/reforward. Owned disposable files only; no runtime activation/version or real send/recall. | active 2026-10-13 |
+
 | codex-phase5d-foundation-evidence | Phase5D worktree: docs/database-redesign-phase5d-validation.md; database redesign program status; own claim row only | Root records opt-in storage review and source fidelity evidence; distinguishes foundation from migration, activation and production acceptance. No runtime or provider changes. | active 2026-10-13 |
 
 | codex-phase5d-storage-foundation | Isolated database-redesign-phase5d worktree: app/action_storage.py; tests/test_sent_delivery_action_storage.py; own claim row | Opt-in finite fourteen-type sent delivery storage foundation and independent target tests only. Preserve older layouts; no migration, callers, release, version, provider, or production work. | SPEC repair implemented 2026-10-13: physical observer pair uniqueness, indexed numeric lookups, native sent SQLITE_FULL transaction effects; 264 focused checks and Ruff pass; unpublished |
