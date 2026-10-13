@@ -55,15 +55,19 @@
 
 ## 2026-10-13 全目标执行状态（覆盖上文阶段性时间说明）
 
-原目标保持10张业务/运行表加1张迁移表；第1–4期已上线不等于整个设计完成。生产当前Store2026-10-12.1、Email51，第四期最终发布与副本/逆迁证据见database-redesign-phase4a/4b/4c-validation.md；后续真实CLI验收见database-native-copy-lifecycle/branches-20261012.md。第5–8期尚未上线。
+原目标保持10张业务/运行表加1张迁移表；第1–4期已上线不等于整个设计完成。生产当前Store2026-10-12.1、Email51，第四期最终发布与副本/逆迁证据见database-redesign-phase4a/4b/4c-validation.md；后续真实CLI验收见database-native-copy-lifecycle/branches-20261012.md。第5A已于31d95f4e上线；其余第5期单元及第6–8期尚未上线。
 
 | 期 | 当前证据/剩余完成条件 | 状态 |
 | --- | --- | --- |
 | 1–3 | 指针、输入引用、已实现终态正文精简；原验收文档 | 已发布 |
 | 4 | tasks/runs、定时/工作台核心合并，source/inverse/new-fact/旧代码和CI/发布；原验收文档 | 已发布 |
-| 5 | actions统一：采用候选/审核/选项/补充/执行/尝试，随后独立回执、消息/OA/邮件/WeChat/跟进/同步；所有读写调用、约束及配对逆迁 | 开发中；尚未发布 |
+| 5 | actions统一：采用候选/审核/选项/补充/执行/尝试，随后独立回执、消息/OA/邮件/WeChat/跟进/同步；所有读写调用、约束及配对逆迁 | 5A六表已发布；其余开发中 |
 | 6 | business及signal/evidence/date/实际关联；legacy不升格、准确来源版本、原文不复制 | 未实施 |
 | 7 | emails/configs/provider_state/schedules/state；当前库存、模型真实输入依赖、水位/锁/CAS | 未实施 |
 | 8 | 全部旧物理结构及旧写入器退休，FTS取消、字段与来源规则逐项审计；副本/回退/CI/部署/UI与实际容量 | 未实施 |
 
 本目标完成门槛以最终物理表、读写路径、字段删除清单、来源引用、现有业务合同与执行回执为准。不得以一组测试或阶段发布宣称全目标完成。未经确认的成功轮询30天删除政策仍排除；无需再次设计或确认已接受的十表结构。
+
+### 2026-10-13 Phase5A release
+
+PR72/31d95f4e formal deployment passed, Store2026-10-13.1/Email51,132 physical/126 ordinary application tables. actions six-type manifest, paired inverse with actual current production code, full CI, substitute native approval/revision, operational/API/UI reads and latest verified backup complete. Evidence:database-redesign-phase5a-validation.md and evals/database_redesign/phase5a_release.v1.json. Current targets present:tasks/runs/actions; full10+1 still incomplete. Next unit:phase5b independent receipts, exact plan/source oracle already prepared. Original1611-field map has7 actual current email fields in a separate2026-10-13 addendum; cancellation and explicit retry facts join the future email actions unit, no policy additions.

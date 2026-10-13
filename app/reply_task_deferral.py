@@ -19,8 +19,11 @@ from typing import Any
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
 
 from app.action_storage import (
+    AGENT_EFFECT_INTENT_SQL,
+    AGENT_EXECUTION_RECEIPT_SQL,
     CANDIDATE_ACTION_ATTEMPT_SQL,
     CANDIDATE_EXECUTION_SQL,
+    EXTERNAL_ACTION_RESULT_SQL,
     REVIEW_CANDIDATE_SQL,
 )
 
@@ -181,7 +184,7 @@ def _snapshot(
         join ({REPLY_TASK_SQL}) t on t.id=c.task_id where t.business_object_key=? limit 1""",
         (task['business_object_key'],)).fetchone():
         blocked.append('candidate_execution')
-    if db.execute('select 1 from external_action_results where business_object_key=? limit 1',
+    if db.execute(f'select 1 from ({EXTERNAL_ACTION_RESULT_SQL}) where business_object_key=? limit 1',
                   (task['business_object_key'],)).fetchone():
         blocked.append('external_action_result')
     if db.execute("""select 1 from sent_replies where conversation_id=?
@@ -197,12 +200,12 @@ def _snapshot(
             blocked.append('tool_effect_or_unknown_effect')
         if not available:
             blocked.append('native_event_source_unavailable')
-    if db.execute(f"""select 1 from agent_effect_intents e join ({AGENT_RUN_SQL}) r on r.id=e.agent_run_id
+    if db.execute(f"""select 1 from ({AGENT_EFFECT_INTENT_SQL}) e join ({AGENT_RUN_SQL}) r on r.id=e.agent_run_id
         join ({REPLY_TASK_SQL}) t on t.id=r.reply_task_id
         where t.business_object_key=? limit 1""",
         (task['business_object_key'],)).fetchone():
         blocked.append('prepared_or_dispatched_effect')
-    if db.execute(f"""select 1 from agent_execution_receipts receipt
+    if db.execute(f"""select 1 from ({AGENT_EXECUTION_RECEIPT_SQL}) receipt
         join ({AGENT_RUN_SQL}) r on r.id=receipt.agent_run_id join ({REPLY_TASK_SQL}) t on t.id=r.reply_task_id
         where t.business_object_key=? limit 1""",
         (task['business_object_key'],)).fetchone():

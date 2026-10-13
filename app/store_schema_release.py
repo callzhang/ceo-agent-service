@@ -88,6 +88,12 @@ def prepare_store_schema_release(
         from app.action_schema_release import SOURCE_ACTION_VERSION, ACTION_VERSION, prepare_action_schema_release
         if (version[0], target) == (SOURCE_ACTION_VERSION, ACTION_VERSION):
             return prepare_action_schema_release(root, path, version)
+        from app.action_receipt_schema_release import (
+            SOURCE_ACTION_RECEIPT_VERSION, ACTION_RECEIPT_VERSION,
+            prepare_action_receipt_schema_release,
+        )
+        if (version[0], target) == (SOURCE_ACTION_RECEIPT_VERSION, ACTION_RECEIPT_VERSION):
+            return prepare_action_receipt_schema_release(root, path, version)
         raise ValueError(
             "Store schema release needs a verified inverse for this transition"
         )

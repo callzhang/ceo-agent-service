@@ -28,3 +28,7 @@ agent_execution_receipts：id是INTEGER PRIMARY KEY AUTOINCREMENT；agent_run_id
 6. SPEC→QUALITY、targeted checks、actual source副本全表/类型/身份/FK/回执比对、新事实/删除/逆迁/实际旧代码/fresh再正迁、五发布失败阶段、完整CI；通过后正常deploy与PID/health/queue/Attention/History回读。对外发送只在业务运行，测试保持替身。
 
 该计划不替代其余actions和第6–8期；只保留已有字段和已批准结果/回执，不新增政策或不存在的实体关系。
+
+## Independent source-oracle preparation while Phase5A CI runs
+
+Captured source declarations are exercised directly in tests/test_action_receipt_source.py;14 tests pass without target helpers. Measured contracts include BINARY text keys (leading zero/case preserved), multiple legal source NULL TEXT primary keys, blank rejection, raw non-JSON strings, logical-run insert/update guards, missing-run FK rejection, both intent unique keys, no invented cross-receipt FK, integer flags outside0/1, defaults, deletion/ignored-insert AUTOINCREMENT watermarks and SQLITE_FULL at the upper bound. These are source semantics, not evidence that the target receipt migration exists. Phase5A runtime and CI head remain untouched.

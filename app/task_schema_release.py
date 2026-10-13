@@ -42,8 +42,8 @@ def publication_task_sources(db: sqlite3.Connection) -> tuple[str, str]:
     if version == TASK_VERSION and "tasks" in tables and not old.intersection(tables):
         return REPLY_TASK_SQL, "select status from tasks where record_type='work_summary_inputs'"
     if (
-        version in ("2026-10-12.1", "2026-10-13.1")
-        and (version != "2026-10-13.1" or action_schema_is_current(db))
+        version in ("2026-10-12.1", "2026-10-13.1", "2026-10-13.2")
+        and (version == "2026-10-12.1" or action_schema_is_current(db, include_receipts=version == "2026-10-13.2"))
         and {"tasks", "runs"} <= tables
         and not (
             old
@@ -76,8 +76,8 @@ def publication_meeting_sources(db: sqlite3.Connection) -> tuple[str, str]:
     if version == TASK_VERSION and {"tasks", "runs"} <= tables and not set(RETIRED_TASK_TABLES).intersection(tables):
         return MEETING_JOB_SQL, MEETING_RUN_SQL
     if (
-        version in ("2026-10-12.1", "2026-10-13.1")
-        and (version != "2026-10-13.1" or action_schema_is_current(db))
+        version in ("2026-10-12.1", "2026-10-13.1", "2026-10-13.2")
+        and (version == "2026-10-12.1" or action_schema_is_current(db, include_receipts=version == "2026-10-13.2"))
         and {"tasks", "runs"} <= tables
         and not (
             set(RETIRED_TASK_TABLES)

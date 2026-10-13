@@ -172,6 +172,19 @@ def full_source_database(path, auxiliary_path):
         for obj in state['objects']:
             if obj['type'] != 'table' and obj['sql']:
                 db.execute(obj['sql'])
+    # Old source13 independently retained native receipts, even after the
+    # auxiliary current constructor has retired their physical declarations.
+    receipt_source = json.loads((Path(__file__).parents[1] / 'docs/superpowers/specs/2026-10-13-database-redesign-phase5b-inventory.json').read_text())['tables']
+    for name in ("external_action_results", "agent_effect_intents", "agent_execution_receipts"):
+        state = receipt_source[name]
+        for obj in state['objects']:
+            if obj['type'] == 'table' and not db.execute('select 1 from sqlite_schema where name=?', (obj['name'],)).fetchone():
+                db.execute(obj['sql'])
+    for name in ("external_action_results", "agent_effect_intents", "agent_execution_receipts"):
+        state = receipt_source[name]
+        for obj in state['objects']:
+            if obj['type'] != 'table' and obj['sql'] and not db.execute('select 1 from sqlite_schema where name=?', (obj['name'],)).fetchone():
+                db.execute(obj['sql'])
     db.commit()
     _INITIALIZED_STORE_PATHS.discard(path.resolve())
     return db

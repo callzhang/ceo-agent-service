@@ -1,0 +1,124 @@
+{
+  "scope": "declarations only; additions absent from original field map, not business rows",
+  "production_commit": "b9572061ac46e2bae0e7cd5f2d0603a32540eed6",
+  "store_version": "2026-10-12.1",
+  "email_schema": 51,
+  "tables": {
+    "email_unsubscribe_cancellations": {
+      "columns": [
+        [
+          0,
+          "action_identity",
+          "TEXT",
+          0,
+          null,
+          1
+        ],
+        [
+          1,
+          "decision_json",
+          "TEXT",
+          1,
+          null,
+          0
+        ]
+      ],
+      "foreign_keys": [],
+      "objects": [
+        {
+          "type": "index",
+          "name": "sqlite_autoindex_email_unsubscribe_cancellations_1",
+          "sql": null
+        },
+        {
+          "type": "table",
+          "name": "email_unsubscribe_cancellations",
+          "sql": "CREATE TABLE email_unsubscribe_cancellations (\n                action_identity text primary key check(trim(action_identity) != ''),\n                decision_json text not null check(json_valid(decision_json))\n            )"
+        }
+      ]
+    },
+    "email_direct_retry_requests": {
+      "columns": [
+        [
+          0,
+          "action_id",
+          "TEXT",
+          1,
+          null,
+          1
+        ],
+        [
+          1,
+          "attempt_number",
+          "INTEGER",
+          1,
+          null,
+          2
+        ],
+        [
+          2,
+          "source_readback_digest",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          3,
+          "account_configuration_snapshot",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          4,
+          "requested_at",
+          "TEXT",
+          1,
+          null,
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "email_actions",
+          "action_id",
+          "action_id",
+          "NO ACTION",
+          "RESTRICT",
+          "NONE"
+        ]
+      ],
+      "objects": [
+        {
+          "type": "index",
+          "name": "sqlite_autoindex_email_direct_retry_requests_1",
+          "sql": null
+        },
+        {
+          "type": "table",
+          "name": "email_direct_retry_requests",
+          "sql": "CREATE TABLE email_direct_retry_requests (\n        action_id text not null check(trim(action_id) != ''),\n        attempt_number integer not null check(attempt_number > 0),\n        source_readback_digest text not null check(length(source_readback_digest) = 64),\n        account_configuration_snapshot text not null check(json_valid(account_configuration_snapshot))\n            check(json_type(account_configuration_snapshot) = 'array')\n            check(json_array_length(account_configuration_snapshot) = 9),\n        requested_at text not null check(trim(requested_at) != ''),\n        primary key(action_id, attempt_number),\n        foreign key(action_id) references email_actions(action_id) on delete restrict\n    )"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_email_direct_retry_immutable_delete",
+          "sql": "CREATE TRIGGER trg_email_direct_retry_immutable_delete\n            before delete on email_direct_retry_requests\n            begin select raise(abort, 'email_direct_retry_request_immutable'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_email_direct_retry_immutable_insert",
+          "sql": "CREATE TRIGGER trg_email_direct_retry_immutable_insert\n        before insert on email_direct_retry_requests\n        when exists (select 1 from email_direct_retry_requests\n                     where action_id=new.action_id and attempt_number=new.attempt_number)\n        begin select raise(abort, 'email_direct_retry_request_immutable'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_email_direct_retry_immutable_update",
+          "sql": "CREATE TRIGGER trg_email_direct_retry_immutable_update\n            before update on email_direct_retry_requests\n            begin select raise(abort, 'email_direct_retry_request_immutable'); end"
+        }
+      ]
+    }
+  }
+}

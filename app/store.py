@@ -178,17 +178,22 @@ from app.work_summary_payload import (
 from app.task_source_documents import source_document_key, source_is_observed
 from app.wechat.models import WechatReplyScope
 
+from app.action_receipt_storage import migrate_action_receipt_schema
+
 from app.action_storage import (
     _current_objects as action_schema_objects,
     ACTION_TYPES,
     create_action_schema,
-    migrate_action_schema,
+    RECEIPT_ACTION_TYPES,
     action_schema_is_current,
     insert_action,
     update_action,
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
     REVIEW_CANDIDATE_SQL,
+    EXTERNAL_ACTION_RESULT_SQL,
+    AGENT_EFFECT_INTENT_SQL,
+    AGENT_EXECUTION_RECEIPT_SQL,
 )
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
@@ -286,7 +291,7 @@ REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id
                   and canonical.reply_task_id=parent.id"""
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-13.1"
+STORE_SCHEMA_VERSION = "2026-10-13.2"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -331,8 +336,6 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "conversation_runtime_sessions",
     "wechat_memory_import_jobs",
     "meeting_memory_write_events",
-    "agent_effect_intents",
-    "external_action_results",
     "sent_reply_observers",
     "business_object_tasks",
     "tasks",
@@ -402,11 +405,8 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_agent_runtime_attempts_run",
     "idx_task_agent_runs_active_input",
     "idx_agent_run_state_events_run",
-    "idx_agent_effect_intents_run",
-    "idx_agent_effect_intents_operation",
     "idx_sent_replies_external_action",
     "idx_sent_replies_external_action_lookup",
-    "idx_external_action_results_business_object",
     "idx_errors_reply_task_settlement",
     "idx_meeting_alignment_runs_active_job",
     "idx_weekly_okr_analysis_jobs_identity",
@@ -470,6 +470,7 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_business_legacy_links_task",
 )
 STORE_SCHEMA_REMOVED_TABLES = (
+    *RECEIPT_ACTION_TYPES,
     *RETIRED_WORKBENCH_TABLES,
     *RETIRED_TASK_TABLES,
     "agent_runs", "agent_runtime_attempts", "agent_run_state_events", "agent_run_events",
@@ -622,7 +623,6 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "skill_update_receipts_json",
         "trigger_text_provenance_json",
     ),
-    "agent_effect_intents": ("external_action_key",),
     "sent_replies": ("agent_run_id", "external_action_key"),
     "runs": (
         "record_type", "legacy_key", "task_id", "parent_id",
@@ -2558,7 +2558,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             and run_schema_is_current(db, include_task_runs=True, include_workbench=True)
             and task_schema_is_current(db, include_workbench=True)
             and workbench_schema_is_current(db)
-            and action_schema_is_current(db)
+            and action_schema_is_current(db, include_receipts=True)
             and reply_input_foreign_keys_present
             and not removed_columns_present
             and (
@@ -3241,67 +3241,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     retry_at text not null,
                     opened_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp
-                );
-                create table if not exists agent_execution_receipts (
-                    id integer primary key autoincrement,
-                    agent_run_id integer not null,
-                    receipt_id text not null,
-                    operation_id text not null,
-                    cli text not null,
-                    command_path text not null,
-                    command_digest text not null,
-                    exit_code integer not null,
-                    completed integer not null,
-                    persisted integer not null,
-                    safe_to_confirm integer not null,
-                    effect_counted integer not null default 0,
-                    created_at text not null default current_timestamp,
-                    unique(agent_run_id, operation_id),
-                    foreign key(agent_run_id) references runs(id)
-                );
-                create index if not exists idx_agent_execution_receipts_run
-                    on agent_execution_receipts(agent_run_id, id);
-                create table if not exists agent_effect_intents (
-                    id integer primary key autoincrement,
-                    agent_run_id integer not null,
-                    authorization_id text not null,
-                    action_index integer not null check(action_index >= 0),
-                    receipt_operation_id text not null,
-                    capability text not null,
-                    operation text not null,
-                    operation_digest text not null,
-                    arguments_digest text not null,
-                    target_identifiers_json text not null,
-                    external_action_key text not null default '',
-                    state text not null default 'prepared'
-                        check(state in ('prepared', 'dispatched', 'acknowledged')),
-                    result_digest text not null default '',
-                    exit_code integer,
-                    prepared_at text not null default current_timestamp,
-                    dispatched_at text not null default '',
-                    acknowledged_at text not null default '',
-                    updated_at text not null default current_timestamp,
-                    unique(agent_run_id, authorization_id),
-                    foreign key(agent_run_id) references runs(id)
-                );
-                create index if not exists idx_agent_effect_intents_run
-                    on agent_effect_intents(agent_run_id, action_index, id);
-                create unique index if not exists idx_agent_effect_intents_operation
-                    on agent_effect_intents(agent_run_id, receipt_operation_id);
-                create table if not exists external_action_results (
-                    external_action_key text primary key
-                        check(trim(external_action_key) != ''),
-                    business_object_key text not null
-                        check(trim(business_object_key) != ''),
-                    action_identity text not null
-                        check(trim(action_identity) != ''),
-                    operation text not null check(trim(operation) != ''),
-                    target_identifiers_json text not null,
-                    provider_result_json text not null,
-                    result_digest text not null check(trim(result_digest) != ''),
-                    first_agent_run_id integer not null,
-                    created_at text not null default current_timestamp,
-                    foreign key(first_agent_run_id) references runs(id)
                 );
                 create table if not exists wechat_read_state (
                     account_id text primary key,
@@ -4402,30 +4341,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "update meeting_memory_write_events set payload_json='{}' "
                 "where payload_json<>'{}'"
             )
-            receipt_columns = {
-                row["name"]
-                for row in db.execute(
-                    "pragma table_info(agent_execution_receipts)"
-                ).fetchall()
-            }
-            if "effect_counted" not in receipt_columns:
-                db.execute(
-                    "alter table agent_execution_receipts add column "
-                    "effect_counted integer not null default 0"
-                )
-            effect_intent_columns = {
-                row["name"]
-                for row in db.execute(
-                    "pragma table_info(agent_effect_intents)"
-                ).fetchall()
-            }
-            if "external_action_key" not in effect_intent_columns:
-                db.execute(
-                    "alter table agent_effect_intents add column "
-                    "external_action_key text not null default ''"
-                )
             db.execute("create index if not exists idx_reply_tasks_business_object_key on tasks(business_object_key) where record_type='reply_tasks'")
-            create_action_schema(db)
+            create_action_schema(db, include_receipts=True)
             self._migrate_oa_notification_events(db)
             sent_reply_columns = {
                 row["name"]
@@ -4459,11 +4376,6 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "create index if not exists "
                 "idx_sent_replies_external_action_lookup "
                 "on sent_replies(external_action_key)"
-            )
-            db.execute(
-                "create index if not exists "
-                "idx_external_action_results_business_object "
-                "on external_action_results(business_object_key, external_action_key)"
             )
             feedback_event_columns = {
                 row["name"]
@@ -9656,10 +9568,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 db.execute("select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
                 if "service_state" in tables else None
             )
-            store_tables = {"tasks", "runs", "actions", *ACTION_TYPES,
-                            *(obj["name"] for obj in action_schema_objects()),
+            store_tables = {"tasks", "runs", "actions", *ACTION_TYPES, *RECEIPT_ACTION_TYPES,
+                            *(obj["name"] for obj in action_schema_objects(True)),
                             *RETIRED_TASK_TABLES, *RETIRED_RUN_TABLES, *RETIRED_WORKBENCH_TABLES}
-            if marker is not None and marker[0] == STORE_SCHEMA_VERSION and run_schema_is_current(db, allow_missing_objects=True, include_task_runs=True, include_workbench=True) and task_schema_is_current(db, allow_missing_objects=True, include_workbench=True) and workbench_schema_is_current(db, allow_missing_objects=True) and action_schema_is_current(db, allow_missing_objects=True):
+            if marker is not None and marker[0] == STORE_SCHEMA_VERSION and run_schema_is_current(db, allow_missing_objects=True, include_task_runs=True, include_workbench=True) and task_schema_is_current(db, allow_missing_objects=True, include_workbench=True) and workbench_schema_is_current(db, allow_missing_objects=True) and action_schema_is_current(db, allow_missing_objects=True, include_receipts=True):
                 return
             collision = db.execute(
                 "select 1 from sqlite_master where name collate nocase in ("
@@ -9669,7 +9581,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if marker is not None or collision is not None:
                 raise sqlite3.IntegrityError(
                     "unsupported or malformed Store source schema; expected a fresh Store, "
-                    "the exact 2026-10-12.1 source, or the current 2026-10-13.1 schema"
+                    "the exact 2026-10-13.1 source, or the current 2026-10-13.2 schema"
                 )
         finally:
             db.close()
@@ -9681,7 +9593,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if db.execute("select 1 from sqlite_master where name='service_state'").fetchone() is None:
                 return False
             marker = db.execute("select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
-            if marker is None or marker[0] != "2026-10-12.1":
+            if marker is None or marker[0] != "2026-10-13.1":
                 return False
             db.execute("pragma foreign_keys=off")
             db.execute("begin immediate")
@@ -9689,7 +9601,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     and task_schema_is_current(db, include_workbench=True)
                     and workbench_schema_is_current(db)):
                 raise sqlite3.IntegrityError("invalid preceding Store core schema")
-            migrate_action_schema(db)
+            migrate_action_receipt_schema(db)
             if not self._schema_manifest_is_current_in_connection(db, include_run_snapshots=True):
                 raise RuntimeError("typed task migration manifest differs")
             db.execute("update service_state set value=? where key=?", (STORE_SCHEMA_VERSION, STORE_SCHEMA_VERSION_KEY))
@@ -9933,7 +9845,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 # Match the receipt/settlement exclusions used by
                 # reconcile_done_reply_tasks_with_failed_current_run.
                 settled = db.execute(
-                    """select 1 from external_action_results actions
+                    f"""select 1 from ({EXTERNAL_ACTION_RESULT_SQL}) actions
                        join sent_replies replies
                          on replies.external_action_key=actions.external_action_key
                        where actions.business_object_key=? limit 1""",
@@ -13384,12 +13296,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return False
             if db.execute(f"select 1 from ({RUNTIME_ATTEMPT_SQL}) where agent_run_id=? limit 1", (run_id,)).fetchone():
                 return False
-            for table in (
-                "agent_effect_intents",
-                "agent_execution_receipts",
+            for source in (
+                AGENT_EFFECT_INTENT_SQL,
+                AGENT_EXECUTION_RECEIPT_SQL,
             ):
                 if db.execute(
-                    f"select 1 from {table} where agent_run_id=? limit 1",
+                    f"select 1 from ({source}) where agent_run_id=? limit 1",
                     (run_id,),
                 ).fetchone():
                     return False
@@ -20112,22 +20024,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchone()
             if run is None or run["business_object_key"] != business_object_key:
                 raise ValueError("completed message delivery run identity mismatch")
-            db.execute(
-                """
-                insert or ignore into external_action_results (
-                    external_action_key, business_object_key, action_identity,
-                    operation, target_identifiers_json, provider_result_json,
-                    result_digest, first_agent_run_id
-                ) values (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    external_action_key, business_object_key, action_identity,
-                    operation, target_json, provider_json, result_digest,
-                    agent_run_id,
-                ),
-            )
+            insert_action(db, "external_action_results", {
+                "external_action_key": external_action_key,
+                "business_object_key": business_object_key,
+                "action_identity": action_identity, "operation": operation,
+                "target_identifiers_json": target_json, "provider_result_json": provider_json,
+                "result_digest": result_digest, "first_agent_run_id": agent_run_id,
+            }, ignore=True)
             completed = db.execute(
-                "select * from external_action_results where external_action_key=?",
+                f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
                 (external_action_key,),
             ).fetchone()
             if (
@@ -20197,7 +20102,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if not business_object_key:
                 raise ValueError("reconciled task has no business object key")
             recorded = db.execute(
-                "select 1 from external_action_results "
+                f"select 1 from ({EXTERNAL_ACTION_RESULT_SQL}) "
                 "where external_action_key=? and business_object_key=?",
                 (key, business_object_key),
             ).fetchone()
@@ -20362,25 +20267,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             business_object_key = str(task["business_object_key"] or "").strip()
             if not business_object_key:
                 raise ValueError("reconciled task has no business object key")
-            db.execute(
-                """
-                insert or ignore into external_action_results (
-                    external_action_key, business_object_key, action_identity,
-                    operation, target_identifiers_json, provider_result_json,
-                    result_digest, first_agent_run_id
-                ) values (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    action_key,
-                    business_object_key,
-                    action_identity,
-                    operation,
-                    target_json,
-                    provider_json,
-                    _canonical_json_sha256(provider_result),
-                    send_run_id,
-                ),
-            )
+            insert_action(db, "external_action_results", {
+                "external_action_key": action_key,
+                "business_object_key": business_object_key,
+                "action_identity": action_identity, "operation": operation,
+                "target_identifiers_json": target_json, "provider_result_json": provider_json,
+                "result_digest": _canonical_json_sha256(provider_result),
+                "first_agent_run_id": send_run_id,
+            }, ignore=True)
             db.execute(
                 """
                 insert or ignore into sent_replies (
@@ -20491,20 +20385,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise ValueError("current reviewed operation has no verified send receipt")
             for row in matched:
                 action = expected[row["external_action_key"]]
-                db.execute(
-                    """
-                    insert or ignore into external_action_results (
-                        external_action_key, business_object_key, action_identity,
-                        operation, target_identifiers_json, provider_result_json,
-                        result_digest, first_agent_run_id
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (row["external_action_key"], task.business_object_key,
-                     action["action_identity"], action["operation"],
-                     _json_object_text(action["target"], field="target_identifiers"),
-                     row["send_result_json"], _canonical_json_sha256(json.loads(row["send_result_json"])),
-                     row["agent_run_id"]),
-                )
+                insert_action(db, "external_action_results", {
+                    "external_action_key": row["external_action_key"],
+                    "business_object_key": task.business_object_key,
+                    "action_identity": action["action_identity"], "operation": action["operation"],
+                    "target_identifiers_json": _json_object_text(action["target"], field="target_identifiers"),
+                    "provider_result_json": row["send_result_json"],
+                    "result_digest": _canonical_json_sha256(json.loads(row["send_result_json"])),
+                    "first_agent_run_id": row["agent_run_id"],
+                }, ignore=True)
             cursor = db.execute(
                 f"""
                 update tasks as reply_tasks set status='done', error='', available_at='',
@@ -20533,14 +20422,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """
         with self._immediate_write_transaction() as db:
             compact_ids = db.execute(
-                """
+                f"""
                 update tasks as tasks
                 set status='done', error='', available_at='', locked_at=null,
                     updated_at=current_timestamp
                 where tasks.record_type='reply_tasks' and tasks.status in ('failed', 'needs_human')
                   and exists (
                       select 1
-                      from external_action_results as actions
+                      from ({EXTERNAL_ACTION_RESULT_SQL}) as actions
                       join sent_replies as replies
                         on replies.external_action_key=actions.external_action_key
                       where actions.business_object_key=tasks.business_object_key
@@ -24432,7 +24321,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 where tasks.status='done' and runs.status='failed'
                   and not exists (
                       select 1
-                      from external_action_results as actions
+                      from ({EXTERNAL_ACTION_RESULT_SQL}) as actions
                       join sent_replies as replies
                         on replies.external_action_key=actions.external_action_key
                       where actions.business_object_key=tasks.business_object_key
