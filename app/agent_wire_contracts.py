@@ -14,6 +14,7 @@ from app.agent_contracts import (
     AuditAgentResult,
     AuditFeedback,
     ConsumerAgentResult,
+    DINGTALK_MESSAGE_IDENTIFIER_FIELDS,
     ConsumerProposal,
     DecisionBasis,
     DecisionOption,
@@ -103,7 +104,7 @@ class ConsumerAgentWireResult(RootModel[_ConsumerWire]):
 
     def to_result(self) -> ConsumerAgentResult:
         payload = self.root
-        return ConsumerAgentResult.model_validate({
+        result = ConsumerAgentResult.model_validate({
             "outcome": payload.outcome,
             "summary": payload.summary,
             "proposal": payload.proposal,
@@ -121,6 +122,18 @@ class ConsumerAgentWireResult(RootModel[_ConsumerWire]):
             "error": payload.error_payload(),
             "durable_memories": tuple(payload.durable_memories),
         })
+        plans = (result.proposal, *(option.plan for option in result.decision_options))
+        for plan in plans:
+            if plan is None:
+                continue
+            for action in plan.actions:
+                if action.capability != "dingtalk-chat":
+                    continue
+                for field in DINGTALK_MESSAGE_IDENTIFIER_FIELDS:
+                    value = action.target.get(field)
+                    if value is not None and (not isinstance(value, str) or not value.strip()):
+                        raise ValueError(f"dingtalk-chat target.{field} must be a nonempty string or null")
+        return result
 
 
 class _AuditWire(_WireBase):
