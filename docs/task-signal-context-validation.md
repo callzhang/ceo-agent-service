@@ -30,3 +30,22 @@ evidence follows after the formal deployment.
 
 Standalone main coverage:30 focused checks, Ruff and diff check pass. Read-only
 review confirms this branch contains no Skill/native-schema/provider changes.
+
+## Independent production publication
+
+Commit ba8b5931 contains only this projection, regression and corresponding
+doc/evidence changes. Formal deployment deploy-bd994189-6fe3-40b2-b6d1-17252dd9d508
+reports succeeded, dc6abe2d -> ba8b5931. The saved backup passes the updater's
+complete-backup validation. Production checkout is clean. New supervisor PID62926
+and web PID62930 are confirmed; health, workers, Attention, History and Consumer
+Settings rendered preview read200. Reply/Work/Classification/Meeting queues have
+0 pending/processing; two existing Reply failures remain and three existing mail
+actions remain pending. These unrelated items are not relabeled as resolved.
+
+Loading the exact deployed source function read-only and projecting one real
+Signal confirms the key is excluded, every other source metadata field is equal
+and the database key is unchanged. Its original2785-character historical source
+keeps the existing truncated ranges. This is production code/source readback,
+not a new Agent business turn. Some HTTP observations timed out before and after
+deploy, then succeeded without another restart; no cause or regression repair
+is claimed. Compact receipt: `task_signal_metadata_release.v1.json`.

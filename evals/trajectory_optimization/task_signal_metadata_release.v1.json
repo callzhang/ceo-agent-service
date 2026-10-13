@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "scope": "Independent database-only Task Signal input projection; excludes PR57 Skill and PR31/78 native output changes",
+  "deployment": {
+    "operation_id": "deploy-bd994189-6fe3-40b2-b6d1-17252dd9d508",
+    "status": "succeeded",
+    "original_commit": "dc6abe2d42ec9e21320589a11248a5a2a0c89e9e",
+    "target_commit": "ba8b59315067dd7adbe60d745fae1ccc39f3be64",
+    "installed_commit": "ba8b59315067dd7adbe60d745fae1ccc39f3be64",
+    "updated_at": "2026-10-13T21:07:40.007220+00:00"
+  },
+  "supervisor_pid": 62926,
+  "web_pid": 62930,
+  "backup_verified_complete": true,
+  "production_checkout_clean": true,
+  "deployed_source_sha256": "b5fc08f38ba596057db048460882454cf5c969e5db85e38b1739fe346063b290",
+  "readonly_real_signal_projection": {
+    "dedupe_key_excluded": true,
+    "all_other_metadata_identical": true,
+    "persistent_dedupe_key_unchanged": true,
+    "original_body_chars": 2785,
+    "existing_historical_truncation_retained": true
+  },
+  "http_readback": {
+    "healthz": 200,
+    "history": 200,
+    "attention_status": 200,
+    "settings_consumer_preview": 200,
+    "workers_status": 200
+  },
+  "queues": {
+    "reply": {
+      "pending": 0,
+      "processing": 0,
+      "failed": 2
+    },
+    "work": {
+      "pending": 0,
+      "processing": 0,
+      "failed": 0
+    },
+    "classification": {
+      "pending": 0,
+      "processing": 0,
+      "failed": 0
+    },
+    "meeting": {
+      "pending": 0,
+      "processing": 0,
+      "failed": 0
+    },
+    "email_actions": {
+      "pending": 3,
+      "processing": 0,
+      "failed": 0
+    }
+  },
+  "boundary": "Code publication plus formal deploy/readback and read-only production-source projection. No new Task model run or external action replay. Two existing reply failures and three existing pending mail actions retained; not asserted resolved. Some HTTP observations timed out before and after deploy; later succeeded without another restart; cause unconfirmed."
+}
