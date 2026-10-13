@@ -720,7 +720,7 @@ def scan_pending_oa_approvals(
                 **(
                     {
                         SERVICE_COMMAND_CONSUMER_CONTEXT_KEY: (
-                            _task_scheduled_consumer_payload(scheduled_consumer)
+                            scheduled_consumer.to_payload()
                         )
                     }
                     if scheduled_consumer
