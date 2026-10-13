@@ -1,6 +1,6 @@
 # 第五期C：发送准备、native dispatch及provider receipt合入actions
 
-本单元属于已批准的完整10+1结构，不能代替剩余actions/business/emails/config/state迁移。Phase5B正式CI/发布尚未完成，因此这里只冻结下一闭包源事实，不预先占用Store版本；执行前重新核对已发布源marker/commit。
+本单元属于已批准的完整10+1结构，不能代替剩余actions/business/emails/config/state迁移。Phase5B正式CI/发布尚未完成，因此可以先完成独立源事实、opt-in存储基础和不带marker的正逆迁副本验证；运行调用方、bootstrap和正式release激活须在Phase5B发布后核对实际源marker/commit，不预先占用Store版本。
 
 ## 准确源范围
 
