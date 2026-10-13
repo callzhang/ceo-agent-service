@@ -183,14 +183,15 @@ def test_uncertain_action_resumes_from_positive_reconciliation_without_redispatc
 
 
 @pytest.mark.parametrize("prior_status", ["uncertain", "dispatched"])
-def test_uncertain_effect_reconciles_before_changed_business_source_guard(monkeypatch, prior_status):
+def test_uncertain_oa_return_reconciles_before_changed_business_source_guard(monkeypatch, prior_status):
     from app.agent_contracts import ReviewedSourceBinding
-    store = FakeStore(_candidate().model_copy(update={"source_bindings": (
+    from tests.test_oa_return_readback import action
+    store = FakeStore(_candidate(actions=[action().model_dump(mode="json")]).model_copy(update={"source_bindings": (
         ReviewedSourceBinding(provider="dingtalk-oa", object_ref="process", value={"status": "RUNNING"}),)}))
     handler = Handler()
     store.attempts[0] = {"status": prior_status, "external_action_key": "original-key"}
     handler.reconcile_result = ActionOutcome("verified", {"receipt_id": "already-returned"})
-    executor = SystemExecutor(store, {("test", "act"): handler}, owner="reconciler")
+    executor = SystemExecutor(store, {("dingtalk-oa", "revert_task"): handler}, owner="reconciler")
     monkeypatch.setattr(executor, "_check_reviewed_sources", lambda *args: executor._failure(
         "business_state_changed", "The effect already changed the source", []))
     result = executor.execute(store.get_reply_task(1), 1, 2)

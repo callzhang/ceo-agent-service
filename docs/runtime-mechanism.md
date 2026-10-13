@@ -12,11 +12,12 @@ before the next provider transition. Tied or untimed transitions, imprecise
 dispatch-second evidence, missing destination or partial records remain
 uncertain. No delay threshold or guessed recipient is used.
 
-Persisted dispatched/uncertain actions reconcile before the pre-write source
+Persisted dispatched/uncertain OA return actions reconcile before the pre-write source
 guard, because the original effect can itself change those facts. Reconciliation
 cannot dispatch. New writes retain source revalidation; prior acceptance evidence
 survives provider read failures. This does not retrospectively manufacture lost
-acceptance responses or rewrite historical failed executions.
+acceptance responses or rewrite historical failed executions. Comment and other
+action recovery retain their existing source/context fences.
 
 Audit handoff includes System-produced JSON type facts for each current action's
 target and payload fields, including human-option plans. The facts come from the
@@ -32,7 +33,9 @@ Policy, source, authority and full-effect review remain Audit's work. Business
 prose is not parsed with keywords or regex, and historical feedback is not
 reconstructed as new evidence. A business misclassification or unsupported prose
 is still a model-review limitation, not proven factual truth merely because an
-assertion matches.
+assertion matches. Scalar field evidence is rendered before the complete final
+candidate JSON; source bindings remain in that JSON without repeating their
+values in the field index.
 
 OA Attention is a business-pending projection: the scanner captures the exact
 principal-owned RUNNING nodes from the authenticated pending list and source

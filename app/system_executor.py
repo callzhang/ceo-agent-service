@@ -241,7 +241,9 @@ class SystemExecutor:
             self.store.renew_candidate_execution_claim(execution_id, self.owner, self.lease_seconds)
             attempt_status = next((item["status"] for item in self.store.list_candidate_action_attempts(execution_id)
                                    if item["action_index"] == index), None)
-            if attempt_status not in ("verified", "uncertain", "dispatched"):
+            reconcile_return = (action.capability == "dingtalk-oa" and action.operation == "revert_task"
+                                and attempt_status in ("uncertain", "dispatched"))
+            if attempt_status != "verified" and not reconcile_return:
                 source_result = self._check_reviewed_sources(candidate, context, plan, execution_id, candidate_id)
                 if source_result is not None:
                     return source_result

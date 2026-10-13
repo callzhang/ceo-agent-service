@@ -362,6 +362,17 @@ class AuditTurnContext:
                     source_reference=source_reference,
                 ),
                 "## Candidate Field Facts\n" + _json(candidate_action_field_facts(self.candidate)),
+                "Current candidate scalar field evidence, computed from exact non-source candidate fields\n"
+                + render_candidate_field_evidence({
+                    key: value for key, value in self.candidate.model_dump(mode="json").items()
+                    if key != "source_bindings"
+                })
+                + (
+                    "\nSource bindings remain complete in Candidate revision and are not expanded again here. "
+                    "Use this evidence to verify a reported current-candidate field value or JSON type. "
+                    "A field-type observation must match its exact JSON Pointer path, literal value, "
+                    "and JSON type here; do not infer the type from identifier appearance."
+                ),
                 "Candidate revision\n"
                 + _json(
                     {
@@ -370,15 +381,6 @@ class AuditTurnContext:
                         "candidate_digest": self.candidate_digest,
                         "candidate": self.candidate.model_dump(mode="json"),
                     }
-                ),
-                "Current candidate scalar field evidence, computed from the exact candidate JSON above\n"
-                + render_candidate_field_evidence(
-                    self.candidate.model_dump(mode="json")
-                )
-                + (
-                    "\nUse this evidence to verify a reported current-candidate field value or JSON type. "
-                    "A field-type observation must match its exact JSON Pointer path, literal value, "
-                    "and JSON type here; do not infer the type from identifier appearance."
                 ),
             )
         )
