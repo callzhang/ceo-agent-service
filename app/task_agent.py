@@ -42,7 +42,6 @@ from app.task_models import (
     TaskProjectAssessment,
     TaskProjectDecisionResult,
     TaskDecisionResult,
-    task_agent_output_schema,
 )
 from app.task_agent_session import TASK_AGENT_SESSION_SCOPE_ID
 from app.task_retrieval import (
@@ -384,6 +383,7 @@ class TaskAgentCodexRunner:
                         "Return exactly one TaskAgentDecision JSON object.\n\n"
                         + BACKGROUND_AGENT_RUNTIME_BOUNDARY
                     ),
+                    skill_names=(WORK_TRACKING_SKILL_PATH.parent.name,),
                     output_schema_path=TASK_AGENT_DECISION_SCHEMA_PATH,
                     use_output_schema=True,
                 ),
@@ -549,9 +549,6 @@ def build_task_agent_prompt(
     effective_current_time = (
         current_time.strip() or datetime.now(timezone.utc).isoformat()
     )
-    decision_schema = json.dumps(
-        task_agent_output_schema(), ensure_ascii=False, separators=(",", ":")
-    )
     return f"""You are the CEO Agent Task/Project reader. Do not reply to the source.
 Follow the current CEO Work Tracking Skill and return one TaskAgentDecision envelope:
 project_decisions, task_decisions, project_assessments are all required (each 0..N).
@@ -591,102 +588,13 @@ not a claim that an omitted middle or another version was read.
 Current semantic Project/Task context (rank is context, never authority):
 {candidate_prompt}
 
-Apply the Skill before returning:
-- Read original Project definitions, current roles/facts and Tasks together.
-  Preserve genuinely standalone Tasks; do not turn a department/topic/customer or
-  small unrelated action into an official Project.
-- project_decisions registers a confirmed report registry Project or explicit
-  meeting decision, or updates an existing active anchor. Preserve exact source
-  title, reference and reporting period. Chats/emails can supplement known Project
-  facts, not create official identity by topical similarity.
-  Project title contains only the entity name, not its status or action. For
-  example, in “甲客户一期交付项目正式启动”, keep “甲客户一期交付项目” as the
-  title and store “正式启动” as a fact when relevant.
-  For reports containing multiple Projects, assess each Project separately;
-  do not let one Project's decision or assessment cover another report row.
-  Adopt the exact current authoritative Project definition with registration to register or reuse.
-  A different stored name cannot replace that definition merely because the action uses its shorter name.
-  A Project may have an optional CRM customer. Only set crm_customer_label with
-  crm_customer_evidence when the source explicitly names the customer; a clear
-  complete customer prefix plus distinct Project work may be cited as the label.
-  When set, include that exact same citation in the Project's evidence list.
-  Do not put a customer ID or display name into the Project title, and do not
-  copy a customer onto Tasks. The service performs a read-only CRM name
-  resolution. Every result is an unconfirmed candidate, including a single
-  returned result; a person must explicitly confirm the Project association.
-- context is a complete current snapshot: one overall owner and responsible result,
-  other people each with a distinct responsibility. Unknown owner is null.
-  A bare responsibility clause (a person responsible for a business area) is
-  ProjectContext only, not a Task or candidate. Create a Task only for an
-  explicitly stated independently completable deliverable/action, or a separate
-  actionable suggestion required by a sourced material Project risk.
-  The clause X负责Y remains a Project responsibility when Y is only a duty area
-  (for example, “王五负责商务对账”). When Y names a specific independently
-  completable action and result (for example, “李四负责核实客户付款排期并反馈”),
-  preserve it as a source-origin Task; without an authorized meeting action record,
-  it is a candidate, not a formal assignment.
-  When overall-owner evidence conflicts, keep overall_owner null and preserve
-  the competing claims and challenge as sourced facts. Do not reclassify the
-  competing overall-owner candidates as responsibilities; responsibilities are
-  only independently evidenced, distinct work duties. Preserve other unchanged
-  responsibilities such as a separately owned deliverable.
-  State explicitly in a Project fact: 总体负责人存在冲突，仍待确认. Do not
-  replace this with only “尚未形成一致确认” or “仍需核实”; preserve the
-  competing source claims as separate evidence.
-  A person explicitly identified as the Project's overall accountable owner
-  belongs in overall_owner, not responsibilities. In Chinese, a description such
-  as “张三总负责交付验收” denotes that role; keep “总” out of the person's name.
-  Keep unchanged roles' original citations; never replace them with the new message.
-  In Chinese source wording, separate a person's name from a trailing rank/honorific
-  such as "总"; store only the person's name and keep the role in responsibility.
-  If overall-owner evidence is explicitly disputed, state the unresolved conflict
-  directly in a Project fact, preserve each competing claim's original evidence,
-  and keep `overall_owner` null.
-  Read the saved ProjectContext together with this source and return the complete
-  current ProjectContext whenever new facts or roles are learned. Retain unchanged
-  facts/roles with their original citations and add or update only what this source
-  establishes; do not omit prior context or cite an unrelated current message.
-- Task.project uses anchor_id or project_decision_index (index into project_decisions).
-  project_link_evidence proves a new association and requires that Project selector;
-  for a standalone Task omit both fields, and for an existing confirmed association
-  reuse the actual link without new proof.
+Additional Task result constraints:
 - For project_assessments, use exactly one selector: anchor_id for a known registered
   Project when this output has no matching Project decision, project_decision_index
   for the matching Project decision in this output, or neither only for an unresolved
   Project clue with insufficient_evidence. Never provide both anchor_id and
   project_decision_index.
-  Selector shapes are exclusive: a new or re-registered Project uses `registration`
-  only: omit `anchor_id`; a known existing Project uses `anchor_id` only: omit
-  `registration`. If a matching Project decision is in this output, its assessment
-  cites the decision index only: omit `anchor_id`; use an existing `anchor_id` only
-  when there is no matching decision in this output.
-  Every assessment has current null-ID evidence: at least one exact current-source
-  quote with `signal_id: null` and the current `source_ref`, even for
-  `historical_comparison`; that basis additionally requires verified positive-ID
-  original evidence.
-  Include one matching assessment for every project_decisions index:
-  project_decisions[i] must have exactly one assessment with
-  project_decision_index=i. Do not use anchor_id when a matching
-  project_decisions entry exists. Do not omit a report row because another
-  Project is also assessed.
-- Actual human work requires its assignment/commitment proof. For inferred next steps,
-  use record_candidate or existing-ID update_fields with suggestion:
-  suggested_owner_name/user_id plus responsibility_evidence and basis_evidence.
-  A proposed person may be absent from this message when sourced Project/org roles
-  establish the relevant duty. The saved single overall_owner may be the proposed
-  owner for a project-wide coordination action. Actual owner fields, assignment metadata, formal basis,
-  typed dates and status remain unset for a pure suggestion. Keep `owner_kind` and
-  `owner_relation` unset, with empty `owner_evidence`; put the proposed person only
-  in `suggestion.suggested_owner_name/user_id`. It is display-only.
-  A Project risk may need Attention without a Task. Create a display-only Task
-  suggestion only when a concrete next action is warranted and a saved, sourced
-  Project responsibility supports the suggested person and relevant duty, or the
-  single overall_owner is suitable for a project-wide coordination action. If no
-  Project role supports an actionable owner, keep the Project risk in Attention
-  without inventing a task, owner, monitoring item or deadline. Do not create a
-  suggestion for routine progress, a settled/resolved fact, or an ambiguous clue
-  that does not establish a material impact.
-  When a needs_attention Project has a material unresolved impact and a directly
+- When a needs_attention Project has a material unresolved impact and a directly
   relevant saved Project responsibility, create one display-only candidate next-step
   Task for that role even when the current message states no assignment or explicit
   action. Infer a concrete action from the risk. An existing Task suppresses this
@@ -707,47 +615,7 @@ Apply the Skill before returning:
   name the payment date/schedule in the title even when confirming an upstream
   acceptance condition is the first step; do not hide the key outcome behind a
   broad title such as “update the plan”.
-  Return every list-valued field as a JSON array; use `[]` when empty and never
-  `null` (including `decision_indexes`, `task_ids`, `todo_changes`,
-  `follow_up_changes`, and `search_trace`).
-  When the current source itself states a concrete action and expected result,
-  normally record it as a source-origin Task; do not relabel that human-stated action
-  as an Agent suggestion just because its metadata does not support a formal assignment.
-  Exception: routine milestones and next steps in the normal Project sequence are
-  Project facts, not Task candidates, even when phrased as actions.
-  For project_link_evidence, when the Project title and Task action occur in
-  different parts of the current source, cite one exact contiguous span from the
-  title occurrence through the action and include the intervening source text
-  verbatim; never splice nonadjacent excerpts into one quotation.
-  A named person responsible to verify a specific matter and report back is an
-  action; a bare duty-area description such as “responsible for reconciliation” is not.
-  Preserve a clearly named responsible person as source-reported owner evidence
-  without inferring acceptance. Use `suggestion` only when the action itself is
-  inferred by the Agent and is absent as an action from the source.
-  A Project role or responsibility is not itself a Task, and ordinary milestones
-  or routine next steps are Project facts, not candidates. Do not create a Task
-  just to fill a missing/contested Project owner or other ProjectContext field;
-  record the unresolved fact and assess its Project impact. Missing ownership alone
-  is not a material risk; use 需关注 only when source evidence shows a material
-  delivery/business impact or required Gate. A suggestion must be an independently
-  actionable step beyond clarifying the Project record itself.
-  Before suggesting another next-step Task for a Project risk, check current linked
-  Tasks. If an existing actionable Task already addresses that risk, use its existing
-  Task ID as the supporting next step and do not add a duplicate monitoring/evaluation
-  suggestion.
-- On later evidence reuse the existing Task ID, including an existing suggestion.
-  Do not rely on source-link duplication or wording similarity as Task identity.
-- New Tasks need a nonblank title. Only update_fields changes a supplied title;
-  promotion/acceptance/merge preserve the stored title. Explicit assignment is
-  assigned_unaccepted, not accepted. apply_acceptance needs identified owner proof,
-  cited assignment Signal and verified reply_to_source_ref; “收到” or TODO existence
-  is not acceptance. Unaccepted status alone is not a material Project risk when
-  current evidence shows progress with no meaningful impact or unresolved dispute.
-  For an existing Task update, leave commitment_status unchanged unless the named
-  owner explicitly accepts, disputes, completes or cancels it in the source; work
-  progress or continued handling is not acceptance. Set acceptance polarity only
-  through apply_acceptance with verified owner and reply evidence.
-  Similar deliverables are linked/clustered, not identity-merged.
+- Similar deliverables are linked/clustered, not identity-merged.
   status and business_relevance may only change through update_fields: set
   transition=update_fields when either field changes. They remain top-level fields,
   not a nested update_fields object; never set them under another transition.
@@ -757,90 +625,14 @@ Apply the Skill before returning:
   When promoting a suggestion, omit the suggestion field; the saved Task keeps its
   existing suggestion history. A suggestion field is valid only when recording or
   updating a candidate.
-  For any Agent-generated suggestion, leave `owner_name`/`owner_user_id` empty,
-  `owner_evidence` empty, and `owner_kind`/`owner_relation` unset; also leave
-  formal basis, acceptance, dates, status and relevance unset. A proposed person
-  belongs only in suggestion.suggested_owner_name/user_id. Return all list-valued
-  fields as JSON arrays, using `[]` when empty and never `null`.
-  For AI Minutes read complete meeting_summary, transcript_excerpts and action items.
-  The assigned person is not automatically the speaker; owner proof quotes the
-  actual sentence with speaker label included when present. A generic speaker
-  placeholder such as 发言人 N is not an owner, nor is a team or department.
-  A meeting action item is an actual assignment only when source_conversation_kind
-  is minutes and the current AI Minutes source reference carries the action-item
-  record marker #todos-sha256=. Otherwise keep it as evidence/candidate and do not
-  claim formal meeting assignment. A non-meeting explicit assignment is formal
-  only when the current source metadata explicitly says assignment_authorized=true;
-  otherwise record it as a display-only candidate, never as an actual assignment.
-  Actual owner_evidence uses {{"source_ref": "the source reference", "excerpt": "the literal owner-action sentence"}}.
-- In project_assessments provide one factual reason and original proof for every
-  relevant Project/clue in this source and current Tasks' confirmed Project links,
-  even when no Project selector or Task update is emitted. No Task is not insufficient
-  evidence. Supported routine progress is not_needed; genuine missing identity/facts
-  is insufficient_evidence, without inventing risk or a card.
+- Actual owner_evidence uses {{"source_ref": "the source reference", "excerpt": "the literal owner-action sentence"}}.
 - Attention belongs once to its assessment. Task decision_indexes and existing task_ids
   are optional real members, not carriers. Never include a skip decision in
   decision_indexes; supporting indexes may identify only a real candidate, create,
   or update Task decision that belongs to this Project and directly supports this
-  specific Project assessment. When a Task decision updates the same concrete
-  Project work described by the assessment, include that decision index as support,
-  including for a not_needed progress assessment. An existing Task belongs in
-  task_ids only when it directly supports the assessment. A Task being linked to
-  the Project is not enough:
-  completed or unrelated Project Tasks are not members. Only a real material impact merits watch,
-  decision or push; “需关注” does not mean “需介入”. A retained existing_attention_id
-  requires an exact citation from this card's stored
-  `current_project_attention.assessment_json.evidence` (same `signal_id`, `source_ref`
-  and `source_excerpt`); newer evidence may supplement but cannot replace that proof.
-  It also requires actual membership, not Project peers.
-  For an existing card, task_ids must be copied only from that card's actual stored
-  member IDs delivered in current_project_attention; never add a peer Task solely
-  because it belongs to the same Project. If the delivered member list is empty,
-  keep task_ids and decision_indexes empty, including when a linked Task is completed
-  or updated in this turn, or when a same-risk candidate was suggested on an earlier
-  turn. This preserves the stored Attention membership; that candidate remains a
-  separate Project-linked Task and is not added to the existing card. An explicit
-  unresolved dispute over who
-  holds the Project's overall accountable role (such as a claimed transfer that the
-  prior owner says was not confirmed) is needs_attention even before operational
-  impact is separately quantified; record the conflict in ProjectContext and do not
-  create a Task just to resolve that Project field. Missing overall ownership
-  without a stated impact or dispute is not a material risk and should be not_needed
-  when the other Project evidence is normal and complete.
-  A current update goes in that assessment's attention_proposal. not_needed or an
-  empty Task list never closes a Project risk; completing one Task is not Project completion.
-  First assessment of a source-observed unresolved material business risk does not
-  require a prior card or a fresh delta against a nonexistent assessment. Candidate
-  Tasks may support Attention without a formal owner or accepted commitment.
-  Labels, relevance, routine progress, and date proximity alone do not explain material impact.
-  An existing card already reflecting the same facts does not need a new proposal.
-  Never invent a Task, owner, assignment, commitment, or date to fill a card.
-- All source_excerpt values are exact contiguous quotes, preserving punctuation,
-  spaces and line breaks (a decoded JSON string leaf is allowed). Keep facts and
-  inference separate. Current evidence has null signal_id/current source_ref;
-  historical proof uses real positive observed Signal IDs, matching references/quotes,
-  not session or Memory provenance. historical_comparison needs current and original
-  historical proof; if originals are unavailable, state uncertainty, not invented history.
-  Do not reconstruct an earlier quotation from a later summary. If the exact historical
-  quote is not available in the original Signal, omit that claim and say what cannot be confirmed.
-- Project registration.source_excerpt must itself be an exact contiguous quote
-  from the immutable current Work Item that defines the Project; do not substitute
-  a responsibility sentence, paraphrase, or quote from another source. When a
-  report contains multiple Projects, cite each Project's defining row and assess
-  each Project separately.
-- Keep created/assigned/requested/external/committed/estimated/check dates distinct.
-  Date evidence must be literal current-source wording and a trusted actor.
-  AI Minutes has no trusted speaker-to-identity date mapping: do not emit source-derived
-  typed deadlines there. next_check_at is not an accepted due date or invented cadence.
-  Never transfer a Project deadline onto a Task.
-- Schema todo_changes/follow_up_changes/search_trace and old completion-check source
-  enums are historical, not current operations. Human DingTalk completion still updates
-  only its explicitly linked Task through the deterministic service path.
-- Memory is background/discovery, not original observed evidence or human acceptance.
-  Keep runtime paths, credentials and diagnostics out of business fields.
+  specific Project assessment.
+- An existing card already reflecting the same facts does not need a new proposal.
 
-TaskAgentDecision Pydantic JSON schema:
-{decision_schema}
 Return only the envelope after checking every item.
 """
 

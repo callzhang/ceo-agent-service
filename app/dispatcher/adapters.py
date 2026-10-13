@@ -1,4 +1,6 @@
 from __future__ import annotations
+from app.run_storage import SCHEDULED_RUN_SQL
+from app.task_storage import MEETING_JOB_SQL, OKR_REQUEST_SQL, task_id_expression, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
 
 from app.store import REPLY_TASK_CURRENT_SQL
 
@@ -92,25 +94,25 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
         ).isoformat(timespec="seconds")
         with self.store._connect() as db:
             pending = db.execute(
-                "select count(*) from scheduled_task_runs "
+                f"select count(*) from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs "
                 "where dispatch_status='pending' "
                 "and (lease_owner='' or lease_expires_at<=?)",
                 (now_text,),
             ).fetchone()[0]
             due = db.execute(
-                "select count(*) from scheduled_task_runs "
+                f"select count(*) from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs "
                 "where dispatch_status='pending' and scheduled_for<=? "
                 "and (lease_owner='' or lease_expires_at<=?)",
                 (now_text, now_text),
             ).fetchone()[0]
             claimed = db.execute(
-                "select count(*) from scheduled_task_runs "
+                f"select count(*) from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs "
                 "where dispatch_status='pending' and lease_owner<>'' "
                 "and lease_expires_at>?",
                 (now_text,),
             ).fetchone()[0]
             oldest = db.execute(
-                "select min(scheduled_for) from scheduled_task_runs "
+                f"select min(scheduled_for) from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs "
                 "where dispatch_status='pending' and scheduled_for<=? "
                 "and (lease_owner='' or lease_expires_at<=?)",
                 (now_text, now_text),
@@ -119,7 +121,7 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                 db,
                 column="skip_or_error_reason",
                 source_projection=(
-                    "from scheduled_task_runs source "
+                    f"from ({SCHEDULED_RUN_SQL}) source "
                     "left join dispatcher_claim_leases source_claim "
                     "on source_claim.adapter_name=? "
                     "and source_claim.source_id=cast(source.id as text) "
@@ -183,7 +185,7 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                     "claim.owner_pid as claim_owner_pid, "
                     "claim.generation as claim_generation, "
                     "claim.lease_expires_at as claim_expires_at "
-                    "from scheduled_task_runs run "
+                    f"from ({SCHEDULED_RUN_SQL}) run "
                     "left join dispatcher_claim_leases claim "
                     "on claim.adapter_name=? and claim.source_id=cast(run.id as text) "
                     "where run.dispatch_status='pending' and run.scheduled_for<=? "
@@ -209,8 +211,8 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                 return None
             previous_source_owner = str(candidate["lease_owner"] or "")
             cursor = db.execute(
-                "update scheduled_task_runs set lease_owner=?, lease_expires_at=? "
-                "where id=? and dispatch_status='pending' and scheduled_for<=? "
+                "update runs set lease_owner=?, lease_expires_at=? "
+                "where record_type='scheduled_task_runs' and cast(legacy_key as integer)=? and dispatch_status='pending' and scheduled_for<=? "
                 "and (lease_owner='' or lease_expires_at<=? or lease_owner=?)",
                 (
                     owner,
@@ -254,7 +256,7 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                 now=now_text,
             )
             claimed = db.execute(
-                f"select {self.store._scheduled_task_run_columns()} from scheduled_task_runs where id=?", (candidate["id"],)
+                f"select {self.store._scheduled_task_run_columns()} from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?", (candidate["id"],)
             ).fetchone()
             assert claimed is not None
             run = self.store._scheduled_task_run_from_row(claimed)
@@ -285,8 +287,8 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                 ).isoformat(timespec="seconds"),
             )
             cursor = db.execute(
-                "update scheduled_task_runs set lease_owner='', lease_expires_at=null "
-                "where id=? and dispatch_status='pending' and lease_owner=?",
+                "update runs set lease_owner='', lease_expires_at=null "
+                "where record_type='scheduled_task_runs' and cast(legacy_key as integer)=? and dispatch_status='pending' and lease_owner=?",
                 (int(envelope.source_id), owner),
             )
             if cursor.rowcount != 1:
@@ -318,8 +320,8 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                 lease_expires_at=lease_text,
             )
             cursor = db.execute(
-                "update scheduled_task_runs set lease_expires_at=? "
-                "where id=? and dispatch_status='pending' and lease_owner=? "
+                "update runs set lease_expires_at=? "
+                "where record_type='scheduled_task_runs' and cast(legacy_key as integer)=? and dispatch_status='pending' and lease_owner=? "
                 "and lease_expires_at>?",
                 (lease_text, int(envelope.source_id), owner, now_text),
             )
@@ -340,7 +342,7 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                 now=now_text,
             )
             row = db.execute(
-                "select 1 from scheduled_task_runs where id=? "
+                f"select 1 from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=? "
                 "and dispatch_status='pending' and lease_owner=? "
                 "and lease_expires_at>?",
                 (int(envelope.source_id), owner, now_text),
@@ -396,11 +398,11 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
         now_text = _sqlite_time(now)
         with self.store._connect() as db:
             pending = db.execute(
-                "select count(*) from reply_tasks task where status='pending' and "
+                f"select count(*) from ({REPLY_TASK_SQL}) task where status='pending' and "
                 + self._channel_clause()
             ).fetchone()[0]
             due = db.execute(
-                "select count(*) from reply_tasks task "
+                f"select count(*) from ({REPLY_TASK_SQL}) task "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(task.id as text) "
                 "where " + self._channel_clause() + " and ((task.status='pending' "
@@ -412,7 +414,7 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
                 (self.name, now_text, now_text, now_text),
             ).fetchone()[0]
             claimed = db.execute(
-                "select count(*) from reply_tasks task "
+                f"select count(*) from ({REPLY_TASK_SQL}) task "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(task.id as text) "
                 "where " + self._channel_clause() + " and task.status='processing' and (claim.owner is null "
@@ -421,7 +423,7 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
             ).fetchone()[0]
             oldest = db.execute(
                 "select min(case when task.available_at='' then task.created_at "
-                "else task.available_at end) from reply_tasks task "
+                f"else task.available_at end) from ({REPLY_TASK_SQL}) task "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(task.id as text) "
                 "where " + self._channel_clause() + " and ((task.status='pending' "
@@ -436,7 +438,7 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
                 db,
                 column="error",
                 source_projection=(
-                    "from reply_tasks source "
+                    f"from ({REPLY_TASK_SQL}) source "
                     "left join dispatcher_claim_leases source_claim "
                     "on source_claim.adapter_name=? "
                     "and source_claim.source_id=cast(source.id as text) "
@@ -485,7 +487,7 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
                     "claim.generation as claim_generation, "
                     "claim.owner_pid as claim_owner_pid, "
                     "claim.lease_expires_at as claim_expires_at "
-                    "from reply_tasks task left join dispatcher_claim_leases claim "
+                    f"from ({REPLY_TASK_SQL}) task left join dispatcher_claim_leases claim "
                     "on claim.adapter_name=? and claim.source_id=cast(task.id as text) "
                     "where " + self._channel_clause() + " and ((task.status='pending' "
                     "and (task.available_at='' or datetime(task.available_at)<=datetime(?)) "
@@ -514,10 +516,10 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
                 return None
             source_id = str(row["id"])
             cursor = db.execute(
-                "update reply_tasks set status='processing', attempts=attempts+1, "
+                "update tasks set status='processing', attempts=attempts+1, "
                 "claimed_input_version=input_version, claimed_input_id=current_input_id, locked_at=?, available_at='', "
-                "updated_at=? where id=? and status in ('pending','processing') and "
-                + self._channel_clause("reply_tasks"),
+                "updated_at=? where record_type='reply_tasks' and id=? and status in ('pending','processing') and "
+                + self._channel_clause("tasks"),
                 (now_text, now_text, row["id"]),
             )
             if cursor.rowcount != 1:
@@ -555,8 +557,8 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
         with self.store._immediate_write_transaction() as db:
             _release_lease(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
             cursor = db.execute(
-                "update reply_tasks set status='pending', attempts=max(attempts-1,0), "
-                "locked_at=null, updated_at=? where id=? and status='processing'",
+                "update tasks set status='pending', attempts=max(attempts-1,0), "
+                "locked_at=null, updated_at=? where record_type='reply_tasks' and id=? and status='processing'",
                 (_sqlite_time(now), int(envelope.source_id)),
             )
             if cursor.rowcount != 1:
@@ -583,10 +585,10 @@ class ReplyQueueAdapter(_LedgerClaimLifecycle):
             _release_lease(db, envelope=envelope, owner=owner, now=now_text)
             cursor = db.execute(
                 """
-                update reply_tasks
+                update tasks
                 set status=?,
                     locked_at=null, available_at=?, error=?, updated_at=?
-                where id=? and status='processing'
+                where record_type='reply_tasks' and id=? and status='processing'
                 """,
                 ('failed' if terminal else 'pending', available_at, error[:2000], now_text, int(envelope.source_id)),
             )
@@ -628,11 +630,11 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
         now_text = _sqlite_time(now)
         with self.store._connect() as db:
             pending = db.execute(
-                "select count(*) from meeting_alignment_jobs "
+                f"select count(*) from ({MEETING_JOB_SQL}) "
                 "where status in ('waiting','pending','retry')"
             ).fetchone()[0]
             due = db.execute(
-                "select count(*) from meeting_alignment_jobs job "
+                f"select count(*) from ({MEETING_JOB_SQL}) job "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(job.id as text) "
                 "where (job.status in ('waiting','pending','retry') "
@@ -645,7 +647,7 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                 (self.name, now_text, now_text, now_text, now_text),
             ).fetchone()[0]
             claimed = db.execute(
-                "select count(*) from meeting_alignment_jobs job "
+                f"select count(*) from ({MEETING_JOB_SQL}) job "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(job.id as text) "
                 "where job.status='processing' and (claim.owner is null "
@@ -656,7 +658,7 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                 "select min(case when job.available_at='' then job.eligible_at "
                 "when datetime(job.available_at)>datetime(job.eligible_at) "
                 "then job.available_at else job.eligible_at end) "
-                "from meeting_alignment_jobs job "
+                f"from ({MEETING_JOB_SQL}) job "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(job.id as text) "
                 "where (job.status in ('waiting','pending','retry') "
@@ -672,7 +674,7 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                 db,
                 column="error",
                 source_projection=(
-                    "from meeting_alignment_jobs source "
+                    f"from ({MEETING_JOB_SQL}) source "
                     "left join dispatcher_claim_leases source_claim "
                     "on source_claim.adapter_name=? "
                     "and source_claim.source_id=cast(source.id as text) "
@@ -728,7 +730,7 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                 if after is not None:
                     keyset = (
                         f"and ({ready_at}>datetime(?) or "
-                        f"({ready_at}=datetime(?) and job.id>?)) "
+                    f"({ready_at}=datetime(?) and job.id>?)) "
                     )
                     params.extend(
                         [after["ready_at"], after["ready_at"], after["id"]]
@@ -739,7 +741,7 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                     "claim.generation as claim_generation, "
                     "claim.owner_pid as claim_owner_pid, "
                     "claim.lease_expires_at as claim_expires_at "
-                    "from meeting_alignment_jobs job "
+                    f"from ({MEETING_JOB_SQL}) job "
                     "left join dispatcher_claim_leases claim "
                     "on claim.adapter_name=? and claim.source_id=cast(job.id as text) "
                     "where ((job.status in ('waiting','pending','retry') "
@@ -772,9 +774,10 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                 return None
             source_id = str(row["id"])
             cursor = db.execute(
-                "update meeting_alignment_jobs set status='processing', "
+                "update tasks set status='processing', "
                 "attempts=attempts+1, locked_at=?, updated_at=? "
-                "where id=? and status in ('waiting','pending','retry','processing')",
+                "where id=" + task_id_expression("meeting_alignment_jobs", "?")
+                + " and record_type='meeting_alignment_jobs' and status in ('waiting','pending','retry','processing')",
                 (now_text, now_text, row["id"]),
             )
             if cursor.rowcount != 1:
@@ -789,7 +792,7 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
                 now=now_text,
             )
             claimed = db.execute(
-                "select * from meeting_alignment_jobs where id=?", (row["id"],)
+                f"select * from ({MEETING_JOB_SQL}) where id=?", (row["id"],)
             ).fetchone()
             assert claimed is not None
         return DispatchEnvelope(
@@ -812,9 +815,10 @@ class MeetingQueueAdapter(_LedgerClaimLifecycle):
         with self.store._immediate_write_transaction() as db:
             _release_lease(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
             cursor = db.execute(
-                "update meeting_alignment_jobs set status='retry', "
+                "update tasks set status='retry', "
                 "attempts=max(attempts-1,0), locked_at=null, updated_at=? "
-                "where id=? and status='processing'",
+                "where id=" + task_id_expression("meeting_alignment_jobs", "?")
+                + " and record_type='meeting_alignment_jobs' and status='processing'",
                 (_sqlite_time(now), int(envelope.source_id)),
             )
             if cursor.rowcount != 1:
@@ -850,10 +854,10 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
         now_text = _sqlite_time(now)
         with self.store._connect() as db:
             pending = db.execute(
-                "select count(*) from okr_review_requests where status='pending'"
+                "select count(*) from tasks where record_type='okr_review_requests' and status='pending'"
             ).fetchone()[0]
             due = db.execute(
-                "select count(*) from okr_review_requests request "
+                f"select count(*) from ({OKR_REQUEST_SQL}) request "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(request.id as text) "
                 "where (request.status='pending' and (claim.owner is null "
@@ -863,7 +867,7 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
                 (self.name, now_text, now_text),
             ).fetchone()[0]
             claimed = db.execute(
-                "select count(*) from okr_review_requests request "
+                f"select count(*) from ({OKR_REQUEST_SQL}) request "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(request.id as text) "
                 "where request.status='processing' and (claim.owner is null "
@@ -871,7 +875,7 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
                 (self.name, now_text),
             ).fetchone()[0]
             oldest = db.execute(
-                "select min(request.created_at) from okr_review_requests request "
+                f"select min(request.created_at) from ({OKR_REQUEST_SQL}) request "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(request.id as text) "
                 "where (request.status='pending' and (claim.owner is null "
@@ -884,7 +888,7 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
                 db,
                 column="error",
                 source_projection=(
-                    "from okr_review_requests source "
+                    f"from ({OKR_REQUEST_SQL}) source "
                     "left join dispatcher_claim_leases source_claim "
                     "on source_claim.adapter_name=? "
                     "and source_claim.source_id=cast(source.id as text) "
@@ -927,7 +931,7 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
                     "select request.*, claim.owner as claim_owner, "
                     "claim.owner_pid as claim_owner_pid, "
                     "claim.lease_expires_at as claim_expires_at "
-                    "from okr_review_requests request "
+                    f"from ({OKR_REQUEST_SQL}) request "
                     "left join dispatcher_claim_leases claim "
                     "on claim.adapter_name=? "
                     "and claim.source_id=cast(request.id as text) "
@@ -956,8 +960,9 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
                 return None
             source_id = str(row["id"])
             cursor = db.execute(
-                "update okr_review_requests set status='processing', error='', "
-                "updated_at=? where id=? and status in ('pending','processing')",
+                "update tasks set status='processing', error='', "
+                "updated_at=? where record_type='okr_review_requests' "
+                "and cast(legacy_key as integer)=? and status in ('pending','processing')",
                 (now_text, row["id"]),
             )
             if cursor.rowcount != 1:
@@ -991,8 +996,9 @@ class OkrReviewQueueAdapter(_LedgerClaimLifecycle):
         with self.store._immediate_write_transaction() as db:
             _release_lease(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
             cursor = db.execute(
-                "update okr_review_requests set status='pending', updated_at=? "
-                "where id=? and status='processing'",
+                "update tasks set status='pending', updated_at=? "
+                "where record_type='okr_review_requests' "
+                "and cast(legacy_key as integer)=? and status='processing'",
                 (_sqlite_time(now), int(envelope.source_id)),
             )
             if cursor.rowcount != 1:
@@ -1026,10 +1032,10 @@ class WorkSummaryQueueAdapter(_LedgerClaimLifecycle):
         now_text = _sqlite_time(now)
         with self.store._connect() as db:
             pending = db.execute(
-                "select count(*) from work_summary_inputs where status='pending'"
+                f"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) where status='pending'"
             ).fetchone()[0]
             due = db.execute(
-                "select count(*) from work_summary_inputs item "
+                f"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) item "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
                 "where (item.status='pending' "
@@ -1041,7 +1047,7 @@ class WorkSummaryQueueAdapter(_LedgerClaimLifecycle):
                 (self.name, now_text, now_text, now_text),
             ).fetchone()[0]
             claimed = db.execute(
-                "select count(*) from work_summary_inputs item "
+                f"select count(*) from ({WORK_SUMMARY_INPUT_SQL}) item "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
                 "where item.status='processing' and (claim.owner is null "
@@ -1050,7 +1056,7 @@ class WorkSummaryQueueAdapter(_LedgerClaimLifecycle):
             ).fetchone()[0]
             oldest = db.execute(
                 "select min(case when item.available_at='' then item.created_at "
-                "else item.available_at end) from work_summary_inputs item "
+                f"else item.available_at end) from ({WORK_SUMMARY_INPUT_SQL}) item "
                 "left join dispatcher_claim_leases claim "
                 "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
                 "where (item.status='pending' "
@@ -1065,7 +1071,7 @@ class WorkSummaryQueueAdapter(_LedgerClaimLifecycle):
                 db,
                 column="error",
                 source_projection=(
-                    "from work_summary_inputs source "
+                    f"from ({WORK_SUMMARY_INPUT_SQL}) source "
                     "left join dispatcher_claim_leases source_claim "
                     "on source_claim.adapter_name=? "
                     "and source_claim.source_id=cast(source.id as text) "
@@ -1111,7 +1117,7 @@ class WorkSummaryQueueAdapter(_LedgerClaimLifecycle):
                     "claim.generation as claim_generation, "
                     "claim.owner_pid as claim_owner_pid, "
                     "claim.lease_expires_at as claim_expires_at "
-                    "from work_summary_inputs item "
+                    f"from ({WORK_SUMMARY_INPUT_SQL}) item "
                     "left join dispatcher_claim_leases claim "
                     "on claim.adapter_name=? and claim.source_id=cast(item.id as text) "
                     "where ((item.status='pending' "
@@ -1141,9 +1147,9 @@ class WorkSummaryQueueAdapter(_LedgerClaimLifecycle):
                 return None
             source_id = str(row["id"])
             cursor = db.execute(
-                "update work_summary_inputs set status='processing', "
+                "update tasks set status='processing', "
                 "attempts=attempts+1, error='', available_at='', updated_at=? "
-                "where id=? and status in ('pending','processing')",
+                f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and status in ('pending','processing')",
                 (now_text, row["id"]),
             )
             if cursor.rowcount != 1:
@@ -1158,7 +1164,7 @@ class WorkSummaryQueueAdapter(_LedgerClaimLifecycle):
                 now=now_text,
             )
             claimed = db.execute(
-                "select * from work_summary_inputs where id=?", (row["id"],)
+                f"select * from ({WORK_SUMMARY_INPUT_SQL}) where id=?", (row["id"],)
             ).fetchone()
             assert claimed is not None
         return DispatchEnvelope(
@@ -1181,9 +1187,9 @@ class WorkSummaryQueueAdapter(_LedgerClaimLifecycle):
         with self.store._immediate_write_transaction() as db:
             _release_lease(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
             cursor = db.execute(
-                "update work_summary_inputs set status='pending', "
+                "update tasks set status='pending', "
                 "attempts=max(attempts-1,0), updated_at=? "
-                "where id=? and status='processing'",
+                f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and status='processing'",
                 (_sqlite_time(now), int(envelope.source_id)),
             )
             if cursor.rowcount != 1:

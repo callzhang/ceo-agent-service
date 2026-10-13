@@ -145,6 +145,9 @@ def test_agent_cli_role_catalogue_excludes_controlled_effects() -> None:
     consumer_tools = set(consumer_catalogue)
     assert "read_skill" in audit_tools
     assert "read_dingtalk_document" in audit_tools
+    assert "exact DingTalk Drive attachment for OA review" in audit_catalogue[
+        "read_dingtalk_drive_file"
+    ].description
     assert {
         "list_dingtalk_minutes", "read_dingtalk_minutes", "search_dingtalk_messages",
         "search_dingtalk_conversations", "search_dingtalk_contacts",
@@ -152,7 +155,7 @@ def test_agent_cli_role_catalogue_excludes_controlled_effects() -> None:
         "read_dingtalk_oa_records", "read_dingtalk_oa_tasks",
         "read_dingtalk_oa_revert_activities", "search_dingtalk_documents",
         "read_dingtalk_document_info", "read_dingtalk_document_permissions",
-        "read_dingtalk_drive_info", "list_dingtalk_sheets",
+        "read_dingtalk_drive_info", "read_dingtalk_drive_file", "list_dingtalk_sheets",
         "read_dingtalk_sheet_info", "read_dingtalk_sheet_range",
         "read_dingtalk_thread_replies",
     } <= audit_tools
@@ -298,6 +301,38 @@ def test_codex_role_preserves_long_skill_output(tmp_path, monkeypatch, role, res
 
     assert command.count("mcp_servers.agent_cli.tools.read_task_skill.output_token_limit=30000") == 1
     assert command.count("mcp_servers.agent_cli.tools.read_skill.output_token_limit=30000") == 1
+    assert not any(value.startswith("tool_output_token_limit=") for value in command)
+    assert command[-1] == "-"
+    assert ("resume" in command) is resume
+
+
+@pytest.mark.parametrize("role", ["consumer", "audit"])
+@pytest.mark.parametrize("resume", [False, True])
+def test_codex_role_preserves_full_document_output(tmp_path, monkeypatch, role, resume):
+    from app.wechat.codex_safety import make_role_agent_command
+
+    monkeypatch.setattr("app.wechat.codex_safety.inherited_native_server_names", lambda: ())
+    command = ["codex", "exec", *(["resume", "session-id"] if resume else []), "--json", "-"]
+    make_role_agent_command(command, role=role,
+                            task_workspace=str(tmp_path) if role == "consumer" else None)
+
+    assert command.count("mcp_servers.agent_cli.tools.read_dingtalk_document_full.output_token_limit=30000") == 1
+    assert not any(value.startswith("tool_output_token_limit=") for value in command)
+    assert command[-1] == "-"
+    assert ("resume" in command) is resume
+
+
+@pytest.mark.parametrize("role", ["consumer", "audit"])
+@pytest.mark.parametrize("resume", [False, True])
+def test_codex_role_preserves_message_list_output(tmp_path, monkeypatch, role, resume):
+    from app.wechat.codex_safety import make_role_agent_command
+
+    monkeypatch.setattr("app.wechat.codex_safety.inherited_native_server_names", lambda: ())
+    command = ["codex", "exec", *(["resume", "session-id"] if resume else []), "--json", "-"]
+    make_role_agent_command(command, role=role,
+                            task_workspace=str(tmp_path) if role == "consumer" else None)
+
+    assert command.count("mcp_servers.agent_cli.tools.read_dingtalk_messages.output_token_limit=30000") == 1
     assert not any(value.startswith("tool_output_token_limit=") for value in command)
     assert command[-1] == "-"
     assert ("resume" in command) is resume

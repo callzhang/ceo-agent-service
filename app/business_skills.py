@@ -6,7 +6,6 @@ from dataclasses import dataclass
 import io
 import json
 import os
-import re
 from pathlib import Path
 import shutil
 import tempfile
@@ -451,7 +450,7 @@ def installed_skill_catalog(
     return tuple(matches[path] for path in sorted(matches))
 
 
-def _compact_skill_catalog(catalog: tuple[BusinessSkillCatalogEntry, ...]) -> str:
+def render_skill_catalog_metadata(catalog: tuple[BusinessSkillCatalogEntry, ...]) -> str:
     candidates = dict.fromkeys(item.skill_path.parent.parent for item in catalog)
     roots = tuple(root for root in candidates if not any(parent in candidates for parent in root.parents))
     aliases = {root: f"r{index}" for index, root in enumerate(roots, start=1)}
@@ -460,16 +459,17 @@ def _compact_skill_catalog(catalog: tuple[BusinessSkillCatalogEntry, ...]) -> st
     writer.writerow(("Root", "Path"))
     writer.writerows((alias, str(root)) for root, alias in aliases.items())
     output.write("\n")
-    writer.writerow(("Name", "Read path", "Description"))
+    writer.writerow(("Name", "Root", "Relative path", "Description"))
     for item in catalog:
         root = next(root for root in roots if item.skill_path.is_relative_to(root))
         writer.writerow((
             item.name,
-            f"{aliases[root]}:{item.skill_path.relative_to(root)}",
+            aliases[root],
+            str(item.skill_path.relative_to(root)),
             item.description,
         ))
     return (
-        "Read paths use root-alias:relative-path; join with the exact root below.\n"
+        "Absolute read path = the Root directory joined with Relative path.\n"
         "Tables are tab-separated; quoted cells preserve full text.\n"
         + output.getvalue().rstrip("\n")
     )
@@ -488,7 +488,7 @@ def render_business_skill_protocol(
     ]
     return (
         "## Installed CEO business Skill catalog\n"
-        + (_compact_skill_catalog(catalog) if compact else json.dumps(inventory, ensure_ascii=False, sort_keys=True))
+        + (render_skill_catalog_metadata(catalog) if compact else json.dumps(inventory, ensure_ascii=False, sort_keys=True))
         + "\n\n## Required Skill protocol\n"
         "PROTOCOL PRECONDITION: before returning any Consumer outcome, call "
         "`agent_cli.read_skill` for at least one CEO business Skill from the exact "
@@ -524,10 +524,11 @@ def render_task_skill_discovery(
         if frozen:
             names = ", ".join(f"`{name}`" for name in selected if name in frozen)
             instructions.append(
-                f"For the task-frozen selection {names}, call "
-                "`agent_cli.read_task_skill(name)` before deciding or reviewing. "
-                "That lookup returns this task's exact frozen content; do not "
-                "substitute a similarly named installed Skill."
+                f"For the task-frozen selection {names}, use this task's exact content. "
+                "Reuse complete content already loaded in this session only while "
+                "this selected frozen Skill's revision_id/sha256 is unchanged. Otherwise read the exact frozen content "
+                "with `agent_cli.read_task_skill(name)`; do not substitute a similarly "
+                "named installed Skill."
             )
         installed = tuple(name for name in selected if name not in frozen)
         if installed:
@@ -677,55 +678,6 @@ def frozen_task_skill_materials(
     )
 
 
-def expand_skill_dependencies(
-    names: Iterable[str], *, target_root: Path | None = None
-) -> tuple[str, ...]:
-    """Add every installed Skill the given Skills reference, transitively.
-
-    A task declares the Skills it works through; those Skills delegate to others
-    by name (the OA Skill shells out to `ocr`, which leads to `pdf` and `xlsx`
-    several hops away). Leaving a dependency out would hide it from the Agent
-    silently, so the closure is followed to the end rather than cut at a depth.
-
-    Two kinds of reference count, and only when they resolve to a Skill that is
-    actually installed: an exact Skill name, and a `dws <product>` command, which
-    is documented by the `dingtalk-<product>` Skill. Matching a Skill mentioned
-    only to say "do not use it" over-includes, which errs toward visibility; an
-    unresolvable token is never invented into a name.
-    """
-    catalog = {entry.name: entry.skill_path for entry in installed_runtime_skills(target_root)}
-    if not catalog:
-        return tuple(dict.fromkeys(name for name in names if name))
-    name_pattern = re.compile(
-        r"(?<![\w-])("
-        + "|".join(re.escape(name) for name in sorted(catalog, key=len, reverse=True))
-        + r")(?![\w-])"
-    )
-    dws_pattern = re.compile(r"(?<![\w-])dws\s+([a-z][a-z0-9-]*)")
-    resolved: dict[str, None] = {}
-    pending = [name for name in names if name]
-    while pending:
-        name = pending.pop()
-        if name in resolved:
-            continue
-        resolved[name] = None
-        path = catalog.get(name)
-        if path is None:
-            continue
-        try:
-            body = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
-            continue
-        referenced = set(name_pattern.findall(body))
-        referenced |= {
-            f"dingtalk-{product}"
-            for product in dws_pattern.findall(body)
-            if f"dingtalk-{product}" in catalog
-        }
-        pending.extend(sorted(referenced - resolved.keys()))
-    return tuple(resolved)
-
-
 # Plugins whose Skills every Agent turn gets regardless of the task's own list.
 # The Consumer and Audit contracts tell the Agent to recall durable context
 # through memory; trimming these away would leave that instruction unusable.
@@ -814,11 +766,14 @@ def codex_skill_config_override(
     - Codex also reads ~/.codex/skills and its plugin caches, so exclusion has
       to walk those roots too, or their Skills keep crowding the budget.
 
+    Only explicitly selected names enter the catalog; a mention in a Skill body
+    is not a dependency declaration. Referenced Skills remain readable on demand.
+
     Trimming matters for quality, not only size: over its Skill budget Codex
     truncates descriptions mid-sentence, and the description is what the Agent
     picks a Skill by. Returns an empty string when there is nothing to set.
     """
-    keep_names = set(expand_skill_dependencies(allowed_names, target_root=target_root))
+    keep_names = set(allowed_names)
     roots = codex_skill_roots(target_root=target_root, codex_home=codex_home)
     files = sorted(
         {path for root in roots if root.is_dir() for path in root.rglob("SKILL.md")}
@@ -834,6 +789,14 @@ def codex_skill_config_override(
             disable.append(path)
     items = [f'{{path="{path}",enabled=true}}' for path in enable] + [
         f'{{path="{path}",enabled=false}}' for path in disable
+    ]
+    return f"skills.config=[{','.join(items)}]" if items else ""
+
+
+def codex_inlined_skill_config_override(names: Iterable[str]) -> str:
+    """Suppress native copies of explicitly inlined Skills using native names."""
+    items = [
+        f"{{name={json.dumps(name)},enabled=false}}" for name in dict.fromkeys(names)
     ]
     return f"skills.config=[{','.join(items)}]" if items else ""
 

@@ -1,0 +1,852 @@
+{
+  "version": 1,
+  "manifest": {
+    "version": 1,
+    "source_sha256": "24e0cd5a450f1ea1adcc5ff2331b8cd75b69d9e382ce816d5fa779af392a5f7a",
+    "source_immutable": true,
+    "model": "gpt-5.6-luna",
+    "comparison": "old compact alias column vs separate Root/Relative path columns",
+    "phases": [
+      "consumer cold",
+      "Audit controlled wrong summary",
+      "Consumer same-session feedback correction",
+      "Audit same-session corrected candidate"
+    ],
+    "fault_injection": "Replace only the actual valid baseline Consumer summary with a wrong110/zero-discrepancy claim; retain exact original120 source binding. This is synthetic injection, not a naturally observed Consumer error.",
+    "role_controls": "Existing make_consumer_agent_command/make_audit_agent_command and native directory options; local read_skill server only. No role policy overrides."
+  },
+  "source_bindings_unchanged": true,
+  "bad_digest": "dd841bf3c12d0d811cf7a955862da53c7f4c735124a86332ed25d93120df1811",
+  "corrected_digest": "0b079c1bb5071a7b40f86de4a1099271d8469bbf78b8e4daa0779330ee8f7032",
+  "feedback_sha256": "801ab72b2a9fc36aff4d1e9756ec1949468b4a1c5439d2c0d949e03f3b4cc093",
+  "runs": [
+    {
+      "role": "consumer",
+      "arm": "baseline",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a131fc-93df-7cb3-9b65-f72d2fd07c4d",
+      "source_sha256": "24e0cd5a450f1ea1adcc5ff2331b8cd75b69d9e382ce816d5fa779af392a5f7a",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "no_action"
+      ],
+      "expected_digest": null,
+      "expected_revision": 0,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "no_action",
+        "summary": "已完成草案预算文档核对。文档标题中的 stated total 为 120 units；三个完整项目行分别为 40、50、20 units，实际行项目合计为 110 units（40 + 50 + 20 = 110）。因此存在 10 units 的差异，标题总额比完整项目行合计高 10 units。该结果仅说明发现了不一致，未改写源文档，也未声称任何更正已获批准。依据文档审查指导，应保留原始数值并将差异与已批准更正区分开来。本次未请求或执行外部变更。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_phase_sha256": "b0e1927b6174eca4e50407d44d6637353701b284647be5cbcca9b8edefa07896",
+      "native_phase_bytes": 489346,
+      "native_cold_prefix_sha256": "b0e1927b6174eca4e50407d44d6637353701b284647be5cbcca9b8edefa07896",
+      "full_cold_plus_resume_native_sha256": "26d87ad19fa8900a354384a672bb82bc2e66b0dd5f402d38f0255a6d2b1e81a5",
+      "native_cwd": [
+        "/private/tmp/ceo-skill-feedback-control-42tbn88o"
+      ],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          }
+        }
+      ],
+      "initial_phase_developer_sha256": "01c7cdf06e722517d131754f09fb29fb33ab097197402c6765a3ef05958fe06c",
+      "read_skill_calls": 4,
+      "read_skill_errors": 2,
+      "target_body_read_in_phase": true,
+      "directory_reads": 1,
+      "read_details": [
+        {
+          "arguments": {
+            "path": "/Users/derek/.agents/AGENTS.md"
+          },
+          "is_error": true,
+          "complete_source_body": false,
+          "directory_complete": false,
+          "model_chars": 87,
+          "model_sha256": "e904d44d4982b1fe4b34f1cd2ebf89e317f71c8c7ed7f673a2fbecb900fbd51f",
+          "error_text": [
+            {
+              "type": "text",
+              "text": "Error executing tool read_skill: skill_path_forbidden"
+            }
+          ]
+        },
+        {
+          "arguments": {},
+          "is_error": false,
+          "complete_source_body": false,
+          "directory_complete": true,
+          "model_chars": 82883,
+          "model_sha256": "f6ea113eae2525e79b8c534ce3bfc4e9468d58b97d32bd155c36753033c2c8f0",
+          "error_text": null
+        },
+        {
+          "arguments": {
+            "path": "r4:guide-150/SKILL.md"
+          },
+          "is_error": true,
+          "complete_source_body": false,
+          "directory_complete": false,
+          "model_chars": 87,
+          "model_sha256": "429b1a72ce956cdad213d95f52f4f55806a3857cc0abdd4dd0b32db07bf9d3ec",
+          "error_text": [
+            {
+              "type": "text",
+              "text": "Error executing tool read_skill: skill_path_forbidden"
+            }
+          ]
+        },
+        {
+          "arguments": {
+            "name": "synthetic-guide-150"
+          },
+          "is_error": false,
+          "complete_source_body": true,
+          "directory_complete": false,
+          "model_chars": 635,
+          "model_sha256": "3c48cdef4f01e7acfdf190834145d1fc93d4178d1fe954812c201d1b97abaf94",
+          "error_text": null
+        }
+      ],
+      "custom_tool_calls": 1,
+      "custom_tool_inputs": [
+        {
+          "name": "exec",
+          "input": "const r = await tools.exec_command({cmd:\"sed -n '1,240p' /Users/derek/.agents/AGENTS.md\",\"workdir\":\"/private/tmp/ceo-skill-feedback-control-42tbn88o\",\"yield_time_ms\":10000,\"max_output_tokens\":12000});\ntext(r.output);\n"
+        }
+      ],
+      "compaction_events": 0,
+      "task_sha256": "f6ee7dc68c7e7499cab3992ea46918a2c2622dc2da2659c493c0194e4a0a7db3",
+      "service_developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+      "events_sha256": "ad52ab0486c3d57ddba1e0726e16d711cb72313941a0abeb1743bceed8e590ef"
+    },
+    {
+      "role": "consumer",
+      "arm": "baseline",
+      "phase": "resume",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a131fc-93df-7cb3-9b65-f72d2fd07c4d",
+      "source_sha256": "24e0cd5a450f1ea1adcc5ff2331b8cd75b69d9e382ce816d5fa779af392a5f7a",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "no_action"
+      ],
+      "expected_digest": null,
+      "expected_revision": 1,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "no_action",
+        "summary": "已根据审计反馈重新核对草案预算文档。标题 stated total 为 120 units；三个完整项目行分别为 40、50、20 units，实际完整项目行合计为 110 units（40 + 50 + 20 = 110）。因此存在 10 units 的差异，标题总额高于完整项目行合计 10 units。该结论仅指出文档中的数值不一致；未改写源文档，也未将任何更正视为已批准或已应用。本次仍无外部变更。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_phase_sha256": "bf44646324050cc1420f7c4d7c033775bad0948eac22d1ce8c5729f137b42d62",
+      "native_phase_bytes": 385155,
+      "native_cold_prefix_sha256": "b0e1927b6174eca4e50407d44d6637353701b284647be5cbcca9b8edefa07896",
+      "full_cold_plus_resume_native_sha256": "26d87ad19fa8900a354384a672bb82bc2e66b0dd5f402d38f0255a6d2b1e81a5",
+      "native_cwd": [
+        "/private/tmp/ceo-skill-feedback-control-42tbn88o"
+      ],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          }
+        }
+      ],
+      "initial_phase_developer_sha256": null,
+      "read_skill_calls": 2,
+      "read_skill_errors": 0,
+      "target_body_read_in_phase": true,
+      "directory_reads": 1,
+      "read_details": [
+        {
+          "arguments": {},
+          "is_error": false,
+          "complete_source_body": false,
+          "directory_complete": true,
+          "model_chars": 82883,
+          "model_sha256": "f6ea113eae2525e79b8c534ce3bfc4e9468d58b97d32bd155c36753033c2c8f0",
+          "error_text": null
+        },
+        {
+          "arguments": {
+            "name": "synthetic-guide-150"
+          },
+          "is_error": false,
+          "complete_source_body": true,
+          "directory_complete": false,
+          "model_chars": 635,
+          "model_sha256": "3c48cdef4f01e7acfdf190834145d1fc93d4178d1fe954812c201d1b97abaf94",
+          "error_text": null
+        }
+      ],
+      "custom_tool_calls": 1,
+      "custom_tool_inputs": [
+        {
+          "name": "exec",
+          "input": "const r = await tools.exec_command({cmd:\"sed -n '1,80p' /Users/derek/.agents/AGENTS.md\",\"workdir\":\"/private/tmp/ceo-skill-feedback-control-42tbn88o\",\"yield_time_ms\":10000,\"max_output_tokens\":5000});\ntext(r.output);\n"
+        }
+      ],
+      "compaction_events": 0,
+      "task_sha256": "120cfb9b845192974c5ef417d012c033e6609120c9f1e214bebad6bc4d06ad6a",
+      "service_developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+      "events_sha256": "3f71fb0009db35fa1e6adb0e136265a0bef5956486e27d6282fedea107cce51d"
+    },
+    {
+      "role": "consumer",
+      "arm": "candidate",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a131fc-e379-7892-b501-8238de911cc1",
+      "source_sha256": "24e0cd5a450f1ea1adcc5ff2331b8cd75b69d9e382ce816d5fa779af392a5f7a",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "no_action"
+      ],
+      "expected_digest": null,
+      "expected_revision": 0,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "no_action",
+        "summary": "已完成只读文档复核：文档标题所述总额为120 units；三个完整项目行分别为40、50和20 units，实际合计为110 units（40 + 50 + 20 = 110）。因此，标题总额比完整项目行合计多10 units，存在10 units的差异。原始草稿仍保持其 stated total=120 的事实；本次仅报告差异，没有改写源文档，也没有声称任何更正已获批准。未请求或执行外部变更。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_phase_sha256": "190cd12b164b5dc3d8fd7f8eb7367fd4098f3a2c0788a3f072992a2cf3dc712a",
+      "native_phase_bytes": 478499,
+      "native_cold_prefix_sha256": "190cd12b164b5dc3d8fd7f8eb7367fd4098f3a2c0788a3f072992a2cf3dc712a",
+      "full_cold_plus_resume_native_sha256": "eb0505c2b1ea23f9e2ddc6be10fb591768f22b80fd87f75b2539e9e1cdfda709",
+      "native_cwd": [
+        "/private/tmp/ceo-skill-feedback-control-42tbn88o"
+      ],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          }
+        }
+      ],
+      "initial_phase_developer_sha256": "01c7cdf06e722517d131754f09fb29fb33ab097197402c6765a3ef05958fe06c",
+      "read_skill_calls": 2,
+      "read_skill_errors": 0,
+      "target_body_read_in_phase": true,
+      "directory_reads": 1,
+      "read_details": [
+        {
+          "arguments": {},
+          "is_error": false,
+          "complete_source_body": false,
+          "directory_complete": true,
+          "model_chars": 83230,
+          "model_sha256": "5de3f345d95f35033b772ee2c433eae1771b2a149b128bda6f7c554b85da5335",
+          "error_text": null
+        },
+        {
+          "arguments": {
+            "name": "synthetic-guide-150"
+          },
+          "is_error": false,
+          "complete_source_body": true,
+          "directory_complete": false,
+          "model_chars": 635,
+          "model_sha256": "3c48cdef4f01e7acfdf190834145d1fc93d4178d1fe954812c201d1b97abaf94",
+          "error_text": null
+        }
+      ],
+      "custom_tool_calls": 1,
+      "custom_tool_inputs": [
+        {
+          "name": "exec",
+          "input": "const r = await tools.exec_command({cmd:\"sed -n '1,240p' /Users/derek/.agents/AGENTS.md\",\"workdir\":\"/private/tmp/ceo-skill-feedback-control-42tbn88o\",\"yield_time_ms\":10000,\"max_output_tokens\":12000});\ntext(r.output);\n"
+        }
+      ],
+      "compaction_events": 0,
+      "task_sha256": "f6ee7dc68c7e7499cab3992ea46918a2c2622dc2da2659c493c0194e4a0a7db3",
+      "service_developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+      "events_sha256": "d84d38634217014937ba8ce48aeea3c0cc3dcb738ad012af8f0c92bf60ed8f17"
+    },
+    {
+      "role": "consumer",
+      "arm": "candidate",
+      "phase": "resume",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a131fc-e379-7892-b501-8238de911cc1",
+      "source_sha256": "24e0cd5a450f1ea1adcc5ff2331b8cd75b69d9e382ce816d5fa779af392a5f7a",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "no_action"
+      ],
+      "expected_digest": null,
+      "expected_revision": 1,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "no_action",
+        "summary": "已完成只读文档复核：文档标题所述总额为120 units；三个完整项目行分别为40、50和20 units，实际合计为110 units（40 + 50 + 20 = 110）。因此，标题总额比完整项目行合计多10 units，存在10 units的差异。原始草稿仍保持其 stated total=120 的事实；本次仅报告差异，没有改写源文档，也没有声称任何更正已获批准或已应用。未请求或执行外部变更。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "native_phase_sha256": "7e0cc65a4dc2e1c7648dad3aaacf7a92189e9ca31a1167fd48532292a5cbc165",
+      "native_phase_bytes": 388301,
+      "native_cold_prefix_sha256": "190cd12b164b5dc3d8fd7f8eb7367fd4098f3a2c0788a3f072992a2cf3dc712a",
+      "full_cold_plus_resume_native_sha256": "eb0505c2b1ea23f9e2ddc6be10fb591768f22b80fd87f75b2539e9e1cdfda709",
+      "native_cwd": [
+        "/private/tmp/ceo-skill-feedback-control-42tbn88o"
+      ],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          }
+        }
+      ],
+      "initial_phase_developer_sha256": null,
+      "read_skill_calls": 2,
+      "read_skill_errors": 0,
+      "target_body_read_in_phase": true,
+      "directory_reads": 1,
+      "read_details": [
+        {
+          "arguments": {},
+          "is_error": false,
+          "complete_source_body": false,
+          "directory_complete": true,
+          "model_chars": 83230,
+          "model_sha256": "5de3f345d95f35033b772ee2c433eae1771b2a149b128bda6f7c554b85da5335",
+          "error_text": null
+        },
+        {
+          "arguments": {
+            "name": "synthetic-guide-150"
+          },
+          "is_error": false,
+          "complete_source_body": true,
+          "directory_complete": false,
+          "model_chars": 635,
+          "model_sha256": "3c48cdef4f01e7acfdf190834145d1fc93d4178d1fe954812c201d1b97abaf94",
+          "error_text": null
+        }
+      ],
+      "custom_tool_calls": 1,
+      "custom_tool_inputs": [
+        {
+          "name": "exec",
+          "input": "const r = await tools.exec_command({cmd:\"sed -n '1,80p' /Users/derek/.agents/AGENTS.md\",\"workdir\":\"/private/tmp/ceo-skill-feedback-control-42tbn88o\",\"yield_time_ms\":10000,\"max_output_tokens\":5000});\ntext(r.output);\n"
+        }
+      ],
+      "compaction_events": 0,
+      "task_sha256": "120cfb9b845192974c5ef417d012c033e6609120c9f1e214bebad6bc4d06ad6a",
+      "service_developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+      "events_sha256": "06861871ffa7b2342f7660d6ae15ade66dea84e86ba57196d2659628e5b7317d"
+    },
+    {
+      "role": "audit",
+      "arm": "baseline",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a131fd-32a4-75f0-a184-ab793b7057ea",
+      "source_sha256": "24e0cd5a450f1ea1adcc5ff2331b8cd75b69d9e382ce816d5fa779af392a5f7a",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "return",
+        "reject"
+      ],
+      "expected_digest": "dd841bf3c12d0d811cf7a955862da53c7f4c735124a86332ed25d93120df1811",
+      "expected_revision": 0,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "reject",
+        "summary": "Reject: the candidate misstates all three required document-review results. The supplied draft states 120 units, its complete rows sum to 110 units (40 + 50 + 20), and the discrepancy is 10 units. The no-action conclusion is consistent with the request, but the factual summary must be regenerated.",
+        "proposal_revision": 0,
+        "candidate_digest": "dd841bf3c12d0d811cf7a955862da53c7f4c735124a86332ed25d93120df1811",
+        "evidence_refs": [
+          "candidate.source_bindings[0].value.trigger_text",
+          "candidate.source_bindings[0].value.trigger_raw_payload.document"
+        ],
+        "feedback": {
+          "rule": "synthetic-guide-150: preserve each original value, compare the stated total with the supporting entries, and distinguish a discrepancy from an approved correction.",
+          "observation": "At JSON path candidate.summary, the current literal string is \"The document heading is110 units, the three complete rows sum to110 units, and the discrepancy is0 units. No external change.\" (JSON type: string). This contradicts the supplied source at candidate.source_bindings[0].value.trigger_text and candidate.source_bindings[0].value.trigger_raw_payload.document, which state a heading total of 120 and complete rows of 40, 50, and 20; those rows sum to 110, producing a discrepancy of 10.",
+          "requested_revision": "Regenerate the summary while preserving the source values: state the heading total as 120 units, the actual complete-row sum as 110 units, and the discrepancy as 10 units. Keep the no-external-change conclusion, and do not imply that any correction was approved or applied."
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "native_phase_sha256": "9466245f60a74134d453d7b3f84005016b81496a60219e09035be4f7e993a24d",
+      "native_phase_bytes": 397894,
+      "native_cold_prefix_sha256": "9466245f60a74134d453d7b3f84005016b81496a60219e09035be4f7e993a24d",
+      "full_cold_plus_resume_native_sha256": "865cfc0bf9c7eeaf1bd573df16596b62cec30906397584c6fa07503c6408054b",
+      "native_cwd": [
+        "/private/tmp/ceo-skill-feedback-control-42tbn88o"
+      ],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          }
+        }
+      ],
+      "initial_phase_developer_sha256": "f625de068378a73dd369b620c6f7fc07d4c151ad89bba6f5049f7378b5f0190a",
+      "read_skill_calls": 3,
+      "read_skill_errors": 1,
+      "target_body_read_in_phase": true,
+      "directory_reads": 1,
+      "read_details": [
+        {
+          "arguments": {},
+          "is_error": false,
+          "complete_source_body": false,
+          "directory_complete": true,
+          "model_chars": 82883,
+          "model_sha256": "f6ea113eae2525e79b8c534ce3bfc4e9468d58b97d32bd155c36753033c2c8f0",
+          "error_text": null
+        },
+        {
+          "arguments": {
+            "path": "/Users/derek/.agents/AGENTS.md"
+          },
+          "is_error": true,
+          "complete_source_body": false,
+          "directory_complete": false,
+          "model_chars": 87,
+          "model_sha256": "aa68cb231312f7a6a890ffa0ffbdf4cca3f8cb4d72df4b8cffe9507c7e10a672",
+          "error_text": [
+            {
+              "type": "text",
+              "text": "Error executing tool read_skill: skill_path_forbidden"
+            }
+          ]
+        },
+        {
+          "arguments": {
+            "name": "synthetic-guide-150"
+          },
+          "is_error": false,
+          "complete_source_body": true,
+          "directory_complete": false,
+          "model_chars": 635,
+          "model_sha256": "3c48cdef4f01e7acfdf190834145d1fc93d4178d1fe954812c201d1b97abaf94",
+          "error_text": null
+        }
+      ],
+      "custom_tool_calls": 0,
+      "custom_tool_inputs": [],
+      "compaction_events": 0,
+      "task_sha256": "3b896e30f8fb2508b047cac7b4f20137f036b2767fbb16e5de7fee9fd940582d",
+      "service_developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+      "events_sha256": "552a5ed87c2343c825f7f67334c6de0d2096df96fb2f2d205bd73a5b258700a9"
+    },
+    {
+      "role": "audit",
+      "arm": "baseline",
+      "phase": "resume",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a131fd-32a4-75f0-a184-ab793b7057ea",
+      "source_sha256": "24e0cd5a450f1ea1adcc5ff2331b8cd75b69d9e382ce816d5fa779af392a5f7a",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "approve"
+      ],
+      "expected_digest": "0b079c1bb5071a7b40f86de4a1099271d8469bbf78b8e4daa0779330ee8f7032",
+      "expected_revision": 1,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "approve",
+        "summary": "Approved: the revised candidate accurately preserves the source values, calculates 40 + 50 + 20 = 110 units, identifies the 10-unit discrepancy against the 120-unit stated total, and clearly states that the source was not rewritten and no correction was approved or applied. No external change is proposed.",
+        "proposal_revision": 1,
+        "candidate_digest": "0b079c1bb5071a7b40f86de4a1099271d8469bbf78b8e4daa0779330ee8f7032",
+        "evidence_refs": [
+          "candidate.source_bindings[0].value.trigger_text",
+          "candidate.source_bindings[0].value.trigger_raw_payload.document",
+          "synthetic-guide-150"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "native_phase_sha256": "4365458c75630cd26c33f0bf58e1ffff655bd2ecb2a9d28de6b576a083cdd6e2",
+      "native_phase_bytes": 334784,
+      "native_cold_prefix_sha256": "9466245f60a74134d453d7b3f84005016b81496a60219e09035be4f7e993a24d",
+      "full_cold_plus_resume_native_sha256": "865cfc0bf9c7eeaf1bd573df16596b62cec30906397584c6fa07503c6408054b",
+      "native_cwd": [
+        "/private/tmp/ceo-skill-feedback-control-42tbn88o"
+      ],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          }
+        }
+      ],
+      "initial_phase_developer_sha256": null,
+      "read_skill_calls": 2,
+      "read_skill_errors": 0,
+      "target_body_read_in_phase": true,
+      "directory_reads": 1,
+      "read_details": [
+        {
+          "arguments": {},
+          "is_error": false,
+          "complete_source_body": false,
+          "directory_complete": true,
+          "model_chars": 82883,
+          "model_sha256": "f6ea113eae2525e79b8c534ce3bfc4e9468d58b97d32bd155c36753033c2c8f0",
+          "error_text": null
+        },
+        {
+          "arguments": {
+            "name": "synthetic-guide-150"
+          },
+          "is_error": false,
+          "complete_source_body": true,
+          "directory_complete": false,
+          "model_chars": 635,
+          "model_sha256": "3c48cdef4f01e7acfdf190834145d1fc93d4178d1fe954812c201d1b97abaf94",
+          "error_text": null
+        }
+      ],
+      "custom_tool_calls": 0,
+      "custom_tool_inputs": [],
+      "compaction_events": 0,
+      "task_sha256": "3dd17ff4aea8267121bc119f897c96efd3cf1c88c073573b78ca0f21a8f1ae2c",
+      "service_developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+      "events_sha256": "f13e4045457a62c6575af354f0b326933b77ca203ac534a9888c6c14c9d2b5eb"
+    },
+    {
+      "role": "audit",
+      "arm": "candidate",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a131fd-76dd-70d2-96bd-2ec9a6c1b6ad",
+      "source_sha256": "24e0cd5a450f1ea1adcc5ff2331b8cd75b69d9e382ce816d5fa779af392a5f7a",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "return",
+        "reject"
+      ],
+      "expected_digest": "dd841bf3c12d0d811cf7a955862da53c7f4c735124a86332ed25d93120df1811",
+      "expected_revision": 0,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "reject",
+        "summary": "Reject: the candidate misstates the supplied document values and therefore fails to explain the actual discrepancy. The trigger states a heading total of 120 units and complete rows of 40, 50, and 20 units; those rows sum to 110 units, producing a 10-unit discrepancy. The candidate instead reports a heading total of 110 units and a discrepancy of 0 units. No external change is requested, and the source must not be rewritten or treated as corrected.",
+        "proposal_revision": 0,
+        "candidate_digest": "dd841bf3c12d0d811cf7a955862da53c7f4c735124a86332ed25d93120df1811",
+        "evidence_refs": [
+          "synthetic-document",
+          "/private/tmp/ceo-skill-document-roles-mqld2ydy/fixture-root/shared-segment/shared-segment/shared-segment/root-03/guide-150/SKILL.md"
+        ],
+        "feedback": {
+          "rule": "synthetic-guide-150: preserve each original value, compare the stated total with supporting entries, distinguish a discrepancy from an approved correction, and summarize without treating an unapproved draft correction as completed.",
+          "observation": "At JSON path `candidate.summary` (type: string), the literal value is `The document heading is110 units, the three complete rows sum to110 units, and the discrepancy is0 units. No external change.` This contradicts the current source binding at `candidate.source_bindings[0].value.trigger_text` (type: string), which states that the heading total is 120 units and the complete rows are 40, 50, and 20 units. The supplied raw payload at `candidate.source_bindings[0].value.trigger_raw_payload.document` confirms `stated_total` is 120 (number) and `complete_rows` is [40, 50, 20] (array); 40 + 50 + 20 = 110, so the discrepancy is 10 units. The candidate's `outcome` at `candidate.outcome` is `no_action` (string), which is consistent with no external change, but its summary does not fulfill the requested explanation.",
+          "requested_revision": "Regenerate the summary while preserving the source values: stated heading total 120 units, actual sum of the three complete rows 110 units, and discrepancy 10 units. State that no correction has been approved and no external change is being made; do not rewrite the source."
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "native_phase_sha256": "7492638f2eeefa0c6e72131c908adf9d1e8daaf5eb9873f774befd33a1bfea0d",
+      "native_phase_bytes": 393224,
+      "native_cold_prefix_sha256": "7492638f2eeefa0c6e72131c908adf9d1e8daaf5eb9873f774befd33a1bfea0d",
+      "full_cold_plus_resume_native_sha256": "2f05a4ad9ad47acde1f49565035e0f639a569dbe20c57b1707807c798eb33f2c",
+      "native_cwd": [
+        "/private/tmp/ceo-skill-feedback-control-42tbn88o"
+      ],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          }
+        }
+      ],
+      "initial_phase_developer_sha256": "f625de068378a73dd369b620c6f7fc07d4c151ad89bba6f5049f7378b5f0190a",
+      "read_skill_calls": 2,
+      "read_skill_errors": 0,
+      "target_body_read_in_phase": true,
+      "directory_reads": 1,
+      "read_details": [
+        {
+          "arguments": {},
+          "is_error": false,
+          "complete_source_body": false,
+          "directory_complete": true,
+          "model_chars": 83230,
+          "model_sha256": "5de3f345d95f35033b772ee2c433eae1771b2a149b128bda6f7c554b85da5335",
+          "error_text": null
+        },
+        {
+          "arguments": {
+            "name": "synthetic-guide-150"
+          },
+          "is_error": false,
+          "complete_source_body": true,
+          "directory_complete": false,
+          "model_chars": 635,
+          "model_sha256": "3c48cdef4f01e7acfdf190834145d1fc93d4178d1fe954812c201d1b97abaf94",
+          "error_text": null
+        }
+      ],
+      "custom_tool_calls": 0,
+      "custom_tool_inputs": [],
+      "compaction_events": 0,
+      "task_sha256": "3b896e30f8fb2508b047cac7b4f20137f036b2767fbb16e5de7fee9fd940582d",
+      "service_developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+      "events_sha256": "20856f8836a5b7d699ce3acfc4aa28f36daf2e6f7779a32fdd4e98a70265ff03"
+    },
+    {
+      "role": "audit",
+      "arm": "candidate",
+      "phase": "resume",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a131fd-76dd-70d2-96bd-2ec9a6c1b6ad",
+      "source_sha256": "24e0cd5a450f1ea1adcc5ff2331b8cd75b69d9e382ce816d5fa779af392a5f7a",
+      "canonical_valid": true,
+      "expected_match": true,
+      "expected_outcomes": [
+        "approve"
+      ],
+      "expected_digest": "0b079c1bb5071a7b40f86de4a1099271d8469bbf78b8e4daa0779330ee8f7032",
+      "expected_revision": 1,
+      "use_native_output_schema": false,
+      "result": {
+        "outcome": "approve",
+        "summary": "Approved: the revised candidate accurately preserves and explains the supplied document facts. It reports the stated heading total of 120 units, the three complete rows of 40, 50, and 20 units, the verified row sum of 110 units, and the resulting 10-unit discrepancy. It explicitly states that the source was not rewritten, no correction was treated as approved or applied, and no external change is requested.",
+        "proposal_revision": 1,
+        "candidate_digest": "0b079c1bb5071a7b40f86de4a1099271d8469bbf78b8e4daa0779330ee8f7032",
+        "evidence_refs": [
+          "synthetic-document",
+          "/private/tmp/ceo-skill-document-roles-mqld2ydy/fixture-root/shared-segment/shared-segment/shared-segment/root-03/guide-150/SKILL.md"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "native_phase_sha256": "69ef55d2c0d6f98bf3965d2b35148dc8fba48d59a8165bc73bb8fa3431ac8324",
+      "native_phase_bytes": 339143,
+      "native_cold_prefix_sha256": "7492638f2eeefa0c6e72131c908adf9d1e8daaf5eb9873f774befd33a1bfea0d",
+      "full_cold_plus_resume_native_sha256": "2f05a4ad9ad47acde1f49565035e0f639a569dbe20c57b1707807c798eb33f2c",
+      "native_cwd": [
+        "/private/tmp/ceo-skill-feedback-control-42tbn88o"
+      ],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          }
+        }
+      ],
+      "initial_phase_developer_sha256": null,
+      "read_skill_calls": 2,
+      "read_skill_errors": 0,
+      "target_body_read_in_phase": true,
+      "directory_reads": 1,
+      "read_details": [
+        {
+          "arguments": {},
+          "is_error": false,
+          "complete_source_body": false,
+          "directory_complete": true,
+          "model_chars": 83230,
+          "model_sha256": "5de3f345d95f35033b772ee2c433eae1771b2a149b128bda6f7c554b85da5335",
+          "error_text": null
+        },
+        {
+          "arguments": {
+            "name": "synthetic-guide-150"
+          },
+          "is_error": false,
+          "complete_source_body": true,
+          "directory_complete": false,
+          "model_chars": 635,
+          "model_sha256": "3c48cdef4f01e7acfdf190834145d1fc93d4178d1fe954812c201d1b97abaf94",
+          "error_text": null
+        }
+      ],
+      "custom_tool_calls": 0,
+      "custom_tool_inputs": [],
+      "compaction_events": 0,
+      "task_sha256": "3dd17ff4aea8267121bc119f897c96efd3cf1c88c073573b78ca0f21a8f1ae2c",
+      "service_developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+      "events_sha256": "12354045700b5046e2ceeabf2ea89370cc29d9a0bdaaf4dd4f028f6def6a6b92"
+    }
+  ],
+  "limits": "Full code-role Developer and existing role command controls, synthetic profile/task/provider and intentionally corrupted summary. Native same-session feedback sequence, not persisted service lifecycle/provider delivery or all-route acceptance. All extra reads/errors retained; no universal quality or call-reduction claim. Consumer sandbox differs cold versus resume; both arms same within each phase. Both resumes rediscover and reread the target Skill; no on-demand reuse or fewer warm calls demonstrated.",
+  "scope": "Synthetic immutable-source native feedback sequence; production role helpers used, but cold/resume Consumer sandbox differs due to adapter test parameter.",
+  "role_control_limit": "Adapter sandbox_mode=read-only created a cold --sandbox read-only flag, while the existing Consumer helper replaces resume sandbox config with workspace-write. Both arms match within each phase; cross-phase sandbox equivalence is not established. No role code changed.",
+  "source_root": "/private/tmp/ceo-skill-feedback-control-42tbn88o",
+  "independent_review": "native_catalog_review: all eight phase results and paired inputs, complete343 metadata and body, original source bindings, actual baseline feedback, same-SID byte-prefixes verified. Review identified cross-phase sandbox limit; no production lifecycle claim.",
+  "startup_failure": {
+    "path": "/private/tmp/ceo-skill-feedback-control-42tbn88o/startup-duplicate-flag",
+    "phase": "pre-session",
+    "cause": "Harness supplied skip_git_repo_check twice; CLI rejected duplicate flag before session creation. Harness changed to production default and initialized temporary Git repository; original failure retained.",
+    "session_id": null
+  }
+}

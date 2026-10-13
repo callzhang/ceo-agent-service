@@ -33,6 +33,8 @@ from app.meeting_alignment import (
     recover_meeting_alignment_jobs,
 )
 from app.meeting_alignment_models import MeetingAlignmentDecision, MeetingSource
+from app.task_storage import MEETING_JOB_SQL
+from app.run_storage import MEETING_RUN_SQL
 from app.store import AutoReplyStore
 from app.skill_features import FeatureRegistry
 
@@ -267,7 +269,7 @@ def test_delivery_cleanup_cannot_release_a_successor_claim(tmp_path, monkeypatch
     def successor_claim(*_args, **_kwargs):
         with sqlite3.connect(store.path) as db:
             db.execute(
-                "update meeting_alignment_jobs set locked_at=? where id=?",
+                "update tasks set locked_at=? where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
                 ("2099-01-01 00:00:00", job_id),
             )
 
@@ -287,7 +289,7 @@ def test_delivery_cleanup_cannot_release_same_timestamp_successor(tmp_path):
     store.reset_ready_to_send_meeting_alignment_jobs()
     second = store.claim_ready_to_send_meeting_alignment_job(job_id, now=NOW.isoformat())
     with sqlite3.connect(store.path) as db:
-        db.execute("update meeting_alignment_jobs set locked_at=? where id=?",
+        db.execute("update tasks set locked_at=? where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
                    (first.locked_at, job_id))
     store.release_ready_to_send_meeting_alignment_claims([first])
     remaining = store.get_meeting_alignment_job(job_id)
@@ -378,7 +380,7 @@ def test_delivery_claim_migration_keeps_old_strict_job_model_readable(tmp_path):
     claim = store.claim_ready_to_send_meeting_alignment_job(job_id, now=NOW.isoformat())
     with sqlite3.connect(store.path) as db:
         db.row_factory = sqlite3.Row
-        row = dict(db.execute("select * from meeting_alignment_jobs where id=?", (job_id,)).fetchone())
+        row = dict(db.execute(f"select * from ({MEETING_JOB_SQL}) where id=?", (job_id,)).fetchone())
     assert old_model.model_validate(row).id == job_id
     store.release_ready_to_send_meeting_alignment_claims([claim])
 
@@ -1410,8 +1412,7 @@ def test_consumer_delivers_summary_when_there_is_no_disagreement(tmp_path):
     assert run.native_available is False
     with store._connect() as db:
         row = db.execute(
-            "select decision_json, audit_summary, audit_tool_events_json "
-            "from meeting_alignment_runs where id=?", (run.id,)
+            f"select decision_json, audit_summary, audit_tool_events_json from ({MEETING_RUN_SQL}) where id=?", (run.id,)
         ).fetchone()
     assert tuple(row) == ("{}", "", "[]")
     assert store.get_meeting_alignment_job(job_id).decision_json != "{}"
@@ -1523,11 +1524,15 @@ def test_consumer_indexes_completed_meeting_codex_session(tmp_path):
     assert results[0].source_type == "meeting_alignment"
     assert results[0].source_id == "1"
     with store._connect() as db:
+        columns = {row[1] for row in db.execute("pragma table_info(codex_session_search_index)")}
         row = db.execute(
-            "select summary_text, fts_text, embedding_json from codex_session_search_index "
-            "where session_id='meeting-session-1'"
+            "select session_id, source_type, source_id, title, created_at, updated_at "
+            "from codex_session_search_index where session_id='meeting-session-1'"
         ).fetchone()
-    assert tuple(row) == ("", "", "")
+    assert columns == {"id", "session_id", "source_type", "source_id", "title", "created_at", "updated_at"}
+    assert tuple(row)[:3] == ("meeting-session-1", "meeting_alignment", "1")
+    assert row["title"] == results[0].title
+    assert row["created_at"] and row["updated_at"]
 
 
 def test_consumer_retries_invalid_model_decision(tmp_path):
@@ -2378,7 +2383,7 @@ def test_confidential_group_read_denial_reaches_agent_without_fallback(tmp_path,
     dws.read_recent_messages = fail_read
     job_id = seed_consumer_job(store, dws)
     with store._connect() as db:
-        db.execute("update meeting_alignment_jobs set attempts=? where id=?", (prior_attempts, job_id))
+        db.execute("update tasks set attempts=? where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?", (prior_attempts, job_id))
     class UnresolvedAudienceRunner(FakeMeetingRunner):
         def decide(self, *, prompt, run_id=None):
             self.calls += 1
@@ -2677,7 +2682,7 @@ def test_ready_delivery_retries_provider_outage_after_attempt_limit(tmp_path):
         final_message=decision.final_message,
     )
     with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
-        db.execute("update meeting_alignment_jobs set attempts=3 where id=?", (job_id,))
+        db.execute("update tasks set attempts=3 where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?", (job_id,))
 
     def unavailable_send(conversation_id, text, **kwargs):
         raise DwsError("THREADPOOL_BUSY", retryable_external_dependency=True)

@@ -16,9 +16,10 @@ from threading import Barrier, Event, Thread
 import pytest
 
 import app.store as store_module
-from tests.reply_schema_fixtures import restore_legacy_reply_parent
+from tests.reply_schema_fixtures import assert_store_reopen_rejected_without_mutation
 from tests.run_reader_fixtures import assert_no_core_native_storage, insert_native_run_fixture
-from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RUN_STATE_EVENT_SQL, insert_run
+from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RUN_STATE_EVENT_SQL, SCHEDULED_RUN_SQL, TASK_AGENT_RUN_SQL, insert_run
+from app.task_storage import WORK_SUMMARY_INPUT_SQL, create_task_schema, insert_task, task_id_expression, task_physical_id
 from app.store import (
     REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
     AgentRole,
@@ -29,15 +30,18 @@ from app.store import (
 
 def test_unsubscribe_page_parent_allows_only_retryable_terminal_receipts():
     with sqlite3.connect(":memory:") as db:
-        db.execute(
-            "create table reply_tasks (channel text, trigger_message_id text, status text)"
-        )
+        create_task_schema(db)
         db.execute(
             "create table email_unsubscribe_receipts (action_identity text, outcome text)"
         )
         identity = "email-action:" + "a" * 64
         key = "email-unsubscribe-page:" + identity + ":" + "b" * 64
-        db.execute("insert into reply_tasks values ('email', ?, 'done')", (identity,))
+        insert_task(db, "reply_tasks", {
+            "channel": "email", "conversation_id": "email-thread",
+            "conversation_title": "Email", "single_chat": 0,
+            "trigger_message_id": identity, "trigger_create_time": "",
+            "trigger_sender": "", "status": "done",
+        })
         assert not store_module.AutoReplyStore._runtime_operation_parent_exists(
             db, "email_unsubscribe_page", key
         )
@@ -52,7 +56,7 @@ def test_unsubscribe_page_parent_allows_only_retryable_terminal_receipts():
         assert not store_module.AutoReplyStore._runtime_operation_parent_exists(
             db, "email_unsubscribe_page", key
         )
-        db.execute("update reply_tasks set status='failed'")
+        db.execute("update tasks set status='failed' where record_type='reply_tasks'")
         db.execute("update email_unsubscribe_receipts set outcome='skipped_no_reliable_entry'")
         assert not store_module.AutoReplyStore._runtime_operation_parent_exists(
             db, "email_unsubscribe_page", key
@@ -349,7 +353,7 @@ def test_restart_recovery_requeues_interrupted_run_without_classifying_effects(
     task_id = task.id
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='processing', locked_at=current_timestamp where id=?",
+            "update tasks set status='processing', locked_at=current_timestamp where record_type='reply_tasks' and id=?",
             (task_id,),
         )
     claim = store.claim_agent_run(
@@ -410,7 +414,7 @@ def test_restart_requeues_a_processing_task_whose_last_run_already_failed(tmp_pa
     assert task is not None
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='processing', locked_at=current_timestamp where id=?",
+            "update tasks set status='processing', locked_at=current_timestamp where record_type='reply_tasks' and id=?",
             (task.id,),
         )
     claim = store.claim_agent_run(
@@ -458,9 +462,9 @@ def test_recover_orphaned_agent_run_for_failed_reply_task(tmp_path: Path) -> Non
     with store._connect() as db:
         db.execute(
             """
-            update reply_tasks
+            update tasks
             set status='processing', locked_at=current_timestamp
-            where id=?
+            where record_type='reply_tasks' and id=?
             """,
             (task.id,),
         )
@@ -485,9 +489,9 @@ def test_recover_orphaned_agent_run_for_failed_reply_task(tmp_path: Path) -> Non
     with store._connect() as db:
         db.execute(
             """
-            update reply_tasks
+            update tasks
             set status='failed', locked_at=null, error='consumer_failed'
-            where id=?
+            where record_type='reply_tasks' and id=?
             """,
             (task.id,),
         )
@@ -561,26 +565,27 @@ def _seed_runtime_operation_parent(
     with store._connect() as db:
         assert db.execute("pragma foreign_keys").fetchone()[0] == 1
         if workload_kind == "structured":
-            db.execute("insert into okr_review_requests (id, conversation_id, conversation_title, trigger_message_id, trigger_sender, trigger_text, period_label, period_start, period_end, status) values (?, 'cid', 'title', 'msg', 'sender', 'text', 'period', 'start', 'end', 'processing')", (int(workload_key),))
+            insert_task(db, 'okr_review_requests', {'legacy_key': int(workload_key), 'conversation_id': 'cid', 'conversation_title': 'title', 'trigger_message_id': 'msg', 'trigger_sender': 'sender', 'trigger_text': 'text', 'period_label': 'period', 'period_start': 'start', 'period_end': 'end', 'status': 'processing'})
         elif workload_kind == "meeting":
-            db.execute("insert into meeting_alignment_jobs (id, meeting_id) values (1, 'meeting-1')")
-            db.execute("insert into meeting_alignment_runs (id, job_id, status) values (?, 1, 'running')", (int(workload_key),))
+            job_id = insert_task(db, 'meeting_alignment_jobs', {'legacy_key': 1, 'meeting_id': 'meeting-1'}).lastrowid
+            insert_run(db, 'meeting_alignment_runs', {'legacy_key': int(workload_key), 'task_id': job_id, 'status': 'running'})
         elif workload_kind == "task":
             source_id, separator, _ = workload_key.partition(":")
-            db.execute("insert into work_summary_inputs (id, source_type, source_ref, payload_json) values (1, 'test', 'task-parent', '{}')")
+            summary_input_id = insert_task(db, 'work_summary_inputs', {
+                'legacy_key': '1', 'source_type': 'test',
+                'source_ref': 'task-parent', 'payload_json': '{}',
+            }).lastrowid
             if separator:
                 db.execute("insert into work_projects (id, title, category, status, priority, risk_level) values (?, ?, 'other', 'active', 'none', 'none')", (int(source_id), f"project-{source_id}"))
             else:
-                db.execute("update work_summary_inputs set status='processing' where id=1")
-                db.execute("insert into task_agent_runs (id, summary_input_id, status) values (?, 1, 'running')", (int(source_id),))
+                db.execute("update tasks set status='processing' where record_type='work_summary_inputs' and id=?", (summary_input_id,))
+                insert_run(db, 'task_agent_runs', {
+                    'legacy_key': source_id, 'summary_input_id': 1,
+                    'status': 'running',
+                })
         elif workload_kind == "weekly_okr":
             week_end, manager_user_id, source_digest = workload_key.split(":", 2)
-            db.execute(
-                "insert into weekly_okr_analysis_jobs "
-                "(week_end, manager_user_id, source_digest, status) "
-                "values (?, ?, ?, 'running')",
-                (week_end, manager_user_id, source_digest),
-            )
+            insert_task(db, 'weekly_okr_analysis_jobs', {'week_end': week_end, 'manager_user_id': manager_user_id, 'source_digest': source_digest, 'status': 'running'})
         elif workload_kind == "memory":
             source, _, source_key = workload_key.partition(":")
             source_id, _, execution_generation = source_key.partition(":")
@@ -594,10 +599,7 @@ def _seed_runtime_operation_parent(
                 db.execute("insert into reply_attempts (id, conversation_id, conversation_title, trigger_message_id, trigger_sender, trigger_text, action, sensitivity_kind, final_reply_text, permission_action, permission_reason, send_status) values (1, 'cid', 'title', 'msg', 'sender', 'text', 'none', 'none', '', 'none', '', 'pending')")
                 db.execute("insert into memory_write_events (id, attempt_id, event_type, payload_json) values (?, 1, 'test', '{}')", (int(source_id),))
             elif table_name == "meeting_memory_write_events":
-                db.execute(
-                    "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
-                    "values (1, 'meeting-memory-parent', 'sent', 'sent summary')"
-                )
+                insert_task(db, 'meeting_alignment_jobs', {'legacy_key': 1, 'meeting_id': 'meeting-memory-parent', 'status': 'sent', 'final_message': 'sent summary'})
                 db.execute(
                     "insert into meeting_memory_write_events "
                     "(id, meeting_job_id, execution_generation, payload_json) "
@@ -630,17 +632,14 @@ def _seed_runtime_operation_parent(
             )
         elif workload_kind == "workbench":
             task_id = "00000000-0000-0000-0000-000000000001"
-            db.execute(
-                "insert into workbench_tasks (id, title, runtime_kind) "
-                "values (?, 'Workbench task', 'codex')",
-                (task_id,),
-            )
-            db.execute(
-                "insert into workbench_turns "
-                "(id, task_id, client_request_id, task_sequence, user_text, status) "
-                "values (?, ?, 'request-1', 1, 'Inspect sales', 'running')",
-                (workload_key, task_id),
-            )
+            parent = insert_task(db, 'workbench_tasks', {
+                'legacy_key': task_id, 'title': 'Workbench task', 'runtime_kind': 'codex',
+            }).lastrowid
+            insert_task(db, 'workbench_turns', {
+                'legacy_key': workload_key, 'parent_id': parent,
+                'client_request_id': 'request-1', 'task_sequence': 1,
+                'user_text': 'Inspect sales', 'status': 'running',
+            })
         elif workload_kind == "email_unsubscribe_page":
             action_identity, _, _ = workload_key.removeprefix(
                 "email-unsubscribe-page:"
@@ -651,7 +650,7 @@ def _seed_runtime_operation_parent(
                 trigger_message_id=action_identity, trigger_create_time="",
                 trigger_sender="", trigger_text="", trigger_message_json="{}",
             ))
-            db.execute("update reply_tasks set status='processing', claimed_input_id=current_input_id where id=?", (task.id,))
+            db.execute("update tasks set status='processing', claimed_input_id=current_input_id where record_type='reply_tasks' and id=?", (task.id,))
         elif workload_kind == "email_description_optimization":
             snapshot_id, _, _ = workload_key.removeprefix(
                 "description-optimization:"
@@ -959,60 +958,36 @@ def test_runtime_attempt_active_claim_compares_session_evidence(tmp_path: Path):
         )
 
 
-def _previous_11_1_runtime_attempt(db_path):
-    from tests.run_schema_fixtures import previous_run_schema_store
-
-    previous_run_schema_store(db_path, task_args=dict(
-        conversation_id='cid-universal', conversation_title='Universal', single_chat=False,
-        trigger_message_id='msg-universal', trigger_create_time='2026-07-20 10:00:00',
-        trigger_sender='Derek', trigger_text='Handle this task', execution_generation='initial',
-    ))
-    with sqlite3.connect(db_path) as db:
-        db.execute("insert into agent_runs(id,reply_task_id,execution_generation,role,status) "
-                   "values(1,1,'initial','audit','running')")
-        db.execute("insert into agent_runtime_attempts(id,agent_run_id,workload_kind,workload_key,"
-                   "attempt_number,route_name,runtime_kind,credential_mode,model,status) "
-                   "values(1,1,'agent_run','1',1,'codex_oauth','codex_cli','local_oauth','gpt-5.5','starting')")
-
-
-def _assert_core_source_rejected_without_mutation(db_path):
-    with sqlite3.connect(db_path) as db:
-        before = tuple(db.iterdump())
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    with pytest.raises((ValueError, sqlite3.IntegrityError),
-                       match="unsupported|native events|retired empty placeholder"):
-        AutoReplyStore(db_path)
-    with sqlite3.connect(db_path) as db:
-        assert tuple(db.iterdump()) == before
-
-
-def test_exact_11_1_runtime_migration_preserves_session_evidence_constraints(tmp_path: Path):
-    db_path = tmp_path / 'runtime-attempt-11-1.sqlite3'
-    _previous_11_1_runtime_attempt(db_path)
-    upgraded = AutoReplyStore(db_path)
-    restored = upgraded.get_agent_runtime_attempt(1)
-    assert restored.session_mode == 'fresh'
-    assert restored.source_session_id == ''
-    with upgraded._connect() as db, pytest.raises(sqlite3.IntegrityError):
-        db.execute("update runs set session_mode='resume',source_session_id='   ' "
-                   "where record_type='agent_runtime_attempts' and legacy_key='1'")
 
 
 
-def test_exact_11_1_runtime_migration_preserves_trim_session_evidence_triggers(tmp_path: Path):
-    db_path = tmp_path / 'runtime-attempt-trim-11-1.sqlite3'
-    _previous_11_1_runtime_attempt(db_path)
-    upgraded = AutoReplyStore(db_path)
-    with upgraded._connect() as db:
-        trigger_sql = dict(db.execute("select name,sql from sqlite_master where type='trigger'"))
-        assert 'trg_runtime_attempt_session_evidence_insert' not in trigger_sql
-        assert 'trg_runtime_attempt_session_evidence_update' not in trigger_sql
-        for name in ('trg_runtime_attempt_session_evidence_trim_insert',
-                     'trg_runtime_attempt_session_evidence_trim_update'):
-            assert "trim(new.source_session_id)<>''" in trigger_sql[name]
-        with pytest.raises(sqlite3.IntegrityError):
-            db.execute("update runs set session_mode='resume',source_session_id='   ' "
-                       "where record_type='agent_runtime_attempts' and legacy_key='1'")
+
+def test_current_runtime_attempt_preserves_session_evidence_constraints(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "session-evidence.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    attempt = store.claim_agent_runtime_attempt(
+        run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+    )
+    assert attempt.session_mode == "fresh"
+    assert attempt.source_session_id == ""
+    with store._connect() as db, pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "update runs set session_mode='resume', source_session_id='   ' "
+            "where record_type='agent_runtime_attempts' and cast(legacy_key as integer)=?",
+            (attempt.id,),
+        )
+
+
+
+def test_current_runtime_preserves_trim_session_evidence_triggers(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "session-triggers.sqlite3")
+    with store._connect() as db:
+        triggers = dict(db.execute("select name,sql from sqlite_master where type='trigger'"))
+        assert "trg_runtime_attempt_session_evidence_insert" not in triggers
+        assert "trg_runtime_attempt_session_evidence_update" not in triggers
+        for name in ("trg_runtime_attempt_session_evidence_trim_insert",
+                     "trg_runtime_attempt_session_evidence_trim_update"):
+            assert "trim(new.source_session_id)<>''" in triggers[name]
 
 
 
@@ -1169,7 +1144,7 @@ def test_runtime_attempt_requires_parent_to_be_in_runnable_state(tmp_path: Path)
     store = AutoReplyStore(tmp_path / "runtime-parent-state.sqlite3")
     _seed_runtime_operation_parent(store, "meeting", "13")
     with store._connect() as db:
-        db.execute("update meeting_alignment_runs set status='failed' where id=13")
+        db.execute("update runs set status='failed' where record_type='meeting_alignment_runs' and cast(legacy_key as integer)=13")
 
     with pytest.raises(ValueError, match="parent does not exist or is not running"):
         store.claim_runtime_operation_attempt(
@@ -1230,10 +1205,10 @@ def test_runtime_attempt_correction_lineage_is_sealed_and_immutable(tmp_path: Pa
 def test_task_memory_backfill_parent_is_work_project_not_summary_input(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task-memory-parent.sqlite3")
     with store._connect() as db:
-        db.execute(
-            "insert into work_summary_inputs "
-            "(id, source_type, source_ref, payload_json) values (41, 'test', 'ref', '{}')"
-        )
+        insert_task(db, 'work_summary_inputs', {
+            'legacy_key': '41', 'source_type': 'test',
+            'source_ref': 'ref', 'payload_json': '{}',
+        })
 
     with pytest.raises(ValueError, match="parent does not exist"):
         store.claim_runtime_operation_attempt(
@@ -1339,7 +1314,7 @@ def test_weekly_okr_failed_job_reopens_and_completed_job_is_cache_hit(tmp_path: 
     assert reopened.outcome == "claimed"
     with store._connect() as db:
         row = db.execute(
-            "select * from weekly_okr_analysis_jobs where id=?",
+            "select * from tasks where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer)=?",
             (reopened.job_id,),
         ).fetchone()
     assert row["status"] == "running"
@@ -1362,7 +1337,7 @@ def test_weekly_okr_manager_identity_is_canonicalized(tmp_path: Path):
     )
     with store._connect() as db:
         row = db.execute(
-            "select manager_user_id from weekly_okr_analysis_jobs where id=?",
+            "select manager_user_id from tasks where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer)=?",
             (claim.job_id,),
         ).fetchone()
     assert row["manager_user_id"] == "manager-1"
@@ -1422,8 +1397,8 @@ def test_weekly_okr_completed_cache_miss_reclaims_same_job(tmp_path: Path):
     assert reclaimed.outcome == "claimed"
     with store._connect() as db:
         row = db.execute(
-            "select status, error, finished_at from weekly_okr_analysis_jobs "
-            "where id=?",
+            "select status, error, finished_at from tasks "
+            "where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer)=?",
             (original.job_id,),
         ).fetchone()
     assert tuple(row) == ("running", "", "")
@@ -1564,12 +1539,12 @@ def test_task_agent_projection_receipt_preserves_terminal_run(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "projection-receipt.sqlite3")
     _, run_id = _completed_projection_run(store)
     with store._connect() as db:
-        before = dict(db.execute("select * from task_agent_runs where id=?", (run_id,)).fetchone())
+        before = dict(db.execute(f"select * from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)).fetchone())
     assert TaskAgentRun.model_validate(before).projection_json == "{}"
     receipt = _projection_receipt_json()
     store.record_task_agent_projection(run_id, receipt)
     with store._connect() as db:
-        after = dict(db.execute("select * from task_agent_runs where id=?", (run_id,)).fetchone())
+        after = dict(db.execute(f"select * from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)).fetchone())
     assert TaskAgentRun.model_validate(after).projection_json == receipt
     assert after.pop("projection_json") == receipt
     assert before.pop("projection_json") == "{}"
@@ -1591,10 +1566,10 @@ def test_task_agent_projection_receipt_uses_existing_transaction(tmp_path: Path)
     with pytest.raises(RuntimeError, match="rollback receipt"):
         with store.business_task_transaction() as db:
             store.record_task_agent_projection(run_id, _projection_receipt_json(), _db=db)
-            assert db.execute("select projection_json from task_agent_runs where id=?", (run_id,)).fetchone()[0] != "{}"
+            assert db.execute(f"select projection_json from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)).fetchone()[0] != "{}"
             raise RuntimeError("rollback receipt")
     with store._connect() as db:
-        assert db.execute("select projection_json from task_agent_runs where id=?", (run_id,)).fetchone()[0] == "{}"
+        assert db.execute(f"select projection_json from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)).fetchone()[0] == "{}"
 
 
 def _create_receipt_attention(store, assessment_json=None):
@@ -1627,21 +1602,18 @@ def test_business_attention_assessment_json_create_and_update(tmp_path: Path):
     assert store.get_business_attention_item(item_id).assessment_json == updated.assessment_json
 
 
-def test_task_attention_receipt_migrates_without_claiming_historical_success(tmp_path: Path):
-    db_path = tmp_path / "legacy-receipts.sqlite3"
-    store = AutoReplyStore(db_path)
+def test_task_attention_receipt_reopen_does_not_claim_historical_success(tmp_path: Path):
+    path = tmp_path / "receipts.sqlite3"
+    store = AutoReplyStore(path)
     _, run_id = _completed_projection_run(store)
     item_id = _create_receipt_attention(store)
     with store._connect() as db:
-        before_run = dict(db.execute("select * from task_agent_runs where id=?", (run_id,)).fetchone())
+        before_run = dict(db.execute(f"select * from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)).fetchone())
         before_item = dict(db.execute("select * from business_attention_items where id=?", (item_id,)).fetchone())
-        db.execute("alter table task_agent_runs drop column projection_json")
-        db.execute("alter table business_attention_items drop column assessment_json")
-    assert not store._schema_is_current()
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    upgraded = AutoReplyStore(db_path)
-    with upgraded._connect() as db:
-        run = dict(db.execute("select * from task_agent_runs where id=?", (run_id,)).fetchone())
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    reopened = AutoReplyStore(path)
+    with reopened._connect() as db:
+        run = dict(db.execute(f"select * from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)).fetchone())
         item = dict(db.execute("select * from business_attention_items where id=?", (item_id,)).fetchone())
     assert run == before_run
     assert item == before_item
@@ -1688,7 +1660,7 @@ def test_task_agent_run_begin_is_concurrent_and_finish_is_idempotent(tmp_path: P
         memory_recall_used=True,
     )
     with store._connect() as db:
-        row = db.execute("select * from task_agent_runs where id=?", (run_id,)).fetchone()
+        row = db.execute(f"select * from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)).fetchone()
     assert row["status"] == "completed"
     assert row["finished_at"]
 
@@ -1799,7 +1771,7 @@ def test_recover_orphaned_task_agent_run_when_parent_input_is_pending(tmp_path: 
 
     with store._connect() as db:
         run = db.execute(
-            "select status, error from task_agent_runs where id=?", (run_id,)
+            f"select status, error from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)
         ).fetchone()
     recovered = store.get_agent_runtime_attempt(attempt.id)
     assert run is not None
@@ -1889,50 +1861,21 @@ def test_wechat_import_jobs_are_distinct_per_invocation(tmp_path: Path):
     store.finish_wechat_memory_import_job(first, status="completed")
 
 
-def test_current_schema_sentinel_rejects_complete_legacy_task_run_shape(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "legacy-task-run-shape.sqlite3"
-    store = AutoReplyStore(db_path)
+def test_current_schema_rejects_legacy_task_run_table_without_mutation(tmp_path: Path):
+    path = tmp_path / "legacy-task-run-shape.sqlite3"
+    store = AutoReplyStore(path)
+    _completed_projection_run(store)
     with store._connect() as db:
         db.execute(
-            "insert into work_summary_inputs "
-            "(id, source_type, source_ref, payload_json) "
-            "values (1, 'local_file', 'legacy', '{}')"
-        )
-        db.execute(
-            "insert into task_agent_runs "
-            "(id, summary_input_id, codex_session_id, decision_json, "
-            "audit_summary, memory_recall_used) "
-            "values (9, 1, 'legacy-session', '{}', 'legacy', 0)"
-        )
-        db.execute("drop index idx_task_agent_runs_active_input")
-        db.execute("alter table task_agent_runs rename to task_agent_runs_current")
-        db.execute(
-            "create table task_agent_runs ("
-            "id integer primary key autoincrement, "
-            "summary_input_id integer not null, "
-            "codex_session_id text not null default '', "
-            "decision_json text not null default '{}', "
-            "audit_summary text not null default '', "
+            "create table task_agent_runs (id integer primary key autoincrement, "
+            "summary_input_id integer not null, codex_session_id text not null default '', "
+            "decision_json text not null default '{}', audit_summary text not null default '', "
             "memory_recall_used integer not null default 0, "
             "created_at text not null default current_timestamp)"
         )
-        db.execute(
-            "insert into task_agent_runs select id, summary_input_id, "
-            "codex_session_id, decision_json, audit_summary, memory_recall_used, "
-            "created_at from task_agent_runs_current"
-        )
-        db.execute("drop table task_agent_runs_current")
+        db.execute("insert into task_agent_runs(summary_input_id,codex_session_id) values(1,'legacy-session')")
     assert store._schema_is_current() is False
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    upgraded = AutoReplyStore(db_path)
-    with upgraded._connect() as db:
-        row = db.execute("select * from task_agent_runs where id=9").fetchone()
-    assert row["status"] == "completed"
-    assert row["finished_at"] == row["created_at"]
-    assert row["updated_at"] == row["created_at"]
+    assert_store_reopen_rejected_without_mutation(path)
 
 
 def test_current_schema_sentinel_requires_new_runtime_parent_tables(tmp_path: Path):
@@ -1940,7 +1883,8 @@ def test_current_schema_sentinel_requires_new_runtime_parent_tables(tmp_path: Pa
     store = AutoReplyStore(db_path)
     with store._connect() as db:
         db.execute("drop index idx_weekly_okr_analysis_jobs_identity")
-        db.execute("drop table weekly_okr_analysis_jobs")
+        db.execute("drop index idx_wechat_memory_import_jobs_status")
+        db.execute("drop table wechat_memory_import_jobs")
     assert store._schema_is_current() is False
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
@@ -1952,7 +1896,17 @@ def test_current_schema_sentinel_requires_new_runtime_parent_tables(tmp_path: Pa
                 "select name from sqlite_master where type='table'"
             ).fetchall()
         }
-    assert {"weekly_okr_analysis_jobs", "wechat_memory_import_jobs"} <= tables
+        assert "weekly_okr_analysis_jobs" not in tables
+        assert "wechat_memory_import_jobs" in tables
+        weekly_index = db.execute(
+            "select tbl_name from sqlite_master where type='index' "
+            "and name='idx_weekly_okr_analysis_jobs_identity'"
+        ).fetchone()
+        assert weekly_index["tbl_name"] == "tasks"
+        assert db.execute(
+            "select tbl_name from sqlite_master where type='index' "
+            "and name='idx_wechat_memory_import_jobs_status'"
+        ).fetchone()["tbl_name"] == "wechat_memory_import_jobs"
 
 
 def test_current_schema_has_no_legacy_core_trajectory_columns(tmp_path: Path):
@@ -1963,12 +1917,14 @@ def test_current_schema_has_no_legacy_core_trajectory_columns(tmp_path: Path):
 
 
 
-def test_current_schema_sentinel_migrates_complete_legacy_meeting_run_shape(
+def test_current_schema_sentinel_rejects_malformed_duplicate_meeting_source(
     tmp_path: Path,
 ):
+    from tests.test_task_storage import fingerprint, source_database
+
     db_path = tmp_path / "legacy-meeting-run-shape.sqlite3"
-    store = AutoReplyStore(db_path)
-    with store._connect() as db:
+    db = source_database(db_path)
+    try:
         db.execute(
             "insert into meeting_alignment_jobs (id, meeting_id) "
             "values (1, 'legacy-meeting')"
@@ -1980,50 +1936,14 @@ def test_current_schema_sentinel_migrates_complete_legacy_meeting_run_shape(
             "(7, 1, 'running', '', '2026-08-20 09:00:00'), "
             "(8, 1, 'running', '', '2026-08-20 09:00:00')"
         )
-        db.execute(
-            "alter table meeting_alignment_runs rename to meeting_alignment_runs_current"
-        )
-        db.execute(
-            "create table meeting_alignment_runs ("
-            "id integer primary key autoincrement, job_id integer not null, "
-            "codex_session_id text not null default '', "
-            "codex_transcript_start_line integer not null default 0, "
-            "codex_transcript_end_line integer not null default 0, "
-            "decision_json text not null default '{}', "
-            "audit_tool_events_json text not null default '[]', "
-            "audit_summary text not null default '', status text not null, "
-            "error text not null default '', "
-            "created_at text not null default current_timestamp, "
-            "foreign key(job_id) references meeting_alignment_jobs(id))"
-        )
-        db.execute(
-            "insert into meeting_alignment_runs select id, job_id, codex_session_id, "
-            "codex_transcript_start_line, codex_transcript_end_line, decision_json, "
-            "audit_tool_events_json, audit_summary, status, error, created_at "
-            "from meeting_alignment_runs_current"
-        )
-        db.execute("drop table meeting_alignment_runs_current")
-    assert store._schema_is_current() is False
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    upgraded = AutoReplyStore(db_path)
-    older = upgraded.get_meeting_alignment_run(7)
-    newest = upgraded.get_meeting_alignment_run(8)
-    assert older is not None and newest is not None
-    assert older.status == "failed"
-    assert older.error == "schema_migration_duplicate_running_meeting_run"
-    assert older.finished_at == older.created_at
-    assert older.updated_at == older.created_at
-    assert newest.status == "running"
-    assert newest.finished_at == ""
-    with upgraded._connect() as db:
-        ids = [
-            row["id"]
-            for row in db.execute(
-                "select id from meeting_alignment_runs order by id"
-            ).fetchall()
-        ]
-    assert ids == [7, 8]
+        db.commit()
+        before = fingerprint(db)
+    finally:
+        db.close()
+    with pytest.raises((ValueError, sqlite3.IntegrityError), match="unsupported|malformed"):
+        AutoReplyStore(db_path)
+    with sqlite3.connect(db_path) as db:
+        assert fingerprint(db) == before
 
 
 def test_runtime_attempt_transitions_are_terminal_safe(tmp_path: Path):
@@ -2750,7 +2670,7 @@ def test_reconcile_done_reply_tasks_with_failed_current_run(tmp_path: Path) -> N
     )
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='done', error='' where id=?",
+            "update tasks set status='done', error='' where record_type='reply_tasks' and id=?",
             (task.id,),
         )
 
@@ -2918,7 +2838,7 @@ def test_reconcile_preserves_done_task_with_recorded_message_delivery(
     store.fail_agent_run(audit.id, {"code": "audit_validation_failed"}, owner="audit")
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='done', error='' where id=?",
+            "update tasks set status='done', error='' where record_type='reply_tasks' and id=?",
             (task.id,),
         )
 
@@ -2965,7 +2885,7 @@ def test_reconcile_recorded_delivery_closes_needs_human_task(tmp_path: Path) -> 
     )
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='needs_human', error=? where id=?",
+            "update tasks set status='needs_human', error=? where record_type='reply_tasks' and id=?",
             ("provider_effect_unreconciled", task.id),
         )
 
@@ -3077,7 +2997,7 @@ def test_done_with_failed_latest_run_keeps_exact_input_until_settlement(tmp_path
     store.complete_reply_task(task.id, expected_execution_generation=claimed.execution_generation)
     assert store.get_reply_task(task.id).status == "failed"
     with store._connect() as db:
-        db.execute("update reply_tasks set status='done' where id=?", (task.id,))
+        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task.id,))
         assert not store._compact_settled_reply_task_input(db, task.id)
     unchanged = store.get_reply_task(task.id)
     assert unchanged is not None and unchanged.trigger_text == "Recoverable original"
@@ -3096,7 +3016,7 @@ def test_reply_input_compaction_rolls_back_with_terminal_transaction(tmp_path: P
     )
     with pytest.raises(RuntimeError, match="abort terminal write"):
         with store._immediate_write_transaction() as db:
-            db.execute("update reply_tasks set status='done' where id=?", (task.id,))
+            db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task.id,))
             assert store._compact_settled_reply_task_input(db, task.id)
             raise RuntimeError("abort terminal write")
     after = store.get_reply_task(task.id)
@@ -3139,8 +3059,8 @@ def test_skip_failed_reply_task_superseded_by_terminal_business_object(
     )
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set business_object_key='oa:process-1:task-1' "
-            "where id in (?, ?)",
+            "update tasks set business_object_key='oa:process-1:task-1' "
+            "where record_type='reply_tasks' and id in (?, ?)",
             (old_task.id, current_task.id),
         )
         db.execute(
@@ -3219,8 +3139,8 @@ def test_skip_obsolete_needs_human_attempt_superseded_by_terminal_business_objec
             (old_run.id, attempt_id),
         )
         db.execute(
-            "update reply_tasks set business_object_key='oa:process-2:task-2' "
-            "where id in (?, ?)",
+            "update tasks set business_object_key='oa:process-2:task-2' "
+            "where record_type='reply_tasks' and id in (?, ?)",
             (old_task.id, current_task.id),
         )
         db.execute(
@@ -3430,7 +3350,7 @@ def test_needs_human_task_follows_resolved_failed_attempt(tmp_path: Path) -> Non
     )
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='needs_human', error=? where id=?",
+            "update tasks set status='needs_human', error=? where record_type='reply_tasks' and id=?",
             ("external_action_completed:verified readback", task.id),
         )
         db.execute(
@@ -3469,7 +3389,7 @@ def test_live_readback_can_close_settled_needs_human_task(tmp_path: Path) -> Non
     )
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='needs_human', error=? where id=?",
+            "update tasks set status='needs_human', error=? where record_type='reply_tasks' and id=?",
             ("calendar_response_not_executed", task.id),
         )
 
@@ -3483,7 +3403,7 @@ def test_live_readback_can_close_settled_needs_human_task(tmp_path: Path) -> Non
     assert updated is not None
     assert updated.status == "done"
     with store._connect() as db:
-        db.execute("update reply_tasks set status='failed' where id=?", (task.id,))
+        db.execute("update tasks set status='failed' where record_type='reply_tasks' and id=?", (task.id,))
     assert store.reconcile_unresolved_reply_tasks_with_settlement_evidence() == 1
     assert store.get_reply_task(task.id).status == "done"
     assert store.reconcile_done_reply_tasks_with_failed_current_run() == 0
@@ -3946,7 +3866,7 @@ def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
     assert len(calls) == 3
     with store._connect() as db:
         db.execute(
-            "update meeting_alignment_jobs set source_json=? where id=1",
+            "update tasks set source_json=? where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=1",
             ('{"minutes_info":{"summary":"业务补充摘要"}}',),
         )
     refreshed_source = store.search_codex_sessions(
@@ -3969,11 +3889,17 @@ def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
     assert by_session["session-risk-budget"].native_reason == "native_input_unavailable"
     assert by_session["session-risk-budget"].embedding_score == 0.0
     with store._connect() as db:
+        columns = {row["name"] for row in db.execute('pragma table_info(codex_session_search_index)')}
+        assert not columns.intersection({
+            'summary_text', 'fts_text', 'embedding_json', 'embedding_model', 'embedding_updated_at',
+        })
         rows = db.execute(
-            "select summary_text, fts_text, embedding_json, embedding_model "
-            "from codex_session_search_index"
+            "select session_id,title from codex_session_search_index order by session_id"
         ).fetchall()
-        assert all(tuple(row) == ("", "", "", "") for row in rows)
+        assert [tuple(row) for row in rows] == [
+            ('session-customer-script', '客服话术'),
+            ('session-risk-budget', '上线评审'),
+        ]
         assert db.execute(
             "select count(*) from codex_session_search_fts "
             "where codex_session_search_fts match 'private'"
@@ -4234,48 +4160,25 @@ def test_store_repairs_missing_required_table_despite_current_schema_version(
         ).fetchone() == (1,)
 
 
-def test_store_adds_legacy_workbench_lease_columns_before_recovery_index(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "legacy-workbench.sqlite3"
-    with sqlite3.connect(db_path) as db:
-        db.executescript(
-            """
-            create table workbench_turns (
-                id text primary key,
-                task_id text not null,
-                client_request_id text not null unique,
-                task_sequence integer not null default 0,
-                user_text text not null,
-                status text not null,
-                stop_requested integer not null default 0,
-                final_text text not null default '',
-                error_code text not null default '',
-                error_detail text not null default '',
-                resume_context text not null default '',
-                execution_run_id text not null default '',
-                runtime_quiesced_run_id text not null default '',
-                started_at text not null default '',
-                completed_at text not null default '',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp
-            );
-            """
-        )
+def test_source13_workbench_lease_values_survive_before_recovery_index(tmp_path: Path) -> None:
+    from tests.workbench_caller_fixtures import empty_source13
+    from app.task_storage import WORKBENCH_TURN_SQL
 
+    db_path = tmp_path / "source13-workbench.sqlite3"
+    with empty_source13(db_path) as db:
+        db.execute("insert into workbench_tasks(id,title,runtime_kind) values('parent','Leases','codex')")
+        db.execute("""insert into workbench_turns(id,task_id,client_request_id,task_sequence,user_text,status,lease_owner,lease_expires_at)
+            values('turn','parent','request',1,'kept','running','original-owner','2026-10-13 00:00:00')""")
     AutoReplyStore(db_path)
-
     with sqlite3.connect(db_path) as db:
-        columns = {
-            str(row[1]) for row in db.execute("pragma table_info(workbench_turns)")
-        }
+        columns = {str(row[1]) for row in db.execute("pragma table_info(tasks)")}
         recovery_index = db.execute(
-            "select 1 from sqlite_master "
-            "where type='index' and name='idx_workbench_turns_recovery'"
+            "select 1 from sqlite_master where type='index' and name='idx_workbench_turns_recovery'"
         ).fetchone()
-
+        lease = db.execute(f"select lease_owner,lease_expires_at from ({WORKBENCH_TURN_SQL}) where id='turn'").fetchone()
     assert {"lease_owner", "lease_expires_at"} <= columns
     assert recovery_index == (1,)
+    assert lease == ("original-owner", "2026-10-13 00:00:00")
 
 
 def test_store_rechecks_schema_after_transient_database_lock(tmp_path, monkeypatch):
@@ -4752,7 +4655,7 @@ def test_retry_failed_effect_free_email_unsubscribe_tasks_requeues_only_safe_row
             """
         )
         db.execute(
-            "update reply_tasks set status='failed', error=? where trigger_message_id=?",
+            "update tasks set status='failed', error=? where record_type='reply_tasks' and trigger_message_id=?",
             (
                 "email_unsubscribe_browser_failed: category=operation_failed",
                 action_identity,
@@ -4760,7 +4663,7 @@ def test_retry_failed_effect_free_email_unsubscribe_tasks_requeues_only_safe_row
         )
 
     with store._connect() as db:
-        db.execute("update reply_task_inputs set trigger_message_json=? where trigger_message_id=?", (json.dumps(payload), action_identity))
+        db.execute("update tasks set trigger_message_json=? where record_type='reply_task_inputs' and trigger_message_id=?", (json.dumps(payload), action_identity))
 
     assert store.retry_failed_effect_free_email_unsubscribe_tasks() == [1]
     task = store.list_reply_tasks(limit=1)[0]
@@ -4771,7 +4674,7 @@ def test_retry_failed_effect_free_email_unsubscribe_tasks_requeues_only_safe_row
 
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='failed', error='email_unsubscribe_browser_timeout' where id=1"
+            "update tasks set status='failed', error='email_unsubscribe_browser_timeout' where record_type='reply_tasks' and id=1"
         )
     assert store.retry_failed_effect_free_email_unsubscribe_tasks() == [1]
 
@@ -4814,166 +4717,10 @@ def test_enqueue_reply_task_rejects_empty_execution_generation(tmp_path: Path):
         )
 
 
-def test_store_migrates_reply_tasks_with_initial_execution_generation(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "worker.sqlite3"
-    # Retain a valid current core while isolating this older business-table shape.
-    AutoReplyStore(db_path)
-    with sqlite3.connect(db_path) as db:
-        db.execute('drop table reply_tasks')
-        db.execute(
-            """
-            create table reply_tasks (
-                id integer primary key autoincrement,
-                conversation_id text not null,
-                conversation_title text not null,
-                single_chat integer not null,
-                trigger_message_id text not null,
-                trigger_create_time text not null,
-                trigger_sender text not null,
-                trigger_text text not null,
-                status text not null default 'pending',
-                attempts integer not null default 0,
-                locked_at text,
-                error text not null default '',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp,
-                unique(conversation_id, trigger_message_id)
-            )
-            """
-        )
-        db.execute(
-            """
-            insert into reply_tasks (
-                conversation_id, conversation_title, single_chat,
-                trigger_message_id, trigger_create_time, trigger_sender, trigger_text
-            ) values ('cid-legacy', 'Legacy', 0, 'msg-legacy',
-                      '2026-07-20 09:00:00', 'Derek', 'Legacy task')
-            """
-        )
-
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    store = AutoReplyStore(db_path)
-
-    assert store.claim_reply_tasks(limit=1)[0].execution_generation == "initial"
 
 
-def test_store_channel_identity_migration_preserves_active_execution_generation(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "worker.sqlite3"
-    # Retain a valid current core while isolating this older business-table shape.
-    AutoReplyStore(db_path)
-    with sqlite3.connect(db_path) as db:
-        db.execute('drop table reply_tasks')
-        db.executescript(
-            """
-            create table reply_tasks (
-                id integer primary key autoincrement,
-                channel text not null default 'dingtalk',
-                conversation_id text not null,
-                conversation_title text not null,
-                single_chat integer not null,
-                trigger_message_id text not null,
-                trigger_create_time text not null,
-                trigger_sender text not null,
-                trigger_text text not null,
-                trigger_message_json text not null default '{}',
-                available_at text not null default '',
-                force_new_decision integer not null default 0,
-                oa_url text not null default '',
-                manual_rerun_attempt_id integer not null default 0,
-                manual_rerun_revision_key text not null default '',
-                execution_generation text not null default 'initial',
-                status text not null default 'pending',
-                attempts integer not null default 0,
-                locked_at text,
-                error text not null default '',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp,
-                unique(conversation_id, trigger_message_id)
-            );
-            insert into reply_tasks (
-                conversation_id, conversation_title, single_chat,
-                trigger_message_id, trigger_create_time, trigger_sender,
-                trigger_text, execution_generation, status
-            ) values (
-                'cid-active', 'Active', 0, 'msg-active',
-                '2026-07-20 09:00:00', 'Derek', 'Active task',
-                'gen-active', 'processing'
-            );
-            """
-        )
-
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    with pytest.raises(RuntimeError, match="quiet"):
-        AutoReplyStore(db_path)
-    with sqlite3.connect(db_path) as db:
-        assert db.execute("select status,execution_generation from reply_tasks where id=1").fetchone() == ("processing", "gen-active")
-        db.execute("update reply_tasks set status='pending' where id=1")
-    store = AutoReplyStore(db_path)
-    migrated = store.get_reply_task(1)
-    assert migrated is not None
-    assert migrated.status == "pending"
-    assert migrated.execution_generation == "gen-active"
-
-    AutoReplyStore(db_path)
-    assert store.get_reply_task(1).execution_generation == "gen-active"
 
 
-def test_reply_task_channel_identity_migration_rolls_back_on_rebuild_failure(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "worker.sqlite3"
-    with sqlite3.connect(db_path) as db:
-        db.row_factory = sqlite3.Row
-        db.executescript(
-            """
-            create table reply_tasks (
-                id integer primary key autoincrement,
-                channel text not null default 'dingtalk',
-                conversation_id text not null,
-                conversation_title text not null,
-                single_chat integer not null,
-                trigger_message_id text not null,
-                trigger_create_time text not null,
-                trigger_sender text not null,
-                trigger_text text not null,
-                execution_generation text not null default 'initial',
-                status text not null default 'pending',
-                attempts integer not null default 0,
-                locked_at text,
-                error text not null default '',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp,
-                unique(conversation_id, trigger_message_id)
-            );
-            insert into reply_tasks (
-                conversation_id, conversation_title, single_chat,
-                trigger_message_id, trigger_create_time, trigger_sender,
-                trigger_text, execution_generation, status
-            ) values (
-                'cid-active', 'Active', 0, 'msg-active',
-                '2026-07-20 09:00:00', 'Derek', 'Active task',
-                'gen-active', 'processing'
-            );
-            create table reply_tasks_channel_migration (id integer primary key);
-            """
-        )
-
-        with pytest.raises(sqlite3.OperationalError):
-            AutoReplyStore._migrate_reply_task_channel_identity(db)
-
-        row = db.execute(
-            "select execution_generation, status from reply_tasks where id=1"
-        ).fetchone()
-        assert dict(row) == {
-            "execution_generation": "gen-active",
-            "status": "processing",
-        }
-        assert db.in_transaction is False
-        assert db.execute("pragma foreign_keys").fetchone()[0] == 1
 
 
 def test_enqueue_manual_rerun_reply_task_requeues_existing_task(tmp_path: Path):
@@ -5305,8 +5052,8 @@ def test_reviewed_reply_and_rerun_roll_back_together(tmp_path: Path) -> None:
     with store._connect() as db:
         db.executescript(
             """
-            create trigger reject_review_rerun before update on reply_tasks
-            when new.manual_rerun_attempt_id > 0
+            create trigger reject_review_rerun before update on tasks
+            when new.record_type='reply_tasks' and new.manual_rerun_attempt_id > 0
             begin
                 select raise(abort, 'forced review rerun failure');
             end;
@@ -6085,13 +5832,15 @@ def test_append_agent_events_does_not_reparse_prior_json(tmp_path: Path, monkeyp
     assert calls <= 300
 
 
-def test_exact_11_1_source_with_native_event_body_is_rejected_without_mutation(tmp_path: Path):
-    db_path = tmp_path / 'nonempty-source-events.sqlite3'
-    _previous_11_1_runtime_attempt(db_path)
-    with sqlite3.connect(db_path) as db:
-        db.execute("insert into agent_run_events(agent_run_id,sequence,event_json) "
-                   "values(1,1,?)", (json.dumps({'type':'item.started','call_id':'legacy-1'}),))
-    _assert_core_source_rejected_without_mutation(db_path)
+def test_current_source_with_retired_native_event_body_is_rejected_without_mutation(tmp_path: Path):
+    path = tmp_path / "nonempty-retired-events.sqlite3"
+    AutoReplyStore(path)
+    inventory = json.loads((Path(__file__).parents[1] / "docs/superpowers/specs/2026-10-11-database-redesign-phase4-inventory.json").read_text())
+    with sqlite3.connect(path) as db:
+        db.execute(inventory["tables"]["agent_run_events"]["sql"])
+        db.execute("insert into agent_run_events(agent_run_id,sequence,event_json) values(1,1,?)",
+                   (json.dumps({"type": "item.started", "call_id": "legacy-1"}),))
+    assert_store_reopen_rejected_without_mutation(path)
 
 
 
@@ -6623,7 +6372,7 @@ def test_reconcile_preserves_legacy_authorization_projection(tmp_path: Path, mon
             (run.lastrowid, attempt_id),
         )
         db.execute(
-            "update reply_tasks set status='needs_human' where id=?", (task.id,)
+            "update tasks set status='needs_human' where record_type='reply_tasks' and id=?", (task.id,)
         )
 
     assert store.reconcile_invalid_needs_human_projections() == 0
@@ -6635,7 +6384,7 @@ def test_reconcile_preserves_legacy_authorization_projection(tmp_path: Path, mon
     # A later queue transition is not rewritten from this unreviewed legacy row.
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='pending', error='orphaned_before_agent_start' where id=?",
+            "update tasks set status='pending', error='orphaned_before_agent_start' where record_type='reply_tasks' and id=?",
             (task.id,),
         )
     assert store.reconcile_invalid_needs_human_projections() == 0
@@ -7076,68 +6825,29 @@ def test_oa_comment_without_task_id_reuses_the_known_approval_task(
     ]
 
 
-def test_schema_upgrade_aliases_historical_oa_comment_to_the_known_node(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    old_comment = store.ensure_reply_task(
-        channel="dingtalk",
-        conversation_id="work-notice",
-        conversation_title="工作通知",
-        single_chat=True,
+def test_oa_comment_aliases_the_known_node_on_current_schema(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "oa-alias.sqlite3")
+    common = dict(channel="dingtalk", single_chat=True, trigger_create_time="2026-09-07 10:00:00", trigger_sender="OA审批")
+    original = store.ensure_reply_task(
+        **common, conversation_id="work-notice", conversation_title="工作通知",
         trigger_message_id="message-1",
-        trigger_create_time="2026-09-07 10:00:00",
-        trigger_sender="OA审批",
-        trigger_text=(
-            "申请人补充了说明 "
-            "https://aflow.dingtalk.com/mobile?procInstId=proc-1&taskId="
-        ),
-        business_object_key="message:dingtalk:work-notice:message-1",
+        trigger_text="补充说明 https://aflow.dingtalk.com/mobile?procInstId=proc-1&taskId=",
     )
-    current = store.ensure_reply_task(
-        channel="dingtalk",
-        conversation_id="oa_pending_scan",
-        conversation_title="审批待办",
-        single_chat=False,
-        trigger_message_id="oa-pending:proc-1:task-1",
-        trigger_create_time="2026-09-07 10:05:00",
-        trigger_sender="Derek OA",
-        trigger_text="待办扫描",
+    known = store.ensure_reply_task(
+        **common, conversation_id="oa_pending_scan", conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-1:task-1", trigger_text="待办扫描",
         oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
     )
-    assert old_comment.id != current.id
-    restore_legacy_reply_parent(store)
-    with store._connect() as db:
-        db.execute(
-            "update service_state set value=? where key=?",
-            (store_module.STORE_SCHEMA_VERSION, store_module.STORE_SCHEMA_VERSION_KEY),
-        )
-    # The core is current; exercise the retained business migration directly.
-    store._initialize()
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    upgraded = AutoReplyStore(db_path)
-    migrated_old = upgraded.get_reply_task(old_comment.id)
-    migrated_current = upgraded.get_reply_task(current.id)
-    assert migrated_old is not None
-    assert migrated_current is not None
-    assert migrated_old.business_object_key == "oa:proc-1:task-1"
-    assert migrated_current.business_object_key == "oa:proc-1:task-1"
-
-    follow_up = upgraded.ensure_reply_task(
-        channel="dingtalk",
-        conversation_id="work-notice",
-        conversation_title="工作通知",
-        single_chat=True,
+    follow_up = store.ensure_reply_task(
+        **common, conversation_id="work-notice", conversation_title="工作通知",
         trigger_message_id="message-2",
-        trigger_create_time="2026-09-07 10:10:00",
-        trigger_sender="OA审批",
         trigger_text="再次补充 https://aflow.dingtalk.com/mobile?procInstId=proc-1&taskId=",
     )
-    assert follow_up.id == current.id
-    with upgraded._connect() as db:
-        assert db.execute("select count(*) from reply_tasks").fetchone()[0] == 2
+    assert original.id == known.id == follow_up.id
+    assert store.get_reply_task(original.id).business_object_key == "oa:proc-1:task-1"
+    assert len(store.list_reply_task_inputs(original.id)) == 3
+    with store._connect() as db:
+        assert [tuple(row) for row in db.execute("select business_object_key,reply_task_id from business_object_tasks")] == [("oa:proc-1:task-1", original.id)]
 
 
 def test_schema_upgrade_preserves_unchanged_business_object_mapping_rows(
@@ -7178,42 +6888,24 @@ def test_schema_upgrade_preserves_unchanged_business_object_mapping_rows(
     assert after == before
 
 
-def test_schema_upgrade_keeps_latest_business_object_remapping(tmp_path: Path) -> None:
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    first = store.ensure_reply_task(
-        channel="dingtalk", conversation_id="cid", conversation_title="Chat",
-        single_chat=False, trigger_message_id="first",
-        trigger_create_time="2026-10-10 00:00:00", trigger_sender="Sender",
-        trigger_text="First input",
-    )
-    second = store.ensure_reply_task(
-        channel="dingtalk", conversation_id="cid", conversation_title="Chat",
-        single_chat=False, trigger_message_id="second",
-        trigger_create_time="2026-10-10 00:01:00", trigger_sender="Sender",
-        trigger_text="Second input",
-    )
-    assert first.id < second.id
-    restore_legacy_reply_parent(store)
+def test_current_business_object_mapping_keeps_latest_input(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "mapping.sqlite3")
+    common = dict(channel="dingtalk", conversation_id="cid", conversation_title="Chat",
+                  single_chat=False, trigger_create_time="2026-10-10", trigger_sender="Sender",
+                  business_object_key="object:current")
+    first = store.ensure_reply_task(**common, trigger_message_id="first", trigger_text="First input")
+    second = store.ensure_reply_task(**common, trigger_message_id="second", trigger_text="Second input")
+    assert first.id == second.id
+    assert second.trigger_text == "Second input"
+    assert second.input_version == first.input_version + 1
     with store._connect() as db:
-        db.execute(
-            "update reply_tasks set business_object_key=? where id=?",
-            (first.business_object_key, second.id),
-        )
-        db.execute(
-            "update service_state set value=? where key=?",
-            (store_module.STORE_SCHEMA_VERSION, store_module.STORE_SCHEMA_VERSION_KEY),
-        )
-    # The core is current; exercise the retained business migration directly.
-    store._initialize()
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    upgraded = AutoReplyStore(db_path)
-    with upgraded._connect() as db:
-        rows = [tuple(row) for row in db.execute(
-            "select business_object_key, reply_task_id from business_object_tasks"
-        )]
-    assert rows == [(first.business_object_key, second.id)]
+        before = [tuple(row) for row in db.execute("select * from business_object_tasks")]
+    store_module._INITIALIZED_STORE_PATHS.discard(store.path.resolve())
+    reopened = AutoReplyStore(store.path)
+    assert reopened.get_reply_task(first.id).trigger_text == "Second input"
+    assert [row["trigger_text"] for row in reopened.list_reply_task_inputs(first.id)] == ["First input", "Second input"]
+    with reopened._connect() as db:
+        assert [tuple(row) for row in db.execute("select * from business_object_tasks")] == before
 
 
 def test_different_oa_nodes_keep_separate_current_reply_tasks(tmp_path: Path) -> None:
@@ -7491,10 +7183,10 @@ def test_recover_native_codex_auth_resumes_orphaned_recovery_lock(tmp_path):
     with store._connect() as db:
         db.execute(
             """
-            update reply_tasks
+            update tasks
             set status='processing', locked_at=datetime('now', '-2 minutes'),
                 error='codex_auth_recovered'
-            where id=?
+            where record_type='reply_tasks' and id=?
             """,
             (task_id,),
         )
@@ -8486,7 +8178,7 @@ def test_reset_recoverable_okr_review_requests_requeues_stale_processing(
     assert store.acquire_codex_session_lock("cid-1", f"okr_review:{request_id}")
     with sqlite3.connect(db_path) as db:
         db.execute(
-            "update okr_review_requests set updated_at=datetime('now', '-31 minutes') where id=?",
+            "update tasks set updated_at=datetime('now', '-31 minutes') where record_type='okr_review_requests' and cast(legacy_key as integer)=?",
             (request_id,),
         )
 
@@ -8810,114 +8502,8 @@ def test_record_reply_attempt_ignores_tool_search_memory_write_mentions(
     assert store.list_memory_write_events_for_attempt(attempt_id) == []
 
 
-def test_reply_attempt_migration_backfills_codex_session_from_conversation(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    with sqlite3.connect(db_path) as db:
-        db.executescript(
-            """
-            create table conversations (
-                conversation_id text primary key,
-                title text not null,
-                single_chat integer not null,
-                codex_session_id text
-            );
-            create table reply_attempts (
-                id integer primary key autoincrement,
-                conversation_id text not null,
-                conversation_title text not null,
-                trigger_message_id text not null,
-                trigger_sender text not null,
-                trigger_text text not null,
-                action text not null,
-                sensitivity_kind text not null,
-                codex_reason text not null default '',
-                draft_reply_text text not null default '',
-                audit_documents_json text not null default '[]',
-                audit_tool_events_json text not null default '[]',
-                audit_summary text not null default '',
-                final_reply_text text not null default '',
-                permission_action text not null default '',
-                permission_reason text not null default '',
-                send_status text not null,
-                send_error text not null default '',
-                retry_count integer not null default 0,
-                reviewed_at text,
-                reviewer_feedback text not null default '',
-                corrected_reply_text text not null default '',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp
-            );
-            insert into conversations (
-                conversation_id, title, single_chat, codex_session_id
-            ) values ('cid-1', 'Friday', 0, 'session-1');
-            insert into reply_attempts (
-                conversation_id, conversation_title, trigger_message_id,
-                trigger_sender, trigger_text, action, sensitivity_kind, send_status
-            ) values (
-                'cid-1', 'Friday', 'msg-1', 'Xiaomin',
-                '@Alex Chen 这个怎么处理？', 'send_reply', 'general', 'sent'
-            );
-            """
-        )
-
-    store = AutoReplyStore(db_path)
-    attempt = store.get_reply_attempt(1)
-
-    assert attempt is not None
-    assert attempt.codex_session_id == "session-1"
-    assert attempt.codex_transcript_start_line == 0
-    assert attempt.codex_transcript_end_line == 0
 
 
-def test_reply_attempt_migration_normalizes_authorization_status_to_failed(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "worker.sqlite3"
-    with sqlite3.connect(db_path) as db:
-        db.executescript(
-            """
-            create table reply_attempts (
-                id integer primary key autoincrement,
-                conversation_id text not null,
-                conversation_title text not null,
-                trigger_message_id text not null,
-                trigger_sender text not null,
-                trigger_text text not null,
-                action text not null,
-                sensitivity_kind text not null,
-                codex_reason text not null default '',
-                draft_reply_text text not null default '',
-                audit_documents_json text not null default '[]',
-                audit_tool_events_json text not null default '[]',
-                audit_summary text not null default '',
-                final_reply_text text not null default '',
-                permission_action text not null default '',
-                permission_reason text not null default '',
-                send_status text not null,
-                send_error text not null default '',
-                retry_count integer not null default 0,
-                reviewed_at text,
-                reviewer_feedback text not null default '',
-                corrected_reply_text text not null default '',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp
-            );
-            insert into reply_attempts (
-                conversation_id, conversation_title, trigger_message_id,
-                trigger_sender, trigger_text, action, sensitivity_kind, send_status
-            ) values (
-                'cid-1', 'Friday', 'msg-1', 'Xiaomin',
-                '@Alex Chen 这个怎么处理？', 'send_reply', 'general',
-                'needs_authorization'
-            );
-            """
-        )
-
-    store = AutoReplyStore(db_path)
-    attempt = store.get_reply_attempt(1)
-
-    assert attempt is not None
-    assert attempt.send_status == "failed"
 
 
 def test_seen_messages_are_deduplicated(tmp_path: Path):
@@ -9957,21 +9543,18 @@ def test_resolve_errors_recovered_by_scheduled_service_command(tmp_path: Path):
             where message_id='event-failed'
             """
         )
-        db.execute(
-            """
-                insert into scheduled_task_runs (
-                    event_id, scheduled_task_id, trigger_kind, scheduled_for, first_scheduled_for,
-                    dispatch_status, snapshot_id, execution_kind, execution_id,
-                    dispatched_at
-                ) values (
-                        'event-success', ?, 'scheduled', '2026-09-10T12:01:00+00:00',
-                        '2026-09-10T12:01:00+00:00',
-                        'dispatched', ?, 'service_command', 'scan-meetings-once',
-                    '2026-09-10 12:01:00'
-                )
-            """,
-            (task.id, snapshot_id),
-        )
+        insert_run(db, 'scheduled_task_runs', {
+            'event_id': 'event-success',
+            'scheduled_task_id': task.id,
+            'trigger_kind': 'scheduled',
+            'scheduled_for': '2026-09-10T12:01:00+00:00',
+            'first_scheduled_for': '2026-09-10T12:01:00+00:00',
+            'dispatch_status': 'dispatched',
+            'snapshot_id': snapshot_id,
+            'execution_kind': 'service_command',
+            'execution_id': 'scan-meetings-once',
+            'dispatched_at': '2026-09-10 12:01:00',
+        })
 
     assert store.resolve_errors_recovered_by_scheduled_service_command() == 1
 
@@ -10009,23 +9592,24 @@ def test_resolve_errors_recovered_by_scheduled_reply_task(tmp_path: Path):
     with store._connect() as db:
         snapshot_id = intern_scheduled_config(db, ScheduledTaskSnapshot.from_task(task).to_json())
         reply_task_id = db.execute(
-            "select id from reply_tasks where trigger_message_id='event-success'"
+            "select cast(legacy_key as integer) from tasks where record_type='reply_tasks' and trigger_message_id='event-success'"
         ).fetchone()[0]
         db.execute(
-            "update reply_tasks set status='done', updated_at='2026-09-18 12:02:00' where id=?",
-            (reply_task_id,),
+            "update tasks set status='done', updated_at='2026-09-18 12:02:00' where record_type='reply_tasks' and id=?",
+            (task_physical_id(db, 'reply_tasks', reply_task_id),),
         )
-        db.execute(
-            """
-            insert into scheduled_task_runs (
-                event_id, scheduled_task_id, trigger_kind, scheduled_for, first_scheduled_for,
-                dispatch_status, snapshot_id, execution_kind, execution_id, dispatched_at
-            ) values ('event-success', ?, 'scheduled', '2026-09-18T12:00:00Z',
-                      '2026-09-18T12:00:00Z', 'dispatched', ?, 'reply_task', ?,
-                      '2026-09-18 12:00:32')
-            """,
-            (task.id, snapshot_id, str(reply_task_id)),
-        )
+        insert_run(db, 'scheduled_task_runs', {
+            'event_id': 'event-success',
+            'scheduled_task_id': task.id,
+            'trigger_kind': 'scheduled',
+            'scheduled_for': '2026-09-18T12:00:00Z',
+            'first_scheduled_for': '2026-09-18T12:00:00Z',
+            'dispatch_status': 'dispatched',
+            'snapshot_id': snapshot_id,
+            'execution_kind': 'reply_task',
+            'execution_id': str(reply_task_id),
+            'dispatched_at': '2026-09-18 12:00:32',
+        })
     store.record_error(
         f"scheduled-task:{task.id}",
         "event-success",
@@ -10092,26 +9676,14 @@ def test_meeting_memory_health_uses_matching_live_leases_not_runtime_status_alon
     store = AutoReplyStore(tmp_path / "meeting-memory-health.sqlite3")
     now = "2026-09-15T12:00:00+00:00"
     with store._connect() as db:
-        db.execute(
-            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
-            "values (1, 'health-active', 'sent', 'summary')"
-        )
-        db.execute(
-            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
-            "values (2, 'health-ghost', 'sent', 'summary')"
-        )
-        db.execute(
-            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
-            "values (3, 'health-due', 'sent', 'summary')"
-        )
-        db.execute(
-            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
-            "values (4, 'health-retry', 'sent', 'summary')"
-        )
-        db.execute(
-            "insert into meeting_alignment_jobs (id, meeting_id, status, final_message) "
-            "values (5, 'health-failed', 'sent', 'summary')"
-        )
+        for job_id, meeting_id in enumerate(
+            ("health-active", "health-ghost", "health-due", "health-retry", "health-failed"),
+            start=1,
+        ):
+            insert_task(db, 'meeting_alignment_jobs', {
+                'id': job_id, 'legacy_key': job_id, 'meeting_id': meeting_id,
+                'status': 'sent', 'final_message': 'summary',
+            })
         db.execute(
             """
             insert into meeting_memory_write_events (
@@ -10434,7 +10006,7 @@ def test_backfill_oa_audit_metadata_recovers_completed_agent_scan_attempt(
     )
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set oa_url='' where trigger_message_id=?",
+            "update tasks set oa_url='' where record_type='reply_tasks' and trigger_message_id=?",
             (trigger_message_id,),
         )
     attempt_id = store.record_reply_attempt(
@@ -10518,7 +10090,7 @@ def test_completed_oa_failed_attempt_closes_stale_task(
     assert task is not None
     with store._immediate_write_transaction() as db:
         db.execute(
-            "update reply_tasks set status=?, error='codex_result_invalid' where id=?",
+            "update tasks set status=?, error='codex_result_invalid' where record_type='reply_tasks' and id=?",
             (task_status, task.id),
         )
     attempt_id = store.record_reply_attempt(
@@ -10953,121 +10525,6 @@ _LEGACY_EFFECT_SUCCESS_CASES: dict[str, tuple[str, dict[str, object]]] = {
 }
 
 
-def test_removed_runtime_migrates_every_action_status_with_terminal_semantics(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    actions = (
-        "send_reply",
-        "ask_clarifying_question",
-        "oa_approval",
-        "mail_reply",
-        "calendar_response",
-        "dws_markdown_document_reply",
-        "dws_message_reaction",
-        "queue_okr_review",
-        "memory_write",
-        "no_reply",
-        "handoff_to_human",
-        "blocked",
-        "stop_with_error",
-    )
-    legacy_statuses = ("succeeded", "failed", "blocked", "unknown", "not_started")
-    succeeded_status = {
-        **{
-            action: status
-            for action, (status, _) in _LEGACY_EFFECT_SUCCESS_CASES.items()
-        },
-        "no_reply": "skipped",
-        "handoff_to_human": "blocked",
-        "blocked": "blocked",
-        "stop_with_error": "failed",
-    }
-    expected: dict[str, str] = {}
-    restore_legacy_reply_parent(store)
-    with store._connect() as db:
-        db.executescript(
-            """
-            create table universal_plan_executions (
-                execution_scope_id text primary key,
-                reply_task_id integer not null
-            );
-            create table universal_action_executions (
-                execution_id text primary key,
-                execution_scope_id text not null,
-                attempt_id integer,
-                action_kind text not null,
-                status text not null,
-                error text not null default '',
-                result_json text not null default '',
-                created_at text not null,
-                updated_at text not null
-            );
-            """
-        )
-        for action in actions:
-            for legacy_status in legacy_statuses:
-                key = f"{action}-{legacy_status}"
-                db.execute(
-                    """
-                    insert into reply_tasks (
-                        conversation_id, conversation_title, single_chat,
-                        trigger_message_id, trigger_create_time, trigger_sender,
-                        trigger_text
-                    ) values ('cid-migration', 'Migration', 0, ?,
-                              '2026-07-20 09:00:00', 'Derek', ?)
-                    """,
-                    (key, key),
-                )
-                task_id = int(db.execute("select last_insert_rowid()").fetchone()[0])
-                scope = f"scope-{key}"
-                db.execute(
-                    "insert into universal_plan_executions values (?, ?)",
-                    (scope, task_id),
-                )
-                db.execute(
-                    """
-                    insert into universal_action_executions
-                    values (?, ?, null, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        f"execution-{key}",
-                        scope,
-                        action,
-                        legacy_status,
-                        f"legacy-{legacy_status}" if legacy_status != "succeeded" else "",
-                            json.dumps(
-                                _LEGACY_EFFECT_SUCCESS_CASES.get(action, ("", {}))[1]
-                            )
-                            if legacy_status == "succeeded"
-                            else "",
-                        "2026-07-20 10:00:00",
-                        "2026-07-20 10:01:00",
-                    ),
-                )
-                expected[key] = (
-                    succeeded_status[action]
-                    if legacy_status == "succeeded"
-                    else "blocked"
-                    if legacy_status in {"blocked", "unknown"}
-                    else "failed"
-                )
-
-    # The core is current; exercise the retained business migration directly.
-    store._initialize()
-    store.set_service_state(store_module.STORE_SCHEMA_VERSION_KEY, store_module.STORE_SCHEMA_VERSION)
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    migrated = AutoReplyStore(db_path)
-    actual = {
-        attempt.trigger_message_id: attempt.send_status
-        for attempt in migrated.list_reply_attempts(limit=200)
-    }
-
-    assert actual == expected
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    AutoReplyStore(db_path)
-    assert len(migrated.list_reply_attempts(limit=200)) == len(expected)
 
 
 @pytest.mark.parametrize(
@@ -11328,7 +10785,7 @@ def test_stale_processing_task_ignores_future_lease_without_recent_heartbeat(
 
     with sqlite3.connect(store.path) as db:
         db.execute(
-            "update reply_tasks set locked_at='2026-07-20 10:00:00', updated_at='2026-07-20 10:00:00' where id=?",
+            "update tasks set locked_at='2026-07-20 10:00:00', updated_at='2026-07-20 10:00:00' where record_type='reply_tasks' and id=?",
             (task.id,),
         )
         db.execute(
@@ -11380,7 +10837,7 @@ def test_stale_processing_task_with_completed_turn_is_recoverable(
     )
     with sqlite3.connect(store.path) as db:
         db.execute(
-            "update reply_tasks set locked_at=datetime('now', '-11 minutes') where id=?",
+            "update tasks set locked_at=datetime('now', '-11 minutes') where record_type='reply_tasks' and id=?",
             (task.id,),
         )
 
@@ -11475,7 +10932,7 @@ def test_requeue_failed_work_summary_input_is_scoped_to_failed_record(tmp_path: 
     )
     with store._connect() as db:
         row = db.execute(
-            "select status, attempts, error, available_at from work_summary_inputs where id=?",
+            f"select status, attempts, error, available_at from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
             (input_id,),
         ).fetchone()
     assert dict(row) == {
@@ -11565,15 +11022,13 @@ def test_skipped_compacts_but_failed_and_requeued_keep_exact_input(tmp_path: Pat
 
 
 def test_work_input_provenance_schema_is_checked_on_store_reopen(tmp_path: Path):
-    path = tmp_path / "worker.sqlite3"
-    AutoReplyStore(path)
-    with sqlite3.connect(path) as db:
-        db.execute("alter table work_summary_inputs drop column body_compacted")
-    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-    reopened = AutoReplyStore(path)
-    with reopened._connect() as db:
-        columns = {row["name"] for row in db.execute("pragma table_info(work_summary_inputs)")}
-    assert "body_compacted" in columns
+    path = tmp_path / "malformed-provenance.sqlite3"
+    store = AutoReplyStore(path)
+    store.enqueue_work_summary_input("local_file", "source", "{}")
+    with store._connect() as db:
+        db.execute("alter table tasks rename column body_compacted to malformed_body_compacted")
+    assert store._schema_is_current() is False
+    assert_store_reopen_rejected_without_mutation(path)
 
 
 @pytest.mark.parametrize("terminal_status", ["done", "skipped"])
@@ -11616,27 +11071,26 @@ def test_reopening_current_core_never_recreates_a_second_trajectory_copy(tmp_pat
 
 
 
-def test_exact_11_1_source_with_result_body_is_rejected_without_erasing_payload(tmp_path: Path):
-    db_path = tmp_path / 'undrained-source-result.sqlite3'
-    _previous_11_1_runtime_attempt(db_path)
-    with sqlite3.connect(db_path) as db:
-        db.execute("update agent_runs set final_result_json=? where id=1",
-                   (json.dumps({'type':'item.completed','call_id':'kept'}),))
-    _assert_core_source_rejected_without_mutation(db_path)
+def test_current_source_with_retired_result_body_is_rejected_without_erasing_payload(tmp_path: Path):
+    path = tmp_path / "undrained-retired-result.sqlite3"
+    AutoReplyStore(path)
+    inventory = json.loads((Path(__file__).parents[1] / "docs/superpowers/specs/2026-10-11-database-redesign-phase4-inventory.json").read_text())
+    with sqlite3.connect(path) as db:
+        db.execute(inventory["tables"]["agent_runs"]["sql"])
+        db.execute("insert into agent_runs(reply_task_id,execution_generation,role,status,final_result_json) values(1,'original','consumer','completed',?)",
+                   (json.dumps({"type": "item.completed", "call_id": "kept"}),))
+    assert_store_reopen_rejected_without_mutation(path)
 
 
 
-def test_exact_11_1_runtime_migration_keeps_execution_shape_without_result_cache(tmp_path: Path):
-    db_path = tmp_path / 'runtime-execution-shape-11-1.sqlite3'
-    _previous_11_1_runtime_attempt(db_path)
-    upgraded = AutoReplyStore(db_path)
-    with upgraded._connect() as db:
-        columns = {row['name'] for row in db.execute('pragma table_info(runs)')}
-        assert {'lease_owner','lease_expires_at','attempt_purpose',
-                'validation_retry_policy_id','validation_result_schema_id','result_schema_id'} <= columns
+def test_current_runtime_keeps_execution_shape_without_result_cache(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "execution-shape.sqlite3")
+    with store._connect() as db:
+        columns = {row["name"] for row in db.execute("pragma table_info(runs)")}
+        assert {"lease_owner", "lease_expires_at", "attempt_purpose",
+                "validation_retry_policy_id", "validation_result_schema_id", "result_schema_id"} <= columns
         assert_no_core_native_storage(db)
-    assert upgraded.get_agent_runtime_attempt(1).attempt_purpose == 'normal'
-    assert upgraded._schema_is_current() is True
+    assert store._schema_is_current() is True
 
 
 
@@ -11747,91 +11201,6 @@ def test_schema_upgrade_adds_meeting_memory_processing_lease_fields(
     assert upgraded._schema_is_current() is True
 
 
-def test_schema_upgrade_preserves_reply_inputs_and_adds_revision_identity(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "reply-input-revision-migration.sqlite3"
-    store = AutoReplyStore(db_path)
-    task_id = store.enqueue_reply_task(
-        conversation_id="cid-calendar-revision",
-        conversation_title="Calendar",
-        single_chat=True,
-        trigger_message_id="msg-calendar-revision",
-        trigger_create_time="2026-09-14 10:00:00",
-        trigger_sender="Organizer",
-        trigger_text="旧日程时间",
-        trigger_message_json="{}",
-    )
-    assert task_id is not None
-    with store._connect() as db:
-        with AutoReplyStore._foreign_key_rebuild(
-            db,
-            migration_name="test_legacy_reply_task_inputs",
-        ):
-            db.executescript(
-                """
-                begin immediate;
-                create table reply_task_inputs_legacy (
-                    id integer primary key autoincrement,
-                    reply_task_id integer not null,
-                    channel text not null,
-                    conversation_id text not null,
-                    conversation_title text not null,
-                    single_chat integer not null,
-                    trigger_message_id text not null,
-                    trigger_create_time text not null,
-                    trigger_sender text not null,
-                    trigger_text text not null,
-                    trigger_message_json text not null default '{}',
-                    oa_url text not null default '',
-                    business_object_key text not null,
-                    created_at text not null default current_timestamp,
-                    unique(channel, conversation_id, trigger_message_id),
-                    foreign key(reply_task_id) references reply_tasks(id)
-                );
-                insert into reply_task_inputs_legacy (
-                    id, reply_task_id, channel, conversation_id,
-                    conversation_title, single_chat, trigger_message_id,
-                    trigger_create_time, trigger_sender, trigger_text,
-                    trigger_message_json, oa_url, business_object_key, created_at
-                )
-                select
-                    id, reply_task_id, channel, conversation_id,
-                    conversation_title, single_chat, trigger_message_id,
-                    trigger_create_time, trigger_sender, trigger_text,
-                    trigger_message_json, oa_url, business_object_key, created_at
-                from reply_task_inputs;
-                drop table reply_task_inputs;
-                alter table reply_task_inputs_legacy rename to reply_task_inputs;
-                create index idx_reply_task_inputs_task
-                    on reply_task_inputs(reply_task_id, id);
-                """
-            )
-        db.execute(
-            "update service_state set value=? where key=?",
-            (store_module.STORE_SCHEMA_VERSION, store_module.STORE_SCHEMA_VERSION_KEY),
-        )
-    # The core is current; exercise the retained business migration directly.
-    store._initialize()
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    reopened = AutoReplyStore(db_path)
-
-    with reopened._connect() as db:
-        columns = {
-            row["name"]
-            for row in db.execute("pragma table_info(reply_task_inputs)").fetchall()
-        }
-        version = db.execute(
-            "select value from service_state where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        ).fetchone()["value"]
-    assert "input_revision_key" in columns
-    assert version == store_module.STORE_SCHEMA_VERSION
-    inputs = reopened.list_reply_task_inputs(task_id)
-    assert len(inputs) == 1
-    assert inputs[0]["trigger_text"] == "旧日程时间"
-    assert inputs[0]["input_revision_key"] == ""
 
 
 def test_terminalize_exhausted_pending_reply_tasks_closes_restart_retry_loop(
@@ -11852,7 +11221,7 @@ def test_terminalize_exhausted_pending_reply_tasks_closes_restart_retry_loop(
     assert task is not None
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='pending', attempts=3, error='consumer_retry_exhausted' where id=?",
+            "update tasks set status='pending', attempts=3, error='consumer_retry_exhausted' where record_type='reply_tasks' and id=?",
             (task.id,),
         )
 
@@ -12193,7 +11562,7 @@ def test_recover_stale_runtime_attempts_closes_expired_weekly_okr_parent(
     with store._connect() as db:
         job = db.execute(
             "select status, error, lease_owner, lease_expires_at, finished_at "
-            "from weekly_okr_analysis_jobs where id=?",
+            "from tasks where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer)=?",
             (claim.job_id,),
         ).fetchone()
     assert tuple(job) == (
@@ -12241,7 +11610,7 @@ def test_superseded_stale_weekly_okr_job_is_completed_and_can_be_reclaimed(
     with store._connect() as db:
         row = db.execute(
             "select status, error, lease_owner, lease_expires_at from "
-            "weekly_okr_analysis_jobs where id=?",
+            "tasks where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer)=?",
             (stale.job_id,),
         ).fetchone()
     assert tuple(row) == (
@@ -12389,13 +11758,13 @@ def test_superseded_failed_weekly_okr_job_is_completed(tmp_path: Path, failure: 
     # pin the order the live rows had (the rerun started after the failure).
     with store._connect() as db:
         db.execute(
-            "update weekly_okr_analysis_jobs set created_at='2026-09-08 04:25:00' "
-            "where id in (?, ?)",
+            "update tasks set created_at='2026-09-08 04:25:00' "
+            "where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer) in (?, ?)",
             (stale.job_id, business.job_id),
         )
         db.execute(
-            "update weekly_okr_analysis_jobs set created_at='2026-09-08 05:12:00' "
-            "where status='completed'",
+            "update tasks set created_at='2026-09-08 05:12:00' "
+            "where record_type='weekly_okr_analysis_jobs' and status='completed'",
         )
 
     assert store.complete_superseded_failed_weekly_okr_analysis_jobs(
@@ -12405,8 +11774,8 @@ def test_superseded_failed_weekly_okr_job_is_completed(tmp_path: Path, failure: 
         rows = {
             row[0]: tuple(row[1:])
             for row in db.execute(
-                "select id, status, error, lease_owner, lease_expires_at "
-                "from weekly_okr_analysis_jobs where id in (?, ?)",
+                "select cast(legacy_key as integer), status, error, lease_owner, lease_expires_at "
+                "from tasks where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer) in (?, ?)",
                 (stale.job_id, business.job_id),
             ).fetchall()
         }
@@ -12432,50 +11801,45 @@ def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_p
     stale = json.dumps({"task_id": 2})
     with store._connect() as db:
         assert store._scheduled_task_run_snapshots_are_current(db) is True
-        cols = {row["name"] for row in db.execute("pragma table_info(scheduled_task_runs)")}
+        cols = {column[0] for column in db.execute(f"select * from ({SCHEDULED_RUN_SQL}) limit 0").description}
         assert "snapshot_id" in cols
         # A JSON null value for command is a present key, not an absent one.
         for index, payload in enumerate(
             (current, json.dumps({"command": None, "required_runtime_capabilities": None}))
         ):
-            db.execute(
-                "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind,"
-                " scheduled_for, first_scheduled_for, dispatch_status, snapshot_id) "
-                "values (?, ?, 'scheduled', ?, ?, 'pending', ?)",
-                (
-                    f"evt-{index}", task.id,
-                    f"2026-09-11T0{index}:00:00+00:00",
-                    f"2026-09-11T0{index}:00:00+00:00", intern_scheduled_config(db, payload),
-                ),
-            )
+            insert_run(db, 'scheduled_task_runs', {
+                'event_id': f"evt-{index}",
+                'scheduled_task_id': task.id,
+                'trigger_kind': 'scheduled',
+                'scheduled_for': f"2026-09-11T0{index}:00:00+00:00",
+                'first_scheduled_for': f"2026-09-11T0{index}:00:00+00:00",
+                'dispatch_status': 'pending',
+                'snapshot_id': intern_scheduled_config(db, payload),
+            })
         assert store._scheduled_task_run_snapshots_are_current(db) is True
 
         # Unparseable JSON is corrupt data, not a stale schema.
-        db.execute(
-            "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind,"
-            " scheduled_for, first_scheduled_for, dispatch_status, snapshot_id) "
-            "values ('evt-bad', ?, 'scheduled', ?, ?, 'pending', ?)",
-            (
-                task.id,
-                "2026-09-11T05:00:00+00:00",
-                "2026-09-11T05:00:00+00:00",
-                intern_scheduled_config(db, "{not json"),
-            ),
-        )
+        insert_run(db, 'scheduled_task_runs', {
+            'event_id': 'evt-bad',
+            'scheduled_task_id': task.id,
+            'trigger_kind': 'scheduled',
+            'scheduled_for': '2026-09-11T05:00:00+00:00',
+            'first_scheduled_for': '2026-09-11T05:00:00+00:00',
+            'dispatch_status': 'pending',
+            'snapshot_id': intern_scheduled_config(db, "{not json"),
+        })
         assert store._scheduled_task_run_snapshots_are_current(db) is True
 
         # A snapshot missing the command keys is what the check must catch.
-        db.execute(
-            "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind,"
-            " scheduled_for, first_scheduled_for, dispatch_status, snapshot_id) "
-            "values ('evt-stale', ?, 'scheduled', ?, ?, 'pending', ?)",
-            (
-                task.id,
-                "2026-09-11T06:00:00+00:00",
-                "2026-09-11T06:00:00+00:00",
-                intern_scheduled_config(db, stale),
-            ),
-        )
+        insert_run(db, 'scheduled_task_runs', {
+            'event_id': 'evt-stale',
+            'scheduled_task_id': task.id,
+            'trigger_kind': 'scheduled',
+            'scheduled_for': '2026-09-11T06:00:00+00:00',
+            'first_scheduled_for': '2026-09-11T06:00:00+00:00',
+            'dispatch_status': 'pending',
+            'snapshot_id': intern_scheduled_config(db, stale),
+        })
         assert store._scheduled_task_run_snapshots_are_current(db) is False
 
 
@@ -12832,7 +12196,7 @@ def test_an_unanswered_question_is_never_retired_by_its_own_closed_task(tmp_path
         trigger_message_json="{}",
     )
     with store._connect() as db:
-        db.execute("update reply_tasks set status='done' where trigger_message_id=?",
+        db.execute("update tasks set status='done' where record_type='reply_tasks' and trigger_message_id=?",
                    ("msg-payroll",))
 
     assert _projected(store, pending_question) == "needs_human"
@@ -12854,7 +12218,7 @@ def test_skipped_task_retires_its_failed_attempt_from_current_problems(tmp_path)
     )
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='skipped' where trigger_message_id=?",
+            "update tasks set status='skipped' where record_type='reply_tasks' and trigger_message_id=?",
             ("msg-skipped",),
         )
 
@@ -12900,7 +12264,7 @@ def _input_with_live_run(store):
 def _live_counts(store, run_id: int, attempt_id: int) -> tuple[str, str]:
     with store._connect() as db:
         run = db.execute(
-            "select status from task_agent_runs where id=?", (run_id,)
+            f"select status from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,)
         ).fetchone()
     attempt = store.get_agent_runtime_attempt(attempt_id)
     return run["status"], attempt.status
@@ -12935,8 +12299,8 @@ def test_the_stale_reset_also_closes_what_it_orphans(tmp_path: Path):
     input_id, run_id, attempt = _input_with_live_run(store)
     with store._connect() as db:
         db.execute(
-            "update work_summary_inputs set updated_at=datetime('now','-3600 seconds') "
-            "where id=?",
+            "update tasks set updated_at=datetime('now','-3600 seconds') "
+            f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
             (input_id,),
         )
 
@@ -12991,9 +12355,9 @@ def test_a_task_whose_approval_action_completed_still_ends_failed(tmp_path):
     assert task is not None
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='processing', locked_at=current_timestamp, "
+            "update tasks set status='processing', locked_at=current_timestamp, "
             "claimed_input_version=input_version, "
-            "business_object_key='oa:INST:T1' where id=?",
+            "business_object_key='oa:INST:T1' where record_type='reply_tasks' and id=?",
             (task.id,),
         )
     claim = store.claim_agent_run(
@@ -13051,9 +12415,9 @@ def test_a_task_that_wrote_nothing_still_fails(tmp_path):
     assert task is not None
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='processing', locked_at=current_timestamp, "
+            "update tasks set status='processing', locked_at=current_timestamp, "
             "claimed_input_version=input_version, "
-            "business_object_key='oa:INST2:T1' where id=?",
+            "business_object_key='oa:INST2:T1' where record_type='reply_tasks' and id=?",
             (task.id,),
         )
 
@@ -13090,8 +12454,8 @@ def test_a_task_holding_a_lock_with_no_live_run_is_requeued(tmp_path):
     assert task is not None
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='processing', "
-            "locked_at=datetime('now','-45 minutes') where id=?",
+            "update tasks set status='processing', "
+            "locked_at=datetime('now','-45 minutes') where record_type='reply_tasks' and id=?",
             (task.id,),
         )
     claim = store.claim_agent_run(
@@ -13145,8 +12509,8 @@ def test_a_task_with_a_live_run_keeps_its_lock(tmp_path):
     assert task is not None
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status='processing', "
-            "locked_at=datetime('now','-45 minutes') where id=?",
+            "update tasks set status='processing', "
+            "locked_at=datetime('now','-45 minutes') where record_type='reply_tasks' and id=?",
             (task.id,),
         )
     store.claim_agent_run(
@@ -13333,7 +12697,7 @@ def test_a_resume_that_never_stops_is_allowed_to_fail(tmp_path: Path):
     statuses = []
     for _ in range(AutoReplyStore.RESUMABLE_MAX_ATTEMPTS + 1):
         with store._connect() as db:
-            db.execute("update reply_tasks set available_at=''")
+            db.execute("update tasks set available_at='' where record_type='reply_tasks'")
         claimed = store.claim_reply_tasks(limit=1)
         if not claimed:
             break
@@ -13451,7 +12815,7 @@ def test_reconcile_preserves_invalid_legacy_needs_human_projection(
             (claim.run.id, "provider_receipt_missing", attempt_id),
         )
         db.execute(
-            "update reply_tasks set status='needs_human', error='' where id=?",
+            "update tasks set status='needs_human', error='' where record_type='reply_tasks' and id=?",
             (task.id,),
         )
 
@@ -13507,7 +12871,7 @@ def test_reconcile_preserves_failed_attempt_and_stale_task_for_investigation(
             (consumer.id, attempt_id),
         )
         db.execute(
-            "update reply_tasks set status='needs_human', error='codex_result_invalid' where id=?",
+            "update tasks set status='needs_human', error='codex_result_invalid' where record_type='reply_tasks' and id=?",
             (task.id,),
         )
 
@@ -13527,7 +12891,7 @@ def test_failed_task_without_a_current_human_projection_is_unchanged(tmp_path: P
     )
     task = store.claim_reply_tasks(limit=1)[0]
     with store._connect() as db:
-        db.execute("update reply_tasks set status='failed', error='codex_result_missing'")
+        db.execute("update tasks set status='failed', error='codex_result_missing' where record_type='reply_tasks'")
 
     assert store.reconcile_invalid_needs_human_projections() == 0
     assert store.get_reply_task(task.id).status == "failed"
@@ -13564,7 +12928,7 @@ def test_old_generation_attempt_cannot_fail_or_surface_current_task(tmp_path: Pa
             (run.lastrowid, attempt_id),
         )
         db.execute(
-            "update reply_tasks set execution_generation='current-gen', status='pending' where id=?",
+            "update tasks set execution_generation='current-gen', status='pending' where record_type='reply_tasks' and id=?",
             (task.id,),
         )
 
@@ -13604,7 +12968,7 @@ def test_current_generation_failed_attempt_remains_visible_while_task_retries(tm
             "update reply_attempts set agent_run_id=?, send_error='codex_process_failed' where id=?",
             (run.lastrowid, attempt_id),
         )
-        db.execute("update reply_tasks set status='pending' where id=?", (task.id,))
+        db.execute("update tasks set status='pending' where record_type='reply_tasks' and id=?", (task.id,))
     assert store.get_reply_task(task.id).status == "pending"
     assert [item.id for item in store.list_current_unresolved_problem_attempts()] == [attempt_id]
     assert [item["id"] for item in store.list_current_unresolved_problem_attempt_summaries()] == [str(attempt_id)]
@@ -13750,7 +13114,7 @@ def test_an_answered_question_can_close(tmp_path: Path):
     )
     task = store.claim_reply_tasks(limit=1)[0]
     with store._connect() as db:
-        db.execute("update reply_tasks set status='needs_human'")
+        db.execute("update tasks set status='needs_human' where record_type='reply_tasks'")
 
     assert store.close_needs_human_task_with_decision(
         task.id, decision="认可已发出的内容，不补发。"
@@ -13784,18 +13148,22 @@ def test_scheduled_task_ids_for_reply_tasks_maps_only_reply_task_runs(tmp_path: 
     with store._connect() as db:
         from app.scheduled_config_storage import intern_scheduled_config
         snapshot_id = intern_scheduled_config(db, snapshot_json)
-        db.execute(
-            "insert into scheduled_task_runs (event_id, scheduled_task_id, trigger_kind, "
-            "scheduled_for, first_scheduled_for, dispatch_status, execution_kind, "
-            "execution_id, created_at, snapshot_id) values "
-            "('e1', 13, 'scheduled', '2026-10-01T12:00:00+00:00', "
-            "'2026-10-01T12:00:00+00:00', 'dispatched', 'reply_task', '9001', "
-            "'2026-10-01T12:00:00+00:00', ?), "
-            "('e2', 13, 'scheduled', '2026-10-01T13:00:00+00:00', "
-            "'2026-10-01T13:00:00+00:00', 'dispatched', 'service_command', 'produce-once', "
-            "'2026-10-01T13:00:00+00:00', ?)",
-            (snapshot_id, snapshot_id),
-        )
+        for event_id, scheduled_for, execution_kind, execution_id in (
+            ('e1', '2026-10-01T12:00:00+00:00', 'reply_task', '9001'),
+            ('e2', '2026-10-01T13:00:00+00:00', 'service_command', 'produce-once'),
+        ):
+            insert_run(db, 'scheduled_task_runs', {
+                'event_id': event_id,
+                'scheduled_task_id': 13,
+                'trigger_kind': 'scheduled',
+                'scheduled_for': scheduled_for,
+                'first_scheduled_for': scheduled_for,
+                'dispatch_status': 'dispatched',
+                'execution_kind': execution_kind,
+                'execution_id': execution_id,
+                'created_at': scheduled_for,
+                'snapshot_id': snapshot_id,
+            })
 
     mapped = store.scheduled_task_ids_for_reply_tasks((9001, 9002))
 

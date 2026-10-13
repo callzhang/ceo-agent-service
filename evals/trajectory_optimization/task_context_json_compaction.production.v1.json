@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "production_head": "6ab876e938d1e0986b0ca6d4985f57e2364b043a",
+  "session_id": "01a130d9-8969-75a2-8e52-8432d5842dc2",
+  "scope": "Read-only original saved native inputs. Values were inspected locally only. Measurements preserve all JSON fields/values and order; no private input sent to a provider, no new actual run. Characters are not tokens or cost.",
+  "rows": [
+    {
+      "record_index": 6,
+      "task_prompt_chars": 396546,
+      "semantic_json_chars": 366009,
+      "compact_equivalent_chars": 314690,
+      "whitespace_reduction_chars": 51319,
+      "collection_counts": {
+        "official_project_registry": 21,
+        "project_contexts": 5,
+        "project_evidence": 23,
+        "task_candidates": 20,
+        "existing_formal_tasks": 20,
+        "unverified_formal_tasks": 20,
+        "task_evidence": 121,
+        "source_documents": 48,
+        "source_signals": 96,
+        "task_relations": 0,
+        "task_anchor_links": 34,
+        "work_clusters": 16,
+        "cluster_memberships": 16,
+        "registered_anchors": 41,
+        "current_project_attention": 5
+      },
+      "lossless_json_roundtrip": true
+    },
+    {
+      "record_index": 41,
+      "task_prompt_chars": 412889,
+      "semantic_json_chars": 382352,
+      "compact_equivalent_chars": 330378,
+      "whitespace_reduction_chars": 51974,
+      "collection_counts": {
+        "official_project_registry": 20,
+        "project_contexts": 5,
+        "project_evidence": 25,
+        "task_candidates": 20,
+        "existing_formal_tasks": 20,
+        "unverified_formal_tasks": 20,
+        "task_evidence": 116,
+        "source_documents": 53,
+        "source_signals": 99,
+        "task_relations": 0,
+        "task_anchor_links": 28,
+        "work_clusters": 16,
+        "cluster_memberships": 16,
+        "registered_anchors": 40,
+        "current_project_attention": 6
+      },
+      "lossless_json_roundtrip": true
+    },
+    {
+      "record_index": 102,
+      "task_prompt_chars": 399107,
+      "semantic_json_chars": 368568,
+      "compact_equivalent_chars": 316659,
+      "whitespace_reduction_chars": 51909,
+      "collection_counts": {
+        "official_project_registry": 21,
+        "project_contexts": 5,
+        "project_evidence": 25,
+        "task_candidates": 20,
+        "existing_formal_tasks": 20,
+        "unverified_formal_tasks": 20,
+        "task_evidence": 115,
+        "source_documents": 52,
+        "source_signals": 98,
+        "task_relations": 0,
+        "task_anchor_links": 28,
+        "work_clusters": 16,
+        "cluster_memberships": 16,
+        "registered_anchors": 41,
+        "current_project_attention": 6
+      },
+      "lossless_json_roundtrip": true
+    },
+    {
+      "record_index": 159,
+      "task_prompt_chars": 417845,
+      "semantic_json_chars": 387308,
+      "compact_equivalent_chars": 334885,
+      "whitespace_reduction_chars": 52423,
+      "collection_counts": {
+        "official_project_registry": 20,
+        "project_contexts": 5,
+        "project_evidence": 26,
+        "task_candidates": 20,
+        "existing_formal_tasks": 20,
+        "unverified_formal_tasks": 20,
+        "task_evidence": 116,
+        "source_documents": 54,
+        "source_signals": 100,
+        "task_relations": 0,
+        "task_anchor_links": 28,
+        "work_clusters": 16,
+        "cluster_memberships": 16,
+        "registered_anchors": 40,
+        "current_project_attention": 7
+      },
+      "lossless_json_roundtrip": true
+    },
+    {
+      "record_index": 188,
+      "task_prompt_chars": 450092,
+      "semantic_json_chars": 419557,
+      "compact_equivalent_chars": 365564,
+      "whitespace_reduction_chars": 53993,
+      "collection_counts": {
+        "official_project_registry": 21,
+        "project_contexts": 5,
+        "project_evidence": 25,
+        "task_candidates": 20,
+        "existing_formal_tasks": 20,
+        "unverified_formal_tasks": 20,
+        "task_evidence": 121,
+        "source_documents": 49,
+        "source_signals": 98,
+        "task_relations": 0,
+        "task_anchor_links": 37,
+        "work_clusters": 16,
+        "cluster_memberships": 16,
+        "registered_anchors": 41,
+        "current_project_attention": 6
+      },
+      "lossless_json_roundtrip": true
+    }
+  ]
+}

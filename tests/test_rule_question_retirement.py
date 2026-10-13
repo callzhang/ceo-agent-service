@@ -69,8 +69,13 @@ def seed(store, *, native_home):
         ]}},
     )) + "\n")
     with store._connect() as db:
-        task_id = db.execute("select id from reply_tasks").fetchone()[0]
-        db.execute("update reply_tasks set status='done' where id=?", (task_id,))
+        task_id = db.execute(
+            "select id from tasks where record_type='reply_tasks'"
+        ).fetchone()[0]
+        db.execute(
+            "update tasks set status='done' where record_type='reply_tasks' and id=?",
+            (task_id,),
+        )
         run_id = insert_run(db, 'agent_runs', {
             'task_id': task_id, 'execution_generation': 'old-contract',
             'role': 'consumer', 'status': 'completed', 'session_id': session_id,
@@ -169,9 +174,17 @@ def test_retirement_refuses_current_or_unproven_questions(tmp_path, change, isol
         elif change in {"retryable", "authorization_required"}:
             result["error"][change] = True
         elif change == "generation":
-            db.execute("update reply_tasks set execution_generation='new'")
+            db.execute(
+                "update tasks set execution_generation='new' "
+                "where record_type='reply_tasks' and id=?",
+                (task_id,),
+            )
         elif change == "active":
-            db.execute("update reply_tasks set status='needs_human'")
+            db.execute(
+                "update tasks set status='needs_human' "
+                "where record_type='reply_tasks' and id=?",
+                (task_id,),
+            )
         elif change == "candidate":
             db.execute("insert into review_candidates(task_id, execution_generation, consumer_run_id, "
                        "candidate_json, candidate_digest, stage_index, proposal_revision) values (?, 'old-contract', ?, '{}', 'digest',0,0)",

@@ -1,0 +1,355 @@
+{
+  "version": 1,
+  "production_commit": "fe41e8a9d2e28c30352f93ea8083460a0ab4c101",
+  "production_dirty": false,
+  "job_pid": [
+    "4164"
+  ],
+  "deployment_receipt": {
+    "operation_id": "deploy-ad1b4d51-65d0-4dc5-8dbb-8e091ee9cd2e",
+    "status": "succeeded",
+    "original_commit": "4b38ab8b55568666770f32b0cb385eb4d11db512",
+    "target_commit": "fe41e8a9d2e28c30352f93ea8083460a0ab4c101",
+    "installed_commit": "fe41e8a9d2e28c30352f93ea8083460a0ab4c101",
+    "error": "",
+    "updated_at": "2026-10-12T23:50:49.711066+00:00"
+  },
+  "backup": {
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-12.sqlite3",
+    "exists": true,
+    "bytes": 471347200
+  },
+  "http_readbacks": [
+    {
+      "path": "/healthz",
+      "http_status": 200,
+      "health": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    {
+      "path": "/api/workers/status",
+      "http_status": 200,
+      "summary": {
+        "queue_count": 13,
+        "pending": 3,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 0,
+        "attention": 0
+      },
+      "queues": [
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 3,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        }
+      ]
+    },
+    {
+      "path": "/api/console/attention",
+      "http_status": 200,
+      "meta": {
+        "snapshot_at": "2026-10-12T23:54:30.843883Z",
+        "page": null,
+        "page_size": null,
+        "total": 0,
+        "next_cursor": "",
+        "has_more": false
+      }
+    },
+    {
+      "path": "/api/console/history?page_size=1&include_chart=false",
+      "http_status": 200,
+      "meta": {
+        "snapshot_at": "2026-10-12T23:54:32.069295Z",
+        "page": 1,
+        "page_size": 1,
+        "total": 34798,
+        "next_cursor": "2",
+        "has_more": true
+      }
+    },
+    {
+      "path": "/api/console/settings/prompt-preview?role=consumer",
+      "http_status": 200,
+      "role": "consumer",
+      "preview_state": "preview",
+      "text_metrics": {
+        "developer_instructions": {
+          "characters": 32244,
+          "sha256": "3b21ddbdfce40adcad5a0d1dcc6f6174fcf6f001ec429e352998271a4be254fc"
+        },
+        "task_prompt": {
+          "characters": 24,
+          "sha256": "3bbbc850f1364ac32529a6f5d5a80b663d1d86aa347ed705056a66dc224b2cc7"
+        },
+        "runtime_context": {
+          "characters": 2699,
+          "sha256": "0eede4a71dc989903911d9d3511920fb89ba2bde5e05b7b6aa8f32f856a75d7e"
+        }
+      },
+      "sections": [
+        {
+          "name": "角色合同",
+          "source": "服务角色合同",
+          "placement": "developer",
+          "characters": 785
+        },
+        {
+          "name": "Skill 使用约定",
+          "source": "服务角色合同",
+          "placement": "developer",
+          "characters": 308
+        },
+        {
+          "name": "共同工作原则",
+          "source": "已保存 Developer 模板",
+          "placement": "developer",
+          "characters": 625
+        },
+        {
+          "name": "系统动作目录",
+          "source": "系统动作合同",
+          "placement": "developer",
+          "characters": 922
+        },
+        {
+          "name": "输出契约",
+          "source": "Pydantic 业务模型",
+          "placement": "developer",
+          "characters": 9079
+        },
+        {
+          "name": "能力边界",
+          "source": "服务能力合同",
+          "placement": "developer",
+          "characters": 3529
+        },
+        {
+          "name": "后台记忆说明",
+          "source": "服务运行合同",
+          "placement": "developer",
+          "characters": 350
+        },
+        {
+          "name": "角色边界",
+          "source": "服务角色合同",
+          "placement": "developer",
+          "characters": 2741
+        },
+        {
+          "name": "决策证据",
+          "source": "服务决策质量合同",
+          "placement": "developer",
+          "characters": 1761
+        },
+        {
+          "name": "应用结果合同",
+          "source": "服务应用合同",
+          "placement": "developer",
+          "characters": 891
+        },
+        {
+          "name": "工作人格",
+          "source": "已保存 Work Profile",
+          "placement": "developer",
+          "characters": 8532
+        },
+        {
+          "name": "运行上下文",
+          "source": "实际运行配置",
+          "placement": "developer",
+          "characters": 2699
+        },
+        {
+          "name": "任务输入",
+          "source": "当前任务正文",
+          "placement": "task",
+          "characters": 24
+        }
+      ]
+    },
+    {
+      "path": "/api/console/settings/prompt-preview?role=audit",
+      "http_status": 200,
+      "role": "audit",
+      "preview_state": "preview",
+      "text_metrics": {
+        "developer_instructions": {
+          "characters": 29246,
+          "sha256": "f5ba30f07a87dea52836f7b3a5fe0b489646ea79e1fb6b02915ec1f1c799b03f"
+        },
+        "task_prompt": {
+          "characters": 24,
+          "sha256": "3bbbc850f1364ac32529a6f5d5a80b663d1d86aa347ed705056a66dc224b2cc7"
+        },
+        "runtime_context": {
+          "characters": 2469,
+          "sha256": "7f6b3a7a11233e5e45c4741f4e28d90f1aefe3006723a38e387ebb22d162c190"
+        }
+      },
+      "sections": [
+        {
+          "name": "审核规则",
+          "source": "已保存 Audit Rules",
+          "placement": "developer",
+          "characters": 7608
+        },
+        {
+          "name": "角色合同",
+          "source": "服务角色合同",
+          "placement": "developer",
+          "characters": 785
+        },
+        {
+          "name": "Skill 使用约定",
+          "source": "服务角色合同",
+          "placement": "developer",
+          "characters": 335
+        },
+        {
+          "name": "共同工作原则",
+          "source": "已保存 Developer 模板",
+          "placement": "developer",
+          "characters": 625
+        },
+        {
+          "name": "系统动作目录",
+          "source": "系统动作合同",
+          "placement": "developer",
+          "characters": 922
+        },
+        {
+          "name": "输出契约",
+          "source": "Pydantic 业务模型",
+          "placement": "developer",
+          "characters": 1575
+        },
+        {
+          "name": "能力边界",
+          "source": "服务能力合同",
+          "placement": "developer",
+          "characters": 828
+        },
+        {
+          "name": "后台记忆说明",
+          "source": "服务运行合同",
+          "placement": "developer",
+          "characters": 350
+        },
+        {
+          "name": "决策证据",
+          "source": "服务决策质量合同",
+          "placement": "developer",
+          "characters": 1761
+        },
+        {
+          "name": "应用结果合同",
+          "source": "服务应用合同",
+          "placement": "developer",
+          "characters": 3007
+        },
+        {
+          "name": "响应完整性",
+          "source": "审核角色合同",
+          "placement": "developer",
+          "characters": 423
+        },
+        {
+          "name": "工作人格",
+          "source": "已保存 Work Profile",
+          "placement": "developer",
+          "characters": 8532
+        },
+        {
+          "name": "运行上下文",
+          "source": "实际运行配置",
+          "placement": "developer",
+          "characters": 2469
+        },
+        {
+          "name": "任务输入",
+          "source": "当前任务正文",
+          "placement": "task",
+          "characters": 24
+        }
+      ]
+    }
+  ],
+  "scope": "Deployment/version/PID/local observability. No actual unsubscribe replay; no claim of configured Memory authentication or new provider outcome."
+}

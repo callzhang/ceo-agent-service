@@ -8,6 +8,7 @@ import sqlite3
 import pytest
 
 from app.agent_cli import build_role_server
+from app.task_storage import create_task_schema, insert_task
 from app.agent_cron.commands import (
     ServiceCommandConsumerContext,
     ServiceCommandSkillMaterial,
@@ -21,14 +22,33 @@ def _task_db(path, *, scheduled_consumer: dict[str, object], generation="first")
         ensure_ascii=False,
     )
     with sqlite3.connect(path) as db:
-        db.execute(
-            "create table reply_tasks ("
-            "id integer primary key, execution_generation text not null, "
-            "claimed_input_id integer references reply_task_inputs(id))"
-        )
-        db.execute("create table reply_task_inputs (id integer primary key, reply_task_id integer not null, trigger_message_json text not null)")
-        db.execute("insert into reply_task_inputs values (13, 7, ?)", (trigger,))
-        db.execute("insert into reply_tasks values (7, ?, 13)", (generation,))
+        create_task_schema(db)
+        insert_task(db, "reply_tasks", {
+            "id": 7,
+            "channel": "dingtalk",
+            "conversation_id": "scheduled-conversation",
+            "conversation_title": "Scheduled task",
+            "single_chat": 0,
+            "trigger_message_id": "scheduled-message",
+            "trigger_create_time": "",
+            "trigger_sender": "",
+            "execution_generation": generation,
+        })
+        insert_task(db, "reply_task_inputs", {
+            "id": 13,
+            "parent_id": 7,
+            "channel": "dingtalk",
+            "conversation_id": "scheduled-conversation",
+            "conversation_title": "Scheduled task",
+            "single_chat": 0,
+            "trigger_message_id": "scheduled-message",
+            "trigger_create_time": "",
+            "trigger_sender": "",
+            "trigger_text": "",
+            "trigger_message_json": trigger,
+            "business_object_key": "",
+        })
+        db.execute("update tasks set claimed_input_id=13 where record_type='reply_tasks' and id=7")
 
 
 def _context(*materials: ServiceCommandSkillMaterial) -> ServiceCommandConsumerContext:
@@ -136,7 +156,7 @@ def test_read_task_skill_fails_for_missing_unknown_ambiguous_or_stale_material(
     with sqlite3.connect(db) as connection:
         empty = _context().to_payload()
         connection.execute(
-            "update reply_task_inputs set trigger_message_json=? where reply_task_id=7",
+            "update tasks set trigger_message_json=? where record_type='reply_task_inputs' and parent_id=7",
             (json.dumps({"raw_payload": {"scheduled_consumer": empty}}),),
         )
     with pytest.raises(ValueError, match="unavailable"):
@@ -144,7 +164,7 @@ def test_read_task_skill_fails_for_missing_unknown_ambiguous_or_stale_material(
 
     with sqlite3.connect(db) as connection:
         connection.execute(
-            "update reply_tasks set execution_generation='second' where id=7"
+            "update tasks set execution_generation='second' where record_type='reply_tasks' and id=7"
         )
     with pytest.raises(ValueError, match="generation changed"):
         read("ceo-calendar-invite")
@@ -219,3 +239,19 @@ def test_role_prompt_carries_current_frozen_skill_catalog_without_body():
     assert "read_task_skill" in context.role_prompt()
     assert "FROZEN BODY" not in context.role_prompt()
     assert _context().role_prompt() == _context().prompt
+
+
+def test_frozen_discovery_reuses_only_complete_unchanged_source_in_session():
+    from app.business_skills import render_task_skill_discovery
+
+    prompt = render_task_skill_discovery(
+        ("ceo-calendar-invite",),
+        catalog=(),
+        frozen_names=("ceo-calendar-invite",),
+    )
+    assert "agent_cli.read_task_skill(name)" in prompt
+    assert "Reuse complete content already loaded in this session" in prompt
+    assert "this selected frozen Skill's revision_id/sha256 is unchanged" in prompt
+    assert "Otherwise read the exact frozen content" in prompt
+    assert "do not substitute a similarly named installed Skill" in prompt
+    assert "before deciding or reviewing" not in prompt

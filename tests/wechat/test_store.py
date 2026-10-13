@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from app.store import AgentRunLeaseLostError, AutoReplyStore
+from app.task_storage import insert_task
 from app.wechat.models import WechatReplyScope
 
 
@@ -62,10 +63,11 @@ def _wechat_delivery_and_attempt_state(store, delivery_id):
                 """
                 select attempts.*
                 from reply_attempts as attempts
-                join reply_tasks as tasks
+                join tasks as tasks
                   on tasks.conversation_id=attempts.conversation_id
                  and tasks.trigger_message_id=attempts.trigger_message_id
-                where tasks.id=? and attempts.channel='wechat'
+                where tasks.id=? and tasks.record_type='reply_tasks'
+                  and attempts.channel='wechat'
                 order by attempts.id
                 """,
                 (delivery["reply_task_id"],),
@@ -74,10 +76,11 @@ def _wechat_delivery_and_attempt_state(store, delivery_id):
     return delivery, attempts
 
 
-def _open_legacy_store_in_process(db_path, barrier, results):
+def _open_current_store_for_repair_in_process(db_path, barrier, results):
     try:
         barrier.wait()
         store = AutoReplyStore(Path(db_path))
+        assert store._schema_is_current() is True
         with store._connect() as db:
             results.put(
                 (
@@ -444,46 +447,48 @@ def test_new_delivery_supersedes_older_unsent_delivery_for_same_conversation(
     tmp_path,
 ):
     store = _store(tmp_path)
-    for task_id, message_id in ((1, "m1"), (2, "m2")):
-        store.enqueue_reply_task(
+    tasks = []
+    for sequence, message_id in enumerate(("m1", "m2"), start=1):
+        task = store.ensure_reply_task(
             channel="wechat",
             conversation_id="u1",
             conversation_title="Alex",
             single_chat=True,
             trigger_message_id=message_id,
-            trigger_create_time=f"2026-07-28T10:0{task_id}:00",
+            trigger_create_time=f"2026-07-28T10:0{sequence}:00",
             trigger_sender="Alex",
-            trigger_text=f"message {task_id}",
+            trigger_text=f"message {sequence}",
         )
+        tasks.append(task)
         store.record_reply_attempt(
             conversation_id="u1",
             conversation_title="Alex",
             trigger_message_id=message_id,
             trigger_sender="Alex",
-            trigger_text=f"message {task_id}",
+            trigger_text=f"message {sequence}",
             action="send_reply",
             sensitivity_kind="normal",
             send_status="pending",
             channel="wechat",
         )
         store.create_wechat_delivery(
-            reply_task_id=task_id,
+            reply_task_id=task.id,
             account_id="acct-1",
             target_type="direct",
             target_id="u1",
             conversation_id="u1",
-            reply_text=f"reply {task_id}",
+            reply_text=f"reply {sequence}",
         )
 
-    old_delivery = store.get_wechat_delivery_for_task(1)
-    new_delivery = store.get_wechat_delivery_for_task(2)
+    old_delivery = store.get_wechat_delivery_for_task(tasks[0].id)
+    new_delivery = store.get_wechat_delivery_for_task(tasks[1].id)
     old_attempt = store.get_latest_reply_attempt_for_trigger("u1", "m1")
     new_attempt = store.get_latest_reply_attempt_for_trigger("u1", "m2")
 
     assert old_delivery.status == "superseded"
-    assert old_delivery.error == "superseded_by_newer_wechat_trigger:2"
+    assert old_delivery.error == f"superseded_by_newer_wechat_trigger:{tasks[1].id}"
     assert old_attempt.send_status == "skipped"
-    assert old_attempt.send_error == "superseded_by_newer_wechat_trigger:2"
+    assert old_attempt.send_error == f"superseded_by_newer_wechat_trigger:{tasks[1].id}"
     assert new_delivery.status == "ready_to_send"
     assert new_attempt.send_status == "pending"
 
@@ -493,6 +498,7 @@ def test_finalize_reply_supersedes_older_unsent_delivery_for_same_conversation(
 ):
     store = _store(tmp_path)
     attempts = []
+    tasks = []
     for message_id in ("m1", "m2"):
         store.enqueue_reply_task(
             channel="wechat",
@@ -505,6 +511,7 @@ def test_finalize_reply_supersedes_older_unsent_delivery_for_same_conversation(
             trigger_text=message_id,
         )
         task = store.claim_reply_tasks(1, channel="wechat")[0]
+        tasks.append(task)
         attempts.append(
             store.finalize_wechat_reply_task(
                 task_id=task.id,
@@ -523,14 +530,14 @@ def test_finalize_reply_supersedes_older_unsent_delivery_for_same_conversation(
             )
         )
 
-    old_delivery = store.get_wechat_delivery_for_task(1)
-    new_delivery = store.get_wechat_delivery_for_task(2)
+    old_delivery = store.get_wechat_delivery_for_task(tasks[0].id)
+    new_delivery = store.get_wechat_delivery_for_task(tasks[1].id)
     old_attempt = store.get_reply_attempt(attempts[0])
 
     assert old_delivery.status == "superseded"
-    assert old_delivery.error == "superseded_by_newer_wechat_trigger:2"
+    assert old_delivery.error == f"superseded_by_newer_wechat_trigger:{tasks[1].id}"
     assert old_attempt.send_status == "skipped"
-    assert old_attempt.send_error == "superseded_by_newer_wechat_trigger:2"
+    assert old_attempt.send_error == f"superseded_by_newer_wechat_trigger:{tasks[1].id}"
     assert new_delivery.status == "ready_to_send"
 
 
@@ -811,11 +818,13 @@ def test_exhausted_stale_wechat_delivery_rejects_ineligible_state_unchanged(
         elif invalid_state == "delivery_generation_mismatch":
             expected_generation = "different-generation"
         elif invalid_state == "task_generation_mismatch":
-            db.execute(
-                "update reply_tasks set execution_generation='new-generation' "
-                "where id=(select reply_task_id from wechat_deliveries where id=?)",
+            changed = db.execute(
+                "update tasks set execution_generation='new-generation' "
+                "where record_type='reply_tasks' and id=(select reply_task_id "
+                "from wechat_deliveries where id=?)",
                 (delivery_id,),
             )
+            assert changed.rowcount == 1
         elif invalid_state == "missing_matching_attempt":
             db.execute("delete from reply_attempts where id=?", (attempt_id,))
     before = _wechat_delivery_and_attempt_state(store, delivery_id)
@@ -899,28 +908,30 @@ def test_sent_revision_supersedes_same_task_pre_action_failure(tmp_path, pre_act
 
 def test_newer_sent_delivery_supersedes_older_action_not_performed(tmp_path):
     store = _store(tmp_path)
-    for task_id, message_id in ((1, "m1"), (2, "m2")):
-        store.enqueue_reply_task(
+    tasks = []
+    for sequence, message_id in enumerate(("m1", "m2"), start=1):
+        task = store.ensure_reply_task(
             channel="wechat",
             conversation_id="u1",
             conversation_title="Alex",
             single_chat=True,
             trigger_message_id=message_id,
-            trigger_create_time=f"2026-07-28T10:0{task_id}:00",
+            trigger_create_time=f"2026-07-28T10:0{sequence}:00",
             trigger_sender="Alex",
-            trigger_text=f"message {task_id}",
+            trigger_text=f"message {sequence}",
         )
+        tasks.append(task)
         store.create_wechat_delivery(
-            reply_task_id=task_id,
+            reply_task_id=task.id,
             account_id="acct-1",
             target_type="direct",
             target_id="u1",
             conversation_id="u1",
-            reply_text=f"reply {task_id}",
+            reply_text=f"reply {sequence}",
         )
 
-    old = store.get_wechat_delivery_for_task(1)
-    newer = store.get_wechat_delivery_for_task(2)
+    old = store.get_wechat_delivery_for_task(tasks[0].id)
+    newer = store.get_wechat_delivery_for_task(tasks[1].id)
     # Simulate an explicit pre-action failure that existed before a later delivery
     # was recorded; normal creation now supersedes this case immediately.
     with store._connect() as db:
@@ -931,7 +942,7 @@ def test_newer_sent_delivery_supersedes_older_action_not_performed(tmp_path):
     store.mark_wechat_delivery_sending(newer.id)
     store.set_wechat_delivery_status(newer.id, "sent")
 
-    refreshed_old = store.get_wechat_delivery_for_task(1)
+    refreshed_old = store.get_wechat_delivery_for_task(tasks[0].id)
     assert refreshed_old.status == "superseded"
     assert refreshed_old.error == f"superseded_by_newer_wechat_delivery:{newer.id}"
 
@@ -942,19 +953,21 @@ def test_newer_wechat_trigger_waits_for_uncertain_delivery_reconciliation(
     status,
 ):
     store = _store(tmp_path)
-    for task_id, message_id in ((1, "m1"), (2, "m2")):
-        store.enqueue_reply_task(
+    tasks = []
+    for sequence, message_id in enumerate(("m1", "m2"), start=1):
+        task = store.ensure_reply_task(
             channel="wechat",
             conversation_id="u1",
             conversation_title="Alex",
             single_chat=True,
             trigger_message_id=message_id,
-            trigger_create_time=f"2026-07-28T10:0{task_id}:00",
+            trigger_create_time=f"2026-07-28T10:0{sequence}:00",
             trigger_sender="Alex",
-            trigger_text=f"message {task_id}",
+            trigger_text=f"message {sequence}",
         )
+        tasks.append(task)
     old_delivery_id = store.create_wechat_delivery(
-        reply_task_id=1,
+        reply_task_id=tasks[0].id,
         account_id="acct-1",
         target_type="direct",
         target_id="u1",
@@ -970,7 +983,7 @@ def test_newer_wechat_trigger_waits_for_uncertain_delivery_reconciliation(
         match="WeChat delivery reconciliation required before a newer trigger",
     ):
         store.create_wechat_delivery(
-            reply_task_id=2,
+            reply_task_id=tasks[1].id,
             account_id="acct-1",
             target_type="direct",
             target_id="u1",
@@ -979,7 +992,7 @@ def test_newer_wechat_trigger_waits_for_uncertain_delivery_reconciliation(
         )
 
     assert store.get_wechat_delivery_by_id(old_delivery_id).status == status
-    assert store.get_wechat_delivery_for_task(2) is None
+    assert store.get_wechat_delivery_for_task(tasks[1].id) is None
 
 
 def test_reconciled_unknown_delivery_can_be_superseded_without_replay(tmp_path):
@@ -1135,13 +1148,15 @@ def test_replacing_enabled_scope_does_not_clear_its_watermark(tmp_path):
     ).last_active_at == baseline
 
 
-def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp_path):
-    db_path = tmp_path / "legacy.sqlite3"
-    from tests.reply_schema_fixtures import restore_cross_channel_reply_parent
+def test_concurrent_current_schema_repair_preserves_rows_and_delivery_fk(tmp_path):
+    db_path = tmp_path / "current-repair.sqlite3"
+    attachment_path = tmp_path / "legacy.txt"
+    attachment_bytes = b"legacy"
+    attachment_path.write_bytes(attachment_bytes)
 
     original = AutoReplyStore(db_path)
     with original._connect() as db:
-        db.execute("insert into sqlite_sequence (name, seq) values ('reply_tasks', 6)")
+        db.execute("insert into sqlite_sequence (name, seq) values ('tasks', 6)")
     task = original.ensure_reply_task(
         conversation_id="same-conversation", conversation_title="Friend",
         single_chat=True, trigger_message_id="same-message",
@@ -1159,39 +1174,51 @@ def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp
                       'same-conversation', 'hi', 'failed',
                       '2026-07-20T10:10:00+08:00', 1)"""
         )
-        db.execute(
-            "insert into workbench_tasks (id, title, runtime_kind) "
-            "values ('workbench-legacy', 'Legacy attachment', 'codex')"
-        )
+        workbench_parent = insert_task(db, "workbench_tasks", {
+            "legacy_key": "workbench-legacy", "title": "Legacy attachment", "runtime_kind": "codex",
+        }).lastrowid
         db.execute(
             """insert into workbench_attachments (
                 id, task_id, filename, media_type, size_bytes, storage_path,
                 client_request_id, content_sha256
-            ) values ('attachment-legacy', 'workbench-legacy',
-                      'legacy.txt', 'text/plain', 6, '/tmp/legacy.txt',
-                      'attachment-legacy', '')"""
+            ) values ('attachment-legacy', ?,
+                      'legacy.txt', 'text/plain', 6, ?,
+                      'attachment-legacy', '')""",
+            (workbench_parent, str(attachment_path)),
         )
+        attachment_before = tuple(db.execute(
+            "select id, task_id, filename, media_type, size_bytes, storage_path, created_at "
+            "from workbench_attachments"
+        ).fetchone())
+        db.execute("drop index idx_reply_tasks_channel_status_id")
         db.execute("drop index idx_workbench_attachments_task_request")
-        db.execute("alter table workbench_attachments drop column content_sha256")
-        db.execute("alter table workbench_attachments drop column client_request_id")
-    restore_cross_channel_reply_parent(original)
     with original._connect() as db:
         assert db.execute("pragma foreign_key_check").fetchall() == []
-        assert "current_input_id" not in {
-            row[1] for row in db.execute("pragma table_info(reply_tasks)")
+        parent = db.execute(
+            "select id, record_type, current_input_id from tasks where id=?",
+            (task.id,),
+        ).fetchone()
+        assert parent["record_type"] == "reply_tasks"
+        assert ("tasks", "current_input_id", "id") in {
+            (row["table"], row["from"], row["to"])
+            for row in db.execute("pragma foreign_key_list(tasks)")
         }
-        assert "client_request_id" not in {
+        current_input_id = parent["current_input_id"]
+        canonical_input = db.execute(
+            "select record_type, parent_id, trigger_text from tasks where id=?",
+            (current_input_id,),
+        ).fetchone()
+        assert tuple(canonical_input) == ("reply_task_inputs", task.id, "hello")
+        assert ("tasks", "reply_task_id", "id") in {
+            (row["table"], row["from"], row["to"])
+            for row in db.execute("pragma foreign_key_list(wechat_deliveries)")
+        }
+        assert {"client_request_id", "content_sha256"} <= {
             row[1] for row in db.execute("pragma table_info(workbench_attachments)")
         }
-        assert any(
-            tuple(row[0] for row in db.execute(
-                "select name from pragma_index_info(?) order by seqno",
-                (index[1],),
-            ))
-            == ("conversation_id", "trigger_message_id")
-            for index in db.execute("pragma index_list(reply_tasks)")
-            if index[2]
-        )
+        assert {"idx_reply_tasks_channel_status_id", "idx_workbench_attachments_task_request"}.isdisjoint({
+            row[0] for row in db.execute("select name from sqlite_master where type='index'")
+        })
     assert original._schema_is_current() is False
 
     context = get_context("spawn")
@@ -1199,7 +1226,7 @@ def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp
     results = context.Queue()
     processes = [
         context.Process(
-            target=_open_legacy_store_in_process,
+            target=_open_current_store_for_repair_in_process,
             args=(str(db_path), barrier, results),
         )
         for _ in range(2)
@@ -1216,6 +1243,8 @@ def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp
         ("ok", 1, [], "attachment-legacy"),
     ]
 
+    assert original._schema_is_current() is True
+    assert attachment_path.read_bytes() == attachment_bytes
     store = AutoReplyStore(db_path)
 
     assert store.get_reply_task_for_message(
@@ -1223,12 +1252,12 @@ def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp
     ).id == 7
     assert store.list_wechat_deliveries_by_status("ready_to_send") == []
     assert store.requeue_unperformed_wechat_deliveries() == 1
-    migrated_delivery = store.list_wechat_deliveries_by_status("ready_to_send")[0]
-    assert migrated_delivery.task_id == 7
-    assert migrated_delivery.reply_text == "hi（by明哥分身）"
+    repaired_delivery = store.list_wechat_deliveries_by_status("ready_to_send")[0]
+    assert repaired_delivery.task_id == 7
+    assert repaired_delivery.reply_text == "hi（by明哥分身）"
     assert store.get_outbound_postfix(
-        "wechat", f"wechat:{migrated_delivery.id}"
-    ).final_body == migrated_delivery.reply_text
+        "wechat", f"wechat:{repaired_delivery.id}"
+    ).final_body == repaired_delivery.reply_text
     assert store.enqueue_reply_task(
         channel="wechat", conversation_id="same-conversation",
         conversation_title="Same", single_chat=True,
@@ -1236,8 +1265,32 @@ def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp
         trigger_create_time="2026-07-20T10:00:00+08:00",
         trigger_sender="Sender", trigger_text="hello",
     )
-    with store._connect() as migrated:
-        assert migrated.execute("pragma foreign_key_check").fetchall() == []
+    assert store._schema_is_current() is True
+    with store._connect() as repaired:
+        assert repaired.execute("pragma foreign_key_check").fetchall() == []
+        assert tuple(repaired.execute(
+            "select id, task_id, filename, media_type, size_bytes, storage_path, created_at "
+            "from workbench_attachments"
+        ).fetchone()) == attachment_before
+        assert tuple(repaired.execute(
+            "select client_request_id, content_sha256 from workbench_attachments"
+        ).fetchone()) == ("attachment-legacy", "")
+        assert repaired.execute(
+            "select current_input_id from tasks where id=?", (task.id,)
+        ).fetchone()[0] == current_input_id
+        assert repaired.execute(
+            "select count(*) from tasks where record_type='reply_tasks'"
+        ).fetchone()[0] == 2
+        assert repaired.execute(
+            "select count(*) from tasks where record_type='reply_task_inputs'"
+        ).fetchone()[0] == 2
+    wechat_task = store.get_reply_task_for_message(
+        "same-conversation", "same-message", channel="wechat"
+    )
+    assert wechat_task.id != task.id
+    assert store.get_reply_task_for_message(
+        "same-conversation", "same-message", channel="dingtalk"
+    ).id == task.id
 
 
 def test_dingtalk_message_operations_do_not_modify_same_identity_wechat_task(tmp_path):

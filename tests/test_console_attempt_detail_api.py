@@ -517,7 +517,7 @@ def _seed_email_attempt(store: AutoReplyStore, *, with_agent_runs: bool) -> int:
         return attempt_id
     with store._connect() as db:
         task_id = db.execute(
-            "select id from reply_tasks where conversation_id=? and trigger_message_id=?",
+            "select id from tasks where record_type='reply_tasks' and conversation_id=? and trigger_message_id=?",
             (CONVERSATION, TRIGGER),
         ).fetchone()[0]
         consumer = insert_run(db, 'agent_runs', {
@@ -1167,7 +1167,11 @@ def test_failed_attempt_rerun_presentation_uses_structured_historical_refusal(
     with store._connect() as db:
         db.execute("update runs set status='failed', execution_generation='old-generation', "
                    "structured_error_json=? where record_type='agent_runs' and cast(legacy_key as integer)=?", (raw, run.id))
-        db.execute("update reply_tasks set status='failed', error='agent_reported_failure' where id=?", (task.id,))
+        db.execute(
+            "update tasks set status='failed', error='agent_reported_failure' "
+            "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
+            (task.id,),
+        )
     attempt_id = store.record_reply_attempt(
         conversation_id=task.conversation_id, conversation_title=task.conversation_title,
         trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,

@@ -2,6 +2,9 @@ import hashlib
 import json
 import sqlite3
 
+from app.run_storage import TASK_AGENT_RUN_SQL, insert_run
+from app.task_storage import insert_task
+
 from app.storage_maintenance import (
     compact_done_email_classification_inputs,
     compact_settled_reply_inputs,
@@ -23,19 +26,30 @@ def test_historical_work_input_compaction_is_idempotent_and_preserves_adopted_ro
                                      "created_at": "2026-01-01T00:00:00Z"},
                           "summary": "old copied input body"})
     with sqlite3.connect(store.path) as db:
+        terminal_physical_id = insert_task(db, "work_summary_inputs", {
+            "source_type": "local_file", "source_ref": "file#v1",
+            "payload_json": payload, "status": "done",
+        }).lastrowid
         terminal_id = db.execute(
-            "insert into work_summary_inputs(source_type,source_ref,payload_json,status) "
-            "values('local_file','file#v1',?,'done')", (payload,),
-        ).lastrowid
-        db.execute(
-            "insert into task_agent_runs(summary_input_id,codex_session_id,status) "
-            "values(?,'native-session','completed')", (terminal_id,),
-        )
+            "select cast(legacy_key as integer) from tasks "
+            "where record_type='work_summary_inputs' and id=?",
+            (terminal_physical_id,),
+        ).fetchone()[0]
+        insert_run(db, "task_agent_runs", {
+            "summary_input_id": terminal_id, "session_id": "native-session",
+            "status": "completed",
+        })
+        skipped_physical_id = insert_task(db, "work_summary_inputs", {
+            "source_type": "local_file", "source_ref": "file#skipped",
+            "payload_json": payload, "status": "skipped", "attempts": 2,
+            "error": "no task", "created_at": "2026-02-01 01:00:00",
+            "updated_at": "2026-02-02 02:00:00",
+        }).lastrowid
         skipped_id = db.execute(
-            "insert into work_summary_inputs(source_type,source_ref,payload_json,status,attempts,error,created_at,updated_at) "
-            "values('local_file','file#skipped',?,'skipped',2,'no task'," 
-            "'2026-02-01 01:00:00','2026-02-02 02:00:00')", (payload,),
-        ).lastrowid
+            "select cast(legacy_key as integer) from tasks "
+            "where record_type='work_summary_inputs' and id=?",
+            (skipped_physical_id,),
+        ).fetchone()[0]
     pending_id = store.enqueue_work_summary_input("local_file", "file#pending", payload)
     failed_id = store.enqueue_work_summary_input("local_file", "file#failed", payload)
     store.mark_work_summary_input_failed(failed_id, "retryable")
@@ -60,7 +74,7 @@ def test_historical_work_input_compaction_is_idempotent_and_preserves_adopted_ro
     with store._connect() as db:
         assert db.execute("select title from work_projects where id=?", (project_id,)).fetchone()[0] == "Adopted project"
         assert db.execute("select summary from work_updates where id=?", (update_id,)).fetchone()[0] == "Adopted business result"
-        assert db.execute("select codex_session_id from task_agent_runs where summary_input_id=?", (terminal_id,)).fetchone()[0] == "native-session"
+        assert db.execute(f"select codex_session_id from ({TASK_AGENT_RUN_SQL}) where summary_input_id=?", (terminal_id,)).fetchone()[0] == "native-session"
 
 
 def test_historical_reply_input_compaction_preserves_unsettled_rows(tmp_path):
@@ -76,7 +90,7 @@ def test_historical_reply_input_compaction_preserves_unsettled_rows(tmp_path):
         )
         ids[status] = task.id
         with store._connect() as db:
-            db.execute("update reply_tasks set status=? where id=?", (status, task.id))
+            db.execute("update tasks set status=? where record_type='reply_tasks' and id=?", (status, task.id))
     first = compact_settled_reply_inputs(store.path)
     second = compact_settled_reply_inputs(store.path)
     assert first["tasks_compacted"] == 2

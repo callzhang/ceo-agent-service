@@ -346,8 +346,8 @@ def test_provider_receipt_survives_candidate_invalidation_after_dispatch(tmp_pat
     with store._connect() as db:
         db.execute("""update review_candidates set invalidated_at=current_timestamp,
             invalidation_reason='new source fact' where id=?""", (candidate["id"],))
-        db.execute("""update reply_tasks set execution_generation='next-generation',
-            status='pending' where id=?""", (task.id,))
+        db.execute("""update tasks set execution_generation='next-generation',
+            status='pending' where record_type='reply_tasks' and id=?""", (task.id,))
     with pytest.raises(ValueError, match="generation mismatch"):
         store.begin_candidate_action(claim["id"], "worker", 0, "effect-key")
     receipt = store.record_candidate_external_action(
@@ -420,7 +420,7 @@ def test_generation_rotation_prevents_old_approved_plan(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "candidate.sqlite3")
     task, candidate, review, _ = _reviewed(store, options=False)
     with store._connect() as db:
-        db.execute("update reply_tasks set execution_generation='new-generation' where id=?", (task.id,))
+        db.execute("update tasks set execution_generation='new-generation' where record_type='reply_tasks' and id=?", (task.id,))
     assert store.current_reviewed_candidate(task.id, task.execution_generation) is None
     with pytest.raises(ValueError, match="generation mismatch"):
         store.claim_candidate_execution(candidate["id"], review["id"], "worker", 60)
@@ -502,7 +502,7 @@ def test_selection_wakes_same_generation_without_rewriting_question(tmp_path: Pa
     store = AutoReplyStore(tmp_path / "candidate.sqlite3")
     task, candidate, review, _ = _reviewed(store)
     with store._connect() as db:
-        db.execute("update reply_tasks set status='needs_human' where id=?", (task.id,))
+        db.execute("update tasks set status='needs_human' where record_type='reply_tasks' and id=?", (task.id,))
     with pytest.raises(ValueError, match="choice is missing"):
         store.wake_selected_candidate_execution(candidate["id"], review["id"])
     store.select_candidate_option(candidate["id"], review["id"], "execute")
@@ -520,7 +520,7 @@ def test_preserved_human_evidence_survives_invalidation_and_generation_change(tm
     store.select_candidate_option(candidate["id"], review["id"], "execute")
     store.record_candidate_supplement(candidate["id"], "Applicant changed the due date")
     with store._connect() as db:
-        db.execute("update reply_tasks set execution_generation='new-facts-generation' where id=?", (task.id,))
+        db.execute("update tasks set execution_generation='new-facts-generation' where record_type='reply_tasks' and id=?", (task.id,))
 
     events = store.list_human_decision_evidence(task.id)
     assert [event["kind"] for event in events] == ["selection", "supplement"]

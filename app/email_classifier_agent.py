@@ -220,8 +220,14 @@ _CLASSIFICATION_RESULT_CODEC = RoutedResultCodec.text(
 class EmailClassifierRoutedBackend:
     """Run a task-keyed, tool-free Agent turn through the shared runtime router."""
 
-    def __init__(self, routed_execution: RoutedCodexExecution):
+    def __init__(
+        self,
+        routed_execution: RoutedCodexExecution,
+        *,
+        skill_name: str = "ceo-email-classifier",
+    ):
         self.routed_execution = routed_execution
+        self.skill_name = skill_name
 
     def classify(
         self,
@@ -277,6 +283,7 @@ class EmailClassifierRoutedBackend:
                     "AgentClassificationResult JSON object and perform no action."
                 ),
                 use_output_schema=False,
+                inlined_skill_names=(self.skill_name,),
             ),
             parser=parse_in_exact_context,
             result_codec=_CLASSIFICATION_RESULT_CODEC,

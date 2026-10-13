@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "production_ref": "6b43a93b7d5e749f338c13452be5c9e5ceee615b",
+  "task_legacy_id": 15312,
+  "task_typed_id": 404226,
+  "execution_generation": "scheduled-run-156226",
+  "runs": [
+    {
+      "attempt_id": 190307,
+      "session_id": "01a13033-59b2-7b91-b143-04e13f081bb9",
+      "start_line": 0,
+      "end_line": 113,
+      "native_records": 113,
+      "selected_skill_reads": [
+        {
+          "name": "ceo-daily-report",
+          "content_chars": 4850,
+          "wrapped_content_sha256": "6385fa9108cec696520264cc43c576a561e6986001737c8d925cc99f9434d97e"
+        },
+        {
+          "name": "dingtalk-chat",
+          "content_chars": 6717,
+          "wrapped_content_sha256": "88647ed22020bd5b0963d002246b2a8d2b5f785746b19c31e32ecf8af2d575af"
+        },
+        {
+          "name": "dingtalk-minutes",
+          "content_chars": 9438,
+          "wrapped_content_sha256": "740d5ca9cfef2116da4d54fcdb116c0a8e25424c0e8d9c3aceea921c5f9bcd28"
+        },
+        {
+          "name": "dingtalk-wiki",
+          "content_chars": 8387,
+          "wrapped_content_sha256": "2d7a4a747cb95c7bee8154baeee50e7be855dcfa928a3ac1eb551e4c99df8d59"
+        },
+        {
+          "name": "dingtalk-doc",
+          "content_chars": 7822,
+          "wrapped_content_sha256": "0a43896012b9c55248d7e2cf9bd8b7b9db43c04e40efe6a6ab4376070107a347"
+        }
+      ],
+      "source_metadata_sha256": [
+        "225c898e84fcb56112ec2b2a0678f14216adb578ce9c6e5ed4b22c77e5bc2f35",
+        "8911f4c15e697515b53370cea3022a41dbb4e3473b6f3146cc11e6de481d71d5",
+        "153cf6e6bcaf3c8af045e001b10457b02d69f7bfd13a3da782189a6e5d952c87",
+        "7d5caa080ea05abe66913689d89c5eeb2492b2d7c9f36df0937c4424cdfd2434",
+        "c0ba5d0143f3fe0421f07c361c9bc18f2147a8800ae54d043df369bdfbcb5f40"
+      ]
+    },
+    {
+      "attempt_id": 190311,
+      "session_id": "01a13033-59b2-7b91-b143-04e13f081bb9",
+      "start_line": 113,
+      "end_line": 172,
+      "native_records": 59,
+      "selected_skill_reads": [
+        {
+          "name": "ceo-daily-report",
+          "content_chars": 4850,
+          "wrapped_content_sha256": "6385fa9108cec696520264cc43c576a561e6986001737c8d925cc99f9434d97e"
+        },
+        {
+          "name": "dingtalk-chat",
+          "content_chars": 6717,
+          "wrapped_content_sha256": "88647ed22020bd5b0963d002246b2a8d2b5f785746b19c31e32ecf8af2d575af"
+        },
+        {
+          "name": "dingtalk-minutes",
+          "content_chars": 9438,
+          "wrapped_content_sha256": "740d5ca9cfef2116da4d54fcdb116c0a8e25424c0e8d9c3aceea921c5f9bcd28"
+        },
+        {
+          "name": "dingtalk-wiki",
+          "content_chars": 8387,
+          "wrapped_content_sha256": "2d7a4a747cb95c7bee8154baeee50e7be855dcfa928a3ac1eb551e4c99df8d59"
+        },
+        {
+          "name": "dingtalk-doc",
+          "content_chars": 7822,
+          "wrapped_content_sha256": "0a43896012b9c55248d7e2cf9bd8b7b9db43c04e40efe6a6ab4376070107a347"
+        }
+      ],
+      "source_metadata_sha256": [
+        "225c898e84fcb56112ec2b2a0678f14216adb578ce9c6e5ed4b22c77e5bc2f35",
+        "8911f4c15e697515b53370cea3022a41dbb4e3473b6f3146cc11e6de481d71d5",
+        "153cf6e6bcaf3c8af045e001b10457b02d69f7bfd13a3da782189a6e5d952c87",
+        "7d5caa080ea05abe66913689d89c5eeb2492b2d7c9f36df0937c4424cdfd2434",
+        "c0ba5d0143f3fe0421f07c361c9bc18f2147a8800ae54d043df369bdfbcb5f40"
+      ]
+    }
+  ],
+  "duplicate_complete_body_chars": 37214,
+  "hash_boundary": "Source metadata hashes describe original revision; tool content hashes include frozen wrapper. Compare like-for-like between turns, not these two hash kinds.",
+  "root_cause": "Task discovery repeats before deciding or reviewing reads; bound reader has no per-turn skill receipt requirement.",
+  "candidate_boundary": "Only discovery text changed. 47 focused tests pass; native candidate cold/resume/source-change gates not run yet. No cache, DB, permission, audit policy, validator or generation-check changes. No private business input or report content copied."
+}

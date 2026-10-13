@@ -12,6 +12,7 @@ from pathlib import Path
 import subprocess
 import sys
 from app.run_storage import RUNTIME_ATTEMPT_SQL
+from app.task_storage import TASK_AGENT_RUN_SQL, WORK_SUMMARY_INPUT_SQL, task_id_expression
 
 EVALUATION_SCOPE = "task-agent:attention-eval:v1"
 EVALUATION_INSTRUCTION = """Evaluation instruction (prompt guidance only):
@@ -429,7 +430,7 @@ def readback(store, *, input_id, before, expected=None, project_before=None, sou
     after = read_domain(store)
     with store._connect() as db:
         run = db.execute(
-            "select * from task_agent_runs where summary_input_id=? order by id desc limit 1",
+            f"select * from ({TASK_AGENT_RUN_SQL}) where summary_input_id=? order by id desc limit 1",
             (input_id,),
         ).fetchone()
         native_ref = latest_task_ref(db, run["id"]) if run is not None else None
@@ -966,7 +967,7 @@ def replay_input(store, runner, input_id, *, source_ref, expected=None, source_p
         lease.assert_owned()
         with store._connect() as db:
             stored = db.execute(
-                "select payload_json from work_summary_inputs where id=?",
+                f"select payload_json from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
                 (input_id,),
             ).fetchone()
             if (
@@ -976,9 +977,10 @@ def replay_input(store, runner, input_id, *, source_ref, expected=None, source_p
                 raise ValueError("input changed before exact replay")
             raw_payload = stored[0]
             updated = db.execute(
-                "update work_summary_inputs set status='processing', error='', available_at='', "
+                "update tasks set status='processing', error='', available_at='', "
                 "payload_json=?, body_compacted=0, updated_at=current_timestamp "
-                "where id=? and source_type=? and source_ref=? and status=? "
+                f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} "
+                "and source_type=? and source_ref=? and status=? "
                 "and body_compacted=? and body_sha256=? and body_bytes=? and payload_json=?",
                 (
                     encode_work_summary_payload(payload), input_id,
@@ -1034,9 +1036,11 @@ def replay_case(store, runner, case):
             encoded = key.encode("utf-8")
             with store._connect() as db:
                 changed = db.execute(
-                    "update work_summary_inputs set status='pending', payload_json=?, "
+                    "update tasks set status='pending', payload_json=?, "
                     "body_compacted=0, body_sha256=?, body_bytes=?, source_created_at=?, "
-                    "error='', available_at='' where id=? and status in ('done','skipped') "
+                    "error='', available_at='' "
+                    f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} "
+                    "and status in ('done','skipped') "
                     "and source_type=? and source_ref=? and body_sha256=?",
                     (key, hashlib.sha256(encoded).hexdigest(), len(encoded),
                      str(item.source.created_at), prior_id, *source_key,

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.run_storage import SCHEDULED_RUN_SQL
 
 from collections import deque
 from dataclasses import replace
@@ -396,10 +397,10 @@ def test_trigger_dispatches_once_and_generic_reply_adapter_excludes_it(tmp_path)
 
     with store._connect() as db:
         visible = db.execute(
-            "select runs.dispatch_status from reply_tasks tasks "
-            "join scheduled_task_runs runs on runs.execution_kind='reply_task' "
-            "and runs.execution_id=cast(tasks.id as text) "
-            "where tasks.channel='scheduled'"
+            "select runs.dispatch_status from tasks "
+            f"join ({SCHEDULED_RUN_SQL}) runs on runs.execution_kind='reply_task' "
+            "and runs.execution_id=tasks.legacy_key "
+            "where tasks.record_type='reply_tasks' and tasks.channel='scheduled'"
         ).fetchall()
     assert visible and {row["dispatch_status"] for row in visible} == {"dispatched"}
 
@@ -412,7 +413,7 @@ def test_atomic_dispatch_rolls_back_source_link_run_and_ledger_on_interrupt(tmp_
     with store._connect() as db:
         db.execute(
             "create trigger abort_scheduled_dispatch before update of dispatch_status "
-            "on scheduled_task_runs when new.dispatch_status='dispatched' "
+            "on runs when new.record_type='scheduled_task_runs' and new.dispatch_status='dispatched' "
             "begin select raise(abort, 'interrupted'); end"
         )
     with pytest.raises(Exception, match="interrupted"):
@@ -424,7 +425,7 @@ def test_atomic_dispatch_rolls_back_source_link_run_and_ledger_on_interrupt(tmp_
     assert persisted.dispatch_status == "pending" and persisted.execution_id == ""
     with store._connect() as db:
         assert db.execute(
-            "select count(*) from reply_tasks where channel='scheduled'"
+            "select count(*) from tasks where record_type='reply_tasks' and channel='scheduled'"
         ).fetchone()[0] == 0
         ledger = db.execute(
             "select terminal_at from dispatcher_claim_leases "
@@ -763,7 +764,7 @@ def test_damaged_duplicate_frozen_material_is_not_repaired_or_replaced(tmp_path)
     )
     with store._immediate_write_transaction() as db:
         db.execute(
-            "update reply_task_inputs set trigger_message_json=? where id=(select current_input_id from reply_tasks where id=?)",
+            "update tasks set trigger_message_json=? where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
             (json.dumps(trigger), task_id),
         )
     store.claim_reply_task(task_id)
@@ -785,7 +786,7 @@ def test_malformed_persisted_execution_context_is_audited_skip(tmp_path):
     task_id = int(dispatch(store, run, options).execution_id)
     with store._immediate_write_transaction() as db:
         db.execute(
-            "update reply_task_inputs set trigger_message_json=? where id=(select current_input_id from reply_tasks where id=?)",
+            "update tasks set trigger_message_json=? where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
             ("{\"schema\":\"old_context\"}", task_id),
         )
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)

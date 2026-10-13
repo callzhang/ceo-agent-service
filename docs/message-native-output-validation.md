@@ -1,0 +1,24 @@
+# Native message source delivery
+
+Latest actual task404308 Consumer attempt349681 native51..91 reads33 complete messages. MCP text55744 characters; model-visible string39845 contains1370-token truncation marker. Audit349683 native0..36 reads an1180-character time window without clipping. Both final no_action/approve are consistent with the source; do not attribute a judgment error to clipping. Audit installed dingtalk-chat6550-character body is fully contained in the6717-character frozen wrapper; no business rule conflict was found. Actual source metadata/hashes only: message_native_budget.production.v1.json.
+
+Candidate adds only native per-tool read_dingtalk_messages output_token_limit30000 in existing Consumer/Audit cold/resume launch controls. No global cap, query/field/window change, source projection, prompt, provider, route, session reset, permission, approval or Audit policy change. Four command regressions first fail; four affected suites pass97 after, Ruff/diff clean. Conversation contract hashes remain recorded metadata, not a new reset condition.
+
+Seven anonymous source-delivery probes preserve33 fixed fictional messages. First five use text-only MCP: Consumer strict paired cold command/task/developer/cwd differs only by the budget; baseline clips and reports middle=null, candidate delivers every field and reports all three markers correctly. Candidate Consumer and Audit cold/resume each use one source read, exact whole-source equality and valid reports; continuation SID/native prefixes remain unchanged. The observed Audit cwd changes on resume, so no same-cwd claim. Two supplemental Consumer cold probes use typed text+structured MCP matching the actual callback: baseline again clips and candidate fully matches. Their disabled catalog snapshot loses one unrelated entry between runs, so this pair is not strictly single-factor.
+
+Lengths distinguish flattened visible text from serialized native blocks: text-only48021→60766, structured48023→57953. MCP originals are complete60732-character text in every probe. Original observer string/list and structuredContent assumptions failed, then were corrected without changing earlier outputs or rerunning those five turns. Both baseline failures stay failures; neither is resumed. These are source-delivery controls, not full Consumer/Audit business-contract acceptance or real provider actions. Independently reviewed records: message_native_budget.controls.v1.json.
+
+
+Current-main reconciliation preserves both appended claim rows and the independent three-test alignment. Seven affected/adjacent suites pass127 in8.35s after merge0b6bd3d4; no new runtime source change. Independent scoped review reports no code-level publication blocker for this per-tool delivery fix, retaining all stated fixture limitations.
+
+## Production release readback
+
+PR68 merged as06c08020773978b613d3a94dc4b9642e4b0cc2ef. Formal deploy deploy-92e67a59-d7d2-4c4b-9d0f-5ba05f0e34b4 succeeded2026-10-12 22:05:56 America/Los_Angeles (2026-10-13T05:05:56Z). Verified database backup exists, production checkout is clean, and new PID43583 runs the installed commit. Health, queue, Attention, History and both Settings role previews returnHTTP200. Queue readback still contains pending, processing and failed items; HTTP availability does not establish their business success.
+
+Local inspection of the actual installed launcher confirms Consumer/Audit cold/resume all carry exactly one read_dingtalk_messages.output_token_limit=30000 setting and no global budget override. This readback makes no provider/model request. No fresh post-release business trajectory has been accepted yet. Versioned evidence: message_native_budget.release.v1.json; preceding127 focused passes and seven bounded source probes retain their documented limitations.
+
+## Natural post-release message trajectories
+
+Six terminal attempts350520/350522/350526/350529/350546/350548, at2026-10-12 22:25–22:31 America/Los_Angeles, preserve task404348 feedback proposal→return→no_action→approve and task404350 no_action→approve. Consumer404348 reuses the same session for correction; unchanged frozen Skills are reused by Consumer404350, while fresh Audit reads both selected bodies. Four live read_dingtalk_messages returns parse as JSON and contain no native truncation marker, including outputs over53000 and60000 characters. These native observations do not prove byte equality to original callback payloads or cross-domain acceptance.
+
+The returned proposal unnecessarily repeated confirmation and added a follow-up request; existing Audit feedback identifies both and the Consumer correction removes them. No prompt rule is added for a successfully resolved feedback case. One shared engineering AGENTS file read remains forbidden noise, and cold Audit Developer inputs remain29395 characters; these issues are not declared solved by the message transport fix. Metadata/hashes only: message_native_budget.post_release.v1.json.

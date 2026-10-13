@@ -1,0 +1,448 @@
+{
+  "version": 1,
+  "comparison": "Two compact encodings, shared root alias expression versus separate Root/Relative path columns",
+  "hypothesis": "The combined expression under Read path is mistaken for a filesystem argument; separate address components remove that misleading argument shape without a resolver or extra rule.",
+  "fixtures": [
+    {
+      "version": 2,
+      "manifest": {
+        "version": 2,
+        "case": "calendar",
+        "comparison": "v1 alias-expression table versus separated root/relative columns; both compact, same metadata/source bodies",
+        "roles": "('audit',)",
+        "source_fixture": "/private/tmp/ceo-skill-roles-control-b9ltfhkp",
+        "private_replay": false
+      },
+      "runs": [
+        {
+          "role": "audit",
+          "arm": "baseline",
+          "session_id": "01a131e3-0206-7552-abec-0626d93d60e1",
+          "returncode": 0,
+          "canonical_result_valid": true,
+          "nonempty_summary": true,
+          "result": {
+            "outcome": "approve",
+            "summary": "批准：无需创建另一个日历事件。候选准确保留了已确认事件的参与者集合 Alex、Bo 及其相同时间瞬间：Alex 在 America/Los_Angeles 为 2026-10-15 09:00–10:00，Bo 在 Asia/Shanghai 为 2026-10-16 00:00–01:00，均对应 UTC 2026-10-15T16:00:00Z–17:00:00Z。日历记录时区为 America/Los_Angeles，且未提出外部变更。该结论符合日历技能关于相同参与者和相同时间瞬间无需重复创建事件的规则。",
+            "proposal_revision": 0,
+            "candidate_digest": "dc668393ddc99d9503b48588b5dbbfe6b48075533dd917fa68c120bf01485200",
+            "evidence_refs": [
+              "synthetic-calendar",
+              "r4:guide-150/SKILL.md"
+            ],
+            "feedback": null,
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0
+          },
+          "candidate_digest": "dc668393ddc99d9503b48588b5dbbfe6b48075533dd917fa68c120bf01485200",
+          "model_visible_catalog_exact": true,
+          "model_catalog_chars": 82899,
+          "catalog_clipped": false,
+          "tool_calls": 2,
+          "tool_errors": 0,
+          "body_reads": [
+            {
+              "arguments": {
+                "name": "synthetic-guide-150",
+                "path": null
+              },
+              "is_error": false,
+              "exact_source_and_model_body": true,
+              "target_skill": true,
+              "error_text": null
+            }
+          ],
+          "target_skill_loaded": true,
+          "native_controls": [
+            {
+              "model": "gpt-5.6-luna",
+              "approval_policy": "on-request",
+              "sandbox_policy": {
+                "type": "read-only"
+              }
+            }
+          ],
+          "initial_native_developer_sha256": "7f3eaacc03cada8855802ed2b89b2102db010e6ea84ab5291a11f5ff26c23631",
+          "service_developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+          "task_sha256": "00cb8263810be4be583b37eb21e95ecc7458b4796a9e0ea33574a4b32c3bd53b",
+          "events_sha256": "cfdce303ee6bc2715d22870de67bc274ec2f23fd0e5e7941dfba8b221287e7a3",
+          "native_sha256": "2136dda36984409b4ce7b7834b9b0969cfee6692cb3c02261be1df5eb9ac6b5c"
+        },
+        {
+          "role": "audit",
+          "arm": "candidate",
+          "session_id": "01a131e3-3361-7e33-a8d1-41a040bb48f8",
+          "returncode": 0,
+          "canonical_result_valid": true,
+          "nonempty_summary": true,
+          "result": {
+            "outcome": "approve",
+            "summary": "批准：无需创建另一个日历事件。根据当前触发材料，已确认事件包含相同参与者 Alex 和 Bo，且时间瞬间一致：Alex 在 America/Los_Angeles 为 2026-10-15 09:00–10:00，Bo 在 Asia/Shanghai 为 2026-10-16 00:00–01:00，二者均对应 UTC 2026-10-15T16:00:00Z–17:00:00Z。日历记录时区为 America/Los_Angeles，且候选未请求外部变更。",
+            "proposal_revision": 0,
+            "candidate_digest": "dc668393ddc99d9503b48588b5dbbfe6b48075533dd917fa68c120bf01485200",
+            "evidence_refs": [
+              "synthetic-calendar",
+              "/private/tmp/ceo-skill-roles-control-b9ltfhkp/fixture-root/shared-segment/shared-segment/shared-segment/root-03/guide-150/SKILL.md"
+            ],
+            "feedback": null,
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0
+          },
+          "candidate_digest": "dc668393ddc99d9503b48588b5dbbfe6b48075533dd917fa68c120bf01485200",
+          "model_visible_catalog_exact": true,
+          "model_catalog_chars": 83246,
+          "catalog_clipped": false,
+          "tool_calls": 2,
+          "tool_errors": 0,
+          "body_reads": [
+            {
+              "arguments": {
+                "path": "/private/tmp/ceo-skill-roles-control-b9ltfhkp/fixture-root/shared-segment/shared-segment/shared-segment/root-03/guide-150/SKILL.md"
+              },
+              "is_error": false,
+              "exact_source_and_model_body": true,
+              "target_skill": true,
+              "error_text": null
+            }
+          ],
+          "target_skill_loaded": true,
+          "native_controls": [
+            {
+              "model": "gpt-5.6-luna",
+              "approval_policy": "on-request",
+              "sandbox_policy": {
+                "type": "read-only"
+              }
+            }
+          ],
+          "initial_native_developer_sha256": "7f3eaacc03cada8855802ed2b89b2102db010e6ea84ab5291a11f5ff26c23631",
+          "service_developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+          "task_sha256": "00cb8263810be4be583b37eb21e95ecc7458b4796a9e0ea33574a4b32c3bd53b",
+          "events_sha256": "a469fad818206db172ec1e3178b4084bb1e16b748fafbb11c7911374f6782d3b",
+          "native_sha256": "ada69b05a219e3480bfe3f52909d445bb91be91b09778b2429042d4b6e8e092a"
+        }
+      ],
+      "paired_task_developer_commands_except_arm_equal": true,
+      "business_results": "Both Audit approve the same previously valid actual Consumer candidate with identical digest and revision0; no Consumer turn runs in this calendar fixture.",
+      "acceptance": "Comparing two compact formats only. Full metadata and exact body checks; tool errors and task Skill selection retained. Independent semantic review required; no release claim.",
+      "limits": "One synthetic cold calendar Audit pair only; no new Consumer run, actual provider/profile/scheduler or same-session acceptance."
+    },
+    {
+      "version": 2,
+      "manifest": {
+        "version": 2,
+        "case": "document",
+        "comparison": "v1 alias-expression table versus separated root/relative columns; both compact, same metadata/source bodies",
+        "roles": "('consumer','audit')",
+        "source_fixture": "/private/tmp/ceo-skill-document-roles-mqld2ydy",
+        "private_replay": false
+      },
+      "runs": [
+        {
+          "role": "consumer",
+          "arm": "baseline",
+          "session_id": "01a131e3-0842-70f3-8d35-257d74aae27b",
+          "returncode": 0,
+          "canonical_result_valid": true,
+          "nonempty_summary": true,
+          "result": {
+            "outcome": "no_action",
+            "summary": "已完成对草稿预算文档的事实与算术审查。文档标题所述总额为120单位；三条且仅有的完整项目行分别为40、50、20单位，实际合计为110单位（40+50+20=110）。因此，标题总额比完整项目行合计高出10单位，存在10单位差异。该结果仅确认草稿中的不一致，不代表已批准任何修正；未改写源文档，也未执行或声称执行任何外部变更。审查依据为原始触发消息synthetic-document及适用的synthetic-guide-150。",
+            "proposal": null,
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "requested_input": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false,
+            "source_bindings": [],
+            "durable_memories": []
+          },
+          "candidate_digest": null,
+          "model_visible_catalog_exact": true,
+          "model_catalog_chars": 82883,
+          "catalog_clipped": false,
+          "tool_calls": 2,
+          "tool_errors": 0,
+          "body_reads": [
+            {
+              "arguments": {
+                "name": "synthetic-guide-150"
+              },
+              "is_error": false,
+              "exact_source_and_model_body": true,
+              "target_skill": true,
+              "error_text": null
+            }
+          ],
+          "target_skill_loaded": true,
+          "native_controls": [
+            {
+              "model": "gpt-5.6-luna",
+              "approval_policy": "on-request",
+              "sandbox_policy": {
+                "type": "read-only"
+              }
+            }
+          ],
+          "initial_native_developer_sha256": "6bf84889ce5cfd6feb1440071e9d0bc6178128ddf7d135f35d6ddbbddafe218e",
+          "service_developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+          "task_sha256": "f6ee7dc68c7e7499cab3992ea46918a2c2622dc2da2659c493c0194e4a0a7db3",
+          "events_sha256": "0c4d42780731eb228538bae0ccbf1129642cf3279166a6e434bf5947d96d0af9",
+          "native_sha256": "20227cd2a1c7834a8d2c376f4430d3dd8555ad0c00c08cff1c143ab239dcc062"
+        },
+        {
+          "role": "consumer",
+          "arm": "candidate",
+          "session_id": "01a131e3-5f1d-7373-b0ee-eebc794150b3",
+          "returncode": 0,
+          "canonical_result_valid": true,
+          "nonempty_summary": true,
+          "result": {
+            "outcome": "no_action",
+            "summary": "已完成只读预算文档审查。草稿标题声明总额为 120 单位；三个完整项目行分别为 40、50 和 20 单位，实际合计为 110 单位（40 + 50 + 20）。因此，声明总额比完整项目行合计多 10 单位。当前材料未提供其他行，也未提供已批准的更正，因此该差异只能作为审查发现，不能视为已完成修正。",
+            "proposal": null,
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "requested_input": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false,
+            "source_bindings": [],
+            "durable_memories": []
+          },
+          "candidate_digest": null,
+          "model_visible_catalog_exact": true,
+          "model_catalog_chars": 83230,
+          "catalog_clipped": false,
+          "tool_calls": 2,
+          "tool_errors": 0,
+          "body_reads": [
+            {
+              "arguments": {
+                "name": "synthetic-guide-150"
+              },
+              "is_error": false,
+              "exact_source_and_model_body": true,
+              "target_skill": true,
+              "error_text": null
+            }
+          ],
+          "target_skill_loaded": true,
+          "native_controls": [
+            {
+              "model": "gpt-5.6-luna",
+              "approval_policy": "on-request",
+              "sandbox_policy": {
+                "type": "read-only"
+              }
+            }
+          ],
+          "initial_native_developer_sha256": "6bf84889ce5cfd6feb1440071e9d0bc6178128ddf7d135f35d6ddbbddafe218e",
+          "service_developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+          "task_sha256": "f6ee7dc68c7e7499cab3992ea46918a2c2622dc2da2659c493c0194e4a0a7db3",
+          "events_sha256": "8a2d32566d87c9083c451181243285705fd065b2ca6f12db4623119c7ac268a2",
+          "native_sha256": "6e8a41556918e5e0f6e2922f354518578ca8c732d40904bc48ea6e5ea24c4646"
+        },
+        {
+          "role": "audit",
+          "arm": "baseline",
+          "session_id": "01a131e3-8815-7851-b130-1aa93ee5ccfe",
+          "returncode": 0,
+          "canonical_result_valid": true,
+          "nonempty_summary": true,
+          "result": {
+            "outcome": "approve",
+            "summary": "Approved. The candidate faithfully fulfills the authoritative trigger and the applicable synthetic-guide-150 document-review guidance: it preserves the stated heading total of 120 units, calculates the three and only three complete item rows as 40 + 50 + 20 = 110 units, identifies the 10-unit discrepancy, and clearly distinguishes the discrepancy from any approved correction. It proposes no external action, does not rewrite the source document, and makes no unsupported claim that a correction was approved or executed.",
+            "proposal_revision": 0,
+            "candidate_digest": "89031e0fd740fa09919334834f2ac550f37573c4696d625640c6d0dd415d0b92",
+            "evidence_refs": [
+              "synthetic-document",
+              "synthetic-guide-150"
+            ],
+            "feedback": null,
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0
+          },
+          "candidate_digest": "89031e0fd740fa09919334834f2ac550f37573c4696d625640c6d0dd415d0b92",
+          "model_visible_catalog_exact": true,
+          "model_catalog_chars": 82883,
+          "catalog_clipped": false,
+          "tool_calls": 3,
+          "tool_errors": 1,
+          "body_reads": [
+            {
+              "arguments": {
+                "path": "r4:guide-150/SKILL.md"
+              },
+              "is_error": true,
+              "exact_source_and_model_body": false,
+              "target_skill": false,
+              "error_text": [
+                {
+                  "type": "text",
+                  "text": "Error executing tool read_skill: skill_path_forbidden"
+                }
+              ]
+            },
+            {
+              "arguments": {
+                "name": "synthetic-guide-150"
+              },
+              "is_error": false,
+              "exact_source_and_model_body": true,
+              "target_skill": true,
+              "error_text": null
+            }
+          ],
+          "target_skill_loaded": true,
+          "native_controls": [
+            {
+              "model": "gpt-5.6-luna",
+              "approval_policy": "on-request",
+              "sandbox_policy": {
+                "type": "read-only"
+              }
+            }
+          ],
+          "initial_native_developer_sha256": "7f3eaacc03cada8855802ed2b89b2102db010e6ea84ab5291a11f5ff26c23631",
+          "service_developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+          "task_sha256": "850ab7fe1f110ffdfecc4d823482416ad0019f1be31c94c82b6df1bf7408e2e6",
+          "events_sha256": "32140736b8172cd518ab67b813e6aba37854d936a28b48d2b410f364ec6b19e0",
+          "native_sha256": "d4d894a4161c1c1bfa2d43d26b3ac146ee9e135344936b0fe555b43481225f19"
+        },
+        {
+          "role": "audit",
+          "arm": "candidate",
+          "session_id": "01a131e3-c0bd-79e1-800f-da1481d51b63",
+          "returncode": 0,
+          "canonical_result_valid": true,
+          "nonempty_summary": true,
+          "result": {
+            "outcome": "approve",
+            "summary": "Approved. The candidate faithfully fulfills the trigger and the applicable synthetic-guide-150 document-review guidance: it preserves the stated heading total of 120 units, preserves the three complete item values of 40, 50, and 20 units, calculates their actual sum as 110 units, identifies the 10-unit discrepancy, and clearly distinguishes the discrepancy from any approved correction. It also correctly states that the source was not rewritten and that no external change was executed or claimed.",
+            "proposal_revision": 0,
+            "candidate_digest": "89031e0fd740fa09919334834f2ac550f37573c4696d625640c6d0dd415d0b92",
+            "evidence_refs": [
+              "synthetic-document",
+              "synthetic-guide-150"
+            ],
+            "feedback": null,
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "low",
+            "confidence": 1.0,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0
+          },
+          "candidate_digest": "89031e0fd740fa09919334834f2ac550f37573c4696d625640c6d0dd415d0b92",
+          "model_visible_catalog_exact": true,
+          "model_catalog_chars": 83230,
+          "catalog_clipped": false,
+          "tool_calls": 2,
+          "tool_errors": 0,
+          "body_reads": [
+            {
+              "arguments": {
+                "name": "synthetic-guide-150"
+              },
+              "is_error": false,
+              "exact_source_and_model_body": true,
+              "target_skill": true,
+              "error_text": null
+            }
+          ],
+          "target_skill_loaded": true,
+          "native_controls": [
+            {
+              "model": "gpt-5.6-luna",
+              "approval_policy": "on-request",
+              "sandbox_policy": {
+                "type": "read-only"
+              }
+            }
+          ],
+          "initial_native_developer_sha256": "7f3eaacc03cada8855802ed2b89b2102db010e6ea84ab5291a11f5ff26c23631",
+          "service_developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+          "task_sha256": "850ab7fe1f110ffdfecc4d823482416ad0019f1be31c94c82b6df1bf7408e2e6",
+          "events_sha256": "681fa5154ddd60b9edf261eae671201a32968363185d71ace38c0cd0f77a24ea",
+          "native_sha256": "23f9bb5191bdc7648d7a6f01e352c32e11ad1a6dd134cacb9ff433c98947bd1d"
+        }
+      ],
+      "paired_task_developer_commands_except_arm_equal": true,
+      "business_results": "Both Consumer no_action, both Audit approve same actual valid Consumer candidate/revision. Semantic review required separately.",
+      "acceptance": "Comparing two compact formats only. Full metadata and exact body checks; tool errors and task Skill selection retained. Independent semantic review required; no release claim.",
+      "limits": "One synthetic cold document code-role pair; no provider changes, private profile/source replay, same-session/other-task/full-runtime acceptance."
+    }
+  ],
+  "limits": "Three paired synthetic cold code-role comparisons, not universal error elimination, complete provider/scheduler/profile, all task classes or same-session acceptance. Old-format success cases retained.",
+  "independent_read_only_review": "All 14 new native streams, paired task/Developer/command controls, canonical wire results, 343 metadata triples, exact bodies, source/digest/revision and all errors independently checked. Root/relative separation is general metadata representation, no business prompt patch or resolver change. Old success cases and distinct AGENTS error retained; limited hypothesis, draft only."
+}

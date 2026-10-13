@@ -1,6 +1,6 @@
 # Database Redesign Phase4: exact tasks/runs mapping
 
-本文件是第四期分析交付与实施范围。4A已部署7baa1f0e并读回Store11.2/Email50；4B首单元在另一个隔离分支接线，未发布；4C未实施。总体 tasks/runs 方向已由 Derek 批准；本次把它落实到真实字段、身份和读取方，不新增业务事实。当前基线为 `f59a41d7a4f840ead657722985f949a602e41496`，生产 Store `2026-10-11.1`、Email `50`。元数据/行数是只读观察快照，会随业务变化；正式副本及发布前必须重新核对。第三期验收不是第四期验证。
+本文件是第四期实际字段映射与实施范围。4A已上线并读回 Store2026-10-11.2/Email50；4B首个内部单元在隔离分支43c1585b实现并通过副本/回退验证，尚未发布；其余B领域及4C未实施。最初分析基线f59a41d7、Store11.1是历史快照；本轮实际副本源为7baa1f0e/Store11.2，生产随后更新到54e6c209。字段、约束和行数必须在最终副本与发布前刷新，不把历史快照作为当前生产。Derek已批准tasks/runs方向，不新增业务事实。
 
 ## 1. 交付与覆盖
 
@@ -73,7 +73,7 @@ tasks候选原表页合计48,447,488B，runs候选原表页合计53,882,880B，�
 | runtime attempt.agent_run_id / state event.agent_run_id | runs.parent_id -> runs[agent_runs] |
 | meeting run.job_id | runs.task_id -> tasks[meeting_alignment_jobs] |
 | task run.summary_input_id | runs.summary_input_id保持原WSI public key；按tasks[work_summary_inputs] legacy_key读取；原源无声明FK，不新增 |
-| OKR run.request_id | runs.task_id -> tasks[okr_review_requests]，原多run关系保留|
+| OKR run.request_id | runs.request_id保留原public scalar；原源无声明FK，按tasks[okr_review_requests] legacy身份读取；多run关系保留|
 | workbench event.turn_id | runs.task_id -> tasks[workbench_turns] |
 | scheduled trigger.scheduled_task_id/snapshot_id | 原scheduled_tasks/config_versions FK不变|
 | scheduled execution_kind/execution_id | reply_task时经旧任务映射定位；service_command时仍为命令文本|
@@ -126,8 +126,34 @@ Meeting发送键`meeting-alignment:{OLD job.id}:{meeting_id}[:sensitive]`原样�
 
 副本验证需保留所有原业务行、原API、public身份、native选择、结果/回执及状态。加入新input/run/provider attempt/receipt/Workbench事件后逆迁，验证新事实仍在，旧代码真实启动；不能覆盖旧DB备份。quiet正式部署前单元逆迁和相关定向测试、独立复核必须通过。每单元发布后读回PID、health、queues、Attention、History、原生缺失显示和新增失败/卡住记录，最后报告实际DB/WAL/页占用。
 
-## 9. 4B首单元实际字段细化（尚未接入或上线）
+## 9. 4B首单元代码核对与源字段调整
 
-reply父/输入的显示、正文和provenance字段计划直接保存为真实源scalar列，取消固定键JSON外层包装；原source默认值、NULL、不可变输入身份和终态精简规则保持，非所属类型列为NULL。WSI payload_json保持原TEXT/BLOB及既有WSI1 codec，不包裹、重新压缩或base64。CSV对应字段已更新，代码行号是27a18e24快照，需按真实函数/DDL复核。
+27a18e24代码快照确认reply DDL位于store.py:3275-3340，WSI与Task run DDL位于4254-4289，DAO分别位于28300与30495附近；CSV相关证据行号据此刷新。后续代码行号会移动，必须按真实函数/DDL核对。4A最新源29e01567副本验证45,573条原核心投影和145张其他原表全值指纹一致，旧代码302文件逐一匹配Git blob；独立最终复审114测试通过，无开放P1/P2。这是4A上线前的历史验证快照；随后PR50完整Quality通过并正常部署，验收见docs/database-redesign-phase4a-validation.md。
 
-真实生产Task run没有summary_input_id FK或status CHECK。该字段保留原名和原public WSI值，作为既有代码关系；读取WSI指定record_type及legacy身份，不套用共享runs.task_id FK。Task类型task_id保持NULL；逻辑Agent类型task_id仍保留实际reply父FK。Task error、projection_json也保留原scalar及原字符串，只退休已验证的三个空缓存列；原自然running唯一和索引仍按summary_input_id保持。后续Meeting/OKR有声明FK的父关系独立映射，不能据此取消原约束。
+4B第一子单元的reply父/输入显示及正文/provenance字段直接保存为真实源scalar列，与4A取舍一致，取消固定键外层JSON包装和json_set/类型转换。这不增加业务字段；原source默认值、NULL、不可变输入身份和终态精简规则保持，不适用类型列为NULL。WSI payload_json仍保持原TEXT/BLOB，不包裹、重压缩或base64。
+
+真实生产Task run没有summary_input_id FK或status CHECK。该字段保留原名和原public WSI值，作为既有代码关系；读取WSI时指定record_type及legacy身份，不能套用共享runs.task_id FK。Task类型task_id保持NULL；逻辑Agent类型task_id仍有实际reply父FK，映到typed tasks。Task error和projection_json也保留原scalar及原字符串。明确取消的三个缓存列不变。原自然running唯一和source索引继续按summary_input_id保持。后续领域按真实PRAGMA分别核对：Meeting有声明FK，OKR是无声明FK的代码关系；不新增或取消臆想的源约束。
+
+
+4B Meeting 子单元字段复核：其23个job字段均保存真实source scalar，包括准确原JSON字符串，取消此前专有字段外层JSON包装。13个run字段只取消三项已退休空过程缓存。真实源没有status CHECK；run updated_at默认空字符串。当前副本唯一已知孤儿是run.id=2298、job_id=4908、status=retry，不是job.id=2298。
+
+有效Meeting run只保存指向typed Meeting task的物理task_id，公共job_id由父legacy_key还原；原缺失父按不同source job_id确定性分配无记录的保留物理ID并推进allocator水位，维持dangling FK，绝不创建ghost业务任务。仅这些孤儿run在真实source字段job_id scalar保留原公共父ID；有效run该列为NULL，不冗余保存可由FK取得的公共ID。DTO及逆迁明确区分两种准确来源，拒绝不一致映射。真实job/source自然键、claim CAS、delivery key、Memory parent唯一/FK及CASCADE保持；逆迁复原原始2298→4908finding。该细化已在隔离分支实现并完成核心、DAO与外围查询独立复核；完整行为测试与最终副本、故障回退及发布门槛仍必需。
+
+
+4B OKR/weekly 源字段复核：实际PRAGMA确认OKR run.request_id与items.request_id均没有声明FK，原“已有FK”的标注已更正。OKR run按原request_id public scalar保存代码关系，不给共享task_id增加新FK；items.request_id仍原值，其他record_type的request_id为NULL。请求的16个真实字段与weekly的11个字段使用准确source scalar；原JSON字符串不包裹、不改格式。OKR请求无status CHECK且有真实skipped；run不存在status/error/finished_at，不补造。三个run cache全为既有占位，可按已批准清单退休。
+
+weekly保留原running/completed/failed CHECK、week_end/manager_user_id/source_digest自然键、owner/expiry CAS、cache hit/miss与supersession语义。当前历史副本169个完成job均有finished_at，25个error为superseded_by_later_completed_week，不能因全完成就删错误或时间。源序列718大于现存最大ID574，迁移与逆迁必须保留水位。report singleton lease和last_attempt/last_success继续在service_state。OKR/weekly核心与运行调用已在隔离分支实现并独立复核；当前仍在完成相关fixture及最终一致副本、旧代码回退和发布验证，最终发布前仍需重新测实际源。
+
+
+## 10. 4C代码预分析与字段调整（尚未实施）
+
+Workbench task/turn保留原公共UUID，以record_type限定TEXT唯一性；不能套用现有数字类型的CAST(legacy_key AS INTEGER)公共索引。7baa历史副本20个task已存在一组整数转换碰撞，主线程独立聚合读取确认。原数字类型仍保持数字查找和排序。task/turn父关系按真实FK映射物理ID，原公开UUID、client_request_id全局唯一、task_sequence与单活跃turn约束保持。
+
+CSV中的九个真实源字段改为直接scalar列：task的title、runtime_kind、provider_session_ref、archived_at；turn的user_text、error_detail、resume_context、started_at、completed_at。现有DAO实际过滤archive、更新title/session、逐值比较user_text幂等输入、按时间恢复，直接列保留原谓词和准确值，不新增业务字段。只取消既已批准的空final_text物理缓存，DTO仍从native/Friday Artifact读取；error_detail/resume_context有真实写入路径，即使历史副本为空也保留。
+
+workbench_events保留准确payload_json；event公共整数id是全局SSE游标，sequence是turn内顺序，native_ordinal是原生完成顺序，三者不能合并。历史副本37turn/810event，event最大ID及sqlite_sequence分配水位均810；confirmations/attachments/artifacts当时无行，验证必须补充有内容的synthetic子记录及结果/回执，保持原NO ACTION外键。该快照不代表最终发布源，最终正逆迁仍须重新测量。
+
+scheduled_task_runs的17字段已有准确runs映射。event_id唯一、scheduled-only自然partial unique、两项实际FK、五个显式索引及原默认值保留；occurrence_count源DDL没有正数CHECK，不能新增。execution_id为reply时保留原公共十进制字符串，为service_command时保留原命令文本，不制造reply任务。Dispatcher source_id、History/API游标、输入provenance和execution_generation仍用原trigger公共ID；dispatch_status仅表示调度，不推造Agent业务终态。历史副本154843行、序列154846与原设计153867不同，最终副本需刷新，不能跨快照证明增删。
+
+
+Workbench源DDL的TEXT PRIMARY KEY没有NOT NULL约束，SQLite允许NULL；历史20/37项公共UUID均非NULL，DAO由uuid4产生身份。共享legacy_key本已可NULL，但其自动数字key触发器在4C必须限定真实数字类型，不能给SQL允许的Workbench NULL补造公共身份，也不能加入源没有的NOT NULL CHECK。workbench_events.sequence与event_type仅NOT NULL，源无默认值或CHECK；DAO的正数/已知类型校验仍在原调用层，不能误记为源数据库约束。

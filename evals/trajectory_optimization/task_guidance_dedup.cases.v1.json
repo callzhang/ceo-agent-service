@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "case": "project_creation_without_tasks",
+  "source": {
+    "source": {
+      "type": "ai_minutes",
+      "ref": "meeting:synthetic-project-creation",
+      "title": "匿名交付周会",
+      "conversation_id": "",
+      "conversation_title": "",
+      "created_at": "2026-10-12T09:00:00Z"
+    },
+    "summary": "会议决定启动星桥交付项目，目标是完成客户验收。陈明总负责交付，赵华负责商务。当前验收按计划推进，未报告风险，没有新的独立行动项。",
+    "context": {
+      "sender": "",
+      "sender_user_id": "",
+      "owner_identity": {},
+      "assignment_authorized": false,
+      "external_task_id": "",
+      "reply_to_source_ref": "",
+      "participants": [],
+      "source_conversation_kind": "minutes",
+      "source_conversation_title": ""
+    },
+    "task_signals": {
+      "possible_task_update": false,
+      "mentions_follow_up": false,
+      "progress_claim": false,
+      "owner_correction": false,
+      "complaint_about_followup": false,
+      "signal_reason": ""
+    },
+    "scheduled_consumer": {}
+  },
+  "context": {
+    "current_work_item": {
+      "document_id": "doc-creation",
+      "source_ref": "meeting:synthetic-project-creation"
+    },
+    "source_documents": [
+      {
+        "document_id": "doc-creation",
+        "source_ref": "meeting:synthetic-project-creation",
+        "visible_ranges": [
+          {
+            "start": 0,
+            "end": 64,
+            "text": "会议决定启动星桥交付项目，目标是完成客户验收。陈明总负责交付，赵华负责商务。当前验收按计划推进，未报告风险，没有新的独立行动项。"
+          }
+        ]
+      }
+    ],
+    "projects": [],
+    "tasks": []
+  },
+  "criteria": {
+    "project_title": "星桥交付项目",
+    "overall_owner": "陈明",
+    "responsibility": "赵华",
+    "no_tasks": true,
+    "assessment": "not_needed",
+    "no_attention": true
+  }
+}

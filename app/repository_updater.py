@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.scheduled_config_storage import publication_scheduled_source
 
 from contextlib import closing, nullcontext
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from app.database_backup import (
 )
 from app.repository_upgrade import GitRepository
 from app.run_schema_release import publication_run_sources
+from app.task_schema_release import publication_meeting_sources, publication_task_sources
 
 
 UPGRADE_OPERATION_STATE_KEY = "repository_upgrade_operation:v1"
@@ -266,10 +268,13 @@ def in_flight_work(database_path: Path) -> int:
         f"file:{database_path}?mode=ro", uri=True, timeout=30
     )) as db:
         agent_source, runtime_source = publication_run_sources(db)
+        reply_source, work_source = publication_task_sources(db)
+        scheduled_source = publication_scheduled_source(db)
+        meeting_jobs, meeting_runs = publication_meeting_sources(db)
         return int(db.execute(
             f"select (select count(*) from ({runtime_source}) as agent_runtime_attempts "
             "        where status not in ('completed','failed','superseded'))"
-            " + (select count(*) from reply_tasks as task "
+            f" + (select count(*) from ({reply_source}) as task "
             "    where task.status='processing' and ("
             f"      exists (select 1 from ({agent_source}) as runs "
             "        where runs.reply_task_id=task.id "
@@ -279,10 +284,10 @@ def in_flight_work(database_path: Path) -> int:
             "          and claim.source_id=cast(task.id as text) "
             "          and coalesce(claim.terminal_at,'')='' "
             "          and julianday(claim.lease_expires_at)>julianday('now'))))"
-            " + (select count(*) from work_summary_inputs where status='processing')"
-            " + (select count(*) from meeting_alignment_jobs as jobs "
+            f" + (select count(*) from ({work_source}) where status='processing')"
+            f" + (select count(*) from ({meeting_jobs}) as jobs "
             "    where (jobs.status='processing' and ("
-            "      exists (select 1 from meeting_alignment_runs as runs "
+            f"      exists (select 1 from ({meeting_runs}) as runs "
             "        where runs.job_id=jobs.id and runs.status='running') "
             "      or exists (select 1 from dispatcher_claim_leases as claim "
             "        where claim.adapter_name='meeting' "
@@ -294,7 +299,7 @@ def in_flight_work(database_path: Path) -> int:
             " + (select count(*) from dispatcher_claim_leases"
             "    where coalesce(terminal_at,'')=''"
             "    and julianday(lease_expires_at)>julianday('now'))"
-            " + (select count(*) from scheduled_task_runs where dispatch_status='pending'"
+            f" + (select count(*) from ({scheduled_source}) where dispatch_status='pending'"
             "    and lease_owner<>'' and lease_expires_at>strftime('%Y-%m-%dT%H:%M:%S+00:00','now'))"
         ).fetchone()[0])
 

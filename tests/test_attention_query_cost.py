@@ -4,6 +4,8 @@ import pytest
 
 from app.audit_web import _queue_attention_rows
 from app.store import AutoReplyStore
+from app.run_storage import insert_run
+from app.task_storage import REPLY_TASK_SQL, task_physical_id
 
 
 @pytest.mark.parametrize("source", ["reply", "error"])
@@ -31,14 +33,14 @@ def test_attention_recovery_does_not_search_unrelated_successes_first(
         channel="scheduled",
     )
     with store._connect() as db:
-        db.execute("update reply_tasks set status='done' where id=?", (completed.id,))
+        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task_physical_id(db, "reply_tasks", completed.id),))
         if source == "reply":
             db.execute(
-                "update reply_tasks set status='failed', error='failed' where id=?",
-                (failed.id,),
+                "update tasks set status='failed', error='failed' where record_type='reply_tasks' and id=?",
+                (task_physical_id(db, "reply_tasks", failed.id),),
             )
         else:
-            db.execute("update reply_tasks set status='done' where id=?", (failed.id,))
+            db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task_physical_id(db, "reply_tasks", failed.id),))
             db.execute(
                 "insert into errors(conversation_id,message_id,kind,detail) values ('unrelated-chat','message','read','failed')"
             )
@@ -46,10 +48,21 @@ def test_attention_recovery_does_not_search_unrelated_successes_first(
             "insert into scheduled_tasks(id,name,prompt,cron_expression,timezone,runtime_id,enabled) values (1,'Report','p','0 * * * *','UTC','',1)"
         )
         db.execute("insert or ignore into scheduled_task_config_versions(snapshot_json) values ('{}')")
-        db.executemany(
-            "insert into scheduled_task_runs(event_id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,dispatch_status,snapshot_id,execution_kind,execution_id) values (?,1,'manual','2026-10-07T10:00:00Z','2026-10-07T10:00:00Z','dispatched',(select id from scheduled_task_config_versions where snapshot_json='{}'),'reply_task',?)",
-            [(f"event-{index}", str(completed.id)) for index in range(20000)],
-        )
+        snapshot_id = db.execute(
+            "select id from scheduled_task_config_versions where snapshot_json='{}'"
+        ).fetchone()[0]
+        for index in range(20000):
+            insert_run(db, 'scheduled_task_runs', {
+                'event_id': f"event-{index}",
+                'scheduled_task_id': 1,
+                'trigger_kind': 'manual',
+                'scheduled_for': '2026-10-07T10:00:00Z',
+                'first_scheduled_for': '2026-10-07T10:00:00Z',
+                'dispatch_status': 'dispatched',
+                'snapshot_id': snapshot_id,
+                'execution_kind': 'reply_task',
+                'execution_id': str(completed.id),
+            })
     steps = 0
 
     def progress():
@@ -103,10 +116,10 @@ def test_attention_recovery_keeps_same_schedule_terminal_evidence(
     ]
     with store._connect() as db:
         db.execute(
-            "update reply_tasks set status=? where id=?",
-            ("failed" if source == "reply" else "done", tasks[0].id),
+            "update tasks set status=? where record_type='reply_tasks' and id=?",
+            ("failed" if source == "reply" else "done", task_physical_id(db, "reply_tasks", tasks[0].id)),
         )
-        db.execute("update reply_tasks set status=? where id=?", (status, tasks[1].id))
+        db.execute("update tasks set status=? where record_type='reply_tasks' and id=?", (status, task_physical_id(db, "reply_tasks", tasks[1].id)))
         if source == "error":
             db.execute(
                 "insert into errors(conversation_id,message_id,kind,detail) values ('scheduled-task-run:10','event-10','read','failed')"
@@ -116,20 +129,25 @@ def test_attention_recovery_keeps_same_schedule_terminal_evidence(
             [(1,), (2,)],
         )
         db.execute("insert or ignore into scheduled_task_config_versions(snapshot_json) values ('{}')")
-        db.executemany(
-            "insert into scheduled_task_runs(id,event_id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,dispatch_status,snapshot_id,execution_kind,execution_id) values (?, ?, ?, 'manual','2026-10-07T10:00:00Z','2026-10-07T10:00:00Z',?,(select id from scheduled_task_config_versions where snapshot_json='{}'),?,?)",
-            [
-                (10, "event-10", 1, "dispatched", "reply_task", str(tasks[0].id)),
-                (
-                    later_id,
-                    f"event-{later_id}",
-                    schedule_id,
-                    dispatch,
-                    kind,
-                    str(tasks[1].id),
-                ),
-            ],
-        )
+        snapshot_id = db.execute(
+            "select id from scheduled_task_config_versions where snapshot_json='{}'"
+        ).fetchone()[0]
+        for run_id, event_id, scheduled_id, dispatch_status, execution_kind, execution_id in (
+            (10, 'event-10', 1, 'dispatched', 'reply_task', str(tasks[0].id)),
+            (later_id, f'event-{later_id}', schedule_id, dispatch, kind, str(tasks[1].id)),
+        ):
+            insert_run(db, 'scheduled_task_runs', {
+                'event_id': event_id,
+                'scheduled_task_id': scheduled_id,
+                'trigger_kind': 'manual',
+                'scheduled_for': '2026-10-07T10:00:00Z',
+                'first_scheduled_for': '2026-10-07T10:00:00Z',
+                'legacy_key': run_id,
+                'dispatch_status': dispatch_status,
+                'snapshot_id': snapshot_id,
+                'execution_kind': execution_kind,
+                'execution_id': execution_id,
+            })
     rows = _queue_attention_rows(store)
     category = "Reply task" if source == "reply" else "Service error"
     matches = [
@@ -141,7 +159,7 @@ def test_attention_recovery_keeps_same_schedule_terminal_evidence(
     assert bool(matches) is not covered
     with store._connect() as db:
         assert db.execute(
-            "select status from reply_tasks where id=?", (tasks[0].id,)
+            f"select status from ({REPLY_TASK_SQL}) where id=?", (tasks[0].id,)
         ).fetchone()[0] == ("failed" if source == "reply" else "done")
         if source == "error":
             assert db.execute("select resolved_at from errors").fetchone()[0] == ""
