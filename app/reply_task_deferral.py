@@ -24,7 +24,7 @@ from app.action_storage import (
     CANDIDATE_ACTION_ATTEMPT_SQL,
     CANDIDATE_EXECUTION_SQL,
     EXTERNAL_ACTION_RESULT_SQL,
-    REVIEW_CANDIDATE_SQL,
+    REVIEW_CANDIDATE_SQL, SENT_REPLY_SQL,
 )
 
 
@@ -187,7 +187,7 @@ def _snapshot(
     if db.execute(f'select 1 from ({EXTERNAL_ACTION_RESULT_SQL}) where business_object_key=? limit 1',
                   (task['business_object_key'],)).fetchone():
         blocked.append('external_action_result')
-    if db.execute("""select 1 from sent_replies where conversation_id=?
+    if db.execute(f"""select 1 from ({SENT_REPLY_SQL}) where conversation_id=?
         and trigger_message_id=? limit 1""",
         (task['conversation_id'], task['trigger_message_id'])).fetchone():
         blocked.append('sent_reply_projection')

@@ -129,3 +129,40 @@ CLI integration, production migration, provider send/recall or VACUUM is proved
 by this artifact. The owned database/code/script directory was removed after
 evidence retention, freeing508825373 bytes. Only aggregate counts and typed
 hashes remain in the artifact; no copied business rows or native files remain.
+
+## Caller and publication reader integration candidate
+
+Store18 bootstrap153a7d2d passed four real fresh/cold checks, including both
+captured Store17 delivery declarations, raw sent values, deleted-ID allocation
+water and auxiliary repair in a new process. Paired release9b38b290 passed
+independent SPEC and QUALITY, each48 focused checks; QUALITY also checked
+consistent readonly preparation under concurrent WAL changes and atomic
+rollback on post-inverse integrity failure. These are unit acceptance, not
+the production-copy default-constructor release protocol.
+
+Store/Audit conversiona4a3fd04 removes all direct old sent/observer SQL. The
+independent SPEC review checked24 reader bodies against their original ASTs
+and all six writes. Repair6963d7f9 retains native recall timestamp evaluation
+after writer lock acquisition, with contention regression and unchanged
+ordinary transaction behavior. Source-equivalence SPEC passed28 focused
+checks. Repair08ba9453 exposes the existing nonempty sent-key unique index
+without new DDL: four parameters are already nonempty by their original
+validation. Traced actual-caller EXPLAIN and source/target ordinary, padded and
+NUL key results pass. Final caller re-review is still pending.
+
+The remaining four external readers now use finite sent/observer projections
+without changing their predicates or result labels: quality_gate,
+reply_task_deferral, scheduled_task_recovery and deploy_maintenance. Maintenance
+reads exact source17 or target18 using the paired publication selector. Existing
+task/meeting/scheduled/candidate/receipt/postfix publication readers accept exact
+Store18 declarations, and the normal release router selects the17→18 pair.
+Two source-variant selector tests execute previous and current delivery queries
+and refuse mixed markers. Together with bootstrap: six checks pass.
+
+The adjacent deferral/maintenance/quality/recovery/receipt/postfix suite passes
+136 checks after three reproduced retired-table fixture failures were updated
+through typed writes. Existing Store duplicate-observer, recall, feedback-time
+and History index expectations were aligned with the same business assertions;
+eight selected Store checks pass. No test was skipped to hide a runtime failure.
+Integrated reader review, actual constructor-to-constructor production-copy,
+native CLI substitutes, full CI and normal deployment remain required.

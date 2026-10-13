@@ -1,5 +1,13 @@
 # Current Runtime Mechanism
 
+The Store18 candidate's maintenance reader supports exact previous/current
+delivery schemas through the existing publication selector. Its quality,
+deferral and scheduled recovery readers use finite sent/observer projections.
+The storage source changes preserve original blockers, exclusions, labels and
+recovery behavior; they do not add a new policy or replay path. Paired release
+routing is wired, but integrated constructor copy/CLI/CI/live acceptance remain
+pending and production continues to use Store17.
+
 The isolated Store18 candidate (`2026-10-13.4`) bootstraps the finite delivery
 action layout and accepts only exact published Store17 as its migration source.
 It does not recreate retired sent/observer tables during auxiliary repair.

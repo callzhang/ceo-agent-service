@@ -18,6 +18,7 @@ from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
 from app.task_schema_release import publication_meeting_sources, publication_task_sources
 from app.action_schema_release import publication_candidate_source
 from app.action_receipt_schema_release import publication_receipt_sources
+from app.action_delivery_schema_release import publication_delivery_sources
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,7 @@ def check_maintenance(database_path: Path, task_ids: tuple[int, ...]) -> Mainten
         reply_source, work_source = publication_task_sources(db)
         candidate_source = publication_candidate_source(db)
         receipt_sources = publication_receipt_sources(db)
+        delivery_sources = publication_delivery_sources(db)
         scheduled_source = publication_scheduled_source(db)
         meeting_jobs, _ = publication_meeting_sources(db)
         processing = {row[0] for row in db.execute(f"select id from ({reply_source}) where status='processing'")}
@@ -70,7 +72,7 @@ def check_maintenance(database_path: Path, task_ids: tuple[int, ...]) -> Mainten
             for source in (receipt_sources['agent_effect_intents'], receipt_sources['agent_execution_receipts']):
                 if db.execute(f'select 1 from ({source}) e join ({AGENT_RUN_SQL}) r on r.id=e.agent_run_id where r.reply_task_id=? limit 1', (task_id,)).fetchone():
                     raise UpgradePreconditionError('maintenance task has effect identity')
-            if db.execute('select 1 from sent_replies where conversation_id=? and trigger_message_id=? limit 1',
+            if db.execute(f'select 1 from ({delivery_sources["sent_replies"]}) where conversation_id=? and trigger_message_id=? limit 1',
                           (task['conversation_id'], task['trigger_message_id'])).fetchone():
                 raise UpgradePreconditionError('maintenance task has delivery receipt')
             if db.execute(f"select 1 from ({RUNTIME_ATTEMPT_SQL}) a join ({AGENT_RUN_SQL}) r on r.id=a.agent_run_id where r.reply_task_id=? and a.first_effect_started_at<>'' limit 1", (task_id,)).fetchone():
