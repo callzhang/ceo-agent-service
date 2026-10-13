@@ -80,6 +80,17 @@ SOURCE_COLUMNS = {
     "candidate_action_attempts": ("id", "execution_id", "action_index", "external_action_key", "status", "result_json", "created_at", "updated_at"),
 }
 ACTION_TYPES = tuple(SOURCE_COLUMNS)
+CANDIDATE_ACTION_TYPES = ACTION_TYPES
+SOURCE_COLUMNS.update({
+    "external_action_results": ("external_action_key", "business_object_key", "action_identity", "operation", "target_identifiers_json", "provider_result_json", "result_digest", "first_agent_run_id", "created_at"),
+    "agent_effect_intents": ("id", "agent_run_id", "authorization_id", "action_index", "receipt_operation_id", "capability", "operation", "operation_digest", "arguments_digest", "target_identifiers_json", "state", "result_digest", "exit_code", "prepared_at", "dispatched_at", "acknowledged_at", "updated_at", "external_action_key"),
+    "agent_execution_receipts": ("id", "agent_run_id", "receipt_id", "operation_id", "cli", "command_path", "command_digest", "exit_code", "completed", "persisted", "safe_to_confirm", "created_at", "effect_counted"),
+})
+RECEIPT_ACTION_TYPES = tuple(kind for kind in SOURCE_COLUMNS if kind not in ACTION_TYPES)
+ALL_ACTION_TYPES = tuple(SOURCE_COLUMNS)
+IDENTITY_FIELDS = {kind: "external_action_key" if kind == "external_action_results" else "id" for kind in ALL_ACTION_TYPES}
+AUTOINCREMENT_TYPES = ("agent_effect_intents", "agent_execution_receipts")
+ACTION_SEQUENCE_NAMES = {kind: "actions:" + kind for kind in AUTOINCREMENT_TYPES}
 # source field -> (physical table, exact parent record_type)
 REFERENCES = {
     "task_id": ("tasks", "reply_tasks"),
@@ -90,17 +101,21 @@ REFERENCES = {
     "review_id": ("actions", "candidate_reviews"),
     "selection_id": ("actions", "candidate_selections"),
     "execution_id": ("actions", "candidate_executions"),
+    "first_agent_run_id": ("runs", "agent_runs"),
+    "agent_run_id": ("runs", "agent_runs"),
 }
 NULLABLE = {"predecessor_review_id", "selection_id"}
-INTEGER_FIELDS = {"stage_index", "proposal_revision", "action_index"}
+INTEGER_FIELDS = {"stage_index", "proposal_revision", "action_index", "exit_code", "completed", "persisted", "safe_to_confirm", "effect_counted"}
+NULLABLE_PAYLOAD_FIELDS = {"agent_effect_intents": {"exit_code"}}
 PAYLOAD_FIELDS = {
-    kind: tuple(c for c in columns if c != "id" and c not in REFERENCES)
+    kind: tuple(c for c in columns if c != IDENTITY_FIELDS[kind] and c not in REFERENCES)
     for kind, columns in SOURCE_COLUMNS.items()
 }
 ENUMS = {
     "candidate_reviews": ("decision", ("approve", "return", "reject")),
     "candidate_executions": ("status", ("running", "done", "skipped", "failed", "retry", "uncertain")),
     "candidate_action_attempts": ("status", ("dispatched", "verified", "confirmed_no_effect", "uncertain", "failed")),
+    "agent_effect_intents": ("state", ("prepared", "dispatched", "acknowledged")),
 }
 DEFAULTS = {
     "review_candidates": {"invalidated_at": "", "invalidation_reason": ""},
@@ -109,6 +124,9 @@ DEFAULTS = {
     "candidate_supplements": {},
     "candidate_executions": {"lease_owner": "", "lease_expires_at": "", "result_json": "{}"},
     "candidate_action_attempts": {"result_json": "{}"},
+    "external_action_results": {},
+    "agent_effect_intents": {"state": "prepared", "result_digest": "", "exit_code": None, "dispatched_at": "", "acknowledged_at": "", "external_action_key": ""},
+    "agent_execution_receipts": {"effect_counted": 0},
 }
 
 
@@ -133,11 +151,23 @@ def _source_schema():
         return {kind: {"columns": list(SOURCE_COLUMNS[kind]), "objects": _objects(db, kind)} for kind in ACTION_TYPES}
 
 
-def _payload_check(kind):
-    terms = [f"json_type(payload_json,'$.{field}') is '{'integer' if field in INTEGER_FIELDS else 'text'}'" for field in PAYLOAD_FIELDS[kind]]
+def _references_for(kinds):
+    return {field: parent for field, parent in REFERENCES.items()
+            if any(field in SOURCE_COLUMNS[kind] for kind in kinds)}
+
+
+def _payload_check(kind, references):
+    terms = []
+    for field in PAYLOAD_FIELDS[kind]:
+        expression = f"json_type(payload_json,'$.{field}')"
+        value_type = 'integer' if field in INTEGER_FIELDS else 'text'
+        condition = f"{expression} is '{value_type}'"
+        if field in NULLABLE_PAYLOAD_FIELDS.get(kind, ()):
+            condition = f"({condition} or {expression} is 'null')"
+        terms.append(condition)
     paths = ",".join(repr("$." + field) for field in PAYLOAD_FIELDS[kind])
     terms.append(f"json_remove(payload_json,{paths})='{{}}'")
-    for field in REFERENCES:
+    for field in references:
         if field not in SOURCE_COLUMNS[kind]:
             terms.append(f"{field} is null")
         elif field in NULLABLE:
@@ -147,44 +177,83 @@ def _payload_check(kind):
     return f"check(record_type<>'{kind}' or ({' and '.join('(' + t + ')' for t in terms)}))"
 
 
-ACTION_TABLE_DDL = (
-    "create table actions (id integer primary key, record_type text not null check(record_type in ("
-    + ",".join(repr(k) for k in ACTION_TYPES)
-    + ")),legacy_key text not null check(legacy_key=cast(cast(legacy_key as integer) as text)),"
-    + ",".join(f"{column} integer references {parent}(id)" for column, (parent, _) in REFERENCES.items())
-    + ",payload_json text not null check(json_valid(payload_json) and json_type(payload_json)='object'),"
-    + ",".join(f"{column} {'integer' if column in INTEGER_FIELDS else 'text'} generated always as (json_extract(payload_json,'$.{column}')) virtual" for column in dict.fromkeys(c for fields in PAYLOAD_FIELDS.values() for c in fields))
-    + "," + ",".join(_payload_check(kind) for kind in ACTION_TYPES)
-    + "," + ",".join(f"check(record_type<>'{kind}' or {field} in ({','.join(repr(v) for v in options)}))" for kind, (field, options) in ENUMS.items())
-    + ")"
-)
-ACTION_INDEX_DDL = (
-    "create unique index idx_actions_public_id on actions(cast(legacy_key as integer),record_type)",
-    "create unique index idx_actions_consumer_run on actions(consumer_run_id) where record_type='review_candidates'",
-    "create index idx_actions_candidates_task on actions(task_id,execution_generation,cast(legacy_key as integer)) where record_type='review_candidates'",
-    "create unique index idx_actions_audit_run on actions(audit_run_id) where record_type='candidate_reviews'",
-    "create index idx_actions_reviews_candidate on actions(candidate_id,cast(legacy_key as integer)) where record_type='candidate_reviews'",
-    "create unique index idx_actions_selection_candidate on actions(candidate_id) where record_type='candidate_selections'",
-    "create unique index idx_actions_execution_candidate on actions(candidate_id) where record_type='candidate_executions'",
-    "create unique index idx_actions_attempt_sequence on actions(execution_id,action_index) where record_type='candidate_action_attempts'",
-    "create index idx_actions_external_key on actions(external_action_key) where record_type='candidate_action_attempts'",
-)
-ACTION_TRIGGER_DDL = (
-    "create trigger trg_actions_record_type_immutable before update of record_type on actions when new.record_type<>old.record_type begin select raise(abort,'action record type is immutable'); end",
-    "create trigger trg_actions_public_reference_update before update of legacy_key on actions when new.legacy_key<>old.legacy_key and exists(select 1 from actions where predecessor_review_id=old.id or candidate_id=old.id or review_id=old.id or selection_id=old.id or execution_id=old.id) begin select raise(abort,'FOREIGN KEY constraint failed'); end",
-    *tuple(
-        f"create trigger trg_actions_{field}_{suffix} before {event} on actions when new.{field} is not null and exists(select 1 from {parent} where id=new.{field} and record_type<>'{kind}') begin select raise(abort,'action parent type mismatch'); end"
-        for field, (parent, kind) in REFERENCES.items()
-        for event, suffix in (("insert", "insert"), (f"update of {field}", "update"))
-    ),
-)
+def _action_definitions(include_receipts=False):
+    kinds = ALL_ACTION_TYPES if include_receipts else CANDIDATE_ACTION_TYPES
+    references = _references_for(kinds)
+    payload_fields = dict.fromkeys(c for kind in kinds for c in PAYLOAD_FIELDS[kind])
+    generated = []
+    for column in payload_fields:
+        expression = f"json_extract(payload_json,'$.{column}')"
+        if include_receipts and column == 'external_action_key':
+            expression = f"case when record_type='external_action_results' then legacy_key else {expression} end"
+        generated.append(f"{column} {'integer' if column in INTEGER_FIELDS else 'text'} generated always as ({expression}) virtual")
+    key_check = "legacy_key=cast(cast(legacy_key as integer) as text)"
+    if include_receipts:
+        key_check = f"case when record_type='external_action_results' then trim(legacy_key)<>'' else {key_check} end"
+    table = (
+        "create table actions (id integer primary key, record_type text not null check(record_type in ("
+        + ",".join(repr(k) for k in kinds)
+        + f")),legacy_key text not null check({key_check}),"
+        + ",".join(f"{column} integer references {parent}(id)" for column, (parent, _) in references.items())
+        + ",payload_json text not null check(json_valid(payload_json) and json_type(payload_json)='object'),"
+        + ",".join(generated)
+        + "," + ",".join(_payload_check(kind, references) for kind in kinds)
+        + "," + ",".join(f"check(record_type<>'{kind}' or {field} in ({','.join(repr(v) for v in options)}))"
+                          for kind, (field, options) in ENUMS.items() if kind in kinds)
+    )
+    if include_receipts:
+        table += ",check(record_type<>'agent_effect_intents' or action_index>=0)"
+        for field in ('business_object_key', 'action_identity', 'operation', 'result_digest'):
+            table += f",check(record_type<>'external_action_results' or trim({field})<>'')"
+    table += ")"
+    numeric_scope = " where record_type<>'external_action_results'" if include_receipts else ""
+    indexes = (
+        "create unique index idx_actions_public_id on actions(cast(legacy_key as integer),record_type)" + numeric_scope,
+        "create unique index idx_actions_consumer_run on actions(consumer_run_id) where record_type='review_candidates'",
+        "create index idx_actions_candidates_task on actions(task_id,execution_generation,cast(legacy_key as integer)) where record_type='review_candidates'",
+        "create unique index idx_actions_audit_run on actions(audit_run_id) where record_type='candidate_reviews'",
+        "create index idx_actions_reviews_candidate on actions(candidate_id,cast(legacy_key as integer)) where record_type='candidate_reviews'",
+        "create unique index idx_actions_selection_candidate on actions(candidate_id) where record_type='candidate_selections'",
+        "create unique index idx_actions_execution_candidate on actions(candidate_id) where record_type='candidate_executions'",
+        "create unique index idx_actions_attempt_sequence on actions(execution_id,action_index) where record_type='candidate_action_attempts'",
+        "create index idx_actions_external_key on actions(external_action_key) where record_type='candidate_action_attempts'",
+    )
+    if include_receipts:
+        indexes += (
+            "create unique index idx_actions_text_public_key on actions(legacy_key,record_type) where record_type='external_action_results'",
+            "create index idx_actions_global_business on actions(business_object_key,external_action_key) where record_type='external_action_results'",
+            "create unique index idx_actions_intent_authorization on actions(agent_run_id,authorization_id) where record_type='agent_effect_intents'",
+            "create unique index idx_actions_intent_operation on actions(agent_run_id,receipt_operation_id) where record_type='agent_effect_intents'",
+            "create index idx_actions_intent_run on actions(agent_run_id,action_index,cast(legacy_key as integer)) where record_type='agent_effect_intents'",
+            "create unique index idx_actions_execution_receipt_operation on actions(agent_run_id,operation_id) where record_type='agent_execution_receipts'",
+            "create index idx_actions_execution_receipt_run on actions(agent_run_id,cast(legacy_key as integer)) where record_type='agent_execution_receipts'",
+        )
+    triggers = (
+        "create trigger trg_actions_record_type_immutable before update of record_type on actions when new.record_type<>old.record_type begin select raise(abort,'action record type is immutable'); end",
+        "create trigger trg_actions_public_reference_update before update of legacy_key on actions when new.legacy_key<>old.legacy_key and exists(select 1 from actions where predecessor_review_id=old.id or candidate_id=old.id or review_id=old.id or selection_id=old.id or execution_id=old.id) begin select raise(abort,'FOREIGN KEY constraint failed'); end",
+        *tuple(
+            f"create trigger trg_actions_{field}_{suffix} before {event} on actions when new.{field} is not null and exists(select 1 from {parent} where id=new.{field} and record_type<>'{kind}') begin select raise(abort,'action parent type mismatch'); end"
+            for field, (parent, kind) in references.items()
+            for event, suffix in (("insert", "insert"), (f"update of {field}", "update"))
+        ),
+    )
+    if include_receipts:
+        for kind, name in ACTION_SEQUENCE_NAMES.items():
+            triggers += (f"create trigger trg_actions_{kind}_sequence before insert on actions when new.record_type='{kind}' begin "
+                         f"insert into sqlite_sequence(name,seq) select '{name}',0 where not exists(select 1 from sqlite_sequence where name='{name}'); "
+                         f"update sqlite_sequence set seq=max(seq,cast(new.legacy_key as integer)) where name='{name}'; end",)
+    return table, indexes, triggers
+
+
+ACTION_TABLE_DDL, ACTION_INDEX_DDL, ACTION_TRIGGER_DDL = _action_definitions()
+RECEIPT_ACTION_TABLE_DDL, RECEIPT_ACTION_INDEX_DDL, RECEIPT_ACTION_TRIGGER_DDL = _action_definitions(True)
 
 
 def _projection(kind):
     fields, joins = [], []
     for field in SOURCE_COLUMNS[kind]:
-        if field == "id":
-            expression = "cast(a.legacy_key as integer)"
+        if field == IDENTITY_FIELDS[kind]:
+            expression = "a.legacy_key" if kind == "external_action_results" else "cast(a.legacy_key as integer)"
         elif field in REFERENCES and REFERENCES[field][0] == "actions":
             alias = "p_" + field
             expression = f"cast({alias}.legacy_key as integer)"
@@ -195,52 +264,67 @@ def _projection(kind):
             # public ID == physical ID. Their source FK scalars remain exact.
             expression = "a." + field
         fields.append(expression + " as " + field)
-    return f"select {','.join(fields)} from actions a {' '.join(joins)} where a.record_type='{kind}'"
+    numeric_scope = " and a.record_type<>'external_action_results'" if kind != "external_action_results" else ""
+    return f"select {','.join(fields)} from actions a {' '.join(joins)} where a.record_type='{kind}'{numeric_scope}"
 
 
-ACTION_PROJECTIONS = {kind: _projection(kind) for kind in ACTION_TYPES}
+ACTION_PROJECTIONS = {kind: _projection(kind) for kind in ALL_ACTION_TYPES}
 REVIEW_CANDIDATE_SQL = ACTION_PROJECTIONS["review_candidates"]
 CANDIDATE_REVIEW_SQL = ACTION_PROJECTIONS["candidate_reviews"]
 CANDIDATE_SELECTION_SQL = ACTION_PROJECTIONS["candidate_selections"]
 CANDIDATE_SUPPLEMENT_SQL = ACTION_PROJECTIONS["candidate_supplements"]
 CANDIDATE_EXECUTION_SQL = ACTION_PROJECTIONS["candidate_executions"]
 CANDIDATE_ACTION_ATTEMPT_SQL = ACTION_PROJECTIONS["candidate_action_attempts"]
+EXTERNAL_ACTION_RESULT_SQL = ACTION_PROJECTIONS["external_action_results"]
+AGENT_EFFECT_INTENT_SQL = ACTION_PROJECTIONS["agent_effect_intents"]
+AGENT_EXECUTION_RECEIPT_SQL = ACTION_PROJECTIONS["agent_execution_receipts"]
 
 
-def create_action_schema(db: sqlite3.Connection) -> None:
+def create_action_schema(db: sqlite3.Connection, *, include_receipts=False) -> None:
     """Create the declared schema, or repair only its missing auxiliary objects."""
     existing = db.execute("select 1 from sqlite_master where name='actions' collate nocase").fetchone()
     if existing:
-        if not action_schema_is_current(db, allow_missing_objects=True):
+        if not action_schema_is_current(db, allow_missing_objects=True, include_receipts=include_receipts):
             raise ValueError("unsupported current actions schema declaration")
         names = {sqlite_schema_name(obj["name"]) for obj in _objects(db, "actions")}
-        for obj in _current_objects():
+        for obj in _current_objects(include_receipts):
             if sqlite_schema_name(obj["name"]) not in names:
                 db.execute(obj["sql"])
     else:
         if any(db.execute("select 1 from sqlite_master where name=? collate nocase", (kind,)).fetchone() for kind in ACTION_TYPES):
             capture_action_schema(db)
-        _require_available_names(db, _current_objects())
-        _create_action_objects(db)
+        _require_available_names(db, _current_objects(include_receipts))
+        _create_action_objects(db, include_receipts)
 
 
-def _create_action_objects(db):
-    for sql in (ACTION_TABLE_DDL, *ACTION_INDEX_DDL, *ACTION_TRIGGER_DDL):
+def _create_action_objects(db, include_receipts=False):
+    if include_receipts and not db.execute("select 1 from sqlite_master where type='table' and name='sqlite_sequence'").fetchone():
+        # SQLite creates its native sequence metadata on the first declaration
+        # of an AUTOINCREMENT table. The initializer has no rows and is removed;
+        # actions retains its ordinary physical INTEGER PRIMARY KEY allocator.
+        name = "_actions_sequence_initializer"
+        while db.execute("select 1 from sqlite_master where name=? collate nocase", (name,)).fetchone():
+            name += "_"
+        db.execute(f'create table "{name}"(id integer primary key autoincrement)')
+        db.execute(f'drop table "{name}"')
+    table, indexes, triggers = _action_definitions(include_receipts)
+    for sql in (table, *indexes, *triggers):
         db.execute(sql)
 
 
-@lru_cache(maxsize=1)
-def _current_objects():
+@lru_cache(maxsize=2)
+def _current_objects(include_receipts=False):
     with closing(sqlite3.connect(":memory:")) as db:
-        _create_action_objects(db)
+        _create_action_objects(db, include_receipts)
         return _objects(db, "actions")
 
 
-def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False) -> bool:
-    if any(db.execute("select 1 from sqlite_master where name=? collate nocase", (kind,)).fetchone() for kind in ACTION_TYPES):
+def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False, include_receipts=False) -> bool:
+    kinds = ALL_ACTION_TYPES if include_receipts else ACTION_TYPES
+    if any(db.execute("select 1 from sqlite_master where name=? collate nocase", (kind,)).fetchone() for kind in kinds):
         return False
     actual = {sqlite_schema_name(o["name"]): o for o in _objects(db, "actions")}
-    expected = {sqlite_schema_name(o["name"]): o for o in _current_objects()}
+    expected = {sqlite_schema_name(o["name"]): o for o in _current_objects(include_receipts)}
     if any(db.execute("select 1 from sqlite_master where name=? collate nocase and tbl_name<>'actions' collate nocase", (name,)).fetchone() for name in expected):
         return False
     return not (actual.keys() - expected.keys()) and all(
@@ -254,11 +338,17 @@ def _require_kind(kind):
         raise ValueError("unknown action record type")
 
 
-def action_physical_id(db: sqlite3.Connection, record_type: str, public_id: int | None) -> int | None:
+def _identity_predicate(kind):
+    if kind == "external_action_results":
+        return "record_type=? and legacy_key=?"
+    return "record_type=? and record_type<>'external_action_results' and cast(legacy_key as integer)=?"
+
+
+def action_physical_id(db: sqlite3.Connection, record_type: str, public_id: int | str | None) -> int | None:
     _require_kind(record_type)
     if public_id is None:
         return None
-    row = db.execute("select id from actions where record_type=? and cast(legacy_key as integer)=?", (record_type, public_id)).fetchone()
+    row = db.execute(f"select id from actions where {_identity_predicate(record_type)}", (record_type, public_id)).fetchone()
     if row is None:
         raise sqlite3.IntegrityError(f"missing {record_type} public ID {public_id}")
     return row[0]
@@ -289,22 +379,72 @@ def _check_fields(kind, values):
 
 @dataclass(frozen=True)
 class ActionWriteResult:
-    lastrowid: int | None
+    lastrowid: int | str | None
     rowcount: int
 
 
+def _autoincrement_high_water(db, kind):
+    rows = db.execute("select seq from sqlite_sequence where name=?", (ACTION_SEQUENCE_NAMES[kind],)).fetchall()
+    if len(rows) > 1 or any(type(row[0]) is not int or row[0] < 0 for row in rows):
+        raise ValueError(f"invalid {kind} allocator metadata")
+    maximum = db.execute("select max(cast(legacy_key as integer)) from actions where record_type=?", (kind,)).fetchone()[0]
+    return max(rows[0][0] if rows else 0, maximum or 0)
+
+
+def _raise_autoincrement_full():
+    # Preserve SQLite's actual SQLITE_FULL exception rather than substituting
+    # a constraint error or reusing an ID when the native allocator is spent.
+    with closing(sqlite3.connect(":memory:")) as allocator:
+        allocator.execute("create table ids(id integer primary key autoincrement)")
+        allocator.execute("insert into ids values(9223372036854775807)")
+        allocator.execute("insert into ids default values")
+
+
 def insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ignore: bool = False) -> ActionWriteResult:
+    """Allocate automatic receipt IDs under SQLite's writer lock."""
+    _check_fields(record_type, values)
+    automatic = record_type in AUTOINCREMENT_TYPES and values.get("id") is None
+    owned = automatic and not db.in_transaction and (
+        db.isolation_level is None or getattr(db, "autocommit", None) is True
+    )
+    if owned:
+        db.execute("savepoint action_receipt_insert")
+    try:
+        if automatic:
+            # A no-row write acquires the lock before reading the allocator.
+            # Deferred connections retain their ordinary caller-owned transaction.
+            db.execute("update sqlite_sequence set seq=seq where 0")
+        result = _insert_action(db, record_type, values, ignore=ignore)
+    except BaseException:
+        if owned and db.in_transaction:
+            db.execute("rollback to action_receipt_insert")
+            db.execute("release action_receipt_insert")
+        raise
+    if owned:
+        db.execute("release action_receipt_insert")
+    return result
+
+
+def _insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ignore: bool = False) -> ActionWriteResult:
     """Insert source-shaped values; return the original per-type public ID."""
     _check_fields(record_type, values)
     now = db.execute("select current_timestamp").fetchone()[0]
-    payload = DEFAULTS[record_type] | {"created_at": now}
-    if "updated_at" in SOURCE_COLUMNS[record_type]:
-        payload["updated_at"] = now
+    payload = DEFAULTS[record_type] | {
+        field: now for field in ("created_at", "updated_at", "prepared_at")
+        if field in SOURCE_COLUMNS[record_type]
+    }
     payload.update({field: value for field, value in values.items() if field in PAYLOAD_FIELDS[record_type]})
     fields = [field for field in REFERENCES if field in SOURCE_COLUMNS[record_type]]
     arguments = [record_type, json.dumps(payload, ensure_ascii=False, separators=(",", ":"))]
     arguments += [_parent_id(db, field, values.get(field)) for field in fields]
-    public_id = values.get("id")
+    public_id = values.get(IDENTITY_FIELDS[record_type])
+    if record_type == "external_action_results" and public_id is None:
+        raise ValueError("unrepresentable null external action key")
+    if public_id is None and record_type in AUTOINCREMENT_TYPES:
+        maximum = _autoincrement_high_water(db, record_type)
+        if maximum == 2**63 - 1:
+            _raise_autoincrement_full()
+        public_id = maximum + 1
     if public_id is None and db.execute("select 1 from actions where record_type=? and legacy_key='9223372036854775807'", (record_type,)).fetchone():
         # Preserve SQLite's own random-rowid algorithm at INTEGER's upper bound.
         with closing(sqlite3.connect(":memory:")) as allocator:
@@ -317,21 +457,23 @@ def insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ign
     else:
         identity = "?"
         arguments.append(str(public_id))
-    sql = f"insert {'or ignore ' if ignore else ''}into actions(record_type,payload_json,{','.join(fields)},legacy_key) values({','.join('?' for _ in range(2 + len(fields)))},{identity}) returning cast(legacy_key as integer)"
+    returning = "legacy_key" if record_type == "external_action_results" else "cast(legacy_key as integer)"
+    sql = f"insert {'or ignore ' if ignore else ''}into actions(record_type,payload_json,{','.join(fields)},legacy_key) values({','.join('?' for _ in range(2 + len(fields)))},{identity}) returning {returning}"
     cursor = db.execute(sql, arguments)
     result = cursor.fetchone()
     cursor.fetchall()
     return ActionWriteResult(result[0] if result else None, cursor.rowcount)
 
 
-def update_action(db: sqlite3.Connection, record_type: str, public_id: int, values: dict, *, where_sql: str = "", parameters=()) -> sqlite3.Cursor:
+def update_action(db: sqlite3.Connection, record_type: str, public_id: int | str, values: dict, *, where_sql: str = "", parameters=()) -> sqlite3.Cursor:
     """Update explicit source fields; an optional predicate uses the projection."""
     _check_fields(record_type, values)
     assignments, args, paths = [], [], []
     for field, value in values.items():
-        if field in REFERENCES or field == "id":
-            assignments.append(("legacy_key" if field == "id" else field) + "=?")
-            args.append(str(value) if field == "id" else _parent_id(db, field, value))
+        if field in REFERENCES or field == IDENTITY_FIELDS[record_type]:
+            is_identity = field == IDENTITY_FIELDS[record_type]
+            assignments.append(("legacy_key" if is_identity else field) + "=?")
+            args.append(str(value) if is_identity and value is not None else value if is_identity else _parent_id(db, field, value))
         else:
             paths.extend(("$." + field, value))
     if paths:
@@ -339,17 +481,19 @@ def update_action(db: sqlite3.Connection, record_type: str, public_id: int, valu
         args.extend(paths)
     if not assignments:
         raise ValueError("action update requires fields")
-    predicate = "record_type=? and cast(legacy_key as integer)=?"
+    predicate = _identity_predicate(record_type)
     args.extend((record_type, public_id))
     if where_sql:
-        predicate += f" and cast(legacy_key as integer) in (select id from ({ACTION_PROJECTIONS[record_type]}) where id=? and ({where_sql}))"
+        identity_field = IDENTITY_FIELDS[record_type]
+        identity_expression = "legacy_key" if record_type == "external_action_results" else "cast(legacy_key as integer)"
+        predicate += f" and {identity_expression} in (select {identity_field} from ({ACTION_PROJECTIONS[record_type]}) where {identity_field}=? and ({where_sql}))"
         args.extend((public_id, *parameters))
     return db.execute(f"update actions set {','.join(assignments)} where {predicate}", args)
 
 
-def delete_action(db: sqlite3.Connection, record_type: str, public_id: int) -> sqlite3.Cursor:
+def delete_action(db: sqlite3.Connection, record_type: str, public_id: int | str) -> sqlite3.Cursor:
     _require_kind(record_type)
-    return db.execute("delete from actions where record_type=? and cast(legacy_key as integer)=?", (record_type, public_id))
+    return db.execute(f"delete from actions where {_identity_predicate(record_type)}", (record_type, public_id))
 
 
 def _no_inbound(db, target_tables):
@@ -477,7 +621,7 @@ def restore_action_schema(db: sqlite3.Connection, state: dict) -> dict:
     _no_sql_dependencies(db, {"actions"})
     if db.execute("pragma foreign_key_check(actions)").fetchone():
         raise ValueError("invalid current actions reference")
-    for field, (parent, kind) in REFERENCES.items():
+    for field, (parent, kind) in _references_for(ACTION_TYPES).items():
         if db.execute(f"select 1 from actions a join {parent} p on p.id=a.{field} where p.record_type<>? limit 1", (kind,)).fetchone():
             raise ValueError(f"invalid current actions parent type {field}")
     check = db.execute("pragma integrity_check(actions)").fetchall()

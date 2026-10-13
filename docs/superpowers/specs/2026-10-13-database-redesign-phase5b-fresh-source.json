@@ -1,0 +1,410 @@
+{
+  "scope": "empty actual fresh31d95f4e constructor declarations only; no business rows",
+  "source_commit": "31d95f4edcd0d15b5c87841ddee820b45c17e2ba",
+  "store": "2026-10-13.1",
+  "tables": {
+    "external_action_results": {
+      "columns": [
+        [
+          0,
+          "external_action_key",
+          "TEXT",
+          0,
+          null,
+          1
+        ],
+        [
+          1,
+          "business_object_key",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          2,
+          "action_identity",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          3,
+          "operation",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          4,
+          "target_identifiers_json",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          5,
+          "provider_result_json",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          6,
+          "result_digest",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          7,
+          "first_agent_run_id",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          8,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0
+        ]
+      ],
+      "objects": [
+        {
+          "type": "index",
+          "name": "idx_external_action_results_business_object",
+          "sql": "CREATE INDEX idx_external_action_results_business_object on external_action_results(business_object_key, external_action_key)"
+        },
+        {
+          "type": "table",
+          "name": "external_action_results",
+          "sql": "CREATE TABLE external_action_results (\n                    external_action_key text primary key\n                        check(trim(external_action_key) != ''),\n                    business_object_key text not null\n                        check(trim(business_object_key) != ''),\n                    action_identity text not null\n                        check(trim(action_identity) != ''),\n                    operation text not null check(trim(operation) != ''),\n                    target_identifiers_json text not null,\n                    provider_result_json text not null,\n                    result_digest text not null check(trim(result_digest) != ''),\n                    first_agent_run_id integer not null,\n                    created_at text not null default current_timestamp,\n                    foreign key(first_agent_run_id) references runs(id)\n                )"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_runs_child_external_action_results_first_agent_run_id_insert",
+          "sql": "CREATE TRIGGER trg_runs_child_external_action_results_first_agent_run_id_insert before insert on \"external_action_results\" when new.\"first_agent_run_id\" is not null and exists(select 1 from runs where id=new.\"first_agent_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_runs_child_external_action_results_first_agent_run_id_update",
+          "sql": "CREATE TRIGGER trg_runs_child_external_action_results_first_agent_run_id_update before update of \"first_agent_run_id\" on \"external_action_results\" when new.\"first_agent_run_id\" is not null and exists(select 1 from runs where id=new.\"first_agent_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+        }
+      ]
+    },
+    "agent_effect_intents": {
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          1,
+          "agent_run_id",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          2,
+          "authorization_id",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          3,
+          "action_index",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          4,
+          "receipt_operation_id",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          5,
+          "capability",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          6,
+          "operation",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          7,
+          "operation_digest",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          8,
+          "arguments_digest",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          9,
+          "target_identifiers_json",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          10,
+          "external_action_key",
+          "TEXT",
+          1,
+          "''",
+          0
+        ],
+        [
+          11,
+          "state",
+          "TEXT",
+          1,
+          "'prepared'",
+          0
+        ],
+        [
+          12,
+          "result_digest",
+          "TEXT",
+          1,
+          "''",
+          0
+        ],
+        [
+          13,
+          "exit_code",
+          "INTEGER",
+          0,
+          null,
+          0
+        ],
+        [
+          14,
+          "prepared_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0
+        ],
+        [
+          15,
+          "dispatched_at",
+          "TEXT",
+          1,
+          "''",
+          0
+        ],
+        [
+          16,
+          "acknowledged_at",
+          "TEXT",
+          1,
+          "''",
+          0
+        ],
+        [
+          17,
+          "updated_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0
+        ]
+      ],
+      "objects": [
+        {
+          "type": "index",
+          "name": "idx_agent_effect_intents_operation",
+          "sql": "CREATE UNIQUE INDEX idx_agent_effect_intents_operation\n                    on agent_effect_intents(agent_run_id, receipt_operation_id)"
+        },
+        {
+          "type": "index",
+          "name": "idx_agent_effect_intents_run",
+          "sql": "CREATE INDEX idx_agent_effect_intents_run\n                    on agent_effect_intents(agent_run_id, action_index, id)"
+        },
+        {
+          "type": "table",
+          "name": "agent_effect_intents",
+          "sql": "CREATE TABLE agent_effect_intents (\n                    id integer primary key autoincrement,\n                    agent_run_id integer not null,\n                    authorization_id text not null,\n                    action_index integer not null check(action_index >= 0),\n                    receipt_operation_id text not null,\n                    capability text not null,\n                    operation text not null,\n                    operation_digest text not null,\n                    arguments_digest text not null,\n                    target_identifiers_json text not null,\n                    external_action_key text not null default '',\n                    state text not null default 'prepared'\n                        check(state in ('prepared', 'dispatched', 'acknowledged')),\n                    result_digest text not null default '',\n                    exit_code integer,\n                    prepared_at text not null default current_timestamp,\n                    dispatched_at text not null default '',\n                    acknowledged_at text not null default '',\n                    updated_at text not null default current_timestamp,\n                    unique(agent_run_id, authorization_id),\n                    foreign key(agent_run_id) references runs(id)\n                )"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_runs_child_agent_effect_intents_agent_run_id_insert",
+          "sql": "CREATE TRIGGER trg_runs_child_agent_effect_intents_agent_run_id_insert before insert on \"agent_effect_intents\" when new.\"agent_run_id\" is not null and exists(select 1 from runs where id=new.\"agent_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_runs_child_agent_effect_intents_agent_run_id_update",
+          "sql": "CREATE TRIGGER trg_runs_child_agent_effect_intents_agent_run_id_update before update of \"agent_run_id\" on \"agent_effect_intents\" when new.\"agent_run_id\" is not null and exists(select 1 from runs where id=new.\"agent_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+        }
+      ]
+    },
+    "agent_execution_receipts": {
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          1,
+          "agent_run_id",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          2,
+          "receipt_id",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          3,
+          "operation_id",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          4,
+          "cli",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          5,
+          "command_path",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          6,
+          "command_digest",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          7,
+          "exit_code",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          8,
+          "completed",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          9,
+          "persisted",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          10,
+          "safe_to_confirm",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          11,
+          "effect_counted",
+          "INTEGER",
+          1,
+          "0",
+          0
+        ],
+        [
+          12,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0
+        ]
+      ],
+      "objects": [
+        {
+          "type": "index",
+          "name": "idx_agent_execution_receipts_run",
+          "sql": "CREATE INDEX idx_agent_execution_receipts_run\n                    on agent_execution_receipts(agent_run_id, id)"
+        },
+        {
+          "type": "table",
+          "name": "agent_execution_receipts",
+          "sql": "CREATE TABLE agent_execution_receipts (\n                    id integer primary key autoincrement,\n                    agent_run_id integer not null,\n                    receipt_id text not null,\n                    operation_id text not null,\n                    cli text not null,\n                    command_path text not null,\n                    command_digest text not null,\n                    exit_code integer not null,\n                    completed integer not null,\n                    persisted integer not null,\n                    safe_to_confirm integer not null,\n                    effect_counted integer not null default 0,\n                    created_at text not null default current_timestamp,\n                    unique(agent_run_id, operation_id),\n                    foreign key(agent_run_id) references runs(id)\n                )"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_runs_child_agent_execution_receipts_agent_run_id_insert",
+          "sql": "CREATE TRIGGER trg_runs_child_agent_execution_receipts_agent_run_id_insert before insert on \"agent_execution_receipts\" when new.\"agent_run_id\" is not null and exists(select 1 from runs where id=new.\"agent_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_runs_child_agent_execution_receipts_agent_run_id_update",
+          "sql": "CREATE TRIGGER trg_runs_child_agent_execution_receipts_agent_run_id_update before update of \"agent_run_id\" on \"agent_execution_receipts\" when new.\"agent_run_id\" is not null and exists(select 1 from runs where id=new.\"agent_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+        }
+      ]
+    }
+  }
+}
