@@ -35,7 +35,7 @@ The first proof preceded the final namespace/bootstrap corrections. The retained
 
 The merged scoped verification passed154 tests, including concurrent main's OA and meeting recovery changes. Draft PR72 is https://github.com/callzhang/ceo-agent-service/pull/72; CI is in progress. Original work data, copied databases and old code remain task-owned temporary acceptance material and will be removed after final verified evidence is retained.
 
-## Remaining gates
+## Remaining gates before the final release
 
 Current main is integrated and corrected application/full-copy proof binding has passed. Run complete CI, including the console checks; deploy only after these gates pass. Read back production marker, PID, health, queues, Attention and History. Continue the remaining actions families and phases6–8 toward the unchanged10+1 goal.
 
@@ -57,3 +57,17 @@ The corrections use typed action projections, expect the exact current Store15 m
 The six affected test files pass234 tests with4 skips in174.98 seconds after these corrections. Ruff and diff whitespace checks pass. This targeted result does not replace the required new complete Quality run.
 
 Real Codex CLI revision acceptance also passed:4 native turns, first review returned/rejected then final approve,1 substitute dispatch/verified receipt/business attempt, current done/input compacted, fresh-store terminal reconstruction without a new turn,126 original nonvirtual application tables unchanged. Receipt:evals/database_redesign/phase5a_native_revision.v1.json. No real outbound send. After terminal process/open-handle checks the exact owned revision temporary directory was removed; native trajectory remains solely in the CLI home.
+
+## Current production baseline rebind while final CI runs
+
+Live production and remote main are b9572061, Store14/Email51; the original full-copy old-code oracle was2d1e94e4. Their storage code is unchanged, but actual current-production startup was verified separately rather than inferred. The retained final Store15 working copy was inverted, its all-table values/types/rowids and exact source declarations/marker timestamp checked, actual b957 app code extracted to owned temporary storage and started in a fresh process, then target fresh constructor re-forwarded. All137 source-layout tables including synthetic post-publication facts match the frozen proof; original source file hash remains unchanged and target application hashes still match. No tasks were replayed and no provider was invoked. Supplementary receipt:evals/database_redesign/phase5a_production_rebind.v1.json. The immutable source/full acceptance directories remain necessary until deployment/readback. CI38393946209 on35baa666 is still live; this supplementary evidence has not restarted it.
+
+## Released and read back (2026-10-13)
+
+Quality38393946209 on35baa666 passed:12205 Python tests,110 skipped,44 deselected;723 frontend tests,2 skipped;2 browser tests and frontend build. PR72 merged as31d95f4e and formal app.deploy completed b9572061→31d95f4e. Production Store15/Email51, PID75674, healthy; exact action manifest current and old six source tables absent. Physical table count132, ordinary application count126: this is still not final10+1. Quick check passes; one pre-existing FK finding is exactly equal to the retained immutable source, not claimed to be zero.
+
+Health/status/Attention/History return200. Actual UI History→Attempt15404→Audit details→native Codex timeline15 records loaded. No feedback/retry/send actions clicked. Dispatcher pending/due/running all0; summary pending3 (email provider work), processing0, failed6, attention4. Three failed reply tasks and their attempts were last updated09:25/10:01/10:48 UTC, before this12:40 release; preserved, not erased or replayed. No post-release Agent business outcome was manufactured for acceptance.
+
+Latest backup auto-reply-2026-10-13.sqlite3 was replaced with a Store15/Email51 online copy only after its full integrity check and completed stamp; reread passes. The unchanged471347200-byte DB file is not a space-reclamation claim; no VACUUM performed. Final metadata:evals/database_redesign/phase5a_release.v1.json. All three exact owned phase5A acceptance/preliminary/graph temporary directories were checked for open handles and removed after proof retention and backup verification; native home untouched.
+
+Phase5A is complete. Remaining independent/action/delivery/email/follow-up/sync families and phases6–8 remain required for the unchanged ten-table-plus-migration goal.

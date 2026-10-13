@@ -14,6 +14,7 @@ from app.action_storage import (
     CANDIDATE_SUPPLEMENT_SQL,
     CANDIDATE_EXECUTION_SQL,
     CANDIDATE_ACTION_ATTEMPT_SQL,
+    EXTERNAL_ACTION_RESULT_SQL,
     insert_action,
     update_action,
 )
@@ -416,7 +417,7 @@ class ReviewedCandidateStoreMixin:
             prior_actions = db.execute(f"select action_index,status from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=? and action_index<?", (execution_id,action_index)).fetchall()
             if len(prior_actions) != action_index or any(row["status"] != "verified" for row in prior_actions):
                 raise ValueError("preceding action is not verified")
-            existing_success = db.execute("select * from external_action_results where external_action_key=?", (external_action_key,)).fetchone()
+            existing_success = db.execute(f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (external_action_key,)).fetchone()
             if existing_success is None:
                 prior_key = db.execute(f"select execution_id,status from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where external_action_key=? and execution_id<>? order by id desc limit 1", (external_action_key,execution_id)).fetchone()
                 if prior_key is not None and prior_key["status"] != "confirmed_no_effect":
@@ -462,7 +463,7 @@ class ReviewedCandidateStoreMixin:
             attempt = db.execute(f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=? and action_index=?", (execution_id,action_index)).fetchone()
             if attempt is None:
                 raise ValueError("action was not dispatched")
-            if status == "verified" and db.execute("select 1 from external_action_results where external_action_key=?", (attempt["external_action_key"],)).fetchone() is None:
+            if status == "verified" and db.execute(f"select 1 from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (attempt["external_action_key"],)).fetchone() is None:
                 raise ValueError("verified action lacks successful ledger receipt")
             update_action(db, "candidate_action_attempts", attempt["id"], {
                 "status": status, "result_json": body, "updated_at": _db_timestamp(db),
@@ -490,10 +491,14 @@ class ReviewedCandidateStoreMixin:
             action = plan["actions"][action_index]
             if action.get("operation") != operation or action.get("target") != target_identifiers:
                 raise ValueError("approved action mismatch")
-            db.execute("""insert or ignore into external_action_results
-                (external_action_key,business_object_key,action_identity,operation,target_identifiers_json,provider_result_json,result_digest,first_agent_run_id)
-                values (?,?,?,?,?,?,?,?)""", (external_action_key,candidate["business_object_key"],action["action_identity"],operation,target_json,provider_json,result_digest,candidate["consumer_run_id"]))
-            saved = db.execute("select * from external_action_results where external_action_key=?", (external_action_key,)).fetchone()
+            insert_action(db, "external_action_results", {
+                "external_action_key": external_action_key,
+                "business_object_key": candidate["business_object_key"],
+                "action_identity": action["action_identity"], "operation": operation,
+                "target_identifiers_json": target_json, "provider_result_json": provider_json,
+                "result_digest": result_digest, "first_agent_run_id": candidate["consumer_run_id"],
+            }, ignore=True)
+            saved = db.execute(f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (external_action_key,)).fetchone()
             if (saved["business_object_key"] != candidate["business_object_key"] or saved["action_identity"] != action["action_identity"]
                 or saved["operation"] != operation or saved["target_identifiers_json"] != target_json or saved["provider_result_json"] != provider_json):
                 raise ValueError("conflicting external action result")
@@ -504,14 +509,14 @@ class ReviewedCandidateStoreMixin:
 
     def get_candidate_external_action(self, external_action_key: str) -> dict[str, Any] | None:
         with self._connect() as db:
-            return _row(db.execute("select * from external_action_results where external_action_key=?", (external_action_key,)).fetchone())
+            return _row(db.execute(f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (external_action_key,)).fetchone())
 
     def get_verified_action_source(self, external_action_key: str) -> dict[str, Any] | None:
         """Resolve a successful ledger key to the branch actually dispatched."""
         with self._connect() as db:
             return _row(db.execute(f"""select c.id as candidate_id, c.candidate_json,
                     a.action_index, s.branch_json, e.selection_id
-                from external_action_results r
+                from ({EXTERNAL_ACTION_RESULT_SQL}) r
                 join ({REVIEW_CANDIDATE_SQL}) c on c.consumer_run_id=r.first_agent_run_id
                 join ({CANDIDATE_EXECUTION_SQL}) e on e.candidate_id=c.id
                 join ({CANDIDATE_ACTION_ATTEMPT_SQL}) a on a.execution_id=e.id
@@ -532,7 +537,7 @@ class ReviewedCandidateStoreMixin:
                 from ({CANDIDATE_ACTION_ATTEMPT_SQL}) a
                 join ({CANDIDATE_EXECUTION_SQL}) e on e.id=a.execution_id
                 join ({REVIEW_CANDIDATE_SQL}) c on c.id=e.candidate_id
-                join external_action_results r on r.external_action_key=a.external_action_key
+                join ({EXTERNAL_ACTION_RESULT_SQL}) r on r.external_action_key=a.external_action_key
                 where c.task_id=? and a.status='verified'
                 order by c.id, a.action_index""", (task_id,)).fetchall()
             return [dict(row) for row in rows]

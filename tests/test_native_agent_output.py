@@ -164,6 +164,57 @@ def test_audit_native_results_keep_digest_and_feedback_contract():
         parse_native_output(stream(bad), "audit")
 
 
+@pytest.mark.parametrize("value,json_type", [
+    ({"entries": [{"key": "entries", "value": [None, True, 1.5]},
+                   {"key": "a/~b", "value": {"entries": [{"key": "", "value": "原值"}]}}]}, "object"),
+    (None, "null"),
+    ("000123", "string"),
+])
+def test_native_audit_field_assertions_restore_values_and_keep_bound_validation(value, json_type):
+    from app.audit_agent import validate_audit_candidate_fields
+
+    payload = {
+        "summary": "Verify exact candidate fields", "outcome": "return",
+        "proposal_revision": 0, "candidate_digest": "0" * 64,
+        "error_code": None, "error_retryable": False,
+        "error_authorization_required": False,
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0, "evidence_refs": [],
+        "feedback": {
+            "rule": "Current field evidence", "observation": "Review exact value",
+            "requested_revision": "Review current business facts",
+            "observation_basis": "candidate_fields",
+            "candidate_field_assertions": [{
+                "path": ["proposal", "actions", 0, "payload", "value"],
+                "value": value, "json_type": json_type,
+            }],
+        },
+    }
+    assert Draft202012Validator(native_output_schema("audit")).is_valid(payload)
+    result = AuditAgentWireResult.model_validate_json(
+        parse_native_output(stream(payload), "audit")
+    ).to_result()
+    assertion = result.feedback.candidate_field_assertions[0]
+    expected = (
+        {"entries": [None, True, 1.5], "a/~b": {"": "原值"}}
+        if json_type == "object" else value
+    )
+    assert assertion.value == expected
+    assert assertion.path == ("proposal", "actions", 0, "payload", "value")
+    candidate_wire = json.loads(parse_native_output(stream(consumer()), "consumer"))
+    candidate_wire["proposal"]["actions"][0]["payload"] = {"value": expected}
+    candidate = ConsumerAgentWireResult.model_validate(candidate_wire).to_result()
+    validate_audit_candidate_fields(result, candidate)
+    candidate.proposal.actions[0].payload["value"] = "different"
+    with pytest.raises(ResultParseError, match="contradicts the bound candidate"):
+        validate_audit_candidate_fields(result, candidate)
+    missing = copy.deepcopy(payload)
+    missing["feedback"]["candidate_field_assertions"] = []
+    assert Draft202012Validator(native_output_schema("audit")).is_valid(missing)
+    with pytest.raises(ResultParseError):
+        parse_native_output(stream(missing), "audit")
+
+
 @pytest.mark.parametrize("role", ["consumer", "audit"])
 def test_committed_native_schema_matches_current_projection(role):
     from app.native_agent_output import native_output_schema_path

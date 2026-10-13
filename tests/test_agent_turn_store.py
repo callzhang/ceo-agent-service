@@ -1932,9 +1932,10 @@ def test_agent_run_migration_preserves_receipts_without_exposing_legacy_events(t
         event = db.execute(
             f"select id, created_at from ({RUN_STATE_EVENT_SQL}) where agent_run_id=7"
         ).fetchone()
+        from app.action_storage import AGENT_EXECUTION_RECEIPT_SQL
         receipt = db.execute(
             "select id, created_at, effect_counted "
-            "from agent_execution_receipts where agent_run_id=7"
+            f"from ({AGENT_EXECUTION_RECEIPT_SQL}) where agent_run_id=7"
         ).fetchone()
     assert event == (8, "2026-08-06 15:00:00")
     assert receipt == (9, "2026-08-06 15:01:00", 0)

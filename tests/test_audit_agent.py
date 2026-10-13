@@ -54,7 +54,8 @@ def _wire(digest: str, *, outcome: str = "approve", revision: int = 0) -> str:
         "proposal_revision": revision, "candidate_digest": digest,
         "evidence_refs": ["source:1"],
         "feedback": ({"rule": "Missing source", "observation": "Unverified fact",
-                     "requested_revision": "Read the source"} if outcome in ("return", "reject") else None),
+                     "requested_revision": "Read the source", "observation_basis": "business",
+                     "candidate_field_assertions": []} if outcome in ("return", "reject") else None),
         "error_code": "", "error_retryable": False,
         "error_authorization_required": False, "risk": "low", "confidence": 0.9,
         "rule_coverage": 1.0, "information_completeness": 1.0,
@@ -298,6 +299,33 @@ def test_audit_wire_digest_and_revision_must_match_claimed_candidate(setup):
     for turn_attempt, raw in enumerate((_wire("0" * 64), _wire(context.candidate_digest, revision=1))):
         with pytest.raises(ResultParseError):
             _runner(setup, CapturingExecutor(raw)).run(task, context, turn_attempt=turn_attempt, parent_agent_run_id=parent.id)
+
+
+def test_false_field_feedback_corrects_audit_without_revising_or_approving_candidate(setup):
+    store, task, parent, context, _config, _router = setup
+    lines = _wire(context.candidate_digest, outcome="return").splitlines()
+    event = json.loads(lines[-1])
+    output = json.loads(event["item"]["text"])
+    output["feedback"].update(observation_basis="candidate_fields", candidate_field_assertions=[{
+        "path": ["proposal", "actions", 0, "target", "open_dingtalk_id"],
+        "value": 123, "json_type": "number",
+    }])
+    event["item"]["text"] = json.dumps(output)
+    lines[-1] = json.dumps(event)
+    with pytest.raises(ResultParseError, match="Audit candidate field assertion"):
+        _runner(setup, CapturingExecutor("\n".join(lines))).run(
+            task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+    failed = store.get_agent_run_for_turn(task.id, task.execution_generation,
+        role=AgentRole.AUDIT, proposal_revision=0, turn_attempt=0)
+    assert failed.status == "failed"
+    assert json.loads(failed.structured_error_json)["code"] == "codex_result_invalid"
+    assert json.loads(store.adopted_candidate_for_consumer_run(parent.id)["candidate_json"]) == context.candidate.model_dump(mode="json")
+    executor = CapturingExecutor(_wire(context.candidate_digest, outcome="return"))
+    result = _runner(setup, executor).run(task, context, turn_attempt=1,
+        parent_agent_run_id=parent.id)
+    assert result.result.outcome is AuditOutcome.RETURN
+    assert "Audit candidate field assertion" in executor.prompts[0]
+    assert context.candidate_digest == result.result.candidate_digest
 
 
 def test_sensitive_audit_output_is_a_result_failure_not_a_process_outage(setup):

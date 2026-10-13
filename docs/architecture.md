@@ -1987,3 +1987,21 @@ Store `2026-10-13.1` 将候选、审查、选择、补充、执行和动作尝�
 版本更新在同一事务内完成。配对逆迁从当前 `actions` 重建源表并恢复原版本记录，保留发布后的新增、更新、
 删除事实，不还原陈旧数据库备份。正常发布和回退后的重新启动在新进程验证，不能以同进程已初始化路径
 缓存代替实际启动验收。此段描述本发布代码契约；是否上线以正式部署回执为准。
+
+
+### 第五期B：独立回执合并
+
+Store `2026-10-13.2` 将 external_action_results、agent_effect_intents 和
+agent_execution_receipts 的实际字段与约束合入同一 actions 表。全局回执保留准确文本主键，
+通过 first_agent_run_id 引用逻辑 Agent run，不制造 candidate 归属。两类原生执行事实保留各自
+AUTOINCREMENT 公开 ID 和 native sqlite_sequence 水位；自动分配与插入持有同一 SQLite 写锁，
+显式自动提交连接使用自有 savepoint，普通连接的事务仍由调用方控制。内层 JSON 原始字符串保持原值。
+正常运行只读写九类型 actions，不创建旧三表、兼容 view 或双写。
+
+本发布单元只接受准确 Store15 声明，包括实际历史 ALTER 与实际 fresh constructor 的列顺序差异。
+配对逆迁按捕获的源声明恢复当前事实与当前水位，保留迁移后的新增、修改和删除，不恢复旧备份内容。
+发布 quiet-wait 读取器仅在明确声明的源／目标结构读取原生执行事实；恢复、审查、发送及回执策略不变。
+完整十表目标尚未完成；其余 actions 家族和第六至八期仍需要实施。是否上线以正式部署回执为准。
+
+
+Codex 原生 Audit schema 同步当前反馈合同的 observation_basis 和 candidate_field_assertions，原生投影只改变结构传输形式；断言 value 的嵌套 JSON、空值和特殊键无损还原后，仍进入既有完整模型及候选字段一致性校验。原生 schema 快照更新不改变 Audit 政策、结果采用、反馈修正或执行授权行为。

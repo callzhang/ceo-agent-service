@@ -21,12 +21,42 @@ def empty_source13(path):
         with db:
             yield db
     finally:
-        # Apply the separately verified source13 -> source14 transition before
-        # the current Store's explicit source14 -> actions publication.
+        # Publish each separately verified historical transition before the
+        # current Store's exact source15 -> source16 migration.
+        from app.action_storage import (
+            ACTION_PROJECTIONS, ACTION_TYPES, RECEIPT_ACTION_TYPES, SOURCE_COLUMNS,
+            migrate_action_schema,
+        )
         from app.workbench_storage import migrate_workbench_schema
         db.execute('pragma foreign_keys=off')
         db.execute('begin immediate')
         migrate_workbench_schema(db)
         db.execute("update service_state set value='2026-10-12.1' where key='store_schema_version'")
+        originals = {
+            kind: [tuple(row) for row in db.execute(
+                f"select {','.join(SOURCE_COLUMNS[kind])} from {kind} order by id"
+            )]
+            for kind in ACTION_TYPES
+        }
+        receipts = {
+            kind: [tuple(row) for row in db.execute(
+                f"select {','.join(SOURCE_COLUMNS[kind])} from {kind} order by {SOURCE_COLUMNS[kind][0]}"
+            )]
+            for kind in RECEIPT_ACTION_TYPES
+        }
+        sequences = [tuple(row) for row in db.execute('select name,seq from sqlite_sequence order by name')]
+        migrate_action_schema(db)
+        assert {
+            kind: [tuple(row) for row in db.execute(f"select * from ({ACTION_PROJECTIONS[kind]}) order by id")]
+            for kind in ACTION_TYPES
+        } == originals
+        assert {
+            kind: [tuple(row) for row in db.execute(
+                f"select {','.join(SOURCE_COLUMNS[kind])} from {kind} order by {SOURCE_COLUMNS[kind][0]}"
+            )]
+            for kind in RECEIPT_ACTION_TYPES
+        } == receipts
+        assert [tuple(row) for row in db.execute('select name,seq from sqlite_sequence order by name')] == sequences
+        db.execute("update service_state set value='2026-10-13.1' where key='store_schema_version'")
         db.commit()
         db.close()

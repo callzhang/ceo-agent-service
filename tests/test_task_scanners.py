@@ -8,6 +8,7 @@ from app.agent_cron.commands import (
     ServiceCommandSkillMaterial,
 )
 from app.dws_client import DwsOaApprovalCandidate
+from app.audit_web import _queue_attention_rows
 from app.skill_features import FeatureRegistry
 from app.store import AutoReplyStore
 from app.task_scanners import (
@@ -787,7 +788,7 @@ def test_scan_pending_oa_approvals_keeps_running_oa_needs_human_attempt(tmp_path
     assert store.get_reply_attempt(attempt_id).send_status == "needs_human"
 
 
-def test_scan_pending_oa_approvals_closes_running_process_task_no_longer_pending(
+def test_scan_pending_oa_approvals_keeps_running_process_task_no_longer_pending(
     tmp_path,
 ):
     class FakeDws:
@@ -820,13 +821,301 @@ def test_scan_pending_oa_approvals_closes_running_process_task_no_longer_pending
     assert scan_pending_oa_approvals(store, FakeDws()) == 0
     attempt = store.get_reply_attempt(attempt_id)
     assert attempt is not None
+    assert attempt.send_status == "needs_human"
+    with store._connect() as db:
+        resolution = db.execute(
+            "select resolution from reply_attempts where id=?",
+            (attempt_id,),
+        ).fetchone()["resolution"]
+    assert resolution == ""
+
+
+def test_scan_pending_oa_approvals_closes_running_process_after_explicit_return(
+    tmp_path,
+):
+    class FakeDws:
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return []
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            raise AssertionError("returned process is no longer pending for principal")
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            return {
+                "result": {
+                    "status": "RUNNING",
+                    "tasks": [
+                        {
+                            "taskId": "task-old",
+                            "userId": "principal-user-1",
+                            "taskStatus": "CANCELED",
+                        },
+                        {
+                            "taskId": "task-applicant",
+                            "userId": "applicant-user-1",
+                            "taskStatus": "RUNNING",
+                        },
+                    ],
+                    "operationRecords": [
+                        {
+                            "date": 1791889619840,
+                            "type": "REDIRECT_PROCESS",
+                            "userId": "principal-user-1",
+                            "result": "NONE",
+                        }
+                    ],
+                }
+            }
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-returned:revision-1",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-returned",
+        oa_task_id="task-old",
+        send_status="needs_human",
+    )
+
+    assert scan_pending_oa_approvals(store, FakeDws()) == 0
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
     assert attempt.send_status == "skipped"
     with store._connect() as db:
         resolution = db.execute(
             "select resolution from reply_attempts where id=?",
             (attempt_id,),
         ).fetchone()["resolution"]
-    assert "OA_TASK_NOT_PENDING" in resolution
+    assert "verified return receipt" in resolution
+
+
+def test_scan_keeps_unreturned_process_in_attention_after_leaving_principal_queue(
+    tmp_path,
+):
+    class FakeDws:
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return []
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            raise AssertionError("the principal has no current node")
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            return {
+                "result": {
+                    "status": "RUNNING",
+                    "tasks": [
+                        {
+                            "taskId": "task-principal",
+                            "userId": "principal-user-1",
+                            "taskStatus": "COMPLETED",
+                        },
+                        {
+                            "taskId": "task-next-approver",
+                            "userId": "next-approver",
+                            "taskStatus": "RUNNING",
+                        },
+                    ],
+                    "operationRecords": [
+                        {
+                            "date": 1791889619840,
+                            "type": "EXECUTE_TASK_NORMAL",
+                            "userId": "principal-user-1",
+                            "result": "AGREE",
+                        }
+                    ],
+                }
+            }
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    key = "oa:proc-next-approver:task-principal"
+    store.set_daily_scan_state(
+        "oa_pending",
+        last_success_at="2026-10-12 00:00:00",
+        cursor_json=json.dumps({"pending_business_object_keys": [key]}),
+        last_error="",
+    )
+
+    assert scan_pending_oa_approvals(store, FakeDws()) == 0
+    state = store.get_daily_scan_state("oa_pending")
+    assert state is not None
+    assert key in json.loads(state["cursor_json"])["pending_business_object_keys"]
+    assert any(row["category"] == "OA approval" and row["id"] == key
+               for row in _queue_attention_rows(store))
+
+
+def test_scan_restores_attention_for_legacy_oa_task_not_pending_resolution(
+    tmp_path,
+):
+    class FakeDws:
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return []
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            raise AssertionError("the principal has no current node")
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            return {
+                "result": {
+                    "status": "RUNNING",
+                    "tasks": [
+                        {
+                            "taskId": "task-principal",
+                            "userId": "principal-user-1",
+                            "taskStatus": "COMPLETED",
+                        },
+                        {
+                            "taskId": "task-next-approver",
+                            "userId": "next-approver",
+                            "taskStatus": "RUNNING",
+                        },
+                    ],
+                    "operationRecords": [
+                        {
+                            "date": 1791889619840,
+                            "type": "EXECUTE_TASK_NORMAL",
+                            "userId": "principal-user-1",
+                            "result": "AGREE",
+                        }
+                    ],
+                }
+            }
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan:proc-legacy",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-legacy:revision-1",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-legacy",
+        oa_task_id="task-principal",
+        send_status="skipped",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set resolved_at=current_timestamp, resolution=? where id=?",
+            (
+                "Live DingTalk OA task reached terminal state OA_TASK_NOT_PENDING.",
+                attempt_id,
+            ),
+        )
+
+    assert scan_pending_oa_approvals(store, FakeDws()) == 0
+    key = "oa:proc-legacy:task-principal"
+    state = store.get_daily_scan_state("oa_pending")
+    assert state is not None
+    assert key in json.loads(state["cursor_json"])["pending_business_object_keys"]
+    assert any(row["category"] == "OA approval" and row["id"] == key
+               for row in _queue_attention_rows(store))
+
+
+def test_scan_clears_legacy_attention_for_provider_snake_case_return_receipt(
+    tmp_path,
+):
+    class FakeDws:
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return []
+
+        def get_current_user_id(self):
+            return "035504180730922"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            raise AssertionError("Derek's original node is no longer pending")
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            return {
+                "errcode": 0,
+                "process_instance": {
+                    "status": "RUNNING",
+                    "tasks": [
+                        {
+                            "taskid": 104248980945,
+                            "userid": "V00_1400815737560",
+                            "task_status": "CANCELED",
+                        },
+                        {
+                            "taskid": 104220105271,
+                            "userid": "next-approver",
+                            "task_status": "RUNNING",
+                        },
+                    ],
+                    "operation_records": [
+                        {
+                            "date": "2026-10-09 15:46:01",
+                            "operation_type": "REDIRECT_PROCESS",
+                            "userid": "035504180730922",
+                            "operation_result": "NONE",
+                        }
+                    ],
+                },
+            }
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    key = "oa:5aD5eemcSVO3kI2H7qL4rg03641790612331:104248980945"
+    attempt_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan:legacy-return",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:legacy-return:revision-1",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="5aD5eemcSVO3kI2H7qL4rg03641790612331",
+        oa_task_id="104248980945",
+        send_status="skipped",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set resolved_at=current_timestamp, resolution=? where id=?",
+            (
+                "Live DingTalk OA task reached terminal state OA_TASK_NOT_PENDING.",
+                attempt_id,
+            ),
+        )
+    store.set_daily_scan_state(
+        "oa_pending",
+        last_success_at="2026-10-12 00:00:00",
+        cursor_json=json.dumps({
+            "pending_business_object_keys": [key],
+            "reconciled_legacy_oa_attempt_ids": [attempt_id],
+        }),
+        last_error="",
+    )
+
+    assert scan_pending_oa_approvals(store, FakeDws()) == 0
+    state = store.get_daily_scan_state("oa_pending")
+    assert state is not None
+    assert key not in json.loads(state["cursor_json"])["pending_business_object_keys"]
+    assert not any(
+        row["category"] == "OA approval" and row["id"] == key
+        for row in _queue_attention_rows(store)
+    )
+    corrected = store.get_reply_attempt(attempt_id)
+    assert corrected is not None
+    assert "verified return receipt" in corrected.resolution
+    assert "Previous resolution retained: Live DingTalk OA task reached terminal state OA_TASK_NOT_PENDING." in corrected.resolution
+    assert not store.correct_legacy_oa_task_not_pending_resolution(
+        attempt_id,
+        process_instance_id="5aD5eemcSVO3kI2H7qL4rg03641790612331",
+        task_id="104248980945",
+        process_result="OA_RETURNED",
+    )
+    assert store.get_reply_attempt(attempt_id).resolution == corrected.resolution
 
 
 def test_scan_pending_oa_approvals_does_not_close_absent_task_on_partial_scan(
