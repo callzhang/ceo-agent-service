@@ -2005,3 +2005,13 @@ AUTOINCREMENT 公开 ID 和 native sqlite_sequence 水位；自动分配与插�
 
 
 Codex 原生 Audit schema 同步当前反馈合同的 observation_basis 和 candidate_field_assertions，原生投影只改变结构传输形式；断言 value 的嵌套 JSON、空值和特殊键无损还原后，仍进入既有完整模型及候选字段一致性校验。原生 schema 快照更新不改变 Audit 政策、结果采用、反馈修正或执行授权行为。
+
+### Store17 postfix 整合（开发候选，尚未发布）
+
+Store `2026-10-13.3` 将 outbound_postfixes、outbound_postfix_receipts、
+native_reply_dispatches 的十三个实际字段合入十二类型 actions。正常调用与
+WeChat bootstrap 只使用 actions 投影及类型写入，不创建旧表、兼容 view 或双写。
+复合身份和立即 NO ACTION 外键保留；首次准备、provider 前 claim、首次回执、
+echo 判断及会议恢复顺序保持现有行为。只接受准确前版 Store16 来源。
+配对逆迁从当前事实重建旧三表及九类型 actions，保留发布后写入并恢复原版本记录。
+完整十张核心表加迁移表目标仍未完成。此段描述开发候选，上线以正式部署回执为准。

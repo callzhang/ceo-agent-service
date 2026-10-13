@@ -1,0 +1,521 @@
+{
+  "scope": "Source metadata only; existing production Store15 and current candidate fresh Store16; neither is a reserved Phase5D version",
+  "source_version": "2026-10-13.1",
+  "production_code_commit": "f1377ab85396394a9a4f7a3eca98431b9180f33f",
+  "observed_counts": {
+    "sent_replies": 2340,
+    "sent_reply_observers": 319
+  },
+  "observed_sequences": {
+    "sent_replies": [
+      2357
+    ],
+    "sent_reply_observers": null
+  },
+  "actual": {
+    "tables": {
+      "sent_replies": {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "INTEGER",
+            "notnull": 0,
+            "default": null,
+            "pk": 1
+          },
+          {
+            "cid": 1,
+            "name": "conversation_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": null,
+            "pk": 0
+          },
+          {
+            "cid": 2,
+            "name": "trigger_message_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": null,
+            "pk": 0
+          },
+          {
+            "cid": 3,
+            "name": "reply_text",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": null,
+            "pk": 0
+          },
+          {
+            "cid": 4,
+            "name": "sent_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": "current_timestamp",
+            "pk": 0
+          },
+          {
+            "cid": 5,
+            "name": "send_result_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": "''",
+            "pk": 0
+          },
+          {
+            "cid": 6,
+            "name": "recall_key",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": "''",
+            "pk": 0
+          },
+          {
+            "cid": 7,
+            "name": "recall_status",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": "''",
+            "pk": 0
+          },
+          {
+            "cid": 8,
+            "name": "recall_error",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": "''",
+            "pk": 0
+          },
+          {
+            "cid": 9,
+            "name": "recalled_at",
+            "type": "TEXT",
+            "notnull": 0,
+            "default": null,
+            "pk": 0
+          },
+          {
+            "cid": 10,
+            "name": "feedback_token",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": "''",
+            "pk": 0
+          },
+          {
+            "cid": 11,
+            "name": "channel",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": "'dingtalk'",
+            "pk": 0
+          },
+          {
+            "cid": 12,
+            "name": "agent_run_id",
+            "type": "INTEGER",
+            "notnull": 1,
+            "default": "0",
+            "pk": 0
+          },
+          {
+            "cid": 13,
+            "name": "external_action_key",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": "''",
+            "pk": 0
+          }
+        ],
+        "objects": [
+          {
+            "type": "index",
+            "name": "idx_sent_replies_external_action",
+            "sql": "CREATE UNIQUE INDEX idx_sent_replies_external_action on sent_replies(external_action_key) where external_action_key<>''"
+          },
+          {
+            "type": "index",
+            "name": "idx_sent_replies_external_action_lookup",
+            "sql": "CREATE INDEX idx_sent_replies_external_action_lookup on sent_replies(external_action_key)"
+          },
+          {
+            "type": "index",
+            "name": "idx_sent_replies_history",
+            "sql": "CREATE INDEX idx_sent_replies_history\n                    on sent_replies(\n                        conversation_id, trigger_message_id, sent_at\n                    )\n                "
+          },
+          {
+            "type": "table",
+            "name": "sent_replies",
+            "sql": "CREATE TABLE sent_replies (\n                    id integer primary key autoincrement,\n                    conversation_id text not null,\n                    trigger_message_id text not null,\n                    reply_text text not null,\n                    sent_at text not null default current_timestamp\n                , send_result_json text not null default '', recall_key text not null default '', recall_status text not null default '', recall_error text not null default '', recalled_at text, feedback_token text not null default '', channel text not null default 'dingtalk', agent_run_id integer not null default 0, external_action_key text not null default '')"
+          }
+        ],
+        "foreign_keys": []
+      },
+      "sent_reply_observers": {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "sent_reply_id",
+            "type": "INTEGER",
+            "notnull": 1,
+            "default": null,
+            "pk": 1
+          },
+          {
+            "cid": 1,
+            "name": "agent_run_id",
+            "type": "INTEGER",
+            "notnull": 1,
+            "default": null,
+            "pk": 2
+          },
+          {
+            "cid": 2,
+            "name": "reply_task_id",
+            "type": "INTEGER",
+            "notnull": 1,
+            "default": null,
+            "pk": 0
+          },
+          {
+            "cid": 3,
+            "name": "created_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": "current_timestamp",
+            "pk": 0
+          }
+        ],
+        "objects": [
+          {
+            "type": "table",
+            "name": "sent_reply_observers",
+            "sql": "CREATE TABLE sent_reply_observers (\n                    sent_reply_id integer not null,\n                    agent_run_id integer not null,\n                    reply_task_id integer not null,\n                    created_at text not null default current_timestamp,\n                    primary key(sent_reply_id, agent_run_id),\n                    foreign key(sent_reply_id) references sent_replies(id),\n                    foreign key(agent_run_id) references runs(id),\n                    foreign key(reply_task_id) references tasks(id)\n                )"
+          },
+          {
+            "type": "trigger",
+            "name": "trg_runs_child_sent_reply_observers_agent_run_id_insert",
+            "sql": "CREATE TRIGGER trg_runs_child_sent_reply_observers_agent_run_id_insert before insert on \"sent_reply_observers\" when new.\"agent_run_id\" is not null and exists(select 1 from runs where id=new.\"agent_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+          },
+          {
+            "type": "trigger",
+            "name": "trg_runs_child_sent_reply_observers_agent_run_id_update",
+            "sql": "CREATE TRIGGER trg_runs_child_sent_reply_observers_agent_run_id_update before update of \"agent_run_id\" on \"sent_reply_observers\" when new.\"agent_run_id\" is not null and exists(select 1 from runs where id=new.\"agent_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+          },
+          {
+            "type": "trigger",
+            "name": "trg_tasks_child_sent_reply_observers_reply_task_id_insert",
+            "sql": "CREATE TRIGGER trg_tasks_child_sent_reply_observers_reply_task_id_insert before insert on \"sent_reply_observers\" when new.\"reply_task_id\" is not null and exists(select 1 from tasks where id=new.\"reply_task_id\" and record_type<>'reply_tasks') begin select raise(abort,'task parent must be a reply task'); end"
+          },
+          {
+            "type": "trigger",
+            "name": "trg_tasks_child_sent_reply_observers_reply_task_id_update",
+            "sql": "CREATE TRIGGER trg_tasks_child_sent_reply_observers_reply_task_id_update before update of \"reply_task_id\" on \"sent_reply_observers\" when new.\"reply_task_id\" is not null and exists(select 1 from tasks where id=new.\"reply_task_id\" and record_type<>'reply_tasks') begin select raise(abort,'task parent must be a reply task'); end"
+          }
+        ],
+        "foreign_keys": [
+          [
+            0,
+            0,
+            "tasks",
+            "reply_task_id",
+            "id",
+            "NO ACTION",
+            "NO ACTION",
+            "NONE"
+          ],
+          [
+            1,
+            0,
+            "runs",
+            "agent_run_id",
+            "id",
+            "NO ACTION",
+            "NO ACTION",
+            "NONE"
+          ],
+          [
+            2,
+            0,
+            "sent_replies",
+            "sent_reply_id",
+            "id",
+            "NO ACTION",
+            "NO ACTION",
+            "NONE"
+          ]
+        ]
+      }
+    },
+    "inbound": [
+      {
+        "table": "sent_reply_observers",
+        "fk": [
+          2,
+          0,
+          "sent_replies",
+          "sent_reply_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      }
+    ]
+  },
+  "fresh_candidate": {
+    "tables": {
+      "sent_replies": {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "INTEGER",
+            "notnull": 0,
+            "default": null,
+            "pk": 1
+          },
+          {
+            "cid": 1,
+            "name": "conversation_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": null,
+            "pk": 0
+          },
+          {
+            "cid": 2,
+            "name": "trigger_message_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": null,
+            "pk": 0
+          },
+          {
+            "cid": 3,
+            "name": "reply_text",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": null,
+            "pk": 0
+          },
+          {
+            "cid": 4,
+            "name": "send_result_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": "''",
+            "pk": 0
+          },
+          {
+            "cid": 5,
+            "name": "recall_key",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": "''",
+            "pk": 0
+          },
+          {
+            "cid": 6,
+            "name": "recall_status",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": "''",
+            "pk": 0
+          },
+          {
+            "cid": 7,
+            "name": "recall_error",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": "''",
+            "pk": 0
+          },
+          {
+            "cid": 8,
+            "name": "recalled_at",
+            "type": "TEXT",
+            "notnull": 0,
+            "default": null,
+            "pk": 0
+          },
+          {
+            "cid": 9,
+            "name": "feedback_token",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": "''",
+            "pk": 0
+          },
+          {
+            "cid": 10,
+            "name": "agent_run_id",
+            "type": "INTEGER",
+            "notnull": 1,
+            "default": "0",
+            "pk": 0
+          },
+          {
+            "cid": 11,
+            "name": "external_action_key",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": "''",
+            "pk": 0
+          },
+          {
+            "cid": 12,
+            "name": "sent_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": "current_timestamp",
+            "pk": 0
+          },
+          {
+            "cid": 13,
+            "name": "channel",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": "'dingtalk'",
+            "pk": 0
+          }
+        ],
+        "objects": [
+          {
+            "type": "index",
+            "name": "idx_sent_replies_external_action",
+            "sql": "CREATE UNIQUE INDEX idx_sent_replies_external_action on sent_replies(external_action_key) where external_action_key<>''"
+          },
+          {
+            "type": "index",
+            "name": "idx_sent_replies_external_action_lookup",
+            "sql": "CREATE INDEX idx_sent_replies_external_action_lookup on sent_replies(external_action_key)"
+          },
+          {
+            "type": "index",
+            "name": "idx_sent_replies_history",
+            "sql": "CREATE INDEX idx_sent_replies_history\n                    on sent_replies(\n                        conversation_id, trigger_message_id, sent_at\n                    )\n                "
+          },
+          {
+            "type": "table",
+            "name": "sent_replies",
+            "sql": "CREATE TABLE sent_replies (\n                    id integer primary key autoincrement,\n                    conversation_id text not null,\n                    trigger_message_id text not null,\n                    reply_text text not null,\n                    send_result_json text not null default '',\n                    recall_key text not null default '',\n                    recall_status text not null default '',\n                    recall_error text not null default '',\n                    recalled_at text,\n                    feedback_token text not null default '',\n                    agent_run_id integer not null default 0,\n                    external_action_key text not null default '',\n                    sent_at text not null default current_timestamp\n                , channel text not null default 'dingtalk')"
+          }
+        ],
+        "foreign_keys": []
+      },
+      "sent_reply_observers": {
+        "columns": [
+          {
+            "cid": 0,
+            "name": "sent_reply_id",
+            "type": "INTEGER",
+            "notnull": 1,
+            "default": null,
+            "pk": 1
+          },
+          {
+            "cid": 1,
+            "name": "agent_run_id",
+            "type": "INTEGER",
+            "notnull": 1,
+            "default": null,
+            "pk": 2
+          },
+          {
+            "cid": 2,
+            "name": "reply_task_id",
+            "type": "INTEGER",
+            "notnull": 1,
+            "default": null,
+            "pk": 0
+          },
+          {
+            "cid": 3,
+            "name": "created_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "default": "current_timestamp",
+            "pk": 0
+          }
+        ],
+        "objects": [
+          {
+            "type": "table",
+            "name": "sent_reply_observers",
+            "sql": "CREATE TABLE sent_reply_observers (\n                    sent_reply_id integer not null,\n                    agent_run_id integer not null,\n                    reply_task_id integer not null,\n                    created_at text not null default current_timestamp,\n                    primary key(sent_reply_id, agent_run_id),\n                    foreign key(sent_reply_id) references sent_replies(id),\n                    foreign key(agent_run_id) references runs(id),\n                    foreign key(reply_task_id) references tasks(id)\n                )"
+          },
+          {
+            "type": "trigger",
+            "name": "trg_runs_child_sent_reply_observers_agent_run_id_insert",
+            "sql": "CREATE TRIGGER trg_runs_child_sent_reply_observers_agent_run_id_insert before insert on \"sent_reply_observers\" when new.\"agent_run_id\" is not null and exists(select 1 from runs where id=new.\"agent_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+          },
+          {
+            "type": "trigger",
+            "name": "trg_runs_child_sent_reply_observers_agent_run_id_update",
+            "sql": "CREATE TRIGGER trg_runs_child_sent_reply_observers_agent_run_id_update before update of \"agent_run_id\" on \"sent_reply_observers\" when new.\"agent_run_id\" is not null and exists(select 1 from runs where id=new.\"agent_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+          },
+          {
+            "type": "trigger",
+            "name": "trg_tasks_child_sent_reply_observers_reply_task_id_insert",
+            "sql": "CREATE TRIGGER trg_tasks_child_sent_reply_observers_reply_task_id_insert before insert on \"sent_reply_observers\" when new.\"reply_task_id\" is not null and exists(select 1 from tasks where id=new.\"reply_task_id\" and record_type<>'reply_tasks') begin select raise(abort,'task parent must be a reply task'); end"
+          },
+          {
+            "type": "trigger",
+            "name": "trg_tasks_child_sent_reply_observers_reply_task_id_update",
+            "sql": "CREATE TRIGGER trg_tasks_child_sent_reply_observers_reply_task_id_update before update of \"reply_task_id\" on \"sent_reply_observers\" when new.\"reply_task_id\" is not null and exists(select 1 from tasks where id=new.\"reply_task_id\" and record_type<>'reply_tasks') begin select raise(abort,'task parent must be a reply task'); end"
+          }
+        ],
+        "foreign_keys": [
+          [
+            0,
+            0,
+            "tasks",
+            "reply_task_id",
+            "id",
+            "NO ACTION",
+            "NO ACTION",
+            "NONE"
+          ],
+          [
+            1,
+            0,
+            "runs",
+            "agent_run_id",
+            "id",
+            "NO ACTION",
+            "NO ACTION",
+            "NONE"
+          ],
+          [
+            2,
+            0,
+            "sent_replies",
+            "sent_reply_id",
+            "id",
+            "NO ACTION",
+            "NO ACTION",
+            "NONE"
+          ]
+        ]
+      }
+    },
+    "inbound": [
+      {
+        "table": "sent_reply_observers",
+        "fk": [
+          2,
+          0,
+          "sent_replies",
+          "sent_reply_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      }
+    ]
+  }
+}

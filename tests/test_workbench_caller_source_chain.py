@@ -51,17 +51,17 @@ def test_source13_fixture_keeps_original_actions_receipts_and_watermark(tmp_path
         }
 
     with sqlite3.connect(path) as db:
-        assert db.execute("select value from service_state where key='store_schema_version'").fetchone() == ("2026-10-13.1",)
-        assert action_schema_is_current(db)
+        assert db.execute("select value from service_state where key='store_schema_version'").fetchone() == ("2026-10-13.2",)
+        assert action_schema_is_current(db, include_receipts=True)
         assert db.execute(ACTION_PROJECTIONS["review_candidates"]).fetchone() == original_candidate
-        assert {name: db.execute(f"select * from {name}").fetchall() for name in original_receipts} == original_receipts
-        assert db.execute("select seq from sqlite_sequence where name='agent_execution_receipts'").fetchone() == (50,)
+        assert {name: db.execute(ACTION_PROJECTIONS[name]).fetchall() for name in original_receipts} == original_receipts
+        assert db.execute("select seq from sqlite_sequence where name='actions:agent_execution_receipts'").fetchone() == (50,)
         original_physical = db.execute("select id,legacy_key,payload_json from actions where record_type='review_candidates'").fetchone()
 
     AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        assert db.execute("select value from service_state where key='store_schema_version'").fetchone() == ("2026-10-13.2",)
-        assert action_schema_is_current(db, include_receipts=True)
+        assert db.execute("select value from service_state where key='store_schema_version'").fetchone() == ("2026-10-13.3",)
+        assert action_schema_is_current(db, include_postfix=True)
         assert db.execute(ACTION_PROJECTIONS["review_candidates"]).fetchone() == original_candidate
         assert db.execute("select id,legacy_key,payload_json from actions where record_type='review_candidates'").fetchone() == original_physical
         for name, expected in original_receipts.items():
