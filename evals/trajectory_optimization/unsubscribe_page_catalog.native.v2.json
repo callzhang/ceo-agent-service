@@ -1,0 +1,382 @@
+{
+  "version": 2,
+  "cases": [
+    {
+      "id": "done",
+      "state": "done",
+      "main": "You are now unsubscribed from the weekly digest. No further digest emails will be sent.",
+      "controls": [],
+      "navigation": "Home\nArticles\nSign in",
+      "footer": "Privacy policy\nTerms of use",
+      "text": "Home\nArticles\nSign in\n\nYou are now unsubscribed from the weekly digest. No further digest emails will be sent.\n\nPrivacy policy\nTerms of use"
+    },
+    {
+      "id": "already",
+      "state": "already_unsubscribed",
+      "main": "This address was already unsubscribed. Its subscription remains off.",
+      "controls": [],
+      "navigation": "Home\nArticles\nSign in",
+      "footer": "Privacy policy\nTerms of use",
+      "text": "Home\nArticles\nSign in\n\nThis address was already unsubscribed. Its subscription remains off.\n\nPrivacy policy\nTerms of use"
+    },
+    {
+      "id": "login",
+      "state": "login_required",
+      "main": "To unsubscribe this address, you must sign in to its account first. There is no unsubscribe control until you authenticate.",
+      "controls": [
+        "button:sign_in"
+      ],
+      "navigation": "Home\nArticles\nSign in",
+      "footer": "Privacy policy\nTerms of use",
+      "text": "Home\nArticles\nSign in\n\nTo unsubscribe this address, you must sign in to its account first. There is no unsubscribe control until you authenticate.\n\nPrivacy policy\nTerms of use"
+    },
+    {
+      "id": "captcha",
+      "state": "captcha",
+      "main": "Complete the CAPTCHA challenge below to continue your unsubscribe request.",
+      "controls": [
+        "captcha:challenge"
+      ],
+      "navigation": "Home\nArticles\nSign in",
+      "footer": "Privacy policy\nTerms of use",
+      "text": "Home\nArticles\nSign in\n\nComplete the CAPTCHA challenge below to continue your unsubscribe request.\n\nPrivacy policy\nTerms of use"
+    },
+    {
+      "id": "payment",
+      "state": "payment",
+      "main": "Enter your card details and pay the processing fee to continue removing this address.",
+      "controls": [
+        "input:card_details",
+        "button:pay"
+      ],
+      "navigation": "Home\nArticles\nSign in",
+      "footer": "Privacy policy\nTerms of use",
+      "text": "Home\nArticles\nSign in\n\nEnter your card details and pay the processing fee to continue removing this address.\n\nPrivacy policy\nTerms of use"
+    },
+    {
+      "id": "expired",
+      "state": "expired",
+      "main": "This unsubscribe link has expired and cannot identify the subscription. Request a new link.",
+      "controls": [],
+      "navigation": "Home\nArticles\nSign in",
+      "footer": "Privacy policy\nTerms of use",
+      "text": "Home\nArticles\nSign in\n\nThis unsubscribe link has expired and cannot identify the subscription. Request a new link.\n\nPrivacy policy\nTerms of use"
+    },
+    {
+      "id": "form",
+      "state": "action_required",
+      "main": "To remove this address from the digest, click Confirm unsubscribe below. This request has not yet been completed.",
+      "controls": [
+        "button:unsubscribe"
+      ],
+      "navigation": "Home\nArticles\nSign in",
+      "footer": "Privacy policy\nTerms of use",
+      "text": "Home\nArticles\nSign in\n\nTo remove this address from the digest, click Confirm unsubscribe below. This request has not yet been completed.\n\nPrivacy policy\nTerms of use"
+    },
+    {
+      "id": "unknown",
+      "state": "unknown",
+      "main": "The Example publication covers science, art and local events. Explore our current issue below.",
+      "controls": [],
+      "navigation": "Home\nArticles\nSign in",
+      "footer": "Privacy policy\nTerms of use",
+      "text": "Home\nArticles\nSign in\n\nThe Example publication covers science, art and local events. Explore our current issue below.\n\nPrivacy policy\nTerms of use"
+    }
+  ],
+  "rows": [
+    {
+      "case": "done",
+      "arm": "baseline",
+      "expected": "done",
+      "result": {
+        "state": "done",
+        "evidence": "You are now unsubscribed from the weekly digest. No further digest emails will be sent."
+      },
+      "fixture_valid": true,
+      "substantive_evidence": true,
+      "session_id": "01a13182-556d-7363-ba8e-bb7253287e8e",
+      "events_sha256": "860417c431e780001366c8aecf88e0355d1fe9c9f2f69d7ce1fbd7927451a4cc",
+      "prompt_sha256": "c203e63df5eaad292f1c9eabc8381f09d9f406d55f7a732bee0d7fee3f91e58a",
+      "native_record_sha256": "d669f0133b3a026682a62bf1d9a7330c8624b4959cdf12c8c8b4e367065c2bdb",
+      "native_tool_calls": [],
+      "command_sha256": "ae1a27e41060fedc47285ff98c0e45e2d20ebf56c232bef6b73cdceca320d68f",
+      "developer_chars": 38750
+    },
+    {
+      "case": "done",
+      "arm": "candidate",
+      "expected": "done",
+      "result": {
+        "state": "done",
+        "evidence": "You are now unsubscribed from the weekly digest. No further digest emails will be sent."
+      },
+      "fixture_valid": true,
+      "substantive_evidence": true,
+      "session_id": "01a13182-6d9b-7f02-ad15-6719e45c1fc3",
+      "events_sha256": "e0048f5f38a89f3ab6b8a4869c68f1ac6999bc0079d542f21c0991a50b747656",
+      "prompt_sha256": "c203e63df5eaad292f1c9eabc8381f09d9f406d55f7a732bee0d7fee3f91e58a",
+      "native_record_sha256": "6549bf54fe030e29d83c061d9759979064ef507c868a7277f99b2b66826c8c13",
+      "native_tool_calls": [],
+      "command_sha256": "bd89642f8f43ab39921780db363e15ade1899beb1e7c1b19fb428cfdba74cafb",
+      "developer_chars": 18960
+    },
+    {
+      "case": "already",
+      "arm": "baseline",
+      "expected": "already_unsubscribed",
+      "result": {
+        "state": "already_unsubscribed",
+        "evidence": "This address was already unsubscribed. Its subscription remains off."
+      },
+      "fixture_valid": true,
+      "substantive_evidence": true,
+      "session_id": "01a13182-8845-73f0-a27b-ae9e193c5f10",
+      "events_sha256": "76f9d9890617cb7e5eaac9a194728c207bb01a4a3a0067f0d9f23c300d169ceb",
+      "prompt_sha256": "b180212d7bd376a4ffaeef1c1e704aa99304bbf38075f566738f89bbb7eb960b",
+      "native_record_sha256": "63cd1c8473abc1e6e0968199ad1e1844da91004e60d3c2aa32de9b3db923fbb4",
+      "native_tool_calls": [],
+      "command_sha256": "ae1a27e41060fedc47285ff98c0e45e2d20ebf56c232bef6b73cdceca320d68f",
+      "developer_chars": 35915
+    },
+    {
+      "case": "already",
+      "arm": "candidate",
+      "expected": "already_unsubscribed",
+      "result": {
+        "state": "already_unsubscribed",
+        "evidence": "This address was already unsubscribed. Its subscription remains off."
+      },
+      "fixture_valid": true,
+      "substantive_evidence": true,
+      "session_id": "01a13182-a7ef-72a3-b0fe-afce0987edb5",
+      "events_sha256": "5c7e51916dc52bfbc452761e36bbcf0b755810d1761a822b782ae403e49141a9",
+      "prompt_sha256": "b180212d7bd376a4ffaeef1c1e704aa99304bbf38075f566738f89bbb7eb960b",
+      "native_record_sha256": "4175ef811609fcdb8d6095cebca0104b4160e7bfc4870f97c2d027a1d60ca70c",
+      "native_tool_calls": [],
+      "command_sha256": "bd89642f8f43ab39921780db363e15ade1899beb1e7c1b19fb428cfdba74cafb",
+      "developer_chars": 18960
+    },
+    {
+      "case": "login",
+      "arm": "baseline",
+      "expected": "login_required",
+      "result": {
+        "state": "login_required",
+        "evidence": "To unsubscribe this address, you must sign in to its account first. There is no unsubscribe control until you authenticate."
+      },
+      "fixture_valid": true,
+      "substantive_evidence": true,
+      "session_id": "01a13182-c77f-7ac2-94c2-0e33a83a9d09",
+      "events_sha256": "ad5bb2c0d1bace6da01d8cdb0f0891684b412d9cd03743d977099c16dad24098",
+      "prompt_sha256": "dea65d9cfa34f6b0f6d9e64b68e6c3907fd92f0a8a6e699daf568277586cbd71",
+      "native_record_sha256": "5b604f2ffb817542e60116c16fa383d8c70823908a24ebb4f667d0d6ce9b8ba9",
+      "native_tool_calls": [],
+      "command_sha256": "ae1a27e41060fedc47285ff98c0e45e2d20ebf56c232bef6b73cdceca320d68f",
+      "developer_chars": 35915
+    },
+    {
+      "case": "login",
+      "arm": "candidate",
+      "expected": "login_required",
+      "result": {
+        "state": "login_required",
+        "evidence": "To unsubscribe this address, you must sign in to its account first. There is no unsubscribe control until you authenticate."
+      },
+      "fixture_valid": true,
+      "substantive_evidence": true,
+      "session_id": "01a13182-e723-7ab0-98a5-6de10374c287",
+      "events_sha256": "5cfca8eebd2dd352c08f280a7ed13181edac8a7dbeb01754eec98bc08abc1557",
+      "prompt_sha256": "dea65d9cfa34f6b0f6d9e64b68e6c3907fd92f0a8a6e699daf568277586cbd71",
+      "native_record_sha256": "36784e23c9856a116b0c48c82398e94ac8c723b5a9c6ce2daf74a1115a7af8c5",
+      "native_tool_calls": [],
+      "command_sha256": "bd89642f8f43ab39921780db363e15ade1899beb1e7c1b19fb428cfdba74cafb",
+      "developer_chars": 18960
+    },
+    {
+      "case": "captcha",
+      "arm": "baseline",
+      "expected": "captcha",
+      "result": {
+        "state": "captcha",
+        "evidence": "Complete the CAPTCHA challenge below to continue your unsubscribe request."
+      },
+      "fixture_valid": true,
+      "substantive_evidence": true,
+      "session_id": "01a13183-07f0-7d90-9f06-3089d8e44d31",
+      "events_sha256": "4836a352c5b44306c7163c3e4a9e535aab210b470d9e475e0d8f588e2dc0125d",
+      "prompt_sha256": "0842d72a6d175839193a6cd70c226c9dd1c2e1a28d5831896741602df398ce8b",
+      "native_record_sha256": "5be0b61e00bb8ddd4dc90b805dd38ef1e9b3295c06c10cf7494c7207574e83c7",
+      "native_tool_calls": [],
+      "command_sha256": "ae1a27e41060fedc47285ff98c0e45e2d20ebf56c232bef6b73cdceca320d68f",
+      "developer_chars": 35915
+    },
+    {
+      "case": "captcha",
+      "arm": "candidate",
+      "expected": "captcha",
+      "result": {
+        "state": "captcha",
+        "evidence": "Complete the CAPTCHA challenge below to continue your unsubscribe request."
+      },
+      "fixture_valid": true,
+      "substantive_evidence": true,
+      "session_id": "01a13183-26cd-7590-baf1-8e3d7319561a",
+      "events_sha256": "903519094f287528a178a6bcaabce665e641706690fc7d82bdb7310c399eab8e",
+      "prompt_sha256": "0842d72a6d175839193a6cd70c226c9dd1c2e1a28d5831896741602df398ce8b",
+      "native_record_sha256": "7c60651573f7d6fd847d4562430d3775ee633a52ad5972cff6262dcc0d8551e6",
+      "native_tool_calls": [],
+      "command_sha256": "bd89642f8f43ab39921780db363e15ade1899beb1e7c1b19fb428cfdba74cafb",
+      "developer_chars": 18960
+    },
+    {
+      "case": "payment",
+      "arm": "baseline",
+      "expected": "payment",
+      "result": {
+        "state": "payment",
+        "evidence": "Enter your card details and pay the processing fee to continue removing this address."
+      },
+      "fixture_valid": true,
+      "substantive_evidence": true,
+      "session_id": "01a13183-3bf5-7fd2-b23e-c093567fdaad",
+      "events_sha256": "e7011e1f4afd58cf696ae4df6df3f3f5a7bca5ecc51373d51fb07bb09fb1ad60",
+      "prompt_sha256": "ffd9ccf22f2d528107d2952fe4ea28f9a4e4af84cebb1a07210303ceae028dad",
+      "native_record_sha256": "ce94353d7fdd4c9ca0ba39925919f3905f193b8c4d0a4eae1604a1fe19b62e2b",
+      "native_tool_calls": [],
+      "command_sha256": "ae1a27e41060fedc47285ff98c0e45e2d20ebf56c232bef6b73cdceca320d68f",
+      "developer_chars": 35915
+    },
+    {
+      "case": "payment",
+      "arm": "candidate",
+      "expected": "payment",
+      "result": {
+        "state": "payment",
+        "evidence": "Enter your card details and pay the processing fee to continue removing this address."
+      },
+      "fixture_valid": true,
+      "substantive_evidence": true,
+      "session_id": "01a13183-5993-7192-a951-3836940c8e54",
+      "events_sha256": "73844c173554a423f9781fe07fbcdc49701c3e81139dacdbe53c08f9aa160563",
+      "prompt_sha256": "ffd9ccf22f2d528107d2952fe4ea28f9a4e4af84cebb1a07210303ceae028dad",
+      "native_record_sha256": "0ae448359f29123ed5c9913f572c3afe1fed496fae99ae4a79e254612a80fbac",
+      "native_tool_calls": [],
+      "command_sha256": "bd89642f8f43ab39921780db363e15ade1899beb1e7c1b19fb428cfdba74cafb",
+      "developer_chars": 18960
+    },
+    {
+      "case": "expired",
+      "arm": "baseline",
+      "expected": "expired",
+      "result": {
+        "state": "expired",
+        "evidence": "This unsubscribe link has expired and cannot identify the subscription. Request a new link."
+      },
+      "fixture_valid": true,
+      "substantive_evidence": true,
+      "session_id": "01a13183-7063-71e0-b890-40945c7e5d8a",
+      "events_sha256": "76d43522ea7af12813638c7b3c37c0e754f5ac903808289ca13cca4d008d4f62",
+      "prompt_sha256": "ee86fabab72e1a711d0d7274aa6fc9036a46852b16cad19f604e9d02056ba4d2",
+      "native_record_sha256": "4c16a6ff463bebdfca85f00e4c995abca58cbc0178fcf5c929223b4b35175d66",
+      "native_tool_calls": [],
+      "command_sha256": "ae1a27e41060fedc47285ff98c0e45e2d20ebf56c232bef6b73cdceca320d68f",
+      "developer_chars": 35915
+    },
+    {
+      "case": "expired",
+      "arm": "candidate",
+      "expected": "expired",
+      "result": {
+        "state": "expired",
+        "evidence": "This unsubscribe link has expired and cannot identify the subscription. Request a new link."
+      },
+      "fixture_valid": true,
+      "substantive_evidence": true,
+      "session_id": "01a13183-867d-7241-bb60-9751a63702b0",
+      "events_sha256": "4dea188f5221c309aaaf6c5019205647d841280ea5923214264c95985f561257",
+      "prompt_sha256": "ee86fabab72e1a711d0d7274aa6fc9036a46852b16cad19f604e9d02056ba4d2",
+      "native_record_sha256": "c3980e694368432061d5ac2b4c8a261de2b0d4c86324119866e29e22cbc37655",
+      "native_tool_calls": [],
+      "command_sha256": "bd89642f8f43ab39921780db363e15ade1899beb1e7c1b19fb428cfdba74cafb",
+      "developer_chars": 18960
+    },
+    {
+      "case": "form",
+      "arm": "baseline",
+      "expected": "action_required",
+      "result": {
+        "state": "action_required",
+        "evidence": "To remove this address from the digest, click Confirm unsubscribe below. This request has not yet been completed."
+      },
+      "fixture_valid": true,
+      "substantive_evidence": true,
+      "session_id": "01a13183-9b55-7c92-aaff-cbd865b134eb",
+      "events_sha256": "f90109cb7cd0ece1f0143bee277a5b6cf33a3eafdb5845f53fcffd8b4341f3f6",
+      "prompt_sha256": "2a8d6e926eeef5287da137fac830e7fb4d16eedbaa213dea446cd0f337a3e937",
+      "native_record_sha256": "b75c905ab5088e886fb7dd956c577617a295b88f057a91c23e9892886d92a974",
+      "native_tool_calls": [],
+      "command_sha256": "ae1a27e41060fedc47285ff98c0e45e2d20ebf56c232bef6b73cdceca320d68f",
+      "developer_chars": 35915
+    },
+    {
+      "case": "form",
+      "arm": "candidate",
+      "expected": "action_required",
+      "result": {
+        "state": "action_required",
+        "evidence": "To remove this address from the digest, click Confirm unsubscribe below. This request has not yet been completed."
+      },
+      "fixture_valid": true,
+      "substantive_evidence": true,
+      "session_id": "01a13183-b181-7730-96c6-5eb1a01ac33e",
+      "events_sha256": "ea9eca0c6d9f0f464fde1498c5df1d91aa74d56aa7c7cf6a9df9249a2d6277b3",
+      "prompt_sha256": "2a8d6e926eeef5287da137fac830e7fb4d16eedbaa213dea446cd0f337a3e937",
+      "native_record_sha256": "e1288e16f87b36b6f84483834341ce8a0bb881a5822009f534400c3b3e78481e",
+      "native_tool_calls": [],
+      "command_sha256": "bd89642f8f43ab39921780db363e15ade1899beb1e7c1b19fb428cfdba74cafb",
+      "developer_chars": 18960
+    },
+    {
+      "case": "unknown",
+      "arm": "baseline",
+      "expected": "unknown",
+      "result": {
+        "state": "unknown",
+        "evidence": "The Example publication covers science, art and local events. Explore our current issue below."
+      },
+      "fixture_valid": true,
+      "substantive_evidence": true,
+      "session_id": "01a13183-c845-77e3-a5ee-567ccbe69f9c",
+      "events_sha256": "a4e23636fcf5727ca175b98b6969632d951acd66e3fc5c3a9b88834aed2d004d",
+      "prompt_sha256": "4ff84cb78a300bc1e18e4aef29e0fe94986d94fe2f919e9c1ec453c28cc57997",
+      "native_record_sha256": "8d51ed021cc02ad62777357d94938dbc63510f2bd70dd19f1de5a536b081ce62",
+      "native_tool_calls": [],
+      "command_sha256": "ae1a27e41060fedc47285ff98c0e45e2d20ebf56c232bef6b73cdceca320d68f",
+      "developer_chars": 35915
+    },
+    {
+      "case": "unknown",
+      "arm": "candidate",
+      "expected": "unknown",
+      "result": {
+        "state": "unknown",
+        "evidence": "The Example publication covers science, art and local events. Explore our current issue below."
+      },
+      "fixture_valid": true,
+      "substantive_evidence": true,
+      "session_id": "01a13183-eadc-7be3-88cd-6a0d68ed3d6d",
+      "events_sha256": "331fc44bfed889174961daed4b37804247ccf988ee15b84182292b55b94b5dbe",
+      "prompt_sha256": "4ff84cb78a300bc1e18e4aef29e0fe94986d94fe2f919e9c1ec453c28cc57997",
+      "native_record_sha256": "6eaf989da9518b565e6ab0e87eaa879b704d28d1977906fd197e85695709782f",
+      "native_tool_calls": [],
+      "command_sha256": "bd89642f8f43ab39921780db363e15ade1899beb1e7c1b19fb428cfdba74cafb",
+      "developer_chars": 18960
+    }
+  ],
+  "checks": {
+    "typed_and_state_and_verbatim": 16,
+    "evidence_within_main_content": 16,
+    "tool_calls": 0
+  },
+  "scope": "Fixed new eight-state anonymous page matrix; actual standard factory/adapter; no source/rule/parser change or provider business execution. Original generic-page navigation evidence failure remains retained and not waived. New successes do not establish cause of that failure or full configured-provider acceptance."
+}
