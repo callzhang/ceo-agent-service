@@ -55,6 +55,9 @@ moved to another node remains unresolved in OA Attention; comments and
 unrelated task transitions are not return receipts. Historical local closures
 made solely for `OA_TASK_NOT_PENDING` are rechecked and restored to the
 projection when their live process is still running without a verified return.
+The service's DingTalk OpenAPI reader returns snake-case `process_instance`,
+`operation_records`, and operation fields; reconciliation reads those native
+records as well as the CLI detail projection before deciding a verified return.
 
 Source feedback callback identities are opaque historical evidence, not newly
 generated outbound tokens. The validation copy removes only configured-origin

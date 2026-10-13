@@ -1024,6 +1024,66 @@ def test_scan_restores_attention_for_legacy_oa_task_not_pending_resolution(
                for row in _queue_attention_rows(store))
 
 
+def test_scan_clears_legacy_attention_for_provider_snake_case_return_receipt(
+    tmp_path,
+):
+    class FakeDws:
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return []
+
+        def get_current_user_id(self):
+            return "035504180730922"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            raise AssertionError("Derek's original node is no longer pending")
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            return {
+                "errcode": 0,
+                "process_instance": {
+                    "status": "RUNNING",
+                    "tasks": [
+                        {
+                            "taskid": 104248980945,
+                            "userid": "V00_1400815737560",
+                            "task_status": "CANCELED",
+                        },
+                        {
+                            "taskid": 104220105271,
+                            "userid": "next-approver",
+                            "task_status": "RUNNING",
+                        },
+                    ],
+                    "operation_records": [
+                        {
+                            "date": "2026-10-09 15:46:01",
+                            "operation_type": "REDIRECT_PROCESS",
+                            "userid": "035504180730922",
+                            "operation_result": "NONE",
+                        }
+                    ],
+                },
+            }
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    key = "oa:5aD5eemcSVO3kI2H7qL4rg03641790612331:104248980945"
+    store.set_daily_scan_state(
+        "oa_pending",
+        last_success_at="2026-10-12 00:00:00",
+        cursor_json=json.dumps({"pending_business_object_keys": [key]}),
+        last_error="",
+    )
+
+    assert scan_pending_oa_approvals(store, FakeDws()) == 0
+    state = store.get_daily_scan_state("oa_pending")
+    assert state is not None
+    assert key not in json.loads(state["cursor_json"])["pending_business_object_keys"]
+    assert not any(
+        row["category"] == "OA approval" and row["id"] == key
+        for row in _queue_attention_rows(store)
+    )
+
+
 def test_scan_pending_oa_approvals_does_not_close_absent_task_on_partial_scan(
     tmp_path,
 ):

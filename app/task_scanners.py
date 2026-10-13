@@ -1047,18 +1047,18 @@ def _oa_approval_revision(
     latest_operation = max(
         records,
         key=lambda record: (
-            _oa_task_field(record, ("operationTime", "date", "time")),
-            _oa_task_field(record, ("operationType", "type")),
+            _oa_task_field(record, ("operationTime", "operation_time", "date", "time")),
+            _oa_task_field(record, ("operationType", "operation_type", "type")),
             _oa_task_field(record, ("userId", "userid", "user_id")),
         ),
         default={},
     )
     marker = "|".join(
         (
-            _oa_task_field(latest_operation, ("operationTime", "date", "time")),
-            _oa_task_field(latest_operation, ("operationType", "type")),
+            _oa_task_field(latest_operation, ("operationTime", "operation_time", "date", "time")),
+            _oa_task_field(latest_operation, ("operationType", "operation_type", "type")),
             _oa_task_field(latest_operation, ("userId", "userid", "user_id")),
-            _oa_task_field(latest_operation, ("operationResult", "result")),
+            _oa_task_field(latest_operation, ("operationResult", "operation_result", "result")),
         )
     )
     return hashlib.sha256(f"{task_id}|{marker}".encode()).hexdigest()[:16]
@@ -1079,7 +1079,7 @@ def _oa_principal_has_commented(
         return False
     return any(
         _oa_task_field(record, ("userId", "userid", "user_id")) == current_user_id
-        and _oa_task_field(record, ("operationType", "type"))
+        and _oa_task_field(record, ("operationType", "operation_type", "type"))
         in OA_COMMENT_OPERATION_TYPES
         for record in _oa_operation_records(records_payload)
     )
@@ -1112,20 +1112,20 @@ def _oa_principal_explicitly_returned_process(
     transitions = [
         record
         for record in _oa_operation_records(process_payload)
-        if _oa_task_field(record, ("operationType", "type"))
+        if _oa_task_field(record, ("operationType", "operation_type", "type"))
         not in OA_COMMENT_OPERATION_TYPES | {"PROCESS_CC"}
     ]
     latest_transition = max(
         transitions,
         key=lambda record: (
-            _oa_task_field(record, ("operationTime", "date", "time")),
-            _oa_task_field(record, ("operationType", "type")),
+            _oa_task_field(record, ("operationTime", "operation_time", "date", "time")),
+            _oa_task_field(record, ("operationType", "operation_type", "type")),
             _oa_task_field(record, ("userId", "userid", "user_id")),
         ),
         default={},
     )
     return (
-        _oa_task_field(latest_transition, ("operationType", "type"))
+        _oa_task_field(latest_transition, ("operationType", "operation_type", "type"))
         == "REDIRECT_PROCESS"
         and _oa_task_field(latest_transition, ("userId", "userid", "user_id"))
         == current_user_id
@@ -1150,8 +1150,8 @@ def _oa_pending_approval_revision(
     latest_operation = max(
         records,
         key=lambda record: (
-            _oa_task_field(record, ("operationTime", "date", "time")),
-            _oa_task_field(record, ("operationType", "type")),
+            _oa_task_field(record, ("operationTime", "operation_time", "date", "time")),
+            _oa_task_field(record, ("operationType", "operation_type", "type")),
             _oa_task_field(record, ("userId", "userid", "user_id")),
         ),
         default={},
@@ -1160,7 +1160,7 @@ def _oa_pending_approval_revision(
         current_user_id
         and _oa_task_field(latest_operation, ("userId", "userid", "user_id"))
         == current_user_id
-        and _oa_task_field(latest_operation, ("operationType", "type"))
+        and _oa_task_field(latest_operation, ("operationType", "operation_type", "type"))
         not in OA_COMMENT_OPERATION_TYPES
     ):
         return ""
@@ -1175,6 +1175,8 @@ def _oa_operation_records(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, dict):
         records: list[dict[str, Any]] = []
         nested = value.get("operationRecords")
+        if not isinstance(nested, list):
+            nested = value.get("operation_records")
         if isinstance(nested, list):
             records.extend(item for item in nested if isinstance(item, dict))
         for key in ("result", "data", "process_instance"):
