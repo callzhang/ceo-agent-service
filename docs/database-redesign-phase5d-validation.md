@@ -23,7 +23,8 @@ tables. The current isolated candidate reserves Store18 `2026-10-13.4` and its
 fresh/current bootstrap uses fourteen types. The standalone migration/inverse,
 latest source-copy proof and four cold/fresh bootstrap checks below are verified.
 Caller conversion, integrated target constructor acceptance against production
-data, paired release acceptance and deployment remain unverified.
+data, paired release acceptance and native substitute approval are verified as
+recorded below. CI, normal deployment and production readback remain pending.
 
 ## Opt-in foundation evidence
 
@@ -167,7 +168,8 @@ ordinary transaction behavior. Source-equivalence SPEC passed28 focused
 checks. Repair08ba9453 exposes the existing nonempty sent-key unique index
 without new DDL: four parameters are already nonempty by their original
 validation. Traced actual-caller EXPLAIN and source/target ordinary, padded and
-NUL key results pass. Final caller re-review is still pending.
+NUL key results pass. Final independent caller SPEC and QUALITY both pass;
+QUALITY independently ran37 caller, receipt, History and feedback checks.
 
 The remaining four external readers now use finite sent/observer projections
 without changing their predicates or result labels: quality_gate,
@@ -183,5 +185,50 @@ The adjacent deferral/maintenance/quality/recovery/receipt/postfix suite passes
 through typed writes. Existing Store duplicate-observer, recall, feedback-time
 and History index expectations were aligned with the same business assertions;
 eight selected Store checks pass. No test was skipped to hide a runtime failure.
-Integrated reader review, actual constructor-to-constructor production-copy,
-native CLI substitutes, full CI and normal deployment remain required.
+Integrated reader SPEC passed161 focused checks and six refusal/router probes;
+QUALITY passed148 focused checks and17 additional source/target probes. Both
+retained exact reader predicates and required malformed-source rollback. The
+two subsequent fixture units54ecae89 andcb05afea retain historical migration
+assertions while moving real default-constructor publication evidence to D.
+Full CI and normal deployment remain required.
+
+## Actual default-constructor copy and native approval
+
+The latest online source isdc6abe2d, Store17/Email51. The normal
+prepare_store_schema_release factory selected the exact17→18 paired release,
+whose unmodified default publisher opened the copy in a fresh Python process.
+The copy126→124 physical tables retained all original3928 action rows,2341
+sent deliveries and320 observer facts with exact values, SQLite/Python types,
+public/physical identities and122 unrelated table hashes. The original single
+FK diagnostic was unchanged; full integrity checking passed.
+
+New surviving and allocated-then-deleted sent records, recall edits, observer
+rebinding/addition and an original-family receipt were written in the target.
+Paired rollback retained these current facts and allocator progress, restored
+the exact source DDL and original marker timestamp, and was idempotent. Actual
+published dc6abe2d code opened the inverse-derived Store17 database in a fresh
+process without changing these facts. Default republication and full integrity
+checking passed. This is actual constructor/release evidence, distinct from
+the earlier standalone functions proof.
+
+The separate immutable Store18 baseline was prepared by the actual constructor
+from that same production capture. Native Consumer and Audit each exited0
+without timeout; the task finisheddone after one approved in-memory send and
+one substitute provider verification. One business attempt, one execution
+receipt and one sent record were persisted. Reopening recovered the terminal
+result without another native invocation; all118 original ordinary application
+tables retained their rows and FK diagnostics. Production has zero matching
+test tasks or native sessions. Native trajectories remain solely in~/.codex;
+no transcript or credential copy was retained. Artifacts are
+phase5d_constructor_copy.v1.json andphase5d_native_copy.v1.json under
+evals/database_redesign. These results do not claim CI or deployment.
+
+All11 opt-in scripted lifecycle cases also passed on disposable copies of that
+same Store18 baseline in86.08 seconds: approve, return, reject, no_action,
+technical_retry, provider_failed, provider_uncertain, scheduled task, work
+summary business result, settlement interruption/reopen and Workbench request
+idempotence. These use scripted roles and network/subprocess refusal; they are
+distinct from the two real native turns above. Both fixture-only commits passed
+separate SPEC and QUALITY review. All three root-owned temporary directories,
+including copied databases/code and synthetic test-native fixtures, were
+removed after the concise artifacts were retained.

@@ -139,3 +139,19 @@ D来源已绑定实际已发布46bfdbe0／Store17，发送记录14字段与观�
 发布证明。508825373字节任务临时副本／代码已清理。下一步合入最新主线，
 接入Store/bootstrap、全部调用方及配对release，再做真实构造器副本／CLI／CI／
 生产验收。D未上线，完整10+1仍未完成。
+
+### 2026-10-13 Phase5D integrated copy/native acceptance
+
+D isolated Store18 candidate has converted every sent/observer caller and
+exact17→18 publication reader. Independent SPEC/QUALITY acceptance covers
+bootstrap, migration/inverse, release, caller behavior and adjacent readers.
+Actual dc6abe2d Store17 online copy passed the normal default new-process
+publication, exact field/type/identity checks, current-fact inverse, actual
+published old-code reopen and republication;126→124 physical tables,122
+unrelated table hashes and the existing FK diagnostic retained. Real native
+Consumer/Audit approval persisted one business result and substitute receipt;
+11 separately scripted copy lifecycle scenarios also passed. Evidence:
+phase5d_constructor_copy.v1.json, phase5d_native_copy.v1.json and D validation.
+Root-owned temporary directories were removed. CI, normal deployment and live
+acceptance remain pending; D is not yet published. Full10+1 remains incomplete;
+E and later action/business/email/config/state/final-retirement work remains.
