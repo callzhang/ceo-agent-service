@@ -94,3 +94,33 @@ All eight attempts to read the shared AGENTS file through the registered materia
 Offline execution-boundary inspection reveals a separate existing mechanism problem: ProposedAction accepts JSON-valued message targets and checks recipient nonemptiness through str(value), without changing the original target. Message handler passes that original value through sender to DwsClient.build_send_message_command. A string identifier builds only string arguments; the number builds one int argument. This is proven without sending or invoking a provider; no delivery/failure receipt is claimed. Do not add another Audit prompt for this case. Next inspect native parameter typing and historical read boundaries, then repair the existing typed-contract mechanism with focused regressions. Scalar-table removal still needs broader task/continuation acceptance and a separate release; production input/schema/policy remains unchanged.
 
 Complete private Developer/Profile stayed only in task-owned temporary input files and CLI-native originals. It is not copied into repository evidence. Probe scripts, metadata and anonymous cases are retained; temporary material is cleaned after hash verification.
+
+## Latest main integration and current closed-exchange inventory
+
+Merged origin/main `31d95f4e`, preserving both the source-binding additions and
+approved storage behavior/documentation; conflicts were independent appended
+claims and documentation sections, all retained. Actual focused source/config/
+composition/Consumer/Audit checks passed 312 tests with 4 skips. An initial
+invocation named two nonexistent test files and ran no tests; the corrected file
+selection produced that result.
+
+Read-only inspection of actual task404575 covers both complete cold native files:
+Consumer17 response items and Audit14. Canonical results are no_action/approve.
+Both read message-triage and chat Skills; Consumer reads both frozen sources,
+while Audit reads the installed chat dependency after the frozen workflow.
+Audit independently reads current conversation. Consumer also executes its shared
+AGENTS read: that custom output is18,771 characters. It is bootstrap/engineering
+instruction material, not the business Skill. The source callback outputs are
+8,160/6,976 characters for Consumer, and8,160/6,865 for Audit; Audit conversation
+output is33,916 characters. Wrapper/reader formatting differs, so these counts do
+not establish differing Skill policy bodies or exact provider transport equality.
+
+The actual judgments are reasonable for the completed exchange. Current-state
+verification is not classified as redundant. The native sessions precede the
+current storage deployment, so they are not new-model acceptance of31d95f4e.
+Metadata only is retained in current_message_no_action.native.v1.json; no private
+message body, Profile, provider mutation or replay is stored/performed here.
+Next control should preserve the independent state check while comparing explicit
+mandatory bindings versus available applicable source entries on an equivalent
+anonymous closed-exchange case. No shared instruction or Audit policy change is
+justified by this inventory alone.
