@@ -2012,3 +2012,13 @@ WeChat bootstrap 只使用 actions 投影及类型写入，不创建旧表、兼
 echo 判断及会议恢复顺序保持现有行为。只接受准确前版 Store16 来源。
 配对逆迁从当前事实重建旧三表及九类型 actions，保留发布后写入并恢复原版本记录。
 完整十张核心表加迁移表目标仍未完成。此段描述开发候选，上线以正式部署回执为准。
+
+### Calendar organizer source projection
+
+DwsCalendarEvent exposes the existing organizer display string and an additional
+organizer_details object containing the exact provider organizer object. Event
+and calendar-window readers, and existing serialized invitation/conflict inputs,
+retain userId, openDingTalkId and other source fields without turning a display
+name into an identifier. A source that supplies only a string has empty details.
+This is source delivery, not an identity-verification result; existing recipient,
+Audit, routing and execution contracts continue to apply.
