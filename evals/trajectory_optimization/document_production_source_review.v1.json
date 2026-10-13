@@ -746,13 +746,15 @@
     "document_related_attempts": 14,
     "document_related_tasks": 5,
     "latest_call_task": 404232,
-    "latest_successful_text_source_task": 404234
+    "latest_successful_text_source_task": 404234,
+    "conflict_predicate": "Owner/current-user mismatch inferred from control flow; current user value not persisted for independent comparison.",
+    "provider_call_stage": "unconfirmed: same conflict reason can arise before dispatch or in reconciliation"
   },
   "limits": [
     "Complete tool result is not proof of complete model-visible raw JSONML.",
     "Markdown and full JSONML are different views; same node_id does not prove same complete representation.",
     "No new external action or provider outcome replayed.",
-    "Canceled provider task before dispatch is not a successful revert; later no_action does not retroactively mark failed execution verified.",
+    "CANCELED/NONE readback plus conflict does not establish pre-dispatch versus reconciliation timing or absence of external effects; no durable receipt is present.",
     "No root cause assigned to instruction size merely from repeated Skill reads."
   ]
 }
