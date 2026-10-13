@@ -1,5 +1,7 @@
 """Existing result validation must stay inside the bounded turn retry lifecycle."""
 
+from app.action_storage import ACTION_PROJECTIONS
+
 import json
 from pathlib import Path
 
@@ -66,4 +68,4 @@ def test_invalid_callback_results_stop_at_existing_consecutive_failure_limit(sto
     assert all(run.status == "failed" and run.role.value == "consumer" for run in runs)
     with store._connect() as db:
         for table in ("review_candidates", "candidate_executions", "external_action_results", "sent_replies"):
-            assert db.execute(f"select count(*) from {table}").fetchone()[0] == 0
+            assert db.execute("select count(*) from " + (f"({ACTION_PROJECTIONS[table]})" if table in ACTION_PROJECTIONS else table)).fetchone()[0] == 0

@@ -832,7 +832,7 @@ def _rebuild(db, table, schema, values, *, forward=False, sequence=None):
 
 def install_task_child_guards(db: sqlite3.Connection) -> None:
     for (table,) in db.execute(
-        "select name from sqlite_master where type='table' and name not in ('tasks','runs')"
+        "select name from sqlite_master where type='table' and name not in ('tasks','runs','actions')"
     ).fetchall():
         for fk in db.execute(f'pragma foreign_key_list("{table}")'):
             if fk[2] != "tasks":

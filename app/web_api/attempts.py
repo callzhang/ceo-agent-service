@@ -12,6 +12,11 @@ from app.attempt_what_happened import build_what_happened
 from app.web_api.common import json_safe, normalize_display_value
 from app.run_storage import AGENT_RUN_SQL
 
+from app.action_storage import (
+    CANDIDATE_REVIEW_SQL,
+    REVIEW_CANDIDATE_SQL,
+)
+
 
 def _stored_json(value: str, fallback: Any) -> Any:
     try:
@@ -733,8 +738,8 @@ def build_attempt_detail(
                             when 'audit' then review.result_json
                           end as adopted_result_json
                    from ({AGENT_RUN_SQL}) as agent_runs
-                   left join review_candidates candidate on candidate.consumer_run_id=agent_runs.id
-                   left join candidate_reviews review on review.audit_run_id=agent_runs.id
+                   left join ({REVIEW_CANDIDATE_SQL}) candidate on candidate.consumer_run_id=agent_runs.id
+                   left join ({CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=agent_runs.id
                    where agent_runs.reply_task_id=? order by agent_runs.id""",
                 (reply_task.id,),
             ).fetchall()

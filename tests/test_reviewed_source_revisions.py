@@ -5,6 +5,8 @@ from app.store import AutoReplyStore
 from app.system_executor import ActionOutcome, SystemExecutor
 from tests.test_reviewed_orchestration import Audit, Consumer, candidate, setup
 
+from app.action_storage import CANDIDATE_SELECTION_SQL, REVIEW_CANDIDATE_SQL
+
 
 class Source:
     amount = "100"
@@ -70,9 +72,9 @@ def test_selected_question_with_changed_native_form_reopens_same_stage_and_keeps
     assert captured.business_state_changes
     assert audit.calls[0].candidate.stage_index == 0
     with reopened._connect() as db:
-        old = db.execute("select candidate_json,invalidated_at from review_candidates where id=?", (reviewed["id"],)).fetchone()
+        old = db.execute(f"select candidate_json,invalidated_at from ({REVIEW_CANDIDATE_SQL}) where id=?", (reviewed["id"],)).fetchone()
         assert old["candidate_json"] == original_json and old["invalidated_at"]
-        saved = db.execute("select * from candidate_selections where id=?", (selection["id"],)).fetchone()
+        saved = db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where id=?", (selection["id"],)).fetchone()
         assert saved["option_key"] == "send" and saved["candidate_id"] == reviewed["id"]
 
 

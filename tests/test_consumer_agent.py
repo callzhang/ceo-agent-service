@@ -1,3 +1,4 @@
+from app.action_storage import ACTION_PROJECTIONS
 import json
 import os
 from dataclasses import replace
@@ -701,7 +702,7 @@ def test_consumer_summary_is_not_an_execution_receipt(store, task, context, summ
     with store._connect() as db:
         for table in ("candidate_executions", "candidate_action_attempts",
                       "external_action_results", "sent_replies"):
-            assert db.execute("select count(*) from " + table).fetchone()[0] == 0
+            assert db.execute("select count(*) from " + (f"({ACTION_PROJECTIONS[table]})" if table in ACTION_PROJECTIONS else table)).fetchone()[0] == 0
 
 
 def test_consumer_persists_native_mcp_reads_from_codex_session(

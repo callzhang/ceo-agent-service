@@ -8,6 +8,7 @@ from urllib.parse import quote
 import pytest
 
 from app.run_storage import insert_run
+from app.action_storage import REVIEW_CANDIDATE_SQL, update_action
 from app.audit_web import handle_rerun_attempt_post
 from app.store import AgentRole, AutoReplyStore
 from app.web_api.attempts import (
@@ -16,6 +17,8 @@ from app.web_api.attempts import (
     _runtime_payload,
     build_attempt_detail,
 )
+
+from app.action_storage import CANDIDATE_EXECUTION_SQL
 
 
 CONVERSATION = "email-thread:thread-digest"
@@ -968,10 +971,8 @@ def test_attempt_detail_api_marks_unavailable_consumer_result_per_field(
     if failure is None:
         consumer = _complete_consumer_run(store, task, owner="malformed-api")
         with store._immediate_write_transaction() as db:
-            db.execute(
-                    "update review_candidates set candidate_json=? where consumer_run_id=?",
-                (json.dumps(stored_result), consumer.id),
-            )
+            public_id = db.execute(f"select id from ({REVIEW_CANDIDATE_SQL}) where consumer_run_id=?", (consumer.id,)).fetchone()[0]
+            update_action(db, 'review_candidates', public_id, {'candidate_json': json.dumps(stored_result)})
     else:
         claimed = store.claim_agent_run(
             task.id,
@@ -1009,10 +1010,8 @@ def test_attempt_detail_api_preserves_valid_metrics_from_partial_consumer_result
     partial.pop("information_completeness")
     partial.pop("rule_coverage")
     with store._immediate_write_transaction() as db:
-        db.execute(
-                "update review_candidates set candidate_json=? where consumer_run_id=?",
-            (json.dumps(partial), consumer.id),
-        )
+        public_id = db.execute(f"select id from ({REVIEW_CANDIDATE_SQL}) where consumer_run_id=?", (consumer.id,)).fetchone()[0]
+        update_action(db, 'review_candidates', public_id, {'candidate_json': json.dumps(partial)})
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
 
     status, item = build_attempt_detail(store, attempt_id)
@@ -1037,7 +1036,8 @@ def test_attempt_detail_api_marks_completed_consumer_without_result_unavailable(
     task = _consumer_result_task(store)
     consumer = _complete_consumer_run(store, task, owner="missing-result-api")
     with store._immediate_write_transaction() as db:
-            db.execute("update review_candidates set candidate_json='' where consumer_run_id=?", (consumer.id,))
+        public_id = db.execute(f"select id from ({REVIEW_CANDIDATE_SQL}) where consumer_run_id=?", (consumer.id,)).fetchone()[0]
+        update_action(db, 'review_candidates', public_id, {'candidate_json': ''})
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
 
     _, item = build_attempt_detail(store, attempt_id)
@@ -1202,7 +1202,7 @@ def test_failed_attempt_rerun_presentation_uses_structured_historical_refusal(
     assert store.get_agent_run(run.id) == before
     assert store.get_reply_task(task.id).status == 'failed'
     with store._connect() as db:
-        assert db.execute('select count(*) from candidate_executions').fetchone()[0] == 0
+        assert db.execute(f'select count(*) from ({CANDIDATE_EXECUTION_SQL})').fetchone()[0] == 0
 
 
 def test_failed_attempt_does_not_inherit_another_business_objects_refusal(tmp_path: Path):

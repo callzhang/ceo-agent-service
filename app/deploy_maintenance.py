@@ -16,6 +16,7 @@ from app.reply_task_deferral import _legacy_event_may_have_effect
 from app.repository_updater import UpgradePreconditionError
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
 from app.task_schema_release import publication_meeting_sources, publication_task_sources
+from app.action_schema_release import publication_candidate_source
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ def check_maintenance(database_path: Path, task_ids: tuple[int, ...]) -> Mainten
     with sqlite3.connect(database_path.resolve().as_uri() + '?mode=ro', uri=True) as db:
         db.row_factory = sqlite3.Row
         reply_source, work_source = publication_task_sources(db)
+        candidate_source = publication_candidate_source(db)
         scheduled_source = publication_scheduled_source(db)
         meeting_jobs, _ = publication_meeting_sources(db)
         processing = {row[0] for row in db.execute(f"select id from ({reply_source}) where status='processing'")}
@@ -56,7 +58,7 @@ def check_maintenance(database_path: Path, task_ids: tuple[int, ...]) -> Mainten
                 raise UpgradePreconditionError('maintenance needs a recoverable Consumer run')
             bindings.append((task_id, task['business_object_key'], task['execution_generation'], task['input_version']))
             checks = (
-                ('review_candidates', 'task_id'),
+                (f'({candidate_source})', 'task_id'),
                 ('external_action_results', 'business_object_key'),
             )
             for table, column in checks:

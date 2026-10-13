@@ -1,0 +1,997 @@
+{
+  "scope": "post5A declarations from verified production-derived acceptance copy; synthetic rows are not a production-count oracle",
+  "source_store_version": "2026-10-13.1",
+  "app_code_commit": "0169d05593a3bc4359a3ccdd6d33e02844e7d898",
+  "tables": {
+    "actions": {
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "record_type",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "legacy_key",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "task_id",
+          "INTEGER",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "consumer_run_id",
+          "INTEGER",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "audit_run_id",
+          "INTEGER",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          6,
+          "predecessor_review_id",
+          "INTEGER",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          7,
+          "candidate_id",
+          "INTEGER",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          8,
+          "review_id",
+          "INTEGER",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          9,
+          "selection_id",
+          "INTEGER",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          10,
+          "execution_id",
+          "INTEGER",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          11,
+          "payload_json",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          12,
+          "execution_generation",
+          "TEXT",
+          0,
+          null,
+          0,
+          2
+        ],
+        [
+          13,
+          "stage_index",
+          "INTEGER",
+          0,
+          null,
+          0,
+          2
+        ],
+        [
+          14,
+          "proposal_revision",
+          "INTEGER",
+          0,
+          null,
+          0,
+          2
+        ],
+        [
+          15,
+          "candidate_digest",
+          "TEXT",
+          0,
+          null,
+          0,
+          2
+        ],
+        [
+          16,
+          "candidate_json",
+          "TEXT",
+          0,
+          null,
+          0,
+          2
+        ],
+        [
+          17,
+          "invalidated_at",
+          "TEXT",
+          0,
+          null,
+          0,
+          2
+        ],
+        [
+          18,
+          "invalidation_reason",
+          "TEXT",
+          0,
+          null,
+          0,
+          2
+        ],
+        [
+          19,
+          "created_at",
+          "TEXT",
+          0,
+          null,
+          0,
+          2
+        ],
+        [
+          20,
+          "decision",
+          "TEXT",
+          0,
+          null,
+          0,
+          2
+        ],
+        [
+          21,
+          "result_json",
+          "TEXT",
+          0,
+          null,
+          0,
+          2
+        ],
+        [
+          22,
+          "option_key",
+          "TEXT",
+          0,
+          null,
+          0,
+          2
+        ],
+        [
+          23,
+          "branch_json",
+          "TEXT",
+          0,
+          null,
+          0,
+          2
+        ],
+        [
+          24,
+          "status",
+          "TEXT",
+          0,
+          null,
+          0,
+          2
+        ],
+        [
+          25,
+          "instruction",
+          "TEXT",
+          0,
+          null,
+          0,
+          2
+        ],
+        [
+          26,
+          "lease_owner",
+          "TEXT",
+          0,
+          null,
+          0,
+          2
+        ],
+        [
+          27,
+          "lease_expires_at",
+          "TEXT",
+          0,
+          null,
+          0,
+          2
+        ],
+        [
+          28,
+          "updated_at",
+          "TEXT",
+          0,
+          null,
+          0,
+          2
+        ],
+        [
+          29,
+          "action_index",
+          "INTEGER",
+          0,
+          null,
+          0,
+          2
+        ],
+        [
+          30,
+          "external_action_key",
+          "TEXT",
+          0,
+          null,
+          0,
+          2
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "actions",
+          "execution_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ],
+        [
+          1,
+          0,
+          "actions",
+          "selection_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ],
+        [
+          2,
+          0,
+          "actions",
+          "review_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ],
+        [
+          3,
+          0,
+          "actions",
+          "candidate_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ],
+        [
+          4,
+          0,
+          "actions",
+          "predecessor_review_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ],
+        [
+          5,
+          0,
+          "runs",
+          "audit_run_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ],
+        [
+          6,
+          0,
+          "runs",
+          "consumer_run_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ],
+        [
+          7,
+          0,
+          "tasks",
+          "task_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "objects": [
+        {
+          "type": "index",
+          "name": "idx_actions_attempt_sequence",
+          "sql": "CREATE UNIQUE INDEX idx_actions_attempt_sequence on actions(execution_id,action_index) where record_type='candidate_action_attempts'"
+        },
+        {
+          "type": "index",
+          "name": "idx_actions_audit_run",
+          "sql": "CREATE UNIQUE INDEX idx_actions_audit_run on actions(audit_run_id) where record_type='candidate_reviews'"
+        },
+        {
+          "type": "index",
+          "name": "idx_actions_candidates_task",
+          "sql": "CREATE INDEX idx_actions_candidates_task on actions(task_id,execution_generation,cast(legacy_key as integer)) where record_type='review_candidates'"
+        },
+        {
+          "type": "index",
+          "name": "idx_actions_consumer_run",
+          "sql": "CREATE UNIQUE INDEX idx_actions_consumer_run on actions(consumer_run_id) where record_type='review_candidates'"
+        },
+        {
+          "type": "index",
+          "name": "idx_actions_execution_candidate",
+          "sql": "CREATE UNIQUE INDEX idx_actions_execution_candidate on actions(candidate_id) where record_type='candidate_executions'"
+        },
+        {
+          "type": "index",
+          "name": "idx_actions_external_key",
+          "sql": "CREATE INDEX idx_actions_external_key on actions(external_action_key) where record_type='candidate_action_attempts'"
+        },
+        {
+          "type": "index",
+          "name": "idx_actions_public_id",
+          "sql": "CREATE UNIQUE INDEX idx_actions_public_id on actions(cast(legacy_key as integer),record_type)"
+        },
+        {
+          "type": "index",
+          "name": "idx_actions_reviews_candidate",
+          "sql": "CREATE INDEX idx_actions_reviews_candidate on actions(candidate_id,cast(legacy_key as integer)) where record_type='candidate_reviews'"
+        },
+        {
+          "type": "index",
+          "name": "idx_actions_selection_candidate",
+          "sql": "CREATE UNIQUE INDEX idx_actions_selection_candidate on actions(candidate_id) where record_type='candidate_selections'"
+        },
+        {
+          "type": "table",
+          "name": "actions",
+          "sql": "CREATE TABLE actions (id integer primary key, record_type text not null check(record_type in ('review_candidates','candidate_reviews','candidate_selections','candidate_supplements','candidate_executions','candidate_action_attempts')),legacy_key text not null check(legacy_key=cast(cast(legacy_key as integer) as text)),task_id integer references tasks(id),consumer_run_id integer references runs(id),audit_run_id integer references runs(id),predecessor_review_id integer references actions(id),candidate_id integer references actions(id),review_id integer references actions(id),selection_id integer references actions(id),execution_id integer references actions(id),payload_json text not null check(json_valid(payload_json) and json_type(payload_json)='object'),execution_generation text generated always as (json_extract(payload_json,'$.execution_generation')) virtual,stage_index integer generated always as (json_extract(payload_json,'$.stage_index')) virtual,proposal_revision integer generated always as (json_extract(payload_json,'$.proposal_revision')) virtual,candidate_digest text generated always as (json_extract(payload_json,'$.candidate_digest')) virtual,candidate_json text generated always as (json_extract(payload_json,'$.candidate_json')) virtual,invalidated_at text generated always as (json_extract(payload_json,'$.invalidated_at')) virtual,invalidation_reason text generated always as (json_extract(payload_json,'$.invalidation_reason')) virtual,created_at text generated always as (json_extract(payload_json,'$.created_at')) virtual,decision text generated always as (json_extract(payload_json,'$.decision')) virtual,result_json text generated always as (json_extract(payload_json,'$.result_json')) virtual,option_key text generated always as (json_extract(payload_json,'$.option_key')) virtual,branch_json text generated always as (json_extract(payload_json,'$.branch_json')) virtual,status text generated always as (json_extract(payload_json,'$.status')) virtual,instruction text generated always as (json_extract(payload_json,'$.instruction')) virtual,lease_owner text generated always as (json_extract(payload_json,'$.lease_owner')) virtual,lease_expires_at text generated always as (json_extract(payload_json,'$.lease_expires_at')) virtual,updated_at text generated always as (json_extract(payload_json,'$.updated_at')) virtual,action_index integer generated always as (json_extract(payload_json,'$.action_index')) virtual,external_action_key text generated always as (json_extract(payload_json,'$.external_action_key')) virtual,check(record_type<>'review_candidates' or ((json_type(payload_json,'$.execution_generation') is 'text') and (json_type(payload_json,'$.stage_index') is 'integer') and (json_type(payload_json,'$.proposal_revision') is 'integer') and (json_type(payload_json,'$.candidate_digest') is 'text') and (json_type(payload_json,'$.candidate_json') is 'text') and (json_type(payload_json,'$.invalidated_at') is 'text') and (json_type(payload_json,'$.invalidation_reason') is 'text') and (json_type(payload_json,'$.created_at') is 'text') and (json_remove(payload_json,'$.execution_generation','$.stage_index','$.proposal_revision','$.candidate_digest','$.candidate_json','$.invalidated_at','$.invalidation_reason','$.created_at')='{}') and (task_id is not null and typeof(task_id)='integer') and (consumer_run_id is not null and typeof(consumer_run_id)='integer') and (audit_run_id is null) and (predecessor_review_id is null or typeof(predecessor_review_id)='integer') and (candidate_id is null) and (review_id is null) and (selection_id is null) and (execution_id is null))),check(record_type<>'candidate_reviews' or ((json_type(payload_json,'$.decision') is 'text') and (json_type(payload_json,'$.candidate_digest') is 'text') and (json_type(payload_json,'$.result_json') is 'text') and (json_type(payload_json,'$.created_at') is 'text') and (json_remove(payload_json,'$.decision','$.candidate_digest','$.result_json','$.created_at')='{}') and (task_id is null) and (consumer_run_id is null) and (audit_run_id is not null and typeof(audit_run_id)='integer') and (predecessor_review_id is null) and (candidate_id is not null and typeof(candidate_id)='integer') and (review_id is null) and (selection_id is null) and (execution_id is null))),check(record_type<>'candidate_selections' or ((json_type(payload_json,'$.option_key') is 'text') and (json_type(payload_json,'$.branch_json') is 'text') and (json_type(payload_json,'$.status') is 'text') and (json_type(payload_json,'$.created_at') is 'text') and (json_remove(payload_json,'$.option_key','$.branch_json','$.status','$.created_at')='{}') and (task_id is null) and (consumer_run_id is null) and (audit_run_id is null) and (predecessor_review_id is null) and (candidate_id is not null and typeof(candidate_id)='integer') and (review_id is not null and typeof(review_id)='integer') and (selection_id is null) and (execution_id is null))),check(record_type<>'candidate_supplements' or ((json_type(payload_json,'$.instruction') is 'text') and (json_type(payload_json,'$.created_at') is 'text') and (json_remove(payload_json,'$.instruction','$.created_at')='{}') and (task_id is null) and (consumer_run_id is null) and (audit_run_id is null) and (predecessor_review_id is null) and (candidate_id is not null and typeof(candidate_id)='integer') and (review_id is null) and (selection_id is null) and (execution_id is null))),check(record_type<>'candidate_executions' or ((json_type(payload_json,'$.status') is 'text') and (json_type(payload_json,'$.lease_owner') is 'text') and (json_type(payload_json,'$.lease_expires_at') is 'text') and (json_type(payload_json,'$.result_json') is 'text') and (json_type(payload_json,'$.created_at') is 'text') and (json_type(payload_json,'$.updated_at') is 'text') and (json_remove(payload_json,'$.status','$.lease_owner','$.lease_expires_at','$.result_json','$.created_at','$.updated_at')='{}') and (task_id is null) and (consumer_run_id is null) and (audit_run_id is null) and (predecessor_review_id is null) and (candidate_id is not null and typeof(candidate_id)='integer') and (review_id is not null and typeof(review_id)='integer') and (selection_id is null or typeof(selection_id)='integer') and (execution_id is null))),check(record_type<>'candidate_action_attempts' or ((json_type(payload_json,'$.action_index') is 'integer') and (json_type(payload_json,'$.external_action_key') is 'text') and (json_type(payload_json,'$.status') is 'text') and (json_type(payload_json,'$.result_json') is 'text') and (json_type(payload_json,'$.created_at') is 'text') and (json_type(payload_json,'$.updated_at') is 'text') and (json_remove(payload_json,'$.action_index','$.external_action_key','$.status','$.result_json','$.created_at','$.updated_at')='{}') and (task_id is null) and (consumer_run_id is null) and (audit_run_id is null) and (predecessor_review_id is null) and (candidate_id is null) and (review_id is null) and (selection_id is null) and (execution_id is not null and typeof(execution_id)='integer'))),check(record_type<>'candidate_reviews' or decision in ('approve','return','reject')),check(record_type<>'candidate_executions' or status in ('running','done','skipped','failed','retry','uncertain')),check(record_type<>'candidate_action_attempts' or status in ('dispatched','verified','confirmed_no_effect','uncertain','failed')))"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_actions_audit_run_id_insert",
+          "sql": "CREATE TRIGGER trg_actions_audit_run_id_insert before insert on actions when new.audit_run_id is not null and exists(select 1 from runs where id=new.audit_run_id and record_type<>'agent_runs') begin select raise(abort,'action parent type mismatch'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_actions_audit_run_id_update",
+          "sql": "CREATE TRIGGER trg_actions_audit_run_id_update before update of audit_run_id on actions when new.audit_run_id is not null and exists(select 1 from runs where id=new.audit_run_id and record_type<>'agent_runs') begin select raise(abort,'action parent type mismatch'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_actions_candidate_id_insert",
+          "sql": "CREATE TRIGGER trg_actions_candidate_id_insert before insert on actions when new.candidate_id is not null and exists(select 1 from actions where id=new.candidate_id and record_type<>'review_candidates') begin select raise(abort,'action parent type mismatch'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_actions_candidate_id_update",
+          "sql": "CREATE TRIGGER trg_actions_candidate_id_update before update of candidate_id on actions when new.candidate_id is not null and exists(select 1 from actions where id=new.candidate_id and record_type<>'review_candidates') begin select raise(abort,'action parent type mismatch'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_actions_consumer_run_id_insert",
+          "sql": "CREATE TRIGGER trg_actions_consumer_run_id_insert before insert on actions when new.consumer_run_id is not null and exists(select 1 from runs where id=new.consumer_run_id and record_type<>'agent_runs') begin select raise(abort,'action parent type mismatch'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_actions_consumer_run_id_update",
+          "sql": "CREATE TRIGGER trg_actions_consumer_run_id_update before update of consumer_run_id on actions when new.consumer_run_id is not null and exists(select 1 from runs where id=new.consumer_run_id and record_type<>'agent_runs') begin select raise(abort,'action parent type mismatch'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_actions_execution_id_insert",
+          "sql": "CREATE TRIGGER trg_actions_execution_id_insert before insert on actions when new.execution_id is not null and exists(select 1 from actions where id=new.execution_id and record_type<>'candidate_executions') begin select raise(abort,'action parent type mismatch'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_actions_execution_id_update",
+          "sql": "CREATE TRIGGER trg_actions_execution_id_update before update of execution_id on actions when new.execution_id is not null and exists(select 1 from actions where id=new.execution_id and record_type<>'candidate_executions') begin select raise(abort,'action parent type mismatch'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_actions_predecessor_review_id_insert",
+          "sql": "CREATE TRIGGER trg_actions_predecessor_review_id_insert before insert on actions when new.predecessor_review_id is not null and exists(select 1 from actions where id=new.predecessor_review_id and record_type<>'candidate_reviews') begin select raise(abort,'action parent type mismatch'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_actions_predecessor_review_id_update",
+          "sql": "CREATE TRIGGER trg_actions_predecessor_review_id_update before update of predecessor_review_id on actions when new.predecessor_review_id is not null and exists(select 1 from actions where id=new.predecessor_review_id and record_type<>'candidate_reviews') begin select raise(abort,'action parent type mismatch'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_actions_public_reference_update",
+          "sql": "CREATE TRIGGER trg_actions_public_reference_update before update of legacy_key on actions when new.legacy_key<>old.legacy_key and exists(select 1 from actions where predecessor_review_id=old.id or candidate_id=old.id or review_id=old.id or selection_id=old.id or execution_id=old.id) begin select raise(abort,'FOREIGN KEY constraint failed'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_actions_record_type_immutable",
+          "sql": "CREATE TRIGGER trg_actions_record_type_immutable before update of record_type on actions when new.record_type<>old.record_type begin select raise(abort,'action record type is immutable'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_actions_review_id_insert",
+          "sql": "CREATE TRIGGER trg_actions_review_id_insert before insert on actions when new.review_id is not null and exists(select 1 from actions where id=new.review_id and record_type<>'candidate_reviews') begin select raise(abort,'action parent type mismatch'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_actions_review_id_update",
+          "sql": "CREATE TRIGGER trg_actions_review_id_update before update of review_id on actions when new.review_id is not null and exists(select 1 from actions where id=new.review_id and record_type<>'candidate_reviews') begin select raise(abort,'action parent type mismatch'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_actions_selection_id_insert",
+          "sql": "CREATE TRIGGER trg_actions_selection_id_insert before insert on actions when new.selection_id is not null and exists(select 1 from actions where id=new.selection_id and record_type<>'candidate_selections') begin select raise(abort,'action parent type mismatch'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_actions_selection_id_update",
+          "sql": "CREATE TRIGGER trg_actions_selection_id_update before update of selection_id on actions when new.selection_id is not null and exists(select 1 from actions where id=new.selection_id and record_type<>'candidate_selections') begin select raise(abort,'action parent type mismatch'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_actions_task_id_insert",
+          "sql": "CREATE TRIGGER trg_actions_task_id_insert before insert on actions when new.task_id is not null and exists(select 1 from tasks where id=new.task_id and record_type<>'reply_tasks') begin select raise(abort,'action parent type mismatch'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_actions_task_id_update",
+          "sql": "CREATE TRIGGER trg_actions_task_id_update before update of task_id on actions when new.task_id is not null and exists(select 1 from tasks where id=new.task_id and record_type<>'reply_tasks') begin select raise(abort,'action parent type mismatch'); end"
+        }
+      ]
+    },
+    "external_action_results": {
+      "columns": [
+        [
+          0,
+          "external_action_key",
+          "TEXT",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "business_object_key",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "action_identity",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "operation",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "target_identifiers_json",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "provider_result_json",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          6,
+          "result_digest",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          7,
+          "first_agent_run_id",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          8,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "runs",
+          "first_agent_run_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "objects": [
+        {
+          "type": "index",
+          "name": "idx_external_action_results_business_object",
+          "sql": "CREATE INDEX idx_external_action_results_business_object on external_action_results(business_object_key, external_action_key)"
+        },
+        {
+          "type": "table",
+          "name": "external_action_results",
+          "sql": "CREATE TABLE external_action_results (\n                    external_action_key text primary key\n                        check(trim(external_action_key) != ''),\n                    business_object_key text not null\n                        check(trim(business_object_key) != ''),\n                    action_identity text not null\n                        check(trim(action_identity) != ''),\n                    operation text not null check(trim(operation) != ''),\n                    target_identifiers_json text not null,\n                    provider_result_json text not null,\n                    result_digest text not null check(trim(result_digest) != ''),\n                    first_agent_run_id integer not null,\n                    created_at text not null default current_timestamp,\n                    foreign key(first_agent_run_id) references runs(id)\n                )"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_runs_child_external_action_results_first_agent_run_id_insert",
+          "sql": "CREATE TRIGGER trg_runs_child_external_action_results_first_agent_run_id_insert before insert on \"external_action_results\" when new.\"first_agent_run_id\" is not null and exists(select 1 from runs where id=new.\"first_agent_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_runs_child_external_action_results_first_agent_run_id_update",
+          "sql": "CREATE TRIGGER trg_runs_child_external_action_results_first_agent_run_id_update before update of \"first_agent_run_id\" on \"external_action_results\" when new.\"first_agent_run_id\" is not null and exists(select 1 from runs where id=new.\"first_agent_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+        }
+      ]
+    },
+    "agent_effect_intents": {
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "agent_run_id",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "authorization_id",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "action_index",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "receipt_operation_id",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "capability",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          6,
+          "operation",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          7,
+          "operation_digest",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          8,
+          "arguments_digest",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          9,
+          "target_identifiers_json",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          10,
+          "state",
+          "TEXT",
+          1,
+          "'prepared'",
+          0,
+          0
+        ],
+        [
+          11,
+          "result_digest",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          12,
+          "exit_code",
+          "INTEGER",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          13,
+          "prepared_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ],
+        [
+          14,
+          "dispatched_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          15,
+          "acknowledged_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          16,
+          "updated_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ],
+        [
+          17,
+          "external_action_key",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "runs",
+          "agent_run_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "objects": [
+        {
+          "type": "index",
+          "name": "idx_agent_effect_intents_operation",
+          "sql": "CREATE UNIQUE INDEX idx_agent_effect_intents_operation\n                    on agent_effect_intents(agent_run_id, receipt_operation_id)"
+        },
+        {
+          "type": "index",
+          "name": "idx_agent_effect_intents_run",
+          "sql": "CREATE INDEX idx_agent_effect_intents_run\n                    on agent_effect_intents(agent_run_id, action_index, id)"
+        },
+        {
+          "type": "table",
+          "name": "agent_effect_intents",
+          "sql": "CREATE TABLE agent_effect_intents (\n                    id integer primary key autoincrement,\n                    agent_run_id integer not null,\n                    authorization_id text not null,\n                    action_index integer not null check(action_index >= 0),\n                    receipt_operation_id text not null,\n                    capability text not null,\n                    operation text not null,\n                    operation_digest text not null,\n                    arguments_digest text not null,\n                    target_identifiers_json text not null,\n                    state text not null default 'prepared'\n                        check(state in ('prepared', 'dispatched', 'acknowledged')),\n                    result_digest text not null default '',\n                    exit_code integer,\n                    prepared_at text not null default current_timestamp,\n                    dispatched_at text not null default '',\n                    acknowledged_at text not null default '',\n                    updated_at text not null default current_timestamp, external_action_key text not null default '',\n                    unique(agent_run_id, authorization_id),\n                    foreign key(agent_run_id) references runs(id)\n                )"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_runs_child_agent_effect_intents_agent_run_id_insert",
+          "sql": "CREATE TRIGGER trg_runs_child_agent_effect_intents_agent_run_id_insert before insert on \"agent_effect_intents\" when new.\"agent_run_id\" is not null and exists(select 1 from runs where id=new.\"agent_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_runs_child_agent_effect_intents_agent_run_id_update",
+          "sql": "CREATE TRIGGER trg_runs_child_agent_effect_intents_agent_run_id_update before update of \"agent_run_id\" on \"agent_effect_intents\" when new.\"agent_run_id\" is not null and exists(select 1 from runs where id=new.\"agent_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+        }
+      ]
+    },
+    "agent_execution_receipts": {
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "agent_run_id",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "receipt_id",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "operation_id",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "cli",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "command_path",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          6,
+          "command_digest",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          7,
+          "exit_code",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          8,
+          "completed",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          9,
+          "persisted",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          10,
+          "safe_to_confirm",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          11,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ],
+        [
+          12,
+          "effect_counted",
+          "INTEGER",
+          1,
+          "0",
+          0,
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "runs",
+          "agent_run_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "objects": [
+        {
+          "type": "index",
+          "name": "idx_agent_execution_receipts_run",
+          "sql": "CREATE INDEX idx_agent_execution_receipts_run\n                    on agent_execution_receipts(agent_run_id, id)"
+        },
+        {
+          "type": "table",
+          "name": "agent_execution_receipts",
+          "sql": "CREATE TABLE agent_execution_receipts (\n                    id integer primary key autoincrement,\n                    agent_run_id integer not null,\n                    receipt_id text not null,\n                    operation_id text not null,\n                    cli text not null,\n                    command_path text not null,\n                    command_digest text not null,\n                    exit_code integer not null,\n                    completed integer not null,\n                    persisted integer not null,\n                    safe_to_confirm integer not null,\n                    created_at text not null default current_timestamp, effect_counted integer not null default 0,\n                    unique(agent_run_id, operation_id),\n                    foreign key(agent_run_id) references runs(id)\n                )"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_runs_child_agent_execution_receipts_agent_run_id_insert",
+          "sql": "CREATE TRIGGER trg_runs_child_agent_execution_receipts_agent_run_id_insert before insert on \"agent_execution_receipts\" when new.\"agent_run_id\" is not null and exists(select 1 from runs where id=new.\"agent_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_runs_child_agent_execution_receipts_agent_run_id_update",
+          "sql": "CREATE TRIGGER trg_runs_child_agent_execution_receipts_agent_run_id_update before update of \"agent_run_id\" on \"agent_execution_receipts\" when new.\"agent_run_id\" is not null and exists(select 1 from runs where id=new.\"agent_run_id\" and record_type<>'agent_runs') begin select raise(abort,'run parent must be a logical agent run'); end"
+        }
+      ]
+    }
+  },
+  "source_sequence": {
+    "agent_effect_intents": 560,
+    "agent_execution_receipts": 115
+  }
+}
