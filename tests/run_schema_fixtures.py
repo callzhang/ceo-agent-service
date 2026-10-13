@@ -139,10 +139,9 @@ def current_store_with_migrated_core(
         names = ",".join(f'"{name}"' for name in columns)
         db.execute(f"insert into runs({names}) select {names} from source.runs order by id")
         if include_receipts:
-            db.execute(
-                "insert into agent_execution_receipts "
-                "select * from source.agent_execution_receipts order by id"
-            )
+            from app.action_storage import insert_action
+            for row in db.execute("select * from source.agent_execution_receipts order by id").fetchall():
+                insert_action(db, "agent_execution_receipts", dict(row))
         db.commit()
         db.execute("detach database source")
     return store

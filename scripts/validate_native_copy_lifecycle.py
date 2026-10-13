@@ -25,6 +25,7 @@ if str(ROOT) not in sys.path:
 
 from app.action_storage import (
     CANDIDATE_REVIEW_SQL,
+    EXTERNAL_ACTION_RESULT_SQL,
     REVIEW_CANDIDATE_SQL,
 )
 
@@ -243,7 +244,7 @@ def run(root, case="approve"):
         assert interrupted and store.get_reply_task(task.id).status == "processing"
         assert len(provider.calls) == 1
         with store._connect() as db:
-            assert db.execute("select count(*) from external_action_results where business_object_key=?", (task.business_object_key,)).fetchone()[0] == 1
+            assert db.execute(f"select count(*) from ({EXTERNAL_ACTION_RESULT_SQL}) where business_object_key=?", (task.business_object_key,)).fetchone()[0] == 1
             assert db.execute("select count(*) from reply_attempts where conversation_id=?", (key,)).fetchone()[0] == 0
             db.execute("drop trigger native_copy_interrupt")
         store = AutoReplyStore(candidate_path)
@@ -292,7 +293,7 @@ def run(root, case="approve"):
     assert {r["role"] for r in report["runs"]} == {"consumer", "audit"}
     assert all(r["native_exists"] and r["end"] > r["start"] for r in report["runs"] if r["status"] == "completed")
     with store._connect() as db:
-        report["receipts"] = db.execute("select count(*) from external_action_results where business_object_key=?", (task.business_object_key,)).fetchone()[0]
+        report["receipts"] = db.execute(f"select count(*) from ({EXTERNAL_ACTION_RESULT_SQL}) where business_object_key=?", (task.business_object_key,)).fetchone()[0]
         report["sent_replies"] = db.execute("select count(*) from sent_replies where conversation_id=?", (key,)).fetchone()[0]
         report["business_attempts"] = db.execute("select count(*) from reply_attempts where conversation_id=?", (key,)).fetchone()[0]
         assert "final_result_json" not in {r[1] for r in db.execute("pragma table_info(runs)")}

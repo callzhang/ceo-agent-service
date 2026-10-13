@@ -24,7 +24,7 @@ def test_current_bootstrap_removes_only_approved_sources_and_caches(tmp_path):
             db.execute(
                 "select value from service_state where key='store_schema_version'"
             ).fetchone()[0]
-            == "2026-10-13.1"
+            == "2026-10-13.2"
         )
         tables = {
             r[0]

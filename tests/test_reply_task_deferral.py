@@ -322,11 +322,29 @@ def test_apply_refuses_changed_identity_or_live_work(tmp_path, mutation):
             'first_effect_started_at': '2026-10-05 11:00:00',
         },
     ), ('RUN', 'RUN_TEXT')),
-    ("insert into agent_effect_intents(agent_run_id,authorization_id,action_index,receipt_operation_id,capability,operation,operation_digest,arguments_digest,target_identifiers_json,state) values (?,'auth',0,'op','c','o','d','a','{}','dispatched')", ('RUN',)),
-    ("insert into agent_effect_intents(agent_run_id,authorization_id,action_index,receipt_operation_id,capability,operation,operation_digest,arguments_digest,target_identifiers_json,state) values (?,'auth',0,'op','c','o','d','a','{}','prepared')", ('RUN',)),
-    ("insert into agent_execution_receipts(agent_run_id,receipt_id,operation_id,cli,command_path,command_digest,exit_code,completed,persisted,safe_to_confirm) values (?,'r','op','cli','cmd','d',1,0,0,0)", ('RUN',)),
+    (lambda db, values: insert_action(db, 'agent_effect_intents', {
+        'agent_run_id': values[0], 'authorization_id': 'auth', 'action_index': 0,
+        'receipt_operation_id': 'op', 'capability': 'c', 'operation': 'o',
+        'operation_digest': 'd', 'arguments_digest': 'a',
+        'target_identifiers_json': '{}', 'state': 'dispatched',
+    }), ('RUN',)),
+    (lambda db, values: insert_action(db, 'agent_effect_intents', {
+        'agent_run_id': values[0], 'authorization_id': 'auth', 'action_index': 0,
+        'receipt_operation_id': 'op', 'capability': 'c', 'operation': 'o',
+        'operation_digest': 'd', 'arguments_digest': 'a',
+        'target_identifiers_json': '{}', 'state': 'prepared',
+    }), ('RUN',)),
+    (lambda db, values: insert_action(db, 'agent_execution_receipts', {
+        'agent_run_id': values[0], 'receipt_id': 'r', 'operation_id': 'op',
+        'cli': 'cli', 'command_path': 'cmd', 'command_digest': 'd',
+        'exit_code': 1, 'completed': 0, 'persisted': 0, 'safe_to_confirm': 0,
+    }), ('RUN',)),
     ("insert into sent_replies(conversation_id,trigger_message_id,reply_text) values ('cid-deferral','mid-deferral','sent')", ()),
-    ("insert into external_action_results(external_action_key,business_object_key,action_identity,operation,target_identifiers_json,provider_result_json,result_digest,first_agent_run_id) values ('k',?,'a','o','{}','{}','d',?)", ('BUSINESS', 'RUN')),
+    (lambda db, values: insert_action(db, 'external_action_results', {
+        'external_action_key': 'k', 'business_object_key': values[0],
+        'action_identity': 'a', 'operation': 'o', 'target_identifiers_json': '{}',
+        'provider_result_json': '{}', 'result_digest': 'd', 'first_agent_run_id': values[1],
+    }), ('BUSINESS', 'RUN')),
 ])
 def test_preview_and_apply_refuse_live_or_possible_effect(tmp_path, statement, values):
     path, task_id, backup = ready(tmp_path)

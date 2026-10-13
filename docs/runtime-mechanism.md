@@ -1,11 +1,67 @@
 # Current Runtime Mechanism
 
-OA Attention is a business-pending projection: the scanner captures the exact
-principal-owned RUNNING nodes from the authenticated pending list and source
-details. A completed comment or internal `done`/`no_action` does not remove
-such a node. Only a subsequent verified scan proving it is no longer pending
-removes it. Partial scans and source-read failures retain previous pending
-nodes; non-OA pending/processing/needs_human status alone remains excluded.
+OA return uses its own effect verification, not the approval/rejection node
+completion predicate. The exact pending-node ownership check still precedes a
+new return. System first saves the actual response, principal, action digest and
+UTC call bounds. Only an explicit successful boolean operation result is
+acceptance; negative or incomplete responses cannot prove it. Read-only recovery
+joins the native process identity/business ID with the existing official OA
+OpenAPI process: original canceled node, unique own return event, exact approved
+remark in the call interval, and destination tasks in the approved activity
+before the next provider transition. Tied or untimed transitions, imprecise
+dispatch-second evidence, missing destination or partial records remain
+uncertain. No delay threshold or guessed recipient is used.
+
+Persisted dispatched/uncertain OA return actions reconcile before the pre-write source
+guard, because the original effect can itself change those facts. Reconciliation
+cannot dispatch. New writes retain source revalidation; prior acceptance evidence
+survives provider read failures. This does not retrospectively manufacture lost
+acceptance responses or rewrite historical failed executions. Comment and other
+action recovery retain their existing source/context fences.
+
+Audit handoff includes System-produced JSON type facts for each current action's
+target and payload fields, including human-option plans. The facts come from the
+exact validated candidate; they do not authorize an action or prove live
+ownership. New native feedback must explicitly classify its observation and
+include its field-assertion array; omission is a result error, not an implicit
+business judgment. Field-based feedback supplies candidate-relative path,
+literal and JSON type assertions. Before adopting the Audit result, the runner
+checks every assertion against the digest-bound candidate. A missing path,
+unsupported index, changed literal or wrong type corrects Audit via the existing
+technical result repair, not Consumer, business routing or automatic approval.
+Policy, source, authority and full-effect review remain Audit's work. Business
+prose is not parsed with keywords or regex, and historical feedback is not
+reconstructed as new evidence. A business misclassification or unsupported prose
+is still a model-review limitation, not proven factual truth merely because an
+assertion matches. Scalar field evidence is rendered before the complete final
+candidate JSON; source bindings remain in that JSON without repeating their
+values in the field index.
+
+OA Attention is a business-pending projection: the scanner starts tracking the
+exact principal-owned RUNNING nodes from the authenticated pending list and
+source details. Once tracked, the OA process remains in Attention while it is
+still running and has neither completed nor been explicitly returned, even if
+its current node moves to another approver. A completed comment or internal
+`done`/`no_action` does not remove it. Partial scans and source-read failures
+retain previous pending processes; non-OA pending/processing/needs_human status
+alone remains excluded.
+
+Reconciliation does not treat absence from the principal's pending list as
+completion or return. It removes the process from Attention only when live
+detail proves a terminal process, or when the exact reviewed task is canceled,
+the principal has no current RUNNING node, and the latest workflow-changing
+operation is that principal's `REDIRECT_PROCESS`. A running process that merely
+moved to another node remains unresolved in OA Attention; comments and
+unrelated task transitions are not return receipts. Historical local closures
+made solely for `OA_TASK_NOT_PENDING` are rechecked and restored to the
+projection when their live process is still running without a verified return.
+The service's DingTalk OpenAPI reader returns snake-case `process_instance`,
+`operation_records`, and operation fields; reconciliation reads those native
+records as well as the CLI detail projection before deciding a verified return.
+When a latest local attempt was previously closed solely as
+`OA_TASK_NOT_PENDING`, the scanner corrects that resolution only under an
+identity-and-original-resolution CAS after live terminal/return evidence; it
+retains the prior text and does not rewrite the attempt's outcome.
 
 Source feedback callback identities are opaque historical evidence, not newly
 generated outbound tokens. The validation copy removes only configured-origin
@@ -2701,3 +2757,18 @@ Store `2026-10-13.1` 将候选、审查、选择、补充、执行和动作尝�
 版本更新在同一事务内完成。配对逆迁从当前 `actions` 重建源表并恢复原版本记录，保留发布后的新增、更新、
 删除事实，不还原陈旧数据库备份。正常发布和回退后的重新启动在新进程验证，不能以同进程已初始化路径
 缓存代替实际启动验收。此段描述本发布代码契约；是否上线以正式部署回执为准。
+
+
+### 第五期B：独立回执合并
+
+Store `2026-10-13.2` 将 external_action_results、agent_effect_intents 和
+agent_execution_receipts 的实际字段与约束合入同一 actions 表。全局回执保留准确文本主键，
+通过 first_agent_run_id 引用逻辑 Agent run，不制造 candidate 归属。两类原生执行事实保留各自
+AUTOINCREMENT 公开 ID 和 native sqlite_sequence 水位；自动分配与插入持有同一 SQLite 写锁，
+显式自动提交连接使用自有 savepoint，普通连接的事务仍由调用方控制。内层 JSON 原始字符串保持原值。
+正常运行只读写九类型 actions，不创建旧三表、兼容 view 或双写。
+
+本发布单元只接受准确 Store15 声明，包括实际历史 ALTER 与实际 fresh constructor 的列顺序差异。
+配对逆迁按捕获的源声明恢复当前事实与当前水位，保留迁移后的新增、修改和删除，不恢复旧备份内容。
+发布 quiet-wait 读取器仅在明确声明的源／目标结构读取原生执行事实；恢复、审查、发送及回执策略不变。
+完整十表目标尚未完成；其余 actions 家族和第六至八期仍需要实施。是否上线以正式部署回执为准。

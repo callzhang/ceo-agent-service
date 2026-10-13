@@ -1203,7 +1203,7 @@ def test_review_feedback_required_on_return_and_reject(outcome):
     payload = {
         "outcome": outcome, "summary": "Revise candidate", "proposal_revision": 0,
         "candidate_digest": "a" * 64, "evidence_refs": ["message:1"],
-        "feedback": {"rule": "Audience must match source", "observation": "Wrong recipient", "requested_revision": "Correct recipient"},
+        "feedback": {"rule": "Audience must match source", "observation": "Wrong recipient", "requested_revision": "Correct recipient", "observation_basis": "business", "candidate_field_assertions": []},
         "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
         "information_completeness": 1.0, "error_code": "",
         "error_retryable": False, "error_authorization_required": False,

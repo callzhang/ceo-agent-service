@@ -31,7 +31,7 @@ from app.system_executor import SystemExecutor
 from app.worker import DingTalkAutoReplyWorker
 from test_agent_orchestrator import ScriptedAudit, ScriptedConsumer
 
-from app.action_storage import CANDIDATE_REVIEW_SQL
+from app.action_storage import CANDIDATE_REVIEW_SQL, EXTERNAL_ACTION_RESULT_SQL
 
 SOURCE = os.environ.get("CEO_COPY_LIFECYCLE_SOURCE", "")
 pytestmark = pytest.mark.skipif(not SOURCE, reason="explicit owned database snapshot required")
@@ -233,7 +233,7 @@ def test_reply_creation_review_execution_business_receipt_and_reopen(copied_stor
         assert [run.parent_agent_run_id for run in runs][1:] == [run.id for run in runs[:-1]]
     with store._connect() as db:
         attempts = db.execute("select send_status,agent_run_id from reply_attempts where conversation_id=?", (task.conversation_id,)).fetchall()
-        receipts = db.execute("select * from external_action_results where business_object_key=?", (task.business_object_key,)).fetchall()
+        receipts = db.execute(f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where business_object_key=?", (task.business_object_key,)).fetchall()
         deliveries = db.execute("select * from sent_replies where conversation_id=?", (task.conversation_id,)).fetchall()
         input_row = db.execute("select trigger_text,trigger_message_json,input_compacted from tasks where id=?", (current.current_input_id,)).fetchone()
     assert attempts
@@ -363,7 +363,7 @@ def test_settlement_interruption_rolls_back_and_reopen_reuses_receipt(copied_sto
     assert current.status == "processing" and not current.input_compacted
     assert len(provider.calls) == 1
     with store._connect() as db:
-        assert db.execute("select count(*) from external_action_results where business_object_key=?", (task.business_object_key,)).fetchone()[0] == 1
+        assert db.execute(f"select count(*) from ({EXTERNAL_ACTION_RESULT_SQL}) where business_object_key=?", (task.business_object_key,)).fetchone()[0] == 1
         assert db.execute("select count(*) from reply_attempts where conversation_id=?", (task.conversation_id,)).fetchone()[0] == 0
         db.execute("drop trigger copy_acceptance_interrupt")
     reopened = AutoReplyStore(store.path)
@@ -376,7 +376,7 @@ def test_settlement_interruption_rolls_back_and_reopen_reuses_receipt(copied_sto
     assert len(provider.calls) == 1
     with reopened._connect() as db:
         assert db.execute("select count(*) from reply_attempts where conversation_id=?", (task.conversation_id,)).fetchone()[0] == 1
-        assert db.execute("select count(*) from external_action_results where business_object_key=?", (task.business_object_key,)).fetchone()[0] == 1
+        assert db.execute(f"select count(*) from ({EXTERNAL_ACTION_RESULT_SQL}) where business_object_key=?", (task.business_object_key,)).fetchone()[0] == 1
 
 
 def test_workbench_creation_api_persists_task_turn_and_idempotent_request(copied_store, tmp_path):
