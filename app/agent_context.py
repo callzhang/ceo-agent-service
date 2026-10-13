@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from app.agent_contracts import AuditFeedback, ConsumerAgentResult
+from app.agent_contracts import AuditFeedback, ConsumerAgentResult, json_value_type
 from app.email_classifier_contracts import EmailAttachmentMetadata
 from app.agent_result import AgentError
 
@@ -361,6 +361,18 @@ class AuditTurnContext:
                     include_heading=False,
                     source_reference=source_reference,
                 ),
+                "## Candidate Field Facts\n" + _json(candidate_action_field_facts(self.candidate)),
+                "Current candidate scalar field evidence, computed from exact non-source candidate fields\n"
+                + render_candidate_field_evidence({
+                    key: value for key, value in self.candidate.model_dump(mode="json").items()
+                    if key != "source_bindings"
+                })
+                + (
+                    "\nSource bindings remain complete in Candidate revision and are not expanded again here. "
+                    "Use this evidence to verify a reported current-candidate field value or JSON type. "
+                    "A field-type observation must match its exact JSON Pointer path, literal value, "
+                    "and JSON type here; do not infer the type from identifier appearance."
+                ),
                 "Candidate revision\n"
                 + _json(
                     {
@@ -370,18 +382,26 @@ class AuditTurnContext:
                         "candidate": self.candidate.model_dump(mode="json"),
                     }
                 ),
-                "Current candidate scalar field evidence, computed from the exact candidate JSON above\n"
-                + render_candidate_field_evidence(
-                    self.candidate.model_dump(mode="json")
-                )
-                + (
-                    "\nUse this evidence to verify a reported current-candidate field value or JSON type. "
-                    "A field-type observation must match its exact JSON Pointer path, literal value, "
-                    "and JSON type here; do not infer the type from identifier appearance."
-                ),
             )
         )
         return f"## Audit Rules\n{self.audit_rules}\n\n## Context Facts\n{context_facts}"
+
+
+def candidate_action_field_facts(candidate: ConsumerAgentResult) -> list[dict[str, object]]:
+    document = candidate.model_dump(mode="json")
+    plans = [("proposal",), *[("decision_options", index, "plan") for index in range(len(candidate.decision_options))]]
+    facts = []
+    for path in plans:
+        plan = document
+        for part in path:
+            plan = plan[part]
+        if plan is None:
+            continue
+        for index, action in enumerate(plan["actions"]):
+            for section in ("target", "payload"):
+                for key, value in action[section].items():
+                    facts.append({"path": [*path, "actions", index, section, key], "json_type": json_value_type(value)})
+    return facts
 
 
 def _json(value: object) -> str:
@@ -429,5 +449,5 @@ _AUDIT_AGENT_RULES = """## Application Result Contract
 2. Bind the result to the exact candidate_digest and proposal_revision supplied below. Return or reject must give concrete feedback with the rule, observation, and requested revision. Audit never originates a human question or an alternative action plan.
 3. Review the whole action plan or all branches of a human request. Check business appropriateness, sourced facts, audience, timing, target, exact payload, action order, applicable rules and prior-stage receipts. An approved human request authorizes only publication of the question; no branch executes until the person selects it.
 4. For every needs_human candidate check all seven conditions: (a) does this instance really need Derek, (b) can existing code, business Skill, memory, session context or read tools settle it, (c) should the applicant or source owner supply missing material, (d) is this a business choice rather than a technical/provider/authentication/schema/runtime/retry failure, (e) is the context and reason concrete enough, (f) are options feasible and meaningfully different with honest tradeoffs, and (g) is every directly executable option complete, current-instance-bound and supported by facts and rules. An open-ended requested_input is a fact request and must not be treated as an executable option.
-5. Preserve action_identity and exact candidate content. A return may request evidence while the actions stay the same; a reject means the proposed content is unsuitable. Do not turn provider confirmation, a missing route, or runtime failure into a human business question. Before reporting a candidate field error, locate its exact JSON path, literal value and JSON type in the current candidate supplied below, and cite these in the observation. A quoted identifier is a string even when all its characters are digits. Do not infer current values or types from a prior revision or prior feedback; do not request a change already present in the current candidate. Still return real contract violations supported by the current value.
+5. Preserve action_identity and exact candidate content. A return may request evidence while the actions stay the same; a reject means the proposed content is unsuitable. Do not turn provider confirmation, a missing route, or runtime failure into a human business question. Candidate Field Facts are System-produced JSON type facts for this validated, digest-bound candidate, not business approval or proof of current authority. For feedback about a candidate field, set observation_basis=candidate_fields and provide candidate_field_assertions with its exact JSON path, literal value and JSON type; paths are relative to the candidate. A quoted identifier is a string even when its characters are digits. System checks those assertions before adopting feedback; a contradiction corrects Audit, never approves an action or asks Consumer to change a correct field. Do not infer current values or types from a prior revision or prior feedback, and do not request a change already present in the current candidate. Keep reviewing real business, evidence, ownership, authorization and payload violations.
 6. Verify provider identity from current source facts, not from a similarly named business object. Read the exact provider object when identity is missing; return a target correction if the plan invents a mapping, or failed if the required dependency cannot be read. Review complete effects, not just the outcome label: a notification or acknowledgment does not perform a different business action. A material-request receipt proves delivery of the request, not arrival of the material; reject immediate continuation that depends on a future source update. A later action may continue immediately only from a verified prior result that actually supplies its required facts."""

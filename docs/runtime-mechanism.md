@@ -1,5 +1,42 @@
 # Current Runtime Mechanism
 
+OA return uses its own effect verification, not the approval/rejection node
+completion predicate. The exact pending-node ownership check still precedes a
+new return. System first saves the actual response, principal, action digest and
+UTC call bounds. Only an explicit successful boolean operation result is
+acceptance; negative or incomplete responses cannot prove it. Read-only recovery
+joins the native process identity/business ID with the existing official OA
+OpenAPI process: original canceled node, unique own return event, exact approved
+remark in the call interval, and destination tasks in the approved activity
+before the next provider transition. Tied or untimed transitions, imprecise
+dispatch-second evidence, missing destination or partial records remain
+uncertain. No delay threshold or guessed recipient is used.
+
+Persisted dispatched/uncertain OA return actions reconcile before the pre-write source
+guard, because the original effect can itself change those facts. Reconciliation
+cannot dispatch. New writes retain source revalidation; prior acceptance evidence
+survives provider read failures. This does not retrospectively manufacture lost
+acceptance responses or rewrite historical failed executions. Comment and other
+action recovery retain their existing source/context fences.
+
+Audit handoff includes System-produced JSON type facts for each current action's
+target and payload fields, including human-option plans. The facts come from the
+exact validated candidate; they do not authorize an action or prove live
+ownership. New native feedback must explicitly classify its observation and
+include its field-assertion array; omission is a result error, not an implicit
+business judgment. Field-based feedback supplies candidate-relative path,
+literal and JSON type assertions. Before adopting the Audit result, the runner
+checks every assertion against the digest-bound candidate. A missing path,
+unsupported index, changed literal or wrong type corrects Audit via the existing
+technical result repair, not Consumer, business routing or automatic approval.
+Policy, source, authority and full-effect review remain Audit's work. Business
+prose is not parsed with keywords or regex, and historical feedback is not
+reconstructed as new evidence. A business misclassification or unsupported prose
+is still a model-review limitation, not proven factual truth merely because an
+assertion matches. Scalar field evidence is rendered before the complete final
+candidate JSON; source bindings remain in that JSON without repeating their
+values in the field index.
+
 OA Attention is a business-pending projection: the scanner captures the exact
 principal-owned RUNNING nodes from the authenticated pending list and source
 details. A completed comment or internal `done`/`no_action` does not remove

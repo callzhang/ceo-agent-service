@@ -9,7 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.agent_context import AuditTurnContext
-from app.agent_contracts import AuditAgentResult
+from app.agent_contracts import AuditAgentResult, ConsumerAgentResult, json_value_type
 from app.agent_effects import LEASE_SECONDS
 from app.agent_result import ResultParseError
 from app.agent_runtime_config import AgentRuntimeConfig
@@ -33,6 +33,25 @@ from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_comman
 
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
+
+
+def validate_audit_candidate_fields(result: AuditAgentResult, candidate: ConsumerAgentResult) -> None:
+    if result.feedback is None:
+        return
+    document = candidate.model_dump(mode="json")
+    for assertion in result.feedback.candidate_field_assertions:
+        actual = document
+        for part in assertion.path:
+            if isinstance(actual, dict) and isinstance(part, str) and part in actual:
+                actual = actual[part]
+            elif isinstance(actual, list) and type(part) is int and 0 <= part < len(actual):
+                actual = actual[part]
+            else:
+                raise ResultParseError("Audit candidate field assertion path does not exist in the bound candidate")
+        if (json_value_type(actual) != assertion.json_type
+            or json_value_type(assertion.value) != assertion.json_type
+            or json.dumps(actual, sort_keys=True, ensure_ascii=False) != json.dumps(assertion.value, sort_keys=True, ensure_ascii=False)):
+            raise ResultParseError("Audit candidate field assertion contradicts the bound candidate; correct Audit feedback, not the candidate")
 
 
 class AuditAgentRunner:
@@ -303,6 +322,7 @@ class AuditAgentRunner:
                 raise ResultParseError("Audit proposal_revision does not match candidate")
             if result.candidate_digest != context.candidate_digest:
                 raise ResultParseError("Audit candidate_digest does not match candidate")
+            validate_audit_candidate_fields(result, context.candidate)
             return result
 
         return process.execute(
