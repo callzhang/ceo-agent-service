@@ -83,6 +83,26 @@ def test_store_update_preserves_available_sources_and_original_run_snapshot(tmp_
     assert "NEW GENERIC BODY" not in context.skill_materials[0].content
     assert context.skill_materials[1].content.endswith("FROZEN BODY project-review")
     assert context.skill_materials[2].content.endswith("FROZEN BODY finance-review")
+    from app.business_skills import render_task_skill_discovery
+
+    assert context.skill_protocol == render_task_skill_discovery(
+        NAMES, catalog=(), frozen_names=NAMES,
+    )
+    assert "Available Task Skill Sources" in context.role_prompt()
+    assert "FROZEN BODY" not in context.role_prompt()
+    from app.prompt_composition import compose_consumer_task_assembly, load_prompt_configuration
+
+    for continuation in ("", "CURRENT CORRECTION"):
+        assembly = compose_consumer_task_assembly(
+            load_prompt_configuration(create_missing=False), task_context="CURRENT FACTS",
+            scheduled_prompt=context.role_prompt(), skill_protocol=context.skill_protocol,
+            skill_protocol_is_custom=False, skill_names=context.skill_names,
+            frozen_skill_names=context.skill_names, skill_catalog=(), continuation=continuation,
+        )
+        assert assembly.text.count("## Available Task Skill Sources") == 1
+        assert assembly.text.count(context.prompt) == 1
+        for name in NAMES:
+            assert assembly.text.count(f"`{name}`") == 1
 
 
 @pytest.mark.parametrize("prompt", ["Use $missing-review.",

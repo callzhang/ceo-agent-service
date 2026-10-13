@@ -213,18 +213,15 @@ class ScheduledAgentContextBuilder:
             return None
         protocols, _skill_facts = self._materialize_skills(snapshot.skill_refs)
         skill_names = tuple(ref.skill_name for ref in snapshot.skill_refs)
-        selected = ", ".join(f"`{name}`" for name in skill_names)
+        from app.business_skills import render_task_skill_discovery
+
         return ServiceCommandConsumerContext(
             scheduled_task_id=snapshot.task_id,
             scheduled_task_run_id=run.id,
             prompt=snapshot.prompt,
             skill_names=skill_names,
-            skill_protocol=(
-                f"Selected frozen task Skills: {selected}. Before applying or "
-                "reviewing an applicable selected Skill, call "
-                "`agent_cli.read_task_skill(name)` to read its exact task-bound "
-                "content. You must read each applicable selected Skill before "
-                "deciding or reviewing the task."
+            skill_protocol=render_task_skill_discovery(
+                skill_names, catalog=(), frozen_names=skill_names,
             ),
             skill_protocol_source="generated_discovery",
             skill_materials=tuple(

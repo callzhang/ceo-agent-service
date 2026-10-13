@@ -251,7 +251,21 @@ def test_frozen_discovery_reuses_only_complete_unchanged_source_in_session():
     )
     assert "agent_cli.read_task_skill(name)" in prompt
     assert "Reuse complete content already loaded in this session" in prompt
-    assert "this selected frozen Skill's revision_id/sha256 is unchanged" in prompt
+    assert "this frozen Skill's revision_id/sha256 is unchanged" in prompt
     assert "Otherwise read the exact frozen content" in prompt
     assert "do not substitute a similarly named installed Skill" in prompt
     assert "before deciding or reviewing" not in prompt
+
+
+def test_frozen_sources_are_available_without_requesting_every_workflow():
+    from app.business_skills import render_task_skill_discovery
+
+    names = ("generic-review", "project-review", "finance-review")
+    rendered = render_task_skill_discovery(names, catalog=(), frozen_names=names)
+    assert "## Available Task Skill Sources" in rendered
+    assert "Read the applicable sources" in rendered
+    assert "Selected Task Skills" not in rendered
+    assert "task-frozen selection" not in rendered
+    for name in names:
+        assert rendered.count(f"`{name}`") == 1
+    assert "agent_cli.read_task_skill(name)" in rendered

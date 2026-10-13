@@ -519,14 +519,13 @@ def render_task_skill_discovery(
                 + ", ".join(missing_installed)
             )
         entries = tuple((name, by_name.get(name)) for name in selected)
-        heading = "## Selected Task Skills"
+        heading = "## Available Task Skill Sources" if frozen else "## Selected Task Skills"
         instructions: list[str] = []
         if frozen:
-            names = ", ".join(f"`{name}`" for name in selected if name in frozen)
             instructions.append(
-                f"For the task-frozen selection {names}, use this task's exact content. "
+                "Read the applicable sources. "
                 "Reuse complete content already loaded in this session only while "
-                "this selected frozen Skill's revision_id/sha256 is unchanged. Otherwise read the exact frozen content "
+                "this frozen Skill's revision_id/sha256 is unchanged. Otherwise read the exact frozen content "
                 "with `agent_cli.read_task_skill(name)`; do not substitute a similarly "
                 "named installed Skill."
             )
@@ -553,11 +552,12 @@ def render_task_skill_discovery(
         )
     lines = [heading]
     for name, entry in entries:
+        default_use = "Task-bound rule source." if name in frozen else "Selected for this task."
         use = (
             " ".join(entry.description.split())
             if entry is not None
-            else "Selected for this task."
-        ) or "Selected for this task."
+            else default_use
+        ) or default_use
         line = f"- `{name}`: {use}"
         if name not in frozen:
             assert entry is not None
