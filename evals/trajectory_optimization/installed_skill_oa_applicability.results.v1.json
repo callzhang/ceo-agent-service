@@ -1,0 +1,306 @@
+{
+  "version": 1,
+  "candidate_commit": "4c53a217fd3feeaa808d1f05edaf1a94624aee7f",
+  "baseline_commit": "e2652eeaa8cdc5cff4f17ce94d6f5cf38ef1f799",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "native_output_schema": false,
+  "fixture": "Seven unchanged pure synthetic installed Skills, unowned live OA; same seven explicit source references, task facts, role Developer, same workspace and actual baseline Consumer candidate for both Audits.",
+  "runs": [
+    {
+      "role": "consumer",
+      "arm": "baseline",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a1347a-9580-7213-a36b-575db7ac926b",
+      "canonical_valid": true,
+      "business_pass": true,
+      "task_sha256": "b9fdee7a2b143fcf0f22f38010f660450b4fe30ae6ab7376e97aa95539712c82",
+      "developer_sha256": "1b1b7f2af1224567ca46fd6dfa076ce0567caae63d69639cad2af219d5e06d95",
+      "native_record_count": 89,
+      "native_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "content_chars": 494,
+          "sha256": "4f1e664717bf022f068c18412a86d0ff78c97a79733a5c27e46d4390bf56f239",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-attendance-travel-review",
+          "content_chars": 406,
+          "sha256": "58269edc74e475e4985a5af2e0c5266923d41d7052998d826e17d8bd5afbd30e",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-cloud-resource-review",
+          "content_chars": 394,
+          "sha256": "a59368cbfbd4d27c2669177b8395fe492610cb91ce1e5bdfe1c15a4eefd007ab",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-contract-review",
+          "content_chars": 370,
+          "sha256": "dc64826e3f83b4ccb3432c27b447ea3673031ca347db28ee4cabbf6b8e230740",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-finance-review",
+          "content_chars": 366,
+          "sha256": "dc3d18629dd2ab787b53ffedce420ffbca7b4081fb57d1f6b343a16c756d63e7",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-people-review",
+          "content_chars": 362,
+          "sha256": "71c9c3120d463f74b137b361736bc0b2a05738259880e5927fd598353aae37ec",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-project-review",
+          "content_chars": 366,
+          "sha256": "cf51c9c3eca440918598e853f996d651be6e6415b1a494210c6c8f95f34be634",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        }
+      ],
+      "native_errors": [
+        {
+          "tool": "read_skill",
+          "native_record": 15,
+          "error": "Wall time: 0.0354 seconds\nOutput:\nError executing tool read_skill: skill_path_forbidden"
+        }
+      ],
+      "outcome": "no_action",
+      "summary": "根据当前 live reads，`proc-fixture` 不属于 principal-7 当前待办，因此本轮不适用任何 OA 业务分类或外部动作。principal-7 的当前 pending 列表为空；流程 `proc-fixture` 仍为 RUNNING，但唯一当前任务是 `task-other`，归属 `other-9`，状态为 RUNNING。未执行任何外部写入。",
+      "candidate_digest": null,
+      "proposal_revision": null,
+      "initial_native_developer_chars": 21529,
+      "initial_native_developer_sha256": "280d68e22d88e248619d7b9f606796645a5753480f08a2667c85828be6a1d5f5"
+    },
+    {
+      "role": "consumer",
+      "arm": "candidate",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a1347b-08cc-7bc2-aa38-9191b4cbbb90",
+      "canonical_valid": true,
+      "business_pass": true,
+      "task_sha256": "94053f6a4615e4b445e2f459355d6018b8171bc489b5211ba625432785bfcda7",
+      "developer_sha256": "1b1b7f2af1224567ca46fd6dfa076ce0567caae63d69639cad2af219d5e06d95",
+      "native_record_count": 62,
+      "native_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "content_chars": 494,
+          "sha256": "4f1e664717bf022f068c18412a86d0ff78c97a79733a5c27e46d4390bf56f239",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        }
+      ],
+      "native_errors": [],
+      "outcome": "no_action",
+      "summary": "当前不适用任何 OA 业务审批动作：实时读取显示 proc-fixture 的 processCode 为 synthetic-project、状态为 RUNNING，但唯一当前任务 task-other 属于 other-9，不属于 principal-7；principal-7 的当前待办列表为空。因此依据 OA ownership/live-state 规则停止业务分类，不执行任何外部动作。",
+      "candidate_digest": null,
+      "proposal_revision": null,
+      "initial_native_developer_chars": 21529,
+      "initial_native_developer_sha256": "280d68e22d88e248619d7b9f606796645a5753480f08a2667c85828be6a1d5f5"
+    },
+    {
+      "role": "audit",
+      "arm": "baseline",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a1347b-c1f1-7531-b6d8-c03a8d207ae2",
+      "canonical_valid": true,
+      "business_pass": true,
+      "task_sha256": "38ba609f9a13a1bbdba93d581b3dd343513cedafbd9ad7fa417ac6546a36752d",
+      "developer_sha256": "1f0948f379aca0c81da37f95243c26e6ee81f39c60bd2c85beb5ae760122a33f",
+      "native_record_count": 71,
+      "native_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "content_chars": 494,
+          "sha256": "4f1e664717bf022f068c18412a86d0ff78c97a79733a5c27e46d4390bf56f239",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-attendance-travel-review",
+          "content_chars": 406,
+          "sha256": "58269edc74e475e4985a5af2e0c5266923d41d7052998d826e17d8bd5afbd30e",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-cloud-resource-review",
+          "content_chars": 394,
+          "sha256": "a59368cbfbd4d27c2669177b8395fe492610cb91ce1e5bdfe1c15a4eefd007ab",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-contract-review",
+          "content_chars": 370,
+          "sha256": "dc64826e3f83b4ccb3432c27b447ea3673031ca347db28ee4cabbf6b8e230740",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-finance-review",
+          "content_chars": 366,
+          "sha256": "dc3d18629dd2ab787b53ffedce420ffbca7b4081fb57d1f6b343a16c756d63e7",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-people-review",
+          "content_chars": 362,
+          "sha256": "71c9c3120d463f74b137b361736bc0b2a05738259880e5927fd598353aae37ec",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-project-review",
+          "content_chars": 366,
+          "sha256": "cf51c9c3eca440918598e853f996d651be6e6415b1a494210c6c8f95f34be634",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        }
+      ],
+      "native_errors": [],
+      "outcome": "approve",
+      "summary": "Approved. Live reads confirm that proc-fixture is not an actionable pending item for principal-7: principal-7's pending list is empty, and the RUNNING process has only task-other, owned by other-9 and currently RUNNING. Although the live processCode is synthetic-project, the OA ownership rule requires stopping before business-category assessment for an unowned item. The proposed no_action result preserves the live ownership and pending state and correctly states that no external write occurred.",
+      "candidate_digest": "63fe00b9d8fece8ff3dfab16172f6539c7861d1c8a9d25f08348bf481852ec63",
+      "proposal_revision": 0,
+      "initial_native_developer_chars": 10231,
+      "initial_native_developer_sha256": "1f0948f379aca0c81da37f95243c26e6ee81f39c60bd2c85beb5ae760122a33f"
+    },
+    {
+      "role": "audit",
+      "arm": "candidate",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a1347c-557a-72d0-9070-c624f4a8072d",
+      "canonical_valid": true,
+      "business_pass": true,
+      "task_sha256": "0e9ac3dadd71c0eef59b251362c557b9296389365330c7e3d581672066faeeda",
+      "developer_sha256": "1f0948f379aca0c81da37f95243c26e6ee81f39c60bd2c85beb5ae760122a33f",
+      "native_record_count": 80,
+      "native_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "content_chars": 494,
+          "sha256": "4f1e664717bf022f068c18412a86d0ff78c97a79733a5c27e46d4390bf56f239",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-attendance-travel-review",
+          "content_chars": 406,
+          "sha256": "58269edc74e475e4985a5af2e0c5266923d41d7052998d826e17d8bd5afbd30e",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-cloud-resource-review",
+          "content_chars": 394,
+          "sha256": "a59368cbfbd4d27c2669177b8395fe492610cb91ce1e5bdfe1c15a4eefd007ab",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-contract-review",
+          "content_chars": 370,
+          "sha256": "dc64826e3f83b4ccb3432c27b447ea3673031ca347db28ee4cabbf6b8e230740",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-finance-review",
+          "content_chars": 366,
+          "sha256": "dc3d18629dd2ab787b53ffedce420ffbca7b4081fb57d1f6b343a16c756d63e7",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-people-review",
+          "content_chars": 362,
+          "sha256": "71c9c3120d463f74b137b361736bc0b2a05738259880e5927fd598353aae37ec",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-project-review",
+          "content_chars": 366,
+          "sha256": "cf51c9c3eca440918598e853f996d651be6e6415b1a494210c6c8f95f34be634",
+          "native_callback_exact_match": true,
+          "truncation_marker": false
+        }
+      ],
+      "native_errors": [
+        {
+          "tool": "read_skill",
+          "native_record": 15,
+          "error": "Wall time: 0.0974 seconds\nOutput:\nError executing tool read_skill: skill_path_forbidden"
+        }
+      ],
+      "outcome": "approve",
+      "summary": "Approved. Live reads confirm that proc-fixture is not currently actionable for principal-7: the principal’s pending OA list is empty, while proc-fixture is RUNNING with processCode synthetic-project and its only RUNNING task task-other belongs to other-9. Under dingtalk-oa-approval, business classification and external action stop when no current task belongs to principal-7 or the instance is absent from the principal’s pending list. The proposed no_action outcome preserves the live ownership and pending state and correctly records that no external write occurred.",
+      "candidate_digest": "63fe00b9d8fece8ff3dfab16172f6539c7861d1c8a9d25f08348bf481852ec63",
+      "proposal_revision": 0,
+      "initial_native_developer_chars": 11155,
+      "initial_native_developer_sha256": "b739fc3f8f3c26ac0a2bb3fac0a17c34bee7a1281e0f76b2f19f91d2fdf7bdda"
+    }
+  ],
+  "pairs": [
+    {
+      "role": "consumer",
+      "developer_byte_equal": true,
+      "task_diff": [
+        "--- \n",
+        "+++ \n",
+        "@@ -15 +15 @@\n",
+        "-For each installed selection, call its exact `agent_cli.read_skill(path=...)` entry below before deciding or reviewing. When a selected Skill names another installed Skill, read that exact dependency on demand with `agent_cli.read_skill(name=...)`.",
+        "+Read the applicable installed Skills through their exact `agent_cli.read_skill(path=...)` entries before deciding or reviewing. Read installed dependencies required by their workflows on demand with `agent_cli.read_skill(name=...)`."
+      ],
+      "baseline_chars": 4325,
+      "candidate_chars": 4309,
+      "initial_native_developer_byte_equal": true
+    },
+    {
+      "role": "audit",
+      "developer_byte_equal": true,
+      "task_diff": [
+        "--- \n",
+        "+++ \n",
+        "@@ -11 +11 @@\n",
+        "-For each installed selection, call its exact `agent_cli.read_skill(path=...)` entry below before deciding or reviewing. When a selected Skill names another installed Skill, read that exact dependency on demand with `agent_cli.read_skill(name=...)`.",
+        "+Read the applicable installed Skills through their exact `agent_cli.read_skill(path=...)` entries before deciding or reviewing. Read installed dependencies required by their workflows on demand with `agent_cli.read_skill(name=...)`."
+      ],
+      "baseline_chars": 5468,
+      "candidate_chars": 5452,
+      "initial_native_developer_byte_equal": false
+    }
+  ],
+  "limitations": [
+    "Consumer reads7->1 in this sample; Audit7->7. No stable or cross-role resource savings proven.",
+    "Two forbidden shared engineering AGENTS reads omitted by successful callback logs are retained from full native records.",
+    "Fake pending-list signature omits production optional page:int=1; observed requests use no args.",
+    "Synthetic Skill bodies, minimal synthetic Profile and callbacks do not establish full real OA business acceptance.",
+    "Seven frozen OA source selection and rules are outside this installed-only change.",
+    "MCP process log-prefix differs between arms, outputs/behavior preserved; native clock/env context may differ naturally.",
+    "Audit candidate initial native Developer additionally includes925-character plugin-creator catalog entry, absent in baseline. Service Developer is equal, native bootstrap is not; no causal attribution of Audit read counts."
+  ],
+  "script_sha256": {
+    "run.py": "267c00eab7fd3b6589cc352b7bd5d189a1b65bf4b2f0c8705d37c18f9d9ab1bd",
+    "server.py": "4904c8ebe700af5575ab4c3f69ad3207e5fc5c0b90e31030a610b2b56e34d786",
+    "baseline_business_skills.py": "51b3230c854c8f58f8a8e67407494b81dda36445d1fb8da77a5bb88daa66759b"
+  },
+  "independent_review": "Read-only reviewer independently verified actual native Task receipt equality, callback/file/model body equality and business outcomes; identified failed-tool omissions and Audit native bootstrap drift."
+}
