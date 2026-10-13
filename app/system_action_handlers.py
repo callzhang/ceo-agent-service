@@ -6,6 +6,7 @@ from hashlib import sha256
 
 from app.agent_contracts import ProposedAction
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
+from app.dws_client import DINGTALK_MESSAGE_TIME_ZONE
 from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.system_executor import ActionOutcome
 
@@ -255,21 +256,61 @@ class OaDecisionHandler:
 class OaRevertHandler(OaDecisionHandler):
     _decisions = {"revert_task": ("退回", "REDIRECT_PROCESS")}
 
+    @staticmethod
+    def _accepted(response: object) -> bool:
+        return (isinstance(response, dict) and response.get("success") is True
+            and response.get("result") is True and response.get("errorCode") == 0)
+
+    @staticmethod
+    def _utc_instant(value: object) -> datetime | None:
+        if not isinstance(value, str):
+            return None
+        try:
+            instant = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        return instant if instant.tzinfo is not None else None
+
+    @staticmethod
+    def _boundary(candidate: dict[str, object], action_key: str) -> datetime | None:
+        attempt = candidate.get("action_attempt")
+        if (not isinstance(attempt, dict) or attempt.get("external_action_key") != action_key
+            or attempt.get("status") not in ("dispatched", "uncertain")):
+            return None
+        return OaRevertHandler._utc_instant(attempt.get("created_at"))
+
+    @staticmethod
+    def _event_time(value: object) -> datetime | None:
+        if not isinstance(value, str):
+            return None
+        try:
+            instant = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        return instant if instant.tzinfo is not None else instant.replace(tzinfo=DINGTALK_MESSAGE_TIME_ZONE)
+
     def dispatch(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome:
         target_activity = action.target.get("target_activity_id")
         revert_action = action.payload.get("revert_action")
         remark = action.payload.get("remark")
         if not all(isinstance(value, str) and value.strip() for value in (target_activity, revert_action, remark)):
             return ActionOutcome("failed", {"reason": "oa_revert_parameters_missing"})
+        if self._boundary(candidate, action_key) is None:
+            return ActionOutcome("uncertain", {"reason": "oa_return_journal_unbound"})
+        if candidate["action_attempt"]["status"] == "uncertain":
+            return self.reconcile(action, action_key=action_key, candidate=candidate)
         state, task = self._task_state(action)
         if state == "verified":
-            return ActionOutcome("verified", {"readback": task})
+            return self.reconcile(action, action_key=action_key, candidate=candidate)
         if state == "conflict":
+            if task.get("taskStatus") == "CANCELED":
+                return self.reconcile(action, action_key=action_key, candidate=candidate)
             return ActionOutcome("business_state_changed", {"reason": "oa_task_state_conflict", "readback": task})
         if state == "invalid":
             return ActionOutcome("failed", {"reason": "oa_task_target_invalid"})
         if state != "running":
             return ActionOutcome("uncertain", {"reason": "oa_current_task_unresolved"})
+        dispatch_started_at = datetime.now(timezone.utc).isoformat()
         receipt = self.dws.revert_oa_approval_task(
             process_instance_id=action.target["process_instance_id"],
             task_id=action.target["task_id"],
@@ -277,9 +318,93 @@ class OaRevertHandler(OaDecisionHandler):
             revert_action=revert_action,
             remark=remark,
         )
-        if not isinstance(receipt, dict) or receipt.get("success") is False:
-            return ActionOutcome("failed", {"reason": "oa_revert_provider_rejected"})
-        return self.reconcile(action, action_key=action_key, candidate=candidate)
+        if isinstance(receipt, dict) and (receipt.get("success") is False or receipt.get("result") is False):
+            return ActionOutcome("failed", {"reason": "oa_revert_provider_rejected", "provider_response": receipt})
+        # Save the response before another provider read can fail or the process stops.
+        received_at = datetime.now(timezone.utc).isoformat()
+        accepted = self._accepted(receipt)
+        proof = {"reason": "oa_return_readback_pending" if accepted else "oa_return_acceptance_unconfirmed",
+            "provider_response": receipt, "dispatch_started_at": dispatch_started_at,
+            "response_received_at": received_at,
+            "dispatch_principal_user_id": str(task.get("userid") or task.get("userId") or ""),
+            "accepted_action_digest": sha256(action.model_dump_json().encode()).hexdigest()}
+        if accepted:
+            proof["accepted_at"] = received_at
+        return ActionOutcome("uncertain", proof)
+
+    def reconcile(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome:
+        attempt = candidate.get("action_attempt")
+        prior = json.loads(attempt.get("result_json") or "{}") if isinstance(attempt, dict) else {}
+        unresolved = ActionOutcome("uncertain", {**prior, "reason": "oa_return_evidence_unverified"})
+        boundary = self._boundary(candidate, action_key)
+        response = prior.get("provider_response")
+        principal = self.dws.get_current_user_id()
+        dispatch_started = self._utc_instant(prior.get("dispatch_started_at"))
+        accepted_at = self._utc_instant(prior.get("accepted_at"))
+        observed_at = datetime.now(timezone.utc)
+        if (boundary is None or dispatch_started is None or accepted_at is None or not self._accepted(response)
+            or not boundary <= dispatch_started <= accepted_at <= observed_at
+            or not principal or prior.get("dispatch_principal_user_id") != principal
+            or prior.get("accepted_action_digest") != sha256(action.model_dump_json().encode()).hexdigest()):
+            return unresolved
+        process_id = action.target["process_instance_id"]
+        native = self.dws.read_oa_approval_detail(process_id)
+        detail = native.get("result") if isinstance(native, dict) else None
+        if (not isinstance(native, dict) or native.get("success") is not True
+            or not isinstance(detail, dict) or detail.get("processInstanceId") != process_id
+            or not isinstance(detail.get("businessId"), str) or not detail["businessId"]):
+            return unresolved
+        data = self.dws.read_oa_process_instance_openapi(process_id)
+        source = data.get("process_instance") if isinstance(data, dict) else None
+        if (not isinstance(data, dict) or data.get("errcode") != 0 or not isinstance(source, dict)
+            or source.get("business_id") != detail["businessId"]
+            or not isinstance(source.get("tasks"), list) or not isinstance(source.get("operation_records"), list)):
+            return unresolved
+        old = [task for task in source["tasks"] if isinstance(task, dict)
+            and str(task.get("taskid")) == action.target["task_id"]]
+        if len(old) != 1 or old[0].get("task_status") != "CANCELED":
+            return unresolved
+        records = []
+        event_times = []
+        for record in source["operation_records"]:
+            if not isinstance(record, dict):
+                return unresolved
+            instant = self._event_time(record.get("date"))
+            if instant is None:
+                return unresolved
+            event_times.append(instant)
+            operation_type = record.get("operation_type")
+            if isinstance(operation_type, str) and operation_type and operation_type != "REDIRECT_PROCESS":
+                continue
+            author, remark = record.get("userid"), record.get("remark")
+            if isinstance(author, str) and author and author != principal:
+                continue
+            if isinstance(remark, str) and remark and remark != action.payload["remark"]:
+                continue
+            if not dispatch_started < instant <= accepted_at:
+                continue
+            if operation_type != "REDIRECT_PROCESS" or author != principal or remark != action.payload["remark"]:
+                return unresolved
+            records.append((record, instant))
+        if len(records) != 1:
+            return unresolved
+        record, instant = records[0]
+        if event_times.count(instant) != 1:
+            return unresolved
+        next_event = min((value for value in event_times if value > instant), default=observed_at)
+        destinations = [str(task["taskid"]) for task in source["tasks"]
+            if isinstance(task, dict) and task.get("taskid") is not None
+            and str(task["taskid"]) != action.target["task_id"]
+            and task.get("activity_id") == action.target["target_activity_id"]
+            and (created := self._event_time(task.get("create_time"))) is not None
+            and instant <= created < next_event and created <= observed_at]
+        if not destinations:
+            return unresolved
+        return ActionOutcome("verified", {**prior, "process_instance_id": process_id,
+            "task_id": action.target["task_id"], "destination_activity_id": action.target["target_activity_id"],
+            "destination_task_ids": destinations, "return_record": {
+                "type": record["operation_type"], "user_id": principal, "date": record["date"],
+                "remark_sha256": sha256(action.payload["remark"].encode()).hexdigest()}})
 
 
 class OaRedirectHandler:
