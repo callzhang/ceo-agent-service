@@ -299,6 +299,17 @@ def deliver_meeting_alignment(
     except ValueError as exc:
         raise MeetingDeliveryError(str(exc)) from exc
     if not _prepared_content_matches(prepared, message_text):
+        # A confirmed same-target action is an immutable delivery fact, not a
+        # request to send revised prose under its old idempotency key.
+        receipt = message_sender.store.get_outbound_postfix_receipt("dingtalk", delivery_key)
+        if (private_message is None and receipt is not None
+                and message_sender.store.get_outbound_postfix("dingtalk", f"{delivery_key}:sensitive") is None
+                and dws.verify_message_send_result(receipt).get("state") == "sent"):
+            return MeetingDeliveryResult(
+                target_kind=target_kind, target_id=target_id, target_title=target_title,
+                resolved_mentions=[], unresolved_mention_names=[], send_result=receipt,
+                message_text=prepared.final_body,
+            )
         # Old split deliveries retain their immutable primary body and action key.
         ordinary_body = meeting_followup_message(
             decision, source, final_message=final_message

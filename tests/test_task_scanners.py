@@ -791,6 +791,9 @@ def test_scan_pending_oa_approvals_closes_running_process_task_no_longer_pending
     tmp_path,
 ):
     class FakeDws:
+        def get_current_user_id(self):
+            return "principal-user-1"
+
         def list_pending_oa_approvals(self, *, page, size, start, end):
             return []
 
