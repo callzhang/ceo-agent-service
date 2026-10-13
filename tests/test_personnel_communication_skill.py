@@ -113,7 +113,8 @@ def test_canonical_prompt_delegates_personnel_and_candidate_policy_to_skill():
         assert removed not in text
     assert CONSUMER_DYNAMIC_SKILL_BODY in text
     assert AUDIT_DYNAMIC_SKILL_BODY in audit_developer_instructions("audit only", runtime_context="", work_profile="")
-    assert "independently selects and reads every applicable" in text
+    assert "independently selects and applies every applicable" in text
+    assert "independently selects and reads every applicable" not in text
     assert "没有列出的字段不要编造" not in text
     assert "[supported_facts] Supported Facts: use only supported facts." in text
     assert "External Secrecy" in text

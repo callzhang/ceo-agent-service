@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "task_id": 404308,
+  "scope": "Full latest pre-release native Consumer/Audit range inspection; final judgment is consistent. No new post-deploy business proof or replay. Metadata only, no source/Profile/message originals.",
+  "consumer_mcp_original_text_chars": 55744,
+  "consumer_mcp_messages": 33,
+  "consumer_mcp_text_sha256": "a8536af5b389f9be351d1db772baa6cfb27e543b24b94ceb3a32b99ad3197411",
+  "installed_chat_body_chars": 6550,
+  "frozen_chat_body_chars": 6717,
+  "business_chat_body_exact_containment": true,
+  "runs": [
+    {
+      "attempt_id": 349681,
+      "role": "consumer",
+      "session_id": "01a13155-3ca9-7281-acc4-e2eb90625968",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T11-17-12-01a13155-3ca9-7281-acc4-e2eb90625968.jsonl",
+      "range": [
+        51,
+        91
+      ],
+      "records": 40,
+      "tool_calls": [
+        {
+          "name": "read_task_skill",
+          "visible_chars": 8160,
+          "visible_sha256": "f9f03865380a041fec5bf0066dd719336b97cecc3374d90a5bc1c58556035f48",
+          "markers": []
+        },
+        {
+          "name": "read_task_skill",
+          "visible_chars": 6976,
+          "visible_sha256": "642d43234b9f901f72fd4b9bc1408d5ac703dba7c3e7d21deaf50eeab3e679e9",
+          "markers": []
+        },
+        {
+          "name": "read_dingtalk_messages",
+          "visible_chars": 39845,
+          "visible_sha256": "18c558030403f11e57553ff3f57767200e00e7f6c21f14ed11082b2ed9c7c9d7",
+          "markers": [
+            "1370 tokens truncated"
+          ]
+        }
+      ],
+      "terminal_outcome": "no_action"
+    },
+    {
+      "attempt_id": 349683,
+      "role": "audit",
+      "session_id": "01a132ce-e1e6-7463-9a50-3df3c29f8f7d",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T18-09-41-01a132ce-e1e6-7463-9a50-3df3c29f8f7d.jsonl",
+      "range": [
+        0,
+        36
+      ],
+      "records": 36,
+      "tool_calls": [
+        {
+          "name": "read_task_skill",
+          "visible_chars": 8160,
+          "visible_sha256": "b4435601040a1220e2dcd62693fed752b078b37f60f178e47c286f48de0e3841",
+          "markers": []
+        },
+        {
+          "name": "read_skill",
+          "visible_chars": 6865,
+          "visible_sha256": "ff4a634522900fde9db36273e0fd2584eecdcd048270a2b43eb3f1d0f8d33785",
+          "markers": []
+        },
+        {
+          "name": "read_dingtalk_messages_in_window",
+          "visible_chars": 1180,
+          "visible_sha256": "5e38adaf9420f06e8a562d4d988510516b565e5f81e4500a827be73fdc637133",
+          "markers": []
+        }
+      ],
+      "terminal_outcome": "approve"
+    }
+  ]
+}

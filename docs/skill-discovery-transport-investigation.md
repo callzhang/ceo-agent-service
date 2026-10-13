@@ -79,3 +79,10 @@ Normal merge2af4f11e integrates main1cca085b. Conflicts are independent appended
 ## Released Skill-reuse integration and local directory fidelity
 
 Normal merge19322f46 integrates released main3da4933c, including PR62. Only independent appended claim rows conflict; both sides are preserved. Runtime diff remains no-source metadata transport and shared table renderer. Six related directory/body/frozen/Settings suites pass120 in7.73s, Ruff/diff clean. Local current installed catalog has348 paths and302 distinct names: all name/description/path triples round-trip exactly. Compact JSON length138898→112713 (26185 characters removed). Only counts/hashes are recorded in skill_discovery_transport.current_local.v1.json; no real metadata is transmitted to a model. Local fidelity does not prove native delivery for this exact current private catalog. Existing343-row synthetic native/body/feedback results retain their limits.
+
+
+## Scoped publication and deployed role-tool readback
+
+PR64 merged as5743f01e3a3e392d70ae523e6beb9201e774d967. Formal deploy deploy-8a52fa65-e5c7-46c4-a847-02a578ef3990 succeeded at2026-10-13T01:53:39Z, advancing dd9b587e to5743f01e, clean checkout, new PID57665 and verified backup existence. Health, queues, Attention, History and unbound/bound Settings previews return200. Bound old Task continues to show explicitly labelled saved input, without rewriting history.
+
+The actual deployed Audit role-server registered read_skill callable was read locally: all348 authorized metadata triples round-trip exactly,302 distinct names,348 distinct paths; old/candidate compact JSON138898/112713 characters. Only lengths/counts/hashes are saved. The existing nonfatal duplicate read_dingtalk_drive_file registration warning is retained; no handler/policy change. No model receives private metadata in this readback. Complete delivery to a real new production model, general directory capacity and new business decisions remain unverified. Original auto Quality workflow38332974302 was in progress; no full green claim. Evidence: skill_discovery_transport.release.v1.json.
