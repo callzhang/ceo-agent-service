@@ -90,6 +90,16 @@ its original candidate, receipt, identity and allocator assertions remain.
 Thirteen affected local cases pass. The copied-database acceptance case needs
 its separately supplied owned snapshot and was not executed in this fixture run.
 
+The next full CI run (`38467335512`) exposed seven failures and three fixture
+errors where historical Store16 databases were passed directly to the Store18
+constructor. The shared test helper now advances only those constructor inputs
+through the actual postfix migration and captured sent source declarations;
+it validates the Store17 layout before setting the Store17 marker. The frozen
+source13-to-16 fixture and each original business assertion remain intact.
+All ten reproduced cases pass locally, as do 81 adjacent source-chain, manifest,
+paired-release and typed-reader checks. This is local fixture validation; a
+new full CI result is still required.
+
 Next finish all existing caller paths and integrate the paired release with the
 Store18 bootstrap, after refreshing the actual published source again.
 The standalone transition below already supports both captured literal source
