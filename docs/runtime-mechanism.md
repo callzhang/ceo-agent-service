@@ -37,12 +37,24 @@ assertion matches. Scalar field evidence is rendered before the complete final
 candidate JSON; source bindings remain in that JSON without repeating their
 values in the field index.
 
-OA Attention is a business-pending projection: the scanner captures the exact
-principal-owned RUNNING nodes from the authenticated pending list and source
-details. A completed comment or internal `done`/`no_action` does not remove
-such a node. Only a subsequent verified scan proving it is no longer pending
-removes it. Partial scans and source-read failures retain previous pending
-nodes; non-OA pending/processing/needs_human status alone remains excluded.
+OA Attention is a business-pending projection: the scanner starts tracking the
+exact principal-owned RUNNING nodes from the authenticated pending list and
+source details. Once tracked, the OA process remains in Attention while it is
+still running and has neither completed nor been explicitly returned, even if
+its current node moves to another approver. A completed comment or internal
+`done`/`no_action` does not remove it. Partial scans and source-read failures
+retain previous pending processes; non-OA pending/processing/needs_human status
+alone remains excluded.
+
+Reconciliation does not treat absence from the principal's pending list as
+completion or return. It removes the process from Attention only when live
+detail proves a terminal process, or when the exact reviewed task is canceled,
+the principal has no current RUNNING node, and the latest workflow-changing
+operation is that principal's `REDIRECT_PROCESS`. A running process that merely
+moved to another node remains unresolved in OA Attention; comments and
+unrelated task transitions are not return receipts. Historical local closures
+made solely for `OA_TASK_NOT_PENDING` are rechecked and restored to the
+projection when their live process is still running without a verified return.
 
 Source feedback callback identities are opaque historical evidence, not newly
 generated outbound tokens. The validation copy removes only configured-origin

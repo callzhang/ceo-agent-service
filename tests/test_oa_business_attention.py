@@ -37,7 +37,7 @@ def test_verified_pending_node_is_visible_before_local_task_is_enqueued(tmp_path
     assert [(row["category"], row["id"]) for row in rows] == [("OA approval", "oa:instance:second")]
 
 
-def test_scanner_retains_pending_nodes_on_read_failure_then_clears_verified_absence(tmp_path):
+def test_scanner_retains_pending_nodes_when_detail_read_fails_after_pending_disappears(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.set_daily_scan_state("oa_pending", last_success_at="2026-10-13T01:00:00Z",
         cursor_json=json.dumps({"pending_business_object_keys": ["oa:instance:node"]}),
@@ -59,7 +59,11 @@ def test_scanner_retains_pending_nodes_on_read_failure_then_clears_verified_abse
     provider.present = False
     scan_pending_oa_approvals(store, provider)
     cursor = json.loads(store.get_daily_scan_state("oa_pending")["cursor_json"])
-    assert cursor["pending_business_object_keys"] == []
+    assert cursor["pending_business_object_keys"] == ["oa:instance:node"]
+    assert any(
+        row["category"] == "OA approval" and row["id"] == "oa:instance:node"
+        for row in _queue_attention_rows(store)
+    )
 
 
 def test_pending_list_failure_cannot_erase_last_verified_pending_nodes(tmp_path):

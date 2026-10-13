@@ -542,8 +542,15 @@ def scan_pending_oa_approvals(
             pending_task_ids = pending_task_ids_by_process.get(
                 process_instance_id, set()
             )
-            if attempt.oa_task_id.strip() not in pending_task_ids:
-                process_result = "OA_TASK_NOT_PENDING"
+            if (
+                attempt.oa_task_id.strip() not in pending_task_ids
+                and _oa_principal_explicitly_returned_process(
+                    detail_payload,
+                    task_id=attempt.oa_task_id,
+                    current_user_id=current_user_id,
+                )
+            ):
+                process_result = "OA_RETURNED"
         if not process_result:
             continue
         if store.resolve_completed_oa_needs_human_attempt(
@@ -556,10 +563,16 @@ def scan_pending_oa_approvals(
     previous_revisions: dict[str, str] = {}
     previous_queued_days: dict[str, str] = {}
     previous_pending_keys: set[str] = set()
+    reconciled_legacy_oa_attempt_ids: set[int] = set()
     if previous_state is not None:
         try:
             cursor = json.loads(previous_state["cursor_json"])
             previous_pending_keys = set(cursor.get("pending_business_object_keys", []))
+            reconciled_legacy_oa_attempt_ids = {
+                int(value)
+                for value in cursor.get("reconciled_legacy_oa_attempt_ids", [])
+                if str(value).isdigit()
+            }
             revisions = cursor.get("process_revisions", {})
             if isinstance(revisions, dict):
                 previous_revisions = {
@@ -767,13 +780,70 @@ def scan_pending_oa_approvals(
         for process_id, task_ids in pending_task_ids_by_process.items()
         for task_id in task_ids
     }
-    # A partial scan or unreadable source cannot prove that a pending node left.
-    pending_business_object_keys.update(
-        key for key in previous_pending_keys
-        if not pending_scan_complete or not current_user_id
-        or key.rsplit(":", 1)[0].removeprefix("oa:") in reconciliation_read_failures
-        or key.rsplit(":", 1)[0].removeprefix("oa:") in unverified_pending_process_ids
-    )
+    legacy_attempts = store.list_oa_task_not_pending_attempts()
+    for attempt in legacy_attempts:
+        if attempt.id in reconciled_legacy_oa_attempt_ids:
+            continue
+        key = f"oa:{attempt.oa_process_instance_id}:{attempt.oa_task_id}"
+        if not pending_scan_complete or not current_user_id:
+            pending_business_object_keys.add(key)
+            continue
+        if pending_task_ids_by_process.get(attempt.oa_process_instance_id):
+            reconciled_legacy_oa_attempt_ids.add(attempt.id)
+            continue
+        pending_business_object_keys.add(key)
+        try:
+            detail_payload = detail_cache.get(attempt.oa_process_instance_id)
+            if detail_payload is None:
+                detail_payload = read_detail(attempt.oa_process_instance_id)
+                detail_cache[attempt.oa_process_instance_id] = detail_payload
+        except Exception:
+            reconciliation_read_failures.append(attempt.oa_process_instance_id)
+            continue
+        if _oa_terminal_process_state(detail_payload) is not None or (
+            _oa_principal_explicitly_returned_process(
+                detail_payload,
+                task_id=attempt.oa_task_id,
+                current_user_id=current_user_id,
+            )
+        ):
+            pending_business_object_keys.discard(key)
+            reconciled_legacy_oa_attempt_ids.add(attempt.id)
+
+    # A partial scan or unreadable source cannot prove that a process is done.
+    for key in previous_pending_keys:
+        process_instance_id, task_id = _oa_business_object_parts(key)
+        if not process_instance_id or not task_id:
+            pending_business_object_keys.add(key)
+            continue
+        if pending_task_ids_by_process.get(process_instance_id):
+            continue
+        if (
+            not pending_scan_complete
+            or not current_user_id
+            or process_instance_id in reconciliation_read_failures
+            or process_instance_id in unverified_pending_process_ids
+        ):
+            pending_business_object_keys.add(key)
+            continue
+        try:
+            detail_payload = detail_cache.get(process_instance_id)
+            if detail_payload is None:
+                detail_payload = read_detail(process_instance_id)
+                detail_cache[process_instance_id] = detail_payload
+        except Exception:
+            reconciliation_read_failures.append(process_instance_id)
+            pending_business_object_keys.add(key)
+            continue
+        if _oa_terminal_process_state(detail_payload) is not None or (
+            _oa_principal_explicitly_returned_process(
+                detail_payload,
+                task_id=task_id,
+                current_user_id=current_user_id,
+            )
+        ):
+            continue
+        pending_business_object_keys.add(key)
     store.set_daily_scan_state(
         OA_PENDING_SCANNER,
         last_success_at=_utc_now(),
@@ -794,6 +864,9 @@ def scan_pending_oa_approvals(
                 ),
                 "reconciled_completed_attempt_ids": (
                     reconciled_completed_attempt_ids
+                ),
+                "reconciled_legacy_oa_attempt_ids": sorted(
+                    reconciled_legacy_oa_attempt_ids
                 ),
             },
             ensure_ascii=False,
@@ -837,6 +910,16 @@ def _oa_terminal_process_state(value: Any) -> tuple[str, str] | None:
         if nested is not None:
             return nested
     return None
+
+
+def _oa_business_object_parts(key: str) -> tuple[str, str]:
+    prefix = "oa:"
+    if not key.startswith(prefix):
+        return "", ""
+    process_instance_id, separator, task_id = key[len(prefix):].rpartition(":")
+    if not separator:
+        return "", ""
+    return process_instance_id, task_id
 
 
 def _cache_oa_applicant_profile(
@@ -999,6 +1082,53 @@ def _oa_principal_has_commented(
         and _oa_task_field(record, ("operationType", "type"))
         in OA_COMMENT_OPERATION_TYPES
         for record in _oa_operation_records(records_payload)
+    )
+
+
+def _oa_principal_explicitly_returned_process(
+    process_payload: Any,
+    *,
+    task_id: str,
+    current_user_id: str,
+) -> bool:
+    """Verify that this exact node was canceled by the principal's return."""
+    if not current_user_id:
+        return False
+    tasks = _oa_task_records(process_payload)
+    returned_task_id = task_id.strip()
+    if not any(
+        _oa_task_field(task, ("taskId", "taskid", "task_id", "id"))
+        == returned_task_id
+        and _oa_task_field(task, ("status", "taskStatus", "task_status")).upper()
+        == "CANCELED"
+        for task in tasks
+    ):
+        return False
+    if _pending_oa_task_ids_for_current_user(
+        process_payload, current_user_id=current_user_id
+    ):
+        return False
+
+    transitions = [
+        record
+        for record in _oa_operation_records(process_payload)
+        if _oa_task_field(record, ("operationType", "type"))
+        not in OA_COMMENT_OPERATION_TYPES | {"PROCESS_CC"}
+    ]
+    latest_transition = max(
+        transitions,
+        key=lambda record: (
+            _oa_task_field(record, ("operationTime", "date", "time")),
+            _oa_task_field(record, ("operationType", "type")),
+            _oa_task_field(record, ("userId", "userid", "user_id")),
+        ),
+        default={},
+    )
+    return (
+        _oa_task_field(latest_transition, ("operationType", "type"))
+        == "REDIRECT_PROCESS"
+        and _oa_task_field(latest_transition, ("userId", "userid", "user_id"))
+        == current_user_id
     )
 
 
