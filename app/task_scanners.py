@@ -484,6 +484,7 @@ def scan_pending_oa_approvals(
     detail_cache: dict[str, Any] = {}
     tasks_cache: dict[str, Any] = {}
     pending_task_ids_by_process: dict[str, set[str]] = {}
+    unverified_pending_process_ids: set[str] = set()
     for approval in approvals:
         process_instance_id = str(
             getattr(approval, "process_instance_id", "") or ""
@@ -508,6 +509,12 @@ def scan_pending_oa_approvals(
             current_user_id = ""
     for process_instance_id, tasks_payload in tasks_cache.items():
         if current_user_id:
+            if any(
+                _oa_task_field(task, ("userId", "userid", "user_id")) == current_user_id
+                and not _oa_task_field(task, ("status", "taskStatus", "task_status"))
+                for task in _oa_task_records({"result": [detail_cache[process_instance_id], tasks_payload]})
+            ):
+                unverified_pending_process_ids.add(process_instance_id)
             pending_task_ids_by_process[process_instance_id] = {
                 _oa_task_field(task, ("taskId", "taskid", "task_id", "id"))
                 for task in _oa_task_records({"result": [detail_cache[process_instance_id], tasks_payload]})
@@ -530,7 +537,8 @@ def scan_pending_oa_approvals(
         process_result = ""
         if terminal_state is not None:
             _status, process_result = terminal_state
-        elif pending_scan_complete and attempt.oa_task_id.strip():
+        elif (pending_scan_complete and current_user_id and attempt.oa_task_id.strip()
+              and process_instance_id not in unverified_pending_process_ids):
             pending_task_ids = pending_task_ids_by_process.get(
                 process_instance_id, set()
             )
@@ -764,6 +772,7 @@ def scan_pending_oa_approvals(
         key for key in previous_pending_keys
         if not pending_scan_complete or not current_user_id
         or key.rsplit(":", 1)[0].removeprefix("oa:") in reconciliation_read_failures
+        or key.rsplit(":", 1)[0].removeprefix("oa:") in unverified_pending_process_ids
     )
     store.set_daily_scan_state(
         OA_PENDING_SCANNER,

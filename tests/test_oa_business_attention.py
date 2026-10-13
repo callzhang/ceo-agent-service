@@ -1,4 +1,5 @@
 import json
+import pytest
 
 from app.audit_web import _queue_attention_rows
 from app.store import AutoReplyStore
@@ -109,3 +110,32 @@ def test_scanner_captures_all_verified_nodes_and_never_guesses_principal(tmp_pat
     scan_pending_oa_approvals(store, provider, max_new_items=0)
     cursor = json.loads(store.get_daily_scan_state("oa_pending")["cursor_json"])
     assert cursor["pending_business_object_keys"] == []
+
+
+@pytest.mark.parametrize("identity_known,status", [(False, "RUNNING"), (True, "")])
+def test_unverified_ownership_or_status_cannot_close_human_attempt(tmp_path, identity_known, status):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(conversation_id="oa_pending_scan:instance",
+        conversation_title="OA", trigger_message_id="message", trigger_sender="OA",
+        trigger_text="Review leave", action="agent_run", sensitivity_kind="general",
+        oa_process_instance_id="instance", oa_task_id="node", send_status="needs_human")
+    store.set_daily_scan_state("oa_pending", last_success_at="2026-10-13T01:00:00Z",
+        cursor_json=json.dumps({"pending_business_object_keys": ["oa:instance:node"]}), last_error="")
+    class Provider:
+        def list_pending_oa_approvals(self, **kwargs):
+            return [DwsOaApprovalCandidate(process_instance_id="instance", title="Leave")]
+        def get_current_user_id(self):
+            if not identity_known:
+                raise ValueError("identity unavailable")
+            return "principal"
+        def read_oa_approval_tasks(self, instance):
+            return {"result": {"tasks": []}}
+        def read_oa_process_instance_openapi(self, instance):
+            return {"result": {"status": "RUNNING", "tasks": [
+                {"taskId": "node", "userId": "principal", "taskStatus": status}]}}
+        def read_oa_approval_records(self, instance):
+            return {"result": {"operationRecords": []}}
+    scan_pending_oa_approvals(store, Provider(), max_new_items=0)
+    assert store.get_reply_attempt(attempt_id).send_status == "needs_human"
+    cursor = json.loads(store.get_daily_scan_state("oa_pending")["cursor_json"])
+    assert cursor["pending_business_object_keys"] == ["oa:instance:node"]
