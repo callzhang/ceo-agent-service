@@ -601,7 +601,9 @@ def test_applicable_installed_discovery_preserves_required_frozen_selection(tmp_
         catalog=(installed,), frozen_names=("frozen-review",),
     )
 
-    assert "For the task-frozen selection `frozen-review`, call" in rendered
+    assert "For the task-frozen selection `frozen-review`, use this task's exact content" in rendered
+    assert "Reuse complete content already loaded in this session" in rendered
+    assert "this selected frozen Skill's revision_id/sha256 is unchanged" in rendered
     assert "agent_cli.read_task_skill(name)" in rendered
     assert "Read the applicable installed Skills" in rendered
     assert str(installed.skill_path.resolve()) in rendered

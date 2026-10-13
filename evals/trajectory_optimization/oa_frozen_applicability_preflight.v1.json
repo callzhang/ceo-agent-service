@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "baseline_commit": "e2652eeaa8cdc5cff4f17ce94d6f5cf38ef1f799",
+  "candidate_commit": "e1bada98968627b9891e4f6bdeccdea36d622c78",
+  "selection": [
+    "dingtalk-oa-approval",
+    "stardust-oa-finance-review",
+    "stardust-oa-project-review",
+    "stardust-oa-contract-review",
+    "stardust-oa-people-review",
+    "stardust-oa-attendance-travel-review",
+    "stardust-oa-cloud-resource-review"
+  ],
+  "frozen_membership_preserved": true,
+  "baseline_chars": 1097,
+  "candidate_chars": 1073,
+  "byte_equal": false,
+  "baseline_sha256": "5f66522a374c1f5f8a90f9e8ff62194bb24fac31d7e989b02c98ab5623d5cba2",
+  "candidate_sha256": "e38e05d57198f75bc036b04fb7320997d722c021e23dd4bf98cc0eeb3df9665e",
+  "scope": "Exact seven-name frozen discovery comparison; frozen-source reuse clause unchanged, final installed-dependency wording differs by24 characters. No provider/model request and no proof of body-read reduction.",
+  "frozen_clause_unchanged": true
+}
