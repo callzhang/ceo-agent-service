@@ -1,0 +1,152 @@
+{
+  "case": "revision",
+  "interrupted": false,
+  "source": {
+    "sha256": "6e5b0c42b3c062bb442d948fc9ee40a512176994c1868452e04c0a8279aedfa0",
+    "scope": "phase5b Store16 production-derived copy; no real sends",
+    "source_commit": "42c0b16f470f2d7de711f47e7ead82e2871886bf",
+    "store_schema": "2026-10-13.2"
+  },
+  "task_id": 404579,
+  "conversation_id": "native-copy-acceptance:ffdca57e-2719-4b29-821f-4a1116de7547",
+  "status": "done",
+  "completed": true,
+  "native_invocations": [
+    {
+      "role": "consumer",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "a0206774bc66b4f0a090a40ce30a20acc1f1b7625f4234dc82c65f4f23efc472"
+    },
+    {
+      "role": "audit",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "e42534ab440f04b091419ce996601f0bc935f7509e0233726b5ef88775592469"
+    },
+    {
+      "role": "consumer",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "1ed0cfc90dd5f4e412f7f04ed0847c9f873a118b5fdce31fe3d9db9e6a199b86"
+    },
+    {
+      "role": "audit",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "230406bd2273a47d878c050a2619f2ce24aca7331a7f9d5aceac26fd6550c069"
+    }
+  ],
+  "provider_calls": 1,
+  "verification_calls": 1,
+  "runs": [
+    {
+      "id": 352585,
+      "role": "consumer",
+      "status": "completed",
+      "revision": 0,
+      "parent_id": null,
+      "session_id": "01a13597-1597-72e0-b42e-b03c7c9840ba",
+      "start": 0,
+      "end": 36,
+      "native_exists": true,
+      "tool_events": 5,
+      "error": "",
+      "attempts": [
+        {
+          "id": 352586,
+          "status": "completed",
+          "session_id": "01a13597-1597-72e0-b42e-b03c7c9840ba",
+          "start": 0,
+          "end": 36
+        }
+      ]
+    },
+    {
+      "id": 352587,
+      "role": "audit",
+      "status": "completed",
+      "revision": 0,
+      "parent_id": 352585,
+      "session_id": "01a13597-5a6c-7651-9007-3e5011532cf3",
+      "start": 0,
+      "end": 29,
+      "native_exists": true,
+      "tool_events": 4,
+      "error": "",
+      "attempts": [
+        {
+          "id": 352588,
+          "status": "completed",
+          "session_id": "01a13597-5a6c-7651-9007-3e5011532cf3",
+          "start": 0,
+          "end": 29
+        }
+      ]
+    },
+    {
+      "id": 352589,
+      "role": "consumer",
+      "status": "completed",
+      "revision": 1,
+      "parent_id": 352587,
+      "session_id": "01a13597-1597-72e0-b42e-b03c7c9840ba",
+      "start": 0,
+      "end": 62,
+      "native_exists": true,
+      "tool_events": 4,
+      "error": "",
+      "attempts": [
+        {
+          "id": 352590,
+          "status": "completed",
+          "session_id": "01a13597-1597-72e0-b42e-b03c7c9840ba",
+          "start": 36,
+          "end": 62
+        }
+      ]
+    },
+    {
+      "id": 352591,
+      "role": "audit",
+      "status": "completed",
+      "revision": 1,
+      "parent_id": 352589,
+      "session_id": "01a13597-f551-7272-9f5d-7e764df914e8",
+      "start": 0,
+      "end": 29,
+      "native_exists": true,
+      "tool_events": 4,
+      "error": "",
+      "attempts": [
+        {
+          "id": 352592,
+          "status": "completed",
+          "session_id": "01a13597-f551-7272-9f5d-7e764df914e8",
+          "start": 0,
+          "end": 29
+        }
+      ]
+    }
+  ],
+  "reviews": [
+    {
+      "id": 587,
+      "decision": "return",
+      "proposal_revision": 0,
+      "candidate_digest": "610bac7753eb681d1a0fdf1c3db4c9d7288e8960f221ca41b4e5913307f6ce58"
+    },
+    {
+      "id": 588,
+      "decision": "approve",
+      "proposal_revision": 1,
+      "candidate_digest": "57016bbeb2870ee675e46a13647453afb57348df965e0f0b49c6867a14f22fbe"
+    }
+  ],
+  "receipts": 1,
+  "sent_replies": 1,
+  "business_attempts": 1,
+  "reopen_no_new_invocation": 4,
+  "original_tables_unchanged": 123,
+  "passed": true
+}

@@ -8,7 +8,7 @@
 
 120项foundation/source/caller/paired-release定向测试通过。发布依赖、代码验证、部分restart、health、loaded五个失败点均验证先逆迁再启动旧代码并保留新回执。原allocator缺少写锁的并发回归实际RED；修复后12case覆盖两类型、普通/ignore、deferred/legacy autocommit/Python explicit autocommit。独立QUALITY复核通过，额外20个事务探针未发现调用方事务被提交。
 
-运行调用方另138项定向通过；与120选集存在重叠，不相加。已移除source3运行时直接SQL；既有测试的旧表造数/读回换成新接口，原业务断言不变。另108项历史存储/fresh-target定向检查通过。集成SPEC独立22项以及10次源/目标publication读取通过；集成QUALITY已通过：独立72项与另23项bootstrap/factory检查通过（选集与前述存在重叠，不相加）。完整CI、真实CLI复测、正式部署和生产读回尚未完成。
+运行调用方另138项定向通过；与120选集存在重叠，不相加。已移除source3运行时直接SQL；既有测试的旧表造数/读回换成新接口，原业务断言不变。另108项历史存储/fresh-target定向检查通过。集成SPEC独立22项以及10次源/目标publication读取通过；集成QUALITY已通过：独立72项与另23项bootstrap/factory检查通过（选集与前述存在重叠，不相加）。完整CI、正式部署和生产读回尚未完成。
 
 简明证据位于 evals/database_redesign/phase5b_copy_proof.v1.json。完整10+1表目标仍未完成，不能将第五期B或Store版本号作为整体完成证明。
 
@@ -17,3 +17,7 @@
 强化副本演练覆盖：迁移后新增global和两类native事实、更新global原始JSON、删除global。逆迁后和实际旧constructor后逐项比对当前三类值/类型、水位、六类完整物理行、准确源DDL、原marker；重新正迁后再比对当前值/类型、水位和六类完整物理行。详细proof与脚本SHA256绑定。
 
 独立集成QUALITY还验证generic发布回调、新进程构造、旧布局新增ID500、重复逆迁、重新正迁后下一ID501。详细proof逐字节与临时文件一致，5个代码SHA256与当前文件全部匹配；结论仅代码和离线证据，不包括完整CI或上线。
+
+真实Codex CLI副本批准链路通过：Consumer/Audit2轮，1次替身投递及回执，123张原非内部/非virtual表行保持。真实修订链路通过：4轮，首次return/reject后最终approve、1次替身投递和回执、done与输入正文精简、终态重建无需新调用。原生trajectory仅保留CLI-owned home，repository证据只含运行元数据。见phase5b_native_copy.v1.json和phase5b_native_revision.v1.json。
+
+新增current-target fixture对齐：历史run receipt保留原始source SQL，通过typed writer装入fresh Store16；3项原旧表self-insert错误RED后修复。相关109项通过，另11项默认跳过需要显式副本；指定owned Store16副本后11个脚本化完整工作流均通过（模型输出为脚本角色，与上述真实CLI证据分开）。这次修正只改tests和验收文档，不改运行代码。
