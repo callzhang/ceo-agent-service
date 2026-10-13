@@ -108,3 +108,17 @@ Validation passed 1,148 metadata assertions and git diff --check. No implementat
 Declaration SHA-256 (canonical JSON of sql/columns/foreign_keys/indexes/triggers): actual `13d530f68e8129035f50fa4c4d283439d25fd22b9520a0d8f2be491982588b9d`; empty candidate17 `06bbfbacc52a98e2e87b6c35e859adae1c02d12693da702990afe7a3b564e6c2`.
 
 Counts and installed commit/marker are the captured point in time. Phase 5C publication can advance production after this snapshot; any later implementation must re-read the applicable source rather than relabeling this Store 16 capture as Store 17 evidence.
+
+## Published predecessor binding, 2026-10-13
+
+The original Store16/fresh17 inventory above remains frozen. After D's normal
+publication, a separate [Store18 source metadata capture](2026-10-13-database-redesign-phase5e-published-source.json)
+bound production commit `9e0570cb8d132f8e4b0394219b4c63411aa6610c`,
+Store `2026-10-13.4` and Email51 in one read-only SQLite transaction. The two
+actual table declarations still equal this inventory's actual variant; the
+current empty Store18 constructor equals its fresh variant. The fourteen-type
+actions declaration is fixed independently by its published fingerprint.
+The E source preflight checks those three declarations, source-owned objects,
+inbound FK and external SQL dependency closure before any future migration.
+The published capture records schema metadata, row counts and allocator
+waters only. It does not replace this caller map or authorize target changes.

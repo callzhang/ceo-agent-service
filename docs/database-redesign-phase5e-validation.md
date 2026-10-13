@@ -4,13 +4,13 @@ This is source preparation for the approved Attempt/Memory action consolidation,
 not target storage, a migration, a new Store version or a deployment. The full
 ten business/runtime tables plus one migration table goal remains incomplete.
 The managed Phase5C checkout was clean and has been reused on the independent
-`codex/database-redesign-phase5e-20261013` branch at D candidate5221062d. D's
-pending release branch is unchanged by this source-only work.
+`codex/database-redesign-phase5e-20261013` branch at D candidate5221062d.
+That earlier refresh left D's release branch unchanged.
 
 ## Current declarations and dependencies
 
-`2026-10-13-database-redesign-phase5e-source-refresh.json` records a readonly
-snapshot of actual published7fabea80 Store17, and an owned empty Store18
+`2026-10-13-database-redesign-phase5e-source-refresh.json` records an earlier
+readonly snapshot of published7fabea80 Store17 and an owned empty Store18
 candidate constructor. The original frozen Store16/candidate17 inventory is
 unchanged and is not relabelled. Both new declarations, column/default/PK
 metadata, exact indexes, triggers and inbound/outgoing FKs equal their
@@ -54,8 +54,39 @@ claims, and ran the combined source/dependency suite:66 passed, two opposite
 variant skips. It found no blocking gap, removed its owned test directory and
 made no production/provider/model call. This is source-preparation acceptance.
 
-D must actually publish before E implementation/migration activation. Re-read
-the exact immediately preceding published schema and its dependencies then;
-this Store17 observation or empty Store18 candidate does not prove a published
-Store18 source. No E version is reserved, no source row was altered, and no
-model, Memory provider, send, recall or deployment was invoked by this work.
+At that earlier point, D still needed publication before E implementation.
+The Store17 observation and empty Store18 candidate did not establish a
+published Store18 source. No E version was reserved, no source row was altered,
+and no model, Memory provider, send, recall or deployment was invoked by that
+refresh. The separate published binding below closes that source prerequisite.
+
+## Task 1: published Store18 source binding
+
+The separate [published source capture](superpowers/specs/2026-10-13-database-redesign-phase5e-published-source.json)
+binds the immediately preceding production checkout `9e0570cb8d132f8e4b0394219b4c63411aa6610c`
+to a single read-only SQLite transaction. The observed database marker is
+Store `2026-10-13.4`, Email 51, with 124 tables. It contains 14,821 Attempt
+rows (sequence 15,409), 476 Memory rows (sequence 1,426), and 6,589 existing
+fourteen-type action rows. Counts and allocator waters are observations, not
+migration constants. Only schema declarations, aggregate counts, sequences
+and dependency names were committed; no private business or native row was
+exported.
+
+Both published source tables exactly match the frozen Store16 actual and later
+Store17 actual declarations. The current Store18 fresh constructor matches
+the frozen fresh Attempt/Memory variant. The published fourteen-type `actions`
+declaration is bound by its own fixed SHA-256 and tested separately from any
+future E additions; this preflight does not derive the source manifest from an
+evolving target type list. The read-only preflight rejects unknown Store/Email
+markers, mixed old/target allocator state, changed columns, added indexes or
+triggers, changed actions, and external FK/view dependencies before schema
+mutation. Existing source-owned object names are included in the exact
+declaration comparison. No external declared dependency on the three source
+tables was found in this capture.
+
+The frozen oracle passed 54 cases with two variant-specific skips. Eleven
+new preflight tests passed, including before/after byte, schema and allocator
+equivalence for every rejected synthetic database. This is source binding and
+refusal evidence only. It does not implement E target DDL, migrate a row,
+reserve a Store version, change a runtime caller or complete the ten-table
+redesign.

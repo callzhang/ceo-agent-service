@@ -1,0 +1,1131 @@
+{
+  "scope": "Phase5E Task1 published source binding only; no target schema or migration",
+  "captured_at_utc": "2026-10-13T23:09:02.323820+00:00",
+  "production_code_commit": "9e0570cb8d132f8e4b0394219b4c63411aa6610c",
+  "store_marker": {
+    "value": "2026-10-13.4",
+    "updated_at": "2026-10-12 00:20:48"
+  },
+  "email_marker": 51,
+  "table_count": 124,
+  "source_variant": "actual",
+  "source_tables": {
+    "reply_attempts": {
+      "sql": "CREATE TABLE reply_attempts (\n                    id integer primary key autoincrement,\n                    conversation_id text not null,\n                    conversation_title text not null,\n                    trigger_message_id text not null,\n                    trigger_sender text not null,\n                    trigger_text text not null,\n                    action text not null,\n                    sensitivity_kind text not null,\n                    codex_reason text not null default '',\n                    draft_reply_text text not null default '',\n                    final_reply_text text not null default '',\n                    permission_action text not null default '',\n                    permission_reason text not null default '',\n                    send_status text not null,\n                    send_error text not null default '',\n                    retry_count integer not null default 0,\n                    reviewed_at text,\n                    reviewer_feedback text not null default '',\n                    corrected_reply_text text not null default '',\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp\n                , audit_documents_json text not null default '[]', audit_tool_events_json text not null default '[]', audit_summary text not null default '', codex_session_id text not null default '', codex_transcript_start_line integer not null default 0, codex_transcript_end_line integer not null default 0, direct_user_id text not null default '', direct_open_dingtalk_id text not null default '', oa_process_instance_id text not null default '', oa_task_id text not null default '', oa_url text not null default '', oa_action text not null default '', oa_remark text not null default '', oa_action_result_json text not null default '', conversation_single_chat integer, trigger_create_time text not null default '', calendar_event_id text not null default '', calendar_response_status text not null default '', calendar_response_result_json text not null default '', mail_mailbox text not null default '', mail_message_id text not null default '', mail_subject text not null default '', mail_reply_text text not null default '', mail_action_result_json text not null default '', channel text not null default 'dingtalk', universal_execution_id text not null default '', universal_execution_scope_id text not null default '', reaction_action_result_json text not null default '', document_action_result_json text not null default '', agent_run_id integer, human_decision_options_json text not null default '[]', feedback_scope text not null default 'one_time', skill_update_requested integer not null default 0, skill_update_receipts_json text not null default '[]', resolved_at text not null default '', resolution text not null default '', trigger_text_provenance_json text not null default '{}')",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "conversation_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "conversation_title",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "trigger_message_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "trigger_sender",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "trigger_text",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "action",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "sensitivity_kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "codex_reason",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 9,
+          "name": "draft_reply_text",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 10,
+          "name": "final_reply_text",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 11,
+          "name": "permission_action",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 12,
+          "name": "permission_reason",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 13,
+          "name": "send_status",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 14,
+          "name": "send_error",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 15,
+          "name": "retry_count",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": "0",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 16,
+          "name": "reviewed_at",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 17,
+          "name": "reviewer_feedback",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 18,
+          "name": "corrected_reply_text",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 19,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "current_timestamp",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 20,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "current_timestamp",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 21,
+          "name": "audit_documents_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "'[]'",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 22,
+          "name": "audit_tool_events_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "'[]'",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 23,
+          "name": "audit_summary",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 24,
+          "name": "codex_session_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 25,
+          "name": "codex_transcript_start_line",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": "0",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 26,
+          "name": "codex_transcript_end_line",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": "0",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 27,
+          "name": "direct_user_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 28,
+          "name": "direct_open_dingtalk_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 29,
+          "name": "oa_process_instance_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 30,
+          "name": "oa_task_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 31,
+          "name": "oa_url",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 32,
+          "name": "oa_action",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 33,
+          "name": "oa_remark",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 34,
+          "name": "oa_action_result_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 35,
+          "name": "conversation_single_chat",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 36,
+          "name": "trigger_create_time",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 37,
+          "name": "calendar_event_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 38,
+          "name": "calendar_response_status",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 39,
+          "name": "calendar_response_result_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 40,
+          "name": "mail_mailbox",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 41,
+          "name": "mail_message_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 42,
+          "name": "mail_subject",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 43,
+          "name": "mail_reply_text",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 44,
+          "name": "mail_action_result_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 45,
+          "name": "channel",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "'dingtalk'",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 46,
+          "name": "universal_execution_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 47,
+          "name": "universal_execution_scope_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 48,
+          "name": "reaction_action_result_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 49,
+          "name": "document_action_result_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 50,
+          "name": "agent_run_id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 51,
+          "name": "human_decision_options_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "'[]'",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 52,
+          "name": "feedback_scope",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "'one_time'",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 53,
+          "name": "skill_update_requested",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": "0",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 54,
+          "name": "skill_update_receipts_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "'[]'",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 55,
+          "name": "resolved_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 56,
+          "name": "resolution",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 57,
+          "name": "trigger_text_provenance_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "'{}'",
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "idx_reply_attempts_agent_run_recovery",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 50,
+              "name": "agent_run_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 14,
+              "name": "send_error",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 3,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ],
+          "sql": "CREATE INDEX idx_reply_attempts_agent_run_recovery\n                    on reply_attempts(agent_run_id, send_error, id)\n                "
+        },
+        {
+          "seq": 1,
+          "name": "idx_reply_attempts_current_trigger",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 45,
+              "name": "channel",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 1,
+              "name": "conversation_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": 3,
+              "name": "trigger_message_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 3,
+              "cid": 20,
+              "name": "updated_at",
+              "desc": 1,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 4,
+              "cid": 0,
+              "name": "id",
+              "desc": 1,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 5,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ],
+          "sql": "CREATE INDEX idx_reply_attempts_current_trigger\n                    on reply_attempts(\n                        channel, conversation_id, trigger_message_id,\n                        updated_at desc, id desc\n                    )\n                "
+        },
+        {
+          "seq": 2,
+          "name": "idx_reply_attempts_trigger_history",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "conversation_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 3,
+              "name": "trigger_message_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": 6,
+              "name": "action",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 3,
+              "cid": 0,
+              "name": "id",
+              "desc": 1,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 4,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ],
+          "sql": "CREATE INDEX idx_reply_attempts_trigger_history\n                    on reply_attempts(\n                        conversation_id, trigger_message_id, action, id desc\n                    )\n                "
+        },
+        {
+          "seq": 3,
+          "name": "idx_reply_attempts_oa_history",
+          "unique": 0,
+          "origin": "c",
+          "partial": 1,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 29,
+              "name": "oa_process_instance_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 19,
+              "name": "created_at",
+              "desc": 1,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": 0,
+              "name": "id",
+              "desc": 1,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 3,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ],
+          "sql": "CREATE INDEX idx_reply_attempts_oa_history\n                    on reply_attempts(\n                        oa_process_instance_id, created_at desc, id desc\n                    )\n                    where oa_process_instance_id <> ''\n                "
+        },
+        {
+          "seq": 4,
+          "name": "idx_reply_attempts_created",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 19,
+              "name": "created_at",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ],
+          "sql": "CREATE INDEX idx_reply_attempts_created\n                    on reply_attempts(created_at, id)"
+        },
+        {
+          "seq": 5,
+          "name": "idx_reply_attempts_status",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 13,
+              "name": "send_status",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 19,
+              "name": "created_at",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ],
+          "sql": "CREATE INDEX idx_reply_attempts_status\n                    on reply_attempts(send_status, created_at)"
+        },
+        {
+          "seq": 6,
+          "name": "idx_reply_attempts_trigger_message_id",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 3,
+              "name": "trigger_message_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ],
+          "sql": "CREATE INDEX idx_reply_attempts_trigger_message_id\n                    on reply_attempts(trigger_message_id)"
+        }
+      ],
+      "triggers": [],
+      "row_count": 14821,
+      "sequence": 15409
+    },
+    "memory_write_events": {
+      "sql": "CREATE TABLE memory_write_events (\n                    id integer primary key autoincrement,\n                    attempt_id integer not null,\n                    event_type text not null,\n                    payload_json text not null,\n                    status text not null default 'pending',\n                    attempts integer not null default 0,\n                    last_error text not null default '',\n                    memory_episode_id text not null default '',\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp,\n                    unique(attempt_id, event_type)\n                )",
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "attempt_id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "event_type",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "payload_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "status",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "'pending'",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "attempts",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": "0",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 6,
+          "name": "last_error",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 7,
+          "name": "memory_episode_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 8,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "current_timestamp",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 9,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "current_timestamp",
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [],
+      "indexes": [
+        {
+          "seq": 0,
+          "name": "idx_memory_write_events_attempt",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "attempt_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ],
+          "sql": "CREATE INDEX idx_memory_write_events_attempt\n                    on memory_write_events(attempt_id, id)"
+        },
+        {
+          "seq": 1,
+          "name": "idx_memory_write_events_status",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 4,
+              "name": "status",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 0,
+              "name": "id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ],
+          "sql": "CREATE INDEX idx_memory_write_events_status\n                    on memory_write_events(status, id)"
+        },
+        {
+          "seq": 2,
+          "name": "sqlite_autoindex_memory_write_events_1",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            {
+              "seqno": 0,
+              "cid": 1,
+              "name": "attempt_id",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 1,
+              "cid": 2,
+              "name": "event_type",
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 1
+            },
+            {
+              "seqno": 2,
+              "cid": -1,
+              "name": null,
+              "desc": 0,
+              "coll": "BINARY",
+              "key": 0
+            }
+          ],
+          "sql": null
+        }
+      ],
+      "triggers": [],
+      "row_count": 476,
+      "sequence": 1426
+    }
+  },
+  "source_fingerprints_sha256": {
+    "reply_attempts": "5ec10b773b04a2a9c09d43fc8d9c01873c36b90c5c842b0ecb5e73857ea9f199",
+    "memory_write_events": "4f236a93d6cba856697474a73f9541a8bcaf720e691139868d0e940f41490ec5"
+  },
+  "source_actions": {
+    "record_type_count": 14,
+    "row_count": 6589,
+    "declaration_sha256": "2b2e7e5c152906c77938192856e3958b4c86c82df32727d1c845ca09301d13e0",
+    "object_names": [
+      "idx_actions_attempt_sequence",
+      "idx_actions_audit_run",
+      "idx_actions_candidates_task",
+      "idx_actions_consumer_run",
+      "idx_actions_execution_candidate",
+      "idx_actions_execution_receipt_operation",
+      "idx_actions_execution_receipt_run",
+      "idx_actions_external_key",
+      "idx_actions_global_business",
+      "idx_actions_intent_authorization",
+      "idx_actions_intent_operation",
+      "idx_actions_intent_run",
+      "idx_actions_observer_identity",
+      "idx_actions_postfix_identity",
+      "idx_actions_public_id",
+      "idx_actions_reviews_candidate",
+      "idx_actions_selection_candidate",
+      "idx_actions_sent_external_key",
+      "idx_actions_sent_history",
+      "idx_actions_text_public_key",
+      "actions",
+      "trg_actions_agent_effect_intents_sequence",
+      "trg_actions_agent_execution_receipts_sequence",
+      "trg_actions_agent_run_id_insert",
+      "trg_actions_agent_run_id_update",
+      "trg_actions_audit_run_id_insert",
+      "trg_actions_audit_run_id_update",
+      "trg_actions_candidate_id_insert",
+      "trg_actions_candidate_id_update",
+      "trg_actions_consumer_run_id_insert",
+      "trg_actions_consumer_run_id_update",
+      "trg_actions_execution_id_insert",
+      "trg_actions_execution_id_update",
+      "trg_actions_first_agent_run_id_insert",
+      "trg_actions_first_agent_run_id_update",
+      "trg_actions_observer_sent_key_insert",
+      "trg_actions_observer_sent_key_update",
+      "trg_actions_predecessor_review_id_insert",
+      "trg_actions_predecessor_review_id_update",
+      "trg_actions_public_reference_update",
+      "trg_actions_record_type_immutable",
+      "trg_actions_reply_task_id_insert",
+      "trg_actions_reply_task_id_update",
+      "trg_actions_review_id_insert",
+      "trg_actions_review_id_update",
+      "trg_actions_selection_id_insert",
+      "trg_actions_selection_id_update",
+      "trg_actions_sent_public_reference_update",
+      "trg_actions_sent_replies_sequence",
+      "trg_actions_sent_reply_id_insert",
+      "trg_actions_sent_reply_id_update",
+      "trg_actions_task_id_insert",
+      "trg_actions_task_id_update"
+    ]
+  },
+  "dependencies": {
+    "inbound_foreign_keys": [],
+    "external_trigger_or_view_references": [],
+    "source_owned_index_and_trigger_names": {
+      "reply_attempts": [
+        "idx_reply_attempts_agent_run_recovery",
+        "idx_reply_attempts_current_trigger",
+        "idx_reply_attempts_trigger_history",
+        "idx_reply_attempts_oa_history",
+        "idx_reply_attempts_created",
+        "idx_reply_attempts_status",
+        "idx_reply_attempts_trigger_message_id"
+      ],
+      "memory_write_events": [
+        "idx_memory_write_events_attempt",
+        "idx_memory_write_events_status",
+        "sqlite_autoindex_memory_write_events_1"
+      ]
+    },
+    "checked_tables": [
+      "actions",
+      "reply_attempts",
+      "memory_write_events"
+    ]
+  },
+  "frozen_declarations_equal": {
+    "actual_store16": true,
+    "actual_store17": true,
+    "fresh17_equals_fresh18": true
+  },
+  "read_transaction": "one SQLite BEGIN snapshot, URI mode=ro; ROLLBACK after capture"
+}
