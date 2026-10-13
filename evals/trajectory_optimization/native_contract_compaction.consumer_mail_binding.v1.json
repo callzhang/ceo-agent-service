@@ -1,0 +1,187 @@
+{
+  "version": 1,
+  "scope": "Consumer mail binding diagnostic; not valid business A/B evidence",
+  "records": [
+    {
+      "case": "mail-already-handled",
+      "variant": "full",
+      "phase": "cold",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "exit_code": 0,
+      "session_id": "01a136a8-a40a-7693-bcf6-a2d31f3654f2",
+      "turn_completed": true,
+      "wire": {
+        "error_code": "dependency_read_unavailable",
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.2,
+        "durable_memories": [],
+        "outcome": "failed",
+        "proposal": null,
+        "decision_options": [],
+        "requested_input": null,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "summary": "无法完成原触发要求的完整邮件线程读取，因此未对邮件作出回复、分类或其他业务判断。按原指定入口执行了 dws mail +thread --email principal@example.test --id mail-thread-1 --format json，并按错误提示追加了一次 --verbose；两次均因本地 DWS 访问令牌文件锁不可访问而失败：open /Users/derek/.dws/.data.lock: operation not permitted（上游错误码 UNCLASSIFIED，进程退出码 5）。该读取依赖没有提供可用的重试语义；当前无法核实发件人、收件人、主题、完整请求、线程状态或是否已有等效处理。"
+      },
+      "canonical": {
+        "outcome": "failed",
+        "summary": "无法完成原触发要求的完整邮件线程读取，因此未对邮件作出回复、分类或其他业务判断。按原指定入口执行了 dws mail +thread --email principal@example.test --id mail-thread-1 --format json，并按错误提示追加了一次 --verbose；两次均因本地 DWS 访问令牌文件锁不可访问而失败：open /Users/derek/.dws/.data.lock: operation not permitted（上游错误码 UNCLASSIFIED，进程退出码 5）。该读取依赖没有提供可用的重试语义；当前无法核实发件人、收件人、主题、完整请求、线程状态或是否已有等效处理。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "dependency_read_unavailable",
+          "retryable": true,
+          "authorization_required": false,
+          "stage": "",
+          "source": "agent",
+          "source_code": "dependency_read_unavailable",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.2,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "task_sha256": "f4ac1f118e20649ec8c1851898c6cafdf93070b7e21357bd23d9ea7d8e5f72f5",
+      "developer_sha256": "7ab9e69771a70769c87dee47796c0682f672459548cff826636e4b55da6dad9b",
+      "developer_characters": 30203,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "trajectory_sha256": "e78069d09c59539aac279b085539bd146073040048c7ec75eadf945e7d54f0bf",
+      "commands": [
+        {
+          "command": "/bin/zsh -lc \"sed -n '1,240p' /Users/derek/.agents/AGENTS.md\"",
+          "status": "completed",
+          "exit_code": 0,
+          "output_sha256": "403c707a3074488455629b7532a66803640f19db2c3240263a57993ea76c1fd7"
+        },
+        {
+          "command": "/bin/zsh -lc 'dws mail +thread --email principal@example.test --id mail-thread-1 --format json'",
+          "status": "failed",
+          "exit_code": 5,
+          "output_sha256": "0b07f6e0a928b71eda189228c89b5013489e59b848dbb797f4089e1061c3dd44"
+        }
+      ],
+      "model_fixture_mail_reads": 0,
+      "business_acceptance": false,
+      "evidence_class": "invalid fixture binding: native dws selected instead of anonymous fixture",
+      "native_original": [
+        {
+          "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T12-06-24-01a136a8-a40a-7693-bcf6-a2d31f3654f2.jsonl",
+          "sha256": "6858f80c914bb9c07f95295bd4dd8ab017ccd83ec06443ffc96e366a50cb324b"
+        }
+      ],
+      "commands_scope": "Command-execution items emitted by Codex stdout only; full native trajectory may include additional execution calls inside CodeMode.",
+      "native_dws_thread_attempt_confirmed": true
+    },
+    {
+      "case": "mail-already-handled",
+      "variant": "compact",
+      "phase": "cold",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "exit_code": 0,
+      "session_id": "01a136a9-38d4-7a32-8dad-e99a5a8ebcc5",
+      "turn_completed": true,
+      "wire": {
+        "error_code": "dependency_read_unavailable",
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "low",
+        "confidence": 0.72,
+        "rule_coverage": 0.88,
+        "information_completeness": 0.25,
+        "durable_memories": [],
+        "outcome": "failed",
+        "proposal": null,
+        "decision_options": [],
+        "requested_input": null,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "summary": "无法完成邮件判断：权威触发要求先读取完整邮件线程 mail-thread-1，但本轮声明的邮箱读取命令失败，未返回任何线程内容。底层错误为：resolve access token: [REDACTED] access token: [REDACTED] file lock: opening lock file: open /Users/derek/.dws/.data.lock: operation not permitted。由于缺少完整线程，无法核实发件人、收件人、主题、当前线程状态或续费请求，也不能据此提出回复、退订或其他邮件动作。"
+      },
+      "canonical": {
+        "outcome": "failed",
+        "summary": "无法完成邮件判断：权威触发要求先读取完整邮件线程 mail-thread-1，但本轮声明的邮箱读取命令失败，未返回任何线程内容。底层错误为：resolve access token: [REDACTED] access token: [REDACTED] file lock: opening lock file: open /Users/derek/.dws/.data.lock: operation not permitted。由于缺少完整线程，无法核实发件人、收件人、主题、当前线程状态或续费请求，也不能据此提出回复、退订或其他邮件动作。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "dependency_read_unavailable",
+          "retryable": true,
+          "authorization_required": false,
+          "stage": "",
+          "source": "agent",
+          "source_code": "dependency_read_unavailable",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.72,
+        "rule_coverage": 0.88,
+        "information_completeness": 0.25,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "task_sha256": "f4ac1f118e20649ec8c1851898c6cafdf93070b7e21357bd23d9ea7d8e5f72f5",
+      "developer_sha256": "956e37c10673669358dfb57a5a4f93156330e1aaa1f34e0a302d4ae118a872e1",
+      "developer_characters": 24035,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "trajectory_sha256": "5d80fa8622a6141e3fa6fc3952cdcce444eaf3423ea9b49cc15b808054f435c8",
+      "commands": [
+        {
+          "command": "/bin/zsh -lc \"sed -n '1,240p' /Users/derek/.agents/AGENTS.md\"",
+          "status": "completed",
+          "exit_code": 0,
+          "output_sha256": "403c707a3074488455629b7532a66803640f19db2c3240263a57993ea76c1fd7"
+        }
+      ],
+      "model_fixture_mail_reads": 0,
+      "business_acceptance": false,
+      "evidence_class": "invalid fixture binding: native dws selected instead of anonymous fixture",
+      "native_original": [
+        {
+          "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T12-07-02-01a136a9-38d4-7a32-8dad-e99a5a8ebcc5.jsonl",
+          "sha256": "c643af4b3a827e580745198ebb5d2ee394a2d1bd183c01f22de12535723a6370"
+        }
+      ],
+      "commands_scope": "Command-execution items emitted by Codex stdout only; full native trajectory may include additional execution calls inside CodeMode.",
+      "native_dws_thread_attempt_confirmed": true
+    }
+  ],
+  "setup_invalid_attempt": {
+    "reason": "duplicate --skip-git-repo-check; process rejected argv before inference",
+    "model_calls": 0
+  },
+  "root_cause": "Absolute material source command did not change resolution of the dws executable prescribed by the installed Skill. Native invocation retained system PATH, selected the real CLI, and failed local credential lock access under workspace sandbox.",
+  "repair": "Use native shell_environment_policy.set PATH with the anonymous executable directory first; login-shell resolution regression passed. No service runtime or Skill instruction change.",
+  "temporary_cleanup": {
+    "path": "/private/tmp/ceo-consumer-business-pair.JipkyC",
+    "removed": true,
+    "open_handles": "lsof +D returned 1 with no output",
+    "native_original_sessions_retained": true
+  },
+  "independent_review": "Native originals confirm both variants attempted machine dws and never anonymous fixture mail. Stdout command summaries are not exhaustive native execution inventories."
+}

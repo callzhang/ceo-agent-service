@@ -1,0 +1,445 @@
+{
+  "version": 1,
+  "case": "document-material-conflicts",
+  "scope": "Actual OAuth Consumer document cold model judgments/tool reads only; not service preparation/audit/executor pipeline acceptance",
+  "manifest": "native_contract_compaction.business_cases.v7.json",
+  "records": [
+    {
+      "case": "document-material-conflicts",
+      "variant": "full",
+      "phase": "cold",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "exit_code": 0,
+      "session_id": "01a136ad-0829-7f30-9ba7-239f15014aa3",
+      "turn_completed": true,
+      "wire": {
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "medium",
+        "confidence": 0.98,
+        "rule_coverage": 0.9,
+        "information_completeness": 1.0,
+        "durable_memories": [],
+        "outcome": "proposal",
+        "proposal": {
+          "objective": "在审批前向原触发消息回复当前文档中已核实的材料问题。",
+          "sourced_facts": [
+            {
+              "assertion": "文档《Synthetic rollout proposal》当前版本为 rev-7；Executive summary 写明 Phase 1 覆盖 120 家门店、10 月 15 日上线。",
+              "references": [
+                "node-doc-review-1",
+                "revision:rev-7"
+              ]
+            },
+            {
+              "assertion": "同一文档的 Rollout table 写明 Phase 1 覆盖 80 家门店、10 月 22 日上线，与 Executive summary 的门店数和日期均冲突。",
+              "references": [
+                "node-doc-review-1",
+                "revision:rev-7"
+              ]
+            },
+            {
+              "assertion": "文档 Budget summary 写明总预算为 USD 500,000，但 Budget lines 合计为 USD 620,000（USD 300,000 + USD 200,000 + USD 120,000），存在 USD 120,000 差额。",
+              "references": [
+                "node-doc-review-1",
+                "revision:rev-7"
+              ]
+            }
+          ],
+          "authored_judgment": "审批前应先解决两项材料问题：确认 Phase 1 的权威门店数和上线日期，并使预算总额与明细一致；否则审批依据不完整且存在执行范围和预算超支风险。",
+          "actions": [
+            {
+              "description": "回复原触发消息，列出文档当前版本中阻断审批的范围/时间冲突和预算核算差异。",
+              "action_identity": "document-review-material-issues:doc-review-1:rev-7:trigger-document-review",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "eval-document-conversation",
+                "message_id": "trigger-document-review"
+              },
+              "payload": {
+                "content": "Material issues before approval:\n1. Scope/timing conflict: the Executive summary says Phase 1 covers 120 stores and launches on October 15, while the Rollout table says 80 stores and October 22. Please confirm the authoritative store count and launch date, then align the other section.\n2. Budget reconciliation: the requested total is USD 500,000, but the listed lines total USD 620,000 (USD 300,000 + USD 200,000 + USD 120,000), leaving a USD 120,000 discrepancy. Please reconcile the total and line items, and clarify whether contingency is included.\n\nApproval should wait until these discrepancies are resolved."
+              },
+              "effect": "external"
+            }
+          ]
+        },
+        "decision_options": [],
+        "requested_input": null,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "summary": "已读取文档当前版本并核实两项审批前材料问题：Phase 1 的门店数和上线日期在正文中冲突；预算总额 USD 500,000 与明细合计 USD 620,000 不一致。已形成回复原触发消息的完整候选，等待 Audit 审核和系统执行；本轮未发送消息。"
+      },
+      "canonical": {
+        "outcome": "proposal",
+        "summary": "已读取文档当前版本并核实两项审批前材料问题：Phase 1 的门店数和上线日期在正文中冲突；预算总额 USD 500,000 与明细合计 USD 620,000 不一致。已形成回复原触发消息的完整候选，等待 Audit 审核和系统执行；本轮未发送消息。",
+        "proposal": {
+          "objective": "在审批前向原触发消息回复当前文档中已核实的材料问题。",
+          "actions": [
+            {
+              "description": "回复原触发消息，列出文档当前版本中阻断审批的范围/时间冲突和预算核算差异。",
+              "action_identity": "document-review-material-issues:doc-review-1:rev-7:trigger-document-review",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "eval-document-conversation",
+                "message_id": "trigger-document-review"
+              },
+              "payload": {
+                "content": "Material issues before approval:\n1. Scope/timing conflict: the Executive summary says Phase 1 covers 120 stores and launches on October 15, while the Rollout table says 80 stores and October 22. Please confirm the authoritative store count and launch date, then align the other section.\n2. Budget reconciliation: the requested total is USD 500,000, but the listed lines total USD 620,000 (USD 300,000 + USD 200,000 + USD 120,000), leaving a USD 120,000 discrepancy. Please reconcile the total and line items, and clarify whether contingency is included.\n\nApproval should wait until these discrepancies are resolved."
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "文档《Synthetic rollout proposal》当前版本为 rev-7；Executive summary 写明 Phase 1 覆盖 120 家门店、10 月 15 日上线。",
+              "references": [
+                "node-doc-review-1",
+                "revision:rev-7"
+              ]
+            },
+            {
+              "assertion": "同一文档的 Rollout table 写明 Phase 1 覆盖 80 家门店、10 月 22 日上线，与 Executive summary 的门店数和日期均冲突。",
+              "references": [
+                "node-doc-review-1",
+                "revision:rev-7"
+              ]
+            },
+            {
+              "assertion": "文档 Budget summary 写明总预算为 USD 500,000，但 Budget lines 合计为 USD 620,000（USD 300,000 + USD 200,000 + USD 120,000），存在 USD 120,000 差额。",
+              "references": [
+                "node-doc-review-1",
+                "revision:rev-7"
+              ]
+            }
+          ],
+          "authored_judgment": "审批前应先解决两项材料问题：确认 Phase 1 的权威门店数和上线日期，并使预算总额与明细一致；否则审批依据不完整且存在执行范围和预算超支风险。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.98,
+        "rule_coverage": 0.9,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "task_sha256": "1f1b62d08c9981be77bd5490c4b119b7eee21e69de6ecfc5d0e32c1452fb2ef2",
+      "developer_sha256": "7ab9e69771a70769c87dee47796c0682f672459548cff826636e4b55da6dad9b",
+      "developer_characters": 30203,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "source_read_exact": true,
+      "required_tool_gates": {
+        "read_task_skill": true,
+        "read_dingtalk_document": true
+      },
+      "required_operation_skill_gates": {
+        "dingtalk-doc": true
+      },
+      "reply_contract_read": true,
+      "source_target_exact": true,
+      "business_content_review": {
+        "store_count_conflict_120_80": true,
+        "launch_date_conflict_oct15_oct22": true,
+        "budget_total_500000_vs_lines_620000_difference_120000": true,
+        "request_reconciliation_before_approval": true,
+        "one_reply_no_document_edit_or_approval": true
+      },
+      "callbacks": [
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "result_sha256": "3c0c57c83ff9bd7bc93a806b47136719b6a5c58cdecfe17fa0455498b1b770ce"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-doc"
+          },
+          "result_sha256": "948b589315d22ae5d65905b2cdff054f0935d0b31ae19a1dcdf56673e45bfc1a"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-chat"
+          },
+          "result_sha256": "3d8be3bb03f0b097531ada65989cedb68ac6cfcc648afc3b00cae0e778ae3e0c"
+        },
+        {
+          "name": "read_dingtalk_document",
+          "arguments": {
+            "node_id": "node-doc-review-1"
+          },
+          "result_sha256": "59c480900930b39c0300f7bd7d07670e3fbb25a1834c3d89360b6e1053eeaac7"
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "reply_to_message"
+          },
+          "result_sha256": "92bf6ccd04c1e662718635ae55f6da5e84c042d5d9222404adfc8c65cb31d527"
+        }
+      ],
+      "trajectory_sha256": "6aa08b896005ed1053d59aae3320e1e04daaa76fcf256ed0ae70ade380c4b37a",
+      "native_original": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T12-11-11-01a136ad-0829-7f30-9ba7-239f15014aa3.jsonl",
+        "sha256": "8f9a553d2c4f575ff9a5c1ab0ad12564c9fc9345a00610cc0e631f066fb4a0a6"
+      },
+      "native_developer_characters": 31127,
+      "native_extra_catalog_characters": 924
+    },
+    {
+      "case": "document-material-conflicts",
+      "variant": "compact",
+      "phase": "cold",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "exit_code": 0,
+      "session_id": "01a136ad-6e9d-7390-9bad-4c8f54755900",
+      "turn_completed": true,
+      "wire": {
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "low",
+        "confidence": 0.98,
+        "rule_coverage": 0.94,
+        "information_completeness": 1.0,
+        "durable_memories": [],
+        "outcome": "proposal",
+        "proposal": {
+          "objective": "在原触发消息对应的钉钉会话中回复《Synthetic rollout proposal》的材料问题，供文档所有者在审批前核对和修订。",
+          "sourced_facts": [
+            {
+              "assertion": "文档当前版本为 rev-7，标题为《Synthetic rollout proposal》。",
+              "references": [
+                "node-doc-review-1:revision=rev-7"
+              ]
+            },
+            {
+              "assertion": "执行摘要写明 Phase 1 覆盖 120 家门店、10 月 15 日上线；Rollout table 写明覆盖 80 家门店、10 月 22 日上线，两处关键执行信息互相冲突。",
+              "references": [
+                "node-doc-review-1:content:Executive summary",
+                "node-doc-review-1:content:Rollout table"
+              ]
+            },
+            {
+              "assertion": "预算摘要写明总预算 USD 500,000；预算分项为 platform USD 300,000、operations USD 200,000、contingency USD 120,000，分项合计 USD 620,000，比总预算高 USD 120,000。",
+              "references": [
+                "node-doc-review-1:content:Budget summary",
+                "node-doc-review-1:content:Budget lines"
+              ]
+            }
+          ],
+          "authored_judgment": "当前材料不具备审批所需的一致性：应先确认唯一的门店范围、上线日期和预算口径，并修正文档后再进入审批。",
+          "actions": [
+            {
+              "description": "回复原触发消息，列出当前文档中需要在审批前修正或确认的两项材料问题。",
+              "action_identity": "review-doc-review-1-material-issues-reply-v1",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "eval-document-conversation",
+                "message_id": "trigger-document-review"
+              },
+              "payload": {
+                "content": "审阅结论：当前文档有两项需在审批前修正/确认的材料问题：\n1. Rollout 信息冲突：Executive summary 写的是 Phase 1 覆盖 120 家门店、10 月 15 日上线；Rollout table 写的是 80 家门店、10 月 22 日上线。请确认唯一的门店范围和上线日期，并同步修正文档。\n2. 预算不一致：总预算写的是 USD 500,000，但分项 platform USD 300,000 + operations USD 200,000 + contingency USD 120,000，合计 USD 620,000，超出总预算 USD 120,000。请确认预算总额或分项金额及 contingency 的口径。\n在上述信息统一并回写文档后，再进入审批。"
+              },
+              "effect": "external"
+            }
+          ]
+        },
+        "decision_options": [],
+        "requested_input": null,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "summary": "已读取冻结的 ceo-document-review Skill 及其适用的 dingtalk-doc、dingtalk-chat Skills，并成功读取 node-doc-review-1 的当前版本 rev-7。文档存在两项明确材料问题：Phase 1 门店数/上线日期在摘要与 rollout 表之间冲突；预算分项合计 USD 620,000，而总预算为 USD 500,000。已形成针对原触发消息的精确回复候选；尚未发送，等待 Audit 审核及系统执行。"
+      },
+      "canonical": {
+        "outcome": "proposal",
+        "summary": "已读取冻结的 ceo-document-review Skill 及其适用的 dingtalk-doc、dingtalk-chat Skills，并成功读取 node-doc-review-1 的当前版本 rev-7。文档存在两项明确材料问题：Phase 1 门店数/上线日期在摘要与 rollout 表之间冲突；预算分项合计 USD 620,000，而总预算为 USD 500,000。已形成针对原触发消息的精确回复候选；尚未发送，等待 Audit 审核及系统执行。",
+        "proposal": {
+          "objective": "在原触发消息对应的钉钉会话中回复《Synthetic rollout proposal》的材料问题，供文档所有者在审批前核对和修订。",
+          "actions": [
+            {
+              "description": "回复原触发消息，列出当前文档中需要在审批前修正或确认的两项材料问题。",
+              "action_identity": "review-doc-review-1-material-issues-reply-v1",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "eval-document-conversation",
+                "message_id": "trigger-document-review"
+              },
+              "payload": {
+                "content": "审阅结论：当前文档有两项需在审批前修正/确认的材料问题：\n1. Rollout 信息冲突：Executive summary 写的是 Phase 1 覆盖 120 家门店、10 月 15 日上线；Rollout table 写的是 80 家门店、10 月 22 日上线。请确认唯一的门店范围和上线日期，并同步修正文档。\n2. 预算不一致：总预算写的是 USD 500,000，但分项 platform USD 300,000 + operations USD 200,000 + contingency USD 120,000，合计 USD 620,000，超出总预算 USD 120,000。请确认预算总额或分项金额及 contingency 的口径。\n在上述信息统一并回写文档后，再进入审批。"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "文档当前版本为 rev-7，标题为《Synthetic rollout proposal》。",
+              "references": [
+                "node-doc-review-1:revision=rev-7"
+              ]
+            },
+            {
+              "assertion": "执行摘要写明 Phase 1 覆盖 120 家门店、10 月 15 日上线；Rollout table 写明覆盖 80 家门店、10 月 22 日上线，两处关键执行信息互相冲突。",
+              "references": [
+                "node-doc-review-1:content:Executive summary",
+                "node-doc-review-1:content:Rollout table"
+              ]
+            },
+            {
+              "assertion": "预算摘要写明总预算 USD 500,000；预算分项为 platform USD 300,000、operations USD 200,000、contingency USD 120,000，分项合计 USD 620,000，比总预算高 USD 120,000。",
+              "references": [
+                "node-doc-review-1:content:Budget summary",
+                "node-doc-review-1:content:Budget lines"
+              ]
+            }
+          ],
+          "authored_judgment": "当前材料不具备审批所需的一致性：应先确认唯一的门店范围、上线日期和预算口径，并修正文档后再进入审批。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.98,
+        "rule_coverage": 0.94,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "task_sha256": "1f1b62d08c9981be77bd5490c4b119b7eee21e69de6ecfc5d0e32c1452fb2ef2",
+      "developer_sha256": "956e37c10673669358dfb57a5a4f93156330e1aaa1f34e0a302d4ae118a872e1",
+      "developer_characters": 24035,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "source_read_exact": true,
+      "required_tool_gates": {
+        "read_task_skill": true,
+        "read_dingtalk_document": true
+      },
+      "required_operation_skill_gates": {
+        "dingtalk-doc": true
+      },
+      "reply_contract_read": true,
+      "source_target_exact": true,
+      "business_content_review": {
+        "store_count_conflict_120_80": true,
+        "launch_date_conflict_oct15_oct22": true,
+        "budget_total_500000_vs_lines_620000_difference_120000": true,
+        "request_reconciliation_before_approval": true,
+        "one_reply_no_document_edit_or_approval": true
+      },
+      "callbacks": [
+        {
+          "name": "read_task_skill",
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "result_sha256": "3c0c57c83ff9bd7bc93a806b47136719b6a5c58cdecfe17fa0455498b1b770ce"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-doc"
+          },
+          "result_sha256": "948b589315d22ae5d65905b2cdff054f0935d0b31ae19a1dcdf56673e45bfc1a"
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": null,
+            "name": "dingtalk-chat"
+          },
+          "result_sha256": "3d8be3bb03f0b097531ada65989cedb68ac6cfcc648afc3b00cae0e778ae3e0c"
+        },
+        {
+          "name": "read_dingtalk_document",
+          "arguments": {
+            "node_id": "node-doc-review-1"
+          },
+          "result_sha256": "59c480900930b39c0300f7bd7d07670e3fbb25a1834c3d89360b6e1053eeaac7"
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "reply_to_message"
+          },
+          "result_sha256": "92bf6ccd04c1e662718635ae55f6da5e84c042d5d9222404adfc8c65cb31d527"
+        }
+      ],
+      "trajectory_sha256": "b2a9139bab2cab3e4e88abc9e1fcbac10ce56be6abd0ba7a67f6bb05dd9a6e23",
+      "native_original": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T12-11-38-01a136ad-6e9d-7390-9bad-4c8f54755900.jsonl",
+        "sha256": "5e570eb3a5510c173586e6f84c6722ed50c8a102ac5fe8637e6f6f48e14f4d22"
+      },
+      "native_developer_characters": 24035,
+      "native_extra_catalog_characters": 0
+    }
+  ],
+  "service_developer_reduction_characters": 6168,
+  "complete_acceptance": false,
+  "limitations": [
+    "Service candidate preparation, source snapshot capture, Audit and executor are not run by this model control. Model source_bindings are empty; do not call these prepared source-bound candidates.",
+    "Native catalog equality must be independently checked before claiming single-variable inference.",
+    "One cold pair does not cover continuation, configured providers or standalone TaskAgent.",
+    "Native readback finds 924 automatic Skill directory characters appended to full Developer, compact none. Native bootstrap User lengths also differ. Therefore the native pair is not strictly single-variable despite identical service facts/model/schema."
+  ],
+  "independent_native_review": {
+    "same_submitted_task": true,
+    "same_schema": true,
+    "exact_document_read": true,
+    "same_five_mcp_calls": true,
+    "no_write_calls": true,
+    "business_fact_judgments": true,
+    "strict_native_single_variable": false,
+    "native_bootstrap_user_characters": {
+      "full": 5594,
+      "compact": 5612
+    }
+  }
+}

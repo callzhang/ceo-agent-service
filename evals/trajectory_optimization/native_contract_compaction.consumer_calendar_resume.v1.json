@@ -1,0 +1,186 @@
+{
+  "version": 1,
+  "case": "calendar-cross-midnight",
+  "scope": "Actual OAuth native Consumer same-session continuation after valid cold results; not service session-binding lookup or production execution acceptance",
+  "records": [
+    {
+      "case": "calendar-cross-midnight",
+      "variant": "full",
+      "phase": "resume",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "exit_code": 0,
+      "session_id": "01a136af-37a1-74f1-a692-c2f33502abcb",
+      "turn_completed": true,
+      "wire": {
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "durable_memories": [],
+        "outcome": "no_action",
+        "proposal": null,
+        "decision_options": [],
+        "requested_input": null,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "summary": "实时日历已确认事件 cal-cross-midnight 当前状态为 accepted。该会议主题和说明仍表明磊哥需要提供客户发布例外与 go/no-go 决策；会议对应磊哥当地时间为 2026-10-16 22:30–23:30（America/Los_Angeles），当前核验窗口未发现重叠日程。按 accept_already_confirmed 处理，无需重复发送日历响应。"
+      },
+      "canonical": {
+        "outcome": "no_action",
+        "summary": "实时日历已确认事件 cal-cross-midnight 当前状态为 accepted。该会议主题和说明仍表明磊哥需要提供客户发布例外与 go/no-go 决策；会议对应磊哥当地时间为 2026-10-16 22:30–23:30（America/Los_Angeles），当前核验窗口未发现重叠日程。按 accept_already_confirmed 处理，无需重复发送日历响应。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "task_sha256": "e1f2196b07217ff7da5b6847937daa42955698a8046227a55452199e5aba678f",
+      "developer_sha256": "7ab9e69771a70769c87dee47796c0682f672459548cff826636e4b55da6dad9b",
+      "developer_characters": 30203,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "same_valid_cold_session": true,
+      "current_accepted_state_exact_read": true,
+      "no_duplicate_response": true,
+      "callbacks": [
+        {
+          "name": "read_dingtalk_calendar_event",
+          "arguments": {
+            "event_id": "cal-cross-midnight"
+          },
+          "result_sha256": "8bbe248979ee7c5c927eb858561ef7e6bc5c964d323d0a90e1df4c1f36748925"
+        },
+        {
+          "name": "list_dingtalk_calendar_events",
+          "arguments": {
+            "start": "2026-10-16T22:00:00-07:00",
+            "end": "2026-10-17T00:00:00-07:00"
+          },
+          "result_sha256": "487757106e4914ddd94e0162f610411dc5da8568fa39cf3ca954d0443d17eacb"
+        }
+      ],
+      "trajectory_sha256": "a3239617f4819a1442ad9135f2c291a51ba2f1409ae21fcccd6557aae003fab1",
+      "native_original": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T12-13-35-01a136af-37a1-74f1-a692-c2f33502abcb.jsonl",
+        "sha256": "bb21b771185df056d6a0bea3da183f24991847040310aa2d6fa4123e8f34d171"
+      }
+    },
+    {
+      "case": "calendar-cross-midnight",
+      "variant": "compact",
+      "phase": "resume",
+      "model": "gpt-5.6-luna",
+      "route": "codex_oauth",
+      "exit_code": 0,
+      "session_id": "01a136af-9568-76e1-aca4-6fef3e7ed6d3",
+      "turn_completed": true,
+      "wire": {
+        "error_code": null,
+        "error_retryable": false,
+        "error_authorization_required": false,
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "durable_memories": [],
+        "outcome": "no_action",
+        "proposal": null,
+        "decision_options": [],
+        "requested_input": null,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "summary": "事件 cal-cross-midnight 当前已处于 accepted 状态，组织者为已核验的 organizer-cross，会议内容仍明确要求磊哥提供客户发布例外与 go/no-go 决策。事件换算为洛杉矶时间 2026-10-16 22:30–23:30，已读取的 2026-10-17 00:00–00:30 Blocked 时段不重叠；根据日历技能，保持已接受状态且不重复发送日历响应。"
+      },
+      "canonical": {
+        "outcome": "no_action",
+        "summary": "事件 cal-cross-midnight 当前已处于 accepted 状态，组织者为已核验的 organizer-cross，会议内容仍明确要求磊哥提供客户发布例外与 go/no-go 决策。事件换算为洛杉矶时间 2026-10-16 22:30–23:30，已读取的 2026-10-17 00:00–00:30 Blocked 时段不重叠；根据日历技能，保持已接受状态且不重复发送日历响应。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "task_sha256": "e1f2196b07217ff7da5b6847937daa42955698a8046227a55452199e5aba678f",
+      "developer_sha256": "956e37c10673669358dfb57a5a4f93156330e1aaa1f34e0a302d4ae118a872e1",
+      "developer_characters": 24035,
+      "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+      "same_valid_cold_session": true,
+      "current_accepted_state_exact_read": true,
+      "no_duplicate_response": true,
+      "callbacks": [
+        {
+          "name": "read_dingtalk_calendar_event",
+          "arguments": {
+            "event_id": "cal-cross-midnight"
+          },
+          "result_sha256": "8bbe248979ee7c5c927eb858561ef7e6bc5c964d323d0a90e1df4c1f36748925"
+        },
+        {
+          "name": "list_dingtalk_calendar_events",
+          "arguments": {
+            "start": "2026-10-16T20:00:00-07:00",
+            "end": "2026-10-17T01:00:00-07:00"
+          },
+          "result_sha256": "d37354ac2c68d500548acac6637ea6575c749b20ba1a46411260701f7a4aa2ee"
+        }
+      ],
+      "trajectory_sha256": "1a5423c361f6062a57becd83f7bf4799bb4f2bb6b844430e66fb460448bb11fd",
+      "native_original": {
+        "path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T12-13-59-01a136af-9568-76e1-aca4-6fef3e7ed6d3.jsonl",
+        "sha256": "2fa357212ab282a96f5205f13fe9062b18da65515efce59a881f3242218b40af"
+      }
+    }
+  ],
+  "core_resume_judgment_pass": true,
+  "complete_acceptance": false,
+  "limitations": [
+    "Fixture provider event was explicitly advanced to accepted; no real action was executed.",
+    "Native sessions were explicitly supplied by eval; production binding selection was not exercised.",
+    "Original predeclared Skill gate and native catalog differences remain; full service candidate/Audit/executor acceptance remains pending."
+  ]
+}

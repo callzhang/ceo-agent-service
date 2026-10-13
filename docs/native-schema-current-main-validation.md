@@ -384,3 +384,73 @@ PR78 integrates updated PR31/main at d33e90a8. Current merged role/preview/nativ
 Both complete with valid current domain results and exact digest/revision. Full supplies candidate_fields feedback with3 exact assertions checked against the current candidate; compact supplies valid business feedback with0 assertions. The latter passes the validator on an empty assertion set and is not evidence of field-level assertion binding. Both request correcting the factual conflicts but still return return rather than predeclared reject. Full does not read the required reply action contract; compact does. Business acceptance remains unpassed; single-sample read differences are not attributable to compaction. No new instruction, policy, adoption override or fallback follows from these observations.
 
 Concise current results and native/source hashes: native_contract_compaction.audit_business_control.v3.json. Prior v5/v6 controls retain their actual inputs and their scope limitations. Consumer domains, standalone TaskAgent, current-route continuation and production publication remain outstanding.
+
+### Consumer native mail fixture binding
+
+The Consumer business control uses the production task/developer assembly and
+native Consumer tools, with separate empty workspaces for each variant. An
+absolute mail material locator alone did not bind the CLI prescribed by the
+installed Skill: both runs selected the machine's native `dws`, failed credential
+lock access in the sandbox, and never read anonymous mail. These are fixture
+binding failures, not business or compaction acceptance. The original native
+sessions and concise evidence are recorded in
+`native_contract_compaction.consumer_mail_binding.v1.json`.
+
+The eval now sets the anonymous CLI directory first through the native
+`shell_environment_policy.set.PATH` configuration. A focused regression checks
+resolution through the native login shell, exact original thread readback, and
+rejection of write leaves. This changes only the eval transport; installed
+Skills, service runtime, contracts, and provider configuration are unchanged.
+Actual model readback is still required before declaring this binding accepted.
+
+Actual cold readback is now recorded in
+`native_contract_compaction.consumer_mail_control.v1.json`: both native turns
+completed, returned canonical `no_action`, and their thread command outputs
+matched the same anonymous original conversation including both messages.
+Developer input was 30,203 versus 24,035 characters (6,168 fewer). Full read only
+the task Skill; compact also read the installed mail and shared operation Skills.
+Neither read the locator chat or separate mailbox/sent receipt. The original
+case's gates remain unchanged and incomplete, so this is correct business fact
+judgment and verified fixture binding, not complete scenario acceptance. Native
+AGENTS reads are separately visible in both trajectories and are not counted
+as service submitted Developer text.
+
+Independent native review found 924 characters of automatic Skill/plugin discovery
+added to compact native Developer (24,959 total), while full matched the saved
+30,203-character service Developer. Native bootstrap User lengths also differed.
+The 6,168-character reduction measures service assembly only; catalog drift
+prevents attributing behavior to one native-input variable.
+
+### Consumer document cold control
+
+The actual current-canonical document pair is recorded in
+`native_contract_compaction.consumer_document_control.v1.json`. Both variants
+read exactly the current anonymous document, task/doc/chat Skills and the reply
+contract. Both propose one exact source-message reply identifying the 120/80
+store conflict, October 15/22 conflict and USD 500,000/620,000 budget discrepancy,
+requesting reconciliation before approval. Neither performs a document edit or
+approval. This runner records model results only: it has not performed service
+candidate preparation, source capture, Audit or System Executor. Its empty model
+source bindings must not be described as prepared source-bound candidates.
+Native catalog parity and the remaining session/provider/pipeline gates remain
+separate requirements.
+
+### Cross-midnight calendar cold and continuation
+
+`native_contract_compaction.consumer_calendar_control.v1.json` records both
+correct cold timezone conversions and exact accept proposals. Full's conflict
+window covers the invitation but stops at midnight; compact's larger window
+also returns the later Blocked event. Both omit the predeclared shared Skill
+read, and full native Developer has an extra automatic Skill directory. A
+compact custom-tool attempt failed before its successful MCP Skill read. These
+limitations are retained.
+
+`native_contract_compaction.consumer_calendar_resume.v1.json` records actual
+continuations using each valid cold SID. Both reread the fixture's now-accepted
+event and return canonical no_action without another response. This proves
+native session continuation and the current-state judgment; it does not prove
+production session-binding selection or real calendar execution. The first eval
+resume export used a dotted filename stem and replaced temporary cold stdout
+exports; the original cold native trajectories remain verified hash prefixes in
+the retained native sessions. Separate cold/resume output names now have a
+focused regression. The active fixture root remains needed for remaining cases.
