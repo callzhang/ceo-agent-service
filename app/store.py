@@ -189,6 +189,9 @@ from app.action_storage import (
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
     REVIEW_CANDIDATE_SQL,
+    EXTERNAL_ACTION_RESULT_SQL,
+    AGENT_EFFECT_INTENT_SQL,
+    AGENT_EXECUTION_RECEIPT_SQL,
 )
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
@@ -9933,7 +9936,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 # Match the receipt/settlement exclusions used by
                 # reconcile_done_reply_tasks_with_failed_current_run.
                 settled = db.execute(
-                    """select 1 from external_action_results actions
+                    f"""select 1 from ({EXTERNAL_ACTION_RESULT_SQL}) actions
                        join sent_replies replies
                          on replies.external_action_key=actions.external_action_key
                        where actions.business_object_key=? limit 1""",
@@ -13384,12 +13387,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return False
             if db.execute(f"select 1 from ({RUNTIME_ATTEMPT_SQL}) where agent_run_id=? limit 1", (run_id,)).fetchone():
                 return False
-            for table in (
-                "agent_effect_intents",
-                "agent_execution_receipts",
+            for source in (
+                AGENT_EFFECT_INTENT_SQL,
+                AGENT_EXECUTION_RECEIPT_SQL,
             ):
                 if db.execute(
-                    f"select 1 from {table} where agent_run_id=? limit 1",
+                    f"select 1 from ({source}) where agent_run_id=? limit 1",
                     (run_id,),
                 ).fetchone():
                     return False
@@ -20112,22 +20115,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             ).fetchone()
             if run is None or run["business_object_key"] != business_object_key:
                 raise ValueError("completed message delivery run identity mismatch")
-            db.execute(
-                """
-                insert or ignore into external_action_results (
-                    external_action_key, business_object_key, action_identity,
-                    operation, target_identifiers_json, provider_result_json,
-                    result_digest, first_agent_run_id
-                ) values (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    external_action_key, business_object_key, action_identity,
-                    operation, target_json, provider_json, result_digest,
-                    agent_run_id,
-                ),
-            )
+            insert_action(db, "external_action_results", {
+                "external_action_key": external_action_key,
+                "business_object_key": business_object_key,
+                "action_identity": action_identity, "operation": operation,
+                "target_identifiers_json": target_json, "provider_result_json": provider_json,
+                "result_digest": result_digest, "first_agent_run_id": agent_run_id,
+            }, ignore=True)
             completed = db.execute(
-                "select * from external_action_results where external_action_key=?",
+                f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
                 (external_action_key,),
             ).fetchone()
             if (
@@ -20197,7 +20193,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if not business_object_key:
                 raise ValueError("reconciled task has no business object key")
             recorded = db.execute(
-                "select 1 from external_action_results "
+                f"select 1 from ({EXTERNAL_ACTION_RESULT_SQL}) "
                 "where external_action_key=? and business_object_key=?",
                 (key, business_object_key),
             ).fetchone()
@@ -20362,25 +20358,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             business_object_key = str(task["business_object_key"] or "").strip()
             if not business_object_key:
                 raise ValueError("reconciled task has no business object key")
-            db.execute(
-                """
-                insert or ignore into external_action_results (
-                    external_action_key, business_object_key, action_identity,
-                    operation, target_identifiers_json, provider_result_json,
-                    result_digest, first_agent_run_id
-                ) values (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    action_key,
-                    business_object_key,
-                    action_identity,
-                    operation,
-                    target_json,
-                    provider_json,
-                    _canonical_json_sha256(provider_result),
-                    send_run_id,
-                ),
-            )
+            insert_action(db, "external_action_results", {
+                "external_action_key": action_key,
+                "business_object_key": business_object_key,
+                "action_identity": action_identity, "operation": operation,
+                "target_identifiers_json": target_json, "provider_result_json": provider_json,
+                "result_digest": _canonical_json_sha256(provider_result),
+                "first_agent_run_id": send_run_id,
+            }, ignore=True)
             db.execute(
                 """
                 insert or ignore into sent_replies (
@@ -20491,20 +20476,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 raise ValueError("current reviewed operation has no verified send receipt")
             for row in matched:
                 action = expected[row["external_action_key"]]
-                db.execute(
-                    """
-                    insert or ignore into external_action_results (
-                        external_action_key, business_object_key, action_identity,
-                        operation, target_identifiers_json, provider_result_json,
-                        result_digest, first_agent_run_id
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (row["external_action_key"], task.business_object_key,
-                     action["action_identity"], action["operation"],
-                     _json_object_text(action["target"], field="target_identifiers"),
-                     row["send_result_json"], _canonical_json_sha256(json.loads(row["send_result_json"])),
-                     row["agent_run_id"]),
-                )
+                insert_action(db, "external_action_results", {
+                    "external_action_key": row["external_action_key"],
+                    "business_object_key": task.business_object_key,
+                    "action_identity": action["action_identity"], "operation": action["operation"],
+                    "target_identifiers_json": _json_object_text(action["target"], field="target_identifiers"),
+                    "provider_result_json": row["send_result_json"],
+                    "result_digest": _canonical_json_sha256(json.loads(row["send_result_json"])),
+                    "first_agent_run_id": row["agent_run_id"],
+                }, ignore=True)
             cursor = db.execute(
                 f"""
                 update tasks as reply_tasks set status='done', error='', available_at='',
@@ -20533,14 +20513,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         """
         with self._immediate_write_transaction() as db:
             compact_ids = db.execute(
-                """
+                f"""
                 update tasks as tasks
                 set status='done', error='', available_at='', locked_at=null,
                     updated_at=current_timestamp
                 where tasks.record_type='reply_tasks' and tasks.status in ('failed', 'needs_human')
                   and exists (
                       select 1
-                      from external_action_results as actions
+                      from ({EXTERNAL_ACTION_RESULT_SQL}) as actions
                       join sent_replies as replies
                         on replies.external_action_key=actions.external_action_key
                       where actions.business_object_key=tasks.business_object_key
@@ -24432,7 +24412,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 where tasks.status='done' and runs.status='failed'
                   and not exists (
                       select 1
-                      from external_action_results as actions
+                      from ({EXTERNAL_ACTION_RESULT_SQL}) as actions
                       join sent_replies as replies
                         on replies.external_action_key=actions.external_action_key
                       where actions.business_object_key=tasks.business_object_key
