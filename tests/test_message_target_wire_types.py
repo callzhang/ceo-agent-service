@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator
@@ -6,6 +7,8 @@ from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from pydantic import ValidationError
 
 from app.agent_contracts import ConsumerAgentResult
+from app.consumer_agent import ConsumerAgentRunner
+from tests import test_consumer_agent as consumer_tests
 from app.agent_result import ResultParseError
 from app.agent_wire_contracts import ConsumerAgentWireResult, parse_consumer_agent_wire_result
 from tests.test_agent_contracts import _consumer_wire_payload, _proposal
@@ -89,3 +92,38 @@ def test_new_wire_validates_executable_human_branches():
         ConsumerAgentWireResult.model_validate(payload)
     with pytest.raises(JsonSchemaValidationError):
         Draft202012Validator(ConsumerAgentWireResult.model_json_schema()).validate(payload)
+
+store = consumer_tests.store
+task = consumer_tests.task
+context = consumer_tests.context
+
+
+def test_numeric_identifier_enters_existing_result_correction_before_audit(
+    store, task, context, tmp_path
+):
+    payload = payload_for({"open_dingtalk_id": 104265682397})
+    stream = "\n".join((
+        json.dumps({"type": "thread.started", "thread_id": "numeric-target-fixture"}),
+        json.dumps({"type": "item.completed", "item": {
+            "type": "agent_message", "text": json.dumps(payload),
+        }}),
+    ))
+    runner = ConsumerAgentRunner(
+        store=store, workspace=Path(tmp_path),
+        executor=consumer_tests.CapturingExecutor(stream),
+    )
+    with pytest.raises(ResultParseError):
+        runner.run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    [run] = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
+    error = json.loads(run.structured_error_json)
+    assert run.status == "failed"
+    assert error["code"] == "codex_result_invalid"
+    assert "open_dingtalk_id" in error["detail"]
+    assert run.final_result_json == ""
+
+    executor = consumer_tests.CapturingExecutor(consumer_tests._result_jsonl())
+    ConsumerAgentRunner(store=store, workspace=Path(tmp_path), executor=executor).run(
+        task, context, proposal_revision=0, parent_agent_run_id=None
+    )
+    assert "## Result Correction" in executor.prompts[0]
+    assert "open_dingtalk_id" in executor.prompts[0]

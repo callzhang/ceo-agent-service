@@ -41,3 +41,17 @@ parser enforces the rule locally. Native output schema work remains independent.
 
 No live provider message, production deployment or broad prompt quality acceptance
 is claimed by these tests. The current scalar Audit table remains unchanged.
+
+## Current-main integration and correction lifecycle
+
+Merged current main `31d95f4e` without rewriting either branch; the only conflict
+was appended ownership rows, both retained. The affected integration group passed
+517 tests with 4 skips after the merge. A further scripted real
+ConsumerAgentRunner regression verifies a numeric target fails result parsing,
+saves `codex_result_invalid` with the specific field detail and no final result,
+and includes that detail in the next existing Result Correction input. This is
+service lifecycle evidence with a scripted executor, not a native model outcome.
+Its first assertion incorrectly expected the outer exception to carry the field;
+the parser intentionally keeps the detail in its cause and persisted error. The
+assertion was corrected without changing runtime error handling. Final contracts
+and identifier/lifecycle checks passed 165 tests; Ruff passed.
