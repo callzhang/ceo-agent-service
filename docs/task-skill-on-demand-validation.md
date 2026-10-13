@@ -138,3 +138,22 @@ owner, Attention and integrity readback in a separate temporary database. The
 fixed application clock above differs from the manifest risk clock
 (`2026-10-13T10:00:00Z`); application at that case clock was independently
 checked too and gives the same readback. Neither check is a new native run.
+
+## Fresh production input inventory
+
+Read-only inventory of completed Task runs353013/353021 in native session
+01a135ff-083f-7d23-b64d-5abd845f7cc8 finds a345116-character service Task
+message, including314573 characters of semantic context JSON. The current
+23452-character installed Skill body occurs both in that service Task and the
+separate native selected-Skill message. This is a fresh production example of
+the inline duplicate addressed by PR57, not proof that PR57 is deployed.
+
+The semantic context includes98 Signal references and50 shared source documents.
+Existing sharing already reduces1244930 body characters to634397 unique source
+characters and102931 visible body characters. Work Item metadata omits its
+summary, so another current-body copy must not be claimed. Large field sizes
+alone do not authorize dropping facts: the next investigation must distinguish
+necessary source evidence, historical context and internal storage metadata.
+Only numeric inventories and hashes are retained in
+`task_current_input_inventory.v1.json`; private facts and original bodies stay
+in the existing native session. No new inference, code or external action occurs.
