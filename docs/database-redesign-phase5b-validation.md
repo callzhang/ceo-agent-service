@@ -31,3 +31,5 @@ main/实际生产已推进到f1377ab8（OA field facts与return恢复）；已me
 正式 CI38415291120 对3f7c0249运行，12,363项通过；7项失败和3项初始化错误均来自source13历史构造。共同helper只完成Workbench source13→14，却将数据库直接交给只接受准确source15→16的当前Store。修正只在测试构造链补充已独立验证的candidate actions source14→15迁移，并保留完整字段／ID及分配器比较；不扩大生产兼容来源，不削弱原业务断言。后续正式CI必须对应修正后的head；本次失败不作为通过证据。
 
 修正已提交34c37699，非空回归包含原candidate原始TEXT、三类独立回执和删除后的高水位50，并分别检查准确Store15中间态及Store16当前态。root新鲜运行task/meeting/Workbench/Store来源案例与该回归，81项通过；此数不与前述选集合计。root逐项重新核对copy/native批准/native修订三份证明所绑定的326个app Python/JSON文件SHA256，均与当前代码匹配；此次fixture修正不改变已接受的副本及真实CLI运行代码范围。
+
+该fixture修正独立SPEC和QUALITY均通过。QUALITY另填满六类actions及三类receipt，对全部字段值和存储类型、NUL原文、非JSON字符串、公开／物理身份和删除后分配器水位做13→14→15→16核对；新分配ID61／51符合保留的水位。故障注入确认两段迁移处于同一FK-off事务，异常时另一连接仍见已提交source13声明／marker，不会留下伪中间版本。此为测试构造质量证据，不扩大生产迁移来源。
