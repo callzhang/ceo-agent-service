@@ -139,3 +139,12 @@ native验收绑定较早候选的完整app哈希；新main只改变独立OA函�
 RED为no such table。夹具改用typed delete_action后保留同一非法状态、拒绝发送及
 runner零调用断言，整文件44项通过；Ruff/diff通过。没有改运行代码或发送规则。
 此前CI版本因此被新提交取代，最终完整CI必须绑定本修正后的提交。
+
+## 最终 CI 的 OA 日报夹具修正
+
+Quality CI 38439477577（c2674086）实际完成后报告 1 failed、12,590 passed、
+110 skipped、44 deselected，用时 34 分 30 秒。唯一失败是日报的待 Derek 处理
+事项夹具：最新 main 的 OA 修复要求非空 oa_task_id，而夹具只给了 process ID。
+本地复现同一失败后，补齐已有 oa_task_id 字段；保留原有已处理、跳过及等待事项
+断言，不修改运行代码或主线 selector。日报、OA attention 与扫描器合计 66 项通过，
+Ruff 和 diff 检查通过。以上仅为定向检查；最终完整 CI 仍需在新提交上重新通过。
