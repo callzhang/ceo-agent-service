@@ -512,3 +512,32 @@ trigger raw data may preserve IDs only in some sources. This is confirmed data
 projection loss, not yet attribution of a particular production failure. The
 next input improvement should preserve original organizer identity in returned
 data and verify source fidelity, rather than add a notification prompt rule.
+
+## Store17 integration and scripted native protocol regression
+
+PR31 integrates current main `dc6abe2d` in `fad2915e`; independent documentation
+appendices are both preserved. Existing CI run38449177442 at57f34f94 failed30
+cases. The same failure set appears in PR78 run38456452848. These are terminal
+check results, not evidence of successful publication. Main already fixes the
+waiting-OA daily-report fixture; the remaining scripted native fixtures still
+emitted canonical JSON where the approved Codex native transport requires
+recursive entries objects. Three representative tests reproduced the failures
+locally before correction, including the exact native-object rejection.
+
+The shared test-only encoder first validates the canonical fixture, then
+represents open JSON maps and nested values in the native format. Consumer/Audit
+scripted final events use it; their simulated tools, candidate facts, business
+results, errors, retry assertions and executor checks are unchanged. Calendar
+e2e now checks the native schema argument is present; the three-route test
+checks the Codex format appendix and the existing unchanged Claude input.
+No runtime, fallback, authorization, audit policy or provider change is made.
+
+Four affected test files: **172 passed,1 deselected**. Native codec, canonical
+schema snapshots and identifier tests: **113 passed**. Ruff and diff check pass.
+A read-only reviewer checked both minimal native results against the projected
+schema and real parser and found no lost defaults or weakened business or retry
+oracles. Fixture key order follows the canonical model, whereas real constrained
+generation uses the native schema order with summary last. These are service
+protocol regression fixtures, not a model-generation-order evaluation. New full
+CI has not yet completed, and all outstanding provider/business/production
+gates remain unchanged.

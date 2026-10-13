@@ -1,0 +1,94 @@
+{
+  "scope": "post-main-merge actual production online copy; formal factory/new interpreter and current deployed old constructor",
+  "candidate_commit": "40dfa5b9c0e50ea07de9d755886531e641151813",
+  "source_commit": "db0c2b7331deb80418b959ad0f556f96a9ef96d2",
+  "old_constructor_commit": "db0c2b7331deb80418b959ad0f556f96a9ef96d2",
+  "source_version": "2026-10-13.2",
+  "target_version": "2026-10-13.3",
+  "source_physical_tables": 129,
+  "target_physical_tables": 126,
+  "original_nine_persistent_fingerprint": {
+    "rows": 2160,
+    "sha256_values_types": "0a6ebc0d433ddedc83eb6ae9e9255c6f9bc5225b2137eb91d2d49df36cd8e23f"
+  },
+  "original_allocators": {
+    "agent_effect_intents": 560,
+    "agent_execution_receipts": 115
+  },
+  "unchanged_tables": 123,
+  "source_fk_findings": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "source_postfix_facts": {
+    "outbound_postfixes": {
+      "rows": 1079,
+      "sha256_values_types": "bfda70d6cf046346d01b9f6c17c9624e9feb7229d7199b0541bd3aa608ac099a"
+    },
+    "outbound_postfix_receipts": {
+      "rows": 613,
+      "sha256_values_types": "86a1af91461df6563b0229b8dfceeb311fbd841c4f5b969fe1c8a19ed2c1eae0"
+    },
+    "native_reply_dispatches": {
+      "rows": 67,
+      "sha256_values_types": "5c0b968cc72318fb79dbe3e5d7027b42a44f8ed4fd79a5c000c886277ce7bf99"
+    }
+  },
+  "current_postfix_facts": {
+    "outbound_postfixes": {
+      "rows": 1080,
+      "sha256_values_types": "b232036bbc360f7561cb5c6b52dda97124529c22a4941d96b3290db8eaef82d4"
+    },
+    "outbound_postfix_receipts": {
+      "rows": 614,
+      "sha256_values_types": "97cfbb8d3f9ad634056b958c85d8cfe8eace932dace5c4abb8a4069b45a965e4"
+    },
+    "native_reply_dispatches": {
+      "rows": 68,
+      "sha256_values_types": "32ce69331e38b73a5765dfbe421d81e96137e5de2bbf2e660cdc9a1c163bed8b"
+    }
+  },
+  "real_constructor_forward": true,
+  "current_fact_inverse": true,
+  "repeated_inverse": true,
+  "original_marker_restored": true,
+  "actual_old_constructor_readback": true,
+  "forward_inverse_forward": true,
+  "real_sends": 0,
+  "code_sha256": {
+    "app/store.py": "8b23d8a991774c89df1ed13cb2f76a67a581bb2fb6787f584b6f582ef270a11b",
+    "app/action_storage.py": "ba2216cbd2c554a5f85d78bdc0e5c593ab5daaa64db792a66cb59875fd92f496",
+    "app/action_postfix_storage.py": "123706c686b7a54bab6976068e49d17aa7d9ed4249f0843102086ae8d77bd8f0",
+    "app/action_postfix_schema_release.py": "1e2cac54525be36e17d04601f0cdfb4a856cd458de89fc67d80f31f4abb1f5a4",
+    "app/store_schema_release.py": "91a59e89629e413a6738bf011923f56d9344ab60b9539223984ec5ca32a70235"
+  },
+  "post_main_merge": {
+    "commit": "d8c2afcd3720a813fed7fccfc0d1b0b94859685b",
+    "merged_main": "d7397203df678fd4137c237eb7eb84a671e084f3",
+    "native_candidate": "40dfa5b9c0e50ea07de9d755886531e641151813",
+    "postfix_constructor_caller_ast_unchanged": [
+      "prepare_meeting_alignment_message",
+      "prepare_outbound_postfix",
+      "_prepare_outbound_postfix_in_transaction",
+      "get_outbound_postfix",
+      "recorded_outbound_body_keys",
+      "claim_native_reply_dispatch",
+      "get_outbound_postfix_receipt",
+      "record_outbound_postfix_receipt",
+      "_require_supported_store_bootstrap_source",
+      "_migrate_known_task_schema",
+      "rerun_meeting_alignment_jobs"
+    ],
+    "changed_existing_store_methods": [
+      "list_oa_task_not_pending_attempts"
+    ],
+    "added_store_methods": [
+      "correct_legacy_oa_task_not_pending_resolution"
+    ],
+    "focused_checks_passed": 89
+  }
+}

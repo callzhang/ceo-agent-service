@@ -31,6 +31,7 @@ from app.runtime_environment import central_python
 from app.worker import ORCHESTRATION_ATTEMPT_STATUS, DingTalkAutoReplyWorker
 from tests.support.image_bytes import TINY_PNG
 from tests.support.native_protocol import install_protocol_native_trajectories
+from tests.support.native_schema import native_wire_fixture
 
 from app.business_skills import bundled_business_skills_root
 
@@ -926,7 +927,9 @@ def _agent_result_event(result) -> dict[str, object]:
         )
     return {
         "type": "item.completed",
-        "item": {"type": "agent_message", "text": json.dumps(payload)},
+        "item": {"type": "agent_message", "text": json.dumps(native_wire_fixture(
+            payload, role="consumer" if isinstance(result, ConsumerAgentResult) else "audit"
+        ))},
     }
 
 

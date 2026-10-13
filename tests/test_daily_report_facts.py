@@ -298,6 +298,7 @@ def test_handled_items_leave_out_no_action_runs_and_list_what_waits_on_derek(
         send_status="needs_human",
         created_at=INSIDE_LATE,
         oa_process_instance_id="proc-1",
+        oa_task_id="oa-task-1",
     )
     _attempt(store, "m-yesterday", send_status="completed", created_at=BEFORE)
 
