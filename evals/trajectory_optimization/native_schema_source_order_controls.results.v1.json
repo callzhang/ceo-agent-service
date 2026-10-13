@@ -1,0 +1,340 @@
+{
+  "version": 1,
+  "code_commit": "89563bf3",
+  "experiment": "source-binding key order and prior/current rule diagnostic; all data synthetic, all callbacks read-only",
+  "invariants": [
+    "Complete candidate JSON value, Developer, digest and Task length identical within source-order pair.",
+    "Only candidate.source_bindings key position differs within source-order pair.",
+    "Prior-rule controls retain exact baseline Task/digest; Developer only removes later field-type evidence instruction."
+  ],
+  "shared_fixture_change": "list_task_artifacts empty native response for every arm; do not treat differences versus previous fixture as source-order effect",
+  "generation": {
+    "source_input_sha256": "0e1d32fc4700a51bab08413cd208f63d3d70b916a7b862e7e5db859acb1c11f0",
+    "only_service_input_change": "move candidate source_bindings key to first position; same complete JSON value, digest and length",
+    "task_characters": 5147,
+    "developer_characters": 10055,
+    "shared_fixture_change": "list_task_artifacts returns native empty files instead of unsupported error in all arms",
+    "initial_artifact": "/private/tmp/ceo-audit-api-capacity-control-5cj_9xyf"
+  },
+  "runs": [
+    {
+      "arm": "baseline-1",
+      "route": "codex_api",
+      "case": "correct",
+      "variant": "baseline",
+      "exit_code": 1,
+      "timed_out": false,
+      "session_id": "01a12e67-8fdd-7ff2-a22e-00e49cb9d957",
+      "turn_completed": false,
+      "developer_characters": 10055,
+      "task_characters": 5147,
+      "calls": [],
+      "canonical_valid": false,
+      "binding_valid": false,
+      "native_schema_valid": false,
+      "parse_error": "ResultParseError",
+      "artifact_root": "/private/tmp/ceo-audit-source-order-controls-rpdq86gx",
+      "files_sha256": {
+        "input.json": "2286f02409d68dd40a6a7c387ecf99b1d83c1589791254e03813a9ca2929eeef",
+        "events.jsonl": "eeeba247282ccf92e488abb6ccca7c6dd47e8c1815a7ecb7b508f09dc6e878b8"
+      },
+      "provider_429": true,
+      "valid_terminal": false,
+      "business_assessment": "provider failure; any parsed intermediate message excluded"
+    },
+    {
+      "arm": "sources_first-1",
+      "route": "codex_api",
+      "case": "correct",
+      "variant": "sources_first",
+      "exit_code": 1,
+      "timed_out": false,
+      "session_id": "01a12e67-a54b-7282-9d68-ec5b6a97bb78",
+      "turn_completed": false,
+      "developer_characters": 10055,
+      "task_characters": 5147,
+      "calls": [],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "failed",
+      "feedback_nonnull": false,
+      "artifact_root": "/private/tmp/ceo-audit-source-order-controls-rpdq86gx",
+      "files_sha256": {
+        "input.json": "3e1222c415a2a58559bcfc0144c622711bf070fa43845d70678827a298f72851",
+        "events.jsonl": "d8eb89b0188024af48ed3b2412b4d35de64a52af924e40d0a820d33ba440e89c",
+        "canonical.json": "492dfedd4e977e36c30b7a211c0955ee9ae9eb8e3978fbce6b8b9f5b9597297d"
+      },
+      "provider_429": true,
+      "valid_terminal": false,
+      "business_assessment": "provider failure; any parsed intermediate message excluded"
+    },
+    {
+      "arm": "baseline-2",
+      "route": "codex_api",
+      "case": "correct",
+      "variant": "baseline",
+      "exit_code": 1,
+      "timed_out": false,
+      "session_id": "01a12e67-e0e6-7440-aed5-9d8f7f302524",
+      "turn_completed": false,
+      "developer_characters": 10055,
+      "task_characters": 5147,
+      "calls": [],
+      "canonical_valid": false,
+      "binding_valid": false,
+      "native_schema_valid": false,
+      "parse_error": "ResultParseError",
+      "artifact_root": "/private/tmp/ceo-audit-source-order-controls-rpdq86gx",
+      "files_sha256": {
+        "input.json": "2286f02409d68dd40a6a7c387ecf99b1d83c1589791254e03813a9ca2929eeef",
+        "events.jsonl": "ef486cefd302ac3aa81c7ed966b9d65eb9e167d2b2081f419ea9dfba03456bf0"
+      },
+      "provider_429": true,
+      "valid_terminal": false,
+      "business_assessment": "provider failure; any parsed intermediate message excluded"
+    },
+    {
+      "arm": "sources_first-2",
+      "route": "codex_api",
+      "case": "correct",
+      "variant": "sources_first",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e67-f4da-7531-98f6-633f01ce047a",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5147,
+      "calls": [
+        "read_system_action_contract"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "artifact_root": "/private/tmp/ceo-audit-source-order-controls-rpdq86gx",
+      "files_sha256": {
+        "input.json": "3e1222c415a2a58559bcfc0144c622711bf070fa43845d70678827a298f72851",
+        "events.jsonl": "5bd7087e662ba5743e621d02e0271e0ae3982f9a40e66fdffd3944bfbde7d5f2",
+        "calls.json": "494b8e5195d0047fa408ca3723c6d7212f8a2eaa1943ffb85fa9e53d4d9c9aa4",
+        "canonical.json": "f685c7e83f0897ec84437fc09ab7644c4b43280923b63725bf52b891c99b1893"
+      },
+      "provider_429": false,
+      "valid_terminal": true,
+      "business_assessment": "false type feedback against string candidate"
+    },
+    {
+      "arm": "baseline-1",
+      "route": "codex_oauth",
+      "case": "correct",
+      "variant": "baseline",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e69-59ee-7733-93c0-c873b36eaefa",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5147,
+      "calls": [
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "artifact_root": "/private/tmp/ceo-audit-source-order-oauth-vbxe9he3",
+      "files_sha256": {
+        "input.json": "2286f02409d68dd40a6a7c387ecf99b1d83c1589791254e03813a9ca2929eeef",
+        "events.jsonl": "0ecf863aaada8210e3a9b6feaacedd0e1e52de36e853b26e7c5f7f49e2f7b41f",
+        "calls.json": "ffdffb232086754cd033f7273642fb9c92caf8b3ad57196190421d82c68fb6b1",
+        "canonical.json": "8056fc3aa4f2006e49de5b554f600f61cdbae19447c0c81212d3f0684f48c8ed"
+      },
+      "provider_429": false,
+      "valid_terminal": true,
+      "business_assessment": "false type feedback against string candidate"
+    },
+    {
+      "arm": "sources_first-1",
+      "route": "codex_oauth",
+      "case": "correct",
+      "variant": "sources_first",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e69-986c-78d2-9750-5b5d8545ff08",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5147,
+      "calls": [
+        "read_system_action_contract",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities",
+        "read_dingtalk_oa"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "artifact_root": "/private/tmp/ceo-audit-source-order-oauth-vbxe9he3",
+      "files_sha256": {
+        "input.json": "3e1222c415a2a58559bcfc0144c622711bf070fa43845d70678827a298f72851",
+        "events.jsonl": "ccc57d22153cf03b1a2078ce3355e087683b565edf83da09a4ef878ac9d13d21",
+        "calls.json": "782e4111177138adf0ff0be527d3d7d2e24625d03e0ac3077e2a3482d2332a3b",
+        "canonical.json": "6cdb26fcfc7583e95342e619a51e1531419571369be4b7aeed31d5cce7639c68"
+      },
+      "provider_429": false,
+      "valid_terminal": true,
+      "business_assessment": "false type feedback against string candidate"
+    },
+    {
+      "arm": "baseline-2",
+      "route": "codex_oauth",
+      "case": "correct",
+      "variant": "baseline",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e69-d9f0-7593-be83-e172d805020e",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5147,
+      "calls": [
+        "read_text_file",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_skill",
+        "read_skill"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "artifact_root": "/private/tmp/ceo-audit-source-order-oauth-vbxe9he3",
+      "files_sha256": {
+        "input.json": "2286f02409d68dd40a6a7c387ecf99b1d83c1589791254e03813a9ca2929eeef",
+        "events.jsonl": "b15295a587116c8b0757bd3f8e63d478286831a87291cb3d2627db60643c46d6",
+        "calls.json": "b41f9ab1493a579c6f6284a1ccfc89497d52b120efc25b6a405ca64941ddf779",
+        "canonical.json": "c68819e00f8b768424a4b7a66d0ffc27fee9ad60cabe58be35d867855a0da5e0"
+      },
+      "provider_429": false,
+      "valid_terminal": true,
+      "business_assessment": "false type feedback against string candidate"
+    },
+    {
+      "arm": "sources_first-2",
+      "route": "codex_oauth",
+      "case": "correct",
+      "variant": "sources_first",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e6a-204b-7ed2-a7b7-efa43a0c64b6",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5147,
+      "calls": [
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "artifact_root": "/private/tmp/ceo-audit-source-order-oauth-vbxe9he3",
+      "files_sha256": {
+        "input.json": "3e1222c415a2a58559bcfc0144c622711bf070fa43845d70678827a298f72851",
+        "events.jsonl": "9738feaa79b96c79f49569d33719d7876b3268e3e9fdedc0fbe710a4bf232cd1",
+        "calls.json": "ffdffb232086754cd033f7273642fb9c92caf8b3ad57196190421d82c68fb6b1",
+        "canonical.json": "fddb7527d7eaec56c873b172b9f0e974b5651f99b2b359be059e0e7629aebc2a"
+      },
+      "provider_429": false,
+      "valid_terminal": true,
+      "business_assessment": "false type feedback against string candidate"
+    },
+    {
+      "arm": "before-1",
+      "route": "codex_oauth",
+      "case": "correct",
+      "variant": "before",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e6b-9cab-73c0-9cd3-be25dbcefa54",
+      "turn_completed": true,
+      "developer_characters": 9594,
+      "task_characters": 5147,
+      "calls": [
+        "read_text_file",
+        "read_system_action_contract",
+        "read_dingtalk_oa"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "artifact_root": "/private/tmp/ceo-audit-before-rule-oauth-6sp5xqy8",
+      "files_sha256": {
+        "input.json": "fb0b0a78082ae1abccfcd66b70c524d7a5882e746dfcc17a0f7865317c8821cd",
+        "events.jsonl": "af7fe1066c450aa089de8aed1ac21011b09285fcdd11aae8800267ea1bf72714",
+        "calls.json": "3e1c28c42f65841264a9fcb2f07abc2513eec5fc91b11502f8498cc2e14e0dfb",
+        "canonical.json": "b818a9e21c94923bfc110391b9817a869fe315eeb6e684c88149754636adc1d7"
+      },
+      "provider_429": false,
+      "valid_terminal": true,
+      "business_assessment": "false type feedback against string candidate"
+    },
+    {
+      "arm": "before-2",
+      "route": "codex_oauth",
+      "case": "correct",
+      "variant": "before",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e6b-d300-7411-bdcb-e043ea62c398",
+      "turn_completed": true,
+      "developer_characters": 9594,
+      "task_characters": 5147,
+      "calls": [
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "artifact_root": "/private/tmp/ceo-audit-before-rule-oauth-6sp5xqy8",
+      "files_sha256": {
+        "input.json": "fb0b0a78082ae1abccfcd66b70c524d7a5882e746dfcc17a0f7865317c8821cd",
+        "events.jsonl": "0b7e391ecc979245f3dd7c84462d0fd3b7c9b7954eda3b8a6e7603714ab4bd1a",
+        "calls.json": "ffdffb232086754cd033f7273642fb9c92caf8b3ad57196190421d82c68fb6b1",
+        "canonical.json": "d6ee6336417cee01ed9a5a9bcd280e684dd4acf8c5367c76e811d8427697c6ad"
+      },
+      "provider_429": false,
+      "valid_terminal": true,
+      "business_assessment": "false type feedback against string candidate"
+    }
+  ],
+  "confirmed": [
+    "OAuth original order0/2 correct; source-first order0/2 correct; both independent cold arms misreport existing string candidate task_id as number.",
+    "OAuth prior rules0/2 correct; same false type request; added instruction is not a necessary condition for this failure.",
+    "API3/4 provider429; sole completed source-first case still false type feedback.",
+    "One429 arm contains a schema-valid intermediate message; turn.failed means it is not accepted as terminal."
+  ],
+  "limitations": [
+    "Synthetic source-only diagnostics are not full Skill/OA/production acceptance.",
+    "Most cases omit selected Skill; unsupported synthetic file-reader calls occur in two OAuth cases.",
+    "One OAuth original-order case also confuses completion state REDIRECT_PROCESS with payload revert_action.",
+    "API and OAuth are evaluated separately; no cross-route causal effect claimed.",
+    "No runtime prompt, validator, audit policy, schema, route or provider change deployed."
+  ],
+  "independent_review": "readonly_business_matrix_review verified actual native input hashes, full string candidate vs numeric source facts, exact tool targets, all terminal results and failed provider boundaries."
+}

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "main": "d7397203df678fd4137c237eb7eb84a671e084f3",
+  "merge_commit": "3ee5a9ab",
+  "scope": "PR31 canonical native schema synchronization only; main policy unchanged",
+  "schema_sha256": {
+    "consumer": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+    "audit": "423a2b6ed633232aa279c041cc9b39218d726ab8d4e529d9846951aa99677104"
+  },
+  "before": "audit native snapshot differs from current projection; exact registry test failed",
+  "focused_verification": {
+    "combined_affected_cases_passed": 429,
+    "skipped": 4,
+    "final_native_file_passed": 22,
+    "notes": "Three new negative tests initially asserted inner ValidationError wording while parser intentionally exposes outer schema error; all still rejected. Rechecked final native file; other426 passed against unchanged implementation."
+  },
+  "independent_review": "native_catalog_review: schema equality, current main policy unchanged, exact values pass/mutations and missing assertions reject",
+  "runtime_model_validation": false,
+  "production_deployment": false
+}

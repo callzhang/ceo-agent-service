@@ -1,0 +1,261 @@
+{
+  "version": 1,
+  "source_code_commit": "b610c036",
+  "changes": [
+    "Real render_task_skill_discovery and compose_plain_task_assembly with selected synthetic Skill, no inline body.",
+    "Real capture_candidate_sources verified native-shaped OA process/form source and excluded task transitions.",
+    "Second group uses real adapter.build_command followed by same role command configuration."
+  ],
+  "runs": [
+    {
+      "arm": "correct-1",
+      "route": "codex_oauth",
+      "case": "correct",
+      "variant": "native_task_source_parity",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e79-26df-77e1-8160-e11c19bbb841",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5471,
+      "calls": [
+        "read_skill",
+        "read_text_file",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "artifact_root": "/private/tmp/ceo-audit-native-parity-0v49u3sr",
+      "hashes": {
+        "input.json": "18d699f94438a3c0c48162bde9a9481f61e839ce06b8172bb7c689d9ad2a953e",
+        "events.jsonl": "3c868467e06813909189957013000dd30994c4cf04d6e2d3e2fe1c84cadc6c2e",
+        "calls.json": "24f7ad40a2390fbc05821170129a1201909f22443f88186825ee36bfe19930ed",
+        "canonical.json": "1549ca168f7d6d17089d3df45929c4bdb88e1df1f53c243be02e05d83c4d688e"
+      },
+      "strict_business_pass": false,
+      "reason": "false candidate type correction"
+    },
+    {
+      "arm": "correct-2",
+      "route": "codex_oauth",
+      "case": "correct",
+      "variant": "native_task_source_parity",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e79-e2d1-7010-837c-e9b7e94eb8b3",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5471,
+      "calls": [
+        "read_skill",
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "artifact_root": "/private/tmp/ceo-audit-native-parity-0v49u3sr",
+      "hashes": {
+        "input.json": "18d699f94438a3c0c48162bde9a9481f61e839ce06b8172bb7c689d9ad2a953e",
+        "events.jsonl": "14e38ec24768ce7bc7430ba1a62c8dc29b32ccec180911e0bfcfc23aef1faa3b",
+        "calls.json": "c6fb7c3169f1cb2d2e95286a2bda2e4088d2379d6c475b03bc3d37157070fc21",
+        "canonical.json": "c24a1a02a3999698462adfd804a9cfee07576417adff721cc071bd4079fc9357"
+      },
+      "strict_business_pass": false,
+      "reason": "false candidate type correction"
+    },
+    {
+      "arm": "wrong_destination",
+      "route": "codex_oauth",
+      "case": "wrong_destination",
+      "variant": "native_task_source_parity",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e7a-22ea-73a1-9062-83ff92be0506",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5477,
+      "calls": [
+        "read_text_file",
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "artifact_root": "/private/tmp/ceo-audit-native-parity-0v49u3sr",
+      "hashes": {
+        "input.json": "4bb86de37fb6243178b162f9a6e3368ef477ac5c9d27cba4c0b9d5fbc7e46e54",
+        "events.jsonl": "fdcced62354330ce11a1691fda9387b6e3face9e184a088714031b02acce6d19",
+        "calls.json": "183cc9421c28e58a20b0d4bd10d742d387c5809142caa7a6d7a26beff64ba41f",
+        "canonical.json": "e8b85a22678221acd8b78fd35bf23202d0c55c502f52d17d18befe94b1edc7e5"
+      },
+      "strict_business_pass": true,
+      "reason": "Correct source-only negative feedback; proposal.actions path is exact relative to the canonical candidate root, no mandatory Task-envelope prefix."
+    },
+    {
+      "arm": "correct-1",
+      "route": "codex_oauth",
+      "case": "correct",
+      "variant": "native_task_source_parity",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e7c-7d2f-7153-a675-245aa77d44ee",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5471,
+      "calls": [
+        "read_text_file",
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "artifact_root": "/private/tmp/ceo-audit-adapter-parity-fukbgkc9",
+      "hashes": {
+        "input.json": "18d699f94438a3c0c48162bde9a9481f61e839ce06b8172bb7c689d9ad2a953e",
+        "events.jsonl": "8e5f801bb459700cbb3af408db2856c8a35eb662d03f239941f6caf633c62a70",
+        "calls.json": "183cc9421c28e58a20b0d4bd10d742d387c5809142caa7a6d7a26beff64ba41f",
+        "canonical.json": "09c49893357425453fd6d6322be740b7ecbfe098d3d86e13e7560b9167a1be4d"
+      },
+      "strict_business_pass": false,
+      "reason": "false candidate type correction"
+    },
+    {
+      "arm": "correct-2",
+      "route": "codex_oauth",
+      "case": "correct",
+      "variant": "native_task_source_parity",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e7c-bf23-7873-8f88-b0be5d6d72e7",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5471,
+      "calls": [
+        "read_text_file",
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "artifact_root": "/private/tmp/ceo-audit-adapter-parity-fukbgkc9",
+      "hashes": {
+        "input.json": "18d699f94438a3c0c48162bde9a9481f61e839ce06b8172bb7c689d9ad2a953e",
+        "events.jsonl": "643897106aeed27eb3375995336ae62d65bc9348063789883b04284fb7c93205",
+        "calls.json": "183cc9421c28e58a20b0d4bd10d742d387c5809142caa7a6d7a26beff64ba41f",
+        "canonical.json": "d5b509221d3f51d0d22c8d95275caca6940e9e81faadc8a57919b537abd8cfba"
+      },
+      "strict_business_pass": false,
+      "reason": "false candidate type correction"
+    },
+    {
+      "arm": "wrong_destination",
+      "route": "codex_oauth",
+      "case": "wrong_destination",
+      "variant": "native_task_source_parity",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e7d-13d1-71e3-9722-9cec890a64fe",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5477,
+      "calls": [
+        "read_skill",
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "artifact_root": "/private/tmp/ceo-audit-adapter-parity-fukbgkc9",
+      "hashes": {
+        "input.json": "4bb86de37fb6243178b162f9a6e3368ef477ac5c9d27cba4c0b9d5fbc7e46e54",
+        "events.jsonl": "f31bf686e0e8474d0bc54fa4ec5e308b9203c5146d51615aeadfbc0ba40d1db0",
+        "calls.json": "c6fb7c3169f1cb2d2e95286a2bda2e4088d2379d6c475b03bc3d37157070fc21",
+        "canonical.json": "9a8662824c6bcc3da6cd29de2877c175eb44644a5325d84da906273c7973080e"
+      },
+      "strict_business_pass": false,
+      "reason": "false candidate type correction"
+    }
+  ],
+  "role_configuration_finding": "make_role_agent_command discards incoming skills.config and regenerates existing role default. Both groups therefore have same final visibility; adapter group does not establish a narrower native budget.",
+  "scope_limits": [
+    "Synthetic Skill and common settings, empty WorkProfile, not the complete AuditAgent DB lifecycle.",
+    "Synthetic trigger has numeric task_id; real historical run25843 frozen trigger taskId is string.",
+    "Synthetic tasks/activities query envelopes are approximations; real tasks query result.taskIdList and activities query result.instRevertActivities shapes were verified locally after these runs."
+  ],
+  "confirmed_real_failure": {
+    "run_id": 25843,
+    "candidate_task_id_type": "string",
+    "frozen_taskId_type": "string",
+    "tools": [
+      {
+        "tool": "read_dingtalk_oa",
+        "matching_id_types": [
+          {
+            "path": "tool_result.content[0].text.decoded.result.tasks[14].taskId",
+            "json_type": "number"
+          },
+          {
+            "path": "tool_result.structuredContent.result.tasks[14].taskId",
+            "json_type": "number"
+          }
+        ]
+      },
+      {
+        "tool": "read_dingtalk_oa_tasks",
+        "matching_id_types": [
+          {
+            "path": "tool_result.content[0].text.decoded.result.taskIdList[14].taskId",
+            "json_type": "number"
+          },
+          {
+            "path": "tool_result.structuredContent.result.taskIdList[14].taskId",
+            "json_type": "number"
+          }
+        ]
+      },
+      {
+        "tool": "read_dingtalk_oa_revert_activities",
+        "matching_id_types": []
+      }
+    ]
+  },
+  "independent_review": "readonly_business_matrix_review checked all native input hashes, Skill bodies/hashes, exact reads, canonical/native binding and feedback.",
+  "no_source_or_policy_mutation": true,
+  "evaluation_correction": "Existing contract does not require candidate. wrapper prefix; relative paths from ConsumerAgentResult root are accepted. Actual false types/fields/parameter changes remain failures."
+}

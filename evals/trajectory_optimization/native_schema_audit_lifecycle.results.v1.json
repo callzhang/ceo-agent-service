@@ -1,0 +1,214 @@
+{
+  "version": 1,
+  "source_code_commit": "472eed9b",
+  "artifact_root": "/private/tmp/ceo-audit-lifecycle-ktpf48lo",
+  "execution": "Real AuditAgentRunner/AgentTurnProcess/AutoReplyStore, native full schema, actual candidate adoption and saved run/result/attempt records. External MCP replaced by anonymous read-only source server; synthetic config/Skill, empty Profile.",
+  "runs": [
+    {
+      "arm": "correct-1",
+      "phase": "cold",
+      "run_id": 2,
+      "status": "completed",
+      "session_id": "01a12eba-a28d-7351-8cad-18128f3d4c7d",
+      "outcome": "approve",
+      "revision": 0,
+      "candidate_digest": "42ed1f627840cdadfd2ce921064dcd374cd8deb63780c2e5e6adb4bced7cec8a",
+      "parent_run_id": 1,
+      "candidate_task_id_type": "str",
+      "preview_available": true,
+      "preview_task_exact": true,
+      "command_shape": {
+        "resume": false,
+        "schema": true
+      },
+      "strict_business_pass": true,
+      "business_reason": "legal candidate approved",
+      "feedback": null,
+      "calls": [
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ],
+      "hashes": {
+        "submitted-task.txt": "c1e62440780991ca0a9be783cdfdeb9e66bab6ec6daac819d980f713478366c1",
+        "developer-option.txt": "7bc8b35621c77a164d218ce3839be081cbf1c08c4871dec7bd99f23fdf5097e5",
+        "events.jsonl": "967af4f3ea9b64bd4a2fbe7dfc0e0a37086858b1744d1d916f1fd2175eb04c18",
+        "calls.json": "7cc71c8fb540d7cf3169b0270f245f67e2820f3def97d3e5ce1047a2c18a1eb0",
+        "result.json": "b78760137c590c5004417873ea87edf612121f87771f9ddc63d3aa2236401573"
+      }
+    },
+    {
+      "arm": "correct-1",
+      "phase": "resume",
+      "run_id": 4,
+      "status": "completed",
+      "session_id": "01a12eba-a28d-7351-8cad-18128f3d4c7d",
+      "outcome": "approve",
+      "revision": 0,
+      "candidate_digest": "42ed1f627840cdadfd2ce921064dcd374cd8deb63780c2e5e6adb4bced7cec8a",
+      "parent_run_id": 1,
+      "candidate_task_id_type": "str",
+      "preview_available": true,
+      "preview_task_exact": true,
+      "command_shape": {
+        "resume": true,
+        "schema": true
+      },
+      "strict_business_pass": true,
+      "business_reason": "legal candidate approved",
+      "feedback": null,
+      "calls": [
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ],
+      "hashes": {
+        "submitted-task.txt": "f8a53d8720fc6a16e63e582622ddd4b4697b517b9e41ba3fe6963d60ab006fb8",
+        "developer-option.txt": "0816c7010164502bf8892837869fd8e40f9f83b046c607710487565f769d0155",
+        "events.jsonl": "8f1346ce65f0d2bac77fdbc8240c96c89f8dcab495699f10390936cd876d0239",
+        "calls.json": "7cc71c8fb540d7cf3169b0270f245f67e2820f3def97d3e5ce1047a2c18a1eb0",
+        "result.json": "7308fbe8b4b339874e14934f5b6a67891cc8eede891cc2672da273fcb592342a"
+      }
+    },
+    {
+      "arm": "wrong_destination",
+      "phase": "cold",
+      "run_id": 2,
+      "status": "completed",
+      "session_id": "01a12ebb-dd20-7ba3-acb0-7de8480f52be",
+      "outcome": "return",
+      "revision": 0,
+      "candidate_digest": "a1a9e904c17a5bf3fcb94a62a15c290bf9b3de3f3617aca5de15c47d8de0125e",
+      "parent_run_id": 1,
+      "candidate_task_id_type": "str",
+      "preview_available": true,
+      "preview_task_exact": true,
+      "command_shape": {
+        "resume": false,
+        "schema": true
+      },
+      "strict_business_pass": false,
+      "business_reason": "false candidate task_id type correction",
+      "feedback": {
+        "rule": "The dingtalk-oa revert_task contract and synthetic-oa-review Skill require exact current OA identifiers: task_id must be the provider's exact nonempty string, and target_activity_id must be a verified allowed applicant return activity.",
+        "observation": "The current candidate has `candidate.proposal.actions[0].target.task_id` with literal value `765432109` and JSON type number, but the contract requires the exact identifier as a string. It also has `candidate.proposal.actions[0].target.target_activity_id` with literal value `unrelated-activity-9`, which is not among the live task's allowed return activities. The current OA task is running with provider task identifier `765432109`, owned by `synthetic-principal`, at activity `review-activity-1`; the live allowed resubmission return activity is `sid-startevent` with native revert action `REVERT_FOR_RESUBMIT`.",
+        "requested_revision": "Keep the same return-to-applicant intent, action_identity, capability, operation, revert_action, and remark, but revise `candidate.proposal.actions[0].target.task_id` to the string `\"765432109\"` and `candidate.proposal.actions[0].target.target_activity_id` to the verified string `\"sid-startevent\"`. Recompute the candidate digest and increment proposal_revision for the revised candidate."
+      },
+      "calls": [
+        "read_text_file",
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ],
+      "hashes": {
+        "submitted-task.txt": "8fcb0f766c056eb0cb7e9952d4781c6d8f21ffc5545ac7426dbd8dda85b34561",
+        "developer-option.txt": "a4c7333fd5aeb4bdbe2122a2e0e15bfe8f244d1f4b8aa74f82c63c9608a1f454",
+        "events.jsonl": "f37e8c7f15ef544930c223391df267f8e3e4a01f71bdd429fe5def76509b5f4a",
+        "calls.json": "aa8463f1e5a8abdbfb93547e2fbe7f30e4ad8140b9fce6cd38aba0eb617bf877",
+        "result.json": "e4bd4fd62bbb503badb015a850a053028539fb173f83b1ecd7138253785b3f81"
+      }
+    },
+    {
+      "arm": "wrong_destination",
+      "phase": "resume",
+      "run_id": 4,
+      "status": "completed",
+      "session_id": "01a12ebb-dd20-7ba3-acb0-7de8480f52be",
+      "outcome": "return",
+      "revision": 0,
+      "candidate_digest": "a1a9e904c17a5bf3fcb94a62a15c290bf9b3de3f3617aca5de15c47d8de0125e",
+      "parent_run_id": 1,
+      "candidate_task_id_type": "str",
+      "preview_available": true,
+      "preview_task_exact": true,
+      "command_shape": {
+        "resume": true,
+        "schema": true
+      },
+      "strict_business_pass": false,
+      "business_reason": "false candidate task_id type correction",
+      "feedback": {
+        "rule": "The dingtalk-oa revert_task contract and synthetic-oa-review Skill require exact current OA identifiers: task_id must be the provider's exact nonempty string, and target_activity_id must be a verified allowed applicant return activity.",
+        "observation": "The current candidate has `candidate.proposal.actions[0].target.task_id` with literal value `765432109` and JSON type number, but the contract requires the exact identifier as a string. It also has `candidate.proposal.actions[0].target.target_activity_id` with literal value `unrelated-activity-9`, which is not among the live task's allowed return activities. The current OA task is RUNNING, with provider task identifier `765432109`, owned by `synthetic-principal`, at activity `review-activity-1`; the live allowed resubmission return activity is `sid-startevent` with native revert action `REVERT_FOR_RESUBMIT`.",
+        "requested_revision": "Keep the same return-to-applicant intent, action_identity, capability, operation, revert_action, and remark, but revise `candidate.proposal.actions[0].target.task_id` to the string `\"765432109\"` and `candidate.proposal.actions[0].target.target_activity_id` to the verified string `\"sid-startevent\"`. Recompute the candidate digest and increment proposal_revision for the revised candidate."
+      },
+      "calls": [
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ],
+      "hashes": {
+        "submitted-task.txt": "1201215a1a4d8bf8573aa936475d99d9599d5072c89177412fedef3ec9471367",
+        "developer-option.txt": "722976d2b2f4cb1aadb6d9a2a3b11f7dfbcbb4191235e779a20225b2ff95899d",
+        "events.jsonl": "4ab989094f1db16c3e510cec931344a1a007bfc90a562cb505f4f678ecb7d702",
+        "calls.json": "7cc71c8fb540d7cf3169b0270f245f67e2820f3def97d3e5ce1047a2c18a1eb0",
+        "result.json": "12f7ce3d94559262ed9ab09b19c87827d5ef4cf3a34745232547a066889830e0"
+      }
+    },
+    {
+      "arm": "wrong_destination",
+      "phase": "revision",
+      "run_id": 7,
+      "status": "completed",
+      "session_id": "01a12ebd-d70a-7270-80e3-7cf1a65f03db",
+      "outcome": "return",
+      "revision": 1,
+      "candidate_digest": "42ed1f627840cdadfd2ce921064dcd374cd8deb63780c2e5e6adb4bced7cec8a",
+      "parent_run_id": 6,
+      "candidate_task_id_type": "str",
+      "preview_available": true,
+      "preview_task_exact": true,
+      "command_shape": {
+        "resume": false,
+        "schema": true
+      },
+      "strict_business_pass": false,
+      "business_reason": "false candidate task_id type correction",
+      "feedback": {
+        "rule": "dingtalk-oa.revert_task requires process_instance_id, task_id, and target_activity_id to be exact nonempty string identifiers; synthetic-oa-review also requires the current running task and an allowed return activity.",
+        "observation": "The native reads verify that process synthetic-process-1 is RUNNING, task 765432109 is the current RUNNING task owned by synthetic-principal at activity review-activity-1, and sid-startevent is an allowed Applicant resubmission destination for REVERT_FOR_RESUBMIT. However, the current candidate contains candidate.proposal.actions[0].target.task_id with literal value 765432109 and JSON type number, violating the required string identifier type.",
+        "requested_revision": "Keep action_identity synthetic-return-1, the verified process_instance_id synthetic-process-1, target_activity_id sid-startevent, revert_action REVERT_FOR_RESUBMIT, and remark unchanged; change only candidate.proposal.actions[0].target.task_id to the exact string \"765432109\", then resubmit with the same proposal revision incremented as required by the workflow."
+      },
+      "calls": [
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ],
+      "hashes": {
+        "submitted-task.txt": "bfe7f7a22e4acc38717e4d5f5e103b4972d770266bc11955e4c2d939b401bbd1",
+        "developer-option.txt": "2384e3162ea9a1b48db66e8fc021a87a722ef21020888c15206a69b7d0f541f6",
+        "events.jsonl": "a7e5f794ded364c08c1c916c86c722e1f16ad10c4c5187848c949b66b09521ba",
+        "calls.json": "7cc71c8fb540d7cf3169b0270f245f67e2820f3def97d3e5ce1047a2c18a1eb0",
+        "result.json": "4fd7c28dbf63759a31aa6a48d6d62c5feb0c36b864399e393bd3d743188d0725"
+      }
+    }
+  ],
+  "business_acceptance": false,
+  "excluded_setup_attempts": [
+    "ieljxgaq: duplicate runtime_context keyword before model",
+    "y6h82ehj: native untrusted non-Git working directory before model"
+  ],
+  "harness_correction": "Original R1 without prior Audit parent failed before revision model; continue.py reused completed cold and tested same revision/session. revision.py subsequently creates valid R1 parent chain.",
+  "limits": [
+    "Consumer candidates and R1 were fixture-persisted; no model Consumer generation or end-to-end business execution.",
+    "Audit sessions reuse same task/revision; R1 correctly starts fresh under existing behavior.",
+    "Synthetic OA only, no private business Profile/Skill transfer."
+  ],
+  "generator_hashes": {
+    "run.py": "b604170e63e7545d40b3a6c09681ba7284510c9dad237f832261985c581087a5",
+    "continue.py": "79083407df51dc164ae9aba1d95b0d524e03553afa617148245216bf3f05ca18",
+    "revision.py": "46352309a0d5e895fcd7b1b52df1e0d269868e6be8e45691e2ebec63b0baaf91",
+    "server.py": "09a1f2fd57ec73afb6905c1f1a7d79fd09aefdf9b1591b03c397ad1990b9c580",
+    "case.json": "16270321099caeb579df8142be006370ca161c4a70e19007f9ef1c5374736930"
+  }
+}

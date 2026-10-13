@@ -1,0 +1,115 @@
+{
+  "tokenizer_only": true,
+  "weights_loaded": false,
+  "rows": [
+    {
+      "encoding": "json_object",
+      "grammar_accepts": true,
+      "raw_sha256": "6e6c7a523720f7f4361b080ebaae435eaffea983b5fff28e5fa27039a686f0a6",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'text(\"中文 🐈\");'",
+      "expected_repr": "'text(\"中文 🐈\");'"
+    },
+    {
+      "encoding": "all_code_units_escaped",
+      "grammar_accepts": true,
+      "raw_sha256": "6e6c7a523720f7f4361b080ebaae435eaffea983b5fff28e5fa27039a686f0a6",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'text(\"中文 🐈\");'",
+      "expected_repr": "'text(\"中文 🐈\");'"
+    },
+    {
+      "encoding": "json_object",
+      "grammar_accepts": true,
+      "raw_sha256": "13b786c2bf84df91789efb6601f912841565a4bc16b75fe1c4a212fcdb48c52b",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'\\ntext(\"quoted\\\\\" and \\\\n\");\\n'",
+      "expected_repr": "'\\ntext(\"quoted\\\\\" and \\\\n\");\\n'"
+    },
+    {
+      "encoding": "all_code_units_escaped",
+      "grammar_accepts": true,
+      "raw_sha256": "13b786c2bf84df91789efb6601f912841565a4bc16b75fe1c4a212fcdb48c52b",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'\\ntext(\"quoted\\\\\" and \\\\n\");\\n'",
+      "expected_repr": "'\\ntext(\"quoted\\\\\" and \\\\n\");\\n'"
+    },
+    {
+      "encoding": "json_object",
+      "grammar_accepts": true,
+      "raw_sha256": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'123'",
+      "expected_repr": "'123'"
+    },
+    {
+      "encoding": "all_code_units_escaped",
+      "grammar_accepts": true,
+      "raw_sha256": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'123'",
+      "expected_repr": "'123'"
+    },
+    {
+      "encoding": "json_object",
+      "grammar_accepts": true,
+      "raw_sha256": "a6e17ae2b00c2a7ed7b066c71ea6a480116e93a438c90c2273a1588353a4da4d",
+      "exact": false,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'{\"value\": \"const tag = \\\\\"'",
+      "expected_repr": "'const tag = \"</parameter>\";'"
+    },
+    {
+      "encoding": "all_code_units_escaped",
+      "grammar_accepts": true,
+      "raw_sha256": "a6e17ae2b00c2a7ed7b066c71ea6a480116e93a438c90c2273a1588353a4da4d",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'const tag = \"</parameter>\";'",
+      "expected_repr": "'const tag = \"</parameter>\";'"
+    },
+    {
+      "encoding": "json_object",
+      "grammar_accepts": true,
+      "raw_sha256": "cf9efaea7174f849c182e45bec352c85e5343c4dd5a05027979ed471eff0300f",
+      "exact": false,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'{\"value\": \"\\\\n'",
+      "expected_repr": "'\\n<parameter= </parameter> <function= </function> <tool_call> </tool_call>\\n'"
+    },
+    {
+      "encoding": "all_code_units_escaped",
+      "grammar_accepts": true,
+      "raw_sha256": "cf9efaea7174f849c182e45bec352c85e5343c4dd5a05027979ed471eff0300f",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'\\n<parameter= </parameter> <function= </function> <tool_call> </tool_call>\\n'",
+      "expected_repr": "'\\n<parameter= </parameter> <function= </function> <tool_call> </tool_call>\\n'"
+    }
+  ],
+  "status": "diagnostic_not_repair",
+  "provider_modified": false,
+  "model_inference": false,
+  "scope": "Installed Qwen parser plus required tool grammar, synthetic JSON-object FunctionTool diagnostic only; no custom-tool production candidate change",
+  "setup_failures_excluded": [
+    "auto tool choice produced no structural constraint",
+    "Responses tools require construct_tool_dicts before xgrammar call"
+  ],
+  "script_sha256": "28d9e345d9e78023442375cb6cd7d4e2c18f445264e1d4df5fe11f10c6c15dba"
+}

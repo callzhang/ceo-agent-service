@@ -1,0 +1,1732 @@
+{
+  "version": 1,
+  "cohorts": [
+    {
+      "cohort": "thin-diagnostic",
+      "catalogs": {
+        "consumer": {
+          "count": 42,
+          "sha256": "09900c6dc31e563749735ce5b34c7b11ae11f5c89fcb2722b4e51ba4b4f5cf6f"
+        },
+        "audit": {
+          "count": 38,
+          "sha256": "4c7abdc33a63221abf85a1fa6c12c5ed8b097c1c8b6e3d1432e02233e2f88be4"
+        }
+      },
+      "runs": [
+        {
+          "route": "qwen_gpu4",
+          "role": "consumer",
+          "phase": "cold",
+          "model": "qwen3.8-27b",
+          "source_session_id": null,
+          "session_id": "01a1358d-731d-7f03-b9cf-e9ae127cd660",
+          "exit_code": null,
+          "timeout": true,
+          "turn_completed": false,
+          "turn_failed": false,
+          "canonical_valid": false,
+          "parse_error": "ResultParseError: no valid typed result JSON found in Codex JSONL",
+          "outcome": null,
+          "binding_valid": false,
+          "summary_matches_nonce": false,
+          "calls": [
+            {
+              "role": "consumer",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "synthetic-current-source"
+              },
+              "expected": true,
+              "result_sha256": "a36ab1bf21cf9667a2096139c060c6b639f8b64e0f83a97cc21dca8de7aa1fba",
+              "result_characters": 48
+            },
+            {
+              "role": "consumer",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "synthetic-current-source"
+              },
+              "expected": true,
+              "result_sha256": "a36ab1bf21cf9667a2096139c060c6b639f8b64e0f83a97cc21dca8de7aa1fba",
+              "result_characters": 48
+            },
+            {
+              "role": "consumer",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "synthetic-current-source"
+              },
+              "expected": true,
+              "result_sha256": "a36ab1bf21cf9667a2096139c060c6b639f8b64e0f83a97cc21dca8de7aa1fba",
+              "result_characters": 48
+            },
+            {
+              "role": "consumer",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "synthetic-current-source"
+              },
+              "expected": true,
+              "result_sha256": "a36ab1bf21cf9667a2096139c060c6b639f8b64e0f83a97cc21dca8de7aa1fba",
+              "result_characters": 48
+            },
+            {
+              "role": "consumer",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "synthetic-current-source"
+              },
+              "expected": true,
+              "result_sha256": "a36ab1bf21cf9667a2096139c060c6b639f8b64e0f83a97cc21dca8de7aa1fba",
+              "result_characters": 48
+            }
+          ],
+          "passed": false,
+          "task_sha256": "01fd258ff5ea29224459ae23e18b80ece5ac1e15aebbbff9eb2c76737e15f8cd",
+          "developer_sha256": "048c8350eae78a440f831f45659b6705a0c02b72fff33fbcc2a66c8aa6e7fc63",
+          "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+          "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T06-57-04-01a1358d-731d-7f03-b9cf-e9ae127cd660.jsonl",
+          "native_sha256": "aa63a94441cabf2917c60dfeec4cc0d181a232155ac0855838041d8d276b2bd3",
+          "native_record_count": 92,
+          "native_response_item_count": 39,
+          "native_task_exact": true,
+          "native_tool_name_counts": {
+            "read_text_file": 12
+          },
+          "invalid_wait_arguments": [],
+          "all_response_items_examined": true,
+          "reasoning_boundary": "Provider Qwen reasoning text inspected privately for state/intent; no reasoning text copied into this artifact. OpenAI encrypted reasoning is not inferred.",
+          "native_developer_messages": [
+            {
+              "characters": 1098,
+              "sha256": "932c6fd4208d5e9ec8e9130036913b81d33ddb76fb2d47e9bfc877ddc492a7ee"
+            }
+          ],
+          "callback_snapshot_count": 5,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 12,
+          "native_terminal_source_read_count": 12
+        },
+        {
+          "route": "qwen_gpu4",
+          "role": "audit",
+          "phase": "cold",
+          "model": "qwen3.8-27b",
+          "source_session_id": null,
+          "session_id": "01a13590-3359-7a10-b904-99e2718b9213",
+          "exit_code": 0,
+          "timeout": false,
+          "turn_completed": true,
+          "turn_failed": false,
+          "canonical_valid": true,
+          "parse_error": null,
+          "outcome": "approve",
+          "binding_valid": true,
+          "summary_matches_nonce": true,
+          "calls": [
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "synthetic-current-source"
+              },
+              "expected": true,
+              "result_sha256": "3f49374b15a220062e5c507312d405f230cca1ec26145358130a5515253ed9d9",
+              "result_characters": 48
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "synthetic-current-source"
+              },
+              "expected": true,
+              "result_sha256": "3f49374b15a220062e5c507312d405f230cca1ec26145358130a5515253ed9d9",
+              "result_characters": 48
+            }
+          ],
+          "passed": false,
+          "task_sha256": "ec8373c55c535d5bd3e5735f584cf68e5e23b1577c2c4363ffac1d1ed223ea58",
+          "developer_sha256": "048c8350eae78a440f831f45659b6705a0c02b72fff33fbcc2a66c8aa6e7fc63",
+          "native_schema_sha256": "d328078ce53eb8189a495dfd8f83855135caa6a135691a8c0f18373881a3a1de",
+          "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T07-00-05-01a13590-3359-7a10-b904-99e2718b9213.jsonl",
+          "native_sha256": "8210d7dc4a12baca9bddde73df2a68f49c0e49428b73ba1200c69f8e4759bf07",
+          "native_record_count": 29,
+          "native_response_item_count": 11,
+          "native_task_exact": true,
+          "native_tool_name_counts": {
+            "read_text_file": 2
+          },
+          "invalid_wait_arguments": [],
+          "all_response_items_examined": true,
+          "reasoning_boundary": "Provider Qwen reasoning text inspected privately for state/intent; no reasoning text copied into this artifact. OpenAI encrypted reasoning is not inferred.",
+          "native_developer_messages": [
+            {
+              "characters": 174,
+              "sha256": "048c8350eae78a440f831f45659b6705a0c02b72fff33fbcc2a66c8aa6e7fc63"
+            }
+          ],
+          "callback_snapshot_count": 2,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 2,
+          "native_terminal_source_read_count": 2
+        },
+        {
+          "route": "codex_oauth",
+          "role": "consumer",
+          "phase": "cold",
+          "model": "gpt-5.6-luna",
+          "source_session_id": null,
+          "session_id": "01a13591-b654-76a1-8eab-cee540a0978f",
+          "exit_code": 0,
+          "timeout": false,
+          "turn_completed": true,
+          "turn_failed": false,
+          "canonical_valid": true,
+          "parse_error": null,
+          "outcome": "no_action",
+          "binding_valid": true,
+          "summary_matches_nonce": true,
+          "calls": [
+            {
+              "role": "consumer",
+              "route": "codex_oauth",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "synthetic-current-source"
+              },
+              "expected": true,
+              "result_sha256": "83ad157eb7d0c99992016077c1bb5a31cfad7fab3c44ddd7cfc0675e129722e9",
+              "result_characters": 48
+            }
+          ],
+          "passed": true,
+          "task_sha256": "01fd258ff5ea29224459ae23e18b80ece5ac1e15aebbbff9eb2c76737e15f8cd",
+          "developer_sha256": "048c8350eae78a440f831f45659b6705a0c02b72fff33fbcc2a66c8aa6e7fc63",
+          "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+          "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T07-01-44-01a13591-b654-76a1-8eab-cee540a0978f.jsonl",
+          "native_sha256": "898d768c38f9f5e86d7a916a356a80c175936983aaeac2123b8d7096c81d3474",
+          "native_record_count": 61,
+          "native_response_item_count": 23,
+          "native_task_exact": true,
+          "native_tool_name_counts": {
+            "exec": 1,
+            "read_text_file": 1
+          },
+          "invalid_wait_arguments": [],
+          "all_response_items_examined": true,
+          "reasoning_boundary": "Provider Qwen reasoning text inspected privately for state/intent; no reasoning text copied into this artifact. OpenAI encrypted reasoning is not inferred.",
+          "native_developer_messages": [
+            {
+              "characters": 174,
+              "sha256": "048c8350eae78a440f831f45659b6705a0c02b72fff33fbcc2a66c8aa6e7fc63"
+            }
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 2,
+          "native_terminal_source_read_count": 1
+        },
+        {
+          "route": "codex_oauth",
+          "role": "consumer",
+          "phase": "resume",
+          "model": "gpt-5.6-luna",
+          "source_session_id": "01a13591-b654-76a1-8eab-cee540a0978f",
+          "session_id": "01a13591-b654-76a1-8eab-cee540a0978f",
+          "exit_code": 0,
+          "timeout": false,
+          "turn_completed": true,
+          "turn_failed": false,
+          "canonical_valid": true,
+          "parse_error": null,
+          "outcome": "no_action",
+          "binding_valid": true,
+          "summary_matches_nonce": true,
+          "calls": [
+            {
+              "role": "consumer",
+              "route": "codex_oauth",
+              "phase": "resume",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "synthetic-current-source"
+              },
+              "expected": true,
+              "result_sha256": "3c45e4522cf36d675abe3c55ac7a3ad863a488445cc6868206d02e8b4850c0c1",
+              "result_characters": 48
+            }
+          ],
+          "passed": true,
+          "task_sha256": "01fd258ff5ea29224459ae23e18b80ece5ac1e15aebbbff9eb2c76737e15f8cd",
+          "developer_sha256": "048c8350eae78a440f831f45659b6705a0c02b72fff33fbcc2a66c8aa6e7fc63",
+          "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+          "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T07-01-44-01a13591-b654-76a1-8eab-cee540a0978f.jsonl",
+          "native_sha256": "898d768c38f9f5e86d7a916a356a80c175936983aaeac2123b8d7096c81d3474",
+          "native_record_count": 61,
+          "native_response_item_count": 23,
+          "native_task_exact": true,
+          "native_tool_name_counts": {
+            "exec": 1,
+            "read_text_file": 1
+          },
+          "invalid_wait_arguments": [],
+          "all_response_items_examined": true,
+          "reasoning_boundary": "Provider Qwen reasoning text inspected privately for state/intent; no reasoning text copied into this artifact. OpenAI encrypted reasoning is not inferred.",
+          "native_developer_messages": [
+            {
+              "characters": 174,
+              "sha256": "048c8350eae78a440f831f45659b6705a0c02b72fff33fbcc2a66c8aa6e7fc63"
+            }
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 2,
+          "native_terminal_source_read_count": 1
+        },
+        {
+          "route": "codex_oauth",
+          "role": "audit",
+          "phase": "cold",
+          "model": "gpt-5.6-luna",
+          "source_session_id": null,
+          "session_id": "01a13592-3152-7b43-af2d-403b6d257bd7",
+          "exit_code": 0,
+          "timeout": false,
+          "turn_completed": true,
+          "turn_failed": false,
+          "canonical_valid": true,
+          "parse_error": null,
+          "outcome": "approve",
+          "binding_valid": true,
+          "summary_matches_nonce": true,
+          "calls": [
+            {
+              "role": "audit",
+              "route": "codex_oauth",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "synthetic-current-source"
+              },
+              "expected": true,
+              "result_sha256": "14bba67b0675bd615caf3bd364832e3700529aa2c0af3c20b97b40d71e93d789",
+              "result_characters": 48
+            }
+          ],
+          "passed": true,
+          "task_sha256": "ec8373c55c535d5bd3e5735f584cf68e5e23b1577c2c4363ffac1d1ed223ea58",
+          "developer_sha256": "048c8350eae78a440f831f45659b6705a0c02b72fff33fbcc2a66c8aa6e7fc63",
+          "native_schema_sha256": "d328078ce53eb8189a495dfd8f83855135caa6a135691a8c0f18373881a3a1de",
+          "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T07-02-15-01a13592-3152-7b43-af2d-403b6d257bd7.jsonl",
+          "native_sha256": "1fb6238a695cc4787d6653e975d625ba794210c7abfa6363b052b1b8a4b267f8",
+          "native_record_count": 67,
+          "native_response_item_count": 27,
+          "native_task_exact": true,
+          "native_tool_name_counts": {
+            "exec": 3,
+            "read_text_file": 1
+          },
+          "invalid_wait_arguments": [],
+          "all_response_items_examined": true,
+          "reasoning_boundary": "Provider Qwen reasoning text inspected privately for state/intent; no reasoning text copied into this artifact. OpenAI encrypted reasoning is not inferred.",
+          "native_developer_messages": [
+            {
+              "characters": 174,
+              "sha256": "048c8350eae78a440f831f45659b6705a0c02b72fff33fbcc2a66c8aa6e7fc63"
+            }
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 4,
+          "native_terminal_source_read_count": 1
+        },
+        {
+          "route": "codex_oauth",
+          "role": "audit",
+          "phase": "resume",
+          "model": "gpt-5.6-luna",
+          "source_session_id": "01a13592-3152-7b43-af2d-403b6d257bd7",
+          "session_id": "01a13592-3152-7b43-af2d-403b6d257bd7",
+          "exit_code": 0,
+          "timeout": false,
+          "turn_completed": true,
+          "turn_failed": false,
+          "canonical_valid": true,
+          "parse_error": null,
+          "outcome": "approve",
+          "binding_valid": true,
+          "summary_matches_nonce": true,
+          "calls": [
+            {
+              "role": "audit",
+              "route": "codex_oauth",
+              "phase": "resume",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "synthetic-current-source"
+              },
+              "expected": true,
+              "result_sha256": "34a632e274cdc4c1cd0daeb91e060eb4b09d6a700b9f0191fd495644f5ce66d3",
+              "result_characters": 48
+            }
+          ],
+          "passed": true,
+          "task_sha256": "ec8373c55c535d5bd3e5735f584cf68e5e23b1577c2c4363ffac1d1ed223ea58",
+          "developer_sha256": "048c8350eae78a440f831f45659b6705a0c02b72fff33fbcc2a66c8aa6e7fc63",
+          "native_schema_sha256": "d328078ce53eb8189a495dfd8f83855135caa6a135691a8c0f18373881a3a1de",
+          "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T07-02-15-01a13592-3152-7b43-af2d-403b6d257bd7.jsonl",
+          "native_sha256": "1fb6238a695cc4787d6653e975d625ba794210c7abfa6363b052b1b8a4b267f8",
+          "native_record_count": 67,
+          "native_response_item_count": 27,
+          "native_task_exact": true,
+          "native_tool_name_counts": {
+            "exec": 3,
+            "read_text_file": 1
+          },
+          "invalid_wait_arguments": [],
+          "all_response_items_examined": true,
+          "reasoning_boundary": "Provider Qwen reasoning text inspected privately for state/intent; no reasoning text copied into this artifact. OpenAI encrypted reasoning is not inferred.",
+          "native_developer_messages": [
+            {
+              "characters": 174,
+              "sha256": "048c8350eae78a440f831f45659b6705a0c02b72fff33fbcc2a66c8aa6e7fc63"
+            }
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 4,
+          "native_terminal_source_read_count": 1
+        }
+      ]
+    },
+    {
+      "cohort": "role-contract",
+      "catalogs": {
+        "consumer": {
+          "count": 42,
+          "sha256": "09900c6dc31e563749735ce5b34c7b11ae11f5c89fcb2722b4e51ba4b4f5cf6f"
+        },
+        "audit": {
+          "count": 38,
+          "sha256": "4c7abdc33a63221abf85a1fa6c12c5ed8b097c1c8b6e3d1432e02233e2f88be4"
+        }
+      },
+      "runs": [
+        {
+          "route": "qwen_gpu4",
+          "role": "consumer",
+          "phase": "cold",
+          "model": "qwen3.8-27b",
+          "source_session_id": null,
+          "session_id": "01a13596-d2cd-7f42-bcb3-dd0874b7ce61",
+          "exit_code": 0,
+          "timeout": false,
+          "turn_completed": true,
+          "turn_failed": false,
+          "canonical_valid": true,
+          "parse_error": null,
+          "outcome": "no_action",
+          "binding_valid": true,
+          "summary_matches_nonce": true,
+          "calls": [
+            {
+              "role": "consumer",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "synthetic-current-source"
+              },
+              "expected": true,
+              "result_sha256": "199eeb5d89f7d65215cd5b9a7c7cf610d99bcecef0fc86e779a1d6fef8c06a36",
+              "result_characters": 48
+            },
+            {
+              "role": "consumer",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "synthetic-current-source"
+              },
+              "expected": true,
+              "result_sha256": "199eeb5d89f7d65215cd5b9a7c7cf610d99bcecef0fc86e779a1d6fef8c06a36",
+              "result_characters": 48
+            }
+          ],
+          "passed": false,
+          "task_sha256": "01fd258ff5ea29224459ae23e18b80ece5ac1e15aebbbff9eb2c76737e15f8cd",
+          "developer_sha256": "1eee786e236f99c51f48a4771dfd6fee386e1d8a7ab07b549f9d0a59870da845",
+          "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+          "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T07-07-19-01a13596-d2cd-7f42-bcb3-dd0874b7ce61.jsonl",
+          "native_sha256": "8e842630f3ce701ce2f0cb3bfecc7260b69e5997df2b3f409779822fbaf1a86d",
+          "native_record_count": 41,
+          "native_response_item_count": 17,
+          "native_task_exact": true,
+          "native_tool_name_counts": {
+            "read_text_file": 2,
+            "wait": 2
+          },
+          "invalid_wait_arguments": [
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "07456f3ca2c59dd2449618dafdc98eb50f7b0022a523f2da3ded9ab685c548b2",
+              "has_noop_cell": false
+            }
+          ],
+          "all_response_items_examined": true,
+          "reasoning_boundary": "Provider Qwen reasoning text inspected privately for state/intent; no reasoning text copied into this artifact. OpenAI encrypted reasoning is not inferred.",
+          "native_developer_messages": [
+            {
+              "characters": 22927,
+              "sha256": "6b6bc79b5898e7e1744b7236dc5700818694b6ed8af978e1a2ed3c8dc4abc554"
+            }
+          ],
+          "callback_snapshot_count": 2,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 4,
+          "native_terminal_source_read_count": 2
+        },
+        {
+          "route": "qwen_gpu4",
+          "role": "audit",
+          "phase": "cold",
+          "model": "qwen3.8-27b",
+          "source_session_id": null,
+          "session_id": "01a13597-6619-7312-98a2-188808556d01",
+          "exit_code": 0,
+          "timeout": false,
+          "turn_completed": true,
+          "turn_failed": false,
+          "canonical_valid": true,
+          "parse_error": null,
+          "outcome": "approve",
+          "binding_valid": true,
+          "summary_matches_nonce": false,
+          "calls": [
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "synthetic-current-source"
+              },
+              "expected": true,
+              "result_sha256": "f0a68fe0700c6b596c2e68e9d5e3ba34a46831a6592b49c4f123d84847c1c1de",
+              "result_characters": 48
+            }
+          ],
+          "passed": false,
+          "task_sha256": "c47882091d9a083933a08352fd0e486d28b6b704861103c738140c8a6ac4df05",
+          "developer_sha256": "92b587251e56c3742bbae85471d825ba1376c779963c0888c5c944cec627a57f",
+          "native_schema_sha256": "d328078ce53eb8189a495dfd8f83855135caa6a135691a8c0f18373881a3a1de",
+          "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T07-07-56-01a13597-6619-7312-98a2-188808556d01.jsonl",
+          "native_sha256": "7afe61d12dec752e6a01147b414f1d90c359d03f41cb24a64a9f7a1c1adad15a",
+          "native_record_count": 22,
+          "native_response_item_count": 8,
+          "native_task_exact": true,
+          "native_tool_name_counts": {
+            "read_text_file": 1
+          },
+          "invalid_wait_arguments": [],
+          "all_response_items_examined": true,
+          "reasoning_boundary": "Provider Qwen reasoning text inspected privately for state/intent; no reasoning text copied into this artifact. OpenAI encrypted reasoning is not inferred.",
+          "native_developer_messages": [
+            {
+              "characters": 18575,
+              "sha256": "92b587251e56c3742bbae85471d825ba1376c779963c0888c5c944cec627a57f"
+            }
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 1,
+          "native_terminal_source_read_count": 1
+        }
+      ]
+    },
+    {
+      "cohort": "registered-source",
+      "catalogs": {
+        "consumer": {
+          "count": 42,
+          "sha256": "09900c6dc31e563749735ce5b34c7b11ae11f5c89fcb2722b4e51ba4b4f5cf6f"
+        },
+        "audit": {
+          "count": 38,
+          "sha256": "4c7abdc33a63221abf85a1fa6c12c5ed8b097c1c8b6e3d1432e02233e2f88be4"
+        }
+      },
+      "runs": [
+        {
+          "route": "qwen_gpu4",
+          "role": "consumer",
+          "phase": "cold",
+          "model": "qwen3.8-27b",
+          "source_session_id": null,
+          "session_id": "01a1359f-6d6e-7a23-b4d6-1eb2223a2b97",
+          "exit_code": null,
+          "timeout": true,
+          "turn_completed": false,
+          "turn_failed": false,
+          "canonical_valid": false,
+          "parse_error": "ResultParseError: no valid typed result JSON found in Codex JSONL",
+          "outcome": null,
+          "binding_valid": false,
+          "summary_matches_nonce": false,
+          "calls": [
+            {
+              "role": "consumer",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.consumer.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "2ae2e544c4c54ef907f206f4621622fefb969ac6871b918f4056e0d79dbade43",
+              "result_characters": 255
+            },
+            {
+              "role": "consumer",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.consumer.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "2ae2e544c4c54ef907f206f4621622fefb969ac6871b918f4056e0d79dbade43",
+              "result_characters": 255
+            },
+            {
+              "role": "consumer",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.consumer.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "2ae2e544c4c54ef907f206f4621622fefb969ac6871b918f4056e0d79dbade43",
+              "result_characters": 255
+            },
+            {
+              "role": "consumer",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.consumer.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "2ae2e544c4c54ef907f206f4621622fefb969ac6871b918f4056e0d79dbade43",
+              "result_characters": 255
+            }
+          ],
+          "passed": false,
+          "task_sha256": "72b7ad78699687264879efe1a3ba16117efeaa34371269a24ad7879739f123a6",
+          "developer_sha256": "1eee786e236f99c51f48a4771dfd6fee386e1d8a7ab07b549f9d0a59870da845",
+          "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+          "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T07-16-43-01a1359f-6d6e-7a23-b4d6-1eb2223a2b97.jsonl",
+          "native_sha256": "2c0fa1f034af35326c064da6f373fa56654857e829d701e6f8468cad8cd1903f",
+          "native_record_count": 296,
+          "native_response_item_count": 141,
+          "native_task_exact": true,
+          "native_tool_name_counts": {
+            "read_text_file": 12,
+            "wait": 34
+          },
+          "invalid_wait_arguments": [
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            },
+            {
+              "arguments_sha256": "99d91067574b218b4abf652be53105b7a7e9f124d024006b51025eaf111545a4",
+              "has_noop_cell": true
+            }
+          ],
+          "all_response_items_examined": true,
+          "reasoning_boundary": "Provider Qwen reasoning text inspected privately for state/intent; no reasoning text copied into this artifact. OpenAI encrypted reasoning is not inferred.",
+          "native_developer_messages": [
+            {
+              "characters": 22003,
+              "sha256": "1eee786e236f99c51f48a4771dfd6fee386e1d8a7ab07b549f9d0a59870da845"
+            }
+          ],
+          "callback_snapshot_count": 4,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 46,
+          "native_terminal_source_read_count": 12
+        },
+        {
+          "route": "qwen_gpu4",
+          "role": "audit",
+          "phase": "cold",
+          "model": "qwen3.8-27b",
+          "source_session_id": null,
+          "session_id": "01a135a2-2cfe-7fb3-a3a8-c2cfe34932da",
+          "exit_code": null,
+          "timeout": true,
+          "turn_completed": false,
+          "turn_failed": false,
+          "canonical_valid": false,
+          "parse_error": "ResultParseError: no valid typed result JSON found in Codex JSONL",
+          "outcome": null,
+          "binding_valid": false,
+          "summary_matches_nonce": false,
+          "calls": [
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_system_action_contract",
+              "arguments": {
+                "capability": "dingtalk-chat",
+                "operation": null
+              },
+              "expected": false
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_system_action_contract",
+              "arguments": {
+                "capability": "dingtalk-chat",
+                "operation": null
+              },
+              "expected": false
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            },
+            {
+              "role": "audit",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/qwen_gpu4.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "9297a205ab67b11127ca51d384b678af197584fbc64d3cff6725220bb67af0d9",
+              "result_characters": 252
+            }
+          ],
+          "passed": false,
+          "task_sha256": "a9d64ac16983ab79608b89727053855d6cadf5413f0d1fdde973b282e4e0d04c",
+          "developer_sha256": "92b587251e56c3742bbae85471d825ba1376c779963c0888c5c944cec627a57f",
+          "native_schema_sha256": "d328078ce53eb8189a495dfd8f83855135caa6a135691a8c0f18373881a3a1de",
+          "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T07-19-43-01a135a2-2cfe-7fb3-a3a8-c2cfe34932da.jsonl",
+          "native_sha256": "09df90181d29abd90b4967329cf2a71abe7d65228709878a07a347acb333dc3c",
+          "native_record_count": 452,
+          "native_response_item_count": 194,
+          "native_task_exact": true,
+          "native_tool_name_counts": {
+            "read_system_action_contract": 2,
+            "read_text_file": 62
+          },
+          "invalid_wait_arguments": [],
+          "all_response_items_examined": true,
+          "reasoning_boundary": "Provider Qwen reasoning text inspected privately for state/intent; no reasoning text copied into this artifact. OpenAI encrypted reasoning is not inferred.",
+          "native_developer_messages": [
+            {
+              "characters": 18575,
+              "sha256": "92b587251e56c3742bbae85471d825ba1376c779963c0888c5c944cec627a57f"
+            }
+          ],
+          "callback_snapshot_count": 44,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 64,
+          "native_terminal_source_read_count": 62
+        },
+        {
+          "route": "codex_oauth",
+          "role": "consumer",
+          "phase": "cold",
+          "model": "gpt-5.6-luna",
+          "source_session_id": null,
+          "session_id": "01a135a4-f0a7-7c01-a397-6466b8475f3a",
+          "exit_code": 0,
+          "timeout": false,
+          "turn_completed": true,
+          "turn_failed": false,
+          "canonical_valid": true,
+          "parse_error": null,
+          "outcome": "no_action",
+          "binding_valid": true,
+          "summary_matches_nonce": true,
+          "calls": [
+            {
+              "role": "consumer",
+              "route": "codex_oauth",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/codex_oauth.consumer.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "59af47cbaf3be7a494d3d9228597db390a2479efc38adcf20d6abf720ee9f6d0",
+              "result_characters": 257
+            }
+          ],
+          "passed": true,
+          "task_sha256": "a640bddd7ce0a93b076336395df3bacdf138c8870f0ee2fe63c9704251d6e2de",
+          "developer_sha256": "1eee786e236f99c51f48a4771dfd6fee386e1d8a7ab07b549f9d0a59870da845",
+          "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+          "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T07-22-44-01a135a4-f0a7-7c01-a397-6466b8475f3a.jsonl",
+          "native_sha256": "b23b4ccf555f71140f980b8f96e3e746173cbb05f3b9c10b0fc39937cf692008",
+          "native_record_count": 57,
+          "native_response_item_count": 21,
+          "native_task_exact": true,
+          "native_tool_name_counts": {
+            "exec": 1,
+            "read_text_file": 1
+          },
+          "invalid_wait_arguments": [],
+          "all_response_items_examined": true,
+          "reasoning_boundary": "Provider Qwen reasoning text inspected privately for state/intent; no reasoning text copied into this artifact. OpenAI encrypted reasoning is not inferred.",
+          "native_developer_messages": [
+            {
+              "characters": 22003,
+              "sha256": "1eee786e236f99c51f48a4771dfd6fee386e1d8a7ab07b549f9d0a59870da845"
+            }
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 2,
+          "native_terminal_source_read_count": 1
+        },
+        {
+          "route": "codex_oauth",
+          "role": "consumer",
+          "phase": "resume",
+          "model": "gpt-5.6-luna",
+          "source_session_id": "01a135a4-f0a7-7c01-a397-6466b8475f3a",
+          "session_id": "01a135a4-f0a7-7c01-a397-6466b8475f3a",
+          "exit_code": 0,
+          "timeout": false,
+          "turn_completed": true,
+          "turn_failed": false,
+          "canonical_valid": true,
+          "parse_error": null,
+          "outcome": "no_action",
+          "binding_valid": true,
+          "summary_matches_nonce": true,
+          "calls": [
+            {
+              "role": "consumer",
+              "route": "codex_oauth",
+              "phase": "resume",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/codex_oauth.consumer.resume.source.json"
+              },
+              "expected": true,
+              "result_sha256": "61b9224fbdbfe26fc27f9ea0e737ae87d82a30af6e4aa4b10896bc72b3fbe1a5",
+              "result_characters": 259
+            }
+          ],
+          "passed": true,
+          "task_sha256": "eb7dd54a4265f9af42b57417f71e447ff58cfda25a2bd1f7d0dafdf898e6a47f",
+          "developer_sha256": "1eee786e236f99c51f48a4771dfd6fee386e1d8a7ab07b549f9d0a59870da845",
+          "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+          "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T07-22-44-01a135a4-f0a7-7c01-a397-6466b8475f3a.jsonl",
+          "native_sha256": "b23b4ccf555f71140f980b8f96e3e746173cbb05f3b9c10b0fc39937cf692008",
+          "native_record_count": 57,
+          "native_response_item_count": 21,
+          "native_task_exact": true,
+          "native_tool_name_counts": {
+            "exec": 1,
+            "read_text_file": 1
+          },
+          "invalid_wait_arguments": [],
+          "all_response_items_examined": true,
+          "reasoning_boundary": "Provider Qwen reasoning text inspected privately for state/intent; no reasoning text copied into this artifact. OpenAI encrypted reasoning is not inferred.",
+          "native_developer_messages": [
+            {
+              "characters": 22003,
+              "sha256": "1eee786e236f99c51f48a4771dfd6fee386e1d8a7ab07b549f9d0a59870da845"
+            }
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 2,
+          "native_terminal_source_read_count": 1
+        },
+        {
+          "route": "codex_oauth",
+          "role": "audit",
+          "phase": "cold",
+          "model": "gpt-5.6-luna",
+          "source_session_id": null,
+          "session_id": "01a135a5-5092-7bb1-8de1-ea34d06d6cfd",
+          "exit_code": 0,
+          "timeout": false,
+          "turn_completed": true,
+          "turn_failed": false,
+          "canonical_valid": true,
+          "parse_error": null,
+          "outcome": "approve",
+          "binding_valid": true,
+          "summary_matches_nonce": true,
+          "calls": [
+            {
+              "role": "audit",
+              "route": "codex_oauth",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/codex_oauth.audit.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "256ae3bcaa9a21a52fb2702eccdebf11351dfd056b0fedf1a7c9708256a05e89",
+              "result_characters": 254
+            }
+          ],
+          "passed": true,
+          "task_sha256": "28be9bdb02a45c728304e8c426c5b61ff25ae813176d70461a5b4bb7ea5eb1f9",
+          "developer_sha256": "92b587251e56c3742bbae85471d825ba1376c779963c0888c5c944cec627a57f",
+          "native_schema_sha256": "d328078ce53eb8189a495dfd8f83855135caa6a135691a8c0f18373881a3a1de",
+          "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T07-23-08-01a135a5-5092-7bb1-8de1-ea34d06d6cfd.jsonl",
+          "native_sha256": "59ee432b677a07766cd0ae9770938ab320e6323ffb77862f9c748793eadd1584",
+          "native_record_count": 43,
+          "native_response_item_count": 15,
+          "native_task_exact": true,
+          "native_tool_name_counts": {
+            "read_text_file": 1
+          },
+          "invalid_wait_arguments": [],
+          "all_response_items_examined": true,
+          "reasoning_boundary": "Provider Qwen reasoning text inspected privately for state/intent; no reasoning text copied into this artifact. OpenAI encrypted reasoning is not inferred.",
+          "native_developer_messages": [
+            {
+              "characters": 18575,
+              "sha256": "92b587251e56c3742bbae85471d825ba1376c779963c0888c5c944cec627a57f"
+            }
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 1,
+          "native_terminal_source_read_count": 1
+        },
+        {
+          "route": "codex_oauth",
+          "role": "audit",
+          "phase": "resume",
+          "model": "gpt-5.6-luna",
+          "source_session_id": "01a135a5-5092-7bb1-8de1-ea34d06d6cfd",
+          "session_id": "01a135a5-5092-7bb1-8de1-ea34d06d6cfd",
+          "exit_code": 0,
+          "timeout": false,
+          "turn_completed": true,
+          "turn_failed": false,
+          "canonical_valid": true,
+          "parse_error": null,
+          "outcome": "approve",
+          "binding_valid": true,
+          "summary_matches_nonce": true,
+          "calls": [
+            {
+              "role": "audit",
+              "route": "codex_oauth",
+              "phase": "resume",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/registered-source/codex_oauth.audit.resume.source.json"
+              },
+              "expected": true,
+              "result_sha256": "37fb3d22f8d138fcf43d96863b5b54adbe67e2d8e783b04f2fcd75b0ad9f6a30",
+              "result_characters": 256
+            }
+          ],
+          "passed": true,
+          "task_sha256": "5aa5b435612b99d834f1d496c5beca0db4c1f47d82f8223140bb6c04838225a9",
+          "developer_sha256": "92b587251e56c3742bbae85471d825ba1376c779963c0888c5c944cec627a57f",
+          "native_schema_sha256": "d328078ce53eb8189a495dfd8f83855135caa6a135691a8c0f18373881a3a1de",
+          "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T07-23-08-01a135a5-5092-7bb1-8de1-ea34d06d6cfd.jsonl",
+          "native_sha256": "59ee432b677a07766cd0ae9770938ab320e6323ffb77862f9c748793eadd1584",
+          "native_record_count": 43,
+          "native_response_item_count": 15,
+          "native_task_exact": true,
+          "native_tool_name_counts": {
+            "read_text_file": 1
+          },
+          "invalid_wait_arguments": [],
+          "all_response_items_examined": true,
+          "reasoning_boundary": "Provider Qwen reasoning text inspected privately for state/intent; no reasoning text copied into this artifact. OpenAI encrypted reasoning is not inferred.",
+          "native_developer_messages": [
+            {
+              "characters": 18575,
+              "sha256": "92b587251e56c3742bbae85471d825ba1376c779963c0888c5c944cec627a57f"
+            }
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 1,
+          "native_terminal_source_read_count": 1
+        },
+        {
+          "route": "qwen_gpu4",
+          "role": "consumer",
+          "phase": "paired-direct-cold",
+          "baseline_session_id": "01a1359f-6d6e-7a23-b4d6-1eb2223a2b97",
+          "session_id": "01a135b9-ce13-7fc0-bcd6-9493c5969f30",
+          "exit_code": 0,
+          "timeout": false,
+          "canonical_valid": true,
+          "outcome": "no_action",
+          "parse_error": null,
+          "passed": false,
+          "calls": [],
+          "task_sha256": "72b7ad78699687264879efe1a3ba16117efeaa34371269a24ad7879739f123a6",
+          "developer_sha256": "1eee786e236f99c51f48a4771dfd6fee386e1d8a7ab07b549f9d0a59870da845",
+          "identical_submitted_task_and_developer": true,
+          "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+          "controlled_change": "Disable native CodeMode host/only/enabled flags; declared agent_cli catalog unchanged, builtin tool interface changes.",
+          "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T07-45-31-01a135b9-ce13-7fc0-bcd6-9493c5969f30.jsonl",
+          "native_sha256": "049cead68d6c46f9057121589cef1ebb58118149f3dd4ca872a4581b4abecf77",
+          "native_record_count": 22,
+          "native_response_item_count": 8,
+          "native_task_exact": true,
+          "native_tool_name_counts": {
+            "exec_command": 1
+          },
+          "invalid_wait_arguments": [],
+          "all_response_items_examined": true,
+          "reasoning_boundary": "Provider Qwen reasoning text inspected privately for state/intent; no reasoning text copied into this artifact. OpenAI encrypted reasoning is not inferred.",
+          "native_developer_messages": [
+            {
+              "characters": 22927,
+              "sha256": "6b6bc79b5898e7e1744b7236dc5700818694b6ed8af978e1a2ed3c8dc4abc554"
+            }
+          ],
+          "model_visible_context_boundary": "Same service-submitted Developer and User; native Developer includes different builtin-mode bootstrap, and builtin tool interface changes. Not identical complete model-visible context.",
+          "callback_snapshot_count": 0,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 1,
+          "native_terminal_source_read_count": 0
+        }
+      ]
+    },
+    {
+      "cohort": "code-mode-control",
+      "catalogs": {
+        "consumer": {
+          "count": 42,
+          "sha256": "09900c6dc31e563749735ce5b34c7b11ae11f5c89fcb2722b4e51ba4b4f5cf6f"
+        }
+      },
+      "runs": [
+        {
+          "route": "qwen_gpu4",
+          "role": "consumer",
+          "phase": "cold",
+          "model": "qwen3.8-27b",
+          "source_session_id": null,
+          "session_id": "01a135af-f8a4-7452-9561-61eaf3edca4c",
+          "exit_code": 0,
+          "timeout": false,
+          "turn_completed": true,
+          "turn_failed": false,
+          "canonical_valid": true,
+          "parse_error": null,
+          "outcome": "no_action",
+          "binding_valid": true,
+          "summary_matches_nonce": true,
+          "calls": [
+            {
+              "role": "consumer",
+              "route": "qwen_gpu4",
+              "phase": "cold",
+              "name": "read_text_file",
+              "arguments": {
+                "path": "/tmp/ceo-current-native-routes.CpNDjk/code-mode-control/qwen_gpu4.consumer.cold.source.json"
+              },
+              "expected": true,
+              "result_sha256": "ee5fc1e9d0d3a8d25cf49ffe5a8ebb34e484d9f05e960fd2363420e1efadb1e0",
+              "result_characters": 255
+            }
+          ],
+          "passed": true,
+          "task_sha256": "8890d51f97ebccf2defaf0aadc2d7da41ef6da20c2f314b592368fec4ccacbdb",
+          "developer_sha256": "1eee786e236f99c51f48a4771dfd6fee386e1d8a7ab07b549f9d0a59870da845",
+          "native_schema_sha256": "911ad56566b6ffb3077189ea85efb548e6d86c650570a2906fb1d3942fc429a9",
+          "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T07-34-47-01a135af-f8a4-7452-9561-61eaf3edca4c.jsonl",
+          "native_sha256": "6482f195cb7c8dde6326b999e94ae37f33f5ad930ba507a591bf76add9bfc698",
+          "native_record_count": 29,
+          "native_response_item_count": 11,
+          "native_task_exact": true,
+          "native_tool_name_counts": {
+            "exec_command": 1,
+            "read_text_file": 1
+          },
+          "invalid_wait_arguments": [],
+          "all_response_items_examined": true,
+          "reasoning_boundary": "Provider Qwen reasoning text inspected privately for state/intent; no reasoning text copied into this artifact. OpenAI encrypted reasoning is not inferred.",
+          "native_developer_messages": [
+            {
+              "characters": 22003,
+              "sha256": "1eee786e236f99c51f48a4771dfd6fee386e1d8a7ab07b549f9d0a59870da845"
+            }
+          ],
+          "callback_snapshot_count": 1,
+          "callback_snapshot_boundary": "Captured immediately after native wrapper completion/deadline; timed-out snapshot may precede complete native history.",
+          "native_terminal_tool_call_count": 2,
+          "native_terminal_source_read_count": 1
+        }
+      ]
+    }
+  ],
+  "interpretation": [
+    "OAuth passes cold/resume for both roles in thin and registered-source cohorts, eight canonical turns with exact singleton source reads/fresh nonce/binding.",
+    "Qwen thin Consumer timeout callback snapshot records five source reads (terminal native history records12); Audit completes canonical output after two source reads, failing exact singleton requirement.",
+    "Qwen full role Consumer completes after two source reads; Audit reads once but abbreviates prefixed nonce. Both remain failed controls.",
+    "Qwen actual registered JSON reader cold turns time out; no valid cold means no resume attempted.",
+    "Visible Qwen reasoning already identifies the correct nonce/result fields but continues invalid CodeMode wait calls; this establishes the observed loop, not a proven provider source defect.",
+    "First CodeMode-off Consumer diagnostic passes. Strict paired comparison retains identical submitted Developer/Task/schema and source, emits canonical no_action with nonce, but reads through native cat rather than the required MCP; paired probe fails singleton MCP oracle. Native Developer/bootstrap differs (baseline22003 chars versus paired22927); equality refers only to service-submitted Developer before native augmentation. This is a mode configuration bundle, not isolated function availability.",
+    "Schema emission can complete in direct mode, but changing mode and builtin interface is not final full-runtime acceptance. Model/formatter/tool-guidance contributions remain to be isolated.",
+    "Timeout callback snapshots are incomplete relative to preserved terminal native history: thin Qwen Consumer5 callbacks versus12 native reads; registered Consumer4 callbacks versus12 reads+34 waits; registered Audit44 callbacks versus62 reads+2 contract reads. Original snapshots retained; terminal native counts are separate. No failure is promoted."
+  ],
+  "business_acceptance": false,
+  "provider_release_ready": false
+}

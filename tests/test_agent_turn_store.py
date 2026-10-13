@@ -660,7 +660,9 @@ def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path, monkeypatch)
         "codex-test",
         "claude-test",
     ]
-    assert submitted_prompts[:2] == ["Read-only decision", "Read-only decision"]
+    from app.native_agent_output import native_task_prompt
+
+    assert submitted_prompts[:2] == [native_task_prompt("Read-only decision", "consumer")] * 2
     saved_run = store.get_agent_run(claim.run.id)
     assert native_trajectory.live_events(str(store.path.resolve()), claim.run.id) is None
     assert not any(event.get("type") == "runtime.prompt" for event in saved_run.tool_events)

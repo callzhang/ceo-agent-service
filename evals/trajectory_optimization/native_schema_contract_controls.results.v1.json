@@ -1,0 +1,200 @@
+{
+  "version": 1,
+  "scope": "Anonymous synthetic cold fixtures; public repository instructions; stubbed role tools; no private Skill, Work Profile or business records. No continuation evidence.",
+  "controls": [
+    {
+      "route": "qwen_gpu4",
+      "role": "audit",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12dbf-fd19-7753-9043-646a3b478486",
+      "canonical_valid": false,
+      "payload_exact": false,
+      "summary_matches_nonce": false,
+      "native_schema_valid": false,
+      "turn_completed": true,
+      "parse_error": "ResultParseError",
+      "passed": false,
+      "control": "schema_off",
+      "artifact_root": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-qwen-audit-schemaoff-control-730r_n2z",
+      "results_sha256": "73d77ea934195436e01ce24a0891a7ac883177f4f563e19ac5947fe3d7622104",
+      "call_count": 2,
+      "tool_names": [
+        "read_dingtalk_messages_in_window"
+      ]
+    },
+    {
+      "route": "qwen_gpu4",
+      "role": "audit",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": true,
+      "session_id": "01a12dc3-a39c-78c3-aa80-65c3e1356652",
+      "canonical_valid": false,
+      "payload_exact": false,
+      "summary_matches_nonce": false,
+      "native_schema_valid": false,
+      "turn_completed": false,
+      "parse_error": "ResultParseError",
+      "passed": false,
+      "control": "audit_role_format",
+      "artifact_root": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-qwen-audit-role-format-control-m74c2q0y",
+      "results_sha256": "399b35cf7003a5496f7a4891b32219c0a945ea60fafa09c879ece75b7c02a335",
+      "call_count": 41,
+      "tool_names": [
+        "read_dingtalk_messages_in_window"
+      ]
+    },
+    {
+      "route": "qwen_gpu4",
+      "role": "audit",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12dc7-9fb0-7b53-83b9-fdc72a42eee4",
+      "canonical_valid": true,
+      "payload_exact": true,
+      "summary_matches_nonce": true,
+      "native_schema_valid": true,
+      "turn_completed": true,
+      "passed": true,
+      "control": "audit_full_contract",
+      "artifact_root": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-qwen-audit-contract-context-control-op13xc60",
+      "results_sha256": "a05267ceeb693b73e747a0e82b7a9bdb43e33c2c66afd7222b984dc66e096b12",
+      "call_count": 1,
+      "tool_names": [
+        "read_dingtalk_messages_in_window"
+      ]
+    },
+    {
+      "route": "qwen_gpu4",
+      "role": "audit",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12dcb-9249-7861-9468-46add04f6e8b",
+      "canonical_valid": true,
+      "payload_exact": true,
+      "summary_matches_nonce": true,
+      "native_schema_valid": true,
+      "turn_completed": true,
+      "passed": true,
+      "control": "audit_field_guide",
+      "artifact_root": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-qwen-audit-field-guide-control-5ja_szxm",
+      "results_sha256": "4fd4250de9f0be96c79c5af90d11d7332394e8991c3226f2ff435bbfc54ea1e9",
+      "call_count": 1,
+      "tool_names": [
+        "read_dingtalk_messages_in_window"
+      ]
+    },
+    {
+      "route": "qwen_gpu4",
+      "role": "consumer",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12dca-4db6-7301-82eb-53eaccb25d26",
+      "canonical_valid": true,
+      "payload_exact": true,
+      "summary_matches_nonce": true,
+      "native_schema_valid": true,
+      "turn_completed": true,
+      "passed": false,
+      "control": "consumer_full_contract",
+      "artifact_root": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-qwen-consumer-contract-context-control-uytulbe9",
+      "results_sha256": "4fabd8afcc1525f84475a96592e4edbe1afe12c3fbdb6ffdcc6f0b8eb6a249d5",
+      "call_count": 2,
+      "tool_names": [
+        "read_dingtalk_messages_in_window"
+      ]
+    },
+    {
+      "route": "qwen_gpu4",
+      "role": "consumer",
+      "phase": "cold",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12dcd-f7bb-7bf1-a13e-fc670b4371c6",
+      "canonical_valid": true,
+      "payload_exact": false,
+      "summary_matches_nonce": true,
+      "native_schema_valid": true,
+      "turn_completed": true,
+      "passed": false,
+      "control": "consumer_field_guide",
+      "artifact_root": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-qwen-consumer-field-guide-control-9gsvfzz_",
+      "results_sha256": "0c53f66e4a7679b684901c27abeafb9bfc27238f4ea4712484850e3697e1f2a6",
+      "call_count": 1,
+      "tool_names": [
+        "read_dingtalk_messages_in_window"
+      ]
+    }
+  ],
+  "business_document": {
+    "artifact_root": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-native-audit-fieldguide-business-h9vi05uh",
+    "results_sha256": "c3a1743a0a1b447a0132856f6d9effaa63f66565a9e1a0e3b8af5cbe5a9e5657",
+    "arms": [
+      {
+        "arm": "full",
+        "route": "qwen_gpu4",
+        "case": "audit-document-feedback",
+        "exit_code": 0,
+        "timed_out": false,
+        "session_id": "01a12de3-5ef7-72c3-8110-e20e07e656b5",
+        "turn_completed": true,
+        "developer_characters": 9553,
+        "task_characters": 4713,
+        "calls": [
+          "read_task_skill",
+          "read_dingtalk_document",
+          "read_system_action_contract",
+          "read_dingtalk_document_full"
+        ],
+        "canonical_valid": true,
+        "binding_valid": true,
+        "native_schema_valid": true,
+        "outcome": "return",
+        "feedback_nonnull": true,
+        "business_review": "Fact correction confirmed independently; full workflow not established for shortened guide."
+      },
+      {
+        "arm": "fields",
+        "route": "qwen_gpu4",
+        "case": "audit-document-feedback",
+        "exit_code": 0,
+        "timed_out": false,
+        "session_id": "01a12de3-cb65-7873-b836-9012e23d07be",
+        "turn_completed": true,
+        "developer_characters": 8278,
+        "task_characters": 4713,
+        "calls": [
+          "read_task_skill",
+          "search_dingtalk_documents",
+          "read_dingtalk_document",
+          "read_dingtalk_document"
+        ],
+        "canonical_valid": true,
+        "binding_valid": true,
+        "native_schema_valid": true,
+        "outcome": "return",
+        "feedback_nonnull": true,
+        "business_review": "Fact correction confirmed independently; full workflow not established for shortened guide."
+      }
+    ],
+    "independent_review": {
+      "fact_conflicts_identified_both": true,
+      "mandatory_action_contract_read": {
+        "full": true,
+        "fields": false
+      },
+      "release_qualified": false,
+      "fixture_limitations": [
+        "document_id conflated with node_id",
+        "declared search callback unsupported",
+        "full document callback returns same material"
+      ],
+      "next_fixture": "Explicit native node locator and/or supported source discovery; retain both original trajectories and unchanged workflow requirements."
+    }
+  }
+}

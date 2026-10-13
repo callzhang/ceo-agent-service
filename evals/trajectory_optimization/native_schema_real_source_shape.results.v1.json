@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "source_code_commit": "81e586e3",
+  "artifact_root": "/private/tmp/ceo-audit-native-parity-qmi2nddw",
+  "changes": [
+    "Frozen trigger taskId string matches observed run25843; live source taskId remains numeric.",
+    "Native query envelopes use result.taskIdList and result.instRevertActivities with revertAction."
+  ],
+  "runs": [
+    {
+      "arm": "correct-1",
+      "route": "codex_oauth",
+      "case": "correct",
+      "variant": "native_task_source_parity",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12eb2-0492-7ab1-ad96-11c760556d08",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5472,
+      "calls": [
+        "read_text_file",
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "approve",
+      "feedback_nonnull": false,
+      "business_review": "independent full trajectory review passed",
+      "strict_business_pass": true,
+      "hashes": {
+        "input.json": "9f9a9b91983065f0ee854d3e99c011e7f7356c7e28f6f25504d59f19670b1176",
+        "events.jsonl": "727883fc43f6cbaa9da271066f4de95dce77edebdfa9ff449862b95b1ff3f79c",
+        "calls.json": "aa8463f1e5a8abdbfb93547e2fbe7f30e4ad8140b9fce6cd38aba0eb617bf877",
+        "canonical.json": "549c5889b7a71a9729c733d78f810eb398a2bd4c88d848ae18e19094724e93aa"
+      },
+      "redundant_unsupported_reads": 1
+    },
+    {
+      "arm": "correct-2",
+      "route": "codex_oauth",
+      "case": "correct",
+      "variant": "native_task_source_parity",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12eb2-ca10-7ee3-a095-cf17733f25b7",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5472,
+      "calls": [
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "approve",
+      "feedback_nonnull": false,
+      "business_review": "independent full trajectory review passed",
+      "strict_business_pass": true,
+      "hashes": {
+        "input.json": "9f9a9b91983065f0ee854d3e99c011e7f7356c7e28f6f25504d59f19670b1176",
+        "events.jsonl": "79a6ca97a329df9c4d358ec07c2fd9ed1521ad5b9b1a47a4e5fad1b53b6ae13e",
+        "calls.json": "7cc71c8fb540d7cf3169b0270f245f67e2820f3def97d3e5ce1047a2c18a1eb0",
+        "canonical.json": "8824b915554fbc96b828737967d05e22b62419385d056d53940b9b928fdca51f"
+      },
+      "redundant_unsupported_reads": 0
+    },
+    {
+      "arm": "wrong_destination",
+      "route": "codex_oauth",
+      "case": "wrong_destination",
+      "variant": "native_task_source_parity",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12eb3-2d8b-7100-88a9-da22abca4e79",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5478,
+      "calls": [
+        "read_text_file",
+        "read_skill",
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "business_review": "independent full trajectory review passed",
+      "strict_business_pass": true,
+      "hashes": {
+        "input.json": "aedfd40fda45907b3ca9299ded0fb2c3d647f62b2daacbbc5e8d4ff3f1436b21",
+        "events.jsonl": "05ca383fce42b478aaff6569b679df9c07c12871526610fedb8ead2ab0ebbe65",
+        "calls.json": "aa8463f1e5a8abdbfb93547e2fbe7f30e4ad8140b9fce6cd38aba0eb617bf877",
+        "canonical.json": "b1024de4beb7ee82415d85c07addd6552b06cf4803730764e24aabd053ec5a9a"
+      },
+      "redundant_unsupported_reads": 1
+    }
+  ],
+  "business_acceptance": false,
+  "limits": [
+    "Three anonymous synthetic cold runs; empty WorkProfile/common settings and synthetic Skill.",
+    "Multiple fixture corrections changed together: not causal attribution.",
+    "Real Task assembly and adapter/role command; not full AuditAgent persistence/lifecycle.",
+    "Runs precede latest main integration."
+  ],
+  "next_step": "Verify latest-main integration and full AuditAgent lifecycle before production schema enablement."
+}

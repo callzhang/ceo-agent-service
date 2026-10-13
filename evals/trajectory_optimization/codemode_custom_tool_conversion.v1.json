@@ -1,0 +1,1530 @@
+{
+  "version": 1,
+  "code_ref": "6517bc95",
+  "codex_cli_version": "0.154.0",
+  "scope": "Anonymous tool serialization only; local endpoint does not forward or infer; provider installed converter invoked on CPU with captured tool definitions. No credentials, private business input, package edit, model call or reload.",
+  "capture": {
+    "path": "/v1/responses",
+    "tools": [
+      {
+        "type": "custom",
+        "name": "exec",
+        "description": "Run JavaScript code to orchestrate/compose tool calls\n- Evaluates the provided JavaScript code in a fresh V8 isolate as an async module.\n- All nested tools are available on the global `tools` object, for example `await tools.exec_command(...)`. Tool names are exposed as normalized JavaScript identifiers, for example `await tools.mcp__ologs__get_profile(...)`.\n- Nested tool methods take either a string or an object as their input argument.\n- Nested tools return either an object or a string, based on the description.\n- Runs raw JavaScript -- no Node, no file system, no network access, no console.\n- Accepts raw JavaScript source text, not JSON, quoted strings, or markdown code fences.\n- You may optionally start the tool input with a first-line pragma like `// @exec: {\"yield_time_ms\": 10000, \"max_output_tokens\": 1000}`.\n- `yield_time_ms` asks `exec` to yield early if the script is still running. Defaults to 30000 ms.\n- `max_output_tokens` sets the token budget for direct `exec` results. Defaults to 10000 tokens.\n- When the JS code is fully evaluated, the isolate's lifetime ends and unawaited promises are silently discarded.\n\n- Global helpers:\n- `exit()`: Immediately ends the current script successfully (like an early return from the top level).\n- `text(value: string | number | boolean | undefined | null)`: Appends a text item. Non-string values are stringified with `JSON.stringify(...)` when possible.\n- `image(imageUrlOrItem: string | { image_url: string; detail?: \"auto\" | \"low\" | \"high\" | \"original\" | null } | ImageContent, detail?: \"auto\" | \"low\" | \"high\" | \"original\" | null)`: Appends an image item. `image_url` should be a base64-encoded `data:` URL. To forward an MCP tool image, pass an individual `ImageContent` block from `result.content`, for example `image(result.content[0])`. MCP image blocks may request detail with `_meta: { \"codex/imageDetail\": \"original\" }`. When provided, the second `detail` argument overrides any detail embedded in the first argument.\n- `audio(audioUrlOrItem: string | { audio_url: string } | AudioContent)`: Appends an audio item. `audio_url` should be a base64-encoded `data:` URL. To forward an MCP tool audio block, pass an individual `AudioContent` block from `result.content`, for example `audio(result.content[0])`.\n- `generatedImage(result: { image_url: string; output_hint?: string })`: Appends an image-generation result and its optional output hint. HTTP(S) URLs are not supported.\n- `store(key: string, value: any)`: stores a serializable value under a string key for later `exec` calls in the same session.\n- `load(key: string)`: returns the stored value for a string key, or `undefined` if it is missing.\n- `notify(value: string | number | boolean | undefined | null)`: immediately injects an extra `custom_tool_call_output` for the current `exec` call. Values are stringified like `text(...)`.\n- `setTimeout(callback: () => void, delayMs?: number)`: schedules a callback to run later and returns a timeout id. Pending timeouts do not keep `exec` alive by themselves; await an explicit promise if you need to wait for one.\n- `clearTimeout(timeoutId?: number)`: cancels a timeout created by `setTimeout`.\n- `ALL_TOOLS`: metadata for the enabled nested tools as `{ name, description }` entries.\n- `yield_control()`: yields the accumulated output to the model immediately while the script keeps running.\n\n### `exec_command`\nRuns a command in a PTY, returning output or a session ID for ongoing interaction.\n\nexec tool declaration:\n```ts\ndeclare const tools: { exec_command(args: {\n  // Shell command to execute.\n  cmd: string;\n  // User-facing approval question for `require_escalated`; omit otherwise.\n  justification?: string;\n  // True runs the shell with -l/-i semantics; false disables them. Defaults to true.\n  login?: boolean;\n  // Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy.\n  max_output_tokens?: number;\n  // Reusable approval prefix for `cmd`, only with `sandbox_permissions: \"require_escalated\"`; for example [\"git\", \"pull\"].\n  prefix_rule?: Array<string>;\n  // Per-command sandbox override. Defaults to `use_default`; use `require_escalated` for unsandboxed execution.\n  sandbox_permissions?: \"use_default\" | \"require_escalated\";\n  // Shell binary to launch. Defaults to the user's default shell.\n  shell?: string;\n  // Working directory for the command. Defaults to the turn cwd.\n  workdir?: string;\n  // Wait before yielding output. Defaults to 10000 ms; effective range is 250-30000 ms.\n  yield_time_ms?: number;\n}): Promise<{\n  // Chunk identifier included when the response reports one.\n  chunk_id?: string;\n  // Process exit code when the command finished during this call.\n  exit_code?: number;\n  // Approximate token count before output truncation.\n  original_token_count?: number;\n  // Command output text, possibly truncated.\n  output: string;\n  // Session identifier to pass to write_stdin when the process is still running.\n  session_id?: number;\n  // Elapsed wall time spent waiting for output in seconds.\n  wall_time_seconds: number;\n}>; };\n```\n\n### `list_mcp_resource_templates`\nLists resource templates provided by MCP servers. Parameterized resource templates allow servers to share data that takes parameters and provides context to language models, such as files, database schemas, or application-specific information. Prefer resource templates over web search when possible.\n\nexec tool declaration:\n```ts\ndeclare const tools: { list_mcp_resource_templates(args: {\n  // Opaque cursor from a previous list_mcp_resource_templates call; omit for the first page.\n  cursor?: string;\n  // MCP server name. Omit to list resource templates from every configured server.\n  server?: string;\n}): Promise<unknown>; };\n```\n\n### `list_mcp_resources`\nLists resources provided by MCP servers. Resources allow servers to share data that provides context to language models, such as files, database schemas, or application-specific information. Prefer resources over web search when possible.\n\nexec tool declaration:\n```ts\ndeclare const tools: { list_mcp_resources(args: {\n  // Opaque cursor from a previous list_mcp_resources call; omit for the first page.\n  cursor?: string;\n  // MCP server name. Omit to list resources from every configured server.\n  server?: string;\n}): Promise<unknown>; };\n```\n\n### `read_mcp_resource`\nRead a specific resource from an MCP server given the server name and resource URI.\n\nexec tool declaration:\n```ts\ndeclare const tools: { read_mcp_resource(args: {\n  // MCP server name exactly as configured. Must match the 'server' field returned by list_mcp_resources.\n  server: string;\n  // Resource URI to read. Must be one of the URIs returned by list_mcp_resources.\n  uri: string;\n}): Promise<unknown>; };\n```\n\n### `view_image`\nView a local image file from the filesystem when visual inspection is needed. Use this for images already available on disk.\n\nexec tool declaration:\n```ts\ndeclare const tools: { view_image(args: {\n  // Local filesystem path to an image file.\n  path: string;\n}): Promise<{\n  // Image detail hint returned by view_image. Returns `high` for default resized behavior or `original` when original resolution is preserved.\n  detail: \"high\" | \"original\";\n  // Data URL for the loaded image.\n  image_url: string;\n}>; };\n```\n\n### `write_stdin`\nWrites characters to an existing unified exec session and returns recent output.\n\nexec tool declaration:\n```ts\ndeclare const tools: { write_stdin(args: {\n  // Bytes to write to stdin. Defaults to empty, which polls without writing.\n  chars?: string;\n  // Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy.\n  max_output_tokens?: number;\n  // Identifier of the running unified exec session.\n  session_id: number;\n  // Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls wait 5000-300000 ms by default.\n  yield_time_ms?: number;\n}): Promise<{\n  // Chunk identifier included when the response reports one.\n  chunk_id?: string;\n  // Process exit code when the command finished during this call.\n  exit_code?: number;\n  // Approximate token count before output truncation.\n  original_token_count?: number;\n  // Command output text, possibly truncated.\n  output: string;\n  // Session identifier to pass to write_stdin when the process is still running.\n  session_id?: number;\n  // Elapsed wall time spent waiting for output in seconds.\n  wall_time_seconds: number;\n}>; };\n```",
+        "format": {
+          "type": "grammar",
+          "syntax": "lark",
+          "definition": "\nstart: pragma_source | plain_source\npragma_source: PRAGMA_LINE NEWLINE SOURCE\nplain_source: SOURCE\n\nPRAGMA_LINE: /[ \\t]*\\/\\/ @exec:[^\\r\\n]*/\nNEWLINE: /\\r?\\n/\nSOURCE: /[\\s\\S]+/\n"
+        }
+      },
+      {
+        "type": "function",
+        "name": "wait",
+        "description": "Waits on a yielded `exec` cell and returns new output or completion.\n- Use `wait` only after `exec` returns `Script running with cell ID ...`.\n- `cell_id` identifies the running `exec` cell to resume.\n- `yield_time_ms` controls how long to wait for more output before yielding again. Defaults to 10000 ms.\n- `max_tokens` limits how much new output this wait call returns. Defaults to 10000 tokens.\n- `terminate: true` stops the running cell; false or omitted waits for output.\n- `wait` returns only the new output since the last yield, or the final completion or termination result for that cell.\n- If the cell is still running, `wait` may yield again with the same `cell_id`.\n- If the cell has already finished, `wait` returns the completed result and closes the cell.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "cell_id": {
+              "type": "string",
+              "description": "Identifier of the running exec cell."
+            },
+            "max_tokens": {
+              "type": "number",
+              "description": "Output token budget for this wait call. Defaults to 10000 tokens."
+            },
+            "terminate": {
+              "type": "boolean",
+              "description": "True stops the running exec cell; false or omitted waits for output."
+            },
+            "yield_time_ms": {
+              "type": "number",
+              "description": "Wait before yielding more output. Defaults to 10000 ms."
+            }
+          },
+          "required": [
+            "cell_id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "request_user_input",
+        "description": "Request user input for one to three short questions and wait for the response. This tool is only available in Plan mode.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "questions": {
+              "type": "array",
+              "description": "Questions to show the user. Prefer 1 and do not exceed 3",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "header": {
+                    "type": "string",
+                    "description": "Short header label shown in the UI (12 or fewer chars)."
+                  },
+                  "id": {
+                    "type": "string",
+                    "description": "Stable identifier for mapping answers (snake_case)."
+                  },
+                  "options": {
+                    "type": "array",
+                    "description": "Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with \"(Recommended)\". Do not include an \"Other\" option in this list; the client will add a free-form \"Other\" option automatically.",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "description": {
+                          "type": "string",
+                          "description": "One short sentence explaining impact/tradeoff if selected."
+                        },
+                        "label": {
+                          "type": "string",
+                          "description": "User-facing label (1-5 words)."
+                        }
+                      },
+                      "required": [
+                        "label",
+                        "description"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "question": {
+                    "type": "string",
+                    "description": "Single-sentence prompt shown to the user."
+                  }
+                },
+                "required": [
+                  "id",
+                  "header",
+                  "question",
+                  "options"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "questions"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "namespace",
+        "name": "mcp__agent_cli",
+        "description": "Task-bound Agent reads and Consumer report documents",
+        "tools": [
+          {
+            "type": "function",
+            "name": "consumer_artifact_write",
+            "description": "Write a text artifact only in this task's current workspace generation.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "content": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "content"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "consumer_document_write",
+            "description": "Publish this scheduled CEO report to its service-resolved document.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "content": {
+                  "type": "string"
+                },
+                "expected_revision": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "content"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "daily_report_facts",
+            "description": "Read the fixed service facts for this scheduled daily report.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          {
+            "type": "function",
+            "name": "list_dingtalk_calendar_events",
+            "description": "Read the principal's events over an explicit time window.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "end": {
+                  "type": "string"
+                },
+                "start": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "list_dingtalk_minutes",
+            "description": "Search accessible AI minutes by title or time range.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "end": {
+                  "type": "string"
+                },
+                "query": {
+                  "type": "string"
+                },
+                "scope": {
+                  "type": "string"
+                },
+                "start": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "list_dingtalk_pending_oa",
+            "description": "Read one unfiltered page of the principal's live OA pending list.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "page": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "list_dingtalk_sheets",
+            "description": "List workbook sheets by stable sheet ID.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "node_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "list_task_artifacts",
+            "description": "List text artifacts from this task's current execution generation.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_calendar_event",
+            "description": "Read one live DingTalk calendar event.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "event_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "event_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_document",
+            "description": "Read a DingTalk document and its current content.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "node_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_document_full",
+            "description": "Read a DingTalk document's full JSONML and editing revision.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "node_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_document_info",
+            "description": "Read an exact document node's title, type, and owner metadata.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "node_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_document_permissions",
+            "description": "Read an exact document's current collaborators and roles.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "node_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_drive_file",
+            "description": "Read the body of one exact DingTalk Drive attachment for OA review.\n\n        Use after drive metadata identifies an accessible attachment node. Returns\n        bounded PDF, workbook, presentation, or text contents. Scanned PDFs set\n        ocr_required and include a temporary path; only send that material to OCR\n        when the current run authorizes the OCR destination. A technical read\n        failure does not mean the applicant omitted the material.\n        ",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "file_name": {
+                  "type": "string"
+                },
+                "node_id": {
+                  "type": "string"
+                },
+                "space_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node_id",
+                "space_id",
+                "file_name"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_drive_info",
+            "description": "Read an exact drive file's metadata before deciding how to open it.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "node_id": {
+                  "type": "string"
+                },
+                "space_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_group_members",
+            "description": "Read the complete bounded users/bots roster for an exact group ID.\n\n        Check complete, hasMore, buckets and failures. Partial results are not\n        a complete audience. openDingtalkId is not an organization userId;\n        correlate stable identifiers before reading enterprise profiles.\n        ",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "conversation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "conversation_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_messages",
+            "description": "Read recent messages of an identified DingTalk conversation.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "conversation_id": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "integer"
+                },
+                "single_chat": {
+                  "type": "boolean"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "conversation_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_messages_in_window",
+            "description": "Read one identified group's messages over the report window.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "conversation_id": {
+                  "type": "string"
+                },
+                "end": {
+                  "type": "string"
+                },
+                "start": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "conversation_id",
+                "start",
+                "end"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_minutes",
+            "description": "Read AI minutes details, summary, and the complete transcript.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "task_uuid": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "task_uuid"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_oa",
+            "description": "Read the live DingTalk OA process and its current facts.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "process_instance_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "process_instance_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_oa_records",
+            "description": "Read one OA process's recorded actions.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "process_instance_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "process_instance_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_oa_revert_activities",
+            "description": "Read legal return destinations for one exact OA task.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "oa_task_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "oa_task_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_oa_tasks",
+            "description": "Read one OA process's current tasks and owners.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "process_instance_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "process_instance_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_sheet_info",
+            "description": "Read one sheet's bounds and merged-cell metadata.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "node_id": {
+                  "type": "string"
+                },
+                "sheet_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node_id",
+                "sheet_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_sheet_range",
+            "description": "Read an explicit A1 workbook range, bounded by the DWS read API.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "cell_range": {
+                  "type": "string"
+                },
+                "node_id": {
+                  "type": "string"
+                },
+                "sheet_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node_id",
+                "sheet_id",
+                "cell_range"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_thread_replies",
+            "description": "Read the full bounded reply thread for one exact root message.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "message_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "message_id"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_dingtalk_user_profiles",
+            "description": "Read exact organization userId profiles and original organization fields.\n\n        Supply verified organization userIds, not display names or group\n        openDingtalkIds. Preserve empty profiles as missing evidence; a native\n        success flag does not prove identity or title. Preserve native depts,\n        labels and manager fields; verify title evidence from actual returned\n        data rather than assuming every profile contains a title.\n        ",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "user_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "user_ids"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_skill",
+            "description": "Read an installed Agent skill or its referenced Markdown safely.\n\n    With no source, return body-free name/use/path TSV with exact root aliases. Otherwise\n    pass exactly one source. `path` identifies a Markdown file inside an\n    installed Skill directory. `name` resolves one exact installed Skill's\n    metadata name and reads its SKILL.md through the same path authorization.\n    ",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "path": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_spreadsheet",
+            "description": "Read a bounded preview of a downloaded xlsx workbook without shell access.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "max_columns": {
+                  "type": "integer"
+                },
+                "max_rows": {
+                  "type": "integer"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_system_action_contract",
+            "description": "Read canonical shared rules and the requested reviewed system action rows.\n\n        Pass a capability from the prompt catalog and optionally one of its\n        operations. The result retains every shared, role, identity, payload,\n        target, and completion-evidence rule from the canonical contract.\n        ",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "capability": {
+                  "type": "string"
+                },
+                "operation": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "capability"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_task_artifact",
+            "description": "Read a text artifact from this task's current execution generation.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_task_skill",
+            "description": "Read an exact selected Skill frozen in this task's original input.\n\n        Pass a Skill name from the scheduled prompt catalog. The returned content\n        is the immutable managed revision or operation snapshot saved when the\n        scheduled command ran; this lookup never rereads an installed Skill file.\n        ",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_text_file",
+            "description": "Read bounded text, PDF, workbook, or presentation material from the temp directory.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "read_weekly_report_archive",
+            "description": "Read one transcript named in this run's meeting archive index.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "recent_dingtalk_conversations",
+            "description": "List conversations active in a bounded report time window.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "end": {
+                  "type": "string"
+                },
+                "start": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "render_weekly_report",
+            "description": "Render and validate weekly report JSONML and its full draft.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "before": {
+                  "type": "array",
+                  "items": {}
+                },
+                "report": {
+                  "$ref": "#/$defs/WeeklyReport"
+                }
+              },
+              "required": [
+                "report",
+                "before"
+              ],
+              "$defs": {
+                "BusinessLineReport": {
+                  "type": "object",
+                  "properties": {
+                    "core_metrics": {},
+                    "full_report_jsonml": {
+                      "type": "array",
+                      "items": {
+                        "type": "array",
+                        "items": {}
+                      }
+                    },
+                    "largest_risk": {},
+                    "management_decision": {},
+                    "metrics": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": true
+                      }
+                    },
+                    "milestone_deviation": {},
+                    "milestones": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": true
+                      }
+                    },
+                    "summary": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportClaim": {
+                  "type": "object",
+                  "properties": {
+                    "counterevidence": {},
+                    "evidence": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/ReportEvidence"
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "type": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportEvidence": {
+                  "type": "object",
+                  "properties": {
+                    "source_id": {},
+                    "source_kind": {},
+                    "speaker_is_derek": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportIssue": {
+                  "type": "object",
+                  "properties": {
+                    "as_of": {},
+                    "closure_evidence": {},
+                    "deadline": {},
+                    "id": {
+                      "type": "string"
+                    },
+                    "management_decision": {},
+                    "severity": {},
+                    "status": {},
+                    "weeks_without_evidence": {},
+                    "weeks_without_gate_movement": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportJudgment": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "ReportMetric": {
+                  "type": "object",
+                  "properties": {
+                    "change": {},
+                    "current": {},
+                    "data_date": {},
+                    "decision_critical": {},
+                    "definition": {},
+                    "key": {},
+                    "next_checkpoint": {},
+                    "previous": {},
+                    "responsible_name": {},
+                    "responsible_user_id": {},
+                    "source": {},
+                    "status": {},
+                    "target": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportRootCause": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "WeeklyReport": {
+                  "type": "object",
+                  "properties": {
+                    "as_of": {},
+                    "business_lines": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": {
+                        "$ref": "#/$defs/BusinessLineReport"
+                      }
+                    },
+                    "ceo_judgment": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportJudgment"
+                      }
+                    },
+                    "claims": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportClaim"
+                      }
+                    },
+                    "cockpit": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "company_metrics": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportMetric"
+                      }
+                    },
+                    "discussion": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportIssue"
+                      }
+                    },
+                    "private": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": true
+                    },
+                    "root_causes": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportRootCause"
+                      }
+                    }
+                  },
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "search_dingtalk_contacts",
+            "description": "Find current organization users by name or stable identifier.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "query"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "search_dingtalk_conversations",
+            "description": "Find an existing DingTalk conversation by title.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "query"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "search_dingtalk_documents",
+            "description": "Find DingTalk documents by title before reading an exact node.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "page_size": {
+                  "type": "integer"
+                },
+                "query": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "query"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "search_dingtalk_messages",
+            "description": "Search messages by exact keyword in an explicit time window.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "end": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "integer"
+                },
+                "query": {
+                  "type": "string"
+                },
+                "start": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "query",
+                "start",
+                "end"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "validate_weekly_report",
+            "description": "Validate a scheduled CEO weekly report using its installed Skill.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "manifest": {
+                  "$ref": "#/$defs/WeeklyReportManifest"
+                },
+                "previous_issues": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": true
+                  }
+                },
+                "report": {
+                  "$ref": "#/$defs/WeeklyReport"
+                }
+              },
+              "required": [
+                "manifest",
+                "report",
+                "previous_issues"
+              ],
+              "$defs": {
+                "BusinessLineReport": {
+                  "type": "object",
+                  "properties": {
+                    "core_metrics": {},
+                    "full_report_jsonml": {
+                      "type": "array",
+                      "items": {
+                        "type": "array",
+                        "items": {}
+                      }
+                    },
+                    "largest_risk": {},
+                    "management_decision": {},
+                    "metrics": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": true
+                      }
+                    },
+                    "milestone_deviation": {},
+                    "milestones": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": true
+                      }
+                    },
+                    "summary": {}
+                  },
+                  "additionalProperties": true
+                },
+                "MessagesCoverage": {
+                  "type": "object",
+                  "properties": {
+                    "context_read_ids": {
+                      "type": "array",
+                      "items": {}
+                    },
+                    "inventory_complete": {},
+                    "selected_ids": {
+                      "type": "array",
+                      "items": {}
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "MinutesCoverage": {
+                  "type": "object",
+                  "properties": {
+                    "full_transcript_ids": {
+                      "type": "array",
+                      "items": {}
+                    },
+                    "inventory_complete": {},
+                    "relevant_ids": {
+                      "type": "array",
+                      "items": {}
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "ReportClaim": {
+                  "type": "object",
+                  "properties": {
+                    "counterevidence": {},
+                    "evidence": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/ReportEvidence"
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "type": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportDocumentIdentity": {
+                  "type": "object",
+                  "properties": {
+                    "node_id": {},
+                    "revision": {},
+                    "title": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportEvidence": {
+                  "type": "object",
+                  "properties": {
+                    "source_id": {},
+                    "source_kind": {},
+                    "speaker_is_derek": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportIssue": {
+                  "type": "object",
+                  "properties": {
+                    "as_of": {},
+                    "closure_evidence": {},
+                    "deadline": {},
+                    "id": {
+                      "type": "string"
+                    },
+                    "management_decision": {},
+                    "severity": {},
+                    "status": {},
+                    "weeks_without_evidence": {},
+                    "weeks_without_gate_movement": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportJudgment": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "ReportMetric": {
+                  "type": "object",
+                  "properties": {
+                    "change": {},
+                    "current": {},
+                    "data_date": {},
+                    "decision_critical": {},
+                    "definition": {},
+                    "key": {},
+                    "next_checkpoint": {},
+                    "previous": {},
+                    "responsible_name": {},
+                    "responsible_user_id": {},
+                    "source": {},
+                    "status": {},
+                    "target": {}
+                  },
+                  "additionalProperties": true
+                },
+                "ReportRootCause": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "WeeklyReport": {
+                  "type": "object",
+                  "properties": {
+                    "as_of": {},
+                    "business_lines": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": {
+                        "$ref": "#/$defs/BusinessLineReport"
+                      }
+                    },
+                    "ceo_judgment": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportJudgment"
+                      }
+                    },
+                    "claims": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportClaim"
+                      }
+                    },
+                    "cockpit": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "company_metrics": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportMetric"
+                      }
+                    },
+                    "discussion": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "issues": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportIssue"
+                      }
+                    },
+                    "private": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": true
+                    },
+                    "root_causes": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/ReportRootCause"
+                      }
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "WeeklyReportManifest": {
+                  "type": "object",
+                  "properties": {
+                    "business_reports": {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": true
+                    },
+                    "messages": {
+                      "$ref": "#/$defs/MessagesCoverage"
+                    },
+                    "minutes": {
+                      "$ref": "#/$defs/MinutesCoverage"
+                    },
+                    "previous": {
+                      "$ref": "#/$defs/ReportDocumentIdentity"
+                    },
+                    "target": {
+                      "$ref": "#/$defs/ReportDocumentIdentity"
+                    }
+                  },
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "weekly_report_materials",
+            "description": "Read the fixed inputs for this scheduled CEO weekly report.",
+            "strict": false,
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        ]
+      },
+      {
+        "type": "web_search",
+        "external_web_access": false
+      }
+    ],
+    "tool_choice": "auto",
+    "text": {
+      "format": {
+        "type": "json_schema",
+        "strict": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ok"
+          ],
+          "additionalProperties": false
+        },
+        "name": "codex_output_schema"
+      }
+    },
+    "instruction_chars": 16979,
+    "instruction_sha256": "3b08633fa672906666659d764864dfda1d7af5b5111ea5817c8f46e5de4e1a8d",
+    "input_item_types": [
+      "message",
+      "message",
+      "message"
+    ],
+    "model": "qwen3.8-27b",
+    "input_body_saved": false,
+    "header_values_saved": false
+  },
+  "provider_conversion": {
+    "validated_tools": [
+      [
+        "custom",
+        "exec"
+      ],
+      [
+        "function",
+        "wait"
+      ],
+      [
+        "function",
+        "request_user_input"
+      ],
+      [
+        "namespace",
+        "mcp__agent_cli"
+      ],
+      [
+        "web_search",
+        null
+      ]
+    ],
+    "converted_function_count": 44,
+    "exec_present": false,
+    "wait_present": true,
+    "registered_count": 42,
+    "source_sha256": "bd5caa24867098d5883570668766f9abb1d06e6d6ac48ce68d37dcd7a0d727dd",
+    "function_names": [
+      "wait",
+      "request_user_input",
+      "mcp__agent_cli__consumer_artifact_write",
+      "mcp__agent_cli__consumer_document_write",
+      "mcp__agent_cli__daily_report_facts",
+      "mcp__agent_cli__list_dingtalk_calendar_events",
+      "mcp__agent_cli__list_dingtalk_minutes",
+      "mcp__agent_cli__list_dingtalk_pending_oa",
+      "mcp__agent_cli__list_dingtalk_sheets",
+      "mcp__agent_cli__list_task_artifacts",
+      "mcp__agent_cli__read_dingtalk_calendar_event",
+      "mcp__agent_cli__read_dingtalk_document",
+      "mcp__agent_cli__read_dingtalk_document_full",
+      "mcp__agent_cli__read_dingtalk_document_info",
+      "mcp__agent_cli__read_dingtalk_document_permissions",
+      "mcp__agent_cli__read_dingtalk_drive_file",
+      "mcp__agent_cli__read_dingtalk_drive_info",
+      "mcp__agent_cli__read_dingtalk_group_members",
+      "mcp__agent_cli__read_dingtalk_messages",
+      "mcp__agent_cli__read_dingtalk_messages_in_window",
+      "mcp__agent_cli__read_dingtalk_minutes",
+      "mcp__agent_cli__read_dingtalk_oa",
+      "mcp__agent_cli__read_dingtalk_oa_records",
+      "mcp__agent_cli__read_dingtalk_oa_revert_activities",
+      "mcp__agent_cli__read_dingtalk_oa_tasks",
+      "mcp__agent_cli__read_dingtalk_sheet_info",
+      "mcp__agent_cli__read_dingtalk_sheet_range",
+      "mcp__agent_cli__read_dingtalk_thread_replies",
+      "mcp__agent_cli__read_dingtalk_user_profiles",
+      "mcp__agent_cli__read_skill",
+      "mcp__agent_cli__read_spreadsheet",
+      "mcp__agent_cli__read_system_action_contract",
+      "mcp__agent_cli__read_task_artifact",
+      "mcp__agent_cli__read_task_skill",
+      "mcp__agent_cli__read_text_file",
+      "mcp__agent_cli__read_weekly_report_archive",
+      "mcp__agent_cli__recent_dingtalk_conversations",
+      "mcp__agent_cli__render_weekly_report",
+      "mcp__agent_cli__search_dingtalk_contacts",
+      "mcp__agent_cli__search_dingtalk_conversations",
+      "mcp__agent_cli__search_dingtalk_documents",
+      "mcp__agent_cli__search_dingtalk_messages",
+      "mcp__agent_cli__validate_weekly_report",
+      "mcp__agent_cli__weekly_report_materials"
+    ],
+    "no_model_inference": true
+  },
+  "harness_sources": {
+    "capture.py": "import json,threading,subprocess,os,tomllib,hashlib,gzip,zlib\nfrom pathlib import Path\nfrom http.server import BaseHTTPRequestHandler,ThreadingHTTPServer\nimport sys\nsys.path.insert(0,'/private/tmp/ceo-native-schema-current-main')\nfrom app.wechat.codex_safety import make_role_agent_command,ControlledCliConfig\nroot=Path(__file__).parent\n(root/'schema.json').write_text(json.dumps({'type':'object','properties':{'ok':{'type':'boolean'}},'required':['ok'],'additionalProperties':False}))\nrecords=[]\nclass Handler(BaseHTTPRequestHandler):\n def log_message(self,*a):pass\n def do_GET(self):\n  body=json.dumps({'object':'list','data':[],'models':[]}).encode();self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)\n def do_POST(self):\n  raw=self.rfile.read(int(self.headers.get('Content-Length',0)));encoding=self.headers.get('Content-Encoding','')\n  if encoding=='gzip':raw=gzip.decompress(raw)\n  if encoding=='zstd':\n   import zstandard\n   raw=zstandard.ZstdDecompressor().decompress(raw)\n  data=json.loads(raw)\n  record={'path':self.path,'tools':data.get('tools',[]),'tool_choice':data.get('tool_choice'),'text':data.get('text'),'instruction_chars':len(data.get('instructions','')),'instruction_sha256':hashlib.sha256(data.get('instructions','').encode()).hexdigest(),'input_item_types':[x.get('type') for x in data.get('input',[])],'model':data.get('model'),'input_body_saved':False,'header_values_saved':False}\n  records.append(record);(root/'capture.json').write_text(json.dumps(records,ensure_ascii=False,indent=2))\n  body=b'{\"error\":{\"message\":\"Anonymous serialization capture completed; no inference is available.\",\"type\":\"invalid_request_error\",\"code\":\"capture_complete\"}}';self.send_response(400);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)\nserver=ThreadingHTTPServer(('127.0.0.1',0),Handler);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()\nprovider='{name=\"anonymous-serialization-fixture\",base_url=\"http://127.0.0.1:'+str(server.server_port)+'/v1\",wire_api=\"responses\",requires_openai_auth=false,request_max_retries=0,stream_max_retries=0}'\ncommand=['codex','exec','--json','--output-schema',str(root/'schema.json'),'--cd',str(root),'-m','qwen3.8-27b','-c','model_provider=\"anonymous_serialization\"','-c','model_providers.anonymous_serialization='+provider,'-c','developer_instructions=\"Anonymous tool serialization fixture.\"']\nfor name in tomllib.loads(Path('/Users/derek/.codex/config.toml').read_text()).get('mcp_servers',{}):command.extend(['-c',f'mcp_servers.{name}.enabled=false'])\ncommand.append('-')\nmake_role_agent_command(command,role='consumer',task_workspace=str(root),controlled_cli=ControlledCliConfig(command='/Users/derek/miniforge3/bin/python',args=(str(root/'server.py'),),cwd=str(root)))\n# Current role tool/config builder; substitute only the inference endpoint.\nenv=os.environ.copy()\nfor k in list(env):\n if k in ('OPENAI_API_KEY','CODEX_API_KEY'):env.pop(k)\nwith (root/'stdout.jsonl').open('w') as out,(root/'stderr.txt').open('w') as err:\n proc=subprocess.Popen(command,stdin=subprocess.PIPE,stdout=out,stderr=err,text=True,env=env,start_new_session=True)\n try:proc.communicate('Return {\"ok\":true}.',timeout=40)\n except subprocess.TimeoutExpired:\n  import signal\n  os.killpg(proc.pid,signal.SIGTERM);proc.wait(timeout=10)\nserver.shutdown();server.server_close()\nprint(json.dumps({'exit':proc.returncode,'captured_requests':len(records),'tool_types':[(t.get('name',t.get('type')),[(x.get('name'),x.get('type')) for x in t.get('tools',[])]) for t in records[0]['tools']] if records else []}))\n",
+    "server.py": "import sys\nfrom pathlib import Path\nsys.path.insert(0,'/private/tmp/ceo-native-schema-current-main')\nfrom app.agent_cli import build_role_server\nroot=Path(__file__).parent\nserver=build_role_server('consumer')\ndef nope(**kwargs):raise RuntimeError('serialization capture has no business callbacks')\nfor t in server._tool_manager.list_tools():server._tool_manager._tools[t.name]=t.model_copy(update={'fn':nope,'is_async':False})\nserver.run(transport='stdio')\n",
+    "provider_check.py": "import json,sys,hashlib\nfrom pathlib import Path\nfrom vllm.entrypoints.openai.responses.protocol import ResponsesRequest\nfrom vllm.entrypoints.openai.responses.utils import construct_tool_dicts\nfrom vllm.tool_parsers.utils import iter_response_function_tool_dicts\nraw=json.load(sys.stdin)\nrequest=ResponsesRequest.model_validate({'model':raw['model'],'input':'Anonymous serialization fixture','tools':raw['tools'],'tool_choice':'auto','text':raw['text']})\nconverted=construct_tool_dicts(request.tools,request.tool_choice)\nfunctions=[t['function']['name'] for t in converted]\nsource=Path('/home/derek/miniforge3/envs/llm-gateway-vllm-029/lib/python3.12/site-packages/vllm/tool_parsers/utils.py')\nprint(json.dumps({'validated_tools':[(t.type,getattr(t,'name',None)) for t in request.tools],'converted_function_count':len(functions),'exec_present': 'exec' in functions,'wait_present':'wait' in functions,'registered_count':sum(x.startswith('mcp__agent_cli') for x in functions),'source_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'function_names':functions,'no_model_inference':True},ensure_ascii=False))\n"
+  },
+  "setup_excluded": {
+    "reason": "First fixture used absent app.store.Store; MCP catalog missing. Fixed setup before accepted capture.",
+    "initial_native_tool_types": [
+      "custom exec",
+      "function wait",
+      "function request_user_input",
+      "web_search"
+    ]
+  },
+  "evidence_boundaries": [
+    "Native CLI serializes custom exec. Installed provider conversion filters it from renderer tool_dicts and Qwen native schema tool grammar path; function wait and all42 registered functions remain.",
+    "Actual historical provider HTTP payloads were not recorded; current native tool serialization and installed conversion are separate direct checks.",
+    "No model inference in capture/CPU checks. This proves unsupported custom tool transport, not that it is the sole cause of all previous final-output loops.",
+    "Original native session paths remain CLI-owned; failed local fixture returns capture_complete as designed."
+  ],
+  "capture_terminal": {
+    "exit_code": 1,
+    "session_id": "01a135ca-5f9a-70f2-9565-7ff4939728b5",
+    "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T08-03-37-01a135ca-5f9a-70f2-9565-7ff4939728b5.jsonl",
+    "native_sha256": "051c1f6f3eedc4302c69a0671f0f6fe586fc03496196fb92cc5178dacb27659c",
+    "events": [
+      "thread.started",
+      "item.completed",
+      "item.completed",
+      "turn.started",
+      "error",
+      "turn.failed"
+    ],
+    "turn_failed_expected": true,
+    "remote_cpu_exit_code": 0
+  },
+  "cleanup": {
+    "owned_temp_path": "/private/tmp/ceo-codemode-tool-serialization.95Pexa",
+    "removed_bytes": 80679,
+    "open_handles_before_cleanup": 0,
+    "native_original_retained": true,
+    "readonly_review": "Capture, installed CPU conversion, source embedding, native hash and reporting boundaries checked; no blocker."
+  }
+}

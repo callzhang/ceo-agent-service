@@ -1,0 +1,25 @@
+{
+  "seed": 20261013,
+  "cases": 129,
+  "exact": 129,
+  "case_digest": "81ad1a35b1637710523ab025cbf8185148b187dbf753ad918192b8821ae7c603",
+  "scope": "generated anonymous text, no model inference",
+  "version": 1,
+  "code_ref": "6de36c92",
+  "provider_modified": false,
+  "model_inference": false,
+  "script_sha256": "9aa4e858008d183b4339ed963054a91779c0a3c35ab4c2941442911687a887b1",
+  "log_sha256": "4afd72d529e374d5515b226261eeacc3ecfa80c3b8bbfd7df64d0fda0ebc91c8",
+  "log": "{\"seed\": 20261013, \"cases\": 129, \"exact\": 129, \"case_digest\": \"81ad1a35b1637710523ab025cbf8185148b187dbf753ad918192b8821ae7c603\", \"scope\": \"generated anonymous text, no model inference\"}\n.\n----------------------------------------------------------------------\nRan 1 test in 0.138s\n\nOK\n",
+  "patch_reference": "qwen_custom_tool_transport.framed.prototype.patch",
+  "fixture_reference": "qwen_custom_tool_transport.prototype.v1.json grammar_fixture",
+  "prelude_reference": "qwen_custom_tool_transport.integrated_framing.cpu.py definitions before unittest.main",
+  "limits": "129 reproducible anonymous cases; not proof of all Unicode values or model acceptance",
+  "cleanup": {
+    "owned_path": "/tmp/ceo-qwen-framing-corpus.0lazx00h",
+    "removed": true,
+    "bytes_removed": 333697,
+    "open_handles": "lsof no output before deletion"
+  },
+  "readonly_review": "script/log hashes and129 cases/digest independently recomputed; exact count is recorded runner evidence, not model inference"
+}

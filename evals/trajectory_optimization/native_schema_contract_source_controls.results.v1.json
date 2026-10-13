@@ -1,0 +1,237 @@
+{
+  "version": 1,
+  "code_commit": "a27298fa",
+  "experiments": [
+    "Only the contract tool response removes one complete identifier format/source paragraph; all service inputs unchanged.",
+    "Provider source taskId number to equivalent string in frozen binding and live source; candidate action unchanged, digest rederived; wrong-node negative control."
+  ],
+  "runs": [
+    {
+      "arm": "baseline-1",
+      "route": "codex_oauth",
+      "case": "correct",
+      "variant": "baseline",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e6f-3163-71e1-ab9d-2fb1bbc89ce3",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5147,
+      "calls": [
+        "read_system_action_contract",
+        "read_dingtalk_oa"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "artifact_root": "/private/tmp/ceo-audit-contract-prose-controls-v2ypjx5c",
+      "hashes": {
+        "input.json": "2286f02409d68dd40a6a7c387ecf99b1d83c1589791254e03813a9ca2929eeef",
+        "events.jsonl": "57d4958cb21226300e5478481fb7641489907c6c038747d497331b956ae41f98",
+        "calls.json": "bc6aa03bc0da40fefba1d018a878931549d3b3ba9da46110f5fd05ea6386ab46",
+        "canonical.json": "7ff20f1329ab1c1ec9549181814bbd3ba39677a1a330ef46591e43eb66a82804"
+      },
+      "valid_terminal": true,
+      "business_assessment": "failed exact-feedback criteria; inspect contradictory type or parameter/path correction"
+    },
+    {
+      "arm": "without_type-1",
+      "route": "codex_oauth",
+      "case": "correct",
+      "variant": "without_type",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e6f-5ee9-7043-b3b0-1a6cd595869d",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5147,
+      "calls": [
+        "read_system_action_contract",
+        "read_dingtalk_oa"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "artifact_root": "/private/tmp/ceo-audit-contract-prose-controls-v2ypjx5c",
+      "hashes": {
+        "input.json": "b730c3b7626b5386b138dff0230537e30e5524106639f9e4b3b59a1b7e5c588f",
+        "events.jsonl": "be715bf5e7e77d6045d497ae924e25fd4effbf599a9c20d43f3be7242a820487",
+        "calls.json": "bc6aa03bc0da40fefba1d018a878931549d3b3ba9da46110f5fd05ea6386ab46",
+        "canonical.json": "909dc6cfbe48a23bacd7d7075212f4fd414915ba7cc7a234aa0fb0ddbbed0822"
+      },
+      "valid_terminal": true,
+      "business_assessment": "failed exact-feedback criteria; inspect contradictory type or parameter/path correction"
+    },
+    {
+      "arm": "baseline-2",
+      "route": "codex_oauth",
+      "case": "correct",
+      "variant": "baseline",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e6f-9881-7bc0-9dce-731e69f531bb",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5147,
+      "calls": [
+        "read_system_action_contract",
+        "read_dingtalk_oa"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "reject",
+      "feedback_nonnull": true,
+      "artifact_root": "/private/tmp/ceo-audit-contract-prose-controls-v2ypjx5c",
+      "hashes": {
+        "input.json": "2286f02409d68dd40a6a7c387ecf99b1d83c1589791254e03813a9ca2929eeef",
+        "events.jsonl": "3d13001a1776bdd9c1232cd75983898ac31adc1af60b80ff5eac5fe5fe2fe954",
+        "calls.json": "bc6aa03bc0da40fefba1d018a878931549d3b3ba9da46110f5fd05ea6386ab46",
+        "canonical.json": "150856ee9b1b009b29b22ccec4f01ac550da7b7485b7d32afdd2d47da5f745b0"
+      },
+      "valid_terminal": true,
+      "business_assessment": "failed exact-feedback criteria; inspect contradictory type or parameter/path correction"
+    },
+    {
+      "arm": "without_type-2",
+      "route": "codex_oauth",
+      "case": "correct",
+      "variant": "without_type",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e6f-c855-7243-9114-3cd825d0c43e",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5147,
+      "calls": [
+        "read_text_file",
+        "read_system_action_contract",
+        "read_dingtalk_oa"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "approve",
+      "feedback_nonnull": false,
+      "artifact_root": "/private/tmp/ceo-audit-contract-prose-controls-v2ypjx5c",
+      "hashes": {
+        "input.json": "b730c3b7626b5386b138dff0230537e30e5524106639f9e4b3b59a1b7e5c588f",
+        "events.jsonl": "8030a1b24049a5d4d8dc0b6b7ac61953e8858796eaa371227afee5a0965b3021",
+        "calls.json": "3e1c28c42f65841264a9fcb2f07abc2513eec5fc91b11502f8498cc2e14e0dfb",
+        "canonical.json": "6b472bbeb1d3a871e3c32df55ae16f3a9f7370c3ce02b735086b0603bc168c5a"
+      },
+      "valid_terminal": true,
+      "business_assessment": "synthetic approve correct"
+    },
+    {
+      "arm": "source_string-1",
+      "route": "codex_oauth",
+      "case": "correct",
+      "variant": "source_string",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e71-0f62-7131-b763-ec906bf9736b",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5149,
+      "calls": [
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_revert_activities"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "approve",
+      "feedback_nonnull": false,
+      "artifact_root": "/private/tmp/ceo-audit-source-id-controls-81nqq7hq",
+      "hashes": {
+        "input.json": "736d9b7c115a4c8aa2c857272e4a823533189c88a7d7781890f7951a63355f56",
+        "events.jsonl": "d018e4dc399cd9ce55f01441bb4095e2dd875bccad11f2ae1da78de3f6766e9f",
+        "calls.json": "ffdffb232086754cd033f7273642fb9c92caf8b3ad57196190421d82c68fb6b1",
+        "canonical.json": "3d0a82201b9cf180ff647923cd82b27a681b295a2d0d288d76e24572ae57fd3e"
+      },
+      "valid_terminal": true,
+      "business_assessment": "synthetic approve correct"
+    },
+    {
+      "arm": "source_string-2",
+      "route": "codex_oauth",
+      "case": "correct",
+      "variant": "source_string",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e71-3b70-7820-8805-9c75b636a9cc",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5149,
+      "calls": [
+        "read_system_action_contract",
+        "read_dingtalk_oa",
+        "read_text_file"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "approve",
+      "feedback_nonnull": false,
+      "artifact_root": "/private/tmp/ceo-audit-source-id-controls-81nqq7hq",
+      "hashes": {
+        "input.json": "736d9b7c115a4c8aa2c857272e4a823533189c88a7d7781890f7951a63355f56",
+        "events.jsonl": "a164f2cd004807dd11a664c23e11aded1513cb10075cea3200b325867c46ec9a",
+        "calls.json": "f6747131d677316a52e438672b94d4ab93be7c45e12947782dabe7e50134be89",
+        "canonical.json": "61999baaa13b846ed9888b5e204bd533f2c90b7bafdeabc0ed4eb7cb6abc0a65"
+      },
+      "valid_terminal": true,
+      "business_assessment": "synthetic approve correct"
+    },
+    {
+      "arm": "source_string-wrong_destination",
+      "route": "codex_oauth",
+      "case": "wrong_destination",
+      "variant": "source_string",
+      "exit_code": 0,
+      "timed_out": false,
+      "session_id": "01a12e71-7a32-7822-9ed1-af6a90aed5c5",
+      "turn_completed": true,
+      "developer_characters": 10055,
+      "task_characters": 5149,
+      "calls": [
+        "read_system_action_contract",
+        "read_dingtalk_oa"
+      ],
+      "canonical_valid": true,
+      "binding_valid": true,
+      "native_schema_valid": true,
+      "outcome": "return",
+      "feedback_nonnull": true,
+      "artifact_root": "/private/tmp/ceo-audit-source-id-controls-81nqq7hq",
+      "hashes": {
+        "input.json": "5b62a2c73eb22255ac671ac50c3be6f559ba9b5b108787db54b5a4f351466897",
+        "events.jsonl": "c991f34075ff8c2a9e1ce5b2d7ad0ed5ce99b8f45b2c9a80ac6be1201c8a6e10",
+        "calls.json": "bc6aa03bc0da40fefba1d018a878931549d3b3ba9da46110f5fd05ea6386ab46",
+        "canonical.json": "9bdafa8cfdac5bea01d5ea7793249a8c57abb19f7571974af564605fdbb11629"
+      },
+      "valid_terminal": true,
+      "business_assessment": "failed exact-feedback criteria; inspect contradictory type or parameter/path correction"
+    }
+  ],
+  "independent_review": "readonly_business_matrix_review verified full native input/returned-source/terminal boundaries and exact business feedback",
+  "confirmed": [
+    "Paragraph-removal0/2 baseline approvals versus1/2 experimental approvals; other experimental feedback asks incorrect numeric conversion and mistakes completion state for payload. Not adopted.",
+    "Equivalent string-source correct cases approve2/2; wrong node is found but feedback invents parameter change and uses a wrong path, so strict negative gate fails."
+  ],
+  "fixture_parity_findings": {
+    "missing_task_skill_entry": "run inputs use AuditTurnContext.render alone plus native format; actual AuditAgent task_sections includes a task Skill discovery PromptSection before current task. skill_names is not emitted by AgentTaskContext.render.",
+    "non_native_oa_binding": "synthetic source binding contains tasks and allowed destinations; reviewed_sources.read_provider_source in production projects process/form/applicant fields and excludes tasks.",
+    "release_implication": "counterfactual observations do not justify raw-source normalization, contract/policy edits or full business-gate claims; correct fixture assembly and source projection before further business comparison."
+  },
+  "source_projection_code_sha256": "b83ed2cc765eb64b50fb22eceef20ff2e2ff2c72235d70eb7b2bf6762ed242fa",
+  "audit_assembly_code_sha256": "3dd6be8831e9a9d2e36d14d4f9e6dcc46b2617536bcb9f79e979ad1dc3ff2def",
+  "no_runtime_change": true
+}

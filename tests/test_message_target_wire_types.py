@@ -102,6 +102,11 @@ def test_numeric_identifier_enters_existing_result_correction_before_audit(
     store, task, context, tmp_path
 ):
     payload = payload_for({"open_dingtalk_id": 104265682397})
+    # The native runner receives structural objects; the restored ID must still
+    # fail the same canonical Wire check, not an earlier format error.
+    action = payload["proposal"]["actions"][0]
+    action["target"] = {"entries": [{"key": "open_dingtalk_id", "value": 104265682397}]}
+    action["payload"] = {"entries": [{"key": "content", "value": "Your materials have been received."}]}
     stream = "\n".join((
         json.dumps({"type": "thread.started", "thread_id": "numeric-target-fixture"}),
         json.dumps({"type": "item.completed", "item": {
