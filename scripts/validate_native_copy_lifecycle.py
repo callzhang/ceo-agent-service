@@ -23,6 +23,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from app.action_storage import (
+    CANDIDATE_REVIEW_SQL,
+    REVIEW_CANDIDATE_SQL,
+)
+
 
 def restricted_command(command, *, workspace, db_path):
     """Narrow this test invocation's native tool exposure, without changing roles."""
@@ -100,7 +105,7 @@ class InMemoryProvider:
     def send_message(self, conversation_id, text, **target):
         assert conversation_id == self.conversation
         with self.store._connect() as db:
-            decision = db.execute("select decision from candidate_reviews order by id desc limit 1").fetchone()[0]
+            decision = db.execute(f"select decision from ({CANDIDATE_REVIEW_SQL}) order by id desc limit 1").fetchone()[0]
         assert decision == "approve"
         self.calls.append({"conversation_id": conversation_id, "text": text, "target": target})
         return {"success": True, "result": {"openMessageId": "native-copy-provider-receipt", "openConversationId": conversation_id}}
@@ -277,7 +282,7 @@ def run(root, case="approve"):
     if case == "revision":
         assert max(x["revision"] for x in report["runs"]) >= 1, report
         with store._connect() as db:
-            report["reviews"] = [dict(x) for x in db.execute("select r.id,r.decision,c.proposal_revision,r.candidate_digest from candidate_reviews r join review_candidates c on c.id=r.candidate_id where c.task_id=? and c.execution_generation=? order by r.id", (task.id, task.execution_generation))]
+            report["reviews"] = [dict(x) for x in db.execute(f"select r.id,r.decision,c.proposal_revision,r.candidate_digest from ({CANDIDATE_REVIEW_SQL}) r join ({REVIEW_CANDIDATE_SQL}) c on c.id=r.candidate_id where c.task_id=? and c.execution_generation=? order by r.id", (task.id, task.execution_generation))]
         assert report["reviews"][0]["decision"] in {"return", "reject"}, report
         assert report["reviews"][-1]["decision"] == "approve", report
     if case == "technical_retry":

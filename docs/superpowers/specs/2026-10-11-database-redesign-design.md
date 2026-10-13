@@ -1,6 +1,6 @@
 # CEO Agent 数据库重构方案（已确认结构设计）
 
-结构设计已获 Derek 的 OK 确认：business 命名、来源优先内联、归属直接 FK、仅共享来源使用 provenance、实际多对多事实进入 actions、可溯源原文不长期保存。精确 DDL 尚未完成，未实施数据库迁移。普通成功轮询明细保留 30 天未确认，排除于当前实施范围。
+结构设计已获 Derek 的 OK 确认：business 命名、来源优先内联、归属直接 FK、仅共享来源使用 provenance、实际多对多事实进入 actions、可溯源原文不长期保存。实施状态按 `../plans/2026-10-11-database-redesign-program.md` 的最新记录：前段精简和 tasks/runs 已发布，actions 及其后合并仍在实施，完整十表目标尚未完成。普通成功轮询明细保留 30 天未确认，排除于当前实施范围。
 
 证据基线：生产提交 `d171fb722380f551f1e71e6933a222dfce1a8aa7`；数据库 `~/Library/Application Support/ceo-agent-service/auto-reply.sqlite3`。本轮观测 149 张表（含 FTS 虚拟表及影子表）、284 个索引、68 个触发器；逻辑数据库大小 413.60 MB。业务持续运行，行数会变化。没有写生产数据库、改运行代码、重启服务或运行生产测试。
 

@@ -182,6 +182,12 @@ from app.task_retrieval import (
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
 from app.run_storage import AGENT_RUN_SQL
 
+from app.action_storage import (
+    REVIEW_CANDIDATE_SQL,
+    CANDIDATE_REVIEW_SQL,
+    CANDIDATE_SELECTION_SQL,
+)
+
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 LOCAL_DISPLAY_TIME_ZONE = ZoneInfo("Asia/Shanghai")
 # A due Meeting Memory write has missed its service objective after 30 minutes.
@@ -3803,9 +3809,9 @@ def _human_decision_attention_rows(
         select attempts.id, attempts.conversation_title, attempts.updated_at,
                c.candidate_json
         from reply_attempts attempts
-        join candidate_reviews review on review.audit_run_id=attempts.agent_run_id
+        join ({CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=attempts.agent_run_id
           and review.decision='approve'
-        join review_candidates c on c.id=review.candidate_id
+        join ({REVIEW_CANDIDATE_SQL}) c on c.id=review.candidate_id
           and c.candidate_digest=review.candidate_digest and c.invalidated_at=''
         join ({REPLY_TASK_SQL}) task on task.id=c.task_id
           and task.execution_generation=c.execution_generation
@@ -3813,12 +3819,12 @@ def _human_decision_attention_rows(
         join business_object_tasks current_object
           on current_object.business_object_key=task.business_object_key
           and current_object.reply_task_id=task.id
-        left join candidate_selections choice on choice.candidate_id=c.id
+        left join ({CANDIDATE_SELECTION_SQL}) choice on choice.candidate_id=c.id
         where attempts.send_status='needs_human'
           and attempts.reviewed_at is null
           and trim(coalesce(attempts.resolved_at,''))=''
           and choice.id is null
-          and c.id=(select max(newest.id) from review_candidates newest
+          and c.id=(select max(newest.id) from ({REVIEW_CANDIDATE_SQL}) newest
               where newest.task_id=task.id
                 and newest.execution_generation=task.execution_generation)
           and attempts.id=(select max(latest.id) from reply_attempts latest

@@ -51,3 +51,19 @@
 第1期索引精简和第2期 current-plan 指针读取已上线，第2期650项定向测试、149表副本/逆迁/实际旧48启动及生产读回完成，见 docs/storage-phase2-validation.md。第3期 reply_tasks／reply_task_inputs canonical 输入及未来 Task WSI 包精简已上线于5d25497e，Store2026-10-11.1、Email49；150表副本、精确逆迁、旧b998启动／恢复、生产读回及全量Quality CI38140069414完成，见 docs/storage-phase3-validation.md。本期保持现有WSI结构和原有回收条件，其他业务来源表不在此次范围。后续第4期起仍需先核对最新生产与读者依赖，分别制定逐任务计划；未实施 tasks/runs 或 actions 的表合并，也未新增保留期限。
 
 第四期已开始分析：以f59a41d7/Store2026-10-11.1/Email50为新基线，完成17表258字段及退休/延期结构总319字段的准确映射。第四期计划分4A core runs、4B任务/领域、4C定时/工作台；16表拟合并，搜索metadata原表只取消5空缓存，合表与FTS退休留第8期组合验证。详见phase4设计/field-map/inventory及计划。尚未改runtime、数据库副本、schema逆迁或上线；禁止把第三期验收套用到第四期。
+
+
+## 2026-10-13 全目标执行状态（覆盖上文阶段性时间说明）
+
+原目标保持10张业务/运行表加1张迁移表；第1–4期已上线不等于整个设计完成。生产当前Store2026-10-12.1、Email51，第四期最终发布与副本/逆迁证据见database-redesign-phase4a/4b/4c-validation.md；后续真实CLI验收见database-native-copy-lifecycle/branches-20261012.md。第5–8期尚未上线。
+
+| 期 | 当前证据/剩余完成条件 | 状态 |
+| --- | --- | --- |
+| 1–3 | 指针、输入引用、已实现终态正文精简；原验收文档 | 已发布 |
+| 4 | tasks/runs、定时/工作台核心合并，source/inverse/new-fact/旧代码和CI/发布；原验收文档 | 已发布 |
+| 5 | actions统一：采用候选/审核/选项/补充/执行/尝试，随后独立回执、消息/OA/邮件/WeChat/跟进/同步；所有读写调用、约束及配对逆迁 | 开发中；尚未发布 |
+| 6 | business及signal/evidence/date/实际关联；legacy不升格、准确来源版本、原文不复制 | 未实施 |
+| 7 | emails/configs/provider_state/schedules/state；当前库存、模型真实输入依赖、水位/锁/CAS | 未实施 |
+| 8 | 全部旧物理结构及旧写入器退休，FTS取消、字段与来源规则逐项审计；副本/回退/CI/部署/UI与实际容量 | 未实施 |
+
+本目标完成门槛以最终物理表、读写路径、字段删除清单、来源引用、现有业务合同与执行回执为准。不得以一组测试或阶段发布宣称全目标完成。未经确认的成功轮询30天删除政策仍排除；无需再次设计或确认已接受的十表结构。

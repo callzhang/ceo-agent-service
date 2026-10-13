@@ -18,6 +18,12 @@ from pathlib import Path
 from typing import Any
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
 
+from app.action_storage import (
+    CANDIDATE_ACTION_ATTEMPT_SQL,
+    CANDIDATE_EXECUTION_SQL,
+    REVIEW_CANDIDATE_SQL,
+)
+
 
 _RECEIPT_DDL = """
 create table if not exists reply_task_deferral_receipts (
@@ -167,11 +173,11 @@ def _snapshot(
             blocked.append('active_dispatcher_owner')
     if task['status'] == 'processing' and not claims:
         blocked.append('unproven_processing_owner')
-    if db.execute(f"""select 1 from review_candidates c join ({REPLY_TASK_SQL}) t on t.id=c.task_id
+    if db.execute(f"""select 1 from ({REVIEW_CANDIDATE_SQL}) c join ({REPLY_TASK_SQL}) t on t.id=c.task_id
         where t.business_object_key=? and c.execution_generation=t.execution_generation limit 1""",
         (task['business_object_key'],)).fetchone():
         blocked.append('current_candidate_or_selection')
-    if db.execute(f"""select 1 from candidate_executions e join review_candidates c on c.id=e.candidate_id
+    if db.execute(f"""select 1 from ({CANDIDATE_EXECUTION_SQL}) e join ({REVIEW_CANDIDATE_SQL}) c on c.id=e.candidate_id
         join ({REPLY_TASK_SQL}) t on t.id=c.task_id where t.business_object_key=? limit 1""",
         (task['business_object_key'],)).fetchone():
         blocked.append('candidate_execution')
@@ -201,9 +207,9 @@ def _snapshot(
         where t.business_object_key=? limit 1""",
         (task['business_object_key'],)).fetchone():
         blocked.append('prior_execution_receipt')
-    if db.execute(f"""select 1 from candidate_action_attempts a
-        join candidate_executions e on e.id=a.execution_id
-        join review_candidates c on c.id=e.candidate_id join ({REPLY_TASK_SQL}) t on t.id=c.task_id
+    if db.execute(f"""select 1 from ({CANDIDATE_ACTION_ATTEMPT_SQL}) a
+        join ({CANDIDATE_EXECUTION_SQL}) e on e.id=a.execution_id
+        join ({REVIEW_CANDIDATE_SQL}) c on c.id=e.candidate_id join ({REPLY_TASK_SQL}) t on t.id=c.task_id
         where t.business_object_key=? limit 1""", (task['business_object_key'],)).fetchone():
         blocked.append('candidate_action_attempt')
     return {

@@ -29,9 +29,6 @@ from app.agent_runtime_contracts import (
     RuntimeKind,
 )
 from app.reviewed_candidate_store import (
-    REVIEWED_CANDIDATE_DDL,
-    REVIEWED_CANDIDATE_INDEXES,
-    REVIEWED_CANDIDATE_TABLES,
     ReviewedCandidateStoreMixin,
 )
 from app.sqlite_schema_lock import schema_initialize_lock
@@ -48,7 +45,7 @@ from app.task_storage import (
 
 from app.workbench_storage import (
     RETIRED_WORKBENCH_TABLES, SEARCH_RETIRED_COLUMNS, create_workbench_auxiliary_schema,
-    migrate_workbench_schema, workbench_schema_is_current,
+    workbench_schema_is_current,
 )
 
 from app.agent_cron.models import (
@@ -181,6 +178,19 @@ from app.work_summary_payload import (
 from app.task_source_documents import source_document_key, source_is_observed
 from app.wechat.models import WechatReplyScope
 
+from app.action_storage import (
+    _current_objects as action_schema_objects,
+    ACTION_TYPES,
+    create_action_schema,
+    migrate_action_schema,
+    action_schema_is_current,
+    insert_action,
+    update_action,
+    CANDIDATE_REVIEW_SQL,
+    CANDIDATE_SELECTION_SQL,
+    REVIEW_CANDIDATE_SQL,
+)
+
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
@@ -276,7 +286,7 @@ REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id
                   and canonical.reply_task_id=parent.id"""
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-12.1"
+STORE_SCHEMA_VERSION = "2026-10-13.1"
 # One row per finished task execution: the durable memories its Consumer
 # result named, and which of them are already in Memory. Built in the
 # initialization migration so the table can be rebuilt from its earlier,
@@ -309,7 +319,7 @@ create index if not exists idx_task_memory_write_events_lease
 """
 
 STORE_SCHEMA_REQUIRED_TABLES = (
-    *REVIEWED_CANDIDATE_TABLES,
+    "actions",
     "meeting_alignment_delivery_claims",
     "task_memory_write_events",
     "feedback_processing_batches",
@@ -375,7 +385,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "business_legacy_links",
 )
 STORE_SCHEMA_REQUIRED_INDEXES = (
-    *REVIEWED_CANDIDATE_INDEXES,
+    "idx_reply_tasks_business_object_key",
     "idx_errors_unresolved",
     "idx_feedback_processing_items_status",
     "idx_feedback_processing_items_batch",
@@ -2548,6 +2558,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             and run_schema_is_current(db, include_task_runs=True, include_workbench=True)
             and task_schema_is_current(db, include_workbench=True)
             and workbench_schema_is_current(db)
+            and action_schema_is_current(db)
             and reply_input_foreign_keys_present
             and not removed_columns_present
             and (
@@ -4413,7 +4424,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                     "alter table agent_effect_intents add column "
                     "external_action_key text not null default ''"
                 )
-            db.executescript(REVIEWED_CANDIDATE_DDL)
+            db.execute("create index if not exists idx_reply_tasks_business_object_key on tasks(business_object_key) where record_type='reply_tasks'")
+            create_action_schema(db)
             self._migrate_oa_notification_events(db)
             sent_reply_columns = {
                 row["name"]
@@ -9644,13 +9656,20 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 db.execute("select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
                 if "service_state" in tables else None
             )
-            store_tables = {"tasks", "runs", *RETIRED_TASK_TABLES, *RETIRED_RUN_TABLES, *RETIRED_WORKBENCH_TABLES}
-            if marker is not None and marker[0] == STORE_SCHEMA_VERSION and run_schema_is_current(db, allow_missing_objects=True, include_task_runs=True, include_workbench=True) and task_schema_is_current(db, allow_missing_objects=True, include_workbench=True) and workbench_schema_is_current(db, allow_missing_objects=True):
+            store_tables = {"tasks", "runs", "actions", *ACTION_TYPES,
+                            *(obj["name"] for obj in action_schema_objects()),
+                            *RETIRED_TASK_TABLES, *RETIRED_RUN_TABLES, *RETIRED_WORKBENCH_TABLES}
+            if marker is not None and marker[0] == STORE_SCHEMA_VERSION and run_schema_is_current(db, allow_missing_objects=True, include_task_runs=True, include_workbench=True) and task_schema_is_current(db, allow_missing_objects=True, include_workbench=True) and workbench_schema_is_current(db, allow_missing_objects=True) and action_schema_is_current(db, allow_missing_objects=True):
                 return
-            if marker is not None or tables.intersection(store_tables):
+            collision = db.execute(
+                "select 1 from sqlite_master where name collate nocase in ("
+                + ','.join('?' for _ in store_tables) + ") limit 1",
+                tuple(store_tables),
+            ).fetchone()
+            if marker is not None or collision is not None:
                 raise sqlite3.IntegrityError(
                     "unsupported or malformed Store source schema; expected a fresh Store, "
-                    "the exact 2026-10-11.3 source, or the current 2026-10-12.1 schema"
+                    "the exact 2026-10-12.1 source, or the current 2026-10-13.1 schema"
                 )
         finally:
             db.close()
@@ -9662,11 +9681,15 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             if db.execute("select 1 from sqlite_master where name='service_state'").fetchone() is None:
                 return False
             marker = db.execute("select value from service_state where key=?", (STORE_SCHEMA_VERSION_KEY,)).fetchone()
-            if marker is None or marker[0] != "2026-10-11.3":
+            if marker is None or marker[0] != "2026-10-12.1":
                 return False
             db.execute("pragma foreign_keys=off")
             db.execute("begin immediate")
-            migrate_workbench_schema(db)
+            if not (run_schema_is_current(db, include_task_runs=True, include_workbench=True)
+                    and task_schema_is_current(db, include_workbench=True)
+                    and workbench_schema_is_current(db)):
+                raise sqlite3.IntegrityError("invalid preceding Store core schema")
+            migrate_action_schema(db)
             if not self._schema_manifest_is_current_in_connection(db, include_run_snapshots=True):
                 raise RuntimeError("typed task migration manifest differs")
             db.execute("update service_state set value=? where key=?", (STORE_SCHEMA_VERSION, STORE_SCHEMA_VERSION_KEY))
@@ -10918,8 +10941,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                             when 'audit' then review.result_json
                           end as adopted_result_json
                    from ({AGENT_RUN_SQL}) as agent_runs
-                   left join review_candidates candidate on candidate.consumer_run_id=agent_runs.id
-                   left join candidate_reviews review on review.audit_run_id=agent_runs.id
+                   left join ({REVIEW_CANDIDATE_SQL}) candidate on candidate.consumer_run_id=agent_runs.id
+                   left join ({CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=agent_runs.id
                    where agent_runs.id=?""",
                 (run_id,),
             ).fetchone()
@@ -11007,8 +11030,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                          when 'audit' then review.result_json
                        end as adopted_result_json
                 from ({AGENT_RUN_SQL}) as agent_runs
-                left join review_candidates candidate on candidate.consumer_run_id=agent_runs.id
-                left join candidate_reviews review on review.audit_run_id=agent_runs.id
+                left join ({REVIEW_CANDIDATE_SQL}) candidate on candidate.consumer_run_id=agent_runs.id
+                left join ({CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=agent_runs.id
                 where agent_runs.reply_task_id=? and agent_runs.execution_generation=? and agent_runs.role=?
                   and agent_runs.proposal_revision=? and agent_runs.turn_attempt=?
                 """,
@@ -11069,8 +11092,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                          when 'audit' then review.result_json
                        end as adopted_result_json
                 from ({AGENT_RUN_SQL}) as agent_runs
-                left join review_candidates candidate on candidate.consumer_run_id=agent_runs.id
-                left join candidate_reviews review on review.audit_run_id=agent_runs.id
+                left join ({REVIEW_CANDIDATE_SQL}) candidate on candidate.consumer_run_id=agent_runs.id
+                left join ({CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=agent_runs.id
                 where agent_runs.reply_task_id=? and agent_runs.execution_generation=?
                 order by agent_runs.proposal_revision,
                          case agent_runs.role when 'consumer' then 0 else 1 end,
@@ -11154,8 +11177,8 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 join ({AGENT_RUN_SQL}) as agent_runs
                   on agent_runs.reply_task_id=terminal_runs.reply_task_id
                  and agent_runs.execution_generation=terminal_runs.execution_generation
-                left join review_candidates candidate on candidate.consumer_run_id=agent_runs.id
-                left join candidate_reviews review on review.audit_run_id=agent_runs.id
+                left join ({REVIEW_CANDIDATE_SQL}) candidate on candidate.consumer_run_id=agent_runs.id
+                left join ({CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=agent_runs.id
                 order by terminal_runs.terminal_id,
                          agent_runs.proposal_revision,
                          case agent_runs.role when 'consumer' then 0 else 1 end,
@@ -11938,7 +11961,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
             if row["status"] == "completed":
                 if agent_run_final_result is not None:
-                    candidate = db.execute("select candidate_json from review_candidates where consumer_run_id=?", (row["agent_run_id"],)).fetchone()
+                    candidate = db.execute(f"select candidate_json from ({REVIEW_CANDIDATE_SQL}) where consumer_run_id=?", (row["agent_run_id"],)).fetchone()
                     if candidate is None or candidate[0] != agent_run_final_result_json:
                         raise ValueError("conflicting terminal rewrite")
                 if actual == expected:
@@ -13140,10 +13163,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return None
             if row["role"] == "consumer":
                 if row["task_channel"] != "wechat" or db.execute(
-                    "select 1 from review_candidates where consumer_run_id=?", (run_id,),
+                    f"select 1 from ({REVIEW_CANDIDATE_SQL}) where consumer_run_id=?", (run_id,),
                 ).fetchone():
                     return None
-            elif db.execute("select 1 from candidate_reviews where audit_run_id=?", (run_id,)).fetchone():
+            elif db.execute(f"select 1 from ({CANDIDATE_REVIEW_SQL}) where audit_run_id=?", (run_id,)).fetchone():
                 return None
             fingerprint, attempt = self._agent_run_terminal_reference(db, row)
         if row["role"] == "consumer":
@@ -13215,10 +13238,10 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             terminal_result = ""
             if row["status"] == target_status and target_status == "completed":
                 if row["role"] == AgentRole.CONSUMER.value:
-                    candidate = db.execute("select candidate_json from review_candidates where consumer_run_id=?", (run_id,)).fetchone()
+                    candidate = db.execute(f"select candidate_json from ({REVIEW_CANDIDATE_SQL}) where consumer_run_id=?", (run_id,)).fetchone()
                     terminal_result = candidate[0] if candidate else ""
                 else:
-                    review = db.execute("select result_json from candidate_reviews where audit_run_id=?", (run_id,)).fetchone()
+                    review = db.execute(f"select result_json from ({CANDIDATE_REVIEW_SQL}) where audit_run_id=?", (run_id,)).fetchone()
                     terminal_result = review[0] if review else ""
                 if (not terminal_result and native_snapshot is None
                     and (row["role"] == AgentRole.AUDIT.value or row["task_channel"] == "wechat")):
@@ -13283,7 +13306,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 if row["role"] == AgentRole.CONSUMER.value:
                     self._adopt_review_candidate_in_connection(db, updated, json.loads(final_result_json))
                 else:
-                    candidate = db.execute("select id from review_candidates where consumer_run_id=?", (row["parent_agent_run_id"],)).fetchone()
+                    candidate = db.execute(f"select id from ({REVIEW_CANDIDATE_SQL}) where consumer_run_id=?", (row["parent_agent_run_id"],)).fetchone()
                     if candidate is not None:
                         self._adopt_candidate_review_in_connection(db, candidate["id"], run_id, json.loads(final_result_json))
             return self._agent_run_from_row(updated, db=db, load_events=False)
@@ -17160,7 +17183,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         consumer_run = db.execute(
             f"""
             select r.id, c.candidate_json from ({AGENT_RUN_SQL}) r
-            left join review_candidates c on c.consumer_run_id=r.id
+            left join ({REVIEW_CANDIDATE_SQL}) c on c.consumer_run_id=r.id
             where r.reply_task_id=? and r.execution_generation=?
               and r.role='consumer' and r.status='completed'
             order by r.id desc limit 1
@@ -24490,20 +24513,20 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                        c.id as candidate_id, c.candidate_json, c.candidate_digest,
                        r.id as review_id, r.audit_run_id
                 from ({REPLY_TASK_SQL}) t
-                join review_candidates c on c.task_id=t.id
+                join ({REVIEW_CANDIDATE_SQL}) c on c.task_id=t.id
                   and c.execution_generation=t.execution_generation
                   and c.invalidated_at=''
-                join candidate_reviews r on r.candidate_id=c.id
+                join ({CANDIDATE_REVIEW_SQL}) r on r.candidate_id=c.id
                   and r.decision='approve' and r.candidate_digest=c.candidate_digest
                 join reply_attempts a on a.channel=t.channel
                   and a.conversation_id=t.conversation_id
                   and a.trigger_message_id=t.trigger_message_id
-                left join candidate_selections choice on choice.candidate_id=c.id
+                left join ({CANDIDATE_SELECTION_SQL}) choice on choice.candidate_id=c.id
                 where t.status in ('failed','needs_human')
                   and a.send_status in ('failed','needs_human')
                   and a.reviewed_at is null and trim(coalesce(a.resolved_at,''))=''
                   and choice.id is null
-                  and c.id=(select max(newest.id) from review_candidates newest
+                  and c.id=(select max(newest.id) from ({REVIEW_CANDIDATE_SQL}) newest
                       where newest.task_id=t.id and newest.execution_generation=t.execution_generation)
                   and a.id=(select max(newest.id) from reply_attempts newest
                       where newest.channel=t.channel and newest.conversation_id=t.conversation_id
@@ -25297,20 +25320,23 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             if review_candidate_id > 0:
                 candidate = self._candidate_context(db, review_candidate_id)
-                source_review = db.execute("""select r.id from candidate_reviews r
+                source_review = db.execute(f"""select r.id from ({CANDIDATE_REVIEW_SQL}) r
                     where r.candidate_id=? and r.decision='approve'
                       and r.candidate_digest=? and r.audit_run_id=(
                         select agent_run_id from reply_attempts where id=?)""",
                     (review_candidate_id, candidate["candidate_digest"], source_attempt_id)).fetchone()
                 if (not supplement_instruction.strip() or source_review is None
                     or candidate["invalidated_at"] or not source_attempt_id
-                    or db.execute("select 1 from candidate_selections where candidate_id=?",
+                    or db.execute(f"select 1 from ({CANDIDATE_SELECTION_SQL}) where candidate_id=?",
                                   (review_candidate_id,)).fetchone()):
                     raise ValueError("reviewed candidate supplement mismatch")
-                db.execute("""insert into candidate_supplements(candidate_id,instruction)
-                    values (?,?)""", (review_candidate_id, supplement_instruction))
-                db.execute("""update review_candidates set invalidated_at=current_timestamp,
-                    invalidation_reason='supplement' where id=?""", (review_candidate_id,))
+                insert_action(db, "candidate_supplements", {
+                    "candidate_id": review_candidate_id, "instruction": supplement_instruction,
+                })
+                update_action(db, "review_candidates", review_candidate_id, {
+                    "invalidated_at": db.execute("select current_timestamp").fetchone()[0],
+                    "invalidation_reason": "supplement",
+                })
             source_row = None
             if source_attempt_id > 0:
                 source_row = db.execute(
@@ -25720,14 +25746,14 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 if (
                     attempt.send_status == "needs_human"
                     and not db.execute(f"""select 1 from ({REPLY_TASK_SQL}) t
-                        join review_candidates c on c.task_id=t.id
+                        join ({REVIEW_CANDIDATE_SQL}) c on c.task_id=t.id
                           and c.execution_generation=t.execution_generation and c.invalidated_at=''
-                        join candidate_reviews r on r.candidate_id=c.id
+                        join ({CANDIDATE_REVIEW_SQL}) r on r.candidate_id=c.id
                           and r.decision='approve' and r.candidate_digest=c.candidate_digest
-                        left join candidate_selections choice on choice.candidate_id=c.id
+                        left join ({CANDIDATE_SELECTION_SQL}) choice on choice.candidate_id=c.id
                         where t.channel=? and t.conversation_id=? and t.trigger_message_id=?
                           and t.status='needs_human' and r.audit_run_id=? and choice.id is null
-                          and c.id=(select max(id) from review_candidates
+                          and c.id=(select max(id) from ({REVIEW_CANDIDATE_SQL})
                             where task_id=t.id and execution_generation=t.execution_generation)
                           and json_extract(c.candidate_json,'$.outcome')='needs_human'
                         limit 1""", (
