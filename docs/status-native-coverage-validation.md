@@ -20,4 +20,7 @@ passes, and TypeScript validation plus the frontend production build pass.
 
 This is a separate deterministic frontend contract correction. No database,
 diagnostic producer, policy, provider call or retention behavior changes.
-Normal deployment and visible page acceptance remain required.
+Normal deployment completed from1b6f55e5 to9e0570cb. The actual Status page now
+renders running/healthy, PID35390, queue statistics and the native availability
+description. No invalid-response error remains. Its four current queue failures
+are existing business records, not a claim that all historical work is resolved.

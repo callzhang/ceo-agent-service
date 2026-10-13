@@ -8,7 +8,7 @@ does not change the approved final ten business/runtime tables plus one
 migration table. The eighteen actual fields and source semantics are frozen
 in the Phase5D delivery source inventory and implementation plan.
 
-The published source is `46bfdbe09403238f95c8aece05bf2f6be2c82b88`,
+The initial published source was `46bfdbe09403238f95c8aece05bf2f6be2c82b88`,
 Store `2026-10-13.3` / Email51. The source refresh binds the actual sent table
 declarations to that published version. A later read-only check confirmed the
 same commit/Store marker, 2,341 sent records and 320 observers. These are
@@ -18,13 +18,15 @@ The current opt-in foundation is `64a5c1105a01fd37a1da2c88e63688322ea342ac`.
 It passed final independent SPEC and QUALITY re-review. Its predecessor
 `b895dcd9` passed SPEC, then QUALITY found a Python native-autocommit
 transaction discrepancy; the final repair closes that reproduced gap.
-Production continues to use Store17, twelve-type actions and the original sent
-tables. The current isolated candidate reserves Store18 `2026-10-13.4` and its
+The historical isolated candidate reserved Store18 `2026-10-13.4` and its
 fresh/current bootstrap uses fourteen types. The standalone migration/inverse,
 latest source-copy proof and four cold/fresh bootstrap checks below are verified.
 Caller conversion, integrated target constructor acceptance against production
 data, paired release acceptance and native substitute approval are verified as
-recorded below. CI, normal deployment and production readback remain pending.
+recorded below. Final CI38476785656 passed and PR80 merged as1b6f55e5.
+Normal deployment published Store18, with124 physical tables and both old sent
+tables absent. The later independent Status frontend contract correction9e0570cb
+is also deployed; it changes no storage. Final readback is recorded at the end.
 
 ## Opt-in foundation evidence
 
@@ -69,7 +71,7 @@ Each reviewer ran270 focused checks on the exact final SHA successfully.
 These are foundation checks, not constructor,
 database-copy, provider delivery or release evidence.
 
-## Remaining acceptance
+## Historical fixture gates (subsequently accepted below)
 
 The legacy fixture alignment now passes all 142 cases across the five affected
 test files. The workbench historical fixture explicitly advances its nine-type
@@ -100,11 +102,9 @@ All ten reproduced cases pass locally, as do 81 adjacent source-chain, manifest,
 paired-release and typed-reader checks. This is local fixture validation; a
 new full CI result is still required.
 
-Next finish all existing caller paths and integrate the paired release with the
-Store18 bootstrap, after refreshing the actual published source again.
-The standalone transition below already supports both captured literal source
-variants, current-fact inverse and the required identity/value/type/watermark
-checks; target constructor and release checks must repeat them.
+At that checkpoint, caller integration, refreshed constructor/release proof and
+full CI were still outstanding. The later entries below record those results;
+the standalone checks alone were not treated as production acceptance.
 
 The integrated target must retain new deliveries, recall changes, deletes and
 observer rebindings on rollback, as the standalone proof does. Paired release,
@@ -290,3 +290,35 @@ Evidence isphase5d_current_source_binding.v1.json. This is a current-source
 binding and focused increment check, not a claim that the native model or
 constructor copy was repeated on7fabea80. Replacement full CI and publication
 remain required.
+
+## Final CI and normal production release
+
+Quality38476785656 at5221062d completed successfully:12764 Python checks passed,
+112 skipped,44 deselected;723 frontend checks passed with2 skipped; both browser
+checks and the frontend build passed. Vercel's separate preview status was rate
+limited; it was not a failed schema or service deployment test. PR80 merged as
+1b6f55e5 and normal `python -m app.deploy` completed from7fabea80 to that commit.
+
+Production readback confirms Store18 (`2026-10-13.4`), Email51,124 physical tables,
+the complete fourteen-type action declaration and no old sent/observer tables.
+The2341 sent and320 observer facts remain readable. Quick check and the latest
+backup's full integrity check areok; the one preexisting runs190042/tasks FK
+diagnostic is unchanged. The actual file remains471347200 bytes; no VACUUM or
+claim of physical shrink was made.
+
+The Status page exposed an existing backend/frontend native coverage contract
+mismatch also present in7fabea80. It was reproduced and corrected separately as
+9e0570cb (48 focused frontend checks, one existing backend contract and build
+passed), then normally deployed. Readback PID35390 is running; Status renders
+healthy with queue data, processing/retryable zero and four existing current
+queue failures. Attention renders three problem groups; History filtering and
+Attempt15409 detail render, including the expanded verified send receipt and
+honest unavailable native process display. No send, recall or feedback control
+was used. This does not resolve those historical business problems.
+
+A new Store18/Email51 online backup passed full integrity and the unchanged FK
+check before atomically replacing the workflow's older daily backup. Only that
+latest database backup remains. Aggregate evidence is
+`evals/database_redesign/phase5d_production_release.v1.json`; private rows and
+native files are not copied into it. Phase5E must now bind this actual published
+source. The final ten core tables plus one migration table remains incomplete.
