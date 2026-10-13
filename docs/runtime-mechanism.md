@@ -1,5 +1,23 @@
 # Current Runtime Mechanism
 
+OA return uses its own effect verification, not the approval/rejection node
+completion predicate. The exact pending-node ownership check still precedes a
+new return. System first saves the actual response, principal, action digest and
+UTC call bounds. Only an explicit successful boolean operation result is
+acceptance; negative or incomplete responses cannot prove it. Read-only recovery
+joins the native process identity/business ID with the existing official OA
+OpenAPI process: original canceled node, unique own return event, exact approved
+remark in the call interval, and destination tasks in the approved activity
+before the next provider transition. Tied or untimed transitions, imprecise
+dispatch-second evidence, missing destination or partial records remain
+uncertain. No delay threshold or guessed recipient is used.
+
+Persisted dispatched/uncertain actions reconcile before the pre-write source
+guard, because the original effect can itself change those facts. Reconciliation
+cannot dispatch. New writes retain source revalidation; prior acceptance evidence
+survives provider read failures. This does not retrospectively manufacture lost
+acceptance responses or rewrite historical failed executions.
+
 Audit handoff includes System-produced JSON type facts for each current action's
 target and payload fields, including human-option plans. The facts come from the
 exact validated candidate; they do not authorize an action or prove live

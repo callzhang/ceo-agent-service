@@ -182,6 +182,23 @@ def test_uncertain_action_resumes_from_positive_reconciliation_without_redispatc
     assert store.events.index("begin:0") < store.events.index("receipt:0")
 
 
+@pytest.mark.parametrize("prior_status", ["uncertain", "dispatched"])
+def test_uncertain_effect_reconciles_before_changed_business_source_guard(monkeypatch, prior_status):
+    from app.agent_contracts import ReviewedSourceBinding
+    store = FakeStore(_candidate().model_copy(update={"source_bindings": (
+        ReviewedSourceBinding(provider="dingtalk-oa", object_ref="process", value={"status": "RUNNING"}),)}))
+    handler = Handler()
+    store.attempts[0] = {"status": prior_status, "external_action_key": "original-key"}
+    handler.reconcile_result = ActionOutcome("verified", {"receipt_id": "already-returned"})
+    executor = SystemExecutor(store, {("test", "act"): handler}, owner="reconciler")
+    monkeypatch.setattr(executor, "_check_reviewed_sources", lambda *args: executor._failure(
+        "business_state_changed", "The effect already changed the source", []))
+    result = executor.execute(store.get_reply_task(1), 1, 2)
+    assert result.outcome == "executed"
+    assert handler.calls == []
+    assert store.events.index("begin:0") < store.events.index("receipt:0")
+
+
 def test_unsupported_action_fails_without_generic_execution():
     store = FakeStore(_candidate())
     result = SystemExecutor(store, {}, owner="worker").execute(store.get_reply_task(1), 1, 2)
@@ -719,37 +736,18 @@ def test_oa_native_detail_nested_tasks_and_integer_task_id_are_authoritative():
     assert handler.reconcile(action, action_key="key", candidate={}).status == "verified"
 
 
-def test_oa_revert_uses_exact_activity_and_redirect_readback():
+def test_oa_revert_uses_exact_activity_and_confirmed_destination_readback(monkeypatch):
     from app.system_action_handlers import OaRevertHandler
-
-    class Dws:
-        def __init__(self):
-            self.calls = []
-            self.status = "RUNNING"
-
-        def revert_oa_approval_task(self, **kwargs):
-            self.calls.append(kwargs)
-            return {"success": True}
-
-        def read_oa_approval_detail(self, process_id):
-            return {"result": {"processInstanceId": process_id, "tasks": [
-                {"taskId": "task-1", "userId": "derek", "taskStatus": self.status,
-                 "taskResult": "REDIRECT_PROCESS" if self.status == "COMPLETED" else ""}]}}
-
-        def get_current_user_id(self):
-            return "derek"
-
-    dws = Dws()
-    action = _candidate(actions=[{
-        "description": "Return", "action_identity": "oa-return", "capability": "dingtalk-oa",
-        "operation": "revert_task", "target": {"process_instance_id": "p1", "task_id": "task-1", "target_activity_id": "activity-2"},
-        "payload": {"revert_action": "return", "remark": "Need material"},
-    }]).proposal.actions[0]
+    from tests.test_oa_return_readback import Source, action, attempt, install_provider_clock
+    dws = Source()
+    dws.clock = install_provider_clock(monkeypatch)
+    dws.clock.current = __import__("datetime").datetime.fromisoformat("2026-10-13T10:06:25.641+00:00")
     handler = OaRevertHandler(dws)
-    assert handler.dispatch(action, action_key="key", candidate={}).status == "uncertain"
-    assert dws.calls[0]["target_activity_id"] == "activity-2"
-    dws.status = "COMPLETED"
-    assert handler.reconcile(action, action_key="key", candidate={}).status == "verified"
+    result = handler.dispatch(action(), action_key="key", candidate=attempt())
+    assert result.status == "uncertain"
+    assert dws.calls[0]["target_activity_id"] == "handover"
+    assert handler.reconcile(action(), action_key="key",
+        candidate=attempt("uncertain", result.provider_result)).status == "verified"
 
 
 def test_oa_redirect_requires_exact_new_owner_task_readback():

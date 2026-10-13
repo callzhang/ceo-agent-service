@@ -241,7 +241,7 @@ class SystemExecutor:
             self.store.renew_candidate_execution_claim(execution_id, self.owner, self.lease_seconds)
             attempt_status = next((item["status"] for item in self.store.list_candidate_action_attempts(execution_id)
                                    if item["action_index"] == index), None)
-            if attempt_status != "verified":
+            if attempt_status not in ("verified", "uncertain", "dispatched"):
                 source_result = self._check_reviewed_sources(candidate, context, plan, execution_id, candidate_id)
                 if source_result is not None:
                     return source_result
@@ -264,7 +264,9 @@ class SystemExecutor:
                 receipt_refs.append({"action_identity": action.action_identity, "external_action_key": action_key})
                 continue
             try:
-                if attempt["status"] == "uncertain":
+                if attempt["status"] == "uncertain" or (
+                    attempt["status"] == "dispatched" and attempt_status in ("uncertain", "dispatched")
+                ):
                     outcome = handler.reconcile(
                         action, action_key=action_key,
                         candidate={**row, "action_attempt": attempt},
@@ -272,13 +274,18 @@ class SystemExecutor:
                     if outcome is None:
                         outcome = ActionOutcome("uncertain", {"reason": "reconciliation_inconclusive"})
                 elif attempt["status"] == "dispatched":
-                    outcome = handler.dispatch(action, action_key=action_key, candidate=row)
+                    if attempt_status in ("verified", "uncertain"):
+                        source_result = self._check_reviewed_sources(candidate, context, plan, execution_id, candidate_id)
+                        if source_result is not None:
+                            return source_result
+                    outcome = handler.dispatch(action, action_key=action_key, candidate={**row, "action_attempt": attempt})
                 else:
                     outcome = ActionOutcome("failed", {"reason": "prior_action_failure"})
             except Exception as exc:
                 source_code = getattr(exc, "code", "")
                 source = getattr(exc, "server_key", "")
-                outcome = ActionOutcome("uncertain", {
+                prior_result = json.loads(attempt.get("result_json") or "{}")
+                outcome = ActionOutcome("uncertain", {**prior_result,
                     "reason": "provider_exception", "exception_type": type(exc).__name__,
                     "source_code": str(source_code) if source_code else "",
                     "source": str(source) if source else "",
