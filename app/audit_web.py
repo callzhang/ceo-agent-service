@@ -3378,8 +3378,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
     pending_oa_rows: list[dict[str, str]] = []
     with store._connect() as db:
         state = db.execute(
-            "select cursor_json from daily_scan_state where scanner_name='oa_pending'"
-        ).fetchone()
+            "select cursor_json,last_success_at,last_error from daily_scan_state where scanner_name='oa_pending'"
+        ).fetchone() if _sqlite_table_exists(db, "daily_scan_state") else None
         pending_keys = json.loads(state["cursor_json"]).get(
             "pending_business_object_keys", []
         ) if state is not None else []
@@ -3397,6 +3397,14 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     "updated_at": str(task["updated_at"]),
                     "error": str(task["error"] or
                         "Current principal OA node is still pending; no completed approval or return readback."),
+                })
+            else:
+                pending_oa_rows.append({
+                    "category": "OA approval", "id": key, "status": "pending",
+                    "context": "OA approval", "summary": key,
+                    "updated_at": str(state["last_success_at"]),
+                    "error": str(state["last_error"] or
+                        "Verified principal OA node is pending and has not entered local processing."),
                 })
         db.create_function(
             "decode_work_summary_payload",

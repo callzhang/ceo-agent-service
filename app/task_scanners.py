@@ -414,6 +414,8 @@ def scan_pending_oa_approvals(
     max_pages: int = 10,
     max_new_items: int | None = None,
 ) -> int:
+    previous_state = store.get_daily_scan_state(OA_PENDING_SCANNER)
+    previous_cursor = previous_state["cursor_json"] if previous_state is not None else "{}"
     list_pending = getattr(dws, "list_pending_oa_approvals", None)
     read_tasks = getattr(dws, "read_oa_approval_tasks", None)
     # The DWS OA detail adapter can receive a valid DingTalk response and then
@@ -425,7 +427,7 @@ def scan_pending_oa_approvals(
         store.set_daily_scan_state(
             OA_PENDING_SCANNER,
             last_success_at="",
-            cursor_json="{}",
+            cursor_json=previous_cursor,
             last_error="dws list_pending_oa_approvals unavailable",
         )
         return 0
@@ -433,7 +435,7 @@ def scan_pending_oa_approvals(
         store.set_daily_scan_state(
             OA_PENDING_SCANNER,
             last_success_at="",
-            cursor_json="{}",
+            cursor_json=previous_cursor,
             last_error="dws read_oa_approval_tasks unavailable",
         )
         return 0
@@ -441,7 +443,7 @@ def scan_pending_oa_approvals(
         store.set_daily_scan_state(
             OA_PENDING_SCANNER,
             last_success_at="",
-            cursor_json="{}",
+            cursor_json=previous_cursor,
             last_error="DingTalk OA detail reader unavailable",
         )
         return 0
@@ -471,7 +473,7 @@ def scan_pending_oa_approvals(
         store.set_daily_scan_state(
             OA_PENDING_SCANNER,
             last_success_at="",
-            cursor_json="{}",
+            cursor_json=previous_cursor,
             last_error=str(exc),
         )
         return 0
@@ -505,14 +507,14 @@ def scan_pending_oa_approvals(
         except Exception:
             current_user_id = ""
     for process_instance_id, tasks_payload in tasks_cache.items():
-        task_id = _pending_oa_task_id_for_current_user(
-            {"result": [detail_cache[process_instance_id], tasks_payload]},
-            current_user_id=current_user_id,
-        )
-        if task_id:
-            pending_task_ids_by_process.setdefault(process_instance_id, set()).add(
-                task_id
-            )
+        if current_user_id:
+            pending_task_ids_by_process[process_instance_id] = {
+                _oa_task_field(task, ("taskId", "taskid", "task_id", "id"))
+                for task in _oa_task_records({"result": [detail_cache[process_instance_id], tasks_payload]})
+                if _oa_task_field(task, ("userId", "userid", "user_id")) == current_user_id
+                and _oa_task_field(task, ("status", "taskStatus", "task_status")).upper() == "RUNNING"
+                and _oa_task_field(task, ("taskId", "taskid", "task_id", "id"))
+            }
 
     for attempt in store.list_open_oa_needs_human_attempts():
         process_instance_id = attempt.oa_process_instance_id.strip()
@@ -546,7 +548,6 @@ def scan_pending_oa_approvals(
     previous_revisions: dict[str, str] = {}
     previous_queued_days: dict[str, str] = {}
     previous_pending_keys: set[str] = set()
-    previous_state = store.get_daily_scan_state(OA_PENDING_SCANNER)
     if previous_state is not None:
         try:
             cursor = json.loads(previous_state["cursor_json"])

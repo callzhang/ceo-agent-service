@@ -18223,6 +18223,12 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         receipt: dict[str, object], result_json: str,
     ) -> bool:
         """CAS restore of an already-delivered primary; preserve its exact body."""
+        from app.meeting_alignment_delivery import MeetingDeliveryResult
+        result = MeetingDeliveryResult.model_validate_json(result_json)
+        if (result.message_text != prepared.final_body or result.send_result != receipt
+                or result.target_kind != job.target_kind or result.target_id != job.target_id
+                or result.sensitive_private_delivery is not None or result.sensitive_private_merged):
+            return False
         with self._immediate_write_transaction() as db:
             body = db.execute("select final_body from outbound_postfixes where channel='dingtalk' and delivery_key=?", (key,)).fetchone()
             saved = db.execute("select provider_result_json from outbound_postfix_receipts where channel='dingtalk' and delivery_key=?", (key,)).fetchone()
@@ -18235,7 +18241,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return False
             if db.execute("select 1 from outbound_postfixes where channel='dingtalk' and delivery_key=?", (f"{key}:sensitive",)).fetchone():
                 return False
-            if db.execute("select 1 from dispatcher_claim_leases where source_id=? "
+            if db.execute("select 1 from dispatcher_claim_leases where adapter_name='meeting' and source_id=? "
                 "and coalesce(terminal_at,'')='' and julianday(lease_expires_at)>julianday('now')",
                 (str(job.id),)).fetchone():
                 return False
@@ -18244,9 +18250,9 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 "send_result_json=?, final_message=?, updated_at=current_timestamp "
                 "where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=? "
                 "and status='failed' and locked_at is null and send_result_json='{}' "
-                "and decision_json=? and target_kind=? and target_id=? and updated_at=?",
+                "and decision_json=? and target_kind=? and target_id=? and updated_at=? and source_json=?",
                 (result_json, prepared.final_body, job.id, job.decision_json,
-                 job.target_kind, job.target_id, job.updated_at),
+                 job.target_kind, job.target_id, job.updated_at, job.source_json),
             )
             return updated.rowcount == 1
 
