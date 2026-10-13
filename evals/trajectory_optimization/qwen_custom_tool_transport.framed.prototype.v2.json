@@ -1,0 +1,93 @@
+{
+  "version": 2,
+  "status": "offline_integrated_candidate_not_release_ready",
+  "provider_release_ready": false,
+  "code_ref": "cac26918",
+  "scope": "Six copied installed modules via fresh-process in-memory loader; no provider changes or inference",
+  "sources": {
+    "vllm/entrypoints/openai/responses/protocol.py": {
+      "original_sha256": "d0d4f4b4776c40ad9744e08ffb9135e1b26af696b7ffb6a5ee3e3a60a1be2c90",
+      "candidate_sha256": "7d5472ee808137cc4de89b9ec14217588d205eb7e728f6e6673ecd980ecb8ecf"
+    },
+    "vllm/entrypoints/openai/responses/streaming_events.py": {
+      "original_sha256": "f2681d82bdb1d041b3d78535db90b556d29c6474f790b783079c7ea156319017",
+      "candidate_sha256": "17733c91dad2e60325c75fa75a6e9784018033af2b4cce574dcebb2241eba98a"
+    },
+    "vllm/entrypoints/openai/responses/utils.py": {
+      "original_sha256": "4a07bb382fb22ca79516db24a7269491ac949e1171d059479179ed1407024632",
+      "candidate_sha256": "c322aeeccf013dd03b41dcc2c2defe6489b6ee504351548305ed08a74d16bfc5"
+    },
+    "vllm/tool_parsers/qwen3_engine_tool_parser.py": {
+      "original_sha256": "fe609579548295ca9f443b966cc00a9772bb8fcce4e19ba2a7edfa4121ca58d4",
+      "candidate_sha256": "2b4ec8b7be0ec49f2003d0a9bd41fba3ffeda9466ade1a9c46e81c2148b2c5dd"
+    },
+    "vllm/tool_parsers/structural_tag_registry.py": {
+      "original_sha256": "be9475e0bbb08de435b13e208278188f65fbb1b72f83e910f18825525fefbf3e",
+      "candidate_sha256": "593f71a8c04e3197576878b70bb3ba5797228f6cd3aa2a6270df026682d920fe"
+    },
+    "vllm/tool_parsers/utils.py": {
+      "original_sha256": "bd5caa24867098d5883570668766f9abb1d06e6d6ac48ce68d37dcd7a0d727dd",
+      "candidate_sha256": "e115feaefe03b38e6898bb2f789663109b608e950a46a11199036c035336e8c5"
+    }
+  },
+  "patch_sha256": "9fb9e4af2529777771d5631e1e6ac4f120dc926e9f343c63cd7c384172417617",
+  "checks": {
+    "red.log": {
+      "sha256": "1f237bc15e36889553ec8cc7af3a48826750241034f986964203666810356347",
+      "bytes": 5942,
+      "output": "..FFFFFFFFFFE\n======================================================================\nERROR: test_real_token_stream (__main__.Integrated.test_real_token_stream)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 59, in test_real_token_stream\nTypeError: string indices must be integers, not 'str'\n\n======================================================================\nFAIL: test_native_roundtrip (__main__.Integrated.test_native_roundtrip) (name='arbitrary_code', raw='\\'\\\\ntext(\"中文 🐈\");\\\\n\\'')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 35, in test_native_roundtrip\nAssertionError: '{\"value\": \"\\\\ntext(\\\\\"中文 🐈\\\\\");\\\\n\"}' != '\\ntext(\"中文 🐈\");\\n'\n- {\"value\": \"\\ntext(\\\"中文 🐈\\\");\\n\"}\n+ \n+ text(\"中文 🐈\");\n+ \n\n\n======================================================================\nFAIL: test_native_roundtrip (__main__.Integrated.test_native_roundtrip) (name='arbitrary_code', raw=\"'123'\")\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 35, in test_native_roundtrip\nAssertionError: '{\"value\": \"123\"}' != '123'\n- {\"value\": \"123\"}\n+ 123\n\n\n======================================================================\nFAIL: test_native_roundtrip (__main__.Integrated.test_native_roundtrip) (name='arbitrary_code', raw='\\'const marker=\"</parameter> </function> </tool_call> <tool_call> <parameter=x> <think> <|im_end|>\";\\'')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 35, in test_native_roundtrip\nAssertionError: '{\"value\": \"const marker=\\\\\"\\\\u003c/parame[112 chars]\";\"}' != 'const marker=\"</parameter> </function> </[53 chars]|>\";'\n- {\"value\": \"const marker=\\\"\\u003c/parameter> \\u003c/function> \\u003c/tool_call> \\u003ctool_call> \\u003cparameter=x> \\u003cthink> \\u003c|im_end|>\\\";\"}\n+ const marker=\"</parameter> </function> </tool_call> <tool_call> <parameter=x> <think> <|im_end|>\";\n\n\n======================================================================\nFAIL: test_native_roundtrip (__main__.Integrated.test_native_roundtrip) (name='arbitrary_code', raw='\\'\\\\\\\\\"\\\\n\\\\t\\\\r\\\\x00\\'')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 35, in test_native_roundtrip\nAssertionError: '{\"value\": \"\\\\\\\\\\\\\"\\\\n\\\\t\\\\r\\\\u0000\"}' != '\\\\\"\\n\\t\\r\\x00'\n- {\"value\": \"\\\\\\\"\\n\\t\\r\\u0000\"}\n+ \\\"\n+ \t\n+ \u0000\n\n\n======================================================================\nFAIL: test_native_roundtrip (__main__.Integrated.test_native_roundtrip) (name='arbitrary_code', raw=\"''\")\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 35, in test_native_roundtrip\nAssertionError: '{\"value\": \"\"}' != ''\n- {\"value\": \"\"}\n\n\n======================================================================\nFAIL: test_native_roundtrip (__main__.Integrated.test_native_roundtrip) (name='mixed__code', raw='\\'\\\\ntext(\"中文 🐈\");\\\\n\\'')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 35, in test_native_roundtrip\nAssertionError: '{\"value\": \"\\\\ntext(\\\\\"中文 🐈\\\\\");\\\\n\"}' != '\\ntext(\"中文 🐈\");\\n'\n- {\"value\": \"\\ntext(\\\"中文 🐈\\\");\\n\"}\n+ \n+ text(\"中文 🐈\");\n+ \n\n\n======================================================================\nFAIL: test_native_roundtrip (__main__.Integrated.test_native_roundtrip) (name='mixed__code', raw=\"'123'\")\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 35, in test_native_roundtrip\nAssertionError: '{\"value\": \"123\"}' != '123'\n- {\"value\": \"123\"}\n+ 123\n\n\n======================================================================\nFAIL: test_native_roundtrip (__main__.Integrated.test_native_roundtrip) (name='mixed__code', raw='\\'const marker=\"</parameter> </function> </tool_call> <tool_call> <parameter=x> <think> <|im_end|>\";\\'')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 35, in test_native_roundtrip\nAssertionError: '{\"value\": \"const marker=\\\\\"\\\\u003c/parame[112 chars]\";\"}' != 'const marker=\"</parameter> </function> </[53 chars]|>\";'\n- {\"value\": \"const marker=\\\"\\u003c/parameter> \\u003c/function> \\u003c/tool_call> \\u003ctool_call> \\u003cparameter=x> \\u003cthink> \\u003c|im_end|>\\\";\"}\n+ const marker=\"</parameter> </function> </tool_call> <tool_call> <parameter=x> <think> <|im_end|>\";\n\n\n======================================================================\nFAIL: test_native_roundtrip (__main__.Integrated.test_native_roundtrip) (name='mixed__code', raw='\\'\\\\\\\\\"\\\\n\\\\t\\\\r\\\\x00\\'')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 35, in test_native_roundtrip\nAssertionError: '{\"value\": \"\\\\\\\\\\\\\"\\\\n\\\\t\\\\r\\\\u0000\"}' != '\\\\\"\\n\\t\\r\\x00'\n- {\"value\": \"\\\\\\\"\\n\\t\\r\\u0000\"}\n+ \\\"\n+ \t\n+ \u0000\n\n\n======================================================================\nFAIL: test_native_roundtrip (__main__.Integrated.test_native_roundtrip) (name='mixed__code', raw=\"''\")\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 35, in test_native_roundtrip\nAssertionError: '{\"value\": \"\"}' != ''\n- {\"value\": \"\"}\n\n\n----------------------------------------------------------------------\nRan 4 tests in 0.460s\n\nFAILED (failures=10, errors=1)\n"
+    },
+    "auto-red.log": {
+      "sha256": "a9295a50f2cb0654f912d0be3afe4ac291b4b1db93ffb70e2938cdbf002ae382",
+      "bytes": 504,
+      "output": ".F......\n======================================================================\nFAIL: test_auto_without_final_schema (__main__.Integrated.test_auto_without_final_schema)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"anonymous-check-transport\", line 66, in test_auto_without_final_schema\nAssertionError: unexpectedly None\n\n----------------------------------------------------------------------\nRan 8 tests in 1.167s\n\nFAILED (failures=1)\n"
+    },
+    "integrated-final.log": {
+      "sha256": "649cf9283a4fe741d3f6849c8eb1808315f701caee93041985277c1803e9fcb4",
+      "bytes": 109,
+      "output": "..........\n----------------------------------------------------------------------\nRan 10 tests in 1.391s\n\nOK\n"
+    },
+    "transport-final.log": {
+      "sha256": "4e4a3e4dc9a4c448c0f9fdd54a4617869fe7366c070450a4d1a14fd7dd10fcb8",
+      "bytes": 1219,
+      "output": "test_custom_grammar_and_input_shape (__main__.Transport.test_custom_grammar_and_input_shape) ... ok\ntest_declarations (__main__.Transport.test_declarations) ... ok\ntest_function_stream_unchanged (__main__.Transport.test_function_stream_unchanged) ... ok\ntest_function_unchanged (__main__.Transport.test_function_unchanged) ... ok\ntest_history_object_and_dict (__main__.Transport.test_history_object_and_dict) ... ok\ntest_lookup_and_required_forced_choices (__main__.Transport.test_lookup_and_required_forced_choices) ... ok\ntest_multiple_stream_call_identity_and_order (__main__.Transport.test_multiple_stream_call_identity_and_order) ... ok\ntest_nonstream_plain_and_namespace (__main__.Transport.test_nonstream_plain_and_namespace) ... ok\ntest_regex_grammar (__main__.Transport.test_regex_grammar) ... ok\ntest_required_and_forced_structural_tag (__main__.Transport.test_required_and_forced_structural_tag) ... ok\ntest_stored_previous_response_custom_call (__main__.Transport.test_stored_previous_response_custom_call) ... ok\ntest_stream_one_character_chunks (__main__.Transport.test_stream_one_character_chunks) ... ok\n\n----------------------------------------------------------------------\nRan 12 tests in 0.087s\n\nOK\n"
+    }
+  },
+  "integrated_tests": 10,
+  "transport_tests": 12,
+  "fixture_reference": "qwen_custom_tool_transport.prototype.v1.json grammar_fixture",
+  "loader_reference": "qwen_custom_tool_transport.loader.py",
+  "checker_sha256": {
+    "qwen_custom_tool_transport.integrated_framing.cpu.py": "e6ad3faa54530e94ba7ecffd2aaddafb34851685f32925d402a7d6e82f45bcae",
+    "qwen_custom_tool_transport.framed.cpu.py": "b1a2eb8567d56baab662876bbd998ac19aa09dc374c14ceefd63fb5c114c8e35"
+  },
+  "installed_sources_unchanged": true,
+  "limitations": [
+    "No Consumer/Audit model cold-start or session resume gate",
+    "No production provider edits or reload",
+    "Custom input deltas remain buffered until complete JSON envelope",
+    "Text/grammar declaration remains validated after decoding; original custom grammar not yet part of generation constraint",
+    "Fixed anonymous samples do not prove every possible Unicode string"
+  ],
+  "progression": [
+    "Previous rawstring candidate: integrated4tests failure10/errors1, retained red log",
+    "Auto no-schema producedNone, regression RED retained then repaired",
+    "Namespace required/forced mismatch reproduced; structuralregistry normalized serving flat names, final10tests pass",
+    "Final formatted10 parser/schema/token tests and12 protocol/event/history/format tests pass"
+  ],
+  "additional_controls": [
+    "auto without final schema permits free text and ordinary function, custom framing enforced",
+    "none leaves tools disabled",
+    "required/forced top-level and namespace requests pass ResponsesRequest.model_validate",
+    "ordinary ChatCompletion function grammar/parser unchanged"
+  ],
+  "setup_note": "First validated request fixture used model_dump without aliases, so json_schema.schema was missing on roundtrip; corrected with by_alias=True, final10 tests pass.",
+  "cleanup": {
+    "owned_path": "/tmp/ceo-qwen-framing-integration.7xb2tntz",
+    "removed": true,
+    "bytes_removed": 342721,
+    "open_handles": "lsof exit1 with no output",
+    "retained": "six-file patch, two checkers, original/candidate hashes and anonymous RED/GREEN receipts"
+  },
+  "readonly_review": "Verified six original/candidate hashes, patch/checker/log hashes and10+12 final logs; auto optional semantics and validated namespace forced choices confirmed; no release readiness claim"
+}
