@@ -190,3 +190,5 @@ candidate in both arms, not either actual Consumer output; this is independent
 role comparison, not end-to-end Consumer-to-Audit execution acceptance.
 
 After independent review, all seven accepted-cohort native file hashes were rechecked, no open handles remained in the owned probe root, and `/tmp/ceo-message-source-control.YldFvw` was removed (1,181,399 bytes). Complete CLI-owned originals and concise metadata/harness receipts remain; private temporary Developer/Profile copies were removed.
+
+Current candidate Audit native reasoning items expose no summary text in either cold/resume file. Visible complete inputs, successful Skill outputs and final judgments establish the omitted independent read, but do not isolate its causal reason. No hidden reasoning is inferred or invented from the final approve.
