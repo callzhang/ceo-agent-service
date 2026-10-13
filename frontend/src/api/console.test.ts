@@ -171,6 +171,29 @@ describe("console API helpers", () => {
     }
   });
 
+  it.each([null, { checked: 2, unavailable: 3 }])("accepts existing native delivery coverage %j", async (coverage) => {
+    const originalFetch = globalThis.fetch;
+    const payload = statusEnvelope();
+    Object.assign(payload.item.system_health, { native_delivery_coverage: coverage });
+    globalThis.fetch = async () => new Response(JSON.stringify(payload), { status: 200 });
+    try { await expect(getStatus()).resolves.toEqual(payload); }
+    finally { globalThis.fetch = originalFetch; }
+  });
+
+  it.each([
+    { checked: -1, unavailable: 0 },
+    { checked: 1, unavailable: "3" },
+    { checked: 1 },
+    { checked: 1, unavailable: 3, unexpected: true },
+  ])("rejects malformed native delivery coverage %j", async (coverage) => {
+    const originalFetch = globalThis.fetch;
+    const payload = statusEnvelope();
+    Object.assign(payload.item.system_health, { native_delivery_coverage: coverage });
+    globalThis.fetch = async () => new Response(JSON.stringify(payload), { status: 200 });
+    try { await expect(getStatus()).rejects.toThrow("invalid status response"); }
+    finally { globalThis.fetch = originalFetch; }
+  });
+
   it("accepts explicit nulls for optional status fields", async () => {
     const originalFetch = globalThis.fetch;
     const payload = statusEnvelope();
