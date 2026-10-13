@@ -33,3 +33,10 @@
 - 同一进程中的 initialized-path cache 不能证明回退后的启动；演练改用真实 release.publish 的新进程，未附带添加缓存恢复逻辑。
 - 独立 SPEC 已确认准确源列/声明、类型字段、引用、公开 ID 和独立回执方向；发现 native-copy 脚本 import 顺序 P2，已修正并用无 PYTHONPATH 的 --help 验证。外部 view/trigger SQL 依赖旧表的修改前拒绝尚需补齐并重新审核。
 - 下一步：完成依赖预检的回归及 SPEC 复核，再 QUALITY；冻结整体代码后进行全库等价、新事实/删除、实际旧代码启动、发布失败阶段与再正迁演练；CI及正式部署回读。其余 actions 家族、第6–8期和最终10+1生产结构仍未完成。
+
+
+## 最终合并代码检查点（待CI/发布）
+
+- 实现提交7a2070a2，合入当前main2d1e94的合并提交0169d055；没有重写其他会话提交。补充NoCase/完整bootstrap对象命名空间修复的QUALITY最终89项通过；foundation51项通过。
+- 复用同一不可变生产源副本，最终137表值/类型/rowid、新增/更新/删除及独立回执、精确逆迁、实际2d旧代码新进程启动、再正迁均通过。311应用文件与证据完全匹配，最终receipt见evals/database_redesign/phase5a_copy_proof.v1.json。合并后154项相关测试通过。
+- PR72已建立并附加本任务，CI正在执行。生产尚未变更，整个十表目标仍未完成。
