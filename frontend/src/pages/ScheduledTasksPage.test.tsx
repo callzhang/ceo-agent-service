@@ -637,6 +637,19 @@ describe("ScheduledTasksPage", () => {
 });
 
 describe("service command tasks", () => {
+  it("retains available Skill sources when a service prompt stops naming one", async () => {
+    setup([commandTask]);
+    const user = userEvent.setup();
+    renderPage("/scheduled-tasks?id=9");
+    await editSelectedTask(user);
+    const prompt = await screen.findByLabelText("Consumer Agent Prompt");
+    fireEvent.change(prompt, { target: { value: "只使用 $ceo-minutes-sync，其他已绑定规则按需读取。" } });
+    expect(screen.getByRole("button", { name: /移除dingtalk-chat/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "保存更改" }));
+    await waitFor(() => expect(api.updateScheduledTask).toHaveBeenCalledWith(9,
+      expect.objectContaining({ prompt: "只使用 $ceo-minutes-sync，其他已绑定规则按需读取。", skill_refs: commandRefs, version: 3 })));
+  });
+
   it("edits the Consumer Prompt and execution command without showing Settings-owned runtime details", async () => {
     setup([commandTask]);
     const user = userEvent.setup();

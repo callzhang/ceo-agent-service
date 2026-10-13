@@ -17,7 +17,7 @@ from app.agent_cron.models import (
     ScheduledTaskSkillRef,
     ScheduledTaskVersionConflictError,
 )
-from app.agent_cron.commands import consumer_skill_names_from_prompt
+from app.agent_cron.commands import validate_consumer_skill_bindings
 from app.agent_cron.options import ScheduledTaskOptionService
 from app.agent_cron.schedule import CronSchedule
 from app.store import AutoReplyStore
@@ -93,12 +93,9 @@ class ScheduledTaskCreatePayload(BaseModel):
                     "service command task must carry its consumer prompt and "
                     "Skill refs together"
                 )
-            if self.skill_refs and consumer_skill_names_from_prompt(
-                self.prompt
-            ) != tuple(ref.skill_name for ref in self.skill_refs):
-                raise ValueError(
-                    "service command Skill refs must exactly match $skill "
-                    "references in prompt"
+            if self.skill_refs:
+                validate_consumer_skill_bindings(
+                    self.prompt, tuple(ref.skill_name for ref in self.skill_refs)
                 )
             return self
         if not self.prompt.strip():

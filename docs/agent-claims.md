@@ -1133,3 +1133,9 @@ reverts committed work they did not author.
 | codex-oa-frozen-source-natural-readback | OA binding validation and oa_frozen_skill_binding.post_release.v1.json only | Save actual task404387 frozen Skill reads and same-session reuse; compare source/category honestly, not external-effect completion or PR67 acceptance. | verified 2026-10-13 |
 
 | codex-oa-frozen-history-settings | OA binding validation and oa_frozen_skill_history_settings.v1.json only | Verify two historical Settings Tasks byte-match actual selected native User inputs after source binding repair; source labels accurate. No private originals, frontend visibility claim, config or runtime change. | verified 2026-10-13 |
+
+| codex-skill-source-bindings | Isolated /private/tmp/ceo-skill-source-bindings: app/agent_cron/commands.py shared prompt-binding format validation; app/store.py scheduled validation; app/web_api/scheduled_tasks.py payload validation; focused tests and architecture/runtime docs | Separate available version-bound sources from explicitly requested Skill names. Retain every ref, position, revision and frozen snapshot; explicit names remain bound/in order. No business/Audit/authorization rule, old input rewrite, session/route change or production config update. | active 2026-10-13 |
+
+| codex-skill-source-binding-editor | Same isolated tree: frontend/src/pages/ScheduledTasksPage.tsx and its test only | Service-command prompt edits retain available version-bound refs; explicit source removal remains unchanged. Agent-task token/ref synchronization is retained. No frontend routing or policy change. | active 2026-10-13 |
+
+| codex-skill-source-binding-decoder | Same isolated tree: frontend/src/api/scheduledTasks.ts and its tests | Align response decoding with the ordered subset binding contract for service commands, including saved run snapshots. Preserve Agent-task validation. | active 2026-10-13 |

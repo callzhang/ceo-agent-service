@@ -491,7 +491,7 @@ function TaskReadOnlyDetail({ task, commandOption, choices }: { task: ScheduledT
       {task.command && commandOption && <div><dt>任务说明</dt><dd>{commandOption.description}</dd></div>}
     </dl>
     {task.prompt && <section className="scheduled-task-readonly-prompt"><h3>{promptLabel}</h3><pre>{task.prompt}</pre></section>}
-    {task.skill_refs.length > 0 && <section className="scheduled-task-skill-block"><div className="scheduled-task-section-heading"><h3>{task.command ? "Consumer Agent Skills" : "Agent Skills"}</h3><span>由 Prompt 中的 $skill 确定性提取</span></div><div className="scheduled-task-skill-chips">{task.skill_refs.map((ref) => { const choice = choices.find((item) => item.key === refKey(ref)); return <SkillReference key={`${refKey(ref)}:${ref.position}:${choice?.previewKey || ""}`} ref={ref} label={choice?.label || ref.skill_name} expectedSha256={choice?.sha256} />; })}</div></section>}
+    {task.skill_refs.length > 0 && <section className="scheduled-task-skill-block"><div className="scheduled-task-section-heading"><h3>{task.command ? "Consumer Agent Skills" : "Agent Skills"}</h3><span>{task.command ? "已绑定的规则来源，供 Agent 按需读取" : "由 Prompt 中的 $skill 确定性提取"}</span></div><div className="scheduled-task-skill-chips">{task.skill_refs.map((ref) => { const choice = choices.find((item) => item.key === refKey(ref)); return <SkillReference key={`${refKey(ref)}:${ref.position}:${choice?.previewKey || ""}`} ref={ref} label={choice?.label || ref.skill_name} expectedSha256={choice?.sha256} />; })}</div></section>}
   </section>;
 }
 
@@ -627,7 +627,7 @@ export function ScheduledTasksPage() {
     setDraft((current) => ({
       ...current,
       prompt,
-      skill_refs: current.skill_refs
+      skill_refs: current.command ? current.skill_refs : current.skill_refs
         .filter((ref) => !hasSkillToken(current.prompt, ref.skill_name) || hasSkillToken(prompt, ref.skill_name))
         .map((ref, position) => ({ ...ref, position })),
     }));
@@ -803,7 +803,7 @@ export function ScheduledTasksPage() {
             {consumerPromptTask && <><div className="scheduled-task-prompt-field"><label htmlFor="scheduled-task-prompt">{commandTask ? "Consumer Agent Prompt" : "Agent 执行提示词"}</label><textarea id="scheduled-task-prompt" aria-label={commandTask ? "Consumer Agent Prompt" : "Agent 执行提示词"} rows={7} value={draft.prompt} onChange={(event) => { updatePrompt(event.target.value); setSkillMenuOpen(activeSkillQuery(event.target.value) !== null); }} placeholder={commandTask ? "描述 Trigger 发现真实输入后 Consumer Agent 要完成什么；输入 $ 引用 Skill" : "描述 Agent 每次触发要完成什么；输入 $ 引用 Skill"} />
               {skillMenuOpen && query !== null && <section className="scheduled-task-suggestions" aria-label="Skill 建议">{suggestions.length ? suggestions.map((choice) => <button type="button" disabled={!choice.available} key={choice.key} onClick={() => selectSkill(choice)}><strong>{choice.label}</strong><small>{choice.description}{choice.available ? "" : ` · 不可用：${choice.unavailableReason}`}</small></button>) : <p>没有匹配的 Skill</p>}</section>}
             </div>
-            <div className="scheduled-task-skill-block"><div className="scheduled-task-section-heading"><h3>{commandTask ? "Consumer Agent Skills" : "Agent Skills"}</h3><span>由 Prompt 中的 $skill 确定性提取</span></div>{draft.skill_refs.length ? <div className="scheduled-task-skill-chips">{draft.skill_refs.map((ref, index) => { const choice = choices.find((item) => item.key === refKey(ref)); const label = choice?.label || ref.skill_name; return <SkillReference key={`${refKey(ref)}:${index}:${choice?.previewKey || ""}`} ref={ref} label={label} expectedSha256={choice?.sha256} removable onRemove={() => removeSkill(index)} />; })}</div> : <p className="scheduled-task-empty-copy">输入 <code>$</code> 搜索并选择至少一个 Skill。</p>}</div>
+            <div className="scheduled-task-skill-block"><div className="scheduled-task-section-heading"><h3>{commandTask ? "Consumer Agent Skills" : "Agent Skills"}</h3><span>{commandTask ? "已绑定的规则来源，供 Agent 按需读取" : "由 Prompt 中的 $skill 确定性提取"}</span></div>{draft.skill_refs.length ? <div className="scheduled-task-skill-chips">{draft.skill_refs.map((ref, index) => { const choice = choices.find((item) => item.key === refKey(ref)); const label = choice?.label || ref.skill_name; return <SkillReference key={`${refKey(ref)}:${index}:${choice?.previewKey || ""}`} ref={ref} label={label} expectedSha256={choice?.sha256} removable onRemove={() => removeSkill(index)} />; })}</div> : <p className="scheduled-task-empty-copy">输入 <code>$</code> 搜索并选择至少一个 Skill。</p>}</div>
             </>}
             <button type="submit" className="primary-button" disabled={mutationState === "saving" || Boolean(runtimeBlockReason)}>{mutationState === "saving" ? "保存中…" : creating ? "创建任务" : "保存更改"}</button>
           </form> : <TaskReadOnlyDetail task={selected!} commandOption={options?.service_command_options.find((item) => item.name === selected?.command)} choices={choices} />}

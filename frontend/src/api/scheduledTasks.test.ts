@@ -210,6 +210,31 @@ describe("scheduled tasks API", () => {
 });
 
 describe("service command tasks", () => {
+  it.each(["使用 $dingtalk-chat 处理当前任务。", "按需读取已绑定来源处理当前任务。"])("decodes available sources independently of explicit requests: %s", async (prompt) => {
+    const refs = [...commandTask.skill_refs, { ...task.skill_refs[0], skill_name: "lark-im", position: 1 }];
+    const run = { ...commandTask.recent_run, snapshot: { ...commandTask.recent_run.snapshot, prompt, skill_refs: refs } };
+    const item = { ...commandTask, prompt, skill_refs: refs, recent_run: run };
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ item, meta: { snapshot_at: "now" } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [item], meta: { total: 1, snapshot_at: "now" } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ item: run, meta: { snapshot_at: "now" } })));
+    vi.stubGlobal("fetch", fetch);
+
+    expect((await updateScheduledTask(item.id, { ...item, required_runtime_capabilities: [] })).item.skill_refs).toEqual(refs);
+    expect((await listScheduledTasks()).items[0].recent_run?.snapshot.skill_refs).toEqual(refs);
+    expect((await runScheduledTask(item.id)).item.snapshot.skill_refs).toEqual(refs);
+  });
+
+  it.each([
+    ["unknown", "使用 $unknown", [task.skill_refs[0]]],
+    ["reversed", "使用 $lark-im 和 $dingtalk-chat", [task.skill_refs[0], { ...task.skill_refs[0], skill_name: "lark-im", position: 1 }]],
+    ["duplicate binding", "使用 $dingtalk-chat", [task.skill_refs[0], { ...task.skill_refs[0], position: 1 }]],
+  ])("rejects %s requests in command responses", async (_label, prompt, skill_refs) => {
+    const item = { ...commandTask, prompt, skill_refs, recent_run: null };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [item], meta: { total: 1, snapshot_at: "now" } }))));
+    await expect(listScheduledTasks()).rejects.toThrow("invalid scheduled task");
+  });
+
   it("accepts a command task with a targeted Consumer Prompt", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [commandTask], meta: { total: 1, snapshot_at: "now" } }), { headers: { "Content-Type": "application/json" } })));
 
