@@ -981,3 +981,14 @@ and uncertain retries did not dispatch again. This independent external-action
 confirmation issue remains unresolved; it is not evidence that the input fix failed,
 and uncertain is not proof that the external comment was never written. No replay
 or incidental effect-reconciliation policy change was made.
+
+
+### Current live OA judgment consistency, 2026-10-13
+
+Production checkout b9572061 uses consolidated tasks/runs tables; the earlier agent_runs-table locator is stale. Read-only inspection of task404565 examines every response item in the full Consumer and four Audit native files. Metadata-only evidence is current_oa_judgment_consistency.v1.json; private source/Profile/business originals remain in native records.
+
+Consumer keeps one session across four results. First Audit explicitly retains reject and asks for a fact-wording correction; the next Audit requires revert under the substantive-supplementation exception. Both audits receive equal parsed Skill bodies, full OA detail, current task facts, available return nodes, reject contract and profiles. Pending-list outputs differ, and second Audit additionally reads the separate operationRecords interface. Its27 differently shaped records are not asserted equivalent to the53 records in full OA detail. A failed observer equality assertion revealed that distinction; no model rerun or runtime change followed.
+
+The direction change is confirmed, but missing rule delivery, session changes, candidate wording, feedback and supplemental evidence are not isolated causes. Consumer later rereads live state after a recorded action-state conflict and returns no_action when ownership changes; final Audit agrees. This does not establish an exact execution receipt or the conflict cause. Necessary live-state verification must not be removed as generic duplicate retrieval.
+
+Next step: compare actual submitted Audit candidate/feedback/Developer and supplemental records, then use a fixed complete history case before changing a mechanism. No provider write, replay, Audit policy, prompt patch, merge or deployment was performed.
