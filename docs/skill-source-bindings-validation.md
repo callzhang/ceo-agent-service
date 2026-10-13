@@ -188,3 +188,5 @@ now retains it. Initial submitted Developer/Profile equality does not mean later
 retrieved model context is equal. Audit reviews the same fixed synthetic no_action
 candidate in both arms, not either actual Consumer output; this is independent
 role comparison, not end-to-end Consumer-to-Audit execution acceptance.
+
+After independent review, all seven accepted-cohort native file hashes were rechecked, no open handles remained in the owned probe root, and `/tmp/ceo-message-source-control.YldFvw` was removed (1,181,399 bytes). Complete CLI-owned originals and concise metadata/harness receipts remain; private temporary Developer/Profile copies were removed.
