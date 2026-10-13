@@ -1147,6 +1147,11 @@ class DingTalkAutoReplyWorker:
                         )
                 else:
                     candidate_unread_messages = unread_messages
+            if recovery:
+                queued_tasks += self._requeue_failed_reply_tasks_for_new_context(
+                    conversation,
+                    [*context_messages, *unread_messages],
+                )
             if recovery and context_messages:
                 queued_tasks += self._requeue_revised_seen_calendar_messages(
                     conversation,
@@ -1414,6 +1419,78 @@ class DingTalkAutoReplyWorker:
                 trigger_text=message.content,
                 trigger_message_json=self._scheduled_trigger_message_json(message),
                 channel="dingtalk",
+            ):
+                queued += 1
+        return queued
+
+    def _requeue_failed_reply_tasks_for_new_context(
+        self,
+        conversation: DingTalkConversation,
+        messages: list[DingTalkMessage],
+    ) -> int:
+        """Retry exhausted reviews once when the same conversation has newer facts."""
+        if not messages:
+            return 0
+        newer_messages: list[tuple[datetime, DingTalkMessage]] = []
+        for message in messages:
+            if message.open_conversation_id != conversation.open_conversation_id:
+                continue
+            created_at = self._parse_calendar_time(message.create_time)
+            if created_at is None:
+                continue
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=DINGTALK_MESSAGE_TIME_ZONE)
+            newer_messages.append((created_at.astimezone(timezone.utc), message))
+        if not newer_messages:
+            return 0
+
+        queued = 0
+        for task in self.store.list_reply_tasks(
+            statuses=("failed",), channel="dingtalk", limit=500
+        ):
+            if (
+                task.conversation_id != conversation.open_conversation_id
+                or task.error != "audit_revision_exhausted"
+            ):
+                continue
+            failed_at = self._parse_calendar_time(task.updated_at)
+            if failed_at is None:
+                continue
+            if failed_at.tzinfo is None:
+                failed_at = failed_at.replace(tzinfo=timezone.utc)
+            failed_at = failed_at.astimezone(timezone.utc)
+            later = [
+                (created_at, message)
+                for created_at, message in newer_messages
+                if created_at > failed_at
+                and message.open_message_id != task.trigger_message_id
+            ]
+            if not later:
+                continue
+            source_revision = [
+                {
+                    "message_id": message.open_message_id,
+                    "create_time": created_at.isoformat(),
+                    "body_sha256": hashlib.sha256(
+                        message.content.encode("utf-8")
+                    ).hexdigest(),
+                }
+                for created_at, message in sorted(
+                    later, key=lambda item: (item[0], item[1].open_message_id)
+                )
+            ]
+            revision_key = hashlib.sha256(
+                json.dumps(
+                    source_revision,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            if self.store.requeue_failed_reply_task_for_source_revision(
+                task.id,
+                expected_execution_generation=task.execution_generation,
+                source_revision_key=revision_key,
             ):
                 queued += 1
         return queued

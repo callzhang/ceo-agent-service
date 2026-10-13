@@ -14935,6 +14935,70 @@ def test_recovery_due_group_unread_without_principal_mention_reads_unread_tail_b
     assert final_sent(dws) == []
 
 
+def test_recovery_requeues_failed_reply_once_when_new_context_arrives(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws([], {})
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    task = worker.store.ensure_reply_task(
+        conversation_id="cid-recovery-context",
+        conversation_title="Recovery context",
+        single_chat=False,
+        trigger_message_id="msg-original",
+        trigger_create_time="2026-10-13 17:00:00",
+        trigger_sender="Mina",
+        trigger_text="Please decide based on the current context.",
+    )
+    claimed = worker.store.claim_reply_task(task.id)
+    assert claimed is not None
+    worker.store.fail_reply_task(
+        task.id,
+        "audit_revision_exhausted",
+        expected_execution_generation=claimed.execution_generation,
+    )
+    with worker.store._connect() as db:
+        db.execute(
+            "update tasks set updated_at='2026-10-13 10:00:00' "
+            "where record_type='reply_tasks' and id=?",
+            (task.id,),
+        )
+    conversation = DingTalkConversation(
+        open_conversation_id="cid-recovery-context",
+        title="Recovery context",
+        single_chat=False,
+        unread_point=0,
+    )
+    later_message = DingTalkMessage(
+        open_conversation_id=conversation.open_conversation_id,
+        open_message_id="msg-after-failure",
+        conversation_title=conversation.title,
+        single_chat=False,
+        sender_name="Mina",
+        create_time="2026-10-13 19:01:00",
+        content="Here is the updated decision context.",
+    )
+    earlier_message = later_message.model_copy(
+        update={
+            "open_message_id": "msg-before-failure",
+            "create_time": "2026-10-13 17:00:00",
+        }
+    )
+
+    assert worker._requeue_failed_reply_tasks_for_new_context(
+        conversation, [earlier_message]
+    ) == 0
+
+    assert worker._requeue_failed_reply_tasks_for_new_context(
+        conversation, [later_message]
+    ) == 1
+    rerun = worker.store.get_reply_task(task.id)
+    assert rerun is not None and rerun.status == "pending"
+    assert rerun.execution_generation != claimed.execution_generation
+    assert worker._requeue_failed_reply_tasks_for_new_context(
+        conversation, [later_message]
+    ) == 0
+
+
 def test_dry_run_group_unread_without_principal_mention_is_ignored(
     tmp_path: Path, monkeypatch
 ):

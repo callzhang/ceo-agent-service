@@ -10616,6 +10616,99 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
             )
         return task
 
+    def requeue_failed_reply_task_for_source_revision(
+        self,
+        task_id: int,
+        *,
+        expected_execution_generation: str,
+        source_revision_key: str,
+    ) -> bool:
+        """Start one fresh decision when a failed audit receives newer source context.
+
+        This is deliberately limited to exhausted review revisions. A delivery or
+        registered-action receipt makes the old task non-replayable; the source
+        revision is also persisted as the idempotency key so the same context
+        cannot create an endless retry loop.
+        """
+        generation = expected_execution_generation.strip()
+        revision_key = source_revision_key.strip()
+        if not generation or not revision_key:
+            raise ValueError("generation and source revision are required")
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks "
+                "where id=? and status='failed' and error='audit_revision_exhausted' "
+                "and execution_generation=?",
+                (task_id, generation),
+            ).fetchone()
+            if row is None:
+                return False
+            if (
+                int(row["manual_rerun_attempt_id"] or 0) == 0
+                and str(row["manual_rerun_revision_key"] or "") == revision_key
+            ):
+                return False
+            active_run = db.execute(
+                f"select 1 from ({AGENT_RUN_SQL}) as agent_runs "
+                "where reply_task_id=? and execution_generation=? and status='running' limit 1",
+                (task_id, generation),
+            ).fetchone()
+            if active_run is not None:
+                return False
+            from app.agent_reported_error import is_provider_risk_rejection
+
+            current_errors = db.execute(
+                f"select structured_error_json from ({AGENT_RUN_SQL}) as agent_runs "
+                "where reply_task_id=? and execution_generation=?",
+                (task_id, generation),
+            ).fetchall()
+            latest_attempt = db.execute(
+                "select send_error from reply_attempts where channel=? and conversation_id=? "
+                "and trigger_message_id=? order by id desc limit 1",
+                (row["channel"], row["conversation_id"], row["trigger_message_id"]),
+            ).fetchone()
+            if (
+                any(is_provider_risk_rejection(error[0]) for error in current_errors)
+                or is_provider_risk_rejection(
+                    "", attempt_error=str(latest_attempt[0] or "") if latest_attempt else ""
+                )
+            ):
+                return False
+            sent = db.execute(
+                "select 1 from sent_replies where channel=? and conversation_id=? "
+                "and trigger_message_id=? limit 1",
+                (row["channel"], row["conversation_id"], row["trigger_message_id"]),
+            ).fetchone()
+            action_receipt = db.execute(
+                "select 1 from actions where task_id=? and record_type in "
+                "('candidate_executions','external_action_results') limit 1",
+                (task_id,),
+            ).fetchone()
+            if sent is not None or action_receipt is not None:
+                return False
+            self._enqueue_manual_rerun_reply_task_in_connection(
+                db,
+                conversation_id=str(row["conversation_id"]),
+                conversation_title=str(row["conversation_title"]),
+                single_chat=bool(row["single_chat"]),
+                trigger_message_id=str(row["trigger_message_id"]),
+                trigger_create_time=str(row["trigger_create_time"]),
+                trigger_sender=str(row["trigger_sender"]),
+                trigger_text=str(row["trigger_text"]),
+                trigger_message_json=str(row["trigger_message_json"]),
+                oa_url=str(row["oa_url"] or ""),
+                attempt_id=0,
+                revision_key=revision_key,
+                channel=str(row["channel"]),
+            )
+            db.execute(
+                "update tasks set error='automatic_source_revision_rerun' "
+                "where record_type='reply_tasks' and id=? and status='pending' "
+                "and execution_generation<>?",
+                (task_id, generation),
+            )
+            return True
+
     @staticmethod
     def _manual_rerun_revision_key(
         db: sqlite3.Connection,
@@ -20568,6 +20661,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         self,
         task_id: int,
         *,
+        expected_execution_generation: str,
         settled_evidence: str,
     ) -> bool:
         """Close an unresolved task whose business object reached its end state.
@@ -20583,33 +20677,37 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
         evidence = settled_evidence.strip()
         if not evidence:
             raise ValueError("settled evidence must be non-empty")
+        generation = expected_execution_generation.strip()
+        if not generation:
+            raise ValueError("execution generation is required")
         with self._immediate_write_transaction() as db:
             task = db.execute(
                 f"select conversation_id, trigger_message_id from ({REPLY_TASK_SQL}) as reply_tasks "
-                "where id=? and status in ('failed', 'needs_human')",
-                (task_id,),
+                "where id=? and status in ('failed', 'needs_human') and execution_generation=?",
+                (task_id, generation),
             ).fetchone()
             if task is None:
                 return False
-            db.execute(
-                "insert into errors (conversation_id, message_id, kind, detail, "
-                "resolved_at, resolution) "
-                "values (?, ?, ?, ?, current_timestamp, ?)",
-                (
-                    task["conversation_id"],
-                    task["trigger_message_id"],
-                    "reply_task_already_settled",
-                    evidence,
-                    evidence,
-                ),
-            )
             cursor = db.execute(
                 "update tasks as reply_tasks set status='done', error='', available_at='', "
                 "locked_at=null, updated_at=current_timestamp "
-                "where reply_tasks.record_type='reply_tasks' and id=? and status in ('failed', 'needs_human')",
-                (task_id,),
+                "where reply_tasks.record_type='reply_tasks' and id=? "
+                "and status in ('failed', 'needs_human') and execution_generation=?",
+                (task_id, generation),
             )
             if cursor.rowcount == 1:
+                db.execute(
+                    "insert into errors (conversation_id, message_id, kind, detail, "
+                    "resolved_at, resolution) "
+                    "values (?, ?, ?, ?, current_timestamp, ?)",
+                    (
+                        task["conversation_id"],
+                        task["trigger_message_id"],
+                        "reply_task_already_settled",
+                        evidence,
+                        evidence,
+                    ),
+                )
                 self._compact_settled_reply_task_input(db, task_id)
             return cursor.rowcount == 1
 

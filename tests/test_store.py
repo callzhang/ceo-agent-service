@@ -3394,8 +3394,14 @@ def test_live_readback_can_close_settled_needs_human_task(tmp_path: Path) -> Non
             ("calendar_response_not_executed", task.id),
         )
 
+    assert not store.close_unresolved_reply_task_already_settled(
+        task.id,
+        expected_execution_generation="stale-generation",
+        settled_evidence="stale external readback must not close newer work",
+    )
     assert store.close_unresolved_reply_task_already_settled(
         task.id,
+        expected_execution_generation=task.execution_generation,
         settled_evidence=(
             "Live calendar readback shows the principal attendee accepted event-1."
         ),
@@ -4482,7 +4488,7 @@ def test_codex_session_lock_retries_resource_deadlock(tmp_path, monkeypatch):
 
 def test_retry_failed_pre_agent_reply_task_requires_no_run_or_sent_reply(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = store.enqueue_reply_task(
+    task = store.ensure_reply_task(
         conversation_id="cid-1",
         conversation_title="Friday",
         single_chat=False,
@@ -4492,16 +4498,16 @@ def test_retry_failed_pre_agent_reply_task_requires_no_run_or_sent_reply(tmp_pat
         trigger_text="请处理",
         trigger_message_json="{}",
     )
-    claimed = store.claim_reply_task(task_id)
+    claimed = store.claim_reply_task(task.id)
     assert claimed is not None
     store.fail_reply_task(
-        task_id,
+        task.id,
         "pre_agent_lock_failure",
         expected_execution_generation=claimed.execution_generation,
     )
 
     recovered = store.retry_failed_pre_agent_reply_task(
-        task_id,
+        task.id,
         reason="operator_retry_after_lock_recovery",
     )
 
@@ -4509,15 +4515,15 @@ def test_retry_failed_pre_agent_reply_task_requires_no_run_or_sent_reply(tmp_pat
     assert recovered.attempts == 0
     assert recovered.error == "operator_retry_after_lock_recovery"
 
-    claimed = store.claim_reply_task(task_id)
+    claimed = store.claim_reply_task(task.id)
     assert claimed is not None
     store.fail_reply_task(
-        task_id,
+        task.id,
         "second_failure",
         expected_execution_generation=claimed.execution_generation,
     )
     run = store.claim_agent_run(
-        task_id,
+        task.id,
         claimed.execution_generation,
         role=AgentRole.CONSUMER,
         proposal_revision=0,
@@ -4529,7 +4535,7 @@ def test_retry_failed_pre_agent_reply_task_requires_no_run_or_sent_reply(tmp_pat
 
     with pytest.raises(ValueError, match="already has an agent run"):
         store.retry_failed_pre_agent_reply_task(
-            task_id,
+            task.id,
             reason="must_not_retry",
         )
     assert run.id > 0
@@ -7888,6 +7894,76 @@ def test_compacted_reply_input_revised_card_starts_new_exact_generation(tmp_path
     assert revised.trigger_text == "Updated card"
     assert revised.execution_generation != claimed.execution_generation
     assert len(store.list_reply_task_inputs(task.id)) == 2
+
+
+def test_failed_reply_task_requeues_once_for_new_source_revision(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "source-revision-rerun.sqlite3")
+    task = store.ensure_reply_task(
+        conversation_id="cid-source-revision",
+        conversation_title="Source revision",
+        single_chat=False,
+        trigger_message_id="msg-original",
+        trigger_create_time="2026-10-13 10:00:00",
+        trigger_sender="Sender",
+        trigger_text="Please handle this after checking the current context.",
+    )
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+    store.fail_reply_task(
+        task.id,
+        "audit_revision_exhausted",
+        expected_execution_generation=claimed.execution_generation,
+    )
+
+    assert store.requeue_failed_reply_task_for_source_revision(
+        task.id,
+        expected_execution_generation=claimed.execution_generation,
+        source_revision_key="messages:sha256:later-context",
+    )
+    rerun = store.get_reply_task(task.id)
+    assert rerun is not None
+    assert rerun.status == "pending"
+    assert rerun.error == "automatic_source_revision_rerun"
+    assert rerun.force_new_decision is True
+    assert rerun.execution_generation != task.execution_generation
+    assert not store.requeue_failed_reply_task_for_source_revision(
+        task.id,
+        expected_execution_generation=rerun.execution_generation,
+        source_revision_key="messages:sha256:later-context",
+    )
+
+
+def test_failed_reply_task_source_revision_rerun_stops_after_delivery_receipt(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "source-revision-receipt.sqlite3")
+    task = store.ensure_reply_task(
+        conversation_id="cid-source-revision-receipt",
+        conversation_title="Source revision receipt",
+        single_chat=False,
+        trigger_message_id="msg-original",
+        trigger_create_time="2026-10-13 10:00:00",
+        trigger_sender="Sender",
+        trigger_text="Please handle this after checking the current context.",
+    )
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+    store.fail_reply_task(
+        task.id,
+        "audit_revision_exhausted",
+        expected_execution_generation=claimed.execution_generation,
+    )
+    store.record_sent_reply(task.conversation_id, task.trigger_message_id, "Already delivered")
+
+    assert not store.requeue_failed_reply_task_for_source_revision(
+        task.id,
+        expected_execution_generation=claimed.execution_generation,
+        source_revision_key="messages:sha256:later-context",
+    )
+    unchanged = store.get_reply_task(task.id)
+    assert unchanged is not None
+    assert unchanged.status == "failed"
+    assert unchanged.execution_generation == claimed.execution_generation
 
 
 def test_scheduled_reply_compaction_keeps_run_and_frozen_skill_identity():

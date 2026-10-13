@@ -4,7 +4,10 @@ import pytest
 from app.audit_web import _queue_attention_rows
 from app.store import AutoReplyStore
 from app.dws_client import DwsOaApprovalCandidate
-from app.task_scanners import scan_pending_oa_approvals
+from app.task_scanners import (
+    _pending_oa_task_ids_for_current_user,
+    scan_pending_oa_approvals,
+)
 
 
 def test_current_oa_pending_node_remains_attention_after_comment_done(tmp_path):
@@ -28,6 +31,42 @@ def test_current_oa_pending_node_remains_attention_after_comment_done(tmp_path):
     store.set_daily_scan_state("oa_pending", last_success_at="2026-10-13T02:00:00Z",
         cursor_json=json.dumps({"pending_business_object_keys": []}), last_error="")
     assert _queue_attention_rows(store) == []
+
+
+def test_completed_oa_from_previous_cursor_is_removed_from_attention(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    key = "oa:instance:node"
+    store.set_daily_scan_state(
+        "oa_pending",
+        last_success_at="2026-10-13T01:00:00Z",
+        cursor_json=json.dumps({"pending_business_object_keys": [key]}),
+        last_error="",
+    )
+
+    class Provider:
+        def list_pending_oa_approvals(self, **kwargs):
+            return []
+
+        def read_oa_approval_tasks(self, instance):
+            raise AssertionError("no task-list read is needed for an empty pending page")
+
+        def read_oa_process_instance_openapi(self, instance):
+            assert instance == "instance"
+            return {
+                "result": {
+                    "status": "COMPLETED",
+                    "processInstanceResult": "agree",
+                    "tasks": [{"taskId": "node", "status": "COMPLETED"}],
+                }
+            }
+
+        def get_current_user_id(self):
+            return "principal"
+
+    scan_pending_oa_approvals(store, Provider())
+    assert _queue_attention_rows(store) == []
+    cursor = json.loads(store.get_daily_scan_state("oa_pending")["cursor_json"])
+    assert cursor["pending_business_object_keys"] == []
 
 
 def test_verified_pending_node_is_visible_before_local_task_is_enqueued(tmp_path):
@@ -112,7 +151,13 @@ def test_scanner_captures_all_verified_nodes_and_never_guesses_principal(tmp_pat
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     scan_pending_oa_approvals(store, provider, max_new_items=0)
     cursor = json.loads(store.get_daily_scan_state("oa_pending")["cursor_json"])
-    assert cursor["pending_business_object_keys"] == ["oa:instance:first", "oa:instance:second"]
+    assert cursor["pending_business_object_keys"] == [
+        "oa:instance:first", "oa:instance:second", "oa:instance:unconfirmed"
+    ]
+    assert _pending_oa_task_ids_for_current_user(
+        {"result": {"tasks": [{"taskId": "other", "status": "RUNNING"}]}},
+        current_user_id="",
+    ) == []
     provider.principal = ""
     store = AutoReplyStore(tmp_path / "unknown.sqlite3")
     scan_pending_oa_approvals(store, provider, max_new_items=0)

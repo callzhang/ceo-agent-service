@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 from app.agent_cron.commands import (
     SERVICE_COMMAND_OPTIONS,
@@ -13,10 +14,109 @@ from app.skill_features import FeatureRegistry
 from app.store import AutoReplyStore
 from app.task_scanners import (
     _pending_oa_task_ids_for_current_user,
+    reconcile_failed_oa_reply_tasks,
     scan_ai_minutes,
     scan_meeting_todos,
     scan_pending_oa_approvals,
 )
+
+
+def test_failed_reply_task_closes_when_its_exact_oa_candidate_is_terminal():
+    task = SimpleNamespace(
+        id=44, channel="dingtalk", error="audit_revision_exhausted",
+        execution_generation="gen-4", status="failed",
+    )
+    run = SimpleNamespace(
+        id=91,
+        role="consumer",
+        status="completed",
+        proposal_revision=3,
+        turn_attempt=1,
+        adopted_result_json=json.dumps({
+            "outcome": "proposal",
+            "proposal": {"actions": [{
+                "capability": "dingtalk-oa",
+                "operation": "revert_task",
+                "target": {
+                    "process_instance_id": "process-44",
+                    "task_id": "node-44",
+                },
+            }]},
+        }),
+    )
+
+    class Store:
+        def list_reply_tasks(self, *, statuses, limit):
+            assert statuses == ("failed", "needs_human")
+            return [task]
+
+        def list_agent_runs_for_task_generation(self, task_id, generation, *, load_events):
+            assert (task_id, generation, load_events) == (44, "gen-4", False)
+            return [run]
+
+        def close_unresolved_reply_task_already_settled(
+            self, task_id, *, expected_execution_generation, settled_evidence
+        ):
+            assert (task_id, expected_execution_generation) == (44, "gen-4")
+            self.evidence = settled_evidence
+            return True
+
+    class Dws:
+        def read_oa_process_instance_openapi(self, process_id):
+            assert process_id == "process-44"
+            return {
+                "result": {
+                    "status": "COMPLETED",
+                    "processInstanceResult": "agree",
+                    "tasks": [{"taskId": "node-44", "status": "COMPLETED"}],
+                }
+            }
+
+    store = Store()
+    assert reconcile_failed_oa_reply_tasks(store, Dws()) == [44]
+    assert "process-44" in store.evidence
+    assert "node-44" in store.evidence
+    assert "COMPLETED" in store.evidence
+
+
+def test_failed_reply_task_does_not_close_for_nonterminal_or_mismatched_oa():
+    task = SimpleNamespace(
+        id=45, channel="dingtalk", error="audit_revision_exhausted",
+        execution_generation="gen-5", status="failed",
+    )
+    candidate = {
+        "outcome": "proposal",
+        "proposal": {"actions": [{
+            "capability": "dingtalk-oa",
+            "operation": "revert_task",
+            "target": {"process_instance_id": "process-45", "task_id": "node-45"},
+        }]},
+    }
+    run = SimpleNamespace(
+        id=92, role="consumer", status="completed", proposal_revision=1,
+        turn_attempt=0, adopted_result_json=json.dumps(candidate),
+    )
+
+    class Store:
+        def list_reply_tasks(self, *, statuses, limit):
+            return [task]
+
+        def list_agent_runs_for_task_generation(self, *args, **kwargs):
+            return [run]
+
+        def close_unresolved_reply_task_already_settled(self, *args, **kwargs):
+            raise AssertionError("nonterminal OA must remain actionable")
+
+    class Dws:
+        def read_oa_process_instance_openapi(self, process_id):
+            return {
+                "result": {
+                    "status": "RUNNING",
+                    "tasks": [{"taskId": "different-node", "status": "COMPLETED"}],
+                }
+            }
+
+    assert reconcile_failed_oa_reply_tasks(Store(), Dws()) == []
 
 
 def test_pending_oa_task_resolution_refuses_ambiguous_current_nodes():
@@ -32,6 +132,18 @@ def test_pending_oa_task_resolution_refuses_ambiguous_current_nodes():
     assert _pending_oa_task_ids_for_current_user(
         payload, current_user_id="me"
     ) == ["task-1", "task-2"]
+
+
+def test_pending_oa_tasks_include_nonterminal_statuses_for_exact_principal():
+    payload = {"result": {"tasks": [
+        {"taskId": "waiting", "status": "PENDING", "userId": "me"},
+        {"taskId": "in-progress", "status": "IN_PROGRESS", "userId": "me"},
+        {"taskId": "completed", "status": "COMPLETED", "userId": "me"},
+        {"taskId": "other-person", "status": "PENDING", "userId": "other"},
+    ]}}
+    assert _pending_oa_task_ids_for_current_user(
+        payload, current_user_id="me"
+    ) == ["waiting", "in-progress"]
 
 
 def test_disabled_work_tracking_does_not_scan_or_enqueue_ai_minutes(tmp_path):
