@@ -1,0 +1,974 @@
+{
+  "version": 1,
+  "runs": [
+    {
+      "case": "valid-string",
+      "arm": "inline",
+      "returncode": 0,
+      "session_id": "01a1352a-5a85-77e3-8358-6f97bf4ab507",
+      "task_chars": 33056,
+      "task_sha256": "41bc5b8e7e891fa10240aa5a142b56090869f849d2aa1702760058af7783cd1c",
+      "service_developer_chars": 29258,
+      "service_developer_sha256": "d70d68d68dbdb9e98397934afb38e1ada904b728fe223c82b89aad30e894d209",
+      "canonical_valid": true,
+      "result": {
+        "outcome": "return",
+        "summary": "Return: the proposed direct message is not executable as currently prepared. The only current evidence is the original 2026-10-04 request, with no newer context confirming that the notification is still needed; the recipient has not been independently verified from a current provider identity record; and the payload is the literal placeholder \"Exact prepared notice\" rather than a complete final notice body.",
+        "proposal_revision": 0,
+        "candidate_digest": "6d5231296106b83299ac15216458caa91bfb38cc4c2859e4c943b20b278d1bd3",
+        "evidence_refs": [
+          "ceo-message-triage",
+          "dingtalk-chat",
+          "dingtalk-chat.send_direct_message",
+          "current-conversation:cid-audit"
+        ],
+        "feedback": {
+          "rule": "Audit Rules 3, 7, 8, 10, and Runtime Invariants 3, 4, 8",
+          "observation": "The current conversation read contains only msg-audit from 2026-10-04 10:00:00 Asia/Shanghai with the text \"Notify applicant\" and the same placeholder recipient/content values; no newer message or independent provider identity evidence was available. In the exact candidate, /proposal/actions/0/target/open_dingtalk_id is the string \"104265682397\", but the candidate supplies no current identity binding beyond the anonymous task_context object. In the exact candidate, /proposal/actions/0/payload/content is the string \"Exact prepared notice\", which is not a complete final notice. The source binding's /source_bindings/0/value/handled value is the boolean false, but it is a stale snapshot and does not establish that the notification remains unhandled at the 2026-10-13 execution time.",
+          "requested_revision": "Refresh the current applicant-notification status, independently verify that open_dingtalk_id \"104265682397\" identifies the intended applicant in the current provider data, and provide the exact complete final notice body in /proposal/actions/0/payload/content. Re-submit the same action only if the refreshed evidence confirms the notification is still required; otherwise suppress or revise the action according to the current state."
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.25
+      },
+      "parse_error": null,
+      "phase": "initial",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T05-08-50-01a1352a-5a85-77e3-8358-6f97bf4ab507.jsonl",
+      "native_file_sha256": "47368f15c0252bc8404108848c5b9c6d0b2a70088f3a624f4181946c02352d09",
+      "native_record_count": 54,
+      "all_response_items_examined": true,
+      "native_task_exact": true,
+      "actual_candidate_digest": "6d5231296106b83299ac15216458caa91bfb38cc4c2859e4c943b20b278d1bd3",
+      "candidate_sha256": "6d5231296106b83299ac15216458caa91bfb38cc4c2859e4c943b20b278d1bd3",
+      "native_developer_hashes": [
+        "2d62c321b4e34c473d813f316c54bf66b1eb8015d41a6c17c88a4e3c1062566f"
+      ],
+      "successful_reads": [
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": "/Users/derek/.agents/skills/ceo-message-triage/SKILL.md"
+          },
+          "canonical_return_sha256": "221d67dc0161097bdd569789baba89f03911f9369045fdce2a54f8d44bbb5dec",
+          "return_chars": 8059,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "name": "dingtalk-chat"
+          },
+          "canonical_return_sha256": "fcfbc25437d99fe0f24ae90d1f8686253fc4113d94fd8ea2ee824354e5c69efd",
+          "return_chars": 6831,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "send_direct_message"
+          },
+          "canonical_return_sha256": "8bb0ad1301df27f4d729ddfefc3e362ab9aac1dd96231231c83c7799d6e67511",
+          "return_chars": 4218,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_dingtalk_messages",
+          "arguments": {
+            "conversation_id": "cid-audit",
+            "limit": 50,
+            "single_chat": true,
+            "title": "Review"
+          },
+          "canonical_return_sha256": "427e8242b757434ecaf8ec2a37fa932905bd8b0094f8bd2d2c7dca4068d6ce20",
+          "return_chars": 11748,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        }
+      ],
+      "failed_tools": [
+        {
+          "tool": "read_text_file",
+          "arguments": {
+            "path": "/Users/derek/.agents/AGENTS.md"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Error executing tool read_text_file: text_material_path_forbidden"
+              }
+            ],
+            "structured_content": null
+          },
+          "error": null
+        }
+      ],
+      "expected_outcome": null,
+      "business_oracle_pass": false,
+      "terminal_completed": true
+    },
+    {
+      "case": "valid-string",
+      "arm": "candidate-only",
+      "returncode": 0,
+      "session_id": "01a1352a-a896-7060-9d09-1cc7c7a1aada",
+      "task_chars": 17014,
+      "task_sha256": "6780ff398d965b37444a97d83c1aad32aa579ac948e84da71a0dffe7bb825c02",
+      "service_developer_chars": 29258,
+      "service_developer_sha256": "d70d68d68dbdb9e98397934afb38e1ada904b728fe223c82b89aad30e894d209",
+      "canonical_valid": true,
+      "result": {
+        "outcome": "return",
+        "summary": "Return the candidate: the proposed external direct message is not executable from the currently verified evidence. The live source confirms only the original 2026-10-04 instruction “Notify applicant” and its raw payload; it does not independently establish that open_dingtalk_id 104265682397 is the current applicant, that the recipient is a verified direct participant, or that “Exact prepared notice” is the complete final message body. The trigger is also nine days old, so current notification purpose must be reconfirmed before sending.",
+        "proposal_revision": 0,
+        "candidate_digest": "6d5231296106b83299ac15216458caa91bfb38cc4c2859e4c943b20b278d1bd3",
+        "evidence_refs": [
+          "candidate.proposal.actions[0]",
+          "candidate.proposal.actions[0].target.open_dingtalk_id",
+          "candidate.proposal.actions[0].payload.content",
+          "candidate.proposal.source_bindings[0]",
+          "original_trigger.msg-audit",
+          "live_conversation.cid-audit"
+        ],
+        "feedback": {
+          "rule": "Confirm the target from live evidence, confirm the source for each factual statement, and approve only a complete plan whose result the System Executor can verify.",
+          "observation": "The current candidate's JSON path `candidate.proposal.actions[0].target.open_dingtalk_id` has the string value `\"104265682397\"`, but the supplied source binding is only `\"anonymous-current-request\"`; the live conversation contains no independently verified applicant identity or recipient mapping. The current candidate's JSON path `candidate.proposal.actions[0].payload.content` has the literal string value `\"Exact prepared notice\"`, which is a placeholder rather than a complete notice body. The original trigger was created on 2026-10-04, while the current execution time is 2026-10-13; no current evidence confirms that the notification remains required and unhandled.",
+          "requested_revision": "Return a fresh complete candidate with: (1) current independently verified evidence tying the exact recipient to the applicant and the direct-message target; (2) the literal final notice body, replacing `\"Exact prepared notice\"`; (3) current evidence that the notification is still required and has not already been completed or superseded; and (4) updated source bindings, completeness, confidence, and timing assessment consistent with those facts. Preserve the same action identity only if the intended external outcome remains materially identical."
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.25
+      },
+      "parse_error": null,
+      "phase": "initial",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T05-09-10-01a1352a-a896-7060-9d09-1cc7c7a1aada.jsonl",
+      "native_file_sha256": "0b2a7ea5ab4012ab5a90f84bc38cf0edb19b6165e868cb5ac216d225b686af09",
+      "native_record_count": 54,
+      "all_response_items_examined": true,
+      "native_task_exact": true,
+      "actual_candidate_digest": "6d5231296106b83299ac15216458caa91bfb38cc4c2859e4c943b20b278d1bd3",
+      "candidate_sha256": "6d5231296106b83299ac15216458caa91bfb38cc4c2859e4c943b20b278d1bd3",
+      "native_developer_hashes": [
+        "2d62c321b4e34c473d813f316c54bf66b1eb8015d41a6c17c88a4e3c1062566f"
+      ],
+      "successful_reads": [
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": "/Users/derek/.agents/skills/ceo-message-triage/SKILL.md"
+          },
+          "canonical_return_sha256": "221d67dc0161097bdd569789baba89f03911f9369045fdce2a54f8d44bbb5dec",
+          "return_chars": 8059,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "name": "dingtalk-chat"
+          },
+          "canonical_return_sha256": "fcfbc25437d99fe0f24ae90d1f8686253fc4113d94fd8ea2ee824354e5c69efd",
+          "return_chars": 6831,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "send_direct_message"
+          },
+          "canonical_return_sha256": "8bb0ad1301df27f4d729ddfefc3e362ab9aac1dd96231231c83c7799d6e67511",
+          "return_chars": 4218,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_dingtalk_messages",
+          "arguments": {
+            "conversation_id": "cid-audit",
+            "limit": 100,
+            "single_chat": true,
+            "title": "Review"
+          },
+          "canonical_return_sha256": "427e8242b757434ecaf8ec2a37fa932905bd8b0094f8bd2d2c7dca4068d6ce20",
+          "return_chars": 11748,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        }
+      ],
+      "failed_tools": [
+        {
+          "tool": "read_text_file",
+          "arguments": {
+            "path": "/Users/derek/.agents/AGENTS.md"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Error executing tool read_text_file: text_material_path_forbidden"
+              }
+            ],
+            "structured_content": null
+          },
+          "error": null
+        }
+      ],
+      "expected_outcome": null,
+      "business_oracle_pass": false,
+      "terminal_completed": true
+    },
+    {
+      "case": "invalid-number",
+      "arm": "inline",
+      "returncode": 0,
+      "session_id": "01a1352a-fef7-7d03-894c-16c713fe4095",
+      "task_chars": 33052,
+      "task_sha256": "756fadc69e0125d166216cb13aedc294def804323211c01209cef498f0587b7c",
+      "service_developer_chars": 29258,
+      "service_developer_sha256": "ce7de2c69248b225d2019e2a43c62330c5eff25ffd36f9c329b5d234c48ccb64",
+      "canonical_valid": true,
+      "result": {
+        "outcome": "return",
+        "summary": "Return: the notice is not executable as proposed because the current evidence does not verify a unique recipient or provide the exact final notice body, and the request is stale relative to the current audit time.",
+        "proposal_revision": 0,
+        "candidate_digest": "229ff7b66fcbca61cb66cb8d4d70e02261feee5ba111d352152d59e8cc5cfc32",
+        "evidence_refs": [
+          "original_trigger",
+          "live_read:cid-audit",
+          "dingtalk-chat.send_direct_message.contract"
+        ],
+        "feedback": {
+          "rule": "Confirm the target from live evidence, confirm the source for each factual statement, carry the exact prepared final body, and reject time-sensitive coordination whose original purpose has expired.",
+          "observation": "The live single-chat read contains only the 2026-10-04 trigger “Notify applicant” and no applicant identity, newer confirmation, or completion evidence. The candidate's /proposal/actions/0/target/open_dingtalk_id is the JSON number 104265682397, while /source_bindings/0/value/recipient is the JSON string \"104265682397\"; this does not independently verify the provider identity or reconcile the target representation. The action payload at /proposal/actions/0/payload/content is the literal placeholder string \"Exact prepared notice\", not a complete final notice that can be persisted and sent. The current audit time is 2026-10-13, nine days after the trigger, with no evidence that the original notification purpose remains current.",
+          "requested_revision": "Regenerate the candidate only after independently resolving the applicant to one current verified recipient and supplying the complete exact notice body. Bind the action target to that verified provider identifier in the contract-supported representation, refresh the handled/duplicate state and current purpose, and preserve the exact same final body in the action payload. If the applicant or notice cannot be verified, propose a concrete clarification to the verified source participant instead of a direct send."
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.25
+      },
+      "parse_error": null,
+      "phase": "initial",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T05-09-32-01a1352a-fef7-7d03-894c-16c713fe4095.jsonl",
+      "native_file_sha256": "f877cd36fc3ba0de35bec11d0d8ce73cf9fd797cc48d53d35c0227768896d565",
+      "native_record_count": 52,
+      "all_response_items_examined": true,
+      "native_task_exact": true,
+      "actual_candidate_digest": "229ff7b66fcbca61cb66cb8d4d70e02261feee5ba111d352152d59e8cc5cfc32",
+      "candidate_sha256": "229ff7b66fcbca61cb66cb8d4d70e02261feee5ba111d352152d59e8cc5cfc32",
+      "native_developer_hashes": [
+        "5378428407abf393372be7343f690f9f014eeba7a750054252c8a84b4498473a"
+      ],
+      "successful_reads": [
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": "/Users/derek/.agents/skills/ceo-message-triage/SKILL.md"
+          },
+          "canonical_return_sha256": "221d67dc0161097bdd569789baba89f03911f9369045fdce2a54f8d44bbb5dec",
+          "return_chars": 8059,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "name": "dingtalk-chat"
+          },
+          "canonical_return_sha256": "fcfbc25437d99fe0f24ae90d1f8686253fc4113d94fd8ea2ee824354e5c69efd",
+          "return_chars": 6831,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "send_direct_message"
+          },
+          "canonical_return_sha256": "8bb0ad1301df27f4d729ddfefc3e362ab9aac1dd96231231c83c7799d6e67511",
+          "return_chars": 4218,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_dingtalk_messages",
+          "arguments": {
+            "conversation_id": "cid-audit",
+            "limit": 100,
+            "single_chat": true,
+            "title": "Review"
+          },
+          "canonical_return_sha256": "427e8242b757434ecaf8ec2a37fa932905bd8b0094f8bd2d2c7dca4068d6ce20",
+          "return_chars": 11748,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        }
+      ],
+      "failed_tools": [
+        {
+          "tool": "read_text_file",
+          "arguments": {
+            "path": "/Users/derek/.agents/AGENTS.md"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Error executing tool read_text_file: text_material_path_forbidden"
+              }
+            ],
+            "structured_content": null
+          },
+          "error": null
+        }
+      ],
+      "expected_outcome": null,
+      "business_oracle_pass": false,
+      "terminal_completed": true
+    },
+    {
+      "case": "invalid-number",
+      "arm": "candidate-only",
+      "returncode": 0,
+      "session_id": "01a1352b-8906-7a21-a673-9927b0e116c9",
+      "task_chars": 17012,
+      "task_sha256": "a097086c7530ed65f9cca8d762273e5e8bef6cd51ed59fb5aefd224199f8e16c",
+      "service_developer_chars": 29258,
+      "service_developer_sha256": "ce7de2c69248b225d2019e2a43c62330c5eff25ffd36f9c329b5d234c48ccb64",
+      "canonical_valid": true,
+      "result": {
+        "outcome": "return",
+        "summary": "return：当前候选不能批准发送。原请求仅说明“Notify applicant”，但没有提供或核实申请人的稳定身份、可验证的直接消息目标，也没有提供“Exact prepared notice”的实际最终正文；当前读取的单聊只确认了这条请求及其匿名 raw_payload，不能证明该数字对应申请人或该通知内容可直接发布。另，触发时间为 2026-10-04 10:00（Asia/Shanghai），本轮审核为 2026-10-13 05:07（-0700），候选未提供当前仍需发送的时效依据。",
+        "proposal_revision": 0,
+        "candidate_digest": "229ff7b66fcbca61cb66cb8d4d70e02261feee5ba111d352152d59e8cc5cfc32",
+        "evidence_refs": [
+          "ceo-message-triage",
+          "dingtalk-chat",
+          "dingtalk-chat.send_direct_message",
+          "current conversation cid-audit/msg-audit",
+          "canonical trigger and execution-time facts"
+        ],
+        "feedback": {
+          "rule": "Confirm the target from live evidence, confirm the source for each factual statement, and verify that a time-sensitive action is still current before approving an external message.",
+          "observation": "In the current candidate JSON, `proposal.actions[0].target.open_dingtalk_id` is the number `104265682397`, while the only supporting binding is `proposal.source_bindings[0].object_ref` = `anonymous-current-request`; the live conversation supplies no stable applicant identity or provider object readback. The exact payload at `proposal.actions[0].payload.content` is the literal string `Exact prepared notice`, not the actual prepared notice body. The candidate also asserts `authored_judgment` that the recipient is current and verified, but no source supports that assertion, and the request is nine days old relative to the current execution time.",
+          "requested_revision": "Regenerate the candidate with a live, independently verified applicant identity and exact direct-message target, the complete final notice body, and current evidence that the original notification remains required. Keep the direct-message operation only after those facts are verified; do not infer the recipient from the anonymous binding or substitute a guessed target/content."
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 0.96,
+        "information_completeness": 0.25
+      },
+      "parse_error": null,
+      "phase": "initial",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T05-10-08-01a1352b-8906-7a21-a673-9927b0e116c9.jsonl",
+      "native_file_sha256": "f1c1b6c8801fd2c9b2edea2b5b19bf8878346f09df91fd0319133b1962e1b005",
+      "native_record_count": 60,
+      "all_response_items_examined": true,
+      "native_task_exact": true,
+      "actual_candidate_digest": "229ff7b66fcbca61cb66cb8d4d70e02261feee5ba111d352152d59e8cc5cfc32",
+      "candidate_sha256": "229ff7b66fcbca61cb66cb8d4d70e02261feee5ba111d352152d59e8cc5cfc32",
+      "native_developer_hashes": [
+        "5378428407abf393372be7343f690f9f014eeba7a750054252c8a84b4498473a"
+      ],
+      "successful_reads": [
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": "/Users/derek/.agents/skills/ceo-message-triage/SKILL.md"
+          },
+          "canonical_return_sha256": "221d67dc0161097bdd569789baba89f03911f9369045fdce2a54f8d44bbb5dec",
+          "return_chars": 8059,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "name": "dingtalk-chat"
+          },
+          "canonical_return_sha256": "fcfbc25437d99fe0f24ae90d1f8686253fc4113d94fd8ea2ee824354e5c69efd",
+          "return_chars": 6831,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "send_direct_message"
+          },
+          "canonical_return_sha256": "8bb0ad1301df27f4d729ddfefc3e362ab9aac1dd96231231c83c7799d6e67511",
+          "return_chars": 4218,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_dingtalk_messages",
+          "arguments": {
+            "conversation_id": "cid-audit",
+            "limit": 100,
+            "single_chat": true,
+            "title": "Review"
+          },
+          "canonical_return_sha256": "427e8242b757434ecaf8ec2a37fa932905bd8b0094f8bd2d2c7dca4068d6ce20",
+          "return_chars": 11748,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        }
+      ],
+      "failed_tools": [
+        {
+          "tool": "read_text_file",
+          "arguments": {
+            "path": "/Users/derek/.agents/AGENTS.md"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Error executing tool read_text_file: text_material_path_forbidden"
+              }
+            ],
+            "structured_content": null
+          },
+          "error": null
+        }
+      ],
+      "expected_outcome": null,
+      "business_oracle_pass": false,
+      "terminal_completed": true
+    },
+    {
+      "case": "valid-string",
+      "arm": "inline",
+      "returncode": 0,
+      "session_id": "01a13530-f393-7832-8d74-00fc72c01710",
+      "task_chars": 35631,
+      "task_sha256": "d2a10a04946f5ddf068481af2085a78fab55abecc5039face47ac0f9cc316d97",
+      "service_developer_chars": 29258,
+      "service_developer_sha256": "8ae61de33f5b5ea3a4bcdab9ba76c968f8a9d03da8bf961cf5d10442743ba50c",
+      "canonical_valid": true,
+      "result": {
+        "outcome": "approve",
+        "summary": "approve：候选完整且适合执行。原触发明确要求向 Avery 发送指定完整通知；当前候选保留了原文、唯一的私聊动作和稳定的 open_dingtalk_id。实时钉钉资料将 104265682397 核实为 Avery，且当前会话仅存在原始触发消息，没有发现已发送回执、更新上下文或时效冲突。系统可按已持久化候选执行，并以原生发送回执完成核验。共享 AGENTS 文件读取因路径访问限制失败，但不影响本候选已有的业务事实与目标核验。",
+        "proposal_revision": 0,
+        "candidate_digest": "89539e854e0954cfdf4675b883744b07db6637bfabd1f9cd73d550380b48b5a6",
+        "evidence_refs": [
+          "msg-audit",
+          "dingtalk-user-profile:104265682397",
+          "dingtalk-conversation:cid-audit",
+          "dingtalk-chat-send-direct-message-contract"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "parse_error": null,
+      "phase": "corrected",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T05-16-02-01a13530-f393-7832-8d74-00fc72c01710.jsonl",
+      "native_file_sha256": "442e338cde8ccd0b8d75649ef639a67fa63f561007768b7b4754213aad0770f2",
+      "native_record_count": 59,
+      "all_response_items_examined": true,
+      "native_task_exact": true,
+      "actual_candidate_digest": "89539e854e0954cfdf4675b883744b07db6637bfabd1f9cd73d550380b48b5a6",
+      "candidate_sha256": "89539e854e0954cfdf4675b883744b07db6637bfabd1f9cd73d550380b48b5a6",
+      "native_developer_hashes": [
+        "1b544a4b5a44face39bc7e2a55d8b12b51e1bdbcaa0260dcc9c752df0399ec9a"
+      ],
+      "successful_reads": [
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": "/Users/derek/.agents/skills/ceo-message-triage/SKILL.md"
+          },
+          "canonical_return_sha256": "221d67dc0161097bdd569789baba89f03911f9369045fdce2a54f8d44bbb5dec",
+          "return_chars": 8059,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "name": "dingtalk-chat"
+          },
+          "canonical_return_sha256": "fcfbc25437d99fe0f24ae90d1f8686253fc4113d94fd8ea2ee824354e5c69efd",
+          "return_chars": 6831,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "send_direct_message"
+          },
+          "canonical_return_sha256": "8bb0ad1301df27f4d729ddfefc3e362ab9aac1dd96231231c83c7799d6e67511",
+          "return_chars": 4218,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_dingtalk_user_profiles",
+          "arguments": {
+            "user_ids": [
+              "104265682397"
+            ]
+          },
+          "canonical_return_sha256": "f26ccfc59f49abd034d86dd4d1ce5632455f4bf233153da442dd6ea615ba6163",
+          "return_chars": 180,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_dingtalk_messages",
+          "arguments": {
+            "conversation_id": "cid-audit",
+            "limit": 100,
+            "single_chat": true,
+            "title": "Review"
+          },
+          "canonical_return_sha256": "f5e99513a8a59bb4e15a7b3129c46215bf56b5a7a56340c2a0a5d31aee39220b",
+          "return_chars": 11954,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        }
+      ],
+      "failed_tools": [
+        {
+          "tool": "read_text_file",
+          "arguments": {
+            "path": "/Users/derek/.agents/AGENTS.md"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Error executing tool read_text_file: text_material_path_forbidden"
+              }
+            ],
+            "structured_content": null
+          },
+          "error": null
+        }
+      ],
+      "expected_outcome": "approve",
+      "business_oracle_pass": true,
+      "terminal_completed": true
+    },
+    {
+      "case": "valid-string",
+      "arm": "candidate-only",
+      "returncode": 0,
+      "session_id": "01a13531-5736-7940-be19-8f2ee00f9cab",
+      "task_chars": 17964,
+      "task_sha256": "69c160674d6fb2b6afe4a1acdc53d8058465ab1c48bbb9a7e517838edfd48d8e",
+      "service_developer_chars": 29258,
+      "service_developer_sha256": "8ae61de33f5b5ea3a4bcdab9ba76c968f8a9d03da8bf961cf5d10442743ba50c",
+      "canonical_valid": true,
+      "result": {
+        "outcome": "approve",
+        "summary": "批准：候选计划完整且适合执行。原触发明确要求向 Avery 发送指定完整通知；目标 open_dingtalk_id=104265682397 已通过当前钉钉用户资料核实为在职用户 Avery，正文与原请求完全一致，当前未见已发送回执或重复执行风险。该计划可由 System Executor 按原 action_identity=notice 执行，并以钉钉原生发送回执确认完成。",
+        "proposal_revision": 0,
+        "candidate_digest": "89539e854e0954cfdf4675b883744b07db6637bfabd1f9cd73d550380b48b5a6",
+        "evidence_refs": [
+          "msg-audit",
+          "dingtalk-user-profile:104265682397"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "parse_error": null,
+      "phase": "corrected",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T05-16-28-01a13531-5736-7940-be19-8f2ee00f9cab.jsonl",
+      "native_file_sha256": "717ae551eb0f4cfb2471c711651b8dba944b9919c3c6be0ea2e7d8750b6c5950",
+      "native_record_count": 52,
+      "all_response_items_examined": true,
+      "native_task_exact": true,
+      "actual_candidate_digest": "89539e854e0954cfdf4675b883744b07db6637bfabd1f9cd73d550380b48b5a6",
+      "candidate_sha256": "89539e854e0954cfdf4675b883744b07db6637bfabd1f9cd73d550380b48b5a6",
+      "native_developer_hashes": [
+        "1b544a4b5a44face39bc7e2a55d8b12b51e1bdbcaa0260dcc9c752df0399ec9a"
+      ],
+      "successful_reads": [
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": "/Users/derek/.agents/skills/ceo-message-triage/SKILL.md"
+          },
+          "canonical_return_sha256": "221d67dc0161097bdd569789baba89f03911f9369045fdce2a54f8d44bbb5dec",
+          "return_chars": 8059,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "name": "dingtalk-chat"
+          },
+          "canonical_return_sha256": "fcfbc25437d99fe0f24ae90d1f8686253fc4113d94fd8ea2ee824354e5c69efd",
+          "return_chars": 6831,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "send_direct_message"
+          },
+          "canonical_return_sha256": "8bb0ad1301df27f4d729ddfefc3e362ab9aac1dd96231231c83c7799d6e67511",
+          "return_chars": 4218,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_dingtalk_user_profiles",
+          "arguments": {
+            "user_ids": [
+              "104265682397"
+            ]
+          },
+          "canonical_return_sha256": "f26ccfc59f49abd034d86dd4d1ce5632455f4bf233153da442dd6ea615ba6163",
+          "return_chars": 180,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        }
+      ],
+      "failed_tools": [
+        {
+          "tool": "read_text_file",
+          "arguments": {
+            "path": "/Users/derek/.agents/AGENTS.md"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Error executing tool read_text_file: text_material_path_forbidden"
+              }
+            ],
+            "structured_content": null
+          },
+          "error": null
+        }
+      ],
+      "expected_outcome": "approve",
+      "business_oracle_pass": true,
+      "terminal_completed": true
+    },
+    {
+      "case": "invalid-number",
+      "arm": "inline",
+      "returncode": 0,
+      "session_id": "01a13531-a2d4-7503-a5a3-91286d415abd",
+      "task_chars": 35627,
+      "task_sha256": "d3eb7b451a08f9eb479bb34918853d7f89e752d5c9e59beb684ba1fc6c84612c",
+      "service_developer_chars": 29258,
+      "service_developer_sha256": "76c39d40fa3041e4431d397aaefbc4359f0072b8f66e1ce311c03fe5787f9c3c",
+      "canonical_valid": true,
+      "result": {
+        "outcome": "approve",
+        "summary": "Approved. The exact prepared notice is appropriate for the principal's responsibility, the direct-message target is independently verified as Avery with open_dingtalk_id 104265682397, the body matches the authoritative request exactly, and the action remains unhandled. The action is ready for SystemExecutor; completion still requires the native send receipt and readback.",
+        "proposal_revision": 0,
+        "candidate_digest": "f3d948674ae1a2ca5951a38666a468a1439c3f30e8a4379332e2887d00d93ad5",
+        "evidence_refs": [
+          "msg-audit",
+          "dingtalk-user-profile:104265682397"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "parse_error": null,
+      "phase": "corrected",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T05-16-47-01a13531-a2d4-7503-a5a3-91286d415abd.jsonl",
+      "native_file_sha256": "6c90386aa8e6470dc396a9624c2b9375ae689efc15bebd7ebbebe1710829544f",
+      "native_record_count": 54,
+      "all_response_items_examined": true,
+      "native_task_exact": true,
+      "actual_candidate_digest": "f3d948674ae1a2ca5951a38666a468a1439c3f30e8a4379332e2887d00d93ad5",
+      "candidate_sha256": "f3d948674ae1a2ca5951a38666a468a1439c3f30e8a4379332e2887d00d93ad5",
+      "native_developer_hashes": [
+        "e70041ce131c16fc5d941c6dd1dce11addc2ccc3d92c93aae0dd687da023b1fc"
+      ],
+      "successful_reads": [
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": "/Users/derek/.agents/skills/ceo-message-triage/SKILL.md"
+          },
+          "canonical_return_sha256": "221d67dc0161097bdd569789baba89f03911f9369045fdce2a54f8d44bbb5dec",
+          "return_chars": 8059,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "name": "dingtalk-chat"
+          },
+          "canonical_return_sha256": "fcfbc25437d99fe0f24ae90d1f8686253fc4113d94fd8ea2ee824354e5c69efd",
+          "return_chars": 6831,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "send_direct_message"
+          },
+          "canonical_return_sha256": "8bb0ad1301df27f4d729ddfefc3e362ab9aac1dd96231231c83c7799d6e67511",
+          "return_chars": 4218,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_dingtalk_user_profiles",
+          "arguments": {
+            "user_ids": [
+              "104265682397"
+            ]
+          },
+          "canonical_return_sha256": "f26ccfc59f49abd034d86dd4d1ce5632455f4bf233153da442dd6ea615ba6163",
+          "return_chars": 180,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        }
+      ],
+      "failed_tools": [
+        {
+          "tool": "read_text_file",
+          "arguments": {
+            "path": "/Users/derek/.agents/AGENTS.md"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Error executing tool read_text_file: text_material_path_forbidden"
+              }
+            ],
+            "structured_content": null
+          },
+          "error": null
+        }
+      ],
+      "expected_outcome": "return",
+      "business_oracle_pass": false,
+      "terminal_completed": true
+    },
+    {
+      "case": "invalid-number",
+      "arm": "candidate-only",
+      "returncode": 0,
+      "session_id": "01a13531-eb49-73f0-8ffa-906b2a5e5ab3",
+      "task_chars": 17962,
+      "task_sha256": "72e68d44375cffc47425d1f84a2523a7cdf21226681240731ab41b55658e44bd",
+      "service_developer_chars": 29258,
+      "service_developer_sha256": "76c39d40fa3041e4431d397aaefbc4359f0072b8f66e1ce311c03fe5787f9c3c",
+      "canonical_valid": true,
+      "result": {
+        "outcome": "return",
+        "summary": "候选通知的业务目的、收件人、正文、发送方式和时效均与原始请求一致，但当前动作目标中的 open_dingtalk_id 类型与已提供的源标识不一致，不能批准执行。",
+        "proposal_revision": 0,
+        "candidate_digest": "f3d948674ae1a2ca5951a38666a468a1439c3f30e8a4379332e2887d00d93ad5",
+        "evidence_refs": [
+          "msg-audit"
+        ],
+        "feedback": {
+          "rule": "Runtime Invariants 6（执行事实与稳定 provider 标识）及 System Action Contract：消息目标标识必须保留运行时提供的精确标识类型。",
+          "observation": "候选 JSON 路径 `candidate.proposal.actions[0].target.open_dingtalk_id` 的字面值为 `104265682397`，JSON 类型为 number；但原始触发绑定 `candidate.source_bindings[0].value.trigger_raw_payload.recipient` 的字面值为 `\"104265682397\"`，JSON 类型为 string。该标识不能在候选中从字符串改成数字，否则系统无法保证按原始已核实目标执行。",
+          "requested_revision": "仅将 `candidate.proposal.actions[0].target.open_dingtalk_id` 改为字符串 `\"104265682397\"`，保持 action_identity、操作、收件人、完整通知正文及其他业务含义不变，并提交新的 candidate_digest。"
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "parse_error": null,
+      "phase": "corrected",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T05-17-06-01a13531-eb49-73f0-8ffa-906b2a5e5ab3.jsonl",
+      "native_file_sha256": "9a160542dc244b44ba726a5626beecced533642662d2079c5db65fb4147db3bc",
+      "native_record_count": 47,
+      "all_response_items_examined": true,
+      "native_task_exact": true,
+      "actual_candidate_digest": "f3d948674ae1a2ca5951a38666a468a1439c3f30e8a4379332e2887d00d93ad5",
+      "candidate_sha256": "f3d948674ae1a2ca5951a38666a468a1439c3f30e8a4379332e2887d00d93ad5",
+      "native_developer_hashes": [
+        "e70041ce131c16fc5d941c6dd1dce11addc2ccc3d92c93aae0dd687da023b1fc"
+      ],
+      "successful_reads": [
+        {
+          "name": "read_skill",
+          "arguments": {
+            "path": "/Users/derek/.agents/skills/ceo-message-triage/SKILL.md"
+          },
+          "canonical_return_sha256": "221d67dc0161097bdd569789baba89f03911f9369045fdce2a54f8d44bbb5dec",
+          "return_chars": 8059,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_skill",
+          "arguments": {
+            "name": "dingtalk-chat"
+          },
+          "canonical_return_sha256": "fcfbc25437d99fe0f24ae90d1f8686253fc4113d94fd8ea2ee824354e5c69efd",
+          "return_chars": 6831,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        },
+        {
+          "name": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "send_direct_message"
+          },
+          "canonical_return_sha256": "8bb0ad1301df27f4d729ddfefc3e362ab9aac1dd96231231c83c7799d6e67511",
+          "return_chars": 4218,
+          "exact_callback_result_match": true,
+          "supplied_arguments_match": true
+        }
+      ],
+      "failed_tools": [
+        {
+          "tool": "read_text_file",
+          "arguments": {
+            "path": "/Users/derek/.agents/AGENTS.md"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Error executing tool read_text_file: text_material_path_forbidden"
+              }
+            ],
+            "structured_content": null
+          },
+          "error": null
+        }
+      ],
+      "expected_outcome": "return",
+      "business_oracle_pass": true,
+      "terminal_completed": true
+    }
+  ],
+  "pairing": "Within phase/case actual initial Developer/Profile and candidate equal; subsequent tool queries can differ",
+  "initial_interpretation": "Old request/placeholder/unverified recipient makes all4 return; exclude from valid-business acceptance",
+  "corrected_interpretation": "Valid strings both approve. Numeric target inline approves while candidate-only returns with exact current path/number/string feedback. Observed one omission, not causal/global superiority or production incident proof.",
+  "observer_corrections": [
+    "Unused initial digest fields remain in local corrected manifest; authoritative new digest comes from current submitted Task/native output and recomputation, explicitly labelled in formal cases",
+    "Callback records resolved optional defaults while native args omit them; result bytes/values and all supplied args match. No runtime/model retry or conversion introduced."
+  ],
+  "independent_review": "Native source/candidate/Developer/return receipts verified; no relevant clipping; all8 shared AGENTS reads denied text_material_path_forbidden and retained; no provider action",
+  "offline_type_boundary": {
+    "consumer_target_accepts_number": true,
+    "presence_validator_checks_str_but_original_target_remains_number": true,
+    "string_cli_target_type": "str",
+    "numeric_cli_target_type": "int",
+    "numeric_nonstring_argv_count": 1,
+    "code_chain": [
+      "ProposedAction.validate_dingtalk_message_target",
+      "system_action_handlers -> service_message_sender",
+      "DwsClient.build_send_message_command"
+    ],
+    "provider_call_executed": false,
+    "actual_delivery_failure_receipt_verified": false
+  },
+  "limits": [
+    "Anonymous notification only; other task types and session continuation unverified",
+    "Reduced readonly transport; registered Skill/contract implementation, synthetic message/directory sources",
+    "No production schema/input/policy/routing/config/merge/deploy changes",
+    "Private Profile/Skill body not copied to evidence; native original paths/hash retained"
+  ],
+  "next_evidence": "Inspect existing target-string validation against native CLI argument types and historical read boundary; repair validated mechanism rather than add prompts. Continue actual service case/continuation comparisons before scalar-table release."
+}
