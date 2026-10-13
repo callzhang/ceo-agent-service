@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "native_session_id": "01a135ff-083f-7d23-b64d-5abd845f7cc8",
+  "native_service_task_line": 158,
+  "source_manifest": "task_current_input_inventory.v1.json",
+  "comparison": "Exact saved compact semantic context, remove only source_signals[*].dedupe_key",
+  "before_context_chars": 314573,
+  "after_context_chars": 293985,
+  "removed_chars": 20588,
+  "removed_storage_keys": 98,
+  "signal_count_preserved": 98,
+  "document_count_preserved": 50,
+  "source_documents_identical": true,
+  "all_other_fields_identical": true,
+  "before_sha256": "aed84f699497c68081a9386468cace3fceabc9567b6063a3e2a3e947bf825895",
+  "after_sha256": "4328cd827c0f41065d0c700a44ea8bfe5878c5d9324195abdd2b9f71c37cc448",
+  "boundary": "Read-only input projection contrast, not a new model run or production release. Native original facts are not copied into this artifact. Existing source selection, text/ranges/citations, route, session and database dedupe keys remain unchanged."
+}
