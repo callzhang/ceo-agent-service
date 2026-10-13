@@ -1,0 +1,259 @@
+{
+  "tokenizer_only": true,
+  "weights_loaded": false,
+  "rows": [
+    {
+      "encoding": "json_object",
+      "grammar_accepts": true,
+      "candidate_accepts": true,
+      "stream_checks": {
+        "1": true,
+        "7": true,
+        "110": true
+      },
+      "raw_sha256": "6e6c7a523720f7f4361b080ebaae435eaffea983b5fff28e5fa27039a686f0a6",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'text(\"中文 🐈\");'",
+      "expected_repr": "'text(\"中文 🐈\");'"
+    },
+    {
+      "encoding": "only_markup_start_escaped",
+      "grammar_accepts": true,
+      "candidate_accepts": true,
+      "stream_checks": {
+        "1": true,
+        "7": true,
+        "110": true
+      },
+      "raw_sha256": "6e6c7a523720f7f4361b080ebaae435eaffea983b5fff28e5fa27039a686f0a6",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'text(\"中文 🐈\");'",
+      "expected_repr": "'text(\"中文 🐈\");'"
+    },
+    {
+      "encoding": "all_code_units_escaped",
+      "grammar_accepts": true,
+      "candidate_accepts": true,
+      "stream_checks": {
+        "1": true,
+        "7": true,
+        "178": true
+      },
+      "raw_sha256": "6e6c7a523720f7f4361b080ebaae435eaffea983b5fff28e5fa27039a686f0a6",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'text(\"中文 🐈\");'",
+      "expected_repr": "'text(\"中文 🐈\");'"
+    },
+    {
+      "encoding": "json_object",
+      "grammar_accepts": true,
+      "candidate_accepts": true,
+      "stream_checks": {
+        "1": true,
+        "7": true,
+        "128": true
+      },
+      "raw_sha256": "13b786c2bf84df91789efb6601f912841565a4bc16b75fe1c4a212fcdb48c52b",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'\\ntext(\"quoted\\\\\" and \\\\n\");\\n'",
+      "expected_repr": "'\\ntext(\"quoted\\\\\" and \\\\n\");\\n'"
+    },
+    {
+      "encoding": "only_markup_start_escaped",
+      "grammar_accepts": true,
+      "candidate_accepts": true,
+      "stream_checks": {
+        "1": true,
+        "7": true,
+        "128": true
+      },
+      "raw_sha256": "13b786c2bf84df91789efb6601f912841565a4bc16b75fe1c4a212fcdb48c52b",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'\\ntext(\"quoted\\\\\" and \\\\n\");\\n'",
+      "expected_repr": "'\\ntext(\"quoted\\\\\" and \\\\n\");\\n'"
+    },
+    {
+      "encoding": "all_code_units_escaped",
+      "grammar_accepts": true,
+      "candidate_accepts": true,
+      "stream_checks": {
+        "1": true,
+        "7": true,
+        "250": true
+      },
+      "raw_sha256": "13b786c2bf84df91789efb6601f912841565a4bc16b75fe1c4a212fcdb48c52b",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'\\ntext(\"quoted\\\\\" and \\\\n\");\\n'",
+      "expected_repr": "'\\ntext(\"quoted\\\\\" and \\\\n\");\\n'"
+    },
+    {
+      "encoding": "json_object",
+      "grammar_accepts": true,
+      "candidate_accepts": true,
+      "stream_checks": {
+        "1": true,
+        "7": true,
+        "98": true
+      },
+      "raw_sha256": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'123'",
+      "expected_repr": "'123'"
+    },
+    {
+      "encoding": "only_markup_start_escaped",
+      "grammar_accepts": true,
+      "candidate_accepts": true,
+      "stream_checks": {
+        "1": true,
+        "7": true,
+        "98": true
+      },
+      "raw_sha256": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'123'",
+      "expected_repr": "'123'"
+    },
+    {
+      "encoding": "all_code_units_escaped",
+      "grammar_accepts": true,
+      "candidate_accepts": true,
+      "stream_checks": {
+        "1": true,
+        "7": true,
+        "112": true
+      },
+      "raw_sha256": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'123'",
+      "expected_repr": "'123'"
+    },
+    {
+      "encoding": "json_object",
+      "grammar_accepts": true,
+      "candidate_accepts": false,
+      "stream_checks": {},
+      "raw_sha256": "a6e17ae2b00c2a7ed7b066c71ea6a480116e93a438c90c2273a1588353a4da4d",
+      "exact": false,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'{\"value\": \"const tag = \\\\\"'",
+      "expected_repr": "'const tag = \"</parameter>\";'"
+    },
+    {
+      "encoding": "only_markup_start_escaped",
+      "grammar_accepts": true,
+      "candidate_accepts": true,
+      "stream_checks": {
+        "1": true,
+        "7": true,
+        "129": true
+      },
+      "raw_sha256": "a6e17ae2b00c2a7ed7b066c71ea6a480116e93a438c90c2273a1588353a4da4d",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'const tag = \"</parameter>\";'",
+      "expected_repr": "'const tag = \"</parameter>\";'"
+    },
+    {
+      "encoding": "all_code_units_escaped",
+      "grammar_accepts": true,
+      "candidate_accepts": true,
+      "stream_checks": {
+        "1": true,
+        "7": true,
+        "256": true
+      },
+      "raw_sha256": "a6e17ae2b00c2a7ed7b066c71ea6a480116e93a438c90c2273a1588353a4da4d",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'const tag = \"</parameter>\";'",
+      "expected_repr": "'const tag = \"</parameter>\";'"
+    },
+    {
+      "encoding": "json_object",
+      "grammar_accepts": true,
+      "candidate_accepts": false,
+      "stream_checks": {},
+      "raw_sha256": "cf9efaea7174f849c182e45bec352c85e5343c4dd5a05027979ed471eff0300f",
+      "exact": false,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'{\"value\": \"\\\\n'",
+      "expected_repr": "'\\n<parameter= </parameter> <function= </function> <tool_call> </tool_call>\\n'"
+    },
+    {
+      "encoding": "only_markup_start_escaped",
+      "grammar_accepts": true,
+      "candidate_accepts": true,
+      "stream_checks": {
+        "1": true,
+        "7": true,
+        "201": true
+      },
+      "raw_sha256": "cf9efaea7174f849c182e45bec352c85e5343c4dd5a05027979ed471eff0300f",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'\\n<parameter= </parameter> <function= </function> <tool_call> </tool_call>\\n'",
+      "expected_repr": "'\\n<parameter= </parameter> <function= </function> <tool_call> </tool_call>\\n'"
+    },
+    {
+      "encoding": "all_code_units_escaped",
+      "grammar_accepts": true,
+      "candidate_accepts": true,
+      "stream_checks": {
+        "1": true,
+        "7": true,
+        "538": true
+      },
+      "raw_sha256": "cf9efaea7174f849c182e45bec352c85e5343c4dd5a05027979ed471eff0300f",
+      "exact": true,
+      "actual_type": "str",
+      "tool_calls": 1,
+      "actual_repr": "'\\n<parameter= </parameter> <function= </function> <tool_call> </tool_call>\\n'",
+      "expected_repr": "'\\n<parameter= </parameter> <function= </function> <tool_call> </tool_call>\\n'"
+    }
+  ],
+  "status": "framing_candidate_not_integrated",
+  "provider_release_ready": false,
+  "provider_modified": false,
+  "model_inference": false,
+  "script_sha256": "17067176be085e93cda2fa2941f8f6e97294d83e1f3103c37e2674b1396a6aa2",
+  "accepted": 13,
+  "accepted_nonstream_exact": 13,
+  "stream_checks": 39,
+  "stream_failures": 0,
+  "stream_modes": [
+    "1-character text deltas without token IDs",
+    "7-character text deltas without token IDs",
+    "whole-output delta with actual tokenizer token IDs"
+  ],
+  "limitations": [
+    "Synthetic FunctionTool envelope, not custom-tool integrated candidate",
+    "No model inference or Consumer/Audit cold/resume acceptance",
+    "Private JSON envelope mapping still must be integrated with current five-file candidate",
+    "Arbitrary streaming token-boundary deltas not yet checked"
+  ],
+  "setup_failure": "Initial fixture overescaped grammar quote literals, causing rejection of all forms; corrected before final run"
+}
