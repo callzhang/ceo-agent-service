@@ -166,3 +166,10 @@ constructor/current-fact inverse/actual old-code/native approval plus11 scripted
 copy cases pass. The v1 D copy artifacts now bind that source; temporary copies
 are removed. Replacement full CI and normal deployment remain pending, so D
 is still unpublished and the complete10+1 goal remains incomplete.
+
+Subsequent current-main7fabea80 Calendar/OA/deploy-stop increments are merged.
+The same seven persistence modules are byte-equal to the last actual copy
+source; readonly Store17 declaration/full-integrity/FK readback and two69-case
+increment/release suites pass. Binding artifact distinguishes this evidence
+from the actual ba8b5931 constructor/native proof. No source snapshot or
+transcript is retained. Replacement full CI and live acceptance remain pending.

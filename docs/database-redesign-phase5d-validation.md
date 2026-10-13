@@ -274,3 +274,19 @@ scripted lifecycle cases passed again in108.94 seconds. App/harness hashes
 remained unchanged during that native run; production test tasks/sessions are
 zero. All three root-owned refresh/CI temporary directories were removed.
 These results do not claim a successful replacement full CI or deployment.
+
+### Later current-main binding
+
+After the ba8b5931 constructor/native proof, main published Calendar organizer
+source delivery, exact OA-node Attention and launchd unload waiting. Current
+production7fabea80 and those independently scoped changes are merged, preserving
+both their documentation and the actual C release status. All seven checked
+persistence modules remain byte-equal to the constructor proof's source.
+Readonly live capture confirms the exact Store17 delivery declaration,126
+physical tables, full integrityok and the original single FK diagnostic.
+Calendar/OA plus D caller/bootstrap/selector checks passed69 cases; updater and
+paired D release checks passed another69. The owned directory was removed.
+Evidence isphase5d_current_source_binding.v1.json. This is a current-source
+binding and focused increment check, not a claim that the native model or
+constructor copy was repeated on7fabea80. Replacement full CI and publication
+remain required.
