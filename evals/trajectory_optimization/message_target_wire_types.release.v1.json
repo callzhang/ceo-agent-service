@@ -1,0 +1,252 @@
+{
+  "version": 1,
+  "verified_at": "2026-10-13T13:29:19.649081+00:00",
+  "pr": 74,
+  "deployed_commit": "978f825dd21329e4db8faa62968ddf025a671435",
+  "previous_commit": "31d95f4e",
+  "previous_pid": 75681,
+  "current_pid": 7889,
+  "deploy_operation": {
+    "operation_id": "deploy-cca9956c-7219-4c67-936a-6b6eac694a80",
+    "status": "succeeded",
+    "original_commit": "31d95f4edcd0d15b5c87841ddee820b45c17e2ba",
+    "target_commit": "978f825dd21329e4db8faa62968ddf025a671435",
+    "installed_commit": "978f825dd21329e4db8faa62968ddf025a671435",
+    "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-13.sqlite3",
+    "error": "",
+    "updated_at": "2026-10-13T13:26:31.712806+00:00"
+  },
+  "backup": {
+    "exists": true,
+    "bytes": 471347200,
+    "quick_check": "ok",
+    "actions_table_present": true
+  },
+  "endpoints": [
+    {
+      "endpoint": "/healthz",
+      "http": 200,
+      "health_ok": true,
+      "returned_items": null,
+      "total": null
+    },
+    {
+      "endpoint": "/api/console/attention",
+      "http": 200,
+      "health_ok": null,
+      "returned_items": 3,
+      "total": 3
+    },
+    {
+      "endpoint": "/api/console/history",
+      "http": 200,
+      "health_ok": null,
+      "returned_items": 20,
+      "total": 34967
+    }
+  ],
+  "status_http": 200,
+  "queues": [
+    {
+      "name": "Reply tasks",
+      "pending": 0,
+      "processing": 0,
+      "failed": 2,
+      "retryable": 0,
+      "latest_updated_at": "2026-10-13 13:26:47"
+    },
+    {
+      "name": "Reply attempts",
+      "pending": 0,
+      "processing": 0,
+      "failed": 2,
+      "retryable": 0,
+      "latest_updated_at": "2026-10-13 13:08:22"
+    },
+    {
+      "name": "Work items",
+      "pending": 0,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-10-12 16:15:55"
+    },
+    {
+      "name": "Email classifications",
+      "pending": 0,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-10-13T12:18:42.270488+00:00"
+    },
+    {
+      "name": "Follow-ups",
+      "pending": 0,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-09-25 05:09:46"
+    },
+    {
+      "name": "Meeting jobs",
+      "pending": 0,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-10-13 09:53:18"
+    },
+    {
+      "name": "OKR reviews",
+      "pending": 0,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-08-25 17:50:49"
+    },
+    {
+      "name": "Memory writes",
+      "pending": 0,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-07-26 14:21:00"
+    },
+    {
+      "name": "Meeting Memory writes",
+      "pending": 0,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-10-13 07:40:19"
+    },
+    {
+      "name": "DingTalk Todos",
+      "pending": 0,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-09-25 03:16:01"
+    },
+    {
+      "name": "WeChat deliveries",
+      "pending": 0,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-10-11 07:53:18"
+    },
+    {
+      "name": "Email provider actions",
+      "pending": 3,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-10-13T13:26:35+00:00"
+    },
+    {
+      "name": "Email unsubscribe tasks",
+      "pending": 0,
+      "processing": 0,
+      "failed": 0,
+      "retryable": 0,
+      "latest_updated_at": "2026-10-13 06:56:46"
+    }
+  ],
+  "dispatchers": [
+    {
+      "name": "scheduled",
+      "pending": 0,
+      "running": 2,
+      "latest_error": ""
+    },
+    {
+      "name": "scheduled_execution",
+      "pending": 0,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "reply",
+      "pending": 0,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "meeting",
+      "pending": 0,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "work_summary",
+      "pending": 0,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "okr_review",
+      "pending": 0,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "task_todo_sync_outbox",
+      "pending": 0,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "business_task_todo_sync_outbox",
+      "pending": 0,
+      "running": 0,
+      "latest_error": ""
+    },
+    {
+      "name": "task_memory_write",
+      "pending": 0,
+      "running": 0,
+      "latest_error": ""
+    }
+  ],
+  "installed_files": [
+    {
+      "path": "app/agent_contracts.py",
+      "installed_sha256": "34b0c91bd8b72a248a9861dfb004b30e71223860e13da235ab611fdbb0fed453",
+      "matches_commit": true
+    },
+    {
+      "path": "app/agent_wire_contracts.py",
+      "installed_sha256": "81b527e7e3e0a99f11e867302be4f0fa0b0ced700ebe3c315f9d7a50c9fb22b6",
+      "matches_commit": true
+    },
+    {
+      "path": "app/schemas/consumer_agent_result.schema.json",
+      "installed_sha256": "775f79479580ce059b62f61c92aadc228c12f9883bbd209e033bc29c4efec138",
+      "matches_commit": true
+    }
+  ],
+  "settings_preview": {
+    "http": 200,
+    "mode": "current",
+    "status": "available",
+    "role": "consumer",
+    "route_name": "codex_oauth",
+    "developer_sha256": "4699592bcdc970b379529eabef002031d4279856bc1e0284328ad917a3713f5c",
+    "contains_message_identifier_schema": true
+  },
+  "limits": [
+    "Installed code/schema and current public Settings preview verified; no business message dispatched by this validation.",
+    "Existing failed reply task/attempt counts remain two each; these are two views of the same existing failures, not four distinct newly failed tasks.",
+    "Pending/running scheduled work is live queue activity; observe timestamps and progress rather than interpreting nonzero counts as failure.",
+    "Native output-schema PR31 and source-binding PR71 remain separate and unmerged."
+  ],
+  "independent_review": {
+    "production_commit_and_clean_tree": "verified",
+    "installed_file_hashes": "verified",
+    "deployment_operation_db_receipt": "verified",
+    "backup_bytes_quick_check_actions_table": "verified",
+    "failed_tasks_and_attempts_same_two_cases": "verified",
+    "api_preview_and_pid": "root live readback recorded; independent reviewer GET blocked by sandbox, not independently re-fetched",
+    "blocking_findings": []
+  }
+}

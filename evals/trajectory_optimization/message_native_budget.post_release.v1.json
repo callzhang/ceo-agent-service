@@ -1,0 +1,224 @@
+{
+  "version": 1,
+  "production_runtime_commit": "06c08020773978b613d3a94dc4b9642e4b0cc2ef",
+  "scope": "Six terminal natural message-triage attempts after release. Native delivery observations, not original callback equality or cross-domain acceptance.",
+  "attempts": [
+    {
+      "attempt_id": 350520,
+      "role": "consumer",
+      "task_id": 404348,
+      "session_id": "01a12ede-fc46-7d21-b5e6-837220f2371a",
+      "start": 36,
+      "end": 60,
+      "native_range_sha256": "f39453030c2bd9be835a8dc79636f96dcabfed0a2af824c5d86fbcf2c259d371",
+      "tools": [
+        "read_system_action_contract"
+      ],
+      "outputs": [
+        {
+          "tool": "read_system_action_contract",
+          "visible_chars": 4213,
+          "sha256": "b209f72c57701b5fa4ddfe3006a624713e56ae76653cfe9253e215b59bd6e74c",
+          "truncation_marker": false,
+          "error_marker": false
+        }
+      ],
+      "final_outcome": "proposal",
+      "developer_chars": [
+        924
+      ]
+    },
+    {
+      "attempt_id": 350522,
+      "role": "audit",
+      "task_id": 404348,
+      "session_id": "01a133b9-4c10-76f3-afd9-4f27f1c2910c",
+      "start": 0,
+      "end": 41,
+      "native_range_sha256": "729d4f59df11a9ce68a7628d7816f173cab8a7e89b61260d96d5e4c2f522f2f2",
+      "tools": [
+        "read_task_skill",
+        "read_task_skill",
+        "read_system_action_contract",
+        "read_dingtalk_messages"
+      ],
+      "outputs": [
+        {
+          "tool": "read_task_skill",
+          "visible_chars": 8160,
+          "sha256": "0fe11731d0af6aeb738774e264c3088f23b605d1dd404c54d78d2d2796f21ddf",
+          "truncation_marker": false,
+          "error_marker": false
+        },
+        {
+          "tool": "read_task_skill",
+          "visible_chars": 6976,
+          "sha256": "614640006b066cfa2539cc846cdb0d56e58d4f001b8876c80e9edf9e017325f1",
+          "truncation_marker": false,
+          "error_marker": false
+        },
+        {
+          "tool": "read_system_action_contract",
+          "visible_chars": 4213,
+          "sha256": "21b822256f448500b50d2fa9caaecc626c13895060a56914c742e45f6c75a72e",
+          "truncation_marker": false,
+          "error_marker": false
+        },
+        {
+          "tool": "read_dingtalk_messages",
+          "visible_chars": 31579,
+          "sha256": "abe899cd9de4933d6974179125d9e65acb57ab4bbba188441853fa6696c7219c",
+          "truncation_marker": false,
+          "error_marker": false,
+          "message_count": 26,
+          "json_parse_valid": true
+        }
+      ],
+      "final_outcome": "return",
+      "developer_chars": [
+        29395
+      ]
+    },
+    {
+      "attempt_id": 350526,
+      "role": "consumer",
+      "task_id": 404348,
+      "session_id": "01a12ede-fc46-7d21-b5e6-837220f2371a",
+      "start": 60,
+      "end": 74,
+      "native_range_sha256": "298213ef60f4db024c476416bf4d5ec7fa3b0c4d7883670cc07612e22ee7f8ec",
+      "tools": [],
+      "outputs": [],
+      "final_outcome": "no_action",
+      "developer_chars": [
+        106
+      ]
+    },
+    {
+      "attempt_id": 350529,
+      "role": "audit",
+      "task_id": 404348,
+      "session_id": "01a133b9-bd7f-7f63-889f-9473bb469a89",
+      "start": 0,
+      "end": 43,
+      "native_range_sha256": "a5258a20d9c51b10e0a91180ec806cbedabdd81e705272b5fa91783490d57b60",
+      "tools": [
+        "read_text_file",
+        "read_task_skill",
+        "read_task_skill",
+        "read_dingtalk_messages"
+      ],
+      "outputs": [
+        {
+          "tool": "read_text_file",
+          "visible_chars": 99,
+          "sha256": "ec5993d4be3742ef7599412e44d9953b5bd94aa6e8658ddfac4cb776a710db74",
+          "truncation_marker": false,
+          "error_marker": true
+        },
+        {
+          "tool": "read_task_skill",
+          "visible_chars": 8160,
+          "sha256": "482fd34f4083a67c08c4b8e95aa05f9e55c84e4b54e12ac15775b0fe0a4bbf9e",
+          "truncation_marker": false,
+          "error_marker": false
+        },
+        {
+          "tool": "read_task_skill",
+          "visible_chars": 6976,
+          "sha256": "2b61358604633b01d095ce60f12d321646bd262b0efb9fb13d43e35519a8d5ca",
+          "truncation_marker": false,
+          "error_marker": false
+        },
+        {
+          "tool": "read_dingtalk_messages",
+          "visible_chars": 61025,
+          "sha256": "8054f0b784dea7d7919c071c1cfdf54760029fc9efc0b9b6a6639f05f7b082ad",
+          "truncation_marker": false,
+          "error_marker": false,
+          "message_count": 45,
+          "json_parse_valid": true
+        }
+      ],
+      "final_outcome": "approve",
+      "developer_chars": [
+        29395
+      ]
+    },
+    {
+      "attempt_id": 350546,
+      "role": "consumer",
+      "task_id": 404350,
+      "session_id": "01a12ef8-2631-7d73-a4dd-cbf0a72a1898",
+      "start": 96,
+      "end": 126,
+      "native_range_sha256": "77351445aa562653ae78c9cbcdd34dc2698c78f5fa0565b308a2d0275229bf10",
+      "tools": [
+        "read_dingtalk_messages"
+      ],
+      "outputs": [
+        {
+          "tool": "read_dingtalk_messages",
+          "visible_chars": 53543,
+          "sha256": "3e6f7df8d9e23b1ad95959dd7e70c6d4a204e4032d6cd2dbddec9832c6e88709",
+          "truncation_marker": false,
+          "error_marker": false,
+          "message_count": 24,
+          "json_parse_valid": true
+        }
+      ],
+      "final_outcome": "no_action",
+      "developer_chars": []
+    },
+    {
+      "attempt_id": 350548,
+      "role": "audit",
+      "task_id": 404350,
+      "session_id": "01a133bd-f9f6-7cc1-a5e3-b91bf48ba82a",
+      "start": 0,
+      "end": 50,
+      "native_range_sha256": "51f2189e2b4c8a563a230727b82d4fc66f54ed30a8e0ac3ab86fc6f15aefc97b",
+      "tools": [
+        "read_task_skill",
+        "read_task_skill",
+        "read_dingtalk_messages"
+      ],
+      "outputs": [
+        {
+          "tool": "read_task_skill",
+          "visible_chars": 8160,
+          "sha256": "3c087809b135b8d5c2fcf65af4f96f9f0486e86e89937888cda016b9edb6a1f9",
+          "truncation_marker": false,
+          "error_marker": false
+        },
+        {
+          "tool": "read_task_skill",
+          "visible_chars": 6976,
+          "sha256": "62b9933c354ecb76849a19be39d930755a007a2a9abae83783ce957057783d0d",
+          "truncation_marker": false,
+          "error_marker": false
+        },
+        {
+          "tool": "read_dingtalk_messages",
+          "visible_chars": 60588,
+          "sha256": "10e6da3aa4ef9e8216673fd5a4980dbc6dd4101f459fafd54dc6acde9cc6d63f",
+          "truncation_marker": false,
+          "error_marker": false,
+          "message_count": 29,
+          "json_parse_valid": true
+        }
+      ],
+      "final_outcome": "approve",
+      "developer_chars": [
+        29395
+      ]
+    }
+  ],
+  "findings": [
+    "Task404348 proposal -> audit return -> same consumer session no_action -> fresh audit approve; duplicate confirmation and added follow-up suppressed without new instructions.",
+    "Task404350 consumer reused unchanged frozen Skills and one message read; fresh audit loaded frozen Skills and independently read live context; no_action/approve.",
+    "All four live message reads parse as complete JSON with no native truncation marker. This does not establish equality to upstream originals.",
+    "One read_text_file call for shared engineering AGENTS is forbidden; retained as unresolved runtime-context noise.",
+    "Audit cold Developer remains29395 characters; contract scoping remains incomplete."
+  ]
+}

@@ -13,7 +13,9 @@ from pydantic import (
 from app.agent_contracts import (
     AuditAgentResult,
     AuditFeedback,
+    CandidateFieldAssertion,
     ConsumerAgentResult,
+    DINGTALK_MESSAGE_IDENTIFIER_FIELDS,
     ConsumerProposal,
     DecisionBasis,
     DecisionOption,
@@ -103,7 +105,7 @@ class ConsumerAgentWireResult(RootModel[_ConsumerWire]):
 
     def to_result(self) -> ConsumerAgentResult:
         payload = self.root
-        return ConsumerAgentResult.model_validate({
+        result = ConsumerAgentResult.model_validate({
             "outcome": payload.outcome,
             "summary": payload.summary,
             "proposal": payload.proposal,
@@ -121,6 +123,25 @@ class ConsumerAgentWireResult(RootModel[_ConsumerWire]):
             "error": payload.error_payload(),
             "durable_memories": tuple(payload.durable_memories),
         })
+        plans = (result.proposal, *(option.plan for option in result.decision_options))
+        for plan in plans:
+            if plan is None:
+                continue
+            for action in plan.actions:
+                if action.capability != "dingtalk-chat":
+                    continue
+                for field in DINGTALK_MESSAGE_IDENTIFIER_FIELDS:
+                    value = action.target.get(field)
+                    if value is not None and (not isinstance(value, str) or not value.strip()):
+                        raise ValueError(f"dingtalk-chat target.{field} must be a nonempty string or null")
+        return result
+
+
+class _AuditFeedbackWire(AuditFeedback):
+    observation_basis: Literal["business", "candidate_fields"] = Field(
+        description=AuditFeedback.model_fields["observation_basis"].description)
+    candidate_field_assertions: tuple[CandidateFieldAssertion, ...] = Field(
+        description=AuditFeedback.model_fields["candidate_field_assertions"].description)
 
 
 class _AuditWire(_WireBase):
@@ -128,7 +149,7 @@ class _AuditWire(_WireBase):
     proposal_revision: int = Field(ge=0)
     candidate_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     evidence_refs: list[str] = Field(default_factory=list)
-    feedback: AuditFeedback | None
+    feedback: _AuditFeedbackWire | None
 
 
 class AuditAgentWireResult(RootModel[_AuditWire]):

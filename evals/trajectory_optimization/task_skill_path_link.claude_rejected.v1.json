@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "entry": "exact-path link only; no full-content use/read request",
+  "raw_root": "/private/tmp/ceo-task-path-link-claude-9ig6bbuz",
+  "turns": [
+    {
+      "route": "claude_oauth",
+      "model": "sonnet",
+      "variant": "candidate",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "bf0a5000-2586-4d02-999c-3886af9862c4",
+      "submitted_chars": 58536,
+      "submitted_sha256": "2185b16ccd1cdbe61e14c55cf54d51255f1970f2f3872f6ab74d9fed14d249da",
+      "events_sha256": "297beac745a3cbef91174e5cae5555a185bb604f26e6221ea4d73a2153fa519f",
+      "decision_sha256": "49c78f95fbb29bd0cec57a06ae04b69094d30b264ca76f9bb90312551b8bf0bd"
+    },
+    {
+      "route": "claude_oauth",
+      "model": "sonnet",
+      "variant": "candidate",
+      "phase": "risk",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "bf0a5000-2586-4d02-999c-3886af9862c4",
+      "submitted_chars": 62040,
+      "submitted_sha256": "9654124074e5b83350943aaeb356ea9f0b49cd03856c88769470fd4a60ac97b2",
+      "events_sha256": "27c2b4aa578466381d95a3a8cd2712c14aa17bbe4e0c2552dbf935178dbab498",
+      "decision_sha256": "91262abcb64ab230b83f0bc43cac6653fafe8ad8c56f9fca5f34a9486782630c"
+    }
+  ],
+  "native_path": "/Users/derek/.claude/projects/-Users-derek-Projects-ceo-agent-service/bf0a5000-2586-4d02-999c-3886af9862c4.jsonl",
+  "complete_selected_body_present": false,
+  "acceptance": "rejected: valid structured outputs without complete current Skill in native session",
+  "boundary": "Cold and same-session risk outputs parsed; source visibility gate fails. No production change or real business writes."
+}

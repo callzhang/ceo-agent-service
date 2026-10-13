@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 import app.audit_web as audit_web_module
 from tests.run_reader_fixtures import insert_native_run_fixture
 from app.run_storage import insert_run
-from app.task_storage import WORK_SUMMARY_INPUT_SQL, insert_task, task_id_expression
+from app.task_storage import WORK_SUMMARY_INPUT_SQL, insert_task, task_id_expression, task_physical_id
 from app.email_store import EmailStore
 from app.audit_web import (
     create_audit_app,
@@ -417,10 +417,11 @@ def test_attempt_detail_marks_malformed_consumer_result_unavailable(tmp_path: Pa
     consumer = _complete_consumer_run(store, task)
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
     with store._immediate_write_transaction() as db:
-        db.execute(
-            "update review_candidates set candidate_json=? where consumer_run_id=?",
-            ('{"outcome":"proposal","raw_marker":"raw-malformed-marker"}', consumer.id),
-        )
+        from app.action_storage import REVIEW_CANDIDATE_SQL, update_action
+        public_id = db.execute(f"select id from ({REVIEW_CANDIDATE_SQL}) where consumer_run_id=?", (consumer.id,)).fetchone()[0]
+        update_action(db, 'review_candidates', public_id, {
+            'candidate_json': '{"outcome":"proposal","raw_marker":"raw-malformed-marker"}',
+        })
 
     status, detail = render_attempt_detail(store, attempt_id)
 
@@ -898,10 +899,9 @@ def _seed_confirmed_approval_attempt(
     # Simulate a grandfathered, service-adopted historical Audit review. Its
     # completed native wire body is separate from the business review row.
     with store._connect() as db:
-        db.execute(
-            "update candidate_reviews set result_json=? where audit_run_id=?",
-            (json.dumps(historical_result), audit.id),
-        )
+        from app.action_storage import CANDIDATE_REVIEW_SQL, update_action
+        public_id = db.execute(f"select id from ({CANDIDATE_REVIEW_SQL}) where audit_run_id=?", (audit.id,)).fetchone()[0]
+        update_action(db, 'candidate_reviews', public_id, {'result_json': json.dumps(historical_result)})
     return store.finalize_orchestrated_reply_task(
         task_id=task.id,
         expected_execution_generation=task.execution_generation,
@@ -12238,17 +12238,20 @@ def test_attention_keeps_old_scheduled_failure_in_history_after_later_success(
 
         snapshot_id = intern_scheduled_config(db, "{}")
         for run_id, event_id, task_id in ((100, "event-old", old.id), (101, "event-new", new.id)):
-            db.execute(
-                "insert into scheduled_task_runs "
-                "(id, event_id, scheduled_task_id, trigger_kind, scheduled_for, "
-                "first_scheduled_for, dispatch_status, snapshot_id, "
-                "execution_kind, execution_id) "
-                "values (?, ?, 14, 'manual', ?, ?, 'dispatched', ?, "
-                "'reply_task', ?)",
-                (run_id, event_id, f"2026-09-28T{run_id-87:02d}:00:00Z", f"2026-09-28T{run_id-87:02d}:00:00Z", snapshot_id, str(task_id)),
-            )
-        db.execute("update tasks set status='failed', error='codex_result_missing' where record_type='reply_tasks' and id=?", (old.id,))
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (new.id,))
+            insert_run(db, 'scheduled_task_runs', {
+                'event_id': event_id,
+                'scheduled_task_id': 14,
+                'trigger_kind': 'manual',
+                'scheduled_for': f"2026-09-28T{run_id-87:02d}:00:00Z",
+                'first_scheduled_for': f"2026-09-28T{run_id-87:02d}:00:00Z",
+                'legacy_key': run_id,
+                'dispatch_status': 'dispatched',
+                'snapshot_id': snapshot_id,
+                'execution_kind': 'reply_task',
+                'execution_id': str(task_id),
+            })
+        db.execute("update tasks set status='failed', error='codex_result_missing' where record_type='reply_tasks' and id=?", (task_physical_id(db, 'reply_tasks', old.id),))
+        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task_physical_id(db, 'reply_tasks', new.id),))
         db.execute(
             "insert into errors (conversation_id, message_id, kind, detail) "
             "values ('scheduled-task-run:100', null, 'read_recent_messages_rerun', 'invalid conversation')"
@@ -12261,7 +12264,7 @@ def test_attention_keeps_old_scheduled_failure_in_history_after_later_success(
     assert not any(row["category"] == "Reply task" and row["id"] == str(old.id) for row in rows)
     assert not any(row["category"] == "Service error" for row in rows)
     with store._connect() as db:
-        assert db.execute("select status from tasks where record_type='reply_tasks' and id=?", (old.id,)).fetchone()[0] == "failed"
+        assert db.execute("select status from tasks where record_type='reply_tasks' and id=?", (task_physical_id(db, 'reply_tasks', old.id),)).fetchone()[0] == "failed"
         assert db.execute("select count(*) from errors where resolved_at='' ").fetchone()[0] == 2
 
 

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import app.wechat.accessibility as accessibility
+from app.action_storage import delete_action
 from app.store import AutoReplyStore
 from app.wechat.accessibility import (
     AccessibilityResult, MacWechatAccessibility, SenderExecutionError,
@@ -184,10 +185,7 @@ def test_sender_rejects_delivery_without_matching_prepared_body(store):
     runner = FakeRunner(AccessibilityResult(True, True, "fp-1"))
     delivery = _seed_delivery(store)
     with store._connect() as db:
-        db.execute(
-            "delete from outbound_postfixes where channel='wechat' and delivery_key=?",
-            (f"wechat:{delivery.id}",),
-        )
+        delete_action(db, "outbound_postfixes", ("wechat", f"wechat:{delivery.id}"))
 
     with pytest.raises(ValueError, match="prepared WeChat delivery"):
         WechatSender(store, runner).send(delivery, _scope("verified"))

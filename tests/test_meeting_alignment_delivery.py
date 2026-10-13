@@ -290,11 +290,13 @@ def test_group_delivery_uses_first_candidate_and_real_mentions(tmp_path):
     assert result.message_text == dws.sent[0]["text"]
 
     changed = send_decision().model_copy(update={"final_message": "改写后的内容"})
-    with pytest.raises(MeetingDeliveryError, match="prepared meeting body"):
-        deliver_meeting_alignment(
-            changed, meeting_source(), dws, message_sender=sender,
-            delivery_key="meeting-alignment:minutes-1:job-1",
-        )
+    recovered = deliver_meeting_alignment(
+        changed, meeting_source(), dws, message_sender=sender,
+        delivery_key="meeting-alignment:minutes-1:job-1",
+    )
+    assert recovered.message_text == result.message_text
+    assert changed.final_message not in recovered.message_text
+    assert len(dws.sent) == 1
     replay = deliver_meeting_alignment(
         send_decision(),
         meeting_source(),
@@ -496,6 +498,23 @@ def test_conflicting_prepared_same_audience_body_fails_before_any_effect(tmp_pat
     sender.prepare_meeting_alignment(target_kind="user", target_id="u-a", delivery_key="conflict", body="Different immutable body")
     with pytest.raises(MeetingDeliveryError, match="prepared meeting body"):
         deliver_meeting_alignment(decision, meeting_source(), dws, message_sender=sender, delivery_key="conflict")
+    assert dws.sent == []
+
+
+def test_changed_prose_recovers_confirmed_primary_without_resending(tmp_path):
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "meeting.sqlite3")
+    sender = ServiceMessageSender(store=store, dingtalk=dws)
+    decision = send_decision(target="direct", mention_names=[])
+    source = meeting_source(one_to_one=True)
+    prepared = sender.prepare_meeting_alignment(target_kind="user", target_id="u-a",
+        delivery_key="confirmed-original", body="Original delivered body")
+    store.record_outbound_postfix_receipt("dingtalk", "confirmed-original",
+        {"result": {"openMessageId": "original-message"}})
+    result = deliver_meeting_alignment(decision, source, dws,
+        message_sender=sender, delivery_key="confirmed-original")
+    assert result.message_text == prepared.final_body
+    assert result.send_result["result"]["openMessageId"] == "original-message"
     assert dws.sent == []
 
 

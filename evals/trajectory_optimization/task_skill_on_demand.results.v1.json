@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "model": "gpt-5.6-luna",
+  "reasoning": "medium",
+  "route": "codex_oauth",
+  "baseline": "5bcfac89 Task prompt, same native catalog/factory settings",
+  "candidate": "Task Skill on demand working diff",
+  "skill_sha256": "1cd05b1a3589437d795001723ec5bfb332456db16f21ff79b7f23bce6af5b101",
+  "raw_evidence_root": "/private/tmp/ceo-task-on-demand-el39rf6f",
+  "runs": [
+    {
+      "variant": "baseline",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12f8d-4e6f-7e60-ba1b-8ddd299aa239",
+      "prompt_sha256": "b5fc1372b8522deed2c58e2c9d0b815dc40d5e441cb8cf942fabe30656020f4b",
+      "skill_config_selected": true,
+      "prompt_chars": 32096,
+      "events_sha256": "c5dcafd9066b358c22f42f36e52408d936c6cec879ab79e145b7022b142ae457",
+      "decision_sha256": "33d573b4480412721f9a7500f95a0610fc090749c742e1018f221f43e8951ccb",
+      "project_count": 1,
+      "task_count": 0,
+      "assessment_outcomes": [
+        "not_needed"
+      ],
+      "attention_categories": [],
+      "task_titles": [],
+      "suggested_owners": [],
+      "completed_mcp": [],
+      "raw_command_capture_contains_full_skill": false,
+      "model_visible_complete_skill_read": false
+    },
+    {
+      "variant": "baseline",
+      "phase": "risk",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12f8d-4e6f-7e60-ba1b-8ddd299aa239",
+      "prompt_sha256": "2935148621930bc24cce667cd633547d39db986595bc121fd7a3deb46c704c8b",
+      "skill_config_selected": true,
+      "prompt_chars": 35600,
+      "events_sha256": "7e946fe847a08fee35f4849fddf5390a51d8251c2c189fe76b3e4e1e1be40d24",
+      "decision_sha256": "1210057e04d0cd381a9bd3ce33adb8f01e7e1439904c75e2b17ab42a0d6ee530",
+      "project_count": 1,
+      "task_count": 1,
+      "assessment_outcomes": [
+        "needs_attention"
+      ],
+      "attention_categories": [
+        "push"
+      ],
+      "task_titles": [
+        "确认客户验收材料并落实回款日期"
+      ],
+      "suggested_owners": [
+        "陈明"
+      ],
+      "completed_mcp": [],
+      "raw_command_capture_contains_full_skill": false,
+      "model_visible_complete_skill_read": false
+    },
+    {
+      "variant": "candidate",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12f8d-9484-7bc3-ac9a-cdfa9d9b7270",
+      "prompt_sha256": "77de94da68d059bddd9b0089e993768ae178434d9e12c5cb700d2064b8b1565e",
+      "skill_config_selected": true,
+      "prompt_chars": 8898,
+      "events_sha256": "34804ba3dd5efa1bd7fdca594b3f2059d2bf3e617a6b11c1e5b7b70fa5334c6a",
+      "decision_sha256": "8fc828e69bc5c6949dd3a16a3fa80f3702be177691e4f1603cf68f03c0854172",
+      "project_count": 1,
+      "task_count": 0,
+      "assessment_outcomes": [
+        "not_needed"
+      ],
+      "attention_categories": [],
+      "task_titles": [],
+      "suggested_owners": [],
+      "completed_mcp": [],
+      "raw_command_capture_contains_full_skill": true,
+      "model_visible_complete_skill_read": false
+    },
+    {
+      "variant": "candidate",
+      "phase": "risk",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "01a12f8d-9484-7bc3-ac9a-cdfa9d9b7270",
+      "prompt_sha256": "e4b32c35920a21ad521eeea39bf6a04d3adc83219129678000ae145ec260432b",
+      "skill_config_selected": true,
+      "prompt_chars": 12402,
+      "events_sha256": "76305b787d803a73cdd44aef634d946cf029b6e0a10967fd5f1adc4c98cb0304",
+      "decision_sha256": "db77bb40b4ef6e16672a56b657593a8b055f22a798282391ca1c83ec8c399182",
+      "project_count": 1,
+      "task_count": 1,
+      "assessment_outcomes": [
+        "needs_attention"
+      ],
+      "attention_categories": [
+        "watch"
+      ],
+      "task_titles": [
+        "补齐客户验收材料并确认回款日期排期"
+      ],
+      "suggested_owners": [
+        "陈明"
+      ],
+      "completed_mcp": [
+        {
+          "server": "memory_fixture",
+          "tool": "memory_write",
+          "error": null
+        }
+      ],
+      "raw_command_capture_contains_full_skill": true,
+      "model_visible_complete_skill_read": true
+    }
+  ],
+  "application_summary": [
+    {
+      "variant": "baseline",
+      "phase": "cold",
+      "applied": true,
+      "projects": 1,
+      "tasks": 0
+    },
+    {
+      "variant": "candidate",
+      "phase": "cold",
+      "applied": true,
+      "projects": 1,
+      "tasks": 0
+    },
+    {
+      "variant": "baseline",
+      "phase": "risk",
+      "applied": true,
+      "projects": 1,
+      "tasks": 1
+    },
+    {
+      "variant": "candidate",
+      "phase": "risk",
+      "applied": true,
+      "projects": 1,
+      "tasks": 1
+    }
+  ],
+  "limits": [
+    "Anonymous local MCP fixture only; no real external business or Memory writes.",
+    "Claude and Friday delivery verified by regressions, not provider runtime.",
+    "Risk attention category differs: baseline push, candidate watch. Not evidence of identical judgments.",
+    "Native Skill read moves instructions into tool results; service prompt reduction is not total-token savings."
+  ],
+  "model_visible_correction": "Native rollout drilldown found candidate cold outer custom_tool_call_output truncated although raw aggregated_output was full; candidate risk actual tool output contains full exact Skill."
+}

@@ -1,0 +1,9 @@
+{
+  "scope": "owned verified production-derived Store15 copy; scripted roles and in-memory provider; network and subprocess refused",
+  "tests": 11,
+  "passed": 11,
+  "original_rows_unchanged": true,
+  "original_fk_findings_unchanged": true,
+  "source_sha256": "e1b93ed5955fcace259837de722df547b1d3612c223512784018706459a96b78",
+  "app_files_sha256": "4c3026891d7f7d7f3ace5ba656d70b5ec66da60f5760774910849766685208c0"
+}

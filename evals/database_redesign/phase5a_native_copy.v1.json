@@ -1,0 +1,82 @@
+{
+  "case": "approve",
+  "interrupted": false,
+  "source": {
+    "sha256": "e1b93ed5955fcace259837de722df547b1d3612c223512784018706459a96b78",
+    "source": "retained verified production-derived phase5a copy",
+    "schema": "2026-10-13.1",
+    "original_old_commit": "2d1e94e4a29820b2a8bc9f8cfed0577cc07f8128"
+  },
+  "task_id": 404510,
+  "conversation_id": "native-copy-acceptance:e001c191-b3a5-4148-b506-7cd8588dcc7b",
+  "status": "done",
+  "completed": true,
+  "native_invocations": [
+    {
+      "role": "consumer",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "70d0a1d2b5f5c48544aa4bf1ed98c29aa8a4021f939c570f7725242bb2a29dca"
+    },
+    {
+      "role": "audit",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "f1c81c22d502b57b1bd6036cd48198e00efb65ce7e1dfba94ff49bbd987c67cd"
+    }
+  ],
+  "provider_calls": 1,
+  "verification_calls": 1,
+  "runs": [
+    {
+      "id": 351767,
+      "role": "consumer",
+      "status": "completed",
+      "revision": 0,
+      "parent_id": null,
+      "session_id": "01a1350a-8710-7f51-bf79-97d32855acc8",
+      "start": 0,
+      "end": 44,
+      "native_exists": true,
+      "tool_events": 5,
+      "error": "",
+      "attempts": [
+        {
+          "id": 351768,
+          "status": "completed",
+          "session_id": "01a1350a-8710-7f51-bf79-97d32855acc8",
+          "start": 0,
+          "end": 44
+        }
+      ]
+    },
+    {
+      "id": 351769,
+      "role": "audit",
+      "status": "completed",
+      "revision": 0,
+      "parent_id": 351767,
+      "session_id": "01a1350a-ef4f-72f1-bd16-35241a2b7f4c",
+      "start": 0,
+      "end": 37,
+      "native_exists": true,
+      "tool_events": 4,
+      "error": "",
+      "attempts": [
+        {
+          "id": 351770,
+          "status": "completed",
+          "session_id": "01a1350a-ef4f-72f1-bd16-35241a2b7f4c",
+          "start": 0,
+          "end": 37
+        }
+      ]
+    }
+  ],
+  "receipts": 1,
+  "sent_replies": 1,
+  "business_attempts": 1,
+  "reopen_no_new_invocation": 2,
+  "original_tables_unchanged": 126,
+  "passed": true
+}

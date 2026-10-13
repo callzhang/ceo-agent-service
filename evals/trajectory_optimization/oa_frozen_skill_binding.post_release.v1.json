@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "production_commit": "3e0d962487ada4d12c73e2fc43826439ea9ada50",
+  "task_id": 404387,
+  "attempt_observations": [
+    {
+      "role": "consumer",
+      "run_id": 351096,
+      "session_id": "01a13447-adee-7d90-bb21-8c5306689cc9",
+      "skill_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "native_record": 34,
+          "content_sha256": "7bb0cbbc0efd9a3d944fcdac8ec6346526caf0fd2ea48942c83df16bc0f59f9c",
+          "content_chars": 38612,
+          "native_output_chars": 39633,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-attendance-travel-review",
+          "native_record": 41,
+          "content_sha256": "974b4e8089d009b387311dd7566b0fc2516a636ca1ea6c3e0642557a808bb432",
+          "content_chars": 8452,
+          "native_output_chars": 8685,
+          "truncation_marker": false
+        }
+      ],
+      "outcomes": [
+        "proposal",
+        "no_action"
+      ],
+      "read_only_source_entry": "read_task_skill"
+    },
+    {
+      "role": "audit",
+      "run_id": 351101,
+      "session_id": "01a13448-83a9-71b0-8cc0-901ef9a9cfaa",
+      "skill_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "native_record": 15,
+          "content_sha256": "7bb0cbbc0efd9a3d944fcdac8ec6346526caf0fd2ea48942c83df16bc0f59f9c",
+          "content_chars": 38612,
+          "native_output_chars": 39633,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-attendance-travel-review",
+          "native_record": 22,
+          "content_sha256": "974b4e8089d009b387311dd7566b0fc2516a636ca1ea6c3e0642557a808bb432",
+          "content_chars": 8452,
+          "native_output_chars": 8685,
+          "truncation_marker": false
+        }
+      ],
+      "outcomes": [
+        "approve"
+      ],
+      "read_only_source_entry": "read_task_skill"
+    },
+    {
+      "role": "audit",
+      "run_id": 351109,
+      "session_id": "01a13449-ee2c-7a82-81eb-cb7fb45475a8",
+      "skill_reads": [
+        {
+          "name": "dingtalk-oa-approval",
+          "native_record": 21,
+          "content_sha256": "7bb0cbbc0efd9a3d944fcdac8ec6346526caf0fd2ea48942c83df16bc0f59f9c",
+          "content_chars": 38612,
+          "native_output_chars": 39633,
+          "truncation_marker": false
+        },
+        {
+          "name": "stardust-oa-attendance-travel-review",
+          "native_record": 28,
+          "content_sha256": "974b4e8089d009b387311dd7566b0fc2516a636ca1ea6c3e0642557a808bb432",
+          "content_chars": 8452,
+          "native_output_chars": 8685,
+          "truncation_marker": false
+        }
+      ],
+      "outcomes": [
+        "approve"
+      ],
+      "read_only_source_entry": "read_task_skill"
+    }
+  ],
+  "confirmed": [
+    "Consumer and both fresh Audits use frozen reader successfully for generic and attendance/travel bodies, no installed fallback or clipping in these reads.",
+    "Consumer continuation reuses the same session and performs live state reads rather than rereading the same unchanged Skill bodies."
+  ],
+  "limitations": [
+    "Different OA case/category from seven-body historical runs; no isolated causal resource-saving claim.",
+    "Audit approve and later Consumer no_action do not prove external action success; effect outcome must be checked through its separate immutable receipt.",
+    "Observations are production baseline after source-binding repair, not PR67 candidate native acceptance."
+  ]
+}

@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "observed_after_check_utc": "2026-10-12T11:03:08Z",
+  "production_head_observed_after_check": "910a649f78a50163cab956ff3ac4592f070bbd0f",
+  "history_attempt_id": 15312,
+  "comparison": "API fields exactly equal redact_credentials of selected native input; bodies not saved here",
+  "runs": [
+    {
+      "run_id": 176991,
+      "role": "consumer",
+      "status": "available",
+      "runtime_attempt_id": 176992,
+      "native_source": "本轮原生 Developer 记录",
+      "matches_native_cleaned_input": {
+        "developer_instructions": true,
+        "task_prompt": true,
+        "submitted_input": true
+      },
+      "input_chars": {
+        "developer_instructions": 32416,
+        "task_prompt": 7797,
+        "submitted_input": 7797
+      },
+      "input_sha256": {
+        "developer_instructions": "c67c3eaf9c45f4592a1a2b84a39b67c34da24573cea30f9803a203eca23841eb",
+        "task_prompt": "bd4f5b809040014cbe69b10f05ab8db62fbe90a0689c7860bea017de805222c8",
+        "submitted_input": "bd4f5b809040014cbe69b10f05ab8db62fbe90a0689c7860bea017de805222c8"
+      }
+    },
+    {
+      "run_id": 176993,
+      "role": "audit",
+      "status": "available",
+      "runtime_attempt_id": 176994,
+      "native_source": "本轮原生 Developer 记录",
+      "matches_native_cleaned_input": {
+        "developer_instructions": true,
+        "task_prompt": true,
+        "submitted_input": true
+      },
+      "input_chars": {
+        "developer_instructions": 29384,
+        "task_prompt": 18247,
+        "submitted_input": 18247
+      },
+      "input_sha256": {
+        "developer_instructions": "66b869715be35d41c9670e058145f79d8d2e8c0fef910ad0076dcc64b0351b90",
+        "task_prompt": "97b87118afd3bb5ef174e011800c9f5efac6b2e7ea6a43c19df36d35c23a9f2d",
+        "submitted_input": "97b87118afd3bb5ef174e011800c9f5efac6b2e7ea6a43c19df36d35c23a9f2d"
+      }
+    },
+    {
+      "run_id": 176995,
+      "role": "consumer",
+      "status": "available",
+      "runtime_attempt_id": 176996,
+      "native_source": "session 已保存的 Developer（非本轮重新提交回执）",
+      "matches_native_cleaned_input": {
+        "developer_instructions": true,
+        "task_prompt": true,
+        "submitted_input": true
+      },
+      "input_chars": {
+        "developer_instructions": 32416,
+        "task_prompt": 8821,
+        "submitted_input": 8821
+      },
+      "input_sha256": {
+        "developer_instructions": "c67c3eaf9c45f4592a1a2b84a39b67c34da24573cea30f9803a203eca23841eb",
+        "task_prompt": "16c31b9cb70237931bfee828b2aefcf349cd201540572151890fd7eed721af05",
+        "submitted_input": "16c31b9cb70237931bfee828b2aefcf349cd201540572151890fd7eed721af05"
+      }
+    },
+    {
+      "run_id": 176997,
+      "role": "audit",
+      "status": "available",
+      "runtime_attempt_id": 176998,
+      "native_source": "本轮原生 Developer 记录",
+      "matches_native_cleaned_input": {
+        "developer_instructions": true,
+        "task_prompt": true,
+        "submitted_input": true
+      },
+      "input_chars": {
+        "developer_instructions": 29384,
+        "task_prompt": 18378,
+        "submitted_input": 18378
+      },
+      "input_sha256": {
+        "developer_instructions": "7c0569532ecdf18e1ac1b49199f7d732a71f7f0472c48f97a204ab7d2cb9f1ad",
+        "task_prompt": "53731d5f9761a142eba92dc712be1ba159cdccab8d97ba4cecf50f853a9c0d92",
+        "submitted_input": "53731d5f9761a142eba92dc712be1ba159cdccab8d97ba4cecf50f853a9c0d92"
+      }
+    }
+  ],
+  "scope": "Existing production Settings Consumer/Audit history, not deployment or acceptance of this draft."
+}

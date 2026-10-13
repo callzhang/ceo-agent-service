@@ -1,0 +1,25 @@
+{
+  "version": 2,
+  "attempt_id": 177022,
+  "role": "audit",
+  "native_range": [
+    0,
+    145
+  ],
+  "original_mcp_rows": 343,
+  "original_unique_names": 297,
+  "original_unique_paths": 343,
+  "original_compact_json_chars": 136668,
+  "original_compact_json_sha256": "5ede907c03f25a78fcb74dd78fa0d8e9d0a7193274bf8f0435569bb87fd141d8",
+  "model_visible_chars": 124840,
+  "model_visible_clipping_marker": "3015 tokens truncated",
+  "deleted_original_characters": 11885,
+  "model_visible_rows": 313,
+  "model_visible_unique_names": 280,
+  "malformed_rows": 1,
+  "candidate_compact_chars": 108994,
+  "candidate_compact_sha256": "c2735feb09d8b4c27d6622a26adb769021f552358f611e4817fdedb7e8a5cd80",
+  "all_original_fields_round_trip": true,
+  "scope": "Offline original historical metadata comparison only; no real metadata sent to a model. Original native delivery observations preserved.",
+  "candidate_encoding": "Separate Root and Relative path columns; no combined alias-expression field"
+}

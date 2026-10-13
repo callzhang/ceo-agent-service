@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from app.store import AgentRunLeaseLostError, AutoReplyStore
+from app.task_storage import insert_task
 from app.wechat.models import WechatReplyScope
 
 
@@ -1173,18 +1174,17 @@ def test_concurrent_current_schema_repair_preserves_rows_and_delivery_fk(tmp_pat
                       'same-conversation', 'hi', 'failed',
                       '2026-07-20T10:10:00+08:00', 1)"""
         )
-        db.execute(
-            "insert into workbench_tasks (id, title, runtime_kind) "
-            "values ('workbench-legacy', 'Legacy attachment', 'codex')"
-        )
+        workbench_parent = insert_task(db, "workbench_tasks", {
+            "legacy_key": "workbench-legacy", "title": "Legacy attachment", "runtime_kind": "codex",
+        }).lastrowid
         db.execute(
             """insert into workbench_attachments (
                 id, task_id, filename, media_type, size_bytes, storage_path,
                 client_request_id, content_sha256
-            ) values ('attachment-legacy', 'workbench-legacy',
+            ) values ('attachment-legacy', ?,
                       'legacy.txt', 'text/plain', 6, ?,
                       'attachment-legacy', '')""",
-            (str(attachment_path),)
+            (workbench_parent, str(attachment_path)),
         )
         attachment_before = tuple(db.execute(
             "select id, task_id, filename, media_type, size_bytes, storage_path, created_at "
@@ -1192,8 +1192,6 @@ def test_concurrent_current_schema_repair_preserves_rows_and_delivery_fk(tmp_pat
         ).fetchone())
         db.execute("drop index idx_reply_tasks_channel_status_id")
         db.execute("drop index idx_workbench_attachments_task_request")
-        db.execute("alter table workbench_attachments drop column content_sha256")
-        db.execute("alter table workbench_attachments drop column client_request_id")
     with original._connect() as db:
         assert db.execute("pragma foreign_key_check").fetchall() == []
         parent = db.execute(
@@ -1215,9 +1213,9 @@ def test_concurrent_current_schema_repair_preserves_rows_and_delivery_fk(tmp_pat
             (row["table"], row["from"], row["to"])
             for row in db.execute("pragma foreign_key_list(wechat_deliveries)")
         }
-        assert {"client_request_id", "content_sha256"}.isdisjoint({
+        assert {"client_request_id", "content_sha256"} <= {
             row[1] for row in db.execute("pragma table_info(workbench_attachments)")
-        })
+        }
         assert {"idx_reply_tasks_channel_status_id", "idx_workbench_attachments_task_request"}.isdisjoint({
             row[0] for row in db.execute("select name from sqlite_master where type='index'")
         })

@@ -1,0 +1,190 @@
+{
+  "scope": "Phase5C observed Store16 copied schema, definitions and counts only; no business originals",
+  "tables": {
+    "outbound_postfixes": {
+      "columns": [
+        [
+          0,
+          "channel",
+          "TEXT",
+          1,
+          null,
+          1
+        ],
+        [
+          1,
+          "delivery_key",
+          "TEXT",
+          1,
+          null,
+          2
+        ],
+        [
+          2,
+          "final_body",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          3,
+          "feedback_token",
+          "TEXT",
+          1,
+          "''",
+          0
+        ],
+        [
+          4,
+          "postfix_version",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          5,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0
+        ]
+      ],
+      "foreign_keys": [],
+      "objects": [
+        {
+          "type": "table",
+          "name": "outbound_postfixes",
+          "sql": "CREATE TABLE outbound_postfixes (\n                    channel text not null check(channel in ('dingtalk', 'wechat')),\n                    delivery_key text not null check(trim(delivery_key) <> ''),\n                    final_body text not null check(trim(final_body) <> ''),\n                    feedback_token text not null default '',\n                    postfix_version text not null,\n                    created_at text not null default current_timestamp,\n                    primary key(channel, delivery_key)\n                )"
+        }
+      ],
+      "observed_rows": 1079
+    },
+    "outbound_postfix_receipts": {
+      "columns": [
+        [
+          0,
+          "channel",
+          "TEXT",
+          1,
+          null,
+          1
+        ],
+        [
+          1,
+          "delivery_key",
+          "TEXT",
+          1,
+          null,
+          2
+        ],
+        [
+          2,
+          "provider_result_json",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          3,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "outbound_postfixes",
+          "channel",
+          "channel",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ],
+        [
+          0,
+          1,
+          "outbound_postfixes",
+          "delivery_key",
+          "delivery_key",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "objects": [
+        {
+          "type": "table",
+          "name": "outbound_postfix_receipts",
+          "sql": "CREATE TABLE outbound_postfix_receipts (\n                    channel text not null check(channel in ('dingtalk', 'wechat')),\n                    delivery_key text not null check(trim(delivery_key) <> ''),\n                    provider_result_json text not null,\n                    created_at text not null default current_timestamp,\n                    primary key(channel, delivery_key),\n                    foreign key(channel, delivery_key)\n                        references outbound_postfixes(channel, delivery_key)\n                )"
+        }
+      ],
+      "observed_rows": 613
+    },
+    "native_reply_dispatches": {
+      "columns": [
+        [
+          0,
+          "channel",
+          "TEXT",
+          1,
+          null,
+          1
+        ],
+        [
+          1,
+          "delivery_key",
+          "TEXT",
+          1,
+          null,
+          2
+        ],
+        [
+          2,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0
+        ]
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "outbound_postfixes",
+          "channel",
+          "channel",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ],
+        [
+          0,
+          1,
+          "outbound_postfixes",
+          "delivery_key",
+          "delivery_key",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "objects": [
+        {
+          "type": "table",
+          "name": "native_reply_dispatches",
+          "sql": "CREATE TABLE native_reply_dispatches (\n                    channel text not null,\n                    delivery_key text not null,\n                    created_at text not null default current_timestamp,\n                    primary key(channel, delivery_key),\n                    foreign key(channel, delivery_key)\n                        references outbound_postfixes(channel, delivery_key)\n                )"
+        }
+      ],
+      "observed_rows": 67
+    }
+  }
+}

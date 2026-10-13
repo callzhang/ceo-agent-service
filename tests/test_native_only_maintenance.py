@@ -7,9 +7,11 @@ import pytest
 from app import storage_maintenance
 from app.store import AutoReplyStore
 from tests.test_agent_turn_store import _task, _claim_consumer
-from app.run_storage import AGENT_RUN_SQL, MEETING_RUN_SQL, OKR_RUN_SQL, RUNTIME_ATTEMPT_SQL, TASK_AGENT_RUN_SQL, insert_run
-from app.task_storage import MEETING_JOB_SQL, REPLY_TASK_SQL, insert_task
+from app.run_storage import AGENT_RUN_SQL, MEETING_RUN_SQL, OKR_RUN_SQL, RUNTIME_ATTEMPT_SQL, TASK_AGENT_RUN_SQL, WORKBENCH_EVENT_SQL, insert_run
+from app.task_storage import MEETING_JOB_SQL, REPLY_TASK_SQL, WORKBENCH_TURN_SQL, insert_task, task_physical_id
 from tests.run_reader_fixtures import assert_no_core_native_storage
+
+from app.action_storage import CANDIDATE_REVIEW_SQL, REVIEW_CANDIDATE_SQL
 
 
 def test_native_only_cleanup_removes_missing_native_copies_preserves_service_state(tmp_path):
@@ -27,13 +29,17 @@ def test_native_only_cleanup_removes_missing_native_copies_preserves_service_sta
         insert_run(db, 'okr_review_runs', {'request_id': 1})
         job_id = insert_task(db, 'meeting_alignment_jobs', {'meeting_id': 'cleanup-meeting', 'final_message': 'adopted business output'}).lastrowid
         insert_run(db, 'meeting_alignment_runs', {'task_id': job_id, 'status': 'sent'})
-        index_id = db.execute("insert into codex_session_search_index(session_id,title,summary_text,fts_text,embedding_json,embedding_model,embedding_updated_at) values('missing-session','service title','oldtrajectorysearch','oldtrajectorysearch','[1,0]','old-model','2026-10-09')").lastrowid
-        db.execute("insert into codex_session_search_fts(rowid,title,summary_text,fts_text) values(?,'service title','oldtrajectorysearch','oldtrajectorysearch')", (index_id,))
-        assert db.execute("select count(*) from codex_session_search_fts where codex_session_search_fts match 'oldtrajectorysearch'").fetchone()[0] == 1
+        index_id = db.execute("insert into codex_session_search_index(session_id,title) values('missing-session','service title')").lastrowid
+        db.execute("insert into codex_session_search_fts(rowid,title) values(?,'service title')", (index_id,))
+        cache_columns = {row[1] for row in db.execute('pragma table_info(codex_session_search_index)')}
+        assert not cache_columns.intersection({
+            'summary_text', 'fts_text', 'embedding_json', 'embedding_model', 'embedding_updated_at',
+        })
+        assert db.execute("select count(*) from codex_session_search_fts where codex_session_search_fts match 'service'").fetchone()[0] == 1
         before = db.execute(f'select id,status,execution_generation from ({REPLY_TASK_SQL})').fetchall()
     counts = storage_maintenance.compact_native_duplicates(store.path)
     assert counts['event_runs_cleared'] == 0
-    assert counts['payload_fields_cleared'] == 6
+    assert counts['payload_fields_cleared'] == 1
     with sqlite3.connect(store.path) as db:
         assert_no_core_native_storage(db)
         assert db.execute('select audit_tool_events_json,send_status from reply_attempts where id=?',(attempt_id,)).fetchone() == ('[]','sent')
@@ -43,7 +49,8 @@ def test_native_only_cleanup_removes_missing_native_copies_preserves_service_sta
         assert db.execute(f'select audit_tool_events_json from ({OKR_RUN_SQL})').fetchone()[0] == '[]'
         assert db.execute(f'select audit_tool_events_json,status from ({MEETING_RUN_SQL})').fetchone() == ('[]','sent')
         assert db.execute(f'select final_message from ({MEETING_JOB_SQL}) where id=?', (job_id,)).fetchone()[0] == 'adopted business output'
-        assert db.execute('select title,summary_text,fts_text,embedding_json,embedding_model,embedding_updated_at from codex_session_search_index').fetchone() == ('service title','','','','','')
+        assert db.execute('select session_id,title from codex_session_search_index').fetchone() == ('missing-session','service title')
+        assert {row[1] for row in db.execute('pragma table_info(codex_session_search_index)')} == cache_columns
         assert db.execute("select count(*) from codex_session_search_fts where codex_session_search_fts match 'oldtrajectorysearch'").fetchone()[0] == 0
         assert db.execute("select count(*) from codex_session_search_fts where codex_session_search_fts match 'service'").fetchone()[0] == 1
         assert db.execute('pragma quick_check').fetchone()[0] == 'ok'
@@ -103,23 +110,28 @@ def test_cleanup_clears_standalone_bodies_and_workbench_keeps_only_source_refere
         insert_run(db, 'meeting_alignment_runs', {'task_id': job, 'status': 'sent'})
         insert_run(db, 'task_agent_runs', {'summary_input_id': 1, 'projection_json': '{"applied":true}'})
         insert_run(db, 'okr_review_runs', {'request_id': 1})
-        db.execute("update workbench_turns set status='failed', final_text='private final', error_detail='private provider stderr', error_code='runtime_failed' where id=?", (turn.id,))
+        physical_turn = task_physical_id(db, 'workbench_turns', turn.id)
+        assert 'final_text' not in {row[1] for row in db.execute('pragma table_info(tasks)')}
+        db.execute("update tasks set status='failed', error_detail='private provider stderr', error_code='runtime_failed' where record_type='workbench_turns' and id=?", (physical_turn,))
         for sequence, (kind, payload) in enumerate(bodies, 100):
-            db.execute("insert into workbench_events(turn_id,sequence,event_type,payload_json) values(?,?,?,?)", (turn.id, sequence, kind, json.dumps(payload)))
-        before = db.execute('select id,turn_id,sequence,event_type,created_at from workbench_events').fetchall()
-        candidate_before = db.execute('select candidate_json,candidate_digest from review_candidates where id=?', (candidate['id'],)).fetchone()
-        review_before = db.execute('select result_json from candidate_reviews where id=?', (review['id'],)).fetchone()
+            insert_run(db, 'workbench_events', {
+                'task_id': physical_turn, 'sequence': sequence,
+                'event_type': kind, 'payload_json': json.dumps(payload),
+            })
+        before = db.execute(f'select id,turn_id,sequence,event_type,created_at from ({WORKBENCH_EVENT_SQL})').fetchall()
+        candidate_before = db.execute(f'select candidate_json,candidate_digest from ({REVIEW_CANDIDATE_SQL}) where id=?', (candidate['id'],)).fetchone()
+        review_before = db.execute(f'select result_json from ({CANDIDATE_REVIEW_SQL}) where id=?', (review['id'],)).fetchone()
     storage_maintenance.compact_native_duplicates(store.path)
     with sqlite3.connect(store.path) as db:
-        assert db.execute('select candidate_json,candidate_digest from review_candidates where id=?', (candidate['id'],)).fetchone() == candidate_before
-        assert db.execute('select result_json from candidate_reviews where id=?', (review['id'],)).fetchone() == review_before
+        assert db.execute(f'select candidate_json,candidate_digest from ({REVIEW_CANDIDATE_SQL}) where id=?', (candidate['id'],)).fetchone() == candidate_before
+        assert db.execute(f'select result_json from ({CANDIDATE_REVIEW_SQL}) where id=?', (review['id'],)).fetchone() == review_before
         assert db.execute(f'select decision_json,audit_summary,audit_tool_events_json from ({MEETING_RUN_SQL})').fetchone() == ('{}','','[]')
         assert db.execute(f'select decision_json,audit_summary,memory_recall_used,projection_json from ({TASK_AGENT_RUN_SQL})').fetchone() == ('{}','',0,'{"applied":true}')
         assert db.execute(f'select envelope_json,audit_summary from ({OKR_RUN_SQL})').fetchone() == ('{}','')
         assert db.execute(f'select decision_json,final_message from ({MEETING_JOB_SQL})').fetchone() == ('{"adopted":true}','Business message')
-        assert db.execute('select status,final_text,error_detail,error_code,user_text from workbench_turns where id=?',(turn.id,)).fetchone() == ('failed','','','runtime_failed','Service input')
-        assert db.execute('select id,turn_id,sequence,event_type,created_at from workbench_events').fetchall() == before
-        payloads = [json.loads(row[0]) for row in db.execute('select payload_json from workbench_events where turn_id=? and sequence>=100 order by sequence',(turn.id,))]
+        assert db.execute(f'select status,final_text,error_detail,error_code,user_text from ({WORKBENCH_TURN_SQL}) where id=?',(turn.id,)).fetchone() == ('failed','','','runtime_failed','Service input')
+        assert db.execute(f'select id,turn_id,sequence,event_type,created_at from ({WORKBENCH_EVENT_SQL})').fetchall() == before
+        payloads = [json.loads(row[0]) for row in db.execute(f'select payload_json from ({WORKBENCH_EVENT_SQL}) where turn_id=? and sequence>=100 order by sequence',(turn.id,))]
         assert payloads == [{'native_ordinal':2},{'native_ordinal':1},{'native_ordinal':1},{'native_ordinal':2},{},{},{'native_ordinal':2},{},{},{'status':'completed'}]
         assert db.execute('pragma quick_check').fetchone()[0] == 'ok'
     assert storage_maintenance.compact_native_duplicates(store.path)['payload_bytes_removed'] == 0

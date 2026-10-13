@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "scope": "One minimal diagnostic to the current configured API relay using the unchanged native adapter-selected route credential. Not native CLI schema/Skill cold/resume acceptance. No business facts/Profile/tools submitted.",
+  "route": "codex_api",
+  "model": "gpt-5.6-luna",
+  "configured_host": "api.kksj.org",
+  "timestamp_utc": "2026-10-13T04:47:21.534561+00:00",
+  "sdk_retries": 0,
+  "native_session_created": false,
+  "http_status": 200,
+  "result_status": "completed",
+  "output_text": "OK",
+  "response_id": "resp_0fdb44182d7478c0006acdb7da989481948f6aec45e44ffd07",
+  "user_approval_scope": "Exactly one minimal diagnostic to existing api.kksj.org/v1/responses; explicit user approval received.",
+  "approval_used": true,
+  "historical_429_root_cause_confirmed": false,
+  "native_schema_business_acceptance": false,
+  "prepared_probe_sha256": "9c832361d414ae6623272644098fce8728fd798df6dacf039e80d75e7e00c60e",
+  "incomplete_details": null
+}

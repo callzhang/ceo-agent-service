@@ -491,6 +491,82 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "capability": {
+                "const": "dingtalk-chat"
+              }
+            },
+            "required": [
+              "capability"
+            ]
+          },
+          "then": {
+            "properties": {
+              "target": {
+                "properties": {
+                  "conversation_id": {
+                    "pattern": "\\S",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "message_id": {
+                    "pattern": "\\S",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "source_message_id": {
+                    "pattern": "\\S",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "open_dingtalk_id": {
+                    "pattern": "\\S",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "user_id": {
+                    "pattern": "\\S",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "recipient_open_dingtalk_id": {
+                    "pattern": "\\S",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "sender_open_dingtalk_id": {
+                    "pattern": "\\S",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "verified_participant_open_dingtalk_id": {
+                    "pattern": "\\S",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            }
+          }
         }
       ],
       "properties": {

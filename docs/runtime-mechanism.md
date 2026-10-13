@@ -1,5 +1,101 @@
 # Current Runtime Mechanism
 
+OA return uses its own effect verification, not the approval/rejection node
+completion predicate. The exact pending-node ownership check still precedes a
+new return. System first saves the actual response, principal, action digest and
+UTC call bounds. Only an explicit successful boolean operation result is
+acceptance; negative or incomplete responses cannot prove it. Read-only recovery
+joins the native process identity/business ID with the existing official OA
+OpenAPI process: original canceled node, unique own return event, exact approved
+remark in the call interval, and destination tasks in the approved activity
+before the next provider transition. Tied or untimed transitions, imprecise
+dispatch-second evidence, missing destination or partial records remain
+uncertain. No delay threshold or guessed recipient is used.
+
+Persisted dispatched/uncertain OA return actions reconcile before the pre-write source
+guard, because the original effect can itself change those facts. Reconciliation
+cannot dispatch. New writes retain source revalidation; prior acceptance evidence
+survives provider read failures. This does not retrospectively manufacture lost
+acceptance responses or rewrite historical failed executions. Comment and other
+action recovery retain their existing source/context fences.
+
+Audit handoff includes System-produced JSON type facts for each current action's
+target and payload fields, including human-option plans. The facts come from the
+exact validated candidate; they do not authorize an action or prove live
+ownership. New native feedback must explicitly classify its observation and
+include its field-assertion array; omission is a result error, not an implicit
+business judgment. Field-based feedback supplies candidate-relative path,
+literal and JSON type assertions. Before adopting the Audit result, the runner
+checks every assertion against the digest-bound candidate. A missing path,
+unsupported index, changed literal or wrong type corrects Audit via the existing
+technical result repair, not Consumer, business routing or automatic approval.
+Policy, source, authority and full-effect review remain Audit's work. Business
+prose is not parsed with keywords or regex, and historical feedback is not
+reconstructed as new evidence. A business misclassification or unsupported prose
+is still a model-review limitation, not proven factual truth merely because an
+assertion matches. Scalar field evidence is rendered before the complete final
+candidate JSON; source bindings remain in that JSON without repeating their
+values in the field index.
+
+OA Attention is a business-pending projection: the scanner starts tracking the
+exact principal-owned RUNNING nodes from the authenticated pending list and
+source details. Once tracked, the OA process remains in Attention while it is
+still running and has neither completed nor been explicitly returned, even if
+its current node moves to another approver. A completed comment or internal
+`done`/`no_action` does not remove it. Partial scans and source-read failures
+retain previous pending processes; non-OA pending/processing/needs_human status
+alone remains excluded.
+
+Reconciliation does not treat absence from the principal's pending list as
+completion or return. It removes the process from Attention only when live
+detail proves a terminal process, or when the exact reviewed task is canceled,
+the principal has no current RUNNING node, and the latest workflow-changing
+operation is that principal's `REDIRECT_PROCESS`. A running process that merely
+moved to another node remains unresolved in OA Attention; comments and
+unrelated task transitions are not return receipts. Historical local closures
+made solely for `OA_TASK_NOT_PENDING` are rechecked and restored to the
+projection when their live process is still running without a verified return.
+The service's DingTalk OpenAPI reader returns snake-case `process_instance`,
+`operation_records`, and operation fields; reconciliation reads those native
+records as well as the CLI detail projection before deciding a verified return.
+When a latest local attempt was previously closed solely as
+`OA_TASK_NOT_PENDING`, the scanner corrects that resolution only under an
+identity-and-original-resolution CAS after live terminal/return evidence; it
+retains the prior text and does not rewrite the attempt's outcome.
+
+Source feedback callback identities are opaque historical evidence, not newly
+generated outbound tokens. The validation copy removes only configured-origin
+pairs with matching identities and valid query fields; authored/outgoing token,
+credential, domain and signature checks are unchanged. Canonical source values
+and source digests are not rewritten.
+
+`reconcile-confirmed-meeting-delivery --job-id ...` previews an existing primary
+delivery receipt using provider readback without sending. `--apply` restores
+only the exact prepared body and original receipt under a transaction CAS,
+then resumes the existing calendar-only tail. It requires an unchanged failed,
+unlocked job, immutable same-target binding, no active dispatch claim and no
+sensitive split preparation. Revised unsent prose is not presented as sent;
+unconfirmed receipts, changed targets or split actions are not reconciled.
+
+Installed Skill discovery (`agent_cli.read_skill()` without a source) returns
+body-free TSV metadata with separate Root and Relative path columns. Joining
+the referenced root directory with the relative component reconstructs the
+absolute source path; no combined alias expression is presented as a read argument.
+The full name, description
+and reconstructed absolute read path of every authorized source are retained,
+including distinct paths sharing a name. The response includes its path joining
+and table quoting instructions. Named/path reads, source authorization and
+ambiguity checks are unchanged; no output budget or role policy is changed.
+
+Email unsubscribe page judgement explicitly selects an empty task Skill catalog
+through the existing native per-path Skill configuration. Unspecified standard
+turns retain the native default catalog, while an explicit selection (including
+empty) filters the catalog through the existing per-path helper. Existing
+always-on/plugin entries may remain visible; empty does not mean zero native Skills.
+The page states, verbatim evidence contract, route, approval, sandbox and
+unsubscribe execution rules are unchanged. Native global memory and AGENTS
+instructions remain CLI-owned and are not represented as service prompt text.
+
 The existing `read_dingtalk_drive_file` attachment reader limits downloaded bytes
 and OOXML aggregate uncompressed bytes to 20 MiB before parsing. Member parsing
 also uses bounded reads against one aggregate budget, with actual compressed
@@ -474,6 +570,8 @@ Codex Consumer 可在绑定工作区进行原生代码执行；Audit 只读。�
 
 Consumer 的业务结果与 wire JSON Schema 和解析器一致：`proposal`、`no_action`、`failed` 的 `decision_options` 为空，`requested_input`、`needs_human_reason`、`decision_basis` 不得有值；这些字段只属于 `needs_human`。普通方案的事实证据写在 `proposal.sourced_facts`，无需动作的依据写在 `summary`，不借用人工问题字段。
 
+新增 Consumer 输出在 Wire 解析入口校验 `dingtalk-chat` 的消息标识字段（conversation_id、message_id、source_message_id、open_dingtalk_id、user_id、recipient_open_dingtalk_id、sender_open_dingtalk_id、verified_participant_open_dingtalk_id）：提供的非 null 值必须是含非空白字符的字符串；不把数字转换成字符串。普通 proposal 和人工选项中的可执行 plan 均适用，输出 JSON Schema 同步声明该约束。历史保存结果的 Pydantic 域模型读取保持原样；这不表示旧数字标识仍符合新的输出 Schema，也不改变历史执行或恢复行为。其他 capability 的 target 继续支持通用 JSON 值。
+
 Consumer 的未审核外部效果检测只把写入操作的 provider 回执视作副作用；
 群消息列表中的 `conversationMessagesList[*].messages[*].openMessageId` 是历史消息身份，
 不能据此判定 Consumer 发送了消息或阻止后续安全恢复。检测只读取 provider 的
@@ -651,6 +749,8 @@ Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，�
 候选分为动作计划和当前实例的人工问题。人工问题包含来源上下文、具体原因、证据、互斥可行选项及后果；可执行选项各自绑定完整动作计划，停止选项写明 skipped 和原因。只有 Derek 能补充的开放事实使用 requested_input，不制造假选择。不能混合立即执行的动作与尚未选择的条件分支。
 
 Audit 返回 approve、return、reject，必须绑定 candidate_digest 和 proposal_revision；failed 只表示技术失败。Audit 不修改正文、选项，不返回执行回执，也不自行创作另一个人工问题。return 允许保留正文并补足证据；reject 要求实质改变被驳回内容，不能只改描述、元数据。首次提交最多三次内容重提，耗尽为 failed，技术失败不占内容预算。
+
+Audit Task 在完整候选旁附上服务从同一候选 JSON 确定性生成的标量字段证据：JSON Pointer 路径、精确字面值和 JSON 类型。字段类型反馈必须和该证据及候选相符；该索引不是额外来源事实，也不改变审核决策规则。
 
 人工问题也先经过 Audit。Audit 检查：是否确需 Derek、规则/代码/Skill/记忆/会话/读取是否可自行解决、是否应向来源人索取材料、是否把技术失败伪装成决策、上下文和理由是否充分、选项是否可行且确有差异、每个执行分支是否完整并仅限当前实例。只有当前版本 approve 后才进入 needs_human 和通知，审核通过不等于业务 done。
 
@@ -854,7 +954,8 @@ Project；原有关系即使 anchor 后来退休也仅作历史证明保留。�
 检索先读取正式 Project 当前资料/证据，再相关 Tasks；同来源旧身份强制保留，预算先给它们。
 零 Task 项目仍可读 context、当前职责/事实证明与有界近期来源，context revision limit=1，
 证据有界并固定保留引用 ID。current_project_attention 保留真实卡成员和原 assessment 原文。
-source_documents 提供精确版本的共享正文一次，source_signals 保留所有 ID/元数据并指向正文；
+Task 语义上下文用无损紧凑 JSON 序列化，省去排版缩进；字段、顺序、原文字符串、引用偏移和检索选择保持不变。
+source_documents 提供精确版本的共享正文一次，source_signals 保留引用 ID、来源和业务元数据并指向正文；数据库内部 dedupe_key 不进入 Agent 输入，持久去重键及其查询行为不变。
 当前 WorkItem 正文也只出现一次，immutable 输入不改。历史长文在 2048 字符预算内保留首尾及关键
 引文，visible_ranges/full_length/truncated 和引用超预算明确显示，JSON 解码引用有实际 leaf 路径/偏移。
 source_metrics 是正文字符观测，不是总 prompt token 保证；检索排名不证明身份、分工或业务重大性。
@@ -2294,7 +2395,7 @@ OA 评论出现未知效果后，System 只读原实例的正式 detail；摘要
 
 Prompts 设置读取先返回 Developer/User 的已保存原文；某份模板验证或渲染失败时，仅该份渲染预览为空并返回明确的 `preview_errors`，编辑器仍显示原文供修正。保存仍需通过现有验证，后台角色调用仍严格验证，不自动迁移或覆盖旧模板。
 
-精简只移除重复或已由任务 Skill 承载的流程说明，不改变角色边界、身份与证据规则、完整效果判断、业务结果模型或 Pydantic 校验。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。未结算的定时服务命令在 `scheduled_consumer.skill_materials` 冻结完整 managed revision 或 operation snapshot；未结算的通用 Scheduled Agent 在 `scheduled_agent_execution.v1` 顶层保存有序 `skill_names`、`skill_materials` 及其来源，原始 trigger 投影只保留结构化 Skill 身份事实，不再次复制正文。冷启动和续接都从同一未结算持久输入恢复；已结算输入改为来源摘要，冻结正文读取明确不可用。每一轮 Consumer 与 Audit Task 只列当前选中 Skill 的名称、极简用途和按需读取入口。保存输入声明该名称为冻结 Skill 时使用 `agent_cli.read_task_skill(name)`；材料重复、损坏或缺失由精确读取报告技术错误，不得改读当前磁盘版本。没有冻结声明的已选 Skill 使用目录中的实际授权绝对路径调用 `agent_cli.read_skill(path=...)`；Skill 正文引用的其他已安装 Skill 通过 `agent_cli.read_skill(name=...)` 精确读取，不把依赖目录预装进 Task。旧任务的显式 inline Task 约定仍在每轮保留。正文不复制进新 prompt，也不根据任务文字猜测来源。未选择 Skill 时 Task 只给 `agent_cli.read_skill()` 发现入口；该调用按需返回授权目录内的 name、用途和路径元数据，不返回正文，Agent 再按精确 name 或 path 读取。目录查询和 name 解析沿用相同授权根，越界符号链接不会进入元数据，重名明确报错。目录 frontmatter 只提取顶层 name/description，嵌套产品 metadata 不会隐藏可用 Skill。无论有无选中 Skill，显式自定义 Task 约定都继续在每轮 Task 保留；服务生成的发现文字由结构化来源标记识别，不重复注入。新运行事实记录实际入口来源与本轮 `skill_names`；未注入的旧全量目录不再作为 `skill_protocol` 保存。Email 分类、Meeting Alignment 与独立 WeChat 没有任务内读取工具，仍直接使用完整冻结正文。Email 分类的 Codex 命令按显式内联 Skill 名称，通过原生 skills.config 仅禁用同名安装副本的自动正文注入；本轮服务选定的托管或冻结正文仍完整提交。此配置不重新启用或关闭其他 Skill，不影响 Claude/Friday 的原有单条消息提交，也不改变分类规则、工具权限、路由、审批或会话绑定。会议来源预装配不能代替冻结 Skill 中的业务要求；在具备按需读取能力并验证规则完整性前，不把这些正文替换为名称提示。Runtime Context 缩短工具说明，保留原有准确 server.tool 名称和其他环境事实。无业务调用的旧 build_turn_prompt、ceo_agent_thread_prompt 及 CodexRunner 的隐含业务 Developer 默认入口已退休；底层 native 指令保留模式及真实调用者显式指令不变。
+精简只移除重复或已由任务 Skill 承载的流程说明，不改变角色边界、身份与证据规则、完整效果判断、业务结果模型或 Pydantic 校验。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。未结算的定时服务命令在 `scheduled_consumer.skill_materials` 冻结完整 managed revision 或 operation snapshot；未结算的通用 Scheduled Agent 在 `scheduled_agent_execution.v1` 顶层保存有序 `skill_names`、`skill_materials` 及其来源，原始 trigger 投影只保留结构化 Skill 身份事实，不再次复制正文。冷启动和续接都从同一未结算持久输入恢复；已结算输入改为来源摘要，冻结正文读取明确不可用。每一轮 Consumer 与 Audit Task 只列当前选中 Skill 的名称、极简用途和按需读取入口。保存输入声明该名称为冻结 Skill 时使用 `agent_cli.read_task_skill(name)`；所选冻结 Skill 的 revision_id/sha256 未变且完整正文仍在同一 session 上下文时，发现提示允许复用已读的确切内容；新会话、来源变化或全文不在上下文时仍准确读取，不新增缓存或本轮读取回执。材料重复、损坏或缺失由精确读取报告技术错误，不得改读当前磁盘版本。没有冻结声明的已选 Skill 使用目录中的实际授权绝对路径调用 `agent_cli.read_skill(path=...)`；Skill 正文引用的其他已安装 Skill 通过 `agent_cli.read_skill(name=...)` 精确读取，不把依赖目录预装进 Task。旧任务的显式 inline Task 约定仍在每轮保留。正文不复制进新 prompt，也不根据任务文字猜测来源。未选择 Skill 时 Task 只给 `agent_cli.read_skill()` 发现入口；该调用按需返回授权目录内的 name、用途和路径元数据，不返回正文，Agent 再按精确 name 或 path 读取。目录查询和 name 解析沿用相同授权根，越界符号链接不会进入元数据，重名明确报错。目录 frontmatter 只提取顶层 name/description，嵌套产品 metadata 不会隐藏可用 Skill。无论有无选中 Skill，显式自定义 Task 约定都继续在每轮 Task 保留；服务生成的发现文字由结构化来源标记识别，不重复注入。新运行事实记录实际入口来源与本轮 `skill_names`；未注入的旧全量目录不再作为 `skill_protocol` 保存。Email 分类、Meeting Alignment 与独立 WeChat 没有任务内读取工具，仍直接使用完整冻结正文。Email 分类的 Codex 命令按显式内联 Skill 名称，通过原生 skills.config 仅禁用同名安装副本的自动正文注入；本轮服务选定的托管或冻结正文仍完整提交。此配置不重新启用或关闭其他 Skill，不影响 Claude/Friday 的原有单条消息提交，也不改变分类规则、工具权限、路由、审批或会话绑定。会议来源预装配不能代替冻结 Skill 中的业务要求；在具备按需读取能力并验证规则完整性前，不把这些正文替换为名称提示。Runtime Context 缩短工具说明，保留原有准确 server.tool 名称和其他环境事实。无业务调用的旧 build_turn_prompt、ceo_agent_thread_prompt 及 CodexRunner 的隐含业务 Developer 默认入口已退休；底层 native 指令保留模式及真实调用者显式指令不变。
 
 Developer 保存先以现有渲染器验证，未知变量或不可渲染内容返回具体错误且不覆盖已保存正文；该检查属于配置格式合同。
 
@@ -2350,7 +2451,7 @@ Provider 明确返回 `success=false` 的主消息或敏感消息记录真实失
 
 ### 历史反馈链接的来源读取（2026-10-07）
 
-Consumer 捕获的历史消息以反馈 token 和 attempt ID 识别上下评分链接是否属于同一对。旧链接中的触发/回复预览各自仍接受敏感值检查，但文字差异不使当前任务失败；Markdown 来源解析保留 URL 原文，以便只在结果检查副本中移除经过检查的链接。两个链接仍分别验证配置的 host/path、query 字段和评分。当前待发送正文保持完整 query 的严格配对，来源原文、候选 digest 和执行前来源比较不受影响。
+Consumer 捕获的历史来源文本可能合并多条消息；校验器按反馈 token 与 attempt ID 分组，并要求每组各自包含通过配置 host/path、query 字段和评分验证的上下反馈链接。旧链接的触发/回复预览各自仍接受敏感值检查，但文字差异不使当前任务失败；Markdown 来源解析保留 URL 原文，以便只在结果检查副本中移除经过检查的链接。当前待发送正文保持完整 query 的严格配对，来源原文、候选 digest 和执行前来源比较不受影响。
 
 ## Storage retention (2026-10-09)
 
@@ -2495,7 +2596,11 @@ provider历史，不改成物理ID排序。取消重复TEXT唯一索引，没有
 
 ### Task 原生 Skill 目录
 
-Task 的 command factory 将当前 `ceo-work-tracking` 选择传到既有 Codex adapter，使用 CLI 原生 `skills.config` 限制目录。目录只启用明确选择的 Skill 和既有默认 Memory 插件，不再从正文的名称提及或 `dws` 命令推断递归依赖；相关依赖继续由 Agent 按需读取。未选中 Skill 的文件和既有读取权限不变。Consumer/Audit 使用空选择时，生成的配置与变更前逐字符相同。Task 完整 Skill 正文、动态事实、输出 schema、业务校验、session 与路线选择保持原有行为；Claude/Friday 的单消息装配不受该 Codex 配置影响。Codex 自带系统 Skill 仍由 CLI 决定，不将目录配置数量冒充实际显示数量。验证见 `docs/task-native-skill-catalog-validation.md`。
+Task 的 command factory 将当前 `ceo-work-tracking` 选择传到既有 Codex adapter，使用 CLI 原生 `skills.config` 限制目录。目录只启用明确选择的 Skill 和既有默认 Memory 插件，不再从正文的名称提及或 `dws` 命令推断递归依赖；相关依赖继续由 Agent 按需读取。未选中 Skill 的文件和既有读取权限不变。Consumer/Audit 使用空选择时，生成的配置与变更前逐字符相同。动态事实、输出 schema、业务校验、session 与路线选择不由目录配置改变；Skill 正文的路线交付方式见下节。Codex 自带系统 Skill 仍由 CLI 决定，不将目录配置数量冒充实际显示数量。验证见 `docs/task-native-skill-catalog-validation.md`。
+
+### Task Skill 按需读取
+
+Task 每轮服务输入保留 `ceo-work-tracking` 极简用途及当前 `WORK_TRACKING_SKILL_PATH` 的确切原生链接 `[$ceo-work-tracking](/exact/SKILL.md)`，Codex 不再指定 shell cat。Codex 对已加载 Skill 按链接路径选择正文；未加载文件不能通过该原生选择机制注入。本次 custom 样本中，Agent 按链接读取了确切文件，未采用已安装同名正文；这是样本行为，不是服务强制读取保证。Claude 本次原生目录未加载该文件；既有单消息适配器根据 factory 的同一 skill_paths 添加原有完整文件读取入口，不内联全文。其他角色未提供 skill_paths 时消息保持不变。既有文件加载 preflight 保留。command factory 保留未指定目录（None）与明确空目录（空 tuple）的区别；提供 skill_paths 时将其既有目录名与显式选择合并，无路径时不把默认目录改成空目录。command factory 保存同一源路径：Codex 的目录启用仍按既有名称配置，具体选择由原生路径链接完成；Friday 无本机文件读取入口，其既有单消息桥从该确切路径读取并内联全文一次，不按名称重新解析另一根目录。历史 scheduled Skill 快照仍不作为当前协议。任务专属动态事实和当前入口每轮提交，复用既有 session。结果 schema、业务校验、路由、工具权限不变。服务输入长度下降不代表总上下文/token 等量下降：原生 Skill 消息或按需读取的全文仍进入模型输入。验证与路线证据边界见 `docs/task-skill-on-demand-validation.md`。
 
 ## Unified reply and work-input storage (Store 2026-10-11.3)
 
@@ -2538,3 +2643,152 @@ weekly analysis job的11个原字段、running/completed/failed CHECK和week_end
 
 
 Email task visibility in Store13: unsubscribe classification lists, classification detail/in-flight progress, verified entry URL lineage and summary queue counts detect the physical tasks/runs tables. They read public task/run IDs through the typed projections and resolve canonical inputs through the physical current_input_id reference. A standalone EmailStore without the shared task tables retains its existing behavior. Existing receipt/lineage/URL validation and redaction rules remain; this change fixes the physical-table presence check and adds no policy.
+
+
+## Phase4C core storage (Store 2026-10-12.1)
+
+隔离候选的核心 schema 将 scheduled_task_runs 和 workbench_events 存入 runs，
+workbench_tasks 和 workbench_turns 存入 tasks；record_type 保留来源身份。Workbench
+公共 TEXT ID 按原值保留，内部父引用使用物理整数 ID；原任务/run ID 不重写。
+scheduled/Workbench CRUD 与 reader 切换已完成并通过独立规格及质量复核。
+生产是否启用本期结构，以本期验收文档中的实际部署读回为准。
+
+构造器支持精确已验证 source13 到本期候选的事务迁移；无标记/未知来源包含任一退休源表
+时，在初始化修改之前拒绝。C 源 tasks/runs 的完整对象清单也必须符合已捕获的声明，
+不能静默删除额外源触发器或索引。当前 schema 已有的缺失对象修复规则保持不变。
+
+本期只取消全空的 Workbench final_text 与搜索 summary_text、fts_text、embedding_json、
+embedding_model、embedding_updated_at；非空或 NULL 值在迁移修改之前拒绝。用户输入、
+恢复上下文、错误详情、原始事件 payload、附件/工件/confirmation 结果保留；三个子表仍在
+原表，父外键映射保留原 NO ACTION 语义。七列搜索元数据与 title-only external-content
+FTS 保留，native 检索排序算法不变。Workbench DTO/native/RAM 的呈现已通过相关调用测试。
+
+配对回退通过当前数据逆迁，保留迁移后业务事实，而非用旧数据库文件覆盖。原 DDL、
+marker/timestamp、分配水位、TEXT 源表与保留子表的 rowid，以及原 FTS shadow 状态由
+本次发布的临时内存证据准确恢复；新/变更/删除搜索元数据只调整相应差异。
+不持久保存另一份 trajectory 或索引快照。实际副本迁移、逆迁、新事实保留、旧代码
+启动及五种离线发布失败阶段已通过6b43a93b来源验证。最终验收还需绑定最新生产来源，
+通过完整CI、正常部署和线上读回；详见 database-redesign-phase4c-validation.md。
+
+
+## Phase4C scheduled callers
+
+候选的定时触发 DAO、dispatcher、恢复、Attempt/History、运行路由引用读取已切换到
+runs 中 record_type=scheduled_task_runs 的记录。查询返回原公共 scheduled ID；写入按
+record_type 和公共 legacy key 精确定位。execution_id 继续保留原 TEXT 值与 execution_kind
+含义，服务命令不会被制造为回复任务。History 对外的 source 标签仍是 scheduled_task_runs。
+
+原事件唯一、定时自然键、overlap 的 first/last/count、领取 CAS、租约、派发事务和
+回复关联规则不变。配置版本和冻结 snapshot_json 留在 scheduled_task_config_versions，
+snapshot_id 保留原 FK；当前初始化不再建立退休 scheduled 表，现有配置默认值修正使用
+typed 父引用。历史 Attempt 和 skipped 快照不因运行路由改名而重写。
+
+正常 deploy 等待读者明确支持已验证的2026-10-11.2 / 2026-10-11.3 来源
+和2026-10-12.1候选。来源判断读取实际 schema；旧标记同时含 C runs 声明与旧表时拒绝，
+包括没有 scheduled 行的混合库。真正历史来源和当前候选沿用原忙碌/租约谓词，
+只读检查不修改行、schema 或数据库 bytes。Workbench CRUD/native/API 仍是后续单元，
+本段不表示完整 C 已发布。
+
+
+Phase4C 的初始化修复边界：旧分散 Workbench0.7/0.8/0.9表缺列后自动补
+resume_context、task_sequence、turn控制和附件client_request_id/content_sha256的路径
+已退休。当前变更只支持准确source13正迁和完整current14声明；缺失必要列的库拒绝，
+不通过补默认值猜测原数据。已有缺失索引/触发器修复继续支持。源13迁移须保留
+原user_text、私有恢复上下文、task_sequence、控制状态、附件标识/hash/path/文件bytes；
+原本同时间戳但不同UUID的turn按原sequence排序。测试覆盖真实来源保留、当前不完整
+声明的非修改拒绝与并发索引修复，不以半旧半新的schema冒充来源。
+
+
+## Phase4C Workbench callers
+
+Workbench task/turn 的CRUD、全局client_request幂等、task_sequence、单active turn、
+claim/lease/stop/control/recovery保留原合同。读者从typed tasks投影公共TEXT ID，
+写者按record_type+legacy_key定位；附件/工件/确认表存储物理父整数，DTO仍返回公共
+task/turn ID。事件在runs中按公共numeric legacy cursor分页和配对，物理run ID、
+turn sequence及native ordinal各自保持原含义；先按物理父筛选再投影cursor以使用索引。
+
+不再写入物理final_text；已有native/RAM与Codex/Claude/Friday读取继续提供正文。
+本单元不改API/UI契约、工具权限、确认政策或新的保留期限。准确source13迁移保留
+pending confirmation，原有业务recovery是独立调用，不作为迁移副作用。
+相关停止/完成竞态、late write、quiescence和恢复行为仍由原机制管理。
+
+旧列补齐测试已换成真实source13值保留和当前不完整schema非修改拒绝；索引修复
+继续以两次并发构造、原外键及附件bytes验证。缺失辅助对象的既有初始化路径仍会
+执行conversation-session回填并更新schema marker时间；它不承诺所有业务行逐字不变。
+最终发布仍须最新来源绑定、完整CI、正常部署与线上读回；本段不表示已部署。
+
+
+Phase4C Attention 定时错误读取以原event_id或规范scheduled-task-run:<公共整数ID>
+分别定位候选，再应用原同日程较新dispatched且回复done/skipped的恢复谓词。
+两路以UNION ALL组合，事件身份和conversation身份互相矛盾时仍沿用原“任一路匹配”
+语义；不新增身份收紧政策。定位使用既有event/public-ID索引，不新增schema/index/helper。
+原2,000VM步预算和只读合同保留；采样进度回调数不表示精确总指令数。
+
+
+Phase4C 查询性能边界：数字ID投影显式包含已有部分索引的类型条件，SQLite可使用
+idx_tasks_public_id完成按公共ID查找；TEXT投影不加入此条件。Work Attention先从
+work_summary_inputs类型的scalar状态记录筛出公共ID，再读取所选输入正文；无关类型
+增长不扩大其候选扫描。会议Memory入队的missing候选、主键连接和事务复核使用
+现有物理任务ID；meeting_memory_write_events仍保存物理父FK，对外还原公共ID，
+已入队记录正文不参与候选检查。状态、排序、limit、去重与竞争复核规则不变。
+
+Phase4C已于2026-10-12通过PR61/05ca33b1正常上线，生产Store2026-10-12.1、Email51、PID43265及数据/队列读回已验证。具体来源、字段映射、回退、CI、容量和清理边界见docs/database-redesign-phase4c-validation.md；上文候选阶段的时间性验收说明以本条及验收文档最终回执为准。
+
+
+### Full document native output delivery
+
+Consumer/Audit Codex commands use the existing per-tool native output budget of30,000 for `agent_cli.read_dingtalk_document_full`, on cold and continued turns. The server's complete result can otherwise be clipped in the native model-visible output. This preserves the selected JSONML/revision result without substituting Markdown, changing all-tool budgets or adding prompt rules. The source may still exceed that finite budget; server complete=true alone is not proof of complete model visibility. Regression/native evidence is recorded in `docs/document-native-output-validation.md`.
+
+Consumer 通用 Skill 约定只规定独立选择并应用适用 Skill；每轮 Task 发现入口统一决定何时读取，避免通用层的读取措辞与冻结来源复用条件冲突。安装来源和未选择 Skill 的既有读取入口不变，不新增缓存或读取回执。
+
+
+Consumer/Audit 的原生 `read_dingtalk_messages` 单工具输出限额为30000，用于完整交付已请求的消息字段；该设置冷启动和续会话均保留。不提高全局输出限额，不改变消息查询参数、窗口工具、正文或分流/审核规则；长目录与文件读取保持各自现有单工具设置。
+
+OA pending scans carry the complete scheduled Consumer wrapper, including exact frozen Skill materials, into the claimed reply input. Consumer and Audit read those original bodies through read_task_skill; the scanner must not use the Task extraction projection that omits skill_materials. Task extraction sources retain their existing body-free scheduled context. This changes input delivery only, not Skill contents, task classification, audit policy, routes or sessions; old inputs are not rebuilt.
+
+
+### 第五期A：候选与执行存储合并
+
+Store `2026-10-13.1` 将候选、审查、选择、补充、执行和动作尝试六种已有事实存入一张 `actions` 表。
+原公开 ID 保留各自类型的整数空间；真实外键使用统一物理 ID，页面和业务 API 仍返回原公开 ID。
+候选的 predecessor review、selection 的 candidate/review、execution 的 candidate/review/selection
+及 attempt 的 execution 关系分别保留。读取使用明确类型投影；写入使用有限字段定义；没有旧物理表、
+兼容 view 或双写。`actions` 自己声明任务、运行及动作类型引用约束，不重复安装通用 child trigger。
+独立 `external_action_results` 在这段仍保留，后续迁入独立 receipt 类型；无候选回执不会被制造归属。
+完整十表目标还包括其余 actions、business、emails、provenance、configs、provider_state、schedules 和 state。
+
+这个发布单元只接受准确的前版 Store `2026-10-12.1`。迁移前核对六表声明、字段及引用；迁移和 schema
+版本更新在同一事务内完成。配对逆迁从当前 `actions` 重建源表并恢复原版本记录，保留发布后的新增、更新、
+删除事实，不还原陈旧数据库备份。正常发布和回退后的重新启动在新进程验证，不能以同进程已初始化路径
+缓存代替实际启动验收。此段描述本发布代码契约；是否上线以正式部署回执为准。
+
+
+### 第五期B：独立回执合并
+
+Store `2026-10-13.2` 将 external_action_results、agent_effect_intents 和
+agent_execution_receipts 的实际字段与约束合入同一 actions 表。全局回执保留准确文本主键，
+通过 first_agent_run_id 引用逻辑 Agent run，不制造 candidate 归属。两类原生执行事实保留各自
+AUTOINCREMENT 公开 ID 和 native sqlite_sequence 水位；自动分配与插入持有同一 SQLite 写锁，
+显式自动提交连接使用自有 savepoint，普通连接的事务仍由调用方控制。内层 JSON 原始字符串保持原值。
+正常运行只读写九类型 actions，不创建旧三表、兼容 view 或双写。
+
+本发布单元只接受准确 Store15 声明，包括实际历史 ALTER 与实际 fresh constructor 的列顺序差异。
+配对逆迁按捕获的源声明恢复当前事实与当前水位，保留迁移后的新增、修改和删除，不恢复旧备份内容。
+发布 quiet-wait 读取器仅在明确声明的源／目标结构读取原生执行事实；恢复、审查、发送及回执策略不变。
+完整十表目标尚未完成；其余 actions 家族和第六至八期仍需要实施。是否上线以正式部署回执为准。
+
+### Store17 postfix 整合（开发候选，尚未发布）
+
+Store `2026-10-13.3` 将 outbound_postfixes、outbound_postfix_receipts、
+native_reply_dispatches 的十三个实际字段合入十二类型 actions。正常调用与
+WeChat bootstrap 只使用 actions 投影及类型写入，不创建旧表、兼容 view 或双写。
+复合身份和立即 NO ACTION 外键保留；首次准备、provider 前 claim、首次回执、
+echo 判断及会议恢复顺序保持现有行为。只接受准确前版 Store16 来源。
+配对逆迁从当前事实重建旧三表及九类型 actions，保留发布后写入并恢复原版本记录。
+完整十张核心表加迁移表目标仍未完成。此段描述开发候选，上线以正式部署回执为准。
+OA approval Attention reflects an unresolved process-level state from the latest
+verified provider scan. A running OA process may have completed the current
+principal's node and moved to another approver; unless the provider detail
+identifies the current node owner, the projection must not claim that the
+principal's node is still pending. Keep the process in Attention until a final
+approval or return receipt is read back.

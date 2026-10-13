@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "checked_at": "2026-10-12T13:44:17Z",
+  "candidate_ref": "09e07daf955dd5750928f926d60444816f56bccf",
+  "raw_evidence": "/private/tmp/ceo-task-openai-api-current-ot1u89tn",
+  "run": {
+    "variant": "candidate",
+    "phase": "cold",
+    "returncode": 1,
+    "timed_out": false,
+    "session_id": "01a1305b-609d-7140-bcb9-d5616d7be19a",
+    "prompt_sha256": "77de94da68d059bddd9b0089e993768ae178434d9e12c5cb700d2064b8b1565e",
+    "skill_config_selected": true,
+    "route": "codex_api",
+    "model": "gpt-5.6-luna"
+  },
+  "terminal_error": "exceeded retry limit, last status: 429 Too Many Requests",
+  "valid_cold": false,
+  "resume_run": false,
+  "business_output": false,
+  "events_sha256": "1eeeed129e9a1660191752070226748414447077eef2f94e8ba0b3af377cbfc1",
+  "boundary": "Configured codex_api route with unchanged approval and local fake Memory; terminal429 is not schema/Skill incompatibility evidence. Models-list warning is not established cause. No valid cold or continuation acceptance."
+}

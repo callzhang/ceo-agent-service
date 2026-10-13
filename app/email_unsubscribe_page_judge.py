@@ -169,6 +169,7 @@ def build_page_judge(
             command_factory=CodexCommandFactory.standard(
                 developer_instructions=_DEVELOPER_INSTRUCTIONS,
                 use_output_schema=False,
+                skill_names=(),
             ),
             parser=lambda raw: parse_page_judgement(raw).model_dump_json(),
             result_codec=_RESULT_CODEC,

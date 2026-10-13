@@ -181,7 +181,8 @@ class CodexCommandFactory:
     output_schema_path: Path | None = None
     use_output_schema: bool = False
     image_paths: tuple[Path, ...] = ()
-    skill_names: tuple[str, ...] = ()
+    skill_paths: tuple[Path, ...] = ()
+    skill_names: tuple[str, ...] | None = None
     inlined_skill_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -196,7 +197,8 @@ class CodexCommandFactory:
         output_schema_path: Path | None = None,
         use_output_schema: bool = False,
         image_paths: Sequence[Path] = (),
-        skill_names: Sequence[str] = (),
+        skill_paths: Sequence[Path] = (),
+        skill_names: Sequence[str] | None = None,
         inlined_skill_names: Sequence[str] = (),
     ) -> "CodexCommandFactory":
         return cls(
@@ -204,7 +206,8 @@ class CodexCommandFactory:
             output_schema_path=output_schema_path,
             use_output_schema=use_output_schema,
             image_paths=tuple(image_paths),
-            skill_names=tuple(skill_names),
+            skill_paths=tuple(skill_paths),
+            skill_names=tuple(skill_names) if skill_names is not None else None,
             inlined_skill_names=tuple(inlined_skill_names),
         )
 
@@ -229,8 +232,10 @@ class CodexCommandFactory:
             use_approval_bypass=False,
             sandbox_mode=None,
         )
-        if self.skill_names:
-            build_options["skill_names"] = self.skill_names
+        if self.skill_names is not None or self.skill_paths:
+            build_options["skill_names"] = (self.skill_names or ()) + tuple(
+                path.parent.name for path in self.skill_paths
+            )
         if skip_git_repo_check:
             build_options["skip_git_repo_check"] = True
         command = adapter.build_command(**build_options)
@@ -265,14 +270,27 @@ def _out_of_band_instructions(command_factory: CodexCommandFactory) -> str:
 def _friday_turn_text(command_factory: CodexCommandFactory, prompt: str) -> str:
     """Friday's turn API takes one user message and has no schema field."""
     return "\n\n".join(
-        part for part in (_out_of_band_instructions(command_factory), prompt) if part
+        part
+        for part in (
+            _out_of_band_instructions(command_factory),
+            "\n\n".join(
+                path.read_text(encoding="utf-8").strip()
+                for path in command_factory.skill_paths
+            ),
+            prompt,
+        )
+        if part
     )
 
 
 def _claude_turn_text(command_factory: CodexCommandFactory, prompt: str) -> str:
     """Claude reads its instructions from the same contract Agent turns use."""
+    skill_entries = "\n\n".join(
+        f"Read the complete current Skill at {path} (cat the file)."
+        for path in command_factory.skill_paths
+    )
     return claude_input_contract(
-        prompt=prompt,
+        prompt="\n\n".join(part for part in (skill_entries, prompt) if part),
         developer_instructions=_out_of_band_instructions(command_factory),
     )
 

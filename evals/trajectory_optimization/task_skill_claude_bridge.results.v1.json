@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "parent_ref": "fba71a59f2c09fec067c206ded816191c9d754f9",
+  "task_source_sha256": "ed1a86fbbca8804ff7c18f3fc6e3c834b058e9be6427649d7b4b0fe5bf3afc68",
+  "router_source_sha256": "6353e9283f66d663d76ad27ed746be80bc1001af7fc4ebf34ebc14cb0122f62d",
+  "raw_root": "/private/tmp/ceo-task-claude-skill-bridge-yk6kxz0s",
+  "native_path": "/Users/derek/.claude/projects/-Users-derek-Projects-ceo-agent-service/b885c7ee-5707-42d8-87af-e239be51fb8b.jsonl",
+  "source_path": "/Users/derek/.agents/skills/ceo-work-tracking/SKILL.md",
+  "source_sha256": "99f2c30ed48cb1734d4ee859f0633f504562257be103136e8de7b96d0fbc3d05",
+  "source_sha256_kind": "stripped UTF-8 Skill body",
+  "full_source_chars": 23452,
+  "source_reads_in_entire_session": 1,
+  "turns": [
+    {
+      "route": "claude_oauth",
+      "model": "sonnet",
+      "variant": "candidate",
+      "phase": "cold",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "b885c7ee-5707-42d8-87af-e239be51fb8b",
+      "submitted_chars": 58643,
+      "submitted_sha256": "10f1d176a6c225922f0a7cd0b8742e667e8e7da70f41362e4bc395dd45067d12",
+      "events_sha256": "219be1cac74babbfba3d711f7e4914cd758e757f4e528347b31acd2caa2f778f",
+      "decision_sha256": "125b8c69bbb7d6f18117f65d8c8b8b3ebeac099bea6bc6ae1c0c715abd639976",
+      "exact_native_input_match": true,
+      "business_model_valid": true,
+      "complete_source_in_session": true,
+      "actual_model": "claude-sonnet-5",
+      "db_quick_check": "ok"
+    },
+    {
+      "route": "claude_oauth",
+      "model": "sonnet",
+      "variant": "candidate",
+      "phase": "risk",
+      "returncode": 0,
+      "timed_out": false,
+      "session_id": "b885c7ee-5707-42d8-87af-e239be51fb8b",
+      "submitted_chars": 62147,
+      "submitted_sha256": "cc47f26885195ed9ccb8f5d06ddc3f62bb76743c2f38895734f8bbfcf8ad41c7",
+      "events_sha256": "9606498326216db0d0443c032d48f3030ed4a467131fd89684de8bfebbf7cf5e",
+      "decision_sha256": "5d217171bab51bb18d56c6e246fd8dfff0aa060e1f9aa066c1a3cfd29e39bea4",
+      "exact_native_input_match": true,
+      "business_model_valid": true,
+      "complete_source_in_session": true,
+      "actual_model": "claude-sonnet-5",
+      "db_quick_check": "ok"
+    }
+  ],
+  "applications": [
+    {
+      "phase": "cold",
+      "projects": 1,
+      "tasks": 0,
+      "attention_count": 0,
+      "attention_categories": []
+    },
+    {
+      "phase": "risk",
+      "projects": 1,
+      "tasks": 1,
+      "attention_count": 1,
+      "attention_categories": [
+        "watch"
+      ]
+    }
+  ],
+  "boundary": "Existing adapter and normalizer, fixed anonymous facts, fake Memory only. Valid cold followed by same-session risk; own cold DB seed. Complete native source, no redundant risk source read. No scheduler, real persistence, production or general quality/cost claim. Other configured API route gates remain open."
+}

@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "fixture": "343 independently synthetic metadata files, actual read_skill source/name/path functions",
+  "model": "gpt-5.6-luna",
+  "paired_command_except_arm_exact": true,
+  "task_sha256": "ec7f6f2c3d83843eb7aecaeef4a719d9a9b8e55dd1412b8f2ce9416506eced56",
+  "source_rows": 343,
+  "runs": [
+    {
+      "arm": "baseline",
+      "session_id": "01a131d3-d2ab-7ed2-aea0-7f44a670d843",
+      "tool_calls": 3,
+      "original_catalog_exact": true,
+      "model_visible_catalog_exact": false,
+      "catalog_clipped": true,
+      "catalog_model_chars": 127275,
+      "source_sha256": "2602b51b874b85c8f34c411ca64fd625fccad5111f649c5a17d30a55e7be360a",
+      "events_sha256": "d9c74b12cae13727af9a5877bfaeafb0990e287c8f08668d832fbad572c61897",
+      "native_sha256": "098b92d1fd555429747aaf263a2bf4d5aa7c439512c4998992fb2852ea7e5717",
+      "initial_developer_sha256": "4be2b46e01bc4b6d460a5c5a7295db3a916b58226371588a74a258a25e7cbfbb",
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "on-request",
+          "sandbox_policy": {
+            "type": "read-only"
+          }
+        }
+      ],
+      "bodies": [
+        {
+          "requested_metadata_name": "synthetic-guide-150",
+          "tool_returned_name": "guide-150",
+          "final_returned_name": "synthetic-guide-150",
+          "content_sha256": "51caed8a9f51713025c7bdfbc422ad2d9e12b9e9f5dab5224bfd3794bdca2f8d",
+          "exact_source_tool_model_final_content": true,
+          "exact_path": true
+        },
+        {
+          "requested_metadata_name": "synthetic-guide-330",
+          "tool_returned_name": "guide-330",
+          "final_returned_name": "synthetic-guide-330",
+          "content_sha256": "db811786de5872de21ba7a2c9b31bc6c2772be479871320aab398a3c686ff8e5",
+          "exact_source_tool_model_final_content": true,
+          "exact_path": true
+        }
+      ]
+    },
+    {
+      "arm": "candidate",
+      "session_id": "01a131d3-f840-7a41-92f1-82ef8363615a",
+      "tool_calls": 3,
+      "original_catalog_exact": true,
+      "model_visible_catalog_exact": true,
+      "catalog_clipped": false,
+      "catalog_model_chars": 82979,
+      "source_sha256": "2602b51b874b85c8f34c411ca64fd625fccad5111f649c5a17d30a55e7be360a",
+      "events_sha256": "2259f941e2d41023dbfe50d9e3a0830158ffddba11416830f6b05b77ee3bbb8d",
+      "native_sha256": "bc08446b3e1f5640cb87f87b38418fb1c788bb55320fcc8eec107ba5af09dc00",
+      "initial_developer_sha256": "4be2b46e01bc4b6d460a5c5a7295db3a916b58226371588a74a258a25e7cbfbb",
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "on-request",
+          "sandbox_policy": {
+            "type": "read-only"
+          }
+        }
+      ],
+      "bodies": [
+        {
+          "requested_metadata_name": "synthetic-guide-150",
+          "tool_returned_name": "guide-150",
+          "final_returned_name": "guide-150",
+          "content_sha256": "51caed8a9f51713025c7bdfbc422ad2d9e12b9e9f5dab5224bfd3794bdca2f8d",
+          "exact_source_tool_model_final_content": true,
+          "exact_path": true
+        },
+        {
+          "requested_metadata_name": "synthetic-guide-330",
+          "tool_returned_name": "guide-330",
+          "final_returned_name": "guide-330",
+          "content_sha256": "db811786de5872de21ba7a2c9b31bc6c2772be479871320aab398a3c686ff8e5",
+          "exact_source_tool_model_final_content": true,
+          "exact_path": true
+        }
+      ]
+    }
+  ],
+  "limits": "Directory-to-body mechanism only, no complete Consumer/Audit business role/provider validation. Final name fields differ; paths/content exact. No private source replay or real provider action.",
+  "independent_read_only_review": "Verified all 343 fixture metadata rows, source/event/native hashes, exact paired commands and initial Developer, actual three tool requests and complete content/path through source/MCP/model/final. Final name difference retained. Complete Consumer/Audit business role acceptance remains open."
+}

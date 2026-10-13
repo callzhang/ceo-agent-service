@@ -1,0 +1,189 @@
+# Task Skill on-demand delivery validation
+
+## Current concise Skill entry follow-up (2026-10-12)
+
+The link-only entry below passes the Codex fixed cases but fails the Claude source-visibility gate: native session `bf0a5000-2586-4d02-999c-3886af9862c4` has valid cold/risk decisions yet no full current Skill body. Results are preserved in `task_skill_path_link.claude_rejected.v1.json`. A conditional full-content requirement also fails Claude: cold has no full Skill, and same-session risk fails existing business validation because a suggestion carries owner/formal fields. Native original output is retained in `task_skill_conditional_link.claude_rejected.v1.json`; no extra repair or new validator rule is added. Preserving the imperative with only a native link also produces no Skill read and fails cold fact-date validation (`task_skill_imperative_link.claude_rejected.v1.json`); no invalid cold resume was attempted. These are source and business failures, not evidence that the result contract should be weakened. Claude native init has reading tools but no loaded ceo-work-tracking Skill; Codex exact native links use loaded Skill selection. Current fix keeps the verified Codex link unchanged and uses existing factory skill_paths to add the original complete-file read entry in the Claude single-message bridge only. Friday full-body bridge and all routes/permissions/business validation are unchanged. 371 affected delivery/registration/schema/guidance/Task/router/routed-execution tests pass after a RED bridge regression. New Claude native bridge cold is valid: SID `b885c7ee-5707-42d8-87af-e239be51fb8b`, exact full 23,452-character stripped Skill in model-visible Bash result, applied to fresh isolated DB1/0/0. Same-session risk is valid and does not reread the unchanged Skill. Against its own cold DB, risk applies1 Project/1 Task/1 watch Attention; both DB quick_check results are ok. Both exact native inputs, source body and original outputs are recorded in `evals/trajectory_optimization/task_skill_claude_bridge.results.v1.json`. This closes the local Claude fixture gate only; API and production gates remain open. Independent read-only final review matched both submitted/native inputs, all event/decision/source hashes and both isolated DBs, and confirmed one complete cold read with no risk reread. No route or permission change.
+
+## Native exact-path entry (2026-10-12)
+
+The plain `$ceo-work-tracking` experiment is rejected as a source-fidelity solution. It injects the installed same-name body even when the task Source points to another file; the custom file and its receipt comment never reach model input. Its successful default-path outputs do not hide that failure. Metadata and original six runs: `evals/trajectory_optimization/task_skill_native_reference.results.v1.json`.
+
+Codex0.154 supports exact-path textual Skill links among loaded/enabled Skills ([official selection source](https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/skills/src/selection.rs#L118-L179)). The Task entry now uses `[$ceo-work-tracking](/exact/SKILL.md)` instead of requiring shell cat; no CLI config, global output cap, permission, route, session or business validator change. The exact-source regression failed before this one-line change. Afterward254 affected delivery, registration, schema, guidance and Task business tests pass; registration still verifies both authoritative definition/name rules against the full selected file.
+
+Real native cold/risk runs cover both the installed source and a separate same-name custom file. Cold prototype strings are byte-identical to current builder output; risk uses the changed builder directly and resumes each valid cold session. All four actual native submissions exactly match saved inputs and pass full business model parsing. Installed source enters native selected-Skill messages in full without Skill file reads. Custom source is not substituted by the installed body: its first260 and remaining83 lines each appear exactly and untruncated in model-visible cold tool outputs, including the receipt comment. Its unchanged source remains available in its resumed history. Four isolated applications against each arm's own cold DB pass quick_check: cold1 Project/0 Task/0 Attention; risk1/1/1. Category/wording variation is not a general quality claim; fake Memory is not real persistence.
+
+Independent read-only review matched all four inputs, raw events, decisions and database applications. Metadata `source_sha256` hashes the stripped Skill body, not raw file bytes.
+
+Evidence: `evals/trajectory_optimization/task_skill_native_path_link.results.v1.json`; raw installed/custom runs `/private/tmp/ceo-task-native-link-installed-1rhgqas2` and `/private/tmp/ceo-task-native-link-custom-1szdgjro`. Claude and API route gates require follow-up for this changed entry; draft remains unpublished. The native body still enters model context, so a smaller service prompt is not equal total-token savings.
+
+2026-10-12 同步目录父分支 `3eaa2e31`（含当前 typed storage）后，schema delivery、runtime router、routed execution、既有 Task repair 和 Project registration 五文件共154 passed；另四个 Skill delivery、guidance dedup、Task business application 与 business Skills 文件275 passed，合计429项不重叠的受影响测试。三份文档冲突保留双方追加内容及父分支准确扩展；Task 全文内嵌目录说明由本草稿的按需交付说明替代。此回归不补齐原生 cold 全文读取或 API business gates，草稿仍不发布。
+
+## Current API readback (2026-10-12)
+
+One additional configured `codex_api` candidate cold probe used the same anonymous facts/context, unchanged approval setting and local fake Memory only. It ended with `exceeded retry limit, last status: 429 Too Many Requests`, exit1 and no decision. Native SID `01a1305b-609d-7140-bcb9-d5616d7be19a` is not a valid cold session; no resume was attempted. The models-list decode warning is retained in raw stderr but is not established as the terminal cause. This is route-readiness evidence, not schema/Skill incompatibility or provider capacity-root-cause proof. Metadata: `evals/trajectory_optimization/task_skill_api_capacity.current.results.v1.json`; raw files `/private/tmp/ceo-task-openai-api-current-ot1u89tn`. No production, approval-policy or prompt change.
+
+Task previously included the entire current work-tracking Skill in every service prompt. Local native CLIs can read that file; Friday's turn API cannot read the local path. The factory now carries the exact selected path. Local Task input includes its brief purpose and full-read entry; Friday's existing message bridge includes that exact file once. The existing source-file preflight remains. No routing, tool permission, result validation, session binding or audit policy changed.
+
+## Regression evidence
+
+The new custom-root regression failed before the change because the full marker body remained in the local prompt. It passes after the change and checks exact factory path, preserved current facts, body-free local Claude input, and full exact remote content once. Existing schema-delivery tests still require one complete output schema. Source-root, historical snapshot exclusion, scheduled scope, input immutability, business guidance and business application tests remain covered. Shared-rule assertions now check the selected Skill plus the Task-specific input, while native read evidence is checked separately.
+
+307 Task/schema/router tests and 85 business-Skill/adapter tests passed locally (392 total). Ruff and diff checks passed. No GitHub Actions test was required for this evidence; no full live-service suite was run.
+
+## Native comparison
+
+Cases: `evals/trajectory_optimization/task_skill_on_demand.cases.v1.json`. Results and input/event/decision hashes: `evals/trajectory_optimization/task_skill_on_demand.results.v1.json`. Raw evidence: `/private/tmp/ceo-task-on-demand-el39rf6f`. Native Codex OAuth, gpt-5.6-luna, medium reasoning, same model/config/facts/clocks/context and full Task result schema. Baseline is the parent Task prompt at 5bcfac89; both use the same explicit native Skill catalog. No real business service or Memory backend is connected.
+
+| Case | Parent service characters | Candidate service characters | Applied result |
+| --- | ---: | ---: | --- |
+| Normal Project cold start | 32,096 | 8,898 | Both: one Project, Chen Ming owner, Zhao Hua payment responsibility, zero Tasks/Attention |
+| Payment-risk same-session continuation | 35,600 | 12,402 | Both: reuse one Project, one display-only Task candidate, one Attention |
+
+Cold sessions: baseline `01a12f8d-4e6f-7e60-ba1b-8ddd299aa239`, candidate `01a12f8d-9484-7bc3-ac9a-cdfa9d9b7270`. Risk turns resumed their respective valid cold sessions. Four outputs passed full existing model/business validation and were actually applied to isolated databases; project/task/Attention counts were read back.
+
+Candidate cold performed a successful native `cat` of the exact current Skill. Its raw command capture contains the full 23,452-character stripped body, but later native-rollout inspection shows the outer model-visible output was truncated. The initial raw-capture-only assertion did not prove complete cold delivery and is corrected below. Candidate risk actual model-visible tool output contains the complete exact Skill. Baseline also read the beginning of the file, but already had the full body in its service input. Do not infer incomplete baseline instructions from that extra partial read.
+
+Risk judgments differ: baseline proposed `push` and “确认客户验收材料并落实回款日期”; candidate proposed `watch` and “补齐客户验收材料并确认回款日期排期”. Both suggested the existing overall delivery owner Chen Ming with original evidence. This sample confirms valid source-based application, not identical judgments or superior business accuracy. The candidate completed one `memory_fixture.memory_write`, and the fixture recorded its data, original source timestamp and provenance. Its result explicitly says `fixture:true`; this is not production durable-Memory evidence. Baseline made no MCP call in these runs.
+
+Friday has regression/code-path evidence only; Claude native evidence is recorded below. On-demand loading reduces the service submission by 23,198 characters in these cases, but the Skill body subsequently enters native tool results. Do not present the reduction as equal total-token savings or zero Skill context. Settings must distinguish the submitted entry from native tool output.
+
+Independent read-only review of the initial Codex evidence found no loss in source selection, rules, routes or session plumbing and confirmed raw command capture and same-session continuations; stronger native model-visible inspection corrected the cold full-reading claim and the above risk-category difference. This step remains a draft and is not deployed; broader route/business acceptance remains necessary before release.
+
+## Native Claude follow-up
+
+The same versioned facts/context/clocks were submitted through the real `ClaudeRuntimeAdapter` and existing `_run_claude_turn` normalizer, using installed Claude Code 2.1.269, configured `claude_oauth`/`sonnet`/medium and only the local fake Memory MCP. Results: `evals/trajectory_optimization/task_skill_on_demand.claude.results.v1.json`. Native cold sessions are baseline `49945b98-ef1e-40c0-8f22-901c436ec1b0` and candidate `07159ea0-9d58-49bd-b4e8-1ebdea3b3838`; risk turns resume those same valid sessions.
+
+All four normalizer/Pydantic-valid outputs were actually applied to isolated databases and read back. Cold: both one Project, Chen Ming overall delivery owner, Zhao Hua payment responsibility, no Task or Attention. Risk: both one reused Project, one display-only candidate for Chen Ming with original responsibility evidence, one `watch` Attention. Titles differ in wording while retaining acceptance-material confirmation and payment-date outcome.
+
+Candidate cold invoked native Bash `cat` on the exact selected Skill. Its successful tool result equals the full stripped file (23,452 characters), including the end. Candidate risk reused that session without rereading the unchanged Skill. All four Claude business turns completed fake Memory write calls; neither provider submission nor fake receipt proves real durable Memory persistence.
+
+Claude submitted messages include the existing full schema bridge: cold 81,763→58,565 characters, risk 85,267→62,069. Do not compare these totals directly to Codex's Task-only counts. Native durations were baseline/candidate cold 57,287/68,967 ms (3/4 turns), risk 68,717/99,290 ms (2/2 turns). Candidate cold adds a file read; risk reasoning/cache variation is not isolated. Native reported usage/cost is saved, not interpreted as actual billing or a general speed/token improvement. This evidence closes the local Claude Skill-entry/runtime fixture gate, not broader business or production acceptance.
+
+Independent read-only Claude review matched all four submitted/event/decision hashes, terminal success/session/usage fields and isolated database readbacks. It confirmed exact complete cold Skill content and no redundant resume read. The harness calls the real adapter and normalizer directly rather than the complete service scheduler; neither service scheduling nor production is claimed by this fixture.
+
+## API routes and stronger native-output check
+
+Results: `evals/trajectory_optimization/task_skill_on_demand.api.results.v1.json`. Current OpenAI API full-Task candidate cold returns terminal HTTP429 after native retries; no valid cold/resume acceptance. Qwen actual parent/candidate cold received native final JSON, but fake MCP recall/write were rejected by native automatic approval: the selected provider returned HTTP404 for `codex-auto-review`. The service runner explicitly selects this reviewer with on-failure approval. This is a confirmed invocation/configuration interaction, not a prompt or schema diagnosis. No reviewer bypass or production change was performed.
+
+Qwen parent output passes the model parser and includes Project context, but leaves overall_owner null and writes unsupported person IDs as literal names. Its tool receipts are rejected, so it is not a successful business case. Candidate also invents IDs and additionally fails existing validators: CRM label without evidence and not_needed assessment with neither Project selector. Both arms supply person IDs absent from the anonymous facts; those identities were not verified by the rejected recall. The cold phrase about delivery ownership also admits a title-versus-overall-role reading, so the missing overall_owner alone is not used as proof of model failure. The direct harness stops at parsing failure; existing service correction behavior was not exercised. No valid candidate cold exists and no resume was run.
+
+The Qwen candidate's first raw Skill capture is complete, but actual saved native function_call_output is only10,106 characters with a truncation marker. It recovers through several untruncated section reads, adding command calls; source-output truncation does not establish the cause of its final business errors. The same stronger check on the earlier Codex candidate found cold outer custom_tool_call_output clipped while raw capture was complete. Risk continuation contains full exact model-visible Skill. Earlier broad cold full-reading language is withdrawn; raw and model-visible fields are now distinct. Claude cold exact full tool_result content remains confirmed.
+
+A separate test-only approval proposal is saved at `/private/tmp/ceo-qwen-task-approval-proposal/docs/qwen-task-native-approval-proposal.md`; explicit approval remains pending. It does not propose or implement a production approval-policy repair. These API failures keep this draft unaccepted for release; do not add prompt rules or a case-specific fallback to hide them.
+
+## Registration guidance fixture correction (2026-10-12)
+
+PR57 automatic run 38241597608 completed with one failure, 11811 passed, 99 skipped and 44 deselected. The failing test required authoritative Project registration/name guidance in both the local prompt and the Skill. A focused local run reproduced this obsolete inline-body expectation. The test now selects the exact repository Skill file, verifies that the prompt directs the Agent to read that file, and retains both authoritative-definition and stored-name rule assertions against its full contents. Registration application tests and remote full-Skill delivery checks remain intact. No runtime or approval policy changed.
+
+After correction, 101 affected registration, Skill delivery, schema delivery, runtime repair, work tracking and routed execution tests pass locally. This is focused regression evidence; the new remote automatic run remains a separate gate.
+
+## Codex native outer-output mechanism (2026-10-12)
+
+Installed CLI is0.154.0. Native session01a12f8d-9484-7bc3-ac9a-cdfa9d9b7270 preserves the cold combined shared-AGENTS/Skill call and the later standalone Skill read. Cold requested nested exec_command max_output_tokens30000, but provided no outer CodeMode exec pragma; the native outer output records original token count10576 and a truncation marker, and does not contain the complete exact Skill. Risk repeats the standalone Skill read with the same nested budget and no outer pragma; its native result contains the entire exact Skill. See `task_skill_codex_output_boundary.v1.json` for call IDs, phase, lengths and output fingerprints.
+
+Tagged upstream source matches this mechanism: [CodeMode result projection](https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/core/src/tools/code_mode/mod.rs#L302-L316) independently resolves its own requested max_output_tokens; [native default resolution](https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/core/src/unified_exec/mod.rs#L203-L205) falls back to10000. Increasing the inner shell request does not raise that outer budget. The existing Consumer/Audit MCP read_skill per-tool setting is a different entry; Task standard factory does not bind that role server. No service global cap, prompt workaround, synthetic tool endpoint, route or approval-policy change is introduced. A causal link from clipped cold Skill to final business judgment remains unproved.
+
+## Parent main integration after native validation
+
+The native bridge evidence freezes feature commit `1a4dbe76`. Normal parent merge from `2a2204a0` preserves factory exact paths, catalog names and classifier inline exclusions. Name/path selections are composed without changing native path resolution; classifier exclusions remain separate. The extended forwarder regression first failed when extra names were lost, then passed with both retained; 429 affected tests pass. Task source SHA remains identical to the recorded Codex/Claude candidate; both Claude native submitted messages regenerate byte-for-byte from the merged factory and bridge. No model/business replay, new provider/permission configuration or deployment.
+
+## Later API readiness check
+
+One later same-fixture configured codex_api candidate cold, model gpt-5.6-luna, terminates turn.failed with HTTP429 and exit1. Native SID01a13194-91fb-7992-bda9-ca863b7f832a has no completed turn or final decision; it is not resumed or applied. No source, schema, route, approval setting or provider changed. Preserve the older records; this does not establish the provider capacity root cause or a Skill/schema defect. Metadata: task_skill_api_capacity.current.results.v2.json.
+
+## Current released-main integration and API destination boundary
+
+Normal merge47962d13 integrates verified released main7e6708ad into this draft. Only appended docs/agent-claims.md blocks conflicted; both were preserved. Task/on-demand factory and Codex/Claude adapter sources remain byte-identical to prior draft546f1d16, while current main's typed storage and semantic-context JSON compaction are preserved. Focused Skill/schema/guidance/session/adapter/classifier/context tests pass69; Task business and project-registration tests pass248. Ruff and diff checks pass after correcting an initial lint command's nonexistent filename. No local full suite, manual GitHub workflow, provider replay, route/policy change or deployment occurs. This integration does not replace native business or production gates.
+
+Read-only configuration inspection finds codex_api currently uses https://api.kksj.org/v1, model gpt-5.6-luna. It is a configured third-party API relay, so the retained historical CLI HTTP429 does not establish direct OpenAI quota/rate-limit failure. Its actual gateway/provider quota cause remains unconfirmed. An initial diagnostic preflight assumed api.openai.com and stopped before any request when the actual host differed. A concrete one-request minimal diagnostic to the existing relay, using only the existing adapter-selected credential and no business/Profile/tools/retries, was then prepared. Automatic approval rejected credential transmission to that specific third-party destination without explicit human authorization; the request did not execute and is not retried via native CLI or another client. A precise user authorization request is pending. Current capacity and error code are not reverified. Evidence: task_skill_api_destination.current.v1.json; earlier HTTP429/no-valid-cold/no-resume records remain unchanged. No OpenAI account balance conclusion or billing/route fix is inferred.
+
+Independent read-only review confirms the normal merge parents, retained claims, all four feature source hashes, prepared diagnostic script hash and accurate no-request/rejection boundary. It did not rerun tests or invoke a provider. The317 focused passes are root-run local verification; draft publication/provider gates remain open.
+
+
+## Released-main optional-catalog reconciliation
+
+Normal merge with main1cca085b exposed an actual factory conflict with PR63: the old Task branch concatenated default names unconditionally and omitted empty selections. With the parent optional type, this raises TypeError for None and loses an explicit empty page catalog. The parent page tests and extended Task forwarder first fail3 (7 pass). The merged factory now forwards a selection only when names are explicitly supplied or exact Skill paths exist; it merges path-derived names without losing None-versus-empty semantics. This preserves both parent page behavior and Task exact-path selection. Eight affected suites pass98, Ruff/diff checks pass. No route, provider, approval, native source/output budget or business criterion changes. Existing Codex/Claude anonymous native evidence remains bounded; API destination approval and Qwen Task reviewer interaction remain unresolved and this draft is not released.
+
+
+## Explicitly approved single minimal API diagnostic
+
+Derek explicitly approved the prepared single request to the existing api.kksj.org/v1/responses using its configured native-adapter-selected credential, body Return exactly OK., no business/Profile/tools, retries0 and unchanged route. The exact reviewed script hash9c832361... ran once at2026-10-13T04:47:21Z (October12 21:47 America/Los_Angeles). HTTP200, completed, outputOK; no native session or further API request. This proves minimal current-route reachability, not the cause of historical429, native schema/tool support, Task business judgment or valid cold/resume acceptance. Older rejection and429 evidence stays unchanged. The narrow approval is consumed; no additional native/private-payload probe is authorized by this receipt. Metadata: task_skill_api_destination.current.v2.json.
+# Current-main integration and Store17 readback (2026-10-13)
+
+PR57 merged main `46bfdbe0` in `56f57597`. The existing Task prompt builder,
+Task runner and Claude/Friday delivery functions retain their accepted behavior;
+the installed Skill body and Task output schema hashes are unchanged. The nine
+affected test files pass 347 tests. This is integration evidence, not a new
+native business evaluation.
+
+The original Claude session `b885c7ee-5707-42d8-87af-e239be51fb8b` still contains
+both anonymous final outputs. Parsing them with the current Task parser and
+serializing the model with UTF-8, `ensure_ascii=False`, indent 2 and no trailing
+newline reproduces both saved decision hashes. Applying cold then risk to one
+new isolated current Store (`2026-10-13.3`, Store17) gives 1 Project/0 Task/0
+Attention, then 1 Project/1 Task/1 watch Attention. The Project owner remains
+陈明 and `PRAGMA quick_check` returns `ok`. The temporary database was removed.
+This uses `record_run=False`; it does not test scheduler execution, native
+provider execution or production persistence. No provider or Memory call occurs.
+
+The recorded installed/custom Codex session files were not found in the current
+native session inventories. Their previous delivery evidence remains historical;
+current Store reapplication is unverified, and was not reconstructed from report
+counts. The API, Qwen and Friday native business gates remain open.
+
+Compact evidence: `evals/trajectory_optimization/task_skill_current_store.results.v1.json`.
+
+A read-only reviewer independently reproduced the hashes, Store17 application,
+owner, Attention and integrity readback in a separate temporary database. The
+fixed application clock above differs from the manifest risk clock
+(`2026-10-13T10:00:00Z`); application at that case clock was independently
+checked too and gives the same readback. Neither check is a new native run.
+
+## Fresh production input inventory
+
+Read-only inventory of completed Task runs353013/353021 in native session
+01a135ff-083f-7d23-b64d-5abd845f7cc8 finds a345116-character service Task
+message, including314573 characters of semantic context JSON. The current
+23452-character installed Skill body occurs both in that service Task and the
+separate native selected-Skill message. This is a fresh production example of
+the inline duplicate addressed by PR57, not proof that PR57 is deployed.
+
+The semantic context includes98 Signal references and50 shared source documents.
+Existing sharing already reduces1244930 body characters to634397 unique source
+characters and102931 visible body characters. Work Item metadata omits its
+summary, so another current-body copy must not be claimed. Large field sizes
+alone do not authorize dropping facts: the next investigation must distinguish
+necessary source evidence, historical context and internal storage metadata.
+Only numeric inventories and hashes are retained in
+`task_current_input_inventory.v1.json`; private facts and original bodies stay
+in the existing native session. No new inference, code or external action occurs.
+
+## Database-only Signal metadata removal
+
+The fresh native input contains98 Signal `dedupe_key` fields. Task creates these
+from source kind/reference plus a SHA256 semantic identity; source references,
+Signal IDs, immutable document IDs and evidence bodies are independently supplied.
+The keys implement database deduplication and are not result/citation selectors.
+`source_bundle` now excludes only that field from its Agent projection. Stored
+keys, provenance, source/body/range selection, citations, order and all other
+metadata remain unchanged. No character budget truncation is introduced.
+
+The new regression initially fails because the internal key is present. After
+the one-line projection change it verifies the exact remaining metadata/body and
+the persisted dedupe lookup. Four affected files initially give268 passes and a
+fixture setup error in the new test (`_db` omitted); that test is corrected and
+passes separately. The268 unchanged checks are not rerun or relabeled as a new
+aggregate run. Ruff and diff check pass.
+
+The original compact native semantic JSON is exactly reproduced by the existing
+compact serializer. Removing only these98 keys changes314573 to293985 characters
+(**20588 fewer**). Every source document and all other fields are equal; numeric
+sizes and hashes are in `task_signal_metadata_projection.results.v1.json`. This
+is an input-projection comparison, not a new model run, general quality/cost
+claim or production publication. PR57 provider and business gates remain open.
+
+Read-only review independently reproduces the native comparison hashes and
+20588-character reduction, confirms no `source_signals` consumer requires the
+internal key and verifies the projection/storage boundary. Historical documents
+already use visible ranges; this change preserves those projected ranges, rather
+than claiming that every historical original body is fully model-visible.

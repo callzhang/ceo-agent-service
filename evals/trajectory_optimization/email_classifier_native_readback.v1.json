@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "scope": "read-only actual classification native inputs/output and persisted result/provider action status; no mail body, identity, URL or example contents copied",
+  "samples": [
+    {
+      "run_id": 176972,
+      "classification_id": "9169330755494306389",
+      "session_id": "01a12f70-7135-7c72-af7f-6e5f740c6d46",
+      "native_input_available": true,
+      "classification_identity_matches_workload": true,
+      "developer_chars": 120,
+      "task_chars": 15878,
+      "skill_chars": 4352,
+      "similar_examples_chars": 3156,
+      "context_chars": 7887,
+      "context_fields": [
+        "allowed_category_keys",
+        "category_descriptions",
+        "message",
+        "provider_unread",
+        "unsubscribe_candidates"
+      ],
+      "tool_call_count": 0,
+      "full_result_context_validation": true,
+      "persisted_classification_matches_native": true,
+      "classification_status": "processed",
+      "provider_action_statuses": [
+        "done"
+      ],
+      "provider_readback_state": "unavailable",
+      "task_sha256": "354c0a6b6570438656f395edc4cd708c4bb3a48b67044a13db814a9cbb2c75a7",
+      "output_sha256": "bfe64e809dc04d96a22c5ec3d7fbd1672d244a003bdfe05071bfc23b29fbb970",
+      "native_selected_skill": {
+        "chars": 4343,
+        "sha256": "df3ce7ed9a2323939af4dbfa7476f1a1e15d81ce3c6b088168da3ba02181045c",
+        "same_contiguous_lines": 71,
+        "common_contiguous_chars": 4220,
+        "source_equivalence": "large shared body; full byte equality not established; managed/native provenance must be verified before deletion"
+      }
+    },
+    {
+      "run_id": 176874,
+      "classification_id": "6052248731044525653",
+      "session_id": "01a12f1a-c0a3-78b3-b25c-4b29d5b96201",
+      "native_input_available": true,
+      "classification_identity_matches_workload": true,
+      "developer_chars": 120,
+      "task_chars": 17685,
+      "skill_chars": 4352,
+      "similar_examples_chars": 3618,
+      "context_chars": 9232,
+      "context_fields": [
+        "allowed_category_keys",
+        "category_descriptions",
+        "message",
+        "provider_unread",
+        "unsubscribe_candidates"
+      ],
+      "tool_call_count": 0,
+      "full_result_context_validation": true,
+      "persisted_classification_matches_native": true,
+      "classification_status": "processed",
+      "provider_action_statuses": [
+        "done",
+        "done"
+      ],
+      "provider_readback_state": "categorized",
+      "task_sha256": "94fea1368993ad8163941ad9bfb2d8818521e7e04ced753a4225f0450a67c5dc",
+      "output_sha256": "64efac04f05a9a3fef8c8711835fb1ff65d6c1994a906bd960fb017c5568c855",
+      "native_selected_skill": {
+        "chars": 4343,
+        "sha256": "df3ce7ed9a2323939af4dbfa7476f1a1e15d81ce3c6b088168da3ba02181045c",
+        "same_contiguous_lines": 71,
+        "common_contiguous_chars": 4220,
+        "source_equivalence": "large shared body; full byte equality not established; managed/native provenance must be verified before deletion"
+      }
+    }
+  ],
+  "missing_native_samples": [
+    {
+      "run_id": 176727,
+      "session_id": "01a12e75-b23d-7fa2-acb9-6f61f3d5fee0"
+    },
+    {
+      "run_id": 175481,
+      "session_id": "01a12de3-21aa-7390-ac15-4f4d36addfff"
+    }
+  ],
+  "business_accuracy": "not independently labelled; valid classification context and persisted equality do not prove semantic accuracy",
+  "mutation": "none",
+  "noncompleted_metadata_only": [
+    {
+      "run_id": 174987,
+      "route": "codex_api",
+      "status": "superseded",
+      "stored_failure_code": "codex_transport_disconnected",
+      "native_file_present": false
+    },
+    {
+      "run_id": 174984,
+      "route": "codex_oauth",
+      "status": "superseded",
+      "stored_failure_code": "codex_provider_capacity_exhausted",
+      "native_file_present": false
+    }
+  ]
+}

@@ -1502,10 +1502,9 @@ def test_audit_fails_closed_when_parent_consumer_has_no_unique_proposal_action(
     with sqlite3.connect(fixture.email_store.path) as db:
         # Deliberately corrupt the adopted business record, not the retired
         # agent_runs body, which is never authoritative for execution.
-        changed = db.execute(
-            "update review_candidates set candidate_json=? where consumer_run_id=?",
-            (candidate_json, fixture.consumer_run.id),
-        )
+        from app.action_storage import REVIEW_CANDIDATE_SQL, update_action
+        public_id = db.execute(f"select id from ({REVIEW_CANDIDATE_SQL}) where consumer_run_id=?", (fixture.consumer_run.id,)).fetchone()[0]
+        changed = update_action(db, 'review_candidates', public_id, {'candidate_json': candidate_json})
         assert changed.rowcount == 1
 
     result = fixture.operation.execute(

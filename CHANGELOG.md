@@ -1,5 +1,11 @@
 # Changelog
 
+## Fresh message identifier types
+
+- Reject nonstring or blank DingTalk message identifiers when parsing new Consumer
+  output, including executable human-choice plans. Preserve exact string values
+  and historical Pydantic result reads; update the output schema accordingly.
+
 ## Bounded attachment evidence
 
 - Bound downloaded and decompressed attachment material and serialized MCP
@@ -26,6 +32,14 @@
   into SQLite error handling and worker restarts.
 
 ## Unreleased
+
+- Validate every complete historical feedback callback pair in captured source
+  text that may combine multiple messages, preserving origin, path, query,
+  rating, token and attempt checks. Strict outgoing-body validation is unchanged.
+
+- Include deterministic JSON Pointer paths, exact scalar literals and JSON
+  types derived from the current adopted candidate in Audit's task input, so
+  field-type feedback can be checked against the candidate under review.
 
 - Avoid SQLite writer-lock waits during idle meeting delivery batch polls.
   Probe the existing ready/unlocked/due predicate read-only, retaining the

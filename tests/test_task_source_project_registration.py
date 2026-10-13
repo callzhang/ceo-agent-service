@@ -255,21 +255,25 @@ def test_only_active_official_exact_title_project_is_reused(tmp_path, source_typ
     assert result.project_links == ((task_id, active.canonical_anchor_id),)
 
 
-def test_project_guidance_resolves_current_authoritative_name_before_existing_link():
+def test_project_guidance_resolves_current_authoritative_name_before_existing_link(
+    monkeypatch,
+):
+    skill_path = (
+        Path(__file__).parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md"
+    )
+    monkeypatch.setattr("app.task_agent.WORK_TRACKING_SKILL_PATH", skill_path)
     item, _ = source_registration("project_weekly_report", 1)
     text = build_task_agent_prompt(item, "当前已有项目上下文")
-    skill = (
-        Path(__file__).parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md"
-    ).read_text()
-    for guidance in (text, skill):
-        guidance = " ".join(guidance.split())
-        assert (
-            "Adopt the exact current authoritative Project definition with registration to register or reuse"
-            in guidance
-        )
-        assert (
-            "A different stored name cannot replace that definition merely because the action uses its shorter name"
-            in guidance
-        )
+    assert str(skill_path) in text
+    assert f"[$ceo-work-tracking]({skill_path})" in text
+    guidance = " ".join(skill_path.read_text().split())
+    assert (
+        "Adopt the exact current authoritative Project definition with registration to register or reuse"
+        in guidance
+    )
+    assert (
+        "A different stored name cannot replace that definition merely because the action uses its shorter name"
+        in guidance
+    )
     description = ProjectProposal.model_fields["source_excerpt"].description
     assert "register or reuse" in description

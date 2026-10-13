@@ -1,0 +1,291 @@
+{
+  "version": 1,
+  "manifest": {
+    "version": 1,
+    "case": "cross-midnight-existing-calendar",
+    "expected_consumer": "no_action with exact LA/Shanghai/UTC instants and no duplicate",
+    "expected_audit": "approve same exact canonical Consumer candidate/revision",
+    "model": "gpt-5.6-luna",
+    "source_rows": 343,
+    "source_sha256": "d6d547400ece2d17477bf26802e2597dd850a2993da08300ac43f2182ea45105",
+    "options_sha256": "1c38c6b01d0104ca2c4e0934c22bf63244a400b156fc513454cce3374e24fa66",
+    "source_repo": "/private/tmp/ceo-skill-discovery-transport",
+    "head": "5513dce2af0a7534c52c50defa9382d4bce5f66d",
+    "scope": "Complete code-role Developer and canonical parsers with synthetic common/profile/task/provider context. Cold only, no production scheduler/provider run."
+  },
+  "runs": [
+    {
+      "role": "consumer",
+      "arm": "baseline",
+      "session_id": "01a131d8-6cc1-7583-b99b-146b3fda9e8f",
+      "returncode": 0,
+      "canonical_result_valid": true,
+      "business_instant_checks": true,
+      "result": {
+        "outcome": "no_action",
+        "summary": "无需创建另一个日历事件。已确认的事件包含相同参与者 Alex 和 Bo，并使用相同的时间瞬间：Alex 在 America/Los_Angeles 时区为 2026-10-15 09:00–10:00，Bo 在 Asia/Shanghai 时区为 2026-10-16 00:00–01:00，对应 UTC 2026-10-15T16:00:00Z–17:00:00Z。日历记录时区为 America/Los_Angeles，且本次未请求外部变更。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "candidate_digest": null,
+      "model_visible_catalog_exact": false,
+      "model_catalog_chars": 127288,
+      "catalog_clipped": true,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "body_reads": [
+        {
+          "arguments": {
+            "path": "/private/tmp/ceo-skill-roles-control-b9ltfhkp/fixture-root/shared-segment/shared-segment/shared-segment/root-03/guide-150/SKILL.md"
+          },
+          "is_error": false,
+          "exact_source_and_model_body": true,
+          "error_text": null
+        }
+      ],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "on-request",
+          "sandbox_policy": {
+            "type": "read-only"
+          }
+        }
+      ],
+      "initial_native_developer_sha256": "6bf84889ce5cfd6feb1440071e9d0bc6178128ddf7d135f35d6ddbbddafe218e",
+      "service_developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+      "task_sha256": "3bf0fbf68a7fda677b667afbd48e5baaf94835b58e074471a8c332865fd31fc6",
+      "events_sha256": "34bd5b93ac0a77b9b1af61c3e15c659a0bc9dc957d0d06dacc3c2cc58d9633f4",
+      "native_sha256": "c1f85e07921fd7a6d26552e80573c4db2df23b73040d8eb7cf41afe86895d621"
+    },
+    {
+      "role": "consumer",
+      "arm": "candidate",
+      "session_id": "01a131d8-dbd0-73d1-a2fe-169d1968ed30",
+      "returncode": 0,
+      "canonical_result_valid": true,
+      "business_instant_checks": true,
+      "result": {
+        "outcome": "no_action",
+        "summary": "无需创建另一个日历事件。已确认的事件包含相同参与者 Alex 和 Bo，且时间瞬间一致：Alex 在 America/Los_Angeles 为 2026-10-15 09:00–10:00；Bo 在 Asia/Shanghai 为 2026-10-16 00:00–01:00；对应 UTC 为 2026-10-15T16:00:00Z–17:00:00Z。日历记录时区为 America/Los_Angeles。本次不执行任何外部变更。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "candidate_digest": null,
+      "model_visible_catalog_exact": true,
+      "model_catalog_chars": 82899,
+      "catalog_clipped": false,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "body_reads": [
+        {
+          "arguments": {
+            "name": "synthetic-guide-150"
+          },
+          "is_error": false,
+          "exact_source_and_model_body": true,
+          "error_text": null
+        }
+      ],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "on-request",
+          "sandbox_policy": {
+            "type": "read-only"
+          }
+        }
+      ],
+      "initial_native_developer_sha256": "6bf84889ce5cfd6feb1440071e9d0bc6178128ddf7d135f35d6ddbbddafe218e",
+      "service_developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+      "task_sha256": "3bf0fbf68a7fda677b667afbd48e5baaf94835b58e074471a8c332865fd31fc6",
+      "events_sha256": "e189292517a9290750c0d912fad0f97775852bf6c59f97565a9834496bd0f996",
+      "native_sha256": "018710fd5d279dfeeb4185d8ec2b29f9399564791132960102bd860c33ac8c70"
+    },
+    {
+      "role": "audit",
+      "arm": "baseline",
+      "session_id": "01a131d9-0ed1-7eb0-9ab6-3be3f0381b3a",
+      "returncode": 0,
+      "canonical_result_valid": true,
+      "business_instant_checks": true,
+      "result": {
+        "outcome": "approve",
+        "summary": "批准：候选结论与权威日历触发内容及适用的日历审查指南一致。现有已确认事件包含相同参与者 Alex、Bo，且时间瞬间一致：Alex 在 America/Los_Angeles 为 2026-10-15 09:00–10:00，Bo 在 Asia/Shanghai 为 2026-10-16 00:00–01:00，均对应 UTC 2026-10-15T16:00:00Z–17:00:00Z。日历记录时区为 America/Los_Angeles，因此无需创建另一个事件；候选也正确声明未请求外部变更。",
+        "proposal_revision": 0,
+        "candidate_digest": "dc668393ddc99d9503b48588b5dbbfe6b48075533dd917fa68c120bf01485200",
+        "evidence_refs": [
+          "synthetic-calendar",
+          "/private/tmp/ceo-skill-roles-control-b9ltfhkp/fixture-root/shared-segment/shared-segment/shared-segment/root-03/guide-150/SKILL.md"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "candidate_digest": "dc668393ddc99d9503b48588b5dbbfe6b48075533dd917fa68c120bf01485200",
+      "model_visible_catalog_exact": false,
+      "model_catalog_chars": 127288,
+      "catalog_clipped": true,
+      "tool_calls": 2,
+      "tool_errors": 0,
+      "body_reads": [
+        {
+          "arguments": {
+            "path": "/private/tmp/ceo-skill-roles-control-b9ltfhkp/fixture-root/shared-segment/shared-segment/shared-segment/root-03/guide-150/SKILL.md"
+          },
+          "is_error": false,
+          "exact_source_and_model_body": true,
+          "error_text": null
+        }
+      ],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "on-request",
+          "sandbox_policy": {
+            "type": "read-only"
+          }
+        }
+      ],
+      "initial_native_developer_sha256": "7f3eaacc03cada8855802ed2b89b2102db010e6ea84ab5291a11f5ff26c23631",
+      "service_developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+      "task_sha256": "00cb8263810be4be583b37eb21e95ecc7458b4796a9e0ea33574a4b32c3bd53b",
+      "events_sha256": "60d7f05f71e2d16fe296b707537d840cf7cd16eb2148f5f5eea71216cdb19aea",
+      "native_sha256": "9f49a935def3310338f1880a0f0f118e15b8f373ba84664848815daeb048d70e"
+    },
+    {
+      "role": "audit",
+      "arm": "candidate",
+      "session_id": "01a131d9-4332-7991-a869-c04253a569f8",
+      "returncode": 0,
+      "canonical_result_valid": true,
+      "business_instant_checks": true,
+      "result": {
+        "outcome": "approve",
+        "summary": "批准该候选结果。触发材料明确说明：已确认的日历事件参与者为 Alex 和 Bo，事件状态为 confirmed，时间区间为 2026-10-15T16:00:00Z–17:00:00Z。该区间对应 Alex 在 America/Los_Angeles 的 2026-10-15 09:00–10:00，以及 Bo 在 Asia/Shanghai 的 2026-10-16 00:00–01:00；参与者集合和时间瞬间均一致。依据 synthetic-guide-150，日历记录时区为 America/Los_Angeles，现有事件满足条件，无需创建另一个事件，且候选正确表示未请求外部变更。",
+        "proposal_revision": 0,
+        "candidate_digest": "dc668393ddc99d9503b48588b5dbbfe6b48075533dd917fa68c120bf01485200",
+        "evidence_refs": [
+          "candidate.source_bindings[0].value.trigger_text",
+          "candidate.source_bindings[0].value.trigger_raw_payload.calendar_event",
+          "synthetic-guide-150"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "candidate_digest": "dc668393ddc99d9503b48588b5dbbfe6b48075533dd917fa68c120bf01485200",
+      "model_visible_catalog_exact": true,
+      "model_catalog_chars": 82899,
+      "catalog_clipped": false,
+      "tool_calls": 3,
+      "tool_errors": 1,
+      "body_reads": [
+        {
+          "arguments": {
+            "path": "r4:guide-150/SKILL.md"
+          },
+          "is_error": true,
+          "exact_source_and_model_body": false,
+          "error_text": [
+            {
+              "type": "text",
+              "text": "Error executing tool read_skill: skill_path_forbidden"
+            }
+          ]
+        },
+        {
+          "arguments": {
+            "name": "synthetic-guide-150"
+          },
+          "is_error": false,
+          "exact_source_and_model_body": true,
+          "error_text": null
+        }
+      ],
+      "native_controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "on-request",
+          "sandbox_policy": {
+            "type": "read-only"
+          }
+        }
+      ],
+      "initial_native_developer_sha256": "7f3eaacc03cada8855802ed2b89b2102db010e6ea84ab5291a11f5ff26c23631",
+      "service_developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+      "task_sha256": "00cb8263810be4be583b37eb21e95ecc7458b4796a9e0ea33574a4b32c3bd53b",
+      "events_sha256": "07365b29097243d6217f828f198be2874f2db4cb4563b21af49de6b6da4e04eb",
+      "native_sha256": "fc8ec816e5bbf6329a5c392169ce836721bd3bfeab18fbc742caa3ae23f1b49d"
+    }
+  ],
+  "paired_task_developer_commands_except_arm_equal": true,
+  "business_results": "Both Consumer no_action, both Audit approve same actual valid Consumer candidate/revision. All instants and duplicate avoidance preserved.",
+  "acceptance": "Directory completeness and body delivery pass; candidate Audit has one erroneous alias-path request then exact name recovery. Tool-use regression remains open; not release acceptance.",
+  "limits": "One synthetic cold calendar code-role pair; no provider changes, private profile/source replay, same-session/other-task/full-runtime acceptance.",
+  "independent_read_only_review": "All four events/native/input/Developer hashes and exact paired commands verified; original user prompts match; canonical wire results re-parsed exactly; both Audit subjects share the actual valid baseline Consumer candidate/digest/revision. Candidate Audit alias-path error retained; direct argument failure confirmed, universal format defect unproven. Draft only."
+}

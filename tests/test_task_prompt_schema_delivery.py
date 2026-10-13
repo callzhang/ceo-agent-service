@@ -1,6 +1,7 @@
 """The Task decision schema reaches each runtime exactly once."""
 
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -31,10 +32,11 @@ class RecordingExecution:
         )
 
 
-def prompt_and_factory(monkeypatch):
-    monkeypatch.setattr(
-        "app.task_agent.load_skill_text", lambda paths: "FULL_SKILL_RULE"
-    )
+def prompt_and_factory(monkeypatch, tmp_path):
+    path = tmp_path / "ceo-work-tracking" / "SKILL.md"
+    path.parent.mkdir()
+    path.write_text("FULL_SKILL_RULE")
+    monkeypatch.setattr("app.task_agent.WORK_TRACKING_SKILL_PATH", path)
     work = WorkItem.model_validate(
         {
             "summary": "Source fact",
@@ -67,30 +69,40 @@ def schema_occurrences(text, schema):
 
 
 @pytest.mark.parametrize("bridge", [_claude_turn_text, _friday_turn_text])
-def test_single_message_task_routes_receive_one_complete_schema(monkeypatch, bridge):
-    prompt, factory = prompt_and_factory(monkeypatch)
+def test_single_message_task_routes_receive_one_complete_schema(
+    monkeypatch, tmp_path, bridge
+):
+    prompt, factory = prompt_and_factory(monkeypatch, tmp_path)
     schema = task_agent_output_schema()
     assert json.loads(factory.output_schema_path.read_text()) == schema
     assert factory.use_output_schema is True
     submitted = bridge(factory, prompt)
-    assert "FULL_SKILL_RULE" in submitted
+    assert ("FULL_SKILL_RULE" in submitted) is (bridge is _friday_turn_text)
+    assert str(factory.skill_paths[0]) in submitted
     assert "CURRENT_SEMANTIC_FACT" in submitted
     assert schema_occurrences(submitted, schema) == 1
 
 
-def test_codex_task_schema_is_out_of_band_and_business_input_remains(monkeypatch):
-    prompt, factory = prompt_and_factory(monkeypatch)
+def test_codex_task_schema_is_out_of_band_and_business_input_remains(
+    monkeypatch, tmp_path
+):
+    prompt, factory = prompt_and_factory(monkeypatch, tmp_path)
     assert factory.use_output_schema is True
     assert (
         json.loads(factory.output_schema_path.read_text()) == task_agent_output_schema()
     )
-    assert "FULL_SKILL_RULE" in prompt
+    assert "FULL_SKILL_RULE" not in prompt
+    assert str(factory.skill_paths[0]) in prompt
     assert "CURRENT_SEMANTIC_FACT" in prompt
     assert "TaskAgentDecision Pydantic JSON schema:" not in prompt
 
 
-def test_task_factory_forwards_its_native_skill_selection(monkeypatch):
-    prompt, factory = prompt_and_factory(monkeypatch)
+@pytest.mark.parametrize("extra_skill_names", [None, (), ("ceo-calendar-invite",)])
+def test_task_factory_forwards_its_native_skill_selection(
+    monkeypatch, tmp_path, extra_skill_names
+):
+    prompt, factory = prompt_and_factory(monkeypatch, tmp_path)
+    factory = replace(factory, skill_names=extra_skill_names)
     calls = []
     adapter = SimpleNamespace(
         build_command=lambda **kwargs: calls.append(kwargs) or ["codex"],
@@ -102,4 +114,4 @@ def test_task_factory_forwards_its_native_skill_selection(monkeypatch):
         prompt=prompt,
         session_id=None,
     )
-    assert calls[0]["skill_names"] == ("ceo-work-tracking",)
+    assert calls[0]["skill_names"] == (extra_skill_names or ()) + ("ceo-work-tracking",)

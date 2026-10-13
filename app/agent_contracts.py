@@ -7,6 +7,8 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
+    StrictInt,
+    StrictStr,
     field_validator,
     model_validator,
 )
@@ -139,6 +141,12 @@ _OA_ACTION_TARGET_FIELDS = {
     "comment": ("process_instance_id",),
 }
 
+DINGTALK_MESSAGE_IDENTIFIER_FIELDS = (
+    "conversation_id", "message_id", "source_message_id", "open_dingtalk_id",
+    "user_id", "recipient_open_dingtalk_id", "sender_open_dingtalk_id",
+    "verified_participant_open_dingtalk_id",
+)
+
 
 def _proposed_action_json_schema(schema: dict[str, object]) -> None:
     schema["allOf"] = [
@@ -164,6 +172,14 @@ def _proposed_action_json_schema(schema: dict[str, object]) -> None:
         }
         for field in ("process_instance_id", "task_id", "target_activity_id", "to_actioner_id")
     ]
+    schema["allOf"].append({
+        "if": {"properties": {"capability": {"const": "dingtalk-chat"}},
+               "required": ["capability"]},
+        "then": {"properties": {"target": {"properties": {
+            field: {"type": ["string", "null"], "pattern": r"\S"}
+            for field in DINGTALK_MESSAGE_IDENTIFIER_FIELDS
+        }}}},
+    })
 
 
 class ProposedAction(BaseModel):
@@ -535,12 +551,56 @@ class AuditOutcome(StrEnum):
     FAILED = "failed"
 
 
+def json_value_type(value: JsonValue) -> str:
+    if value is None:
+        return "null"
+    if type(value) is bool:
+        return "boolean"
+    if type(value) in (int, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    raise ValueError("value is not a JSON value")
+
+
+class CandidateFieldAssertion(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    path: tuple[StrictStr | StrictInt, ...] = Field(min_length=1)
+    value: JsonValue
+    json_type: Literal["null", "boolean", "number", "string", "array", "object"]
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def accept_json_path(cls, value: object) -> object:
+        return tuple(value) if isinstance(value, list) else value
+
+
 class AuditFeedback(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     rule: str = Field(min_length=1)
     observation: str = Field(min_length=1)
     requested_revision: str = Field(min_length=1)
+    observation_basis: Literal["business", "candidate_fields"] = Field(default="business",
+        description="Use candidate_fields for claims about current candidate JSON values, types or paths; business for policy, authority and source judgments.")
+    candidate_field_assertions: tuple[CandidateFieldAssertion, ...] = Field(default=(),
+        description="For candidate_fields, supply the exact candidate-relative path, literal value and JSON type; System checks these before adopting feedback.")
+
+    @field_validator("candidate_field_assertions", mode="before")
+    @classmethod
+    def accept_json_assertions(cls, value: object) -> object:
+        return tuple(value) if isinstance(value, list) else value
+
+    @model_validator(mode="after")
+    def require_candidate_field_evidence(self) -> "AuditFeedback":
+        if self.observation_basis == "candidate_fields" and not self.candidate_field_assertions:
+            raise ValueError("candidate field feedback requires field assertions")
+        return self
 
 
 class AuditExternalResult(BaseModel):

@@ -779,16 +779,84 @@ TASK_RUN_TRIGGER_DDL = (
 )
 
 
+SCHEDULED_RUN_COLUMNS = ("id", "event_id", "scheduled_task_id", "trigger_kind",
+    "scheduled_for", "dispatch_status", "skip_or_error_reason", "execution_kind",
+    "execution_id", "lease_owner", "lease_expires_at", "created_at", "dispatched_at",
+    "first_scheduled_for", "occurrence_count", "result_summary", "snapshot_id")
+WORKBENCH_EVENT_COLUMNS = ("id", "turn_id", "sequence", "event_type", "payload_json", "created_at")
+SCHEDULED_RUN_SQL = "select cast(legacy_key as integer) as id," + ",".join(SCHEDULED_RUN_COLUMNS[1:]) + " from runs where record_type='scheduled_task_runs'"
+WORKBENCH_EVENT_SQL = """select cast(r.legacy_key as integer) as id,
+    (select t.legacy_key from tasks t where t.id=r.task_id) as turn_id,
+    r.sequence,r.event_type,r.payload_json,r.created_at
+    from runs r where r.record_type='workbench_events'"""
+RUN_DEFAULT_SQL.update({
+    "scheduled_task_runs": dict(dispatch_status="'pending'", skip_or_error_reason="''",
+        execution_kind="''", execution_id="''", lease_owner="''", created_at="current_timestamp",
+        first_scheduled_for="''", occurrence_count="1", result_summary="''"),
+    "workbench_events": dict(created_at="current_timestamp"),
+})
+_WORKBENCH_RUN_FIELDS = {
+    "scheduled_task_runs": set(SCHEDULED_RUN_COLUMNS[1:]),
+    "workbench_events": {"task_id", "sequence", "event_type", "payload_json", "created_at"},
+}
+_EXISTING_RUN_FIELDS = _CORE_RUN_FIELDS | _TASK_DOMAIN_FIELDS | _MEETING_DOMAIN_FIELDS | _OKR_DOMAIN_FIELDS
+_WORKBENCH_RUN_NEW_FIELDS = tuple(dict.fromkeys(
+    c for c in (*SCHEDULED_RUN_COLUMNS[1:], "sequence", "event_type", "payload_json")
+    if c not in _EXISTING_RUN_FIELDS
+))
+WORKBENCH_RUN_TABLE_DDL = TASK_RUN_TABLE_DDL.replace(
+    "'okr_review_runs'))", "'okr_review_runs','scheduled_task_runs','workbench_events'))", 1,
+).replace(
+    "    check(record_type<>'agent_runs' or legacy_key",
+    "    " + ",\n    ".join(c + (" integer" if c in ("scheduled_task_id", "snapshot_id", "occurrence_count", "sequence") else " text") for c in _WORKBENCH_RUN_NEW_FIELDS)
+    + ",\n    foreign key(scheduled_task_id) references scheduled_tasks(id),"
+    + "\n    foreign key(snapshot_id) references scheduled_task_config_versions(id),"
+    + "\n    check(record_type<>'agent_runs' or legacy_key", 1,
+).removesuffix(")") + "," + ",".join(
+    "check(record_type<>'" + kind + "' or ("
+    + " and ".join(c + " is not null" for c in sorted(fields - {"lease_expires_at", "dispatched_at", "snapshot_id"})) + "))"
+    for kind, fields in _WORKBENCH_RUN_FIELDS.items()
+) + "," + ",".join(
+    "check(record_type<>'" + kind + "' or ("
+    + " and ".join(c + " is null" for c in sorted(
+        (_EXISTING_RUN_FIELDS | set(_WORKBENCH_RUN_NEW_FIELDS)) - fields)) + "))"
+    for kind, fields in _WORKBENCH_RUN_FIELDS.items()
+) + ",check(record_type in ('scheduled_task_runs','workbench_events') or (" + " and ".join(
+    c + " is null" for c in _WORKBENCH_RUN_NEW_FIELDS
+) + "))" + ",check(record_type<>'scheduled_task_runs' or (trigger_kind in ('scheduled','manual') and dispatch_status in ('pending','dispatched','skipped','failed'))))"
+WORKBENCH_RUN_INDEX_DDL = (
+    *TASK_RUN_INDEX_DDL,
+    "create unique index idx_scheduled_task_runs_event on runs(event_id) where record_type='scheduled_task_runs'",
+    "create unique index idx_scheduled_task_runs_scheduled_instant on runs(scheduled_task_id,scheduled_for) where record_type='scheduled_task_runs' and trigger_kind='scheduled'",
+    "create index idx_scheduled_task_runs_dispatch on runs(dispatch_status,lease_expires_at,scheduled_for,cast(legacy_key as integer)) where record_type='scheduled_task_runs'",
+    "create index idx_scheduled_task_runs_claim on runs(dispatch_status,scheduled_for,cast(legacy_key as integer)) where record_type='scheduled_task_runs'",
+    "create index idx_scheduled_task_runs_latest on runs(scheduled_task_id,cast(legacy_key as integer) desc) where record_type='scheduled_task_runs'",
+    "create index idx_scheduled_task_runs_reply_execution on runs(cast(execution_id as integer),scheduled_task_id,cast(legacy_key as integer)) where record_type='scheduled_task_runs' and execution_kind='reply_task'",
+    "create unique index idx_workbench_events_sequence on runs(task_id,sequence) where record_type='workbench_events'",
+    "create index idx_workbench_events_turn_id_id on runs(task_id,cast(legacy_key as integer)) where record_type='workbench_events'",
+    "create index idx_workbench_events_id_turn_id on runs(cast(legacy_key as integer),task_id) where record_type='workbench_events'",
+    "create index idx_workbench_events_event_type on runs(event_type) where record_type='workbench_events'",
+)
+WORKBENCH_RUN_TRIGGER_DDL = (
+    *TASK_RUN_TRIGGER_DDL,
+    *tuple(
+        f"create trigger trg_runs_workbench_turn_{suffix} before {event} on runs when new.record_type='workbench_events' and exists(select 1 from tasks where id=new.task_id and record_type<>'workbench_turns') begin select raise(abort,'event task must be a workbench turn'); end"
+        for event,suffix in (("insert","insert"),("update of task_id","update"))
+    ),
+)
+
+
 def create_run_schema(
-    db: sqlite3.Connection, *, include_task_runs: bool = False
+    db: sqlite3.Connection, *, include_task_runs: bool = False, include_workbench: bool = False
 ) -> None:
     db.execute(
-        (TASK_RUN_TABLE_DDL if include_task_runs else RUN_TABLE_DDL).replace(
+        (WORKBENCH_RUN_TABLE_DDL if include_workbench else TASK_RUN_TABLE_DDL if include_task_runs else RUN_TABLE_DDL).replace(
             "create table runs", "create table if not exists runs", 1
         )
     )
     for sql in (
-        (*TASK_RUN_INDEX_DDL, *TASK_RUN_TRIGGER_DDL)
+        (*WORKBENCH_RUN_INDEX_DDL, *WORKBENCH_RUN_TRIGGER_DDL)
+        if include_workbench else (*TASK_RUN_INDEX_DDL, *TASK_RUN_TRIGGER_DDL)
         if include_task_runs
         else (*RUN_INDEX_DDL, *RUN_TRIGGER_DDL)
     ):
@@ -803,11 +871,11 @@ def create_run_schema(
         db.execute(sql)
 
 
-@lru_cache(maxsize=2)
-def _declared_run_objects(include_task_runs: bool) -> dict[str, str]:
+@lru_cache(maxsize=3)
+def _declared_run_objects(include_task_runs: bool, include_workbench: bool = False) -> dict[str, str]:
     """Read SQLite's canonical declarations without changing SQL literals."""
     with closing(sqlite3.connect(":memory:")) as reference:
-        create_run_schema(reference, include_task_runs=include_task_runs)
+        create_run_schema(reference, include_task_runs=include_task_runs, include_workbench=include_workbench)
         return dict(
             reference.execute(
                 "select name,sql from sqlite_master where tbl_name='runs' and sql is not null"
@@ -820,6 +888,7 @@ def run_schema_is_current(
     *,
     allow_missing_objects: bool = False,
     include_task_runs: bool = False,
+    include_workbench: bool = False,
 ) -> bool:
     """Match the current core layout and its declared indexes/triggers.
 
@@ -832,6 +901,8 @@ def run_schema_is_current(
         RETIRED_RUN_TABLES,
     ).fetchone():
         return False
+    if include_workbench and db.execute("select 1 from sqlite_master where name in ('scheduled_task_runs','workbench_events')").fetchone():
+        return False
     objects = {
         row[0]: str(row[1] or "")
         for row in db.execute(
@@ -839,7 +910,7 @@ def run_schema_is_current(
         )
     }
 
-    expected = _declared_run_objects(include_task_runs)
+    expected = _declared_run_objects(include_task_runs, include_workbench)
     if objects.get("runs", "").strip() != expected["runs"].strip():
         return False
     for name, sql in expected.items():
@@ -975,7 +1046,7 @@ def _install_child_guards(db: sqlite3.Connection, table: str) -> None:
 def install_run_child_guards(db: sqlite3.Connection) -> None:
     """Retain each old declared FK's logical-run parent namespace."""
     for row in db.execute(
-        "select name from sqlite_master where type='table' and name<>'runs'"
+        "select name from sqlite_master where type='table' and name not in ('runs','actions')"
     ).fetchall():
         _install_child_guards(db, row[0])
 
