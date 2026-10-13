@@ -1,0 +1,372 @@
+{
+  "version": 1,
+  "scope": "supplemental synthetic Consumer comparison with same native bootstrap, frozen catalog and full PR31 test schema; not actual saved configuration or production activation",
+  "requested_approval_policy": "on-failure",
+  "observed_approval_policy": "on-request",
+  "native_initial_developer_content_blocks_equal": true,
+  "results_valid": 6,
+  "reads": {
+    "baseline": [
+      1,
+      1,
+      1
+    ],
+    "candidate": [
+      1,
+      0,
+      1
+    ]
+  },
+  "native_sessions": {
+    "01a130f3-bfd0-7e31-8cb8-79780e044a94": {
+      "developer_content_blocks_sha256": "9c896751ee1f608e1bf0b7aeaa8f5f037b2edc0d73e5b15befe1a8be07d38f82",
+      "developer_chars_with_newline_join": 37628,
+      "skill_file_mentions": 3,
+      "approval_policies": [
+        "on-request"
+      ],
+      "models": [
+        "gpt-5.6-luna"
+      ],
+      "native_rollout_sha256": "661b0ffca4adda524f366e487b79303ef21efc046add28759583b7da6d5b7259"
+    },
+    "01a130f3-9464-77b3-af4f-1279fa5b9e8e": {
+      "developer_content_blocks_sha256": "9c896751ee1f608e1bf0b7aeaa8f5f037b2edc0d73e5b15befe1a8be07d38f82",
+      "developer_chars_with_newline_join": 37628,
+      "skill_file_mentions": 3,
+      "approval_policies": [
+        "on-request"
+      ],
+      "models": [
+        "gpt-5.6-luna"
+      ],
+      "native_rollout_sha256": "1473ebe20135386bf17f642c9152f01f709487235e7e2505ef5e122d38ff8145"
+    }
+  },
+  "rows": [
+    {
+      "variant": "baseline",
+      "phase": "cold",
+      "session_id": "01a130f3-bfd0-7e31-8cb8-79780e044a94",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "70f143193409703b7b59378817c47cf12a3f97aa78b7190cb970c37da34fe1a0",
+      "source_revision": 41,
+      "source_sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472",
+      "valid": true,
+      "scope": "service role contracts with synthetic profile/common configuration/source/provider, service task assembly; not actual saved production profile/template or production end-to-end acceptance",
+      "result": {
+        "outcome": "no_action",
+        "summary": "无需创建另一场日历事件。当前选定日历源的日历记录时区为 America/Los_Angeles；请求会议为 2026-10-15 09:00–10:00 America/Los_Angeles，对应 2026-10-15 16:00–17:00 UTC，也对应 2026-10-16 00:00–01:00 Asia/Shanghai。现有已确认事件 event-existing 的参与者为 Alex 和 Bo，UTC 时间为 2026-10-15 16:00–17:00，参与者及起止 instants 均完全一致，因此重复创建没有必要；本任务明确没有可用的外部动作。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "catalog_options_sha256": "1c38c6b01d0104ca2c4e0934c22bf63244a400b156fc513454cce3374e24fa66",
+      "developer_sha256": "656d88259b08eb751cad84fcdefc6d0fe3ae9b3e0776c53ade176e0c68cc7e4d",
+      "developer_chars": 20604,
+      "reads": 1,
+      "role": "consumer",
+      "source": {
+        "revision_id": 41,
+        "sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472",
+        "content": "## Managed Skill: ceo-calendar-invite\nrevision_id: 41\nsha256: f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472\n\nCalendar invitation review: use each participant timezone, compare instants, and avoid recreating an event already present with the same participants and start/end. The calendar of record uses America/Los_Angeles."
+      },
+      "canonical_recheck_passed": true,
+      "full_model_visible_tool_content_verified": true,
+      "events_sha256": "818ac85fad6f5ecff831b34f25320b70122d279afa6b6c0ea79161ce22fe5b5e",
+      "command_sha256": "1639567e66b595b82cede21bd16fbc5ca60cfca46de1d482b279a8c5a3821e2e",
+      "harness_sha256": "833c1483de763c0b73fc18c54ff38e3c2774e74b787743386281c8f5c26ff8fb"
+    },
+    {
+      "variant": "baseline",
+      "phase": "unchanged",
+      "session_id": "01a130f3-bfd0-7e31-8cb8-79780e044a94",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "70f143193409703b7b59378817c47cf12a3f97aa78b7190cb970c37da34fe1a0",
+      "source_revision": 41,
+      "source_sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472",
+      "valid": true,
+      "scope": "service role contracts with synthetic profile/common configuration/source/provider, service task assembly; not actual saved production profile/template or production end-to-end acceptance",
+      "result": {
+        "outcome": "no_action",
+        "summary": "无需创建另一场日历事件。当前选定日历源的日历记录时区为 America/Los_Angeles；请求会议为 2026-10-15 09:00–10:00 America/Los_Angeles，对应 2026-10-15 16:00–17:00 UTC，也对应 2026-10-16 00:00–01:00 Asia/Shanghai。现有已确认事件 event-existing 的参与者为 Alex 和 Bo，UTC 时间为 2026-10-15 16:00–17:00，参与者及起止 instants 均完全一致，因此重复创建没有必要；本任务明确没有可用的外部动作。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "catalog_options_sha256": "1c38c6b01d0104ca2c4e0934c22bf63244a400b156fc513454cce3374e24fa66",
+      "developer_sha256": "656d88259b08eb751cad84fcdefc6d0fe3ae9b3e0776c53ade176e0c68cc7e4d",
+      "developer_chars": 20604,
+      "reads": 1,
+      "role": "consumer",
+      "source": {
+        "revision_id": 41,
+        "sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472",
+        "content": "## Managed Skill: ceo-calendar-invite\nrevision_id: 41\nsha256: f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472\n\nCalendar invitation review: use each participant timezone, compare instants, and avoid recreating an event already present with the same participants and start/end. The calendar of record uses America/Los_Angeles."
+      },
+      "canonical_recheck_passed": true,
+      "full_model_visible_tool_content_verified": true,
+      "events_sha256": "da56abf310a0f1c4b1cd1d7ceeaec7244d6fa846ffe39d5a8391b4aa026c6303",
+      "command_sha256": "346059641cda266e3da1cbb606c93a38d0f14459b6f46b92719bd798caa6b499",
+      "harness_sha256": "833c1483de763c0b73fc18c54ff38e3c2774e74b787743386281c8f5c26ff8fb"
+    },
+    {
+      "variant": "baseline",
+      "phase": "changed",
+      "session_id": "01a130f3-bfd0-7e31-8cb8-79780e044a94",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "2db4ccbc08ffce5206fb459b616d5579e43c3452237c592c6afcd5113d67b883",
+      "source_revision": 42,
+      "source_sha256": "78363443a073611a3601122ef071390c909213e9485be505cc26579e15a4e80b",
+      "valid": true,
+      "scope": "service role contracts with synthetic profile/common configuration/source/provider, service task assembly; not actual saved production profile/template or production end-to-end acceptance",
+      "result": {
+        "outcome": "no_action",
+        "summary": "无需创建另一场日历事件。当前选定日历源的日历记录时区为 Asia/Shanghai；请求会议为 2026-10-15 09:00–10:00 America/Los_Angeles，对应 2026-10-15 16:00–17:00 UTC，也对应 2026-10-16 00:00–01:00 Asia/Shanghai。现有已确认事件 event-existing 的参与者为 Alex 和 Bo，UTC 时间为 2026-10-15 16:00–17:00，参与者及起止 instants 均完全一致，因此重复创建没有必要；本任务明确没有可用的外部动作。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "catalog_options_sha256": "1c38c6b01d0104ca2c4e0934c22bf63244a400b156fc513454cce3374e24fa66",
+      "developer_sha256": "656d88259b08eb751cad84fcdefc6d0fe3ae9b3e0776c53ade176e0c68cc7e4d",
+      "developer_chars": 20604,
+      "reads": 1,
+      "role": "consumer",
+      "source": {
+        "revision_id": 42,
+        "sha256": "78363443a073611a3601122ef071390c909213e9485be505cc26579e15a4e80b",
+        "content": "## Managed Skill: ceo-calendar-invite\nrevision_id: 42\nsha256: 78363443a073611a3601122ef071390c909213e9485be505cc26579e15a4e80b\n\nCalendar invitation review: use each participant timezone, compare instants, and avoid recreating an event already present with the same participants and start/end. The calendar of record uses Asia/Shanghai."
+      },
+      "canonical_recheck_passed": true,
+      "full_model_visible_tool_content_verified": true,
+      "events_sha256": "31d9e133fb40ec49cd8d5e1a4ab52ed8f7f4a1d362a86abf43d8ceb6b585341d",
+      "command_sha256": "6ce4da6cff8adbc7c43485821c8e8446235cd60b2b3551b6b770ebc0aa681ac9",
+      "harness_sha256": "833c1483de763c0b73fc18c54ff38e3c2774e74b787743386281c8f5c26ff8fb"
+    },
+    {
+      "variant": "candidate",
+      "phase": "cold",
+      "session_id": "01a130f3-9464-77b3-af4f-1279fa5b9e8e",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "e90a2335a7e3fcb41eb0e7b100c1248d2b2202d079d8f6e09b5fc35f6b034e42",
+      "source_revision": 41,
+      "source_sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472",
+      "valid": true,
+      "scope": "service role contracts with synthetic profile/common configuration/source/provider, service task assembly; not actual saved production profile/template or production end-to-end acceptance",
+      "result": {
+        "outcome": "no_action",
+        "summary": "无需新增日历事件。当前选定 Skill 明确规定：按参与者时区比较瞬间，并避免在相同参与者及相同开始/结束瞬间的既有事件上重复创建；日历记录时区为 America/Los_Angeles。原请求的 2026-10-15 09:00–10:00 America/Los_Angeles 对应 2026-10-15 16:00–17:00 UTC、2026-10-16 00:00–01:00 Asia/Shanghai；当前源中的 event-existing 已确认，参与者为 Alex 和 Bo，时间为 2026-10-15 16:00–17:00 UTC，完全匹配。因此本阶段不提出任何外部动作。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "catalog_options_sha256": "1c38c6b01d0104ca2c4e0934c22bf63244a400b156fc513454cce3374e24fa66",
+      "developer_sha256": "656d88259b08eb751cad84fcdefc6d0fe3ae9b3e0776c53ade176e0c68cc7e4d",
+      "developer_chars": 20604,
+      "reads": 1,
+      "role": "consumer",
+      "source": {
+        "revision_id": 41,
+        "sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472",
+        "content": "## Managed Skill: ceo-calendar-invite\nrevision_id: 41\nsha256: f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472\n\nCalendar invitation review: use each participant timezone, compare instants, and avoid recreating an event already present with the same participants and start/end. The calendar of record uses America/Los_Angeles."
+      },
+      "canonical_recheck_passed": true,
+      "full_model_visible_tool_content_verified": true,
+      "events_sha256": "a11b372d9bc14935cc7ca4ee090e59db0075724dc6744bf8db3a833edf405c36",
+      "command_sha256": "df1bacf71f43dcb179cbc3bab917b9c029151a9940b3c22de136cb31f3131814",
+      "harness_sha256": "833c1483de763c0b73fc18c54ff38e3c2774e74b787743386281c8f5c26ff8fb"
+    },
+    {
+      "variant": "candidate",
+      "phase": "unchanged",
+      "session_id": "01a130f3-9464-77b3-af4f-1279fa5b9e8e",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "e90a2335a7e3fcb41eb0e7b100c1248d2b2202d079d8f6e09b5fc35f6b034e42",
+      "source_revision": 41,
+      "source_sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472",
+      "valid": true,
+      "scope": "service role contracts with synthetic profile/common configuration/source/provider, service task assembly; not actual saved production profile/template or production end-to-end acceptance",
+      "result": {
+        "outcome": "no_action",
+        "summary": "无需新增日历事件。当前选定 Skill ceo-calendar-invite（revision_id 41，sha256 f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472）规定：按参与者时区比较瞬间，并避免在相同参与者及相同开始/结束瞬间的既有事件上重复创建；日历记录时区为 America/Los_Angeles。原请求的 2026-10-15 09:00–10:00 America/Los_Angeles 对应 2026-10-15 16:00–17:00 UTC、2026-10-16 00:00–01:00 Asia/Shanghai；当前源中的 event-existing 已确认，参与者为 Alex 和 Bo，时间为 2026-10-15 16:00–17:00 UTC，完全匹配。因此本阶段不提出任何外部动作。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "catalog_options_sha256": "1c38c6b01d0104ca2c4e0934c22bf63244a400b156fc513454cce3374e24fa66",
+      "developer_sha256": "656d88259b08eb751cad84fcdefc6d0fe3ae9b3e0776c53ade176e0c68cc7e4d",
+      "developer_chars": 20604,
+      "reads": 0,
+      "role": "consumer",
+      "source": {
+        "revision_id": 41,
+        "sha256": "f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472",
+        "content": "## Managed Skill: ceo-calendar-invite\nrevision_id: 41\nsha256: f42475629335e9b54f60f19601456a41cc15fd5dbe42087acac70ef69d57c472\n\nCalendar invitation review: use each participant timezone, compare instants, and avoid recreating an event already present with the same participants and start/end. The calendar of record uses America/Los_Angeles."
+      },
+      "canonical_recheck_passed": true,
+      "full_model_visible_tool_content_verified": false,
+      "events_sha256": "065f07433715c8ebe96b1086422c06f868f9b93f80ceaf02f04d59e67a3e5232",
+      "command_sha256": "a2225b4b96633517a24ce56109023da777fcc0e9b14115921ebefa7ac75a6753",
+      "harness_sha256": "833c1483de763c0b73fc18c54ff38e3c2774e74b787743386281c8f5c26ff8fb"
+    },
+    {
+      "variant": "candidate",
+      "phase": "changed",
+      "session_id": "01a130f3-9464-77b3-af4f-1279fa5b9e8e",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "a4dbcb4221ffb4a8d0517a849bd4dc3ad1e3b3339ca9388bd8088c886b57eead",
+      "source_revision": 42,
+      "source_sha256": "78363443a073611a3601122ef071390c909213e9485be505cc26579e15a4e80b",
+      "valid": true,
+      "scope": "service role contracts with synthetic profile/common configuration/source/provider, service task assembly; not actual saved production profile/template or production end-to-end acceptance",
+      "result": {
+        "outcome": "no_action",
+        "summary": "无需新增日历事件。当前选定 Skill ceo-calendar-invite（revision_id 42，sha256 78363443a073611a3601122ef071390c909213e9485be505cc26579e15a4e80b）规定：按参与者时区比较瞬间，并避免在相同参与者及相同开始/结束瞬间的既有事件上重复创建；当前源指定的日历记录时区为 Asia/Shanghai。原请求的 2026-10-15 09:00–10:00 America/Los_Angeles 对应 2026-10-15 16:00–17:00 UTC、2026-10-16 00:00–01:00 Asia/Shanghai；当前源中的 event-existing 已确认，参与者为 Alex 和 Bo，时间为 2026-10-15 16:00–17:00 UTC，完全匹配。因此本阶段不提出任何外部动作。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "source_bindings": [],
+        "durable_memories": []
+      },
+      "catalog_options_sha256": "1c38c6b01d0104ca2c4e0934c22bf63244a400b156fc513454cce3374e24fa66",
+      "developer_sha256": "656d88259b08eb751cad84fcdefc6d0fe3ae9b3e0776c53ade176e0c68cc7e4d",
+      "developer_chars": 20604,
+      "reads": 1,
+      "role": "consumer",
+      "source": {
+        "revision_id": 42,
+        "sha256": "78363443a073611a3601122ef071390c909213e9485be505cc26579e15a4e80b",
+        "content": "## Managed Skill: ceo-calendar-invite\nrevision_id: 42\nsha256: 78363443a073611a3601122ef071390c909213e9485be505cc26579e15a4e80b\n\nCalendar invitation review: use each participant timezone, compare instants, and avoid recreating an event already present with the same participants and start/end. The calendar of record uses Asia/Shanghai."
+      },
+      "canonical_recheck_passed": true,
+      "full_model_visible_tool_content_verified": true,
+      "events_sha256": "40bf35587ad09db53db690b6abf3173428b77c568992513e23d03ff66bceb0bd",
+      "command_sha256": "760f4430004016b86db798e8e6fde0077d47dcc3d59609ede5535c9c5708616e",
+      "harness_sha256": "833c1483de763c0b73fc18c54ff38e3c2774e74b787743386281c8f5c26ff8fb"
+    }
+  ]
+}

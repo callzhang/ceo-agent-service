@@ -122,7 +122,7 @@ class CodexRuntimeAdapter:
         sandbox_mode: str | None = None,
         skip_git_repo_check: bool = False,
         reasoning_effort: str | None = None,
-        skill_names: tuple[str, ...] = (),
+        skill_names: tuple[str, ...] | None = None,
     ) -> list[str]:
         configured_route = self._configured_route(route)
         command = self.runner.build_command(
@@ -148,7 +148,7 @@ class CodexRuntimeAdapter:
             skip_git_repo_check=skip_git_repo_check,
             reasoning_effort=reasoning_effort,
             skill_exclusion_override=codex_skill_config_override(skill_names)
-            if skill_names
+            if skill_names is not None
             else "",
         )
         _insert_service_mcp_options(command, session_id=session_id)

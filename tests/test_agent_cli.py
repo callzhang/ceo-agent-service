@@ -490,13 +490,13 @@ def test_read_skill_tool_discovers_metadata_and_reads_exact_name(
     )
 
     discovered = tool()
-    assert discovered == {
-        "skills": [{
-            "name": "business-review",
-            "description": "Review business material: with evidence.",
-            "path": str(skill_path.resolve()),
-        }]
-    }
+    from tests.test_skill_discovery_transport import decode_catalog
+
+    assert decode_catalog(discovered) == [{
+        "name": "business-review",
+        "description": "Review business material: with evidence.",
+        "path": str(skill_path.resolve()),
+    }]
     assert "EXACT BODY" not in json.dumps(discovered)
     assert set(descriptor.inputSchema["properties"]) == {"path", "name"}
     assert "required" not in descriptor.inputSchema
@@ -548,7 +548,9 @@ def test_read_skill_discovery_excludes_skill_symlink_outside_authorized_root(
 
     discovered = tool()
 
-    assert discovered == {"skills": []}
+    from tests.test_skill_discovery_transport import decode_catalog
+
+    assert decode_catalog(discovered) == []
     assert "SECRET SENTINEL" not in json.dumps(discovered)
     with pytest.raises(ValueError, match="unknown"):
         tool(name="secret-skill")

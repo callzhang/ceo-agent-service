@@ -1,0 +1,480 @@
+{
+  "version": 1,
+  "production_commit": "dd9b587e20f60cb109a8a8b73375504fdc09ece6",
+  "production_dirty": false,
+  "job_pid": [
+    "54970"
+  ],
+  "deployment_receipt": {
+    "operation_id": "deploy-081fb703-021e-49fb-8609-974104d3d2df",
+    "status": "succeeded",
+    "original_commit": "51556e7a0b92ab0de1fbff602c26c4be72a47b56",
+    "target_commit": "dd9b587e20f60cb109a8a8b73375504fdc09ece6",
+    "installed_commit": "dd9b587e20f60cb109a8a8b73375504fdc09ece6",
+    "error": "",
+    "updated_at": "2026-10-13T01:45:38.653164+00:00"
+  },
+  "backup": {
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-12.sqlite3",
+    "exists": true,
+    "bytes": 471347200
+  },
+  "http_readbacks": [
+    {
+      "path": "/healthz",
+      "http_status": 200,
+      "health": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    {
+      "path": "/api/workers/status",
+      "http_status": 200,
+      "summary": {
+        "queue_count": 13,
+        "pending": 3,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 0
+      },
+      "queues": [
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 3,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        }
+      ]
+    },
+    {
+      "path": "/api/console/attention",
+      "http_status": 200,
+      "meta": {
+        "snapshot_at": "2026-10-13T01:48:11.587803Z",
+        "page": null,
+        "page_size": null,
+        "total": 0,
+        "next_cursor": "",
+        "has_more": false
+      }
+    },
+    {
+      "path": "/api/console/history?page_size=1&include_chart=false",
+      "http_status": 200,
+      "meta": {
+        "snapshot_at": "2026-10-13T01:48:11.600981Z",
+        "page": 1,
+        "page_size": 1,
+        "total": 34804,
+        "next_cursor": "2",
+        "has_more": true
+      }
+    },
+    {
+      "path": "/api/console/settings/prompt-preview?role=consumer",
+      "http_status": 200,
+      "role": "consumer",
+      "preview_state": null,
+      "task_id": null,
+      "mode": "current",
+      "text_metrics": {
+        "developer_instructions": {
+          "characters": 32246,
+          "sha256": "a3fd8c65f6819ef2a0a518a14bc0cba359af94916eea3a8670bd631546e0fea9"
+        },
+        "task_prompt": {
+          "characters": 24,
+          "sha256": "3bbbc850f1364ac32529a6f5d5a80b663d1d86aa347ed705056a66dc224b2cc7"
+        },
+        "runtime_context": {
+          "characters": 2699,
+          "sha256": "ff9761c1775a85efaa9a5657e19373b91d81b5246e5ce7fb313fe82e74e11637"
+        }
+      },
+      "sections": [
+        {
+          "name": "角色合同",
+          "source": "服务角色合同",
+          "placement": "developer",
+          "characters": 785
+        },
+        {
+          "name": "Skill 使用约定",
+          "source": "服务角色合同",
+          "placement": "developer",
+          "characters": 310
+        },
+        {
+          "name": "共同工作原则",
+          "source": "已保存 Developer 模板",
+          "placement": "developer",
+          "characters": 625
+        },
+        {
+          "name": "系统动作目录",
+          "source": "系统动作合同",
+          "placement": "developer",
+          "characters": 922
+        },
+        {
+          "name": "输出契约",
+          "source": "Pydantic 业务模型",
+          "placement": "developer",
+          "characters": 9079
+        },
+        {
+          "name": "能力边界",
+          "source": "服务能力合同",
+          "placement": "developer",
+          "characters": 3529
+        },
+        {
+          "name": "后台记忆说明",
+          "source": "服务运行合同",
+          "placement": "developer",
+          "characters": 350
+        },
+        {
+          "name": "角色边界",
+          "source": "服务角色合同",
+          "placement": "developer",
+          "characters": 2741
+        },
+        {
+          "name": "决策证据",
+          "source": "服务决策质量合同",
+          "placement": "developer",
+          "characters": 1761
+        },
+        {
+          "name": "应用结果合同",
+          "source": "服务应用合同",
+          "placement": "developer",
+          "characters": 891
+        },
+        {
+          "name": "工作人格",
+          "source": "已保存 Work Profile",
+          "placement": "developer",
+          "characters": 8532
+        },
+        {
+          "name": "运行上下文",
+          "source": "实际运行配置",
+          "placement": "developer",
+          "characters": 2699
+        },
+        {
+          "name": "任务输入",
+          "source": "当前任务正文",
+          "placement": "task",
+          "characters": 24
+        }
+      ],
+      "select_apply_present": true,
+      "old_select_read_absent": true
+    },
+    {
+      "path": "/api/console/settings/prompt-preview?role=audit",
+      "http_status": 200,
+      "role": "audit",
+      "preview_state": null,
+      "task_id": null,
+      "mode": "current",
+      "text_metrics": {
+        "developer_instructions": {
+          "characters": 29246,
+          "sha256": "b86faad5c76a5109d2fd70d120938de1abefb2141f4acb8c056d9f1d78adcf93"
+        },
+        "task_prompt": {
+          "characters": 24,
+          "sha256": "3bbbc850f1364ac32529a6f5d5a80b663d1d86aa347ed705056a66dc224b2cc7"
+        },
+        "runtime_context": {
+          "characters": 2469,
+          "sha256": "a414bbe33b95d3cbb845b083062979359f91ca887793be609f4abfe7d6bd5cf1"
+        }
+      },
+      "sections": [
+        {
+          "name": "审核规则",
+          "source": "已保存 Audit Rules",
+          "placement": "developer",
+          "characters": 7608
+        },
+        {
+          "name": "角色合同",
+          "source": "服务角色合同",
+          "placement": "developer",
+          "characters": 785
+        },
+        {
+          "name": "Skill 使用约定",
+          "source": "服务角色合同",
+          "placement": "developer",
+          "characters": 335
+        },
+        {
+          "name": "共同工作原则",
+          "source": "已保存 Developer 模板",
+          "placement": "developer",
+          "characters": 625
+        },
+        {
+          "name": "系统动作目录",
+          "source": "系统动作合同",
+          "placement": "developer",
+          "characters": 922
+        },
+        {
+          "name": "输出契约",
+          "source": "Pydantic 业务模型",
+          "placement": "developer",
+          "characters": 1575
+        },
+        {
+          "name": "能力边界",
+          "source": "服务能力合同",
+          "placement": "developer",
+          "characters": 828
+        },
+        {
+          "name": "后台记忆说明",
+          "source": "服务运行合同",
+          "placement": "developer",
+          "characters": 350
+        },
+        {
+          "name": "决策证据",
+          "source": "服务决策质量合同",
+          "placement": "developer",
+          "characters": 1761
+        },
+        {
+          "name": "应用结果合同",
+          "source": "服务应用合同",
+          "placement": "developer",
+          "characters": 3007
+        },
+        {
+          "name": "响应完整性",
+          "source": "审核角色合同",
+          "placement": "developer",
+          "characters": 423
+        },
+        {
+          "name": "工作人格",
+          "source": "已保存 Work Profile",
+          "placement": "developer",
+          "characters": 8532
+        },
+        {
+          "name": "运行上下文",
+          "source": "实际运行配置",
+          "placement": "developer",
+          "characters": 2469
+        },
+        {
+          "name": "任务输入",
+          "source": "当前任务正文",
+          "placement": "task",
+          "characters": 24
+        }
+      ]
+    },
+    {
+      "path": "/api/console/settings/prompt-preview?role=consumer&task_id=404226",
+      "http_status": 200,
+      "role": "consumer",
+      "preview_state": null,
+      "task_id": 404226,
+      "mode": "current",
+      "text_metrics": {
+        "developer_instructions": {
+          "characters": 32368,
+          "sha256": "0e268527fbf97edf2907c958815b5a60b014afbb4264ba12b83791f345b99cf1"
+        },
+        "task_prompt": {
+          "characters": 6080,
+          "sha256": "88387ea89a61c90a3348aab8c39d44e3f84b6ca715e4833aa18ae989fa40ec27"
+        },
+        "runtime_context": {
+          "characters": 2821,
+          "sha256": "9ce18f3ebe77fa39f21632a663ed87b1f906a57490c85117946dfe03d80826ff"
+        }
+      },
+      "sections": [
+        {
+          "name": "角色合同",
+          "source": "服务角色合同",
+          "placement": "developer",
+          "characters": 785
+        },
+        {
+          "name": "Skill 使用约定",
+          "source": "服务角色合同",
+          "placement": "developer",
+          "characters": 310
+        },
+        {
+          "name": "共同工作原则",
+          "source": "已保存 Developer 模板",
+          "placement": "developer",
+          "characters": 625
+        },
+        {
+          "name": "系统动作目录",
+          "source": "系统动作合同",
+          "placement": "developer",
+          "characters": 922
+        },
+        {
+          "name": "输出契约",
+          "source": "Pydantic 业务模型",
+          "placement": "developer",
+          "characters": 9079
+        },
+        {
+          "name": "能力边界",
+          "source": "服务能力合同",
+          "placement": "developer",
+          "characters": 3529
+        },
+        {
+          "name": "后台记忆说明",
+          "source": "服务运行合同",
+          "placement": "developer",
+          "characters": 350
+        },
+        {
+          "name": "角色边界",
+          "source": "服务角色合同",
+          "placement": "developer",
+          "characters": 2741
+        },
+        {
+          "name": "决策证据",
+          "source": "服务决策质量合同",
+          "placement": "developer",
+          "characters": 1761
+        },
+        {
+          "name": "应用结果合同",
+          "source": "服务应用合同",
+          "placement": "developer",
+          "characters": 891
+        },
+        {
+          "name": "工作人格",
+          "source": "已保存 Work Profile",
+          "placement": "developer",
+          "characters": 8532
+        },
+        {
+          "name": "运行上下文",
+          "source": "实际运行配置",
+          "placement": "developer",
+          "characters": 2821
+        },
+        {
+          "name": "本轮 Task",
+          "source": "选定 attempt 的原生输入",
+          "placement": "task",
+          "characters": 6080
+        }
+      ],
+      "select_apply_present": true,
+      "old_select_read_absent": true,
+      "selected_skill_condition_present": false,
+      "exact_read_entry_present": true,
+      "task_source_run_id": 190310,
+      "task_source_rendered_at": "",
+      "saved_task_boundary": true,
+      "scope": "Current Developer plus explicitly labelled saved Task input; saved historic discovery is not rewritten by current code."
+    }
+  ],
+  "scope": "PR62 operational release readback. Task-bound preview preserves its explicitly labelled saved input and read entry; current unbound Consumer Developer confirms select/apply; no real provider action or new production business task replay.",
+  "automatic_checks": {
+    "run_id": 38332517769,
+    "status": "in_progress",
+    "required_status_checks": [],
+    "scope": "Not claimed as pass. Published using affected tests, fixed-case controls and independent review under approved plan; repository main protection disabled."
+  },
+  "readback_probe_diagnostic": {
+    "first_assertion": "Probe treated item/meta wrapper as top-level prompt, then wrongly expected saved old Task text to be reconstructed with new rules; assertion failed.",
+    "correction": "Unwrapped actual item; verified current Developer apply clause and labelled saved Task input/read entry. No service or snapshot changed."
+  }
+}
