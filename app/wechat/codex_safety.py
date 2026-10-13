@@ -263,6 +263,8 @@ def make_role_agent_command(
         "-c",
         "mcp_servers.agent_cli.tools.read_dingtalk_document_full.output_token_limit=30000",
         "-c",
+        "mcp_servers.agent_cli.tools.read_dingtalk_messages.output_token_limit=30000",
+        "-c",
         'approval_policy="never"',
     ]
     skill_override = codex_skill_config_override(())

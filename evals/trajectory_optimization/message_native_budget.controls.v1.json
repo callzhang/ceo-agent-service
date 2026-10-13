@@ -1,0 +1,388 @@
+{
+  "version": 1,
+  "scope": "Anonymous source-delivery controls using real role launch helpers. First5 text-only results; supplemental structured Consumer pair matches actual MCP mode. No complete business contract/profile, provider replay or production judgment claim.",
+  "measurement": "visible_text_chars flattens input_text blocks; serialized_native_output_chars includes JSON framing and is a distinct unit.",
+  "source_file_sha256": "e121b20b34a7b126133203859c716ede9b18fbd59f0bdd6f19e2be92b49612cf",
+  "source_compact_json_chars": 57919,
+  "runs": [
+    {
+      "arm": "baseline",
+      "role": "consumer",
+      "phase": "cold",
+      "session_id": "01a13307-207d-7660-849b-40031352d609",
+      "previous_session_id": null,
+      "exit_code": 0,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T19-11-07-01a13307-207d-7660-849b-40031352d609.jsonl",
+      "prefix_preserved": null,
+      "command_sha256": "aec8b6cac4f533d3e69e31e175e1bbf71a6a3311a18df679d3cd396e1d5a7c1e",
+      "task_sha256": "c79f7e656e6648c01254dde714c149d295085d65578369c50d74d1b22cf46b52",
+      "developer_sha256": "9c158f07a8570400cbd88f121756c8dc349a97e569c2bc722b2431cf86187743",
+      "mcp_delivery_mode": "text_only",
+      "native_range": [
+        0,
+        31
+      ],
+      "model_source_exact": false,
+      "report": {
+        "first": "message-0-e8be58771a99c993883d",
+        "middle": null,
+        "last": "message-32-b1624d82e9539bcf65d9"
+      },
+      "report_valid": false,
+      "mcp_source_exact": true,
+      "mcp_text_chars": 60732,
+      "mcp_text_sha256": "ef4fa2281e1a3b5b3e3af257cb01250c2e056ceb16f5fcc78197cfe7717979cf",
+      "visible_text_chars": 48021,
+      "serialized_native_output_chars": 49178,
+      "clipping_markers": [
+        "3192 tokens truncated"
+      ],
+      "source_calls": 1,
+      "native_phase_sha256": "c5e8ccf8c9952490194e06ef5ee0a37ab0201eca4d5b70cebefd4e8c986ddbe0",
+      "controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-message-native-budget-huAHN9/baseline-consumer",
+          "effort": "medium"
+        }
+      ],
+      "initial_native_developer_sha256": "f83e201a7eebcea8243e925a39c1bdc065eec45e338740ae7896405c83d77248"
+    },
+    {
+      "arm": "candidate",
+      "role": "consumer",
+      "phase": "cold",
+      "session_id": "01a1330a-3c5e-7bd3-8b88-424a1bffabd6",
+      "previous_session_id": null,
+      "exit_code": 0,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T19-14-31-01a1330a-3c5e-7bd3-8b88-424a1bffabd6.jsonl",
+      "prefix_preserved": null,
+      "command_sha256": "4c8d27038aabae8af2af93767cea156808dd9b33a6caa1874611185e2d5b5003",
+      "task_sha256": "c79f7e656e6648c01254dde714c149d295085d65578369c50d74d1b22cf46b52",
+      "developer_sha256": "9c158f07a8570400cbd88f121756c8dc349a97e569c2bc722b2431cf86187743",
+      "native_range": [
+        0,
+        31
+      ],
+      "source_calls": 1,
+      "model_source_exact": true,
+      "report": {
+        "first": "message-0-e8be58771a99c993883d",
+        "middle": "message-16-0ba1ad1b2705e7ec8519",
+        "last": "message-32-b1624d82e9539bcf65d9"
+      },
+      "report_valid": true,
+      "visible_chars": [
+        60766
+      ],
+      "source_sha256": "e121b20b34a7b126133203859c716ede9b18fbd59f0bdd6f19e2be92b49612cf",
+      "harness_sha256": "fb1c625cce0ea4525e4626c431c9f4c0a73daa49622f85fa48121ed89835cd46",
+      "mcp_delivery_mode": "text_only",
+      "mcp_source_exact": true,
+      "mcp_text_chars": 60732,
+      "mcp_text_sha256": "ef4fa2281e1a3b5b3e3af257cb01250c2e056ceb16f5fcc78197cfe7717979cf",
+      "visible_text_chars": 60766,
+      "serialized_native_output_chars": 62196,
+      "clipping_markers": [],
+      "native_phase_sha256": "3c985826d154699c91e80e6b803e614a17bfc8e53f7d7ac63c1b2871e49dd0e9",
+      "controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-message-native-budget-huAHN9/baseline-consumer",
+          "effort": "medium"
+        }
+      ],
+      "initial_native_developer_sha256": "f83e201a7eebcea8243e925a39c1bdc065eec45e338740ae7896405c83d77248"
+    },
+    {
+      "arm": "candidate",
+      "role": "consumer",
+      "phase": "resume",
+      "session_id": "01a1330a-3c5e-7bd3-8b88-424a1bffabd6",
+      "previous_session_id": "01a1330a-3c5e-7bd3-8b88-424a1bffabd6",
+      "exit_code": 0,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T19-14-31-01a1330a-3c5e-7bd3-8b88-424a1bffabd6.jsonl",
+      "prefix_preserved": true,
+      "command_sha256": "a91883c1eee71f3c0c5f092d63629bc5702e0afec08191b3df7c95c97ece4803",
+      "task_sha256": "c79f7e656e6648c01254dde714c149d295085d65578369c50d74d1b22cf46b52",
+      "developer_sha256": "9c158f07a8570400cbd88f121756c8dc349a97e569c2bc722b2431cf86187743",
+      "native_range": [
+        31,
+        48
+      ],
+      "source_calls": 1,
+      "model_source_exact": true,
+      "report": {
+        "first": "message-0-e8be58771a99c993883d",
+        "middle": "message-16-0ba1ad1b2705e7ec8519",
+        "last": "message-32-b1624d82e9539bcf65d9"
+      },
+      "report_valid": true,
+      "visible_chars": [
+        60766
+      ],
+      "source_sha256": "e121b20b34a7b126133203859c716ede9b18fbd59f0bdd6f19e2be92b49612cf",
+      "harness_sha256": "fb1c625cce0ea4525e4626c431c9f4c0a73daa49622f85fa48121ed89835cd46",
+      "mcp_delivery_mode": "text_only",
+      "mcp_source_exact": true,
+      "mcp_text_chars": 60732,
+      "mcp_text_sha256": "ef4fa2281e1a3b5b3e3af257cb01250c2e056ceb16f5fcc78197cfe7717979cf",
+      "visible_text_chars": 60766,
+      "serialized_native_output_chars": 62196,
+      "clipping_markers": [],
+      "native_phase_sha256": "04c52e8f42d6829123b65ea1fd2fc967a62c522f24d44e272de909a269b272ff",
+      "controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-message-native-budget-huAHN9/baseline-consumer",
+          "effort": "medium"
+        }
+      ],
+      "initial_native_developer_sha256": "f83e201a7eebcea8243e925a39c1bdc065eec45e338740ae7896405c83d77248"
+    },
+    {
+      "arm": "candidate",
+      "role": "audit",
+      "phase": "cold",
+      "session_id": "01a1330c-781e-7d52-bb51-650ee167c2e8",
+      "previous_session_id": null,
+      "exit_code": 0,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T19-16-57-01a1330c-781e-7d52-bb51-650ee167c2e8.jsonl",
+      "prefix_preserved": null,
+      "command_sha256": "dcc39e8b9381db3b50c0c3bc0d0a2fcb84175f162c8e9f08c0c2275eea17cd22",
+      "task_sha256": "c79f7e656e6648c01254dde714c149d295085d65578369c50d74d1b22cf46b52",
+      "developer_sha256": "9c158f07a8570400cbd88f121756c8dc349a97e569c2bc722b2431cf86187743",
+      "native_range": [
+        0,
+        24
+      ],
+      "source_calls": 1,
+      "model_source_exact": true,
+      "report": {
+        "first": "message-0-e8be58771a99c993883d",
+        "middle": "message-16-0ba1ad1b2705e7ec8519",
+        "last": "message-32-b1624d82e9539bcf65d9"
+      },
+      "report_valid": true,
+      "visible_chars": [
+        60766
+      ],
+      "source_sha256": "e121b20b34a7b126133203859c716ede9b18fbd59f0bdd6f19e2be92b49612cf",
+      "harness_sha256": "fb1c625cce0ea4525e4626c431c9f4c0a73daa49622f85fa48121ed89835cd46",
+      "mcp_delivery_mode": "text_only",
+      "mcp_source_exact": true,
+      "mcp_text_chars": 60732,
+      "mcp_text_sha256": "ef4fa2281e1a3b5b3e3af257cb01250c2e056ceb16f5fcc78197cfe7717979cf",
+      "visible_text_chars": 60766,
+      "serialized_native_output_chars": 62196,
+      "clipping_markers": [],
+      "native_phase_sha256": "9e8a1f702ac96c386c4edd05e19e073cfed20c1fd455a1d9cb6d20b10665fcc5",
+      "controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          },
+          "cwd": "/private/tmp/ceo-message-native-budget-huAHN9/candidate-audit",
+          "effort": "medium"
+        }
+      ],
+      "initial_native_developer_sha256": "47ac8d51ae3d59f05f1a1d85bb3762e9fb277963edcd4971c0bc8453d26930cf"
+    },
+    {
+      "arm": "candidate",
+      "role": "audit",
+      "phase": "resume",
+      "session_id": "01a1330c-781e-7d52-bb51-650ee167c2e8",
+      "previous_session_id": "01a1330c-781e-7d52-bb51-650ee167c2e8",
+      "exit_code": 0,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T19-16-57-01a1330c-781e-7d52-bb51-650ee167c2e8.jsonl",
+      "prefix_preserved": true,
+      "command_sha256": "a12c7e69602e2b65b2e41f141bd6251eed779baf3e89c7a5afe398ba5ddedeb0",
+      "task_sha256": "c79f7e656e6648c01254dde714c149d295085d65578369c50d74d1b22cf46b52",
+      "developer_sha256": "9c158f07a8570400cbd88f121756c8dc349a97e569c2bc722b2431cf86187743",
+      "native_range": [
+        24,
+        46
+      ],
+      "source_calls": 1,
+      "model_source_exact": true,
+      "report": {
+        "first": "message-0-e8be58771a99c993883d",
+        "middle": "message-16-0ba1ad1b2705e7ec8519",
+        "last": "message-32-b1624d82e9539bcf65d9"
+      },
+      "report_valid": true,
+      "visible_chars": [
+        60766
+      ],
+      "source_sha256": "e121b20b34a7b126133203859c716ede9b18fbd59f0bdd6f19e2be92b49612cf",
+      "harness_sha256": "fb1c625cce0ea4525e4626c431c9f4c0a73daa49622f85fa48121ed89835cd46",
+      "mcp_delivery_mode": "text_only",
+      "mcp_source_exact": true,
+      "mcp_text_chars": 60732,
+      "mcp_text_sha256": "ef4fa2281e1a3b5b3e3af257cb01250c2e056ceb16f5fcc78197cfe7717979cf",
+      "visible_text_chars": 60766,
+      "serialized_native_output_chars": 62196,
+      "clipping_markers": [],
+      "native_phase_sha256": "abab8bd1ad46266e5678a0049b4dda5c76b4f1980d480957850e0c94746d09a8",
+      "controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "read-only"
+          },
+          "cwd": "/Users/derek/Projects/ceo-agent-service",
+          "effort": "medium"
+        }
+      ],
+      "initial_native_developer_sha256": "47ac8d51ae3d59f05f1a1d85bb3762e9fb277963edcd4971c0bc8453d26930cf"
+    },
+    {
+      "arm": "baseline2",
+      "role": "consumer",
+      "phase": "cold",
+      "session_id": "01a13312-7750-73b1-b3b3-3e4a71b204b0",
+      "previous_session_id": null,
+      "exit_code": 0,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T19-23-30-01a13312-7750-73b1-b3b3-3e4a71b204b0.jsonl",
+      "prefix_preserved": null,
+      "command_sha256": "aec8b6cac4f533d3e69e31e175e1bbf71a6a3311a18df679d3cd396e1d5a7c1e",
+      "task_sha256": "c79f7e656e6648c01254dde714c149d295085d65578369c50d74d1b22cf46b52",
+      "developer_sha256": "9c158f07a8570400cbd88f121756c8dc349a97e569c2bc722b2431cf86187743",
+      "native_range": [
+        0,
+        31
+      ],
+      "source_calls": 1,
+      "model_source_exact": false,
+      "report": {
+        "first": "message-0-e8be58771a99c993883d",
+        "middle": null,
+        "last": "message-32-b1624d82e9539bcf65d9"
+      },
+      "report_valid": false,
+      "visible_chars": [
+        48023
+      ],
+      "source_sha256": "e121b20b34a7b126133203859c716ede9b18fbd59f0bdd6f19e2be92b49612cf",
+      "harness_sha256": "b79d03ac74b56da60504f9f70fea26f8b0259012e5d5bc8e6b97c5ea9a1d136d",
+      "mcp_delivery_mode": "text_and_structured",
+      "mcp_source_exact": true,
+      "mcp_text_chars": 60732,
+      "mcp_text_sha256": "ef4fa2281e1a3b5b3e3af257cb01250c2e056ceb16f5fcc78197cfe7717979cf",
+      "visible_text_chars": 48023,
+      "serialized_native_output_chars": 48849,
+      "clipping_markers": [
+        "2489 tokens truncated"
+      ],
+      "native_phase_sha256": "e0ed564bf9d36dfe0c105bf2a4c6efd0f22e094b4d8780e73fd23fbdec080a0c",
+      "controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-message-native-budget-huAHN9/baseline-consumer",
+          "effort": "medium"
+        }
+      ],
+      "initial_native_developer_sha256": "f83e201a7eebcea8243e925a39c1bdc065eec45e338740ae7896405c83d77248"
+    },
+    {
+      "arm": "candidate2",
+      "role": "consumer",
+      "phase": "cold",
+      "session_id": "01a1331d-5394-7901-b065-f8583069d674",
+      "previous_session_id": null,
+      "exit_code": 0,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T19-35-22-01a1331d-5394-7901-b065-f8583069d674.jsonl",
+      "prefix_preserved": null,
+      "command_sha256": "cdc59ad60f57db6566e9faccffb9024a2b9cae9be5ac6f4d63db94c2a583348a",
+      "task_sha256": "c79f7e656e6648c01254dde714c149d295085d65578369c50d74d1b22cf46b52",
+      "developer_sha256": "9c158f07a8570400cbd88f121756c8dc349a97e569c2bc722b2431cf86187743",
+      "native_range": [
+        0,
+        31
+      ],
+      "source_calls": 1,
+      "model_source_exact": true,
+      "report": {
+        "first": "message-0-e8be58771a99c993883d",
+        "middle": "message-16-0ba1ad1b2705e7ec8519",
+        "last": "message-32-b1624d82e9539bcf65d9"
+      },
+      "report_valid": true,
+      "visible_chars": [
+        57953
+      ],
+      "source_sha256": "e121b20b34a7b126133203859c716ede9b18fbd59f0bdd6f19e2be92b49612cf",
+      "harness_sha256": "b79d03ac74b56da60504f9f70fea26f8b0259012e5d5bc8e6b97c5ea9a1d136d",
+      "mcp_delivery_mode": "text_and_structured",
+      "mcp_source_exact": true,
+      "mcp_text_chars": 60732,
+      "mcp_text_sha256": "ef4fa2281e1a3b5b3e3af257cb01250c2e056ceb16f5fcc78197cfe7717979cf",
+      "visible_text_chars": 57953,
+      "serialized_native_output_chars": 58949,
+      "clipping_markers": [],
+      "native_phase_sha256": "3bec3ba07a03e6b43de9052899078e502ad350e93761ae890c7d8e3264243c69",
+      "controls": [
+        {
+          "model": "gpt-5.6-luna",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "network_access": false,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "cwd": "/private/tmp/ceo-message-native-budget-huAHN9/baseline-consumer",
+          "effort": "medium"
+        }
+      ],
+      "initial_native_developer_sha256": "f83e201a7eebcea8243e925a39c1bdc065eec45e338740ae7896405c83d77248"
+    }
+  ],
+  "controls_limits": {
+    "text_only_consumer_cold": "Exact paired command/task/developer/cwd control; only per-tool budget differs.",
+    "structured_pair": "Same task/developer/cwd/source/native Developer, but installed disabled-directory snapshot lost one unrelated entry between turns; not strictly single-factor.",
+    "audit_continuation": "Same SID/preserved prefix, actual observed cwd changes to development repository on resume; not same-cwd runtime acceptance.",
+    "observer_repairs": "List-of-input_text output initially treated as string; later structuredContent assumed for text-only result. Fixed readback only, no original model rerun or result rewrite."
+  },
+  "independent_review": "native_catalog_review checked actual clipping, immutable source/MCP/model equality, arguments, command controls, reports and continuation prefixes; found no code-level blocker for scoped per-tool transport change, with stated confounders.",
+  "harness_hashes": {
+    "server.py": "084bfe02db9e482da44e8df41dc1ef5cb21475fa2b9f38a801d5da352132c290",
+    "probe.py": "b79d03ac74b56da60504f9f70fea26f8b0259012e5d5bc8e6b97c5ea9a1d136d",
+    "verify.py": "fe0f8d5b199a8b1b93c63c966da4957fbf760a3d082e4c592f03201c5fb241ff",
+    "text-only-server.py": "446d5bedafe1d1db58ad33e9177d157f7b7d9f4843d72d7fc6e544ac092223f0",
+    "text-only-probe.py": "fb1c625cce0ea4525e4626c431c9f4c0a73daa49622f85fa48121ed89835cd46",
+    "baseline-probe.py": "5fe1636c4db90ef8f5d7b0ad85c1079efcb18c7a2f97464d5d94c73e947eb2f7"
+  }
+}
