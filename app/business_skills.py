@@ -525,7 +525,7 @@ def render_task_skill_discovery(
             instructions.append(
                 f"For the task-frozen selection {names}, use this task's exact content. "
                 "Reuse complete content already loaded in this session only while "
-                "this task's source revision/hash is unchanged. Otherwise read the exact frozen content "
+                "this selected frozen Skill's revision_id/sha256 is unchanged. Otherwise read the exact frozen content "
                 "with `agent_cli.read_task_skill(name)`; do not substitute a similarly "
                 "named installed Skill."
             )

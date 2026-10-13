@@ -251,7 +251,7 @@ def test_frozen_discovery_reuses_only_complete_unchanged_source_in_session():
     )
     assert "agent_cli.read_task_skill(name)" in prompt
     assert "Reuse complete content already loaded in this session" in prompt
-    assert "this task's source revision/hash is unchanged" in prompt
+    assert "this selected frozen Skill's revision_id/sha256 is unchanged" in prompt
     assert "Otherwise read the exact frozen content" in prompt
     assert "do not substitute a similarly named installed Skill" in prompt
     assert "before deciding or reviewing" not in prompt
