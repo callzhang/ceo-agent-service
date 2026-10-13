@@ -3375,7 +3375,29 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
     ]
     rows: list[dict[str, str]] = []
     active_reply_task_triggers: set[tuple[str, str, str]] = set()
+    pending_oa_rows: list[dict[str, str]] = []
     with store._connect() as db:
+        state = db.execute(
+            "select cursor_json from daily_scan_state where scanner_name='oa_pending'"
+        ).fetchone()
+        pending_keys = json.loads(state["cursor_json"]).get(
+            "pending_business_object_keys", []
+        ) if state is not None else []
+        for key in pending_keys:
+            task = db.execute(
+                f"select id,conversation_title,trigger_text,updated_at,error,status "
+                f"from ({REPLY_TASK_CURRENT_SQL}) where business_object_key=? "
+                "order by id desc limit 1", (key,),
+            ).fetchone()
+            if task is not None:
+                pending_oa_rows.append({
+                    "category": "OA approval", "id": str(task["id"]),
+                    "status": "pending", "context": str(task["conversation_title"]),
+                    "summary": str(task["trigger_text"]),
+                    "updated_at": str(task["updated_at"]),
+                    "error": str(task["error"] or
+                        "Current principal OA node is still pending; no completed approval or return readback."),
+                })
         db.create_function(
             "decode_work_summary_payload",
             1,
@@ -3791,6 +3813,10 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 "error": attempt["send_error"],
             }
         )
+    pending_oa_ids = {row["id"] for row in pending_oa_rows}
+    rows = [row for row in rows
+            if not (row["category"] == "Reply task" and row["id"] in pending_oa_ids)]
+    rows.extend(pending_oa_rows)
     rows.sort(key=lambda row: row["updated_at"], reverse=True)
     return rows if limit is None else rows[:limit]
 

@@ -545,10 +545,12 @@ def scan_pending_oa_approvals(
 
     previous_revisions: dict[str, str] = {}
     previous_queued_days: dict[str, str] = {}
+    previous_pending_keys: set[str] = set()
     previous_state = store.get_daily_scan_state(OA_PENDING_SCANNER)
     if previous_state is not None:
         try:
             cursor = json.loads(previous_state["cursor_json"])
+            previous_pending_keys = set(cursor.get("pending_business_object_keys", []))
             revisions = cursor.get("process_revisions", {})
             if isinstance(revisions, dict):
                 previous_revisions = {
@@ -751,6 +753,17 @@ def scan_pending_oa_approvals(
             queued += 1
             queued_process_ids.append(process_instance_id)
 
+    pending_business_object_keys = {
+        f"oa:{process_id}:{task_id}"
+        for process_id, task_ids in pending_task_ids_by_process.items()
+        for task_id in task_ids
+    }
+    # A partial scan or unreadable source cannot prove that a pending node left.
+    pending_business_object_keys.update(
+        key for key in previous_pending_keys
+        if not pending_scan_complete or not current_user_id
+        or key.rsplit(":", 1)[0].removeprefix("oa:") in reconciliation_read_failures
+    )
     store.set_daily_scan_state(
         OA_PENDING_SCANNER,
         last_success_at=_utc_now(),
@@ -760,6 +773,7 @@ def scan_pending_oa_approvals(
                 "window_end": window_end,
                 "window_start": window_start,
                 "seen_process_instance_ids": sorted(seen_process_ids),
+                "pending_business_object_keys": sorted(pending_business_object_keys),
                 "queued_process_instance_ids": queued_process_ids,
                 "process_revisions": process_revisions,
                 "queued_days": queued_days,
