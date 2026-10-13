@@ -229,6 +229,7 @@ class DwsCalendarEvent(BaseModel):
     end_time: str = ""
     description: str = ""
     organizer: str = ""
+    organizer_details: dict[str, Any] = Field(default_factory=dict)
     response_status: str = ""
     self_response_status: str = ""
     attendees: list[str] = Field(default_factory=list)
@@ -5044,6 +5045,7 @@ class DwsClient:
                 "remark",
             ),
             organizer=DwsClient._calendar_person(record.get("organizer")),
+            organizer_details=(record["organizer"] if isinstance(record.get("organizer"), dict) else {}),
             response_status=DwsClient._first_string(
                 record,
                 "responseStatus",

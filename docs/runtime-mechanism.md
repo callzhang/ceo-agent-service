@@ -2783,9 +2783,18 @@ WeChat bootstrap 只使用 actions 投影及类型写入，不创建旧表、兼
 echo 判断及会议恢复顺序保持现有行为。只接受准确前版 Store16 来源。
 配对逆迁从当前事实重建旧三表及九类型 actions，保留发布后写入并恢复原版本记录。
 完整十张核心表加迁移表目标仍未完成。此段描述开发候选，上线以正式部署回执为准。
+
 OA approval Attention reflects an unresolved process-level state from the latest
 verified provider scan. A running OA process may have completed the current
 principal's node and moved to another approver; unless the provider detail
 identifies the current node owner, the projection must not claim that the
 principal's node is still pending. Keep the process in Attention until a final
 approval or return receipt is read back.
+
+### 日历组织者来源字段
+
+日历解析继续生成原有 organizer 显示字符串，同时在 organizer_details 中保留
+provider 返回的完整组织者对象。日历事件读取、窗口读取及既有 model_dump 任务输入
+因此可看到原始 userId、openDingTalkId、邮箱及其他来源字段，字符串标识和嵌套值
+不被改写。来源只有字符串时 details 为空，不根据显示名猜测稳定身份。新增对象是
+来源证据，不能冒充接收人核验或授权结果；既有动作、Audit、通知和运行路线不变。
