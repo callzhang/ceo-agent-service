@@ -1,0 +1,271 @@
+{
+  "version": 1,
+  "runs": [
+    {
+      "case": "valid-string",
+      "arm": "inline",
+      "returncode": null,
+      "reused_existing_terminal_stream": true,
+      "session_id": "01a13513-c849-7790-9630-aefb10efb028",
+      "prompt_chars": 33437,
+      "prompt_sha256": "c1842479e7d25c9cca5b5c72d0902592b16acffd336cb314a0c2c061f396f9ea",
+      "result": {
+        "outcome": "approve",
+        "summary": "Approved: the complete candidate accurately proposes sending the exact requested notice to the verified recipient, with no execution authorized in this audit.",
+        "proposal_revision": 0,
+        "candidate_digest": "6d5231296106b83299ac15216458caa91bfb38cc4c2859e4c943b20b278d1bd3",
+        "evidence_refs": [
+          "/proposal/actions/0/action_identity = \"notice\"",
+          "/proposal/actions/0/operation = \"send_direct_message\"",
+          "/proposal/actions/0/target/open_dingtalk_id is JSON string \"104265682397\"",
+          "/proposal/actions/0/payload/content = \"Exact prepared notice\"",
+          "/source_bindings/0/value/authorized = true",
+          "/source_bindings/0/value/handled = false",
+          "/source_bindings/0/value/complete_support contains the complete source snapshot"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "canonical_valid": true,
+      "digest_matches": true,
+      "outcome_matches": true,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T04-44-11-01a13513-c849-7790-9630-aefb10efb028.jsonl",
+      "native_file_sha256": "e8e0aa14afd8757791a0b2665f855467694bd6a5d3d7c800d00c87b00f458d06",
+      "native_record_count": 34,
+      "all_response_items_examined": true,
+      "actual_task_exact": true,
+      "developer_hashes": [
+        "e3cd2be8105c994622616e86177df6f95f70eb87fa1a5bb6edc9ac3beae4c005",
+        "d1f5c413448a3d3bd9338fe21f0400d795bca790d7faccafdc03f8498d121b14"
+      ],
+      "developer_chars": [
+        23291,
+        410
+      ],
+      "terminal_completed": true,
+      "native_mcp_calls": [
+        {
+          "server": "codex_apps",
+          "tool": "memory.user_get",
+          "status": "completed",
+          "error": null
+        }
+      ]
+    },
+    {
+      "case": "valid-string",
+      "arm": "candidate-only",
+      "returncode": 0,
+      "reused_existing_terminal_stream": false,
+      "session_id": "01a13514-e785-78e3-8a9c-427ad6ca3087",
+      "prompt_chars": 17629,
+      "prompt_sha256": "a7a59e25eef1abadf68cf17524b5e4fffc327c1bab86eefbde5f28e2e0ea97d7",
+      "result": {
+        "outcome": "approve",
+        "summary": "Approve: the complete current candidate satisfies the supplied send_direct_message contract and authoritative source snapshot. The proposed action preserves the exact requested text, targets the verified recipient, uses a JSON string identifier, and has stable action_identity; this read-only audit authorizes no execution.",
+        "proposal_revision": 0,
+        "candidate_digest": "6d5231296106b83299ac15216458caa91bfb38cc4c2859e4c943b20b278d1bd3",
+        "evidence_refs": [
+          "candidate.proposal.actions[0].target.open_dingtalk_id",
+          "candidate.proposal.actions[0].payload.content",
+          "candidate.proposal.actions[0].action_identity",
+          "candidate.source_bindings[0].value"
+        ],
+        "feedback": null,
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "canonical_valid": true,
+      "digest_matches": true,
+      "outcome_matches": true,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T04-45-24-01a13514-e785-78e3-8a9c-427ad6ca3087.jsonl",
+      "native_file_sha256": "8c721c1e5cb59a06646be071a4d2732c3e18abaa5a228c77cdbc0b791e1e2b22",
+      "native_record_count": 38,
+      "all_response_items_examined": true,
+      "actual_task_exact": true,
+      "developer_hashes": [
+        "e3cd2be8105c994622616e86177df6f95f70eb87fa1a5bb6edc9ac3beae4c005",
+        "d1f5c413448a3d3bd9338fe21f0400d795bca790d7faccafdc03f8498d121b14"
+      ],
+      "developer_chars": [
+        23291,
+        410
+      ],
+      "terminal_completed": true,
+      "native_mcp_calls": [
+        {
+          "server": "codex_apps",
+          "tool": "memory.user_get",
+          "status": "completed",
+          "error": null
+        }
+      ]
+    },
+    {
+      "case": "invalid-number",
+      "arm": "inline",
+      "returncode": 0,
+      "reused_existing_terminal_stream": false,
+      "session_id": "01a13515-25cb-7472-b182-abf27b26e0bf",
+      "prompt_chars": 33433,
+      "prompt_sha256": "8b03082089a909783b43bcff530da69aefd2c8db8daf27fe8f9d5bf0b6ba5bc5",
+      "result": {
+        "outcome": "return",
+        "summary": "Return: the candidate is not contract-valid because the direct-message target identifier has the wrong JSON type.",
+        "proposal_revision": 0,
+        "candidate_digest": "229ff7b66fcbca61cb66cb8d4d70e02261feee5ba111d352152d59e8cc5cfc32",
+        "evidence_refs": [
+          "/proposal/actions/0/target/open_dingtalk_id",
+          "/proposal/actions/0/payload/content",
+          "/proposal/actions/0/action_identity",
+          "/source_bindings/0/value/recipient"
+        ],
+        "feedback": {
+          "rule": "The exact send_direct_message contract requires target.open_dingtalk_id to be a JSON string, payload.content to equal the requested text, and action_identity to be stable.",
+          "observation": "At /proposal/actions/0/target/open_dingtalk_id, the current candidate supplies the JSON number 104265682397, not a JSON string. The current candidate does supply the exact requested content at /proposal/actions/0/payload/content as the string \"Exact prepared notice\", and supplies the stable action_identity \"notice\" at /proposal/actions/0/action_identity. The source snapshot independently supplies the recipient as the string \"104265682397\" at /source_bindings/0/value/recipient. This finding is based on the current candidate JSON, not stale earlier feedback.",
+          "requested_revision": "Change only /proposal/actions/0/target/open_dingtalk_id to the JSON string \"104265682397\" while preserving the exact candidate content, action_identity, operation, target, and action plan."
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "canonical_valid": true,
+      "digest_matches": true,
+      "outcome_matches": true,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T04-45-40-01a13515-25cb-7472-b182-abf27b26e0bf.jsonl",
+      "native_file_sha256": "2ffb3340e80c8ec288cd59126e09a3f5fb7215573886c04146f4beca77abe46f",
+      "native_record_count": 30,
+      "all_response_items_examined": true,
+      "actual_task_exact": true,
+      "developer_hashes": [
+        "e3cd2be8105c994622616e86177df6f95f70eb87fa1a5bb6edc9ac3beae4c005",
+        "d1f5c413448a3d3bd9338fe21f0400d795bca790d7faccafdc03f8498d121b14"
+      ],
+      "developer_chars": [
+        23291,
+        410
+      ],
+      "terminal_completed": true,
+      "native_mcp_calls": [
+        {
+          "server": "codex_apps",
+          "tool": "memory.user_get",
+          "status": "completed",
+          "error": null
+        }
+      ]
+    },
+    {
+      "case": "invalid-number",
+      "arm": "candidate-only",
+      "returncode": 0,
+      "reused_existing_terminal_stream": false,
+      "session_id": "01a13515-60dd-7721-a39b-cb7d939ab235",
+      "prompt_chars": 17627,
+      "prompt_sha256": "0fc99b815052929a29da4271ebb3661bf81dc2b1a775675a920080506eed0cee",
+      "result": {
+        "outcome": "return",
+        "summary": "Return: the proposed direct message is otherwise complete and authorized, but the recipient identifier has the wrong JSON type for the required send_direct_message contract.",
+        "proposal_revision": 0,
+        "candidate_digest": "229ff7b66fcbca61cb66cb8d4d70e02261feee5ba111d352152d59e8cc5cfc32",
+        "evidence_refs": [
+          "candidate.proposal.actions[0].target.open_dingtalk_id",
+          "candidate.proposal.actions[0].payload.content",
+          "candidate.proposal.actions[0].action_identity",
+          "candidate.source_bindings[0].value"
+        ],
+        "feedback": {
+          "rule": "The exact send_direct_message contract requires target.open_dingtalk_id to be a JSON string; preserve the stable action_identity and exact requested payload.",
+          "observation": "At JSON path candidate.proposal.actions[0].target.open_dingtalk_id, the current literal value is 104265682397 and its JSON type is number, not string. The current payload.content is \"Exact prepared notice\" and action_identity is \"notice\".",
+          "requested_revision": "Change candidate.proposal.actions[0].target.open_dingtalk_id from the JSON number 104265682397 to the JSON string \"104265682397\". Preserve action_identity \"notice\", operation \"send_direct_message\", and payload.content exactly as \"Exact prepared notice\"."
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "canonical_valid": true,
+      "digest_matches": true,
+      "outcome_matches": true,
+      "native_path": "/Users/derek/.codex/sessions/2026/10/13/rollout-2026-10-13T04-45-55-01a13515-60dd-7721-a39b-cb7d939ab235.jsonl",
+      "native_file_sha256": "a3b48f842faae31e8ff326c11326bc02ca78e60c22b3d679987960a6f7408148",
+      "native_record_count": 37,
+      "all_response_items_examined": true,
+      "actual_task_exact": true,
+      "developer_hashes": [
+        "e3cd2be8105c994622616e86177df6f95f70eb87fa1a5bb6edc9ac3beae4c005",
+        "d1f5c413448a3d3bd9338fe21f0400d795bca790d7faccafdc03f8498d121b14"
+      ],
+      "developer_chars": [
+        23291,
+        410
+      ],
+      "terminal_completed": true,
+      "native_mcp_calls": [
+        {
+          "server": "codex_apps",
+          "tool": "memory.user_get",
+          "status": "completed",
+          "error": null
+        }
+      ]
+    }
+  ],
+  "all_developer_sections_equal": true,
+  "observer_correction": "First observer supplied raw final JSON to a parser requiring native JSONL events. Re-parsed the original complete stdout without rerunning the model; first native process exit code was not separately saved and remains null.",
+  "input_reduction": {
+    "valid_string": 15808,
+    "invalid_number": 15806
+  },
+  "independent_review": "Passed bounded field oracle: four exact Developer pairs/full submitted candidate inputs, canonical result+digest/revision, valid string approves and real numeric error returns with correct current path/literal/type and preserved payload/identity. Each native turn calls real Memory bootstrap; no provider action. Not full deployed runner/Skill/session acceptance.",
+  "limits": [
+    "Two anonymous notification candidates across four cold turns; not all business task types",
+    "Uses current application role rules and complete canonical wire parser, not full deployed AuditAgentRunner/Profile/business Skills/MCP process",
+    "Inline comparison includes scalar renderer table; not full production AuditTurnContext trailing table guidance",
+    "No runtime tool/field evidence/Audit policy/source/session/provider change",
+    "No continuation, service session lookup, generation or production business gate",
+    "No causal total-token/cost claim; actual submitted Task characters measured"
+  ]
+}
