@@ -21,3 +21,7 @@
 真实Codex CLI副本批准链路通过：Consumer/Audit2轮，1次替身投递及回执，123张原非内部/非virtual表行保持。真实修订链路通过：4轮，首次return/reject后最终approve、1次替身投递和回执、done与输入正文精简、终态重建无需新调用。原生trajectory仅保留CLI-owned home，repository证据只含运行元数据。见phase5b_native_copy.v1.json和phase5b_native_revision.v1.json。
 
 新增current-target fixture对齐：历史run receipt保留原始source SQL，通过typed writer装入fresh Store16；3项原旧表self-insert错误RED后修复。相关109项通过，另11项默认跳过需要显式副本；指定owned Store16副本后11个脚本化完整工作流均通过（模型输出为脚本角色，与上述真实CLI证据分开）。这次修正只改tests和验收文档，不改运行代码。
+
+## 当前主线重新绑定
+
+main/实际生产已推进到f1377ab8（OA field facts与return恢复）；已merge成9dc0ead9。151项receipt/caller/agent-turn/OA检查通过。实际f137旧constructor的完整副本正逆正重跑通过，仍132→129、126非affected表、原FK1。合并后真实CLI批准2轮、修订4轮均重跑通过，各1次替身发送和回执、123原非内部表保持。当前copy/native/revision evidence已替换成这轮证明，并附同一app Python/JSON文件哈希；不把较早978证明当当前发布证明。独立窄审确认14个main运行/测试blob原样保留，任务14条runtime/验证路径相对已审存储代码无diff。正式CI需对应这次合并的新head，尚未部署。
