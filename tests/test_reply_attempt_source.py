@@ -306,12 +306,16 @@ def test_actual_legacy_fields_accept_populated_values_and_fresh_lacks_them(db, s
 
 def test_memory_defaults_and_required_columns(db):
     parent = _attempt(db).lastrowid
+    before = db.execute("select current_timestamp").fetchone()[0]
     event = _event(db, parent).lastrowid
-    now = db.execute("select current_timestamp").fetchone()[0]
-    assert _row(db, "memory_write_events", event, "status", "attempts", "last_error",
-                "memory_episode_id", "created_at", "updated_at") == (
-        "pending", 0, "", "", now, now
+    status, attempts, last_error, episode_id, created_at, updated_at = _row(
+        db, "memory_write_events", event, "status", "attempts", "last_error",
+        "memory_episode_id", "created_at", "updated_at",
     )
+    after = db.execute("select current_timestamp").fetchone()[0]
+    assert (status, attempts, last_error, episode_id) == ("pending", 0, "", "")
+    assert created_at == updated_at
+    assert before <= created_at <= after
     for field in ("attempt_id", "event_type", "payload_json"):
         with pytest.raises(sqlite3.IntegrityError, match="NOT NULL"):
             _insert(db, "memory_write_events", {
