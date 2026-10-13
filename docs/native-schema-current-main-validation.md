@@ -308,3 +308,9 @@ No provider file or model process was changed. Custom deltas still wait for a co
 The validated-request fixture initially serialized without Pydantic aliases, dropping the external `schema` field name on reconstruction; this setup error was corrected with `model_dump(by_alias=True)`. The final validated-request10-test run passes. No-schema auto explicitly accepts ordinary final text and ordinary function calls, and `none` returns no tool constraint.
 
 Independent read-only review matched all six source-pair hashes, the patch and checkers, and four preserved logs; it confirmed optional auto behavior and validated forced namespace choices. The exact owned temporary directory was removed after a zero-open-handle check. Only the patch, test code and concise anonymous evidence are retained.
+
+### Additional corpus and provider publication boundary
+
+The same six-file candidate passes129 reproducible seeded anonymous text roundtrips, including all ASCII characters, control characters, Chinese/non-BMP symbols and dense quotes/backslashes. The exact generated case digest is `81ad1a35b1637710523ab025cbf8185148b187dbf753ad918192b8821ae7c603`; see corpus checker/result. This is additional parser/output evidence, not model acceptance or exhaustive Unicode proof.
+
+Current manager/source readback shows both Qwen replicas use the shared vLLM environment. At2026-10-13T16:54:33Z slots0/1 were ready with13 active requests each, ports9000/9010 and PIDs1340918/1142177. Slot1-only reload would leave mixed versions. A separate exact six-file, both-slot proposal is in `docs/qwen-custom-tool-provider-release-plan.md`; it preserves the no-atomic-drain arrival race and mixed-version interval and awaits explicit approval. No source modification or reload occurred.
