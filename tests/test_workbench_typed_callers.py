@@ -81,7 +81,7 @@ def test_current_workload_check_uses_public_text_turn_key(tmp_path: Path):
 @pytest.mark.parametrize("source", ["current", "source13"])
 def test_incomplete_workbench_declaration_is_rejected_without_mutation(tmp_path: Path, source):
     from app.store import _INITIALIZED_STORE_PATHS
-    from tests.workbench_caller_fixtures import empty_source13
+    from tests.workbench_schema_fixtures import full_source_database
 
     path = tmp_path / "incomplete.sqlite3"
     if source == "current":
@@ -90,11 +90,15 @@ def test_incomplete_workbench_declaration_is_rejected_without_mutation(tmp_path:
         with sqlite3.connect(path) as db:
             db.execute("alter table workbench_attachments drop column content_sha256")
     else:
-        with empty_source13(path) as db:
+        # Keep the malformed source13 intact: do not run the valid-source
+        # fixture finalizer, which itself performs a source13 migration.
+        db = full_source_database(path, path.with_suffix(".unrelated-schema.sqlite3"))
+        with db:
             db.execute("insert into workbench_tasks(id,title,runtime_kind) values('parent','Retained task','codex')")
             db.execute("""insert into workbench_turns(id,task_id,client_request_id,task_sequence,user_text,status)
                 values('turn','parent','request',1,'retained input','completed')""")
             db.execute("alter table workbench_turns drop column resume_context")
+        db.close()
     # Match the native runtime source journal mode before recording refusal evidence.
     with sqlite3.connect(path) as db:
         db.execute("pragma journal_mode=WAL")

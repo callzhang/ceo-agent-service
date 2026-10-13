@@ -417,10 +417,11 @@ def test_attempt_detail_marks_malformed_consumer_result_unavailable(tmp_path: Pa
     consumer = _complete_consumer_run(store, task)
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
     with store._immediate_write_transaction() as db:
-        db.execute(
-            "update review_candidates set candidate_json=? where consumer_run_id=?",
-            ('{"outcome":"proposal","raw_marker":"raw-malformed-marker"}', consumer.id),
-        )
+        from app.action_storage import REVIEW_CANDIDATE_SQL, update_action
+        public_id = db.execute(f"select id from ({REVIEW_CANDIDATE_SQL}) where consumer_run_id=?", (consumer.id,)).fetchone()[0]
+        update_action(db, 'review_candidates', public_id, {
+            'candidate_json': '{"outcome":"proposal","raw_marker":"raw-malformed-marker"}',
+        })
 
     status, detail = render_attempt_detail(store, attempt_id)
 
@@ -898,10 +899,9 @@ def _seed_confirmed_approval_attempt(
     # Simulate a grandfathered, service-adopted historical Audit review. Its
     # completed native wire body is separate from the business review row.
     with store._connect() as db:
-        db.execute(
-            "update candidate_reviews set result_json=? where audit_run_id=?",
-            (json.dumps(historical_result), audit.id),
-        )
+        from app.action_storage import CANDIDATE_REVIEW_SQL, update_action
+        public_id = db.execute(f"select id from ({CANDIDATE_REVIEW_SQL}) where audit_run_id=?", (audit.id,)).fetchone()[0]
+        update_action(db, 'candidate_reviews', public_id, {'result_json': json.dumps(historical_result)})
     return store.finalize_orchestrated_reply_task(
         task_id=task.id,
         expected_execution_generation=task.execution_generation,

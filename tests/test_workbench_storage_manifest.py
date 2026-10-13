@@ -2,8 +2,8 @@ import sqlite3
 
 import pytest
 
-from app.store import AutoReplyStore, _INITIALIZED_STORE_PATHS
-from app.workbench_storage import workbench_schema_is_current
+from app.store import AutoReplyStore, _INITIALIZED_STORE_PATHS, STORE_SCHEMA_VERSION
+from app.workbench_storage import workbench_schema_is_current, migrate_workbench_schema
 from tests.workbench_schema_fixtures import full_source_database, fingerprint, SOURCE
 
 
@@ -11,7 +11,12 @@ def test_actual_source_declarations_initialize_transactionally_and_idempotently(
     tmp_path,
 ):
     path = tmp_path / "source.db"
-    full_source_database(path, tmp_path / "auxiliary.db").close()
+    db = full_source_database(path, tmp_path / "auxiliary.db")
+    db.execute('begin immediate')
+    migrate_workbench_schema(db)
+    db.execute("update service_state set value='2026-10-12.1' where key='store_schema_version'")
+    db.commit()
+    db.close()
     store = AutoReplyStore(path)
     with store._connect() as db:
         assert workbench_schema_is_current(db)
@@ -22,7 +27,7 @@ def test_actual_source_declarations_initialize_transactionally_and_idempotently(
             db.execute(
                 "select value from service_state where key='store_schema_version'"
             ).fetchone()[0]
-            == "2026-10-12.1"
+            == STORE_SCHEMA_VERSION
         )
     with sqlite3.connect(path) as db:
         before = fingerprint(db)

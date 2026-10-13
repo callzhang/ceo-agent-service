@@ -1,6 +1,7 @@
 import test_reviewed_human_decision as fixtures
 
 from app.agent_contracts import ConsumerAgentResult
+from app.action_storage import CANDIDATE_ACTION_ATTEMPT_SQL, update_action
 from app.web_api.attempts import build_attempt_detail
 
 
@@ -78,8 +79,8 @@ def test_verified_action_without_success_ledger_is_not_projected_as_completed(tm
     store.begin_candidate_action(claimed["id"], "executor", 0, "missing-receipt")
     # A historical inconsistent row must not invent a canonical success receipt.
     with store._connect() as db:
-        db.execute("update candidate_action_attempts set status='verified' where execution_id=?",
-                   (claimed["id"],))
+        for (public_id,) in db.execute(f"select id from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=?", (claimed["id"],)).fetchall():
+            update_action(db, 'candidate_action_attempts', public_id, {'status': 'verified'})
     _, detail = build_attempt_detail(store, attempt_id)
     assert detail["system_execution"]["verified_actions"] == 0
     assert detail["system_execution"]["actions"][0]["receipt"] is None

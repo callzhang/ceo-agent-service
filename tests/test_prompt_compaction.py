@@ -28,10 +28,18 @@ def test_audit_keeps_complete_candidate_but_serializes_bound_source_facts_once()
     result = candidate(context)
     audit = AuditTurnContext(context, 0, 'operation', result, 'digest', 'configured audit rule')
     body = audit.render(current_time='2026-10-06T10:00:00-07:00')
+    source_and_candidate, separator, field_evidence = body.partition(
+        'Current candidate scalar field evidence, computed from the exact candidate JSON above\n'
+    )
+    assert separator
     for fact in ('unique-trigger-facts', 'unique-long-history-facts', 'unique-raw-provider-facts'):
-        assert body.count(fact) == 1
+        assert source_and_candidate.count(fact) == 1
+        assert field_evidence.count(fact) == 1
+    from app.audit_candidate_field_evidence import render_candidate_field_evidence
+    assert field_evidence.startswith(render_candidate_field_evidence(result.model_dump(mode='json')))
     assert '2026-10-06T08:00:00-07:00' in body
-    saved = json.loads(body.partition('Candidate revision\n')[2])['candidate']
+    saved, _ = json.JSONDecoder().raw_decode(body.partition('Candidate revision\n')[2])
+    saved = saved['candidate']
     assert saved == result.model_dump(mode='json')
     assert 'source_bindings[0].value' in body
 
