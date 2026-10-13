@@ -18218,6 +18218,38 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 return None
             return self._meeting_alignment_job_from_row(row)
 
+    def restore_confirmed_meeting_delivery(
+        self, job: MeetingAlignmentJob, *, key: str, prepared: PreparedOutboundMessage,
+        receipt: dict[str, object], result_json: str,
+    ) -> bool:
+        """CAS restore of an already-delivered primary; preserve its exact body."""
+        with self._immediate_write_transaction() as db:
+            body = db.execute("select final_body from outbound_postfixes where channel='dingtalk' and delivery_key=?", (key,)).fetchone()
+            saved = db.execute("select provider_result_json from outbound_postfix_receipts where channel='dingtalk' and delivery_key=?", (key,)).fetchone()
+            if body is None or saved is None or body["final_body"] != prepared.final_body or json.loads(saved["provider_result_json"]) != receipt:
+                return False
+            target = db.execute("select value from service_state where key=?",
+                (f"meeting_delivery_target:v1:dingtalk:{key}",)).fetchone()
+            expected_target = {"kind": "group" if job.target_kind == "group" else "user", "id": job.target_id}
+            if target is None or json.loads(target["value"]) != expected_target:
+                return False
+            if db.execute("select 1 from outbound_postfixes where channel='dingtalk' and delivery_key=?", (f"{key}:sensitive",)).fetchone():
+                return False
+            if db.execute("select 1 from dispatcher_claim_leases where source_id=? "
+                "and coalesce(terminal_at,'')='' and julianday(lease_expires_at)>julianday('now')",
+                (str(job.id),)).fetchone():
+                return False
+            updated = db.execute(
+                "update tasks set status='ready_to_send', available_at='', error='', "
+                "send_result_json=?, final_message=?, updated_at=current_timestamp "
+                "where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=? "
+                "and status='failed' and locked_at is null and send_result_json='{}' "
+                "and decision_json=? and target_kind=? and target_id=? and updated_at=?",
+                (result_json, prepared.final_body, job.id, job.decision_json,
+                 job.target_kind, job.target_id, job.updated_at),
+            )
+            return updated.rowcount == 1
+
     def requeue_failed_meeting_delivery(self, job_id: int) -> MeetingAlignmentJob | None:
         """Resume a reviewed unsent delivery after independent provider readback."""
         with self._connect() as db:

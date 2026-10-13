@@ -1,5 +1,26 @@
 # Current Runtime Mechanism
 
+OA Attention is a business-pending projection: the scanner captures the exact
+principal-owned RUNNING nodes from the authenticated pending list and source
+details. A completed comment or internal `done`/`no_action` does not remove
+such a node. Only a subsequent verified scan proving it is no longer pending
+removes it. Partial scans and source-read failures retain previous pending
+nodes; non-OA pending/processing/needs_human status alone remains excluded.
+
+Source feedback callback identities are opaque historical evidence, not newly
+generated outbound tokens. The validation copy removes only configured-origin
+pairs with matching identities and valid query fields; authored/outgoing token,
+credential, domain and signature checks are unchanged. Canonical source values
+and source digests are not rewritten.
+
+`reconcile-confirmed-meeting-delivery --job-id ...` previews an existing primary
+delivery receipt using provider readback without sending. `--apply` restores
+only the exact prepared body and original receipt under a transaction CAS,
+then resumes the existing calendar-only tail. It requires an unchanged failed,
+unlocked job, immutable same-target binding, no active dispatch claim and no
+sensitive split preparation. Revised unsent prose is not presented as sent;
+unconfirmed receipts, changed targets or split actions are not reconciled.
+
 Installed Skill discovery (`agent_cli.read_skill()` without a source) returns
 body-free TSV metadata with separate Root and Relative path columns. Joining
 the referenced root directory with the relative component reconstructs the
