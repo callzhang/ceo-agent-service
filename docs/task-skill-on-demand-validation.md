@@ -157,3 +157,33 @@ necessary source evidence, historical context and internal storage metadata.
 Only numeric inventories and hashes are retained in
 `task_current_input_inventory.v1.json`; private facts and original bodies stay
 in the existing native session. No new inference, code or external action occurs.
+
+## Database-only Signal metadata removal
+
+The fresh native input contains98 Signal `dedupe_key` fields. Task creates these
+from source kind/reference plus a SHA256 semantic identity; source references,
+Signal IDs, immutable document IDs and evidence bodies are independently supplied.
+The keys implement database deduplication and are not result/citation selectors.
+`source_bundle` now excludes only that field from its Agent projection. Stored
+keys, provenance, source/body/range selection, citations, order and all other
+metadata remain unchanged. No character budget truncation is introduced.
+
+The new regression initially fails because the internal key is present. After
+the one-line projection change it verifies the exact remaining metadata/body and
+the persisted dedupe lookup. Four affected files initially give268 passes and a
+fixture setup error in the new test (`_db` omitted); that test is corrected and
+passes separately. The268 unchanged checks are not rerun or relabeled as a new
+aggregate run. Ruff and diff check pass.
+
+The original compact native semantic JSON is exactly reproduced by the existing
+compact serializer. Removing only these98 keys changes314573 to293985 characters
+(**20588 fewer**). Every source document and all other fields are equal; numeric
+sizes and hashes are in `task_signal_metadata_projection.results.v1.json`. This
+is an input-projection comparison, not a new model run, general quality/cost
+claim or production publication. PR57 provider and business gates remain open.
+
+Read-only review independently reproduces the native comparison hashes and
+20588-character reduction, confirms no `source_signals` consumer requires the
+internal key and verifies the projection/storage boundary. Historical documents
+already use visible ranges; this change preserves those projected ranges, rather
+than claiming that every historical original body is fully model-visible.
