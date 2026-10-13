@@ -7,3 +7,9 @@ Regression changes the existing OA enqueue test to require the complete original
 Preserving frozen bodies is not preloading them into model Task text: normal composition continues to submit the existing short discovery entries, with full bodies available only through the bound read tool. Native applicability/resource and full business acceptance remain separate gates.
 
 Four affected scanner, frozen-source, composition and role-boundary suites pass102 in7.10s; Ruff/diff checks pass. Independent read-only review confirms the one-line scope and actual both-role bound-reader regression, with no code-level blocker. Architecture/runtime documentation updated in the same change. No native model/business replay was used to establish this deterministic delivery mechanism.
+
+## Production release
+
+PR69 merged as3e0d962487ada4d12c73e2fc43826439ea9ada50. Formal deploy deploy-aa1f5e7c-6e26-452a-b3d1-28f0a65517a9 succeeded2026-10-12 23:36:59 America/Los_Angeles (2026-10-13T06:36:59Z). Production checkout is clean, PID90772 replaces43583, and the persisted backup exists. Installed scanner carries OA complete scheduled wrapper while retaining Task extraction projection. Health, queues, Attention, History and both current role previews returnHTTP200. Pending and failed work remain visible; endpoint availability does not prove their business completion.
+
+This readback invokes no provider/model and does not reconstruct historical inputs. A future natural OA trajectory must independently confirm frozen reads; old tasks that omitted materials remain unchanged. Automatic CI was still running when the PR merged;102 focused local passes and independent review are the completed code gates, not a full CI success claim. Technical receipt: evals/trajectory_optimization/oa_frozen_skill_binding.release.v1.json.
