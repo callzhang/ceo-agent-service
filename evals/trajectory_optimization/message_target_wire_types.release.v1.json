@@ -239,5 +239,14 @@
     "Existing failed reply task/attempt counts remain two each; these are two views of the same existing failures, not four distinct newly failed tasks.",
     "Pending/running scheduled work is live queue activity; observe timestamps and progress rather than interpreting nonzero counts as failure.",
     "Native output-schema PR31 and source-binding PR71 remain separate and unmerged."
-  ]
+  ],
+  "independent_review": {
+    "production_commit_and_clean_tree": "verified",
+    "installed_file_hashes": "verified",
+    "deployment_operation_db_receipt": "verified",
+    "backup_bytes_quick_check_actions_table": "verified",
+    "failed_tasks_and_attempts_same_two_cases": "verified",
+    "api_preview_and_pid": "root live readback recorded; independent reviewer GET blocked by sandbox, not independently re-fetched",
+    "blocking_findings": []
+  }
 }

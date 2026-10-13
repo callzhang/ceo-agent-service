@@ -80,3 +80,5 @@ execution. No provider replay or validation message was dispatched.
 Receipt:evals/trajectory_optimization/message_target_wire_types.release.v1.json.
 Source binding PR71 and native output-schema PR31 remain separate unreleased
 work; this release neither enables native schema nor removes the scalar table.
+
+Independent readonly review directly verifies production commit/clean tree, installed blobs/hashes, SQLite deployment receipt, backup quick_check and the two failed trigger pairs. Its sandbox refused the localhost API GET, so API preview/PID are root live readback evidence, not independently re-fetched responses. No blocking finding was reported.
