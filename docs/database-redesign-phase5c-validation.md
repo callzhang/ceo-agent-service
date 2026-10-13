@@ -84,3 +84,46 @@ published ebaf，不冒充当前生产完整代码。发布前需合并最新 ma
 在线副本原九类型完整持久值与类型、两个水位以及124张其他表不变；
 迁移后改正文、子记录改绑、无引用父键改名、删除均经当前事实逆迁／正迁检验。
 此独立脚本不发布 marker，证据保留这一范围，不代替实际构造函数证明。
+
+
+## Store17 真实 CLI 与替身发送验收（2026-10-13）
+
+证据见 `evals/database_redesign/phase5c_native_copy.v1.json`。原生产在线快照绑定
+`db0c2b7331deb80418b959ad0f556f96a9ef96d2`、Store16／Email51，先由真实
+AutoReplyStore 构造函数准备 Store17 基线，再原样运行现有
+`validate_native_copy_lifecycle.py --case approve`。原始 Store16 快照和 Store17
+基线分别保存 SHA256；本项证明 Store17 的 native 生命周期，正式迁移与逆迁证明
+仍由构造函数副本证据承担。临时目录名称遵守现有脚本的 `ceo-native-copy.` 前缀断言，
+未修改运行代码、脚本或 oracle 来容纳来源版本差异。
+
+真实 Consumer 和 Audit 各执行一次，CLI 均退出 0、未超时，持久状态均为 completed。
+测试任务 404585 最终 done；脚本的三条输入与合计 100 校验通过。内存 provider 调用
+1 次、验证调用 1 次，external action result、sent reply、business attempt 各 1 条。
+再次打开显示 executed，没有新增模型或 provider 调用。批准候选、review、execution、
+attempt、external receipt 的实际物理关联与 digest 均通过只读核对。
+
+120 张原有应用表完整值和 SQLite/Python 类型保持一致：117 张严格比较 rowid，
+3 张既有 WITHOUT ROWID 表按声明主键比较；原有 1 条 FK finding 原样保留。
+临时独立检查器起初把所有表当作有 rowid，按上述真实表身份修正后只读复查通过，
+未变更运行代码或现有验收脚本。两份来源文件哈希不变，生产中测试 task、两条
+native session 和替身 receipt 标记均为 0。
+
+本案例在 actions 中新增 outbound_postfixes parent 1 条和 outbound_postfix_receipts
+1 条，复合父键一致，provider_result_json 保持原始 TEXT 且与替身返回完全一致；
+final_body 与批准候选的发送内容逐值相等。现有案例选择 send_group_message，
+所以 native_reply_dispatches 新增 0 条，**未覆盖 native reply claim 分支**；未人为补造
+dispatch。真实 DingTalk 发送为 0，也未执行部署。
+
+运行时 332 个 app 文件总 SHA256 为
+`8aca0de65e927d703d8271154d81c149899e9fbfe12c2d66662447164fd4c89f`，
+验收脚本 SHA256 为
+`f4123fc7ce7d8f07510a64bed3bdcfd294c2520da21e51f1018648174fa19e35`。
+验收起点 HEAD 为 40dfa5b9，结束绑定 758c5f7f，期间 app 与脚本未改变。
+最终只读看到生产代码已前进到 d7397203，Store 仍为16；原在线快照的代码绑定仍是
+db0c2b73，不将这份副本表述为 d7397203 的新快照。一次 2.978 秒慢 SQLite context
+诊断未导致验收失败。
+
+证据仅保留 native session ID、offset、状态和摘要哈希，原生轨迹仍在本机原有
+Codex home；未复制 auth、配置或 trajectory。核对证据写入后，已删除本次唯一拥有的
+`/private/tmp/ceo-native-copy.phase5c-jTOQja`，并确认路径不存在；其他临时目录及
+原生会话均未清理。完整 CI、最终主线整合与正常部署由根任务另行完成。
