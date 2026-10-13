@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "code_ref": "f3221e21",
+  "code_ref": "ff621dfd",
   "status": "local_candidate_not_deployed",
   "scope": "Service-owned common role instructions, explicit empty saved Developer/Profile/runtime facts; Audit uses synthetic rule. Character counts, not token counts or actual model-input measurements.",
   "results": [
@@ -51,5 +51,7 @@
     "No model/trajectory A/B acceptance with compacted input",
     "No production deployment",
     "Actual CLI base prompt, tool schemas, history, user configuration and task facts excluded from length baseline"
-  ]
+  ],
+  "baseline_code_ref": "f3221e21",
+  "readonly_review": "Source-preserving compaction, same runtime/current-preview helper, exact canonical assertion retention and evidence limits reviewed; model A/B and production acceptance remain pending."
 }
