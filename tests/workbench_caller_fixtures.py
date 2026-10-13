@@ -1,8 +1,32 @@
 """Workbench caller fixtures use the independently captured complete source13."""
 
 from contextlib import contextmanager
+import sqlite3
 
 from tests.workbench_schema_fixtures import full_source_database
+from tests.test_sent_delivery_source import SOURCE as SENT_SOURCE
+
+
+def advance_source16_to_store17(path):
+    """Publish the exact historical postfix step before a current constructor."""
+    from app.action_postfix_storage import migrate_action_postfix_schema
+    from app.action_delivery_storage import capture_action_delivery_schema
+
+    with sqlite3.connect(path) as db:
+        db.execute("pragma foreign_keys=off")
+        assert db.execute(
+            "select value from service_state where key='store_schema_version'"
+        ).fetchone() == ("2026-10-13.2",)
+        db.execute("begin immediate")
+        migrate_action_postfix_schema(db)
+        for definition in SENT_SOURCE["actual"].values():
+            db.execute(next(obj["sql"] for obj in definition["objects"] if obj["type"] == "table"))
+        for definition in SENT_SOURCE["actual"].values():
+            for obj in definition["objects"]:
+                if obj["type"] != "table":
+                    db.execute(obj["sql"])
+        capture_action_delivery_schema(db)
+        db.execute("update service_state set value='2026-10-13.3' where key='store_schema_version'")
 
 
 @contextmanager

@@ -1,5 +1,29 @@
 # CEO Agent Service Architecture
 
+Store18 publication readers select exact Store17 native delivery tables or
+Store18 finite action projections during the existing deploy window. Quality,
+deferral and scheduled recovery read the candidate's typed delivery facts;
+their predicates, logical result labels and recovery decisions are unchanged.
+The existing Store release router now selects the verified17→18 paired inverse.
+These integrations remain a development candidate. Real constructor copy,
+current-fact rollback, published-old-code reopen and native substitute execution
+have passed; CI and production acceptance remain pending.
+
+Store18 delivery integration is an isolated development candidate, not a
+published runtime. Its fresh bootstrap and exact Store17 migration use fourteen
+finite `actions` types and retire physical `sent_replies` and
+`sent_reply_observers`. Sent public IDs and their native allocation watermark
+remain independent; sent `agent_run_id` is the existing scalar field, while
+observer run/task/delivery endpoints remain actual foreign keys. Current-fact
+inverse and published-old-code copy evidence are in the Phase5D validation.
+Store sent delivery writes, feedback/history reads, settlement checks and the
+Audit console sent reader now use the finite action projection. This is caller
+conversion in the development candidate. Recall timestamps are read after the
+ordinary writer lock is acquired, matching the source UPDATE. Integrated release
+acceptance is still pending. Validated nonempty external-key lookups retain a
+key seek through the finite sent index. This is not a production migration or
+the full10+1 goal.
+
 Installed Skill discovery (`agent_cli.read_skill()` without a source) returns
 body-free TSV metadata with separate Root and Relative path columns. Joining
 the referenced root directory with the relative component reconstructs the
@@ -2004,7 +2028,7 @@ AUTOINCREMENT 公开 ID 和 native sqlite_sequence 水位；自动分配与插�
 发布 quiet-wait 读取器仅在明确声明的源／目标结构读取原生执行事实；恢复、审查、发送及回执策略不变。
 完整十表目标尚未完成；其余 actions 家族和第六至八期仍需要实施。是否上线以正式部署回执为准。
 
-### Store17 postfix 整合（开发候选，尚未发布）
+### Store17 postfix 整合（已发布）
 
 Store `2026-10-13.3` 将 outbound_postfixes、outbound_postfix_receipts、
 native_reply_dispatches 的十三个实际字段合入十二类型 actions。正常调用与
@@ -2012,7 +2036,7 @@ WeChat bootstrap 只使用 actions 投影及类型写入，不创建旧表、兼
 复合身份和立即 NO ACTION 外键保留；首次准备、provider 前 claim、首次回执、
 echo 判断及会议恢复顺序保持现有行为。只接受准确前版 Store16 来源。
 配对逆迁从当前事实重建旧三表及九类型 actions，保留发布后写入并恢复原版本记录。
-完整十张核心表加迁移表目标仍未完成。此段描述开发候选，上线以正式部署回执为准。
+第五期C已通过PR77／46bfdbe0正常发布，生产Store17／Email51及126物理表读回通过；实际副本、当前事实逆迁、CLI替身与完整CI／上线证据见docs/database-redesign-phase5c-validation.md。完整十张核心表加迁移表目标仍未完成，其余actions家族及第六至八期仍需实施。
 
 ### Calendar organizer source projection
 

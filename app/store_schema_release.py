@@ -100,6 +100,12 @@ def prepare_store_schema_release(
         )
         if (version[0], target) == (SOURCE_ACTION_POSTFIX_VERSION, ACTION_POSTFIX_VERSION):
             return prepare_action_postfix_schema_release(root, path, version)
+        from app.action_delivery_schema_release import (
+            SOURCE_ACTION_DELIVERY_VERSION, ACTION_DELIVERY_VERSION,
+            prepare_action_delivery_schema_release,
+        )
+        if (version[0], target) == (SOURCE_ACTION_DELIVERY_VERSION, ACTION_DELIVERY_VERSION):
+            return prepare_action_delivery_schema_release(root, path, version)
         raise ValueError(
             "Store schema release needs a verified inverse for this transition"
         )

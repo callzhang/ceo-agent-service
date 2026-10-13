@@ -98,9 +98,17 @@ POSTFIX_ACTION_TYPES = tuple(kind for kind in SOURCE_COLUMNS if kind not in ALL_
 _POSTFIX_TYPES_SQL = ",".join(repr(kind) for kind in POSTFIX_ACTION_TYPES)
 ALL_ACTION_TYPES_WITH_POSTFIX = ALL_ACTION_TYPES + POSTFIX_ACTION_TYPES
 POSTFIX_IDENTITY_FIELDS = ("channel", "delivery_key")
-ActionIdentity = int | str | tuple[str, str]
+DELIVERY_ACTION_TYPES = ("sent_replies", "sent_reply_observers")
+SOURCE_COLUMNS.update({
+    "sent_replies": ("id", "conversation_id", "trigger_message_id", "reply_text", "sent_at", "send_result_json", "recall_key", "recall_status", "recall_error", "recalled_at", "feedback_token", "channel", "agent_run_id", "external_action_key"),
+    "sent_reply_observers": ("sent_reply_id", "agent_run_id", "reply_task_id", "created_at"),
+})
+ALL_ACTION_TYPES_WITH_DELIVERY = ALL_ACTION_TYPES_WITH_POSTFIX + DELIVERY_ACTION_TYPES
+IDENTITY_FIELDS.update({"sent_replies": "id"})
+ActionIdentity = int | str | tuple[str, str] | tuple[int, int]
 AUTOINCREMENT_TYPES = ("agent_effect_intents", "agent_execution_receipts")
 ACTION_SEQUENCE_NAMES = {kind: "actions:" + kind for kind in AUTOINCREMENT_TYPES}
+DELIVERY_SEQUENCE_NAME = "actions:sent_replies"
 # source field -> (physical table, exact parent record_type)
 REFERENCES = {
     "task_id": ("tasks", "reply_tasks"),
@@ -114,6 +122,7 @@ REFERENCES = {
     "first_agent_run_id": ("runs", "agent_runs"),
     "agent_run_id": ("runs", "agent_runs"),
 }
+DELIVERY_REFERENCES = {"sent_reply_id": ("actions", "sent_replies"), "reply_task_id": ("tasks", "reply_tasks")}
 NULLABLE = {"predecessor_review_id", "selection_id"}
 INTEGER_FIELDS = {"stage_index", "proposal_revision", "action_index", "exit_code", "completed", "persisted", "safe_to_confirm", "effect_counted"}
 NULLABLE_PAYLOAD_FIELDS = {"agent_effect_intents": {"exit_code"}}
@@ -142,6 +151,24 @@ DEFAULTS = {
     "outbound_postfix_receipts": {},
     "native_reply_dispatches": {},
 }
+PAYLOAD_FIELDS.update({
+    "sent_replies": tuple(field for field in SOURCE_COLUMNS["sent_replies"] if field != "id"),
+    "sent_reply_observers": ("created_at",),
+})
+NULLABLE_PAYLOAD_FIELDS["sent_replies"] = {"recalled_at"}
+INTEGER_FIELDS.add("agent_run_id")
+DEFAULTS.update({
+    "sent_replies": {"send_result_json": "", "recall_key": "", "recall_status": "", "recall_error": "", "recalled_at": None, "feedback_token": "", "channel": "dingtalk", "agent_run_id": 0, "external_action_key": ""},
+    "sent_reply_observers": {},
+})
+
+
+def _kind_references(kind):
+    if kind == "sent_replies":
+        return {}
+    if kind == "sent_reply_observers":
+        return {"agent_run_id": REFERENCES["agent_run_id"], **DELIVERY_REFERENCES}
+    return {field: reference for field, reference in REFERENCES.items() if field in SOURCE_COLUMNS[kind]}
 
 
 def _objects(db, table):
@@ -166,8 +193,11 @@ def _source_schema():
 
 
 def _references_for(kinds):
-    return {field: parent for field, parent in REFERENCES.items()
-            if any(field in SOURCE_COLUMNS[kind] for kind in kinds)}
+    references = {field: parent for field, parent in REFERENCES.items()
+                  if any(field in _kind_references(kind) for kind in kinds)}
+    if "sent_reply_observers" in kinds:
+        references.update(DELIVERY_REFERENCES)
+    return references
 
 
 def _payload_check(kind, references):
@@ -182,7 +212,7 @@ def _payload_check(kind, references):
     paths = ",".join(repr("$." + field) for field in PAYLOAD_FIELDS[kind])
     terms.append(f"json_remove(payload_json,{paths})='{{}}'")
     for field in references:
-        if field not in SOURCE_COLUMNS[kind]:
+        if field not in _kind_references(kind):
             terms.append(f"{field} is null")
         elif field in NULLABLE:
             terms.append(f"{field} is null or typeof({field})='integer'")
@@ -191,11 +221,12 @@ def _payload_check(kind, references):
     return f"check(record_type<>'{kind}' or ({' and '.join('(' + t + ')' for t in terms)}))"
 
 
-def _action_definitions(include_receipts=False, include_postfix=False):
+def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False):
+    include_postfix = include_postfix or include_delivery
     include_receipts = include_receipts or include_postfix
-    kinds = ALL_ACTION_TYPES_WITH_POSTFIX if include_postfix else ALL_ACTION_TYPES if include_receipts else CANDIDATE_ACTION_TYPES
+    kinds = ALL_ACTION_TYPES_WITH_DELIVERY if include_delivery else ALL_ACTION_TYPES_WITH_POSTFIX if include_postfix else ALL_ACTION_TYPES if include_receipts else CANDIDATE_ACTION_TYPES
     references = _references_for(kinds)
-    payload_fields = dict.fromkeys(c for kind in kinds for c in PAYLOAD_FIELDS[kind])
+    payload_fields = dict.fromkeys(c for kind in kinds for c in PAYLOAD_FIELDS[kind] if c not in references and not (include_delivery and c == "channel"))
     generated = []
     for column in payload_fields:
         expression = f"json_extract(payload_json,'$.{column}')"
@@ -205,7 +236,8 @@ def _action_definitions(include_receipts=False, include_postfix=False):
     postfix_scope = _POSTFIX_TYPES_SQL
     if include_postfix:
         for index, column in enumerate(POSTFIX_IDENTITY_FIELDS):
-            generated.append(f"{column} text generated always as (case when record_type in ({postfix_scope}) then json_extract(legacy_key,'$[{index}]') end) virtual")
+            sent_channel = "when record_type='sent_replies' then json_extract(payload_json,'$.channel') " if include_delivery and column == "channel" else ""
+            generated.append(f"{column} text generated always as (case {sent_channel}when record_type in ({postfix_scope}) then json_extract(legacy_key,'$[{index}]') end) virtual")
         generated.append("postfix_type text generated always as (case when record_type in ('outbound_postfix_receipts','native_reply_dispatches') then 'outbound_postfixes' end) virtual")
     key_check = "legacy_key=cast(cast(legacy_key as integer) as text)"
     if include_receipts:
@@ -215,6 +247,11 @@ def _action_definitions(include_receipts=False, include_postfix=False):
                            "and json_array_length(legacy_key)=2 and json_type(legacy_key,'$[0]') is 'text' "
                            "and json_type(legacy_key,'$[1]') is 'text' else 0 end")
         key_check = f"case when record_type in ({postfix_scope}) then ({composite_check}) else ({key_check}) end"
+    if include_delivery:
+        observer_key = ("case when json_valid(legacy_key) then json_type(legacy_key)='array' "
+                        "and json_array_length(legacy_key)=2 and json_type(legacy_key,'$[0]')='integer' "
+                        "and json_type(legacy_key,'$[1]')='integer' else 0 end")
+        key_check = f"case when record_type='sent_reply_observers' then ({observer_key}) else ({key_check}) end"
     table = (
         "create table actions (id integer primary key, record_type text not null check(record_type in ("
         + ",".join(repr(k) for k in kinds)
@@ -234,10 +271,14 @@ def _action_definitions(include_receipts=False, include_postfix=False):
         table += ",check(record_type not in ('outbound_postfixes','outbound_postfix_receipts') or (channel in ('dingtalk','wechat') and trim(delivery_key)<>''))"
         table += ",check(record_type<>'outbound_postfixes' or trim(final_body)<>'')"
         table += ",foreign key(postfix_type,channel,delivery_key) references actions(record_type,channel,delivery_key)"
+    if include_delivery:
+        table += ",check(record_type<>'sent_reply_observers' or (sent_reply_id is not null and agent_run_id is not null and reply_task_id is not null and json_extract(legacy_key,'$[1]')=agent_run_id))"
     table += ")"
     numeric_scope = " where record_type<>'external_action_results'" if include_receipts else ""
     if include_postfix:
         numeric_scope += f" and record_type not in ({postfix_scope})"
+    if include_delivery:
+        numeric_scope += " and record_type<>'sent_reply_observers'"
     indexes = (
         "create unique index idx_actions_public_id on actions(cast(legacy_key as integer),record_type)" + numeric_scope,
         "create unique index idx_actions_consumer_run on actions(consumer_run_id) where record_type='review_candidates'",
@@ -261,6 +302,12 @@ def _action_definitions(include_receipts=False, include_postfix=False):
         )
     if include_postfix:
         indexes += ("create unique index idx_actions_postfix_identity on actions(record_type,channel,delivery_key)",)
+    if include_delivery:
+        indexes += (
+            "create unique index idx_actions_observer_identity on actions(sent_reply_id,agent_run_id) where record_type='sent_reply_observers'",
+            "create unique index idx_actions_sent_external_key on actions(external_action_key) where record_type='sent_replies' and external_action_key<>''",
+            "create index idx_actions_sent_history on actions(conversation_id,trigger_message_id,sent_at) where record_type='sent_replies'",
+        )
     triggers = (
         "create trigger trg_actions_record_type_immutable before update of record_type on actions when new.record_type<>old.record_type begin select raise(abort,'action record type is immutable'); end",
         "create trigger trg_actions_public_reference_update before update of legacy_key on actions when new.legacy_key<>old.legacy_key and exists(select 1 from actions where predecessor_review_id=old.id or candidate_id=old.id or review_id=old.id or selection_id=old.id or execution_id=old.id) begin select raise(abort,'FOREIGN KEY constraint failed'); end",
@@ -271,10 +318,15 @@ def _action_definitions(include_receipts=False, include_postfix=False):
         ),
     )
     if include_receipts:
-        for kind, name in ACTION_SEQUENCE_NAMES.items():
+        sequences = ACTION_SEQUENCE_NAMES | ({"sent_replies": DELIVERY_SEQUENCE_NAME} if include_delivery else {})
+        for kind, name in sequences.items():
             triggers += (f"create trigger trg_actions_{kind}_sequence before insert on actions when new.record_type='{kind}' begin "
                          f"insert into sqlite_sequence(name,seq) select '{name}',0 where not exists(select 1 from sqlite_sequence where name='{name}'); "
                          f"update sqlite_sequence set seq=max(seq,cast(new.legacy_key as integer)) where name='{name}'; end",)
+    if include_delivery:
+        triggers += ("create trigger trg_actions_sent_public_reference_update before update of legacy_key on actions when old.record_type='sent_replies' and new.legacy_key<>old.legacy_key and exists(select 1 from actions where sent_reply_id=old.id and record_type='sent_reply_observers') begin select raise(abort,'FOREIGN KEY constraint failed'); end",)
+        for event, suffix in (("insert", "insert"), ("update of sent_reply_id,legacy_key", "update")):
+            triggers += (f"create trigger trg_actions_observer_sent_key_{suffix} before {event} on actions when new.record_type='sent_reply_observers' and not exists(select 1 from actions p where p.id=new.sent_reply_id and p.record_type='sent_replies' and cast(p.legacy_key as integer)=json_extract(new.legacy_key,'$[0]')) begin select raise(abort,'observer sent reply identity mismatch'); end",)
     return table, indexes, triggers
 
 
@@ -288,11 +340,13 @@ def _projection(kind):
     for field in SOURCE_COLUMNS[kind]:
         if field == IDENTITY_FIELDS.get(kind):
             expression = "a.legacy_key" if kind == "external_action_results" else "cast(a.legacy_key as integer)"
-        elif field in REFERENCES and REFERENCES[field][0] == "actions":
+        elif kind == "sent_replies" and field == "agent_run_id":
+            expression = "json_extract(a.payload_json,'$.agent_run_id')"
+        elif field in _kind_references(kind) and _kind_references(kind)[field][0] == "actions":
             alias = "p_" + field
             expression = f"cast({alias}.legacy_key as integer)"
             join = "left join" if field in NULLABLE else "join"
-            joins.append(f"{join} actions {alias} on {alias}.id=a.{field} and {alias}.record_type='{REFERENCES[field][1]}'")
+            joins.append(f"{join} actions {alias} on {alias}.id=a.{field} and {alias}.record_type='{_kind_references(kind)[field][1]}'")
         else:
             # The existing logical reply-task and agent-run core schemas enforce
             # public ID == physical ID. Their source FK scalars remain exact.
@@ -303,10 +357,11 @@ def _projection(kind):
         # SQLite needs the partial index predicate explicitly, even when the
         # literal record_type already identifies an integer-keyed type.
         numeric_scope += f" and a.record_type not in ({_POSTFIX_TYPES_SQL})"
+        numeric_scope += " and a.record_type<>'sent_reply_observers'"
     return f"select {','.join(fields)} from actions a {' '.join(joins)} where a.record_type='{kind}'{numeric_scope}"
 
 
-ACTION_PROJECTIONS = {kind: _projection(kind) for kind in ALL_ACTION_TYPES_WITH_POSTFIX}
+ACTION_PROJECTIONS = {kind: _projection(kind) for kind in ALL_ACTION_TYPES_WITH_DELIVERY}
 REVIEW_CANDIDATE_SQL = ACTION_PROJECTIONS["review_candidates"]
 CANDIDATE_REVIEW_SQL = ACTION_PROJECTIONS["candidate_reviews"]
 CANDIDATE_SELECTION_SQL = ACTION_PROJECTIONS["candidate_selections"]
@@ -319,27 +374,29 @@ AGENT_EXECUTION_RECEIPT_SQL = ACTION_PROJECTIONS["agent_execution_receipts"]
 OUTBOUND_POSTFIX_SQL = ACTION_PROJECTIONS["outbound_postfixes"]
 OUTBOUND_POSTFIX_RECEIPT_SQL = ACTION_PROJECTIONS["outbound_postfix_receipts"]
 NATIVE_REPLY_DISPATCH_SQL = ACTION_PROJECTIONS["native_reply_dispatches"]
+SENT_REPLY_SQL = ACTION_PROJECTIONS["sent_replies"]
+SENT_REPLY_OBSERVER_SQL = ACTION_PROJECTIONS["sent_reply_observers"]
 
 
-def create_action_schema(db: sqlite3.Connection, *, include_receipts=False, include_postfix=False) -> None:
+def create_action_schema(db: sqlite3.Connection, *, include_receipts=False, include_postfix=False, include_delivery=False) -> None:
     """Create the declared schema, or repair only its missing auxiliary objects."""
     existing = db.execute("select 1 from sqlite_master where name='actions' collate nocase").fetchone()
     if existing:
-        if not action_schema_is_current(db, allow_missing_objects=True, include_receipts=include_receipts, include_postfix=include_postfix):
+        if not action_schema_is_current(db, allow_missing_objects=True, include_receipts=include_receipts, include_postfix=include_postfix, include_delivery=include_delivery):
             raise ValueError("unsupported current actions schema declaration")
         names = {sqlite_schema_name(obj["name"]) for obj in _objects(db, "actions")}
-        for obj in _current_objects(include_receipts, include_postfix):
+        for obj in _current_objects(include_receipts, include_postfix, include_delivery):
             if sqlite_schema_name(obj["name"]) not in names:
                 db.execute(obj["sql"])
     else:
         if any(db.execute("select 1 from sqlite_master where name=? collate nocase", (kind,)).fetchone() for kind in ACTION_TYPES):
             capture_action_schema(db)
-        _require_available_names(db, _current_objects(include_receipts, include_postfix))
-        _create_action_objects(db, include_receipts, include_postfix)
+        _require_available_names(db, _current_objects(include_receipts, include_postfix, include_delivery))
+        _create_action_objects(db, include_receipts, include_postfix, include_delivery)
 
 
-def _create_action_objects(db, include_receipts=False, include_postfix=False):
-    if (include_receipts or include_postfix) and not db.execute("select 1 from sqlite_master where type='table' and name='sqlite_sequence'").fetchone():
+def _create_action_objects(db, include_receipts=False, include_postfix=False, include_delivery=False):
+    if (include_receipts or include_postfix or include_delivery) and not db.execute("select 1 from sqlite_master where type='table' and name='sqlite_sequence'").fetchone():
         # SQLite creates its native sequence metadata on the first declaration
         # of an AUTOINCREMENT table. The initializer has no rows and is removed;
         # actions retains its ordinary physical INTEGER PRIMARY KEY allocator.
@@ -348,24 +405,24 @@ def _create_action_objects(db, include_receipts=False, include_postfix=False):
             name += "_"
         db.execute(f'create table "{name}"(id integer primary key autoincrement)')
         db.execute(f'drop table "{name}"')
-    table, indexes, triggers = _action_definitions(include_receipts, include_postfix)
+    table, indexes, triggers = _action_definitions(include_receipts, include_postfix, include_delivery)
     for sql in (table, *indexes, *triggers):
         db.execute(sql)
 
 
-@lru_cache(maxsize=4)
-def _current_objects(include_receipts=False, include_postfix=False):
+@lru_cache(maxsize=8)
+def _current_objects(include_receipts=False, include_postfix=False, include_delivery=False):
     with closing(sqlite3.connect(":memory:")) as db:
-        _create_action_objects(db, include_receipts, include_postfix)
+        _create_action_objects(db, include_receipts, include_postfix, include_delivery)
         return _objects(db, "actions")
 
 
-def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False, include_receipts=False, include_postfix=False) -> bool:
-    kinds = ALL_ACTION_TYPES_WITH_POSTFIX if include_postfix else ALL_ACTION_TYPES if include_receipts else ACTION_TYPES
+def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False, include_receipts=False, include_postfix=False, include_delivery=False) -> bool:
+    kinds = ALL_ACTION_TYPES_WITH_DELIVERY if include_delivery else ALL_ACTION_TYPES_WITH_POSTFIX if include_postfix else ALL_ACTION_TYPES if include_receipts else ACTION_TYPES
     if any(db.execute("select 1 from sqlite_master where name=? collate nocase", (kind,)).fetchone() for kind in kinds):
         return False
     actual = {sqlite_schema_name(o["name"]): o for o in _objects(db, "actions")}
-    expected = {sqlite_schema_name(o["name"]): o for o in _current_objects(include_receipts, include_postfix)}
+    expected = {sqlite_schema_name(o["name"]): o for o in _current_objects(include_receipts, include_postfix, include_delivery)}
     if any(db.execute("select 1 from sqlite_master where name=? collate nocase and tbl_name<>'actions' collate nocase", (name,)).fetchone() for name in expected):
         return False
     return not (actual.keys() - expected.keys()) and all(
@@ -380,15 +437,26 @@ def _require_kind(kind):
 
 
 def _identity_predicate(kind):
+    if kind == "sent_reply_observers":
+        return ("record_type=? and sent_reply_id=(select id from actions where "
+                "record_type='sent_replies' and record_type<>'external_action_results' "
+                f"and record_type not in ({_POSTFIX_TYPES_SQL}) "
+                "and record_type<>'sent_reply_observers' and cast(legacy_key as integer)=?) "
+                "and agent_run_id=?")
     if kind in POSTFIX_ACTION_TYPES:
         return "record_type=? and channel=? and delivery_key=?"
     if kind == "external_action_results":
         return "record_type=? and legacy_key=?"
     return ("record_type=? and record_type<>'external_action_results' "
-            f"and record_type not in ({_POSTFIX_TYPES_SQL}) and cast(legacy_key as integer)=?")
+            f"and record_type not in ({_POSTFIX_TYPES_SQL}) "
+            "and record_type<>'sent_reply_observers' and cast(legacy_key as integer)=?")
 
 
 def _identity_arguments(kind, public_id):
+    if kind == "sent_reply_observers":
+        if type(public_id) is not tuple or len(public_id) != 2 or any(type(value) is not int for value in public_id):
+            raise ValueError("observer public identity must be a (sent_reply_id, agent_run_id) tuple")
+        return (kind, *public_id)
     if kind in POSTFIX_ACTION_TYPES:
         if type(public_id) is not tuple or len(public_id) != 2 or any(type(value) is not str for value in public_id):
             raise ValueError("postfix public identity must be a (channel, delivery_key) tuple")
@@ -409,7 +477,7 @@ def action_physical_id(db: sqlite3.Connection, record_type: str, public_id: Acti
 def _parent_id(db, field, public_id):
     if public_id is None:
         return None
-    table, kind = REFERENCES[field]
+    table, kind = (REFERENCES | DELIVERY_REFERENCES)[field]
     if table == "actions":
         return action_physical_id(db, kind, public_id)
     row = db.execute(f"select id from {table} where record_type=? and cast(legacy_key as integer)=?", (kind, public_id)).fetchone()
@@ -423,7 +491,7 @@ def _check_fields(kind, values):
     if set(values) - set(SOURCE_COLUMNS[kind]):
         raise ValueError(f"unknown {kind} source fields")
     for field, value in values.items():
-        if value is not None and type(value) is not (int if field == "id" or field in REFERENCES or field in INTEGER_FIELDS else str):
+        if value is not None and type(value) is not (int if field == "id" or field in REFERENCES or field in DELIVERY_REFERENCES or field in INTEGER_FIELDS else str):
             raise ValueError(f"unrepresentable {kind}.{field} storage type")
         if type(value) is int and not -(2**63) <= value < 2**63:
             raise ValueError(f"unrepresentable {kind}.{field} integer")
@@ -436,7 +504,8 @@ class ActionWriteResult:
 
 
 def _autoincrement_high_water(db, kind):
-    rows = db.execute("select seq from sqlite_sequence where name=?", (ACTION_SEQUENCE_NAMES[kind],)).fetchall()
+    name = DELIVERY_SEQUENCE_NAME if kind == "sent_replies" else ACTION_SEQUENCE_NAMES[kind]
+    rows = db.execute("select seq from sqlite_sequence where name=?", (name,)).fetchall()
     if len(rows) > 1 or any(type(row[0]) is not int or row[0] < 0 for row in rows):
         raise ValueError(f"invalid {kind} allocator metadata")
     maximum = db.execute("select max(cast(legacy_key as integer)) from actions where record_type=?", (kind,)).fetchone()[0]
@@ -455,7 +524,7 @@ def _raise_autoincrement_full():
 def insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ignore: bool = False) -> ActionWriteResult:
     """Allocate automatic receipt IDs under SQLite's writer lock."""
     _check_fields(record_type, values)
-    automatic = record_type in AUTOINCREMENT_TYPES and values.get("id") is None
+    automatic = (record_type in AUTOINCREMENT_TYPES or record_type == "sent_replies") and values.get("id") is None
     owned = automatic and not db.in_transaction and (
         db.isolation_level is None or getattr(db, "autocommit", None) is True
     )
@@ -482,20 +551,26 @@ def _insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ig
     _check_fields(record_type, values)
     now = db.execute("select current_timestamp").fetchone()[0]
     payload = DEFAULTS[record_type] | {
-        field: now for field in ("created_at", "updated_at", "prepared_at")
+        field: now for field in ("created_at", "updated_at", "prepared_at", "sent_at")
         if field in SOURCE_COLUMNS[record_type]
     }
     payload.update({field: value for field, value in values.items() if field in PAYLOAD_FIELDS[record_type]})
-    fields = [field for field in REFERENCES if field in SOURCE_COLUMNS[record_type]]
+    fields = [field for field in (REFERENCES | DELIVERY_REFERENCES) if field in _kind_references(record_type)]
     arguments = [record_type, json.dumps(payload, ensure_ascii=False, separators=(",", ":"))]
     arguments += [_parent_id(db, field, values.get(field)) for field in fields]
     public_id = (tuple(values.get(field) for field in POSTFIX_IDENTITY_FIELDS)
-                 if record_type in POSTFIX_ACTION_TYPES else values.get(IDENTITY_FIELDS[record_type]))
+                 if record_type in POSTFIX_ACTION_TYPES else
+                 (values.get("sent_reply_id"), values.get("agent_run_id")) if record_type == "sent_reply_observers"
+                 else values.get(IDENTITY_FIELDS[record_type]))
     if record_type == "external_action_results" and public_id is None:
         raise ValueError("unrepresentable null external action key")
-    if public_id is None and record_type in AUTOINCREMENT_TYPES:
+    if public_id is None and (record_type in AUTOINCREMENT_TYPES or record_type == "sent_replies"):
         maximum = _autoincrement_high_water(db, record_type)
         if maximum == 2**63 - 1:
+            if record_type == "sent_replies" and db.in_transaction:
+                # Native AUTOINCREMENT SQLITE_FULL aborts the whole caller
+                # transaction, including nested savepoints.
+                db.execute("rollback")
             _raise_autoincrement_full()
         public_id = maximum + 1
     if public_id is None and db.execute("select 1 from actions where record_type=? and legacy_key='9223372036854775807'", (record_type,)).fetchone():
@@ -509,15 +584,18 @@ def _insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ig
         arguments.append(record_type)
     else:
         identity = "?"
-        arguments.append(json.dumps(public_id, ensure_ascii=False, separators=(",", ":")) if record_type in POSTFIX_ACTION_TYPES else str(public_id))
+        arguments.append(json.dumps(public_id, ensure_ascii=False, separators=(",", ":")) if record_type in POSTFIX_ACTION_TYPES or record_type == "sent_reply_observers" else str(public_id))
     returning = ("channel,delivery_key" if record_type in POSTFIX_ACTION_TYPES else
+                 "legacy_key" if record_type == "sent_reply_observers" else
                  "legacy_key" if record_type == "external_action_results" else "cast(legacy_key as integer)")
     columns = ("record_type", "payload_json", *fields, "legacy_key")
     sql = f"insert {'or ignore ' if ignore else ''}into actions({','.join(columns)}) values({','.join('?' for _ in range(2 + len(fields)))},{identity}) returning {returning}"
     cursor = db.execute(sql, arguments)
     result = cursor.fetchone()
     cursor.fetchall()
-    return ActionWriteResult((tuple(result) if record_type in POSTFIX_ACTION_TYPES else result[0]) if result else None, cursor.rowcount)
+    identity = (tuple(result) if record_type in POSTFIX_ACTION_TYPES else
+                tuple(json.loads(result[0])) if record_type == "sent_reply_observers" else result[0]) if result else None
+    return ActionWriteResult(identity, cursor.rowcount)
 
 
 def update_action(db: sqlite3.Connection, record_type: str, public_id: ActionIdentity, values: dict, *, where_sql: str = "", parameters=()) -> sqlite3.Cursor:
@@ -525,6 +603,10 @@ def update_action(db: sqlite3.Connection, record_type: str, public_id: ActionIde
     _check_fields(record_type, values)
     assignments, args, paths = [], [], []
     identity_arguments = _identity_arguments(record_type, public_id)
+    if record_type == "sent_reply_observers" and ("sent_reply_id" in values or "agent_run_id" in values):
+        new_key = (values.get("sent_reply_id", public_id[0]), values.get("agent_run_id", public_id[1]))
+        assignments.append("legacy_key=?")
+        args.append(json.dumps(new_key, separators=(",", ":")))
     if record_type in POSTFIX_ACTION_TYPES and any(field in values for field in POSTFIX_IDENTITY_FIELDS):
         new_key = tuple(values.get(field, public_id[index]) for index, field in enumerate(POSTFIX_IDENTITY_FIELDS))
         assignments.append("legacy_key=?")
@@ -532,7 +614,7 @@ def update_action(db: sqlite3.Connection, record_type: str, public_id: ActionIde
     for field, value in values.items():
         if record_type in POSTFIX_ACTION_TYPES and field in POSTFIX_IDENTITY_FIELDS:
             continue
-        if field in REFERENCES or field == IDENTITY_FIELDS.get(record_type):
+        if field in _kind_references(record_type) or field == IDENTITY_FIELDS.get(record_type):
             is_identity = field == IDENTITY_FIELDS.get(record_type)
             assignments.append(("legacy_key" if is_identity else field) + "=?")
             args.append(str(value) if is_identity and value is not None else value if is_identity else _parent_id(db, field, value))
@@ -548,6 +630,9 @@ def update_action(db: sqlite3.Connection, record_type: str, public_id: ActionIde
     if where_sql:
         if record_type in POSTFIX_ACTION_TYPES:
             predicate += f" and (channel,delivery_key) in (select channel,delivery_key from ({ACTION_PROJECTIONS[record_type]}) where channel=? and delivery_key=? and ({where_sql}))"
+            args.extend((*public_id, *parameters))
+        elif record_type == "sent_reply_observers":
+            predicate += f" and exists (select 1 from ({ACTION_PROJECTIONS[record_type]}) where sent_reply_id=? and agent_run_id=? and ({where_sql}))"
             args.extend((*public_id, *parameters))
         else:
             identity_field = IDENTITY_FIELDS[record_type]

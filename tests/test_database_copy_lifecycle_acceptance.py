@@ -31,7 +31,7 @@ from app.system_executor import SystemExecutor
 from app.worker import DingTalkAutoReplyWorker
 from test_agent_orchestrator import ScriptedAudit, ScriptedConsumer
 
-from app.action_storage import CANDIDATE_REVIEW_SQL, EXTERNAL_ACTION_RESULT_SQL
+from app.action_storage import CANDIDATE_REVIEW_SQL, EXTERNAL_ACTION_RESULT_SQL, SENT_REPLY_SQL
 
 SOURCE = os.environ.get("CEO_COPY_LIFECYCLE_SOURCE", "")
 pytestmark = pytest.mark.skipif(not SOURCE, reason="explicit owned database snapshot required")
@@ -234,7 +234,7 @@ def test_reply_creation_review_execution_business_receipt_and_reopen(copied_stor
     with store._connect() as db:
         attempts = db.execute("select send_status,agent_run_id from reply_attempts where conversation_id=?", (task.conversation_id,)).fetchall()
         receipts = db.execute(f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where business_object_key=?", (task.business_object_key,)).fetchall()
-        deliveries = db.execute("select * from sent_replies where conversation_id=?", (task.conversation_id,)).fetchall()
+        deliveries = db.execute(f"select * from ({SENT_REPLY_SQL}) where conversation_id=?", (task.conversation_id,)).fetchall()
         input_row = db.execute("select trigger_text,trigger_message_json,input_compacted from tasks where id=?", (current.current_input_id,)).fetchone()
     assert attempts
     if case in {"provider_failed", "provider_uncertain"}:

@@ -5,6 +5,7 @@ import json
 import pytest
 
 import app.audit_web as audit_web
+from app.action_storage import SENT_REPLY_SQL
 from app.run_storage import insert_run
 from app.store import AgentRole, AutoReplyStore
 
@@ -39,7 +40,9 @@ def test_reply_attention_shows_original_current_run_error_without_effect_claim(t
     })
     with store._connect() as db:
         before = {
-            table: [tuple(row) for row in db.execute(f"select * from {table}")]
+            table: [tuple(row) for row in db.execute(
+                f"select * from ({SENT_REPLY_SQL})" if table == "sent_replies" else f"select * from {table}"
+            )]
             for table in ("tasks", "runs", "reply_attempts", "sent_replies")
         }
     [row] = [row for row in audit_web._queue_attention_rows(store) if row["category"] == "Reply task"]
@@ -51,7 +54,8 @@ def test_reply_attention_shows_original_current_run_error_without_effect_claim(t
     assert "尚未取得外部执行回执" in row["error"]
     with store._connect() as db:
         for table, original in before.items():
-            assert [tuple(row) for row in db.execute(f"select * from {table}")] == original
+            query = f"select * from ({SENT_REPLY_SQL})" if table == "sent_replies" else f"select * from {table}"
+            assert [tuple(row) for row in db.execute(query)] == original
 
 
 @pytest.mark.parametrize("raw_error", ["invalid-json", "[]", '{"source_code":12}', "{}"])

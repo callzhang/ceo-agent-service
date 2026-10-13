@@ -56,8 +56,8 @@ def publication_scheduled_source(db: sqlite3.Connection) -> str:
         for row in db.execute("select name from sqlite_master where type='table'")
     }
     if (
-        version in ("2026-10-12.1", "2026-10-13.1", "2026-10-13.2", "2026-10-13.3")
-        and (version == "2026-10-12.1" or action_schema_is_current(db, include_receipts=version in ("2026-10-13.2", "2026-10-13.3"), include_postfix=version == "2026-10-13.3"))
+        version in ("2026-10-12.1", "2026-10-13.1", "2026-10-13.2", "2026-10-13.3", "2026-10-13.4")
+        and (version == "2026-10-12.1" or action_schema_is_current(db, include_receipts=version in ("2026-10-13.2", "2026-10-13.3", "2026-10-13.4"), include_postfix=version in ("2026-10-13.3", "2026-10-13.4"), include_delivery=version == "2026-10-13.4"))
         and {"tasks", "runs"} <= tables
         and not {
             "scheduled_task_runs",

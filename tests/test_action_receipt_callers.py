@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, insert_action, update_action
+from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, SENT_REPLY_SQL, insert_action, update_action
 from app.run_storage import AGENT_RUN_SQL
 from app.store import AgentRole, AutoReplyStore
 from tests.test_action_receipt_source import source_values
@@ -103,7 +103,8 @@ def test_failed_audit_receipt_preserves_the_raw_recorded_provider_body(receipt_s
     )
     raw = ' { "verification": {"state": "sent"}, "原始": [2, 1] } '
     with store._connect() as db:
-        db.execute("update sent_replies set send_result_json=? where external_action_key=?", (raw, key))
+        sid = db.execute(f"select id from ({SENT_REPLY_SQL}) where external_action_key=?", (key,)).fetchone()[0]
+        update_action(db, "sent_replies", sid, {"send_result_json":raw})
     store.fail_agent_run(audit.id, {"code": "codex_result_invalid"}, owner="audit")
     store.fail_reply_task(task.id, "codex_result_invalid", expected_execution_generation=task.execution_generation)
     monkeypatch.setattr(DingTalkSendEvidenceDriver, "audit_run_has_execution_evidence", lambda *args, **kwargs: True)
