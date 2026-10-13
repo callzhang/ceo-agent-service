@@ -14939,6 +14939,10 @@ def test_recovery_requeues_failed_reply_once_when_new_context_arrives(
 ):
     dws = FakeDws([], {})
     worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    worker.store.set_current_user_id("principal-user")
+    worker.store.upsert_org_user_profile(
+        "another-user", "Another sender", "open-another-user", None, set()
+    )
     task = worker.store.ensure_reply_task(
         conversation_id="cid-recovery-context",
         conversation_title="Recovery context",
@@ -14973,6 +14977,7 @@ def test_recovery_requeues_failed_reply_once_when_new_context_arrives(
         conversation_title=conversation.title,
         single_chat=False,
         sender_name="Mina",
+        raw_payload={"senderId": "principal-user"},
         create_time="2026-10-13 19:01:00",
         content="Here is the updated decision context.",
     )
@@ -14989,12 +14994,23 @@ def test_recovery_requeues_failed_reply_once_when_new_context_arrives(
 
     assert worker._requeue_failed_reply_tasks_for_new_context(
         conversation, [later_message]
+    ) == 0
+
+    external_later_message = later_message.model_copy(
+        update={
+            "open_message_id": "msg-from-other-sender",
+            "sender_user_id": None,
+            "raw_payload": {"senderId": "another-user"},
+        }
+    )
+    assert worker._requeue_failed_reply_tasks_for_new_context(
+        conversation, [external_later_message]
     ) == 1
     rerun = worker.store.get_reply_task(task.id)
     assert rerun is not None and rerun.status == "pending"
     assert rerun.execution_generation != claimed.execution_generation
     assert worker._requeue_failed_reply_tasks_for_new_context(
-        conversation, [later_message]
+        conversation, [external_later_message]
     ) == 0
 
 

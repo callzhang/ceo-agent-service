@@ -1432,8 +1432,25 @@ class DingTalkAutoReplyWorker:
         if not messages:
             return 0
         newer_messages: list[tuple[datetime, DingTalkMessage]] = []
+        current_user_id = str(self.store.get_current_user_id() or "").strip()
         for message in messages:
             if message.open_conversation_id != conversation.open_conversation_id:
+                continue
+            sender_user_id = str(message.sender_user_id or "").strip()
+            sender_open_id = str(message.sender_open_dingtalk_id or "").strip()
+            if not sender_user_id and sender_open_id:
+                profile = self.store.find_org_user_by_open_dingtalk_id(sender_open_id)
+                sender_user_id = profile.user_id if profile is not None else ""
+            if not sender_user_id:
+                raw_sender_id = str(message.raw_payload.get("senderId") or "").strip()
+                if raw_sender_id:
+                    profile = self.store.get_org_user_profile(raw_sender_id)
+                    if profile is None:
+                        profile = self.store.find_org_user_by_open_dingtalk_id(raw_sender_id)
+                    sender_user_id = profile.user_id if profile is not None else ""
+                    if not sender_user_id and raw_sender_id == current_user_id:
+                        sender_user_id = current_user_id
+            if not sender_user_id or sender_user_id == current_user_id:
                 continue
             created_at = self._parse_calendar_time(message.create_time)
             if created_at is None:
@@ -1471,6 +1488,8 @@ class DingTalkAutoReplyWorker:
                 {
                     "message_id": message.open_message_id,
                     "create_time": created_at.isoformat(),
+                    "sender_user_id": message.sender_user_id or sender_user_id,
+                    "sender_open_dingtalk_id": sender_open_id,
                     "body_sha256": hashlib.sha256(
                         message.content.encode("utf-8")
                     ).hexdigest(),
