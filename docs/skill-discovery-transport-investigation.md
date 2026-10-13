@@ -74,3 +74,8 @@ Existing automatic main CI run38305019823 has reached failure at6d601b25:12,097 
 ## Current-main reconciliation
 
 Normal merge2af4f11e integrates main1cca085b. Conflicts are independent appended architecture/runtime paragraphs and claim rows; both sides are retained. Runtime diff remains the no-source metadata representation and existing shared renderer only. Named/path body reads, per-tool budgets, catalog selection, source authorization and role controls remain unchanged. The same three affected suites pass85 tests in1.86 seconds after integration; Ruff and diff checks pass. Existing synthetic native delivery/body/feedback evidence retains its original limits and is not rerun or relabeled. No production release is claimed.
+
+
+## Released Skill-reuse integration and local directory fidelity
+
+Normal merge19322f46 integrates released main3da4933c, including PR62. Only independent appended claim rows conflict; both sides are preserved. Runtime diff remains no-source metadata transport and shared table renderer. Six related directory/body/frozen/Settings suites pass120 in7.73s, Ruff/diff clean. Local current installed catalog has348 paths and302 distinct names: all name/description/path triples round-trip exactly. Compact JSON length138898→112713 (26185 characters removed). Only counts/hashes are recorded in skill_discovery_transport.current_local.v1.json; no real metadata is transmitted to a model. Local fidelity does not prove native delivery for this exact current private catalog. Existing343-row synthetic native/body/feedback results retain their limits.
