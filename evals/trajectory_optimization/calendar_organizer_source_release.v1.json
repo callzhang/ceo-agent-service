@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "pull_request": 79,
+  "merged_commit": "3e7052dc7676137b8c911cb42ee71144f0cb55b3",
+  "prior_exact_head_quality_run": 38463468779,
+  "prior_exact_head_quality_result": "success",
+  "post_main_integration_focused_passed": 26,
+  "deployment": {
+    "operation_id": "deploy-6fd268b3-ee0b-4cbb-9233-a98a3cf9fc32",
+    "status": "succeeded",
+    "original_commit": "ba8b59315067dd7adbe60d745fae1ccc39f3be64",
+    "installed_commit": "3e7052dc7676137b8c911cb42ee71144f0cb55b3",
+    "updated_at": "2026-10-13T22:01:59.148621+00:00"
+  },
+  "supervisor_pid": 74842,
+  "backup_verified_complete": true,
+  "deployed_dws_source_sha256": "0e498b88a44132054e2182aab792a97e87e3089ebcfa4967639a3638de4939aa",
+  "deployed_source_matches_verified_development": true,
+  "anonymous_source_parser_readback": {
+    "original_organizer_object_preserved": true,
+    "original_display_preserved": true,
+    "leading_zero_string_preserved": true,
+    "nested_false_null_preserved": true
+  },
+  "http_readback": {
+    "healthz": 200,
+    "workers_status": 200,
+    "attention_status": 200,
+    "history": 200,
+    "consumer_settings_preview": 200,
+    "audit_settings_preview": 200
+  },
+  "queues": {
+    "reply": {
+      "pending": 0,
+      "processing": 0,
+      "failed": 2
+    },
+    "work": {
+      "pending": 0,
+      "processing": 0,
+      "failed": 0
+    },
+    "classification": {
+      "pending": 0,
+      "processing": 0,
+      "failed": 0
+    },
+    "meeting": {
+      "pending": 0,
+      "processing": 0,
+      "failed": 0
+    },
+    "email_actions": {
+      "pending": 3,
+      "processing": 0,
+      "failed": 0
+    }
+  },
+  "boundary": "Source-data preservation publication and operational/source readback only. No fresh real-provider calendar read, new Agent decision or external action replay. Organizer source is not recipient verification or authorization. PR31/78 native output, PR57 Skill delivery and Qwen provider repairs remain independent. Initial anonymous parser probe omitted required event times and correctly returned None; repeated with the existing complete regression fixture, without a code change."
+}
