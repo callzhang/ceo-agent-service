@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "scope": "Local current installed-catalog roundtrip only; no model request or external transmission. Historical synthetic native acceptance remains separate.",
+  "entry_count": 348,
+  "unique_names": 302,
+  "unique_paths": 348,
+  "metadata_exact": true,
+  "old_compact_json_chars": 138898,
+  "candidate_compact_json_chars": 112713,
+  "chars_removed": 26185,
+  "old_sha256": "aa385891470cf2de36510bdf18b58ac37519368b6d6e25b64aefd2867024b01a",
+  "candidate_sha256": "913b400928800f3ab52e039de2da9ca5a464e572ee6bc82507f3504a1937a3f4"
+}
