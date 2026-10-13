@@ -281,6 +281,68 @@ def _populate_nine(db):
         storage.delete_action(db, kind, 700)
 
 
+@pytest.mark.parametrize("include_postfix", [False, True], ids=["nine", "twelve"])
+@pytest.mark.parametrize("kind", [kind for kind in storage.ALL_ACTION_TYPES if kind != "external_action_results"])
+def test_integer_public_id_queries_use_the_expression_index(include_postfix, kind):
+    with closing(sqlite3.connect(":memory:")) as db:
+        _target(db, include_postfix=include_postfix)
+        _populate_nine(db)
+        queries = (
+            (f"select id from actions where {storage._identity_predicate(kind)}", (kind, 1)),
+            (f"select * from ({storage.ACTION_PROJECTIONS[kind]}) where id=?", (1,)),
+        )
+        for sql, params in queries:
+            plan = [row[3] for row in db.execute("explain query plan " + sql, params)]
+            assert any("idx_actions_public_id" in detail and "<expr>=?" in detail for detail in plan), plan
+
+
+def _vm_steps(db, query):
+    steps = 0
+
+    def tick():
+        nonlocal steps
+        steps += 1
+        return 0
+
+    db.set_progress_handler(tick, 1)
+    try:
+        result = query()
+    finally:
+        db.set_progress_handler(None, 0)
+    return result, steps
+
+
+@pytest.mark.parametrize("include_postfix", [False, True], ids=["nine", "twelve"])
+def test_integer_public_id_lookup_and_projection_work_does_not_grow_with_rows(include_postfix):
+    with closing(sqlite3.connect(":memory:")) as db:
+        _target(db, include_postfix=include_postfix)
+        _populate_nine(db)
+        seed_id = storage.action_physical_id(db, "candidate_supplements", 1)
+        costs = []
+        previous = 1
+        for size in (500, 5000):
+            # Duplicate one valid supplement's source fields, changing only its
+            # public ID. The target's real constraints and indexes remain active.
+            db.executemany(
+                "insert into actions(record_type,legacy_key,candidate_id,payload_json) "
+                "select record_type,cast(? as text),candidate_id,payload_json from actions where id=?",
+                ((public_id, seed_id) for public_id in range(previous + 1, size + 1)),
+            )
+            physical_id, lookup_steps = _vm_steps(
+                db, lambda: storage.action_physical_id(db, "candidate_supplements", size),
+            )
+            rows, projection_steps = _vm_steps(db, lambda: db.execute(
+                f"select id,instruction from ({storage.CANDIDATE_SUPPLEMENT_SQL}) where id=?", (size,),
+            ).fetchall())
+            assert rows == [(size, "instruction")]
+            assert db.execute("select legacy_key from actions where id=?", (physical_id,)).fetchone() == (str(size),)
+            costs.append((lookup_steps, projection_steps))
+            previous = size
+        # SQLite version changes can affect instruction counts; the meaningful
+        # invariant is bounded work for one ID as the population grows tenfold.
+        assert all(large <= small + 20 for small, large in zip(*costs, strict=True)), costs
+
+
 def test_postfix_writes_preserve_all_nine_type_rows_and_allocator_semantics(pair):
     target = pair[1]
     _populate_nine(target)

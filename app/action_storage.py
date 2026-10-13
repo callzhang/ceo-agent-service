@@ -95,6 +95,7 @@ SOURCE_COLUMNS.update({
     "native_reply_dispatches": ("channel", "delivery_key", "created_at"),
 })
 POSTFIX_ACTION_TYPES = tuple(kind for kind in SOURCE_COLUMNS if kind not in ALL_ACTION_TYPES)
+_POSTFIX_TYPES_SQL = ",".join(repr(kind) for kind in POSTFIX_ACTION_TYPES)
 ALL_ACTION_TYPES_WITH_POSTFIX = ALL_ACTION_TYPES + POSTFIX_ACTION_TYPES
 POSTFIX_IDENTITY_FIELDS = ("channel", "delivery_key")
 ActionIdentity = int | str | tuple[str, str]
@@ -201,7 +202,7 @@ def _action_definitions(include_receipts=False, include_postfix=False):
         if include_receipts and column == 'external_action_key':
             expression = f"case when record_type='external_action_results' then legacy_key else {expression} end"
         generated.append(f"{column} {'integer' if column in INTEGER_FIELDS else 'text'} generated always as ({expression}) virtual")
-    postfix_scope = ",".join(repr(kind) for kind in POSTFIX_ACTION_TYPES)
+    postfix_scope = _POSTFIX_TYPES_SQL
     if include_postfix:
         for index, column in enumerate(POSTFIX_IDENTITY_FIELDS):
             generated.append(f"{column} text generated always as (case when record_type in ({postfix_scope}) then json_extract(legacy_key,'$[{index}]') end) virtual")
@@ -298,6 +299,10 @@ def _projection(kind):
             expression = "a." + field
         fields.append(expression + " as " + field)
     numeric_scope = " and a.record_type<>'external_action_results'" if kind != "external_action_results" else ""
+    if kind in IDENTITY_FIELDS and kind != "external_action_results":
+        # SQLite needs the partial index predicate explicitly, even when the
+        # literal record_type already identifies an integer-keyed type.
+        numeric_scope += f" and a.record_type not in ({_POSTFIX_TYPES_SQL})"
     return f"select {','.join(fields)} from actions a {' '.join(joins)} where a.record_type='{kind}'{numeric_scope}"
 
 
@@ -379,7 +384,8 @@ def _identity_predicate(kind):
         return "record_type=? and channel=? and delivery_key=?"
     if kind == "external_action_results":
         return "record_type=? and legacy_key=?"
-    return "record_type=? and record_type<>'external_action_results' and cast(legacy_key as integer)=?"
+    return ("record_type=? and record_type<>'external_action_results' "
+            f"and record_type not in ({_POSTFIX_TYPES_SQL}) and cast(legacy_key as integer)=?")
 
 
 def _identity_arguments(kind, public_id):
