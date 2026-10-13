@@ -82,8 +82,109 @@ PR77开发候选已完成postfix三表十三字段合入十二类型actions、St
 全部prepare/claim/receipt/echo/meeting/WeChat调用和配对release。合并最新OA改动后
 212项定向检查、100项恢复／发送检查通过（11项明确环境跳过）；3处current marker
 断言RED后校准，128项邻接检查通过。独立SPEC／QUALITY已通过，范围仅5C。
-当前生产仍Store16；目标未发布，CLI替身验收和完整CI仍是发布前门槛。
+当前生产仍Store16；目标未发布。真实CLI替身批准验收已完成，见
+phase5c_native_copy.v1.json：Consumer／Audit及业务结果／替身回执链通过，
+group-send案例未覆盖native dispatch claim，后者由caller／copy检查覆盖。
+完整CI与正常发布／生产读回仍是门槛，不将来源副本或模型验收当作上线证明。
 实际最新生产副本配对constructor／current-fact inverse／实际旧代码启动／再正迁
 见phase5c_constructor_copy.v1.json；独立所有原九类型值／类型／水位／改绑／删除
 证明见phase5c_current_source_storage_copy.v1.json。临时副本已清理。
 完整10+1仍未完成；5D等其余actions家族与第6–8期仍需实施。
+
+### 2026-10-13 Phase5D／5E及邮件动作来源准备
+
+D的发送记录18字段和76项独立来源行为检查已准备；E实际生产58列Attempt／
+10列Memory与fresh54／10变体、54项来源检查及2项变体跳过已准备。
+E实施计划6ee59d29通过独立SPEC和QUALITY核对，包含当前queued审查标记的
+配对逆迁和页面／helper／runtime三种既有native范围行为；两项对应回归通过。
+这些结果不证明D／E目标存储、迁移或发布。实施前必须刷新实际已发布来源。
+
+邮件动作来源551cacf0捕获实际Store16／Email51的9表103字段及4张外部子表
+依赖，3,265项元数据断言通过，未保留私有原始行。准确DDL／字段／调用路径见
+2026-10-13-database-redesign-email-actions-source.json及同名前缀source-map.md。
+这是来源盘点；独立来源行为、目标映射／调用转换及配对迁移尚需完成，不占用版本。
+所有来源测试均无真实发送、provider回放或生产写入；完整10+1目标仍未完成。
+
+
+### 2026-10-13 Phase5C正式发布
+
+PR77／46bfdbe0正式部署完成，实际Store2026-10-13.3／Email51、PID82712、126物理表。
+最终Quality CI38445177259通过，原九类2167条actions及1080／614／67条postfix事实的
+字段值／类型／身份保留，两个原生水位560／115不回退；原FK诊断保持。真实CLI替身
+及配对逆迁证据范围按phase5c验证文档；生产只读API／页面与最新Store17日备份验证
+完成，未触发测试对外发送或VACUUM。来源临时数据清理以release证据为准。
+D工作树已合入这一已发布主线，不保留旧测试夹具；下一步刷新实际Store17来源并
+实施D目标存储。邮件动作来源另补4表41字段，整体13表144实际字段已盘点；独立
+来源测试20项仅覆盖其代表性行为。D／E／邮件目标及第六至八期仍未完成，10+1不变。
+
+### 2026-10-13 Phase5D opt-in storage acceptance
+
+D来源已绑定实际已发布46bfdbe0／Store17，发送记录14字段与观察关系4字段的
+有限actions存储基础64a5c110通过独立SPEC和QUALITY复审，两个审查均270项
+定向检查通过。原六／九／十二类型声明逐对象不变，观察者整数复合身份、
+公开ID索引及sent原生ID耗尽事务行为的审查发现已用回归修正；无新增物理表。
+证据见database-redesign-phase5d-validation.md。这仅是opt-in存储基础，未激活、
+未保留D目标版本号、未上线；下一步实施成对正迁／当前事实逆迁，再做caller、
+真实副本、旧代码重开、release及上线验收。完整10+1目标仍未完成。
+
+### 2026-10-13 Phase5D standalone migration/copy acceptance
+
+成对存储迁移25ed876c通过独立SPEC／QUALITY；两个审查各125项定向检查通过，
+额外拒绝／MAX／全十二类型当前事实循环按D验证文档记录。最新生产来源已跟进
+到dc6abe2d／Store17（主线增量仅OA状态描述，无本期存储代码变化）。真实在线
+副本3928原actions、2341发送及320观察者保留值／类型／身份／关系／水位，
+122其他表持久字段一致，原单项FK诊断不变；修改后事实逆迁、实际已发布代码
+新进程重开、再正迁及二次逆迁通过。证据phase5d_current_source_storage_copy.v1.json。
+副本126→124物理表仅证明存储函数；Store marker有意保持17，不是新构造器／
+发布证明。508825373字节任务临时副本／代码已清理。下一步合入最新主线，
+接入Store/bootstrap、全部调用方及配对release，再做真实构造器副本／CLI／CI／
+生产验收。D未上线，完整10+1仍未完成。
+
+### 2026-10-13 Phase5D integrated copy/native acceptance
+
+D isolated Store18 candidate has converted every sent/observer caller and
+exact17→18 publication reader. Independent SPEC/QUALITY acceptance covers
+bootstrap, migration/inverse, release, caller behavior and adjacent readers.
+Actual dc6abe2d Store17 online copy passed the normal default new-process
+publication, exact field/type/identity checks, current-fact inverse, actual
+published old-code reopen and republication;126→124 physical tables,122
+unrelated table hashes and the existing FK diagnostic retained. Real native
+Consumer/Audit approval persisted one business result and substitute receipt;
+11 separately scripted copy lifecycle scenarios also passed. Evidence:
+phase5d_constructor_copy.v1.json, phase5d_native_copy.v1.json and D validation.
+Root-owned temporary directories were removed. CI, normal deployment and live
+acceptance remain pending; D is not yet published. Full10+1 remains incomplete;
+E and later action/business/email/config/state/final-retirement work remains.
+
+The first full D CI38467335512 exposed ten historical source16 constructor
+fixtures;12746 checks passed. Fixture-only9acd12dd explicitly advances those
+inputs through the genuine source17 transition, retaining all original
+business assertions and the frozen historical source contract. Exact ten plus
+81 adjacent checks and independent SPEC/QUALITY pass. Latest production
+ba8b5931 is merged; its persistence modules are unchanged, and refreshed real
+constructor/current-fact inverse/actual old-code/native approval plus11 scripted
+copy cases pass. The v1 D copy artifacts now bind that source; temporary copies
+are removed. Replacement full CI and normal deployment remain pending, so D
+is still unpublished and the complete10+1 goal remains incomplete.
+
+Subsequent current-main7fabea80 Calendar/OA/deploy-stop increments are merged.
+The same seven persistence modules are byte-equal to the last actual copy
+source; readonly Store17 declaration/full-integrity/FK readback and two69-case
+increment/release suites pass. Binding artifact distinguishes this evidence
+from the actual ba8b5931 constructor/native proof. No source snapshot or
+transcript is retained. Replacement full CI and live acceptance remain pending.
+
+### 2026-10-13 Phase5D actual publication accepted
+
+PR80/head5221062d final Quality38476785656 passed12764Python checks(112skip,44deselect),
+723frontend(2skip), browser2 and build. Normal deployment published1b6f55e5,
+Store18/Email51,126→124 physical tables;2341 sent and320 observer facts are in
+finite actions. Full current declaration, unchanged original FK diagnostic,
+verified latest backup and readonly History/Attention/expanded receipt checks
+passed. An existing Status frontend coverage-contract mismatch was separately
+reproduced, fixed, focused-tested and normally published as9e0570cb; the actual
+Status page now renders running/healthy with queue data. Details and limits are
+in phase5d validation and phase5d_production_release.v1.json. No real test send,
+recall or feedback action, no native copy or VACUUM. Actual file size remains
+471347200 bytes. E can now refresh against actual published18, rather than the
+old Store17/empty-candidate observation. The full10+1 redesign remains incomplete.

@@ -34,6 +34,8 @@ def publication_postfix_sources(db):
         return {kind: f"select {','.join(SOURCE_COLUMNS[kind])} from {kind}" for kind in POSTFIX_ACTION_TYPES}
     if version == ACTION_POSTFIX_VERSION and action_schema_is_current(db, include_postfix=True):
         return {kind: ACTION_PROJECTIONS[kind] for kind in POSTFIX_ACTION_TYPES}
+    if version == "2026-10-13.4" and action_schema_is_current(db, include_delivery=True):
+        return {kind: ACTION_PROJECTIONS[kind] for kind in POSTFIX_ACTION_TYPES}
     raise ValueError("unknown or mixed postfix publication source schema")
 
 

@@ -1,5 +1,29 @@
 # CEO Agent Service Architecture
 
+Store18 publication readers select exact Store17 native delivery tables or
+Store18 finite action projections during the existing deploy window. Quality,
+deferral and scheduled recovery read the candidate's typed delivery facts;
+their predicates, logical result labels and recovery decisions are unchanged.
+The existing Store release router now selects the verified17→18 paired inverse.
+These integrations remain a development candidate. Real constructor copy,
+current-fact rollback, published-old-code reopen and native substitute execution
+have passed; CI and production acceptance remain pending.
+
+Store18 delivery integration is an isolated development candidate, not a
+published runtime. Its fresh bootstrap and exact Store17 migration use fourteen
+finite `actions` types and retire physical `sent_replies` and
+`sent_reply_observers`. Sent public IDs and their native allocation watermark
+remain independent; sent `agent_run_id` is the existing scalar field, while
+observer run/task/delivery endpoints remain actual foreign keys. Current-fact
+inverse and published-old-code copy evidence are in the Phase5D validation.
+Store sent delivery writes, feedback/history reads, settlement checks and the
+Audit console sent reader now use the finite action projection. This is caller
+conversion in the development candidate. Recall timestamps are read after the
+ordinary writer lock is acquired, matching the source UPDATE. Integrated release
+acceptance is still pending. Validated nonempty external-key lookups retain a
+key seek through the finite sent index. This is not a production migration or
+the full10+1 goal.
+
 Installed Skill discovery (`agent_cli.read_skill()` without a source) returns
 body-free TSV metadata with separate Root and Relative path columns. Joining
 the referenced root directory with the relative component reconstructs the
@@ -1738,7 +1762,7 @@ Workbench 的实时文字和工具正文仅在运行时 RAM 中使用；SQLite �
 
 描述优化提案保持产生它时的快照身份与引用证据不变。若提案尚未评估而源快照已被最新数据替代，提案一次性转为 `unavailable`，原因 `description_proposal_source_unavailable`；不反复启动失败的评估，也不把旧证据套到新数据上。下一次基于最新数据的训练可产生新的提案。
 
-Status API 的 SystemHealth 使用严格类型的 native_delivery_coverage（checked、unavailable）展示原生轨迹可用性；该字段仅实时计算，不写入质量快照，也不改变质量违规判断。
+Status API 与前端 SystemHealth 解码器均声明 native_delivery_coverage（checked、unavailable）：允许省略或 null；存在时只接受这两个非负整数，仍拒绝未知字段。该字段仅实时计算，不写入质量快照，也不改变质量违规判断。
 
 已完成的邮件分类任务不长期保存分类输入正文：`email_agent_classification_tasks.status=done` 在既有租约／代际校验的完成事务内，将 `input_json` 改为明确标记的来源记录，保留原始 JSON 摘要和字节数、去除 `scheduled_consumer` 后的不可变输入摘要、稳定邮件身份、provider locator、配置版本及脱敏退订候选引用。定时配置与 Skill 只保留运行／版本／摘要引用；模型输入、邮件正文和冻结 Skill 正文不再复制。重复发现以既有不可变输入语义核对摘要，不补回正文；内容变化仍按既有错误处理。pending／running／failed 保留完整输入以便恢复，分类结果、任务状态和执行回执保持原样。历史精简由显式维护命令执行，不在初始化时扫描。`email_classifications.model_text` 仍是训练／人工标注使用的准确特征文本，与邮件原文不同，本阶段保留。
 
@@ -2004,7 +2028,7 @@ AUTOINCREMENT 公开 ID 和 native sqlite_sequence 水位；自动分配与插�
 发布 quiet-wait 读取器仅在明确声明的源／目标结构读取原生执行事实；恢复、审查、发送及回执策略不变。
 完整十表目标尚未完成；其余 actions 家族和第六至八期仍需要实施。是否上线以正式部署回执为准。
 
-### Store17 postfix 整合（开发候选，尚未发布）
+### Store17 postfix 整合（已发布）
 
 Store `2026-10-13.3` 将 outbound_postfixes、outbound_postfix_receipts、
 native_reply_dispatches 的十三个实际字段合入十二类型 actions。正常调用与
@@ -2012,7 +2036,7 @@ WeChat bootstrap 只使用 actions 投影及类型写入，不创建旧表、兼
 复合身份和立即 NO ACTION 外键保留；首次准备、provider 前 claim、首次回执、
 echo 判断及会议恢复顺序保持现有行为。只接受准确前版 Store16 来源。
 配对逆迁从当前事实重建旧三表及九类型 actions，保留发布后写入并恢复原版本记录。
-完整十张核心表加迁移表目标仍未完成。此段描述开发候选，上线以正式部署回执为准。
+第五期C已通过PR77／46bfdbe0正常发布，生产Store17／Email51及126物理表读回通过；实际副本、当前事实逆迁、CLI替身与完整CI／上线证据见docs/database-redesign-phase5c-validation.md。完整十张核心表加迁移表目标仍未完成，其余actions家族及第六至八期仍需实施。
 
 ### Calendar organizer source projection
 

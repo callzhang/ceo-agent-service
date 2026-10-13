@@ -309,7 +309,7 @@ export interface FeedbackItem {
 }
 export interface FeedbackList extends ConsoleList<FeedbackItem> { pending_count?: number; }
 export interface StatusService { label: string; target: string; ok: boolean; state: string; detail: string; pid: string; runs: string; initialized: string; last_terminating_signal: string; returncode: number; }
-export interface StatusSystemHealth { state: string; detail: string; checked_at: string; violations: number; components: StatusPersistedComponent[]; }
+export interface StatusSystemHealth { state: string; detail: string; checked_at: string; violations: number; components: StatusPersistedComponent[]; native_delivery_coverage?: { checked: number; unavailable: number } | null; }
 export interface StatusPersistedComponent { component: string; state: string; status: string; detail: string; latest_tick_at: string; latest_error: string; latest_error_at: string; updated_at: string; }
 export interface StatusComponent { name: string; role: string; cadence: string; status: string; latest_tick_at: string; latest_error: string; latest_error_at: string; }
 export interface StatusDispatcherQueue { name: string; pending: number; due: number; oldest_available_at: string | null; running: number; latest_error: string; }
@@ -1363,13 +1363,16 @@ function workerStatus(value: unknown): value is WorkerStatus {
   const row = exactRecord(value, ["service", "system_health", "components", "connectors", "email", "meeting_memory_health", "wechat", "queues", "dispatcher_queues", "attention_rows", "database", "summary"], ["human_decision_rows"]);
   if (row === null) return false;
   const service = exactRecord(row.service, ["label", "target", "ok", "state", "detail", "pid", "runs", "initialized", "last_terminating_signal", "returncode"]);
-  const health = exactRecord(row.system_health, ["state", "detail", "checked_at", "violations", "components"]);
+  const health = exactRecord(row.system_health, ["state", "detail", "checked_at", "violations", "components"], ["native_delivery_coverage"]);
+  const coverage = health?.native_delivery_coverage;
+  const deliveryCoverage = coverage == null ? null : exactRecord(coverage, ["checked", "unavailable"]);
   const database = exactRecord(row.database, ["path"]);
   const summary = exactRecord(row.summary, ["queue_count", "pending", "processing", "failed", "retryable", "attention"]);
   return service !== null && strings(service, ["label", "target", "state", "detail", "pid", "runs", "initialized", "last_terminating_signal"])
     && typeof service.ok === "boolean" && Number.isInteger(service.returncode)
     && health !== null && strings(health, ["state", "detail", "checked_at"]) && counts(health, ["violations"])
     && Array.isArray(health.components) && health.components.every(persistedComponent)
+    && (coverage == null || (deliveryCoverage !== null && counts(deliveryCoverage, ["checked", "unavailable"])))
     && Array.isArray(row.components) && row.components.every(statusComponent)
     && isRecord(row.connectors) && Object.values(row.connectors).every(connectorStatus)
     && emailHealth(row.email) && meetingMemoryHealth(row.meeting_memory_health) && wechatStatus(row.wechat)

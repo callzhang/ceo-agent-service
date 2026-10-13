@@ -1,7 +1,7 @@
 from __future__ import annotations
 from app.run_storage import SCHEDULED_RUN_SQL
 from app.task_storage import REPLY_TASK_SQL
-from app.action_storage import EXTERNAL_ACTION_RESULT_SQL
+from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, SENT_REPLY_SQL
 
 from datetime import datetime, timezone
 
@@ -102,7 +102,7 @@ def close_superseded_scheduled_reply_tasks(
               )
               and not exists (
                   select 1
-                  from sent_replies as sent
+                  from ({SENT_REPLY_SQL}) as sent
                   where sent.conversation_id=task.conversation_id
                     and sent.trigger_message_id=task.trigger_message_id
               )

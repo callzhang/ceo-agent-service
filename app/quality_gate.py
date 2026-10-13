@@ -24,7 +24,7 @@ from app.store import SERVICE_HEALTH_STATE_PREFIX, REPLY_TASK_CURRENT_SQL
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
 
 from app.action_storage import (
-    REVIEW_CANDIDATE_SQL,
+    REVIEW_CANDIDATE_SQL, SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL,
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
 )
@@ -130,7 +130,7 @@ def scan_hourly_quality(
             str(row["name"])
             for row in db.execute("select name from sqlite_master where type='table'")
         }
-        physical_source = {"agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks"}
+        physical_source = {"sent_replies": "actions", "agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks"}
         missing = tuple(source for source in REQUIRED_SOURCES if physical_source.get(source, source) not in existing)
         checked = (
             *(source for source in REQUIRED_SOURCES if physical_source.get(source, source) in existing),
@@ -377,7 +377,7 @@ def _check_reply_attempts(
               and lower(action) in ('send_reply','ask_clarifying_question')
               and lower(send_status) in ('failed','blocked')
               and not exists (
-                select 1 from sent_replies sr
+                select 1 from ({SENT_REPLY_SQL}) sr
                 where sr.conversation_id=a.conversation_id
                   and sr.trigger_message_id=a.trigger_message_id
               )
@@ -894,7 +894,7 @@ def _check_delivery_records(
         where audit.role='audit' and audit.status='completed'
           and task.channel='dingtalk'
           and audit.completed_at >= datetime('now', '-7 days')
-          and not exists(select 1 from sent_reply_observers observer where observer.agent_run_id=audit.id)
+          and not exists(select 1 from ({SENT_REPLY_OBSERVER_SQL}) observer where observer.agent_run_id=audit.id)
         """).fetchall()
     missing = 0
     unavailable = 0

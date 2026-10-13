@@ -223,7 +223,7 @@ def test_expired_dispatcher_lease_with_live_pid_is_still_owned(tmp_path):
 def test_unrelated_message_delivery_does_not_block_this_task(tmp_path):
     path, task_id, _backup = ready(tmp_path)
     with sqlite3.connect(path) as db:
-        db.execute("insert into sent_replies(conversation_id,trigger_message_id,reply_text) values ('cid-deferral','other-message','sent')")
+        insert_action(db, 'sent_replies', {'conversation_id':'cid-deferral','trigger_message_id':'other-message','reply_text':'sent'})
     assert preview_deferral(path, task_id, now=NOW)['eligible'] is True
 
 
@@ -339,7 +339,7 @@ def test_apply_refuses_changed_identity_or_live_work(tmp_path, mutation):
         'cli': 'cli', 'command_path': 'cmd', 'command_digest': 'd',
         'exit_code': 1, 'completed': 0, 'persisted': 0, 'safe_to_confirm': 0,
     }), ('RUN',)),
-    ("insert into sent_replies(conversation_id,trigger_message_id,reply_text) values ('cid-deferral','mid-deferral','sent')", ()),
+    (lambda db, values: insert_action(db, 'sent_replies', {'conversation_id':'cid-deferral','trigger_message_id':'mid-deferral','reply_text':'sent'}), ()),
     (lambda db, values: insert_action(db, 'external_action_results', {
         'external_action_key': 'k', 'business_object_key': values[0],
         'action_identity': 'a', 'operation': 'o', 'target_identifiers_json': '{}',

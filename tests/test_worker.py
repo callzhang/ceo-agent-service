@@ -55,6 +55,7 @@ from app.dws_client import (
     DwsUserProfile,
 )
 from app.outbound_postfix import compose_outbound_postfix
+from app.action_storage import update_action
 from app.store import AgentRole, AutoReplyStore
 from app.task_storage import REPLY_TASK_SQL
 from app.skill_features import FeatureRegistry
@@ -5831,11 +5832,10 @@ def test_consume_once_uses_required_feedback_prefix_after_unanswered_week(
         "旧回复",
         feedback_token="token-old",
     )
+    old_reply = worker.store.get_sent_reply("cid-1", "old-msg-1")
+    assert old_reply is not None
     with sqlite3.connect(worker.store.path) as db:
-        db.execute(
-            "update sent_replies set sent_at=? where trigger_message_id=?",
-            ("2026-05-05 18:00:00", "old-msg-1"),
-        )
+        update_action(db, "sent_replies", old_reply.id, {"sent_at": "2026-05-05 18:00:00"})
     worker.produce_once()
 
     processed = worker.consume_once(max_tasks=1)
@@ -5867,11 +5867,10 @@ def test_consume_once_keeps_reply_after_unanswered_feedback_deadline(
         "旧回复",
         feedback_token="token-old",
     )
+    old_reply = worker.store.get_sent_reply("cid-1", "old-msg-1")
+    assert old_reply is not None
     with sqlite3.connect(worker.store.path) as db:
-        db.execute(
-            "update sent_replies set sent_at=? where trigger_message_id=?",
-            ("2026-05-02 18:00:00", "old-msg-1"),
-        )
+        update_action(db, "sent_replies", old_reply.id, {"sent_at": "2026-05-02 18:00:00"})
     worker.produce_once()
 
     processed = worker.consume_once(max_tasks=1)

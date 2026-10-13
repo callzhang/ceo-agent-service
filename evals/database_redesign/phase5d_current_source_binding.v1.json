@@ -1,0 +1,51 @@
+{
+  "scope": "later published Calendar/OA/deploy-stop increment binding to verified Store17 persistence source; not a repeated constructor/native run",
+  "verified_at_utc": "2026-10-13T22:16:57.121898+00:00",
+  "production_commit": "7fabea8085e0a3095c3296c93226d21a28374216",
+  "candidate_commit": "4a9af7f75dc21e573b941ddda9efee363146939a",
+  "constructor_native_proof_source_commit": "ba8b59315067dd7adbe60d745fae1ccc39f3be64",
+  "source_marker": [
+    "2026-10-13.3",
+    "2026-10-12 00:20:48"
+  ],
+  "physical_tables": 126,
+  "persistence_modules_byte_equal": {
+    "app/store.py": "e47abfe620f5d8c4e79629d9725de51fd5686c97572c4067042751abf71918a6",
+    "app/action_storage.py": "ba2216cbd2c554a5f85d78bdc0e5c593ab5daaa64db792a66cb59875fd92f496",
+    "app/action_postfix_storage.py": "123706c686b7a54bab6976068e49d17aa7d9ed4249f0843102086ae8d77bd8f0",
+    "app/action_receipt_storage.py": "9aef524f504b3c7a9c226e0c4e4499a69e9e9c491e586ac1f4e026e14a7c01e5",
+    "app/run_storage.py": "ae57fb5d13aac35672cb07de38c9b515d49651ffebce20cf3b88398e40845718",
+    "app/task_storage.py": "e53c32df9a8ff18d0c2804071267c7e630a19c8451f1590e49c977b4e4ad9f86",
+    "app/email_store.py": "274cafd8b4306ca2745fadca470cb20f750da4f4c7815273e2a9b4e9849d7924"
+  },
+  "changed_application_files": [
+    "app/dws_client.py",
+    "app/repository_updater.py",
+    "app/task_scanners.py"
+  ],
+  "source_delivery_declaration_sha256": "bc106e714d1ecf4e86978a58aa0431fda6fcd28d05604e090f0a3ac26c2c36e8",
+  "current_source_declaration_valid": true,
+  "source_fk_diagnostics": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "integrity_check": "ok",
+  "production_checkout_clean": true,
+  "no_production_mutation_or_provider_call": true,
+  "focused_increment_checks_pending": false,
+  "focused_checks": {
+    "calendar_oa_delivery_cases": {
+      "passed": 69,
+      "duration_seconds": 11.32
+    },
+    "updater_and_paired_delivery_release": {
+      "passed": 69,
+      "duration_seconds": 82.58
+    }
+  },
+  "temporary_artifacts_removed": true
+}

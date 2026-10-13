@@ -18,7 +18,7 @@ import pytest
 import app.store as store_module
 from tests.reply_schema_fixtures import assert_store_reopen_rejected_without_mutation
 from tests.run_reader_fixtures import assert_no_core_native_storage, insert_native_run_fixture
-from app.action_storage import EXTERNAL_ACTION_RESULT_SQL
+from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL, update_action
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RUN_STATE_EVENT_SQL, SCHEDULED_RUN_SQL, TASK_AGENT_RUN_SQL, insert_run
 from app.task_storage import WORK_SUMMARY_INPUT_SQL, create_task_schema, insert_task, task_id_expression, task_physical_id
 from app.store import (
@@ -4168,7 +4168,7 @@ def test_store_repairs_missing_required_table_despite_current_schema_version(
 
 
 def test_source13_workbench_lease_values_survive_before_recovery_index(tmp_path: Path) -> None:
-    from tests.workbench_caller_fixtures import empty_source13
+    from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17
     from app.task_storage import WORKBENCH_TURN_SQL
 
     db_path = tmp_path / "source13-workbench.sqlite3"
@@ -4176,6 +4176,7 @@ def test_source13_workbench_lease_values_survive_before_recovery_index(tmp_path:
         db.execute("insert into workbench_tasks(id,title,runtime_kind) values('parent','Leases','codex')")
         db.execute("""insert into workbench_turns(id,task_id,client_request_id,task_sequence,user_text,status,lease_owner,lease_expires_at)
             values('turn','parent','request',1,'kept','running','original-owner','2026-10-13 00:00:00')""")
+    advance_source16_to_store17(db_path)
     AutoReplyStore(db_path)
     with sqlite3.connect(db_path) as db:
         columns = {str(row[1]) for row in db.execute("pragma table_info(tasks)")}
@@ -5917,9 +5918,9 @@ def test_message_delivery_history_is_single_projection_with_run_observers(
 
     assert repeated.id == first.id
     with store._connect() as db:
-        assert db.execute("select count(*) from sent_replies").fetchone()[0] == 1
+        assert db.execute(f"select count(*) from ({SENT_REPLY_SQL})").fetchone()[0] == 1
         assert db.execute(
-            "select count(*) from sent_reply_observers where sent_reply_id=?",
+            f"select count(*) from ({SENT_REPLY_OBSERVER_SQL}) where sent_reply_id=?",
             (first.id,),
         ).fetchone()[0] == 2
 
@@ -5960,7 +5961,7 @@ def test_completed_message_delivery_persists_action_result_and_history_atomicall
             ("external-send-result",),
         ).fetchone()[0] == 1
         assert db.execute(
-            "select count(*) from sent_reply_observers where agent_run_id=?",
+            f"select count(*) from ({SENT_REPLY_OBSERVER_SQL}) where agent_run_id=?",
             (audit.id,),
         ).fetchone()[0] == 1
 
@@ -8666,22 +8667,14 @@ def test_feedback_pressure_counts_unanswered_replies_since_last_feedback(
         received_at="2026-06-01 12:00:00",
     )
     with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update sent_replies set sent_at=? where trigger_message_id=?",
+        for sent_at, trigger_id in (
             ("2026-05-30 12:00:00", "old-before-feedback"),
-        )
-        db.execute(
-            "update sent_replies set sent_at=? where trigger_message_id=?",
             ("2026-06-02 12:00:00", "old-unanswered"),
-        )
-        db.execute(
-            "update sent_replies set sent_at=? where trigger_message_id=?",
             ("2026-06-09 12:00:00", "recent-unanswered"),
-        )
-        db.execute(
-            "update sent_replies set sent_at=? where trigger_message_id=?",
             ("2026-06-02 12:00:00", "other-conversation"),
-        )
+        ):
+            for row in db.execute(f"select id from ({SENT_REPLY_SQL}) where trigger_message_id=?", (trigger_id,)).fetchall():
+                update_action(db, "sent_replies", row[0], {"sent_at":sent_at})
 
     stats = store.feedback_pressure_stats(
         "cid-1",
@@ -9031,7 +9024,7 @@ def test_history_query_has_indexes_for_correlated_reply_lookups(tmp_path: Path):
         "idx_reply_attempts_trigger_history",
         "idx_reply_attempts_current_trigger",
         "idx_reply_attempts_agent_run_recovery",
-        "idx_sent_replies_history",
+        "idx_actions_sent_history",
         "idx_work_summary_inputs_updated",
     } <= index_names
     assert not any("scan process_attempts" in detail.lower() for detail in plan)

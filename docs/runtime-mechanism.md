@@ -1,5 +1,27 @@
 # Current Runtime Mechanism
 
+The Store18 candidate's maintenance reader supports exact previous/current
+delivery schemas through the existing publication selector. Its quality,
+deferral and scheduled recovery readers use finite sent/observer projections.
+The storage source changes preserve original blockers, exclusions, labels and
+recovery behavior; they do not add a new policy or replay path. Paired release
+routing, integrated constructor copy/current-fact rollback and native substitute
+CLI acceptance have passed. CI/live acceptance remain pending and production
+continues to use Store17.
+
+The isolated Store18 candidate (`2026-10-13.4`) bootstraps the finite delivery
+action layout and accepts only exact published Store17 as its migration source.
+It does not recreate retired sent/observer tables during auxiliary repair.
+Four cold/fresh bootstrap checks cover both captured source declarations, raw
+sent TEXT and deleted-ID watermark progress. Store sent writes and direct
+Store/Audit sent readers now address finite actions while retaining public IDs,
+original sent facts, observer identities, feedback filters and transaction
+boundaries. Recall timestamps are read after the ordinary writer lock is
+acquired, matching the source UPDATE. Integrated paired release acceptance is
+still pending. Validated nonempty sent external-key lookups use the finite sent
+index for a key seek; production remains Store17.
+The published Store17 contract below continues to describe the live service.
+
 OA return uses its own effect verification, not the approval/rejection node
 completion predicate. The exact pending-node ownership check still precedes a
 new return. System first saves the actual response, principal, action digest and
@@ -2495,7 +2517,7 @@ Workbench 的实时文字和工具正文仅在运行时 RAM 中使用；SQLite �
 
 描述优化提案保持产生它时的快照身份与引用证据不变。若提案尚未评估而源快照已被最新数据替代，提案一次性转为 `unavailable`，原因 `description_proposal_source_unavailable`；不反复启动失败的评估，也不把旧证据套到新数据上。下一次基于最新数据的训练可产生新的提案。
 
-Status API 的 SystemHealth 使用严格类型的 native_delivery_coverage（checked、unavailable）展示原生轨迹可用性；该字段仅实时计算，不写入质量快照，也不改变质量违规判断。
+Status API 与前端 SystemHealth 解码器均声明 native_delivery_coverage（checked、unavailable）：允许省略或 null；存在时只接受这两个非负整数，仍拒绝未知字段。该字段仅实时计算，不写入质量快照，也不改变质量违规判断。
 
 Codex 原生工具只有开始、没有对应完成记录时，历史详情保留准确范围内的
 `item.started` 和实际输入，并按原生顺序展示；不生成结果、退出码或成功回执。
@@ -2789,7 +2811,7 @@ AUTOINCREMENT 公开 ID 和 native sqlite_sequence 水位；自动分配与插�
 发布 quiet-wait 读取器仅在明确声明的源／目标结构读取原生执行事实；恢复、审查、发送及回执策略不变。
 完整十表目标尚未完成；其余 actions 家族和第六至八期仍需要实施。是否上线以正式部署回执为准。
 
-### Store17 postfix 整合（开发候选，尚未发布）
+### Store17 postfix 整合（已发布）
 
 Store `2026-10-13.3` 将 outbound_postfixes、outbound_postfix_receipts、
 native_reply_dispatches 的十三个实际字段合入十二类型 actions。正常调用与
@@ -2797,7 +2819,7 @@ WeChat bootstrap 只使用 actions 投影及类型写入，不创建旧表、兼
 复合身份和立即 NO ACTION 外键保留；首次准备、provider 前 claim、首次回执、
 echo 判断及会议恢复顺序保持现有行为。只接受准确前版 Store16 来源。
 配对逆迁从当前事实重建旧三表及九类型 actions，保留发布后写入并恢复原版本记录。
-完整十张核心表加迁移表目标仍未完成。此段描述开发候选，上线以正式部署回执为准。
+第五期C已通过PR77／46bfdbe0正常发布，生产Store17／Email51及126物理表读回通过；实际副本、当前事实逆迁、CLI替身与完整CI／上线证据见docs/database-redesign-phase5c-validation.md。完整十张核心表加迁移表目标仍未完成，其余actions家族及第六至八期仍需实施。
 
 OA approval Attention reflects an unresolved process-level state from the latest
 verified provider scan. A running OA process may have completed the current

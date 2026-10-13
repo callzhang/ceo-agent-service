@@ -186,6 +186,7 @@ from app.action_storage import (
     REVIEW_CANDIDATE_SQL,
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
+    SENT_REPLY_SQL,
 )
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -3115,7 +3116,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                           and lower(t.status) in ('done', 'skipped')
                         )
                         or exists (
-                            select 1 from sent_replies sr
+                            select 1 from ({SENT_REPLY_SQL}) sr
                             where sr.conversation_id=a.conversation_id
                               and sr.trigger_message_id=a.trigger_message_id
                         )

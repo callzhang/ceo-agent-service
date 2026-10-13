@@ -1,0 +1,71 @@
+{
+  "captured_at_utc": "2026-10-13T23:04:17.236472+00:00",
+  "production_commit": "9e0570cb8d132f8e4b0394219b4c63411aa6610c",
+  "store": "2026-10-13.4",
+  "email": 51,
+  "physical_tables": 124,
+  "retired_delivery_objects": [],
+  "delivery_counts": [
+    [
+      "sent_replies",
+      2341
+    ],
+    [
+      "sent_reply_observers",
+      320
+    ]
+  ],
+  "integrity": [
+    [
+      "ok"
+    ]
+  ],
+  "foreign_keys": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-13.sqlite3",
+  "backup_verified_before_replacement": true,
+  "file_bytes": 471347200,
+  "production_test_sends": 0,
+  "latest_backup_replaced": true,
+  "full_fourteen_type_manifest": true,
+  "release_commit": "1b6f55e5b197d65da4499abda144b37ce2613e86",
+  "ci": {
+    "run_id": 38476785656,
+    "head": "5221062de86382165abd6ac4d829f980264523d5",
+    "conclusion": "success",
+    "python_passed": 12764,
+    "python_skipped": 112,
+    "python_deselected": 44,
+    "frontend_passed": 723,
+    "frontend_skipped": 2,
+    "browser_passed": 2,
+    "build": "passed"
+  },
+  "post_status_contract_fix": {
+    "commit": "9e0570cb8d132f8e4b0394219b4c63411aa6610c",
+    "pid": 35390,
+    "frontend_focused_passed": 48,
+    "backend_contract_passed": 1,
+    "build": "passed",
+    "status_page": "rendered running/healthy; queue values visible",
+    "processing": 0,
+    "retryable": 0,
+    "current_failures": 4,
+    "attention_groups": 3,
+    "history_total": 35052,
+    "history_dingtalk_total": 5887,
+    "attempt_opened": 15409,
+    "receipt_expanded": true,
+    "recall_or_send_clicked": false,
+    "native_unavailable_display_retained": true
+  },
+  "remaining_goal": "ten core tables plus migration not complete; Phase5E next",
+  "owned_temporary_artifacts_removed": true,
+  "final_backup_reopened_quick_check": "ok"
+}

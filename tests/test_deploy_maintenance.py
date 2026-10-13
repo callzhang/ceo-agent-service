@@ -1,4 +1,5 @@
 import pytest
+from app.action_storage import insert_action
 
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, insert_run
 from app.task_storage import REPLY_TASK_SQL, task_id_expression
@@ -133,7 +134,7 @@ def test_post_stop_race_rejected_before_recovery_or_backup(tmp_path, monkeypatch
     snapshot = check_maintenance(path, (task_id,))
     with sqlite3.connect(path) as db:
         if effect == 'receipt':
-            db.execute("insert into sent_replies(conversation_id,trigger_message_id,reply_text) values ('cid-deferral','mid-deferral','sent')")
+            insert_action(db, 'sent_replies', {'conversation_id':'cid-deferral','trigger_message_id':'mid-deferral','reply_text':'sent'})
         elif effect == 'unknown_tool':
             native_events(path, task_id, monkeypatch, {'type': 'CommandExecution'})
         else:
