@@ -1067,6 +1067,26 @@ def test_scan_clears_legacy_attention_for_provider_snake_case_return_receipt(
 
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     key = "oa:5aD5eemcSVO3kI2H7qL4rg03641790612331:104248980945"
+    attempt_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan:legacy-return",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:legacy-return:revision-1",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="5aD5eemcSVO3kI2H7qL4rg03641790612331",
+        oa_task_id="104248980945",
+        send_status="skipped",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set resolved_at=current_timestamp, resolution=? where id=?",
+            (
+                "Live DingTalk OA task reached terminal state OA_TASK_NOT_PENDING.",
+                attempt_id,
+            ),
+        )
     store.set_daily_scan_state(
         "oa_pending",
         last_success_at="2026-10-12 00:00:00",
@@ -1082,6 +1102,17 @@ def test_scan_clears_legacy_attention_for_provider_snake_case_return_receipt(
         row["category"] == "OA approval" and row["id"] == key
         for row in _queue_attention_rows(store)
     )
+    corrected = store.get_reply_attempt(attempt_id)
+    assert corrected is not None
+    assert "verified return receipt" in corrected.resolution
+    assert "Previous resolution retained: Live DingTalk OA task reached terminal state OA_TASK_NOT_PENDING." in corrected.resolution
+    assert not store.correct_legacy_oa_task_not_pending_resolution(
+        attempt_id,
+        process_instance_id="5aD5eemcSVO3kI2H7qL4rg03641790612331",
+        task_id="104248980945",
+        process_result="OA_RETURNED",
+    )
+    assert store.get_reply_attempt(attempt_id).resolution == corrected.resolution
 
 
 def test_scan_pending_oa_approvals_does_not_close_absent_task_on_partial_scan(

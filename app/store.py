@@ -26482,6 +26482,7 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 from reply_attempts attempts
                 where attempts.send_status='skipped'
                   and attempts.resolution like '%OA_TASK_NOT_PENDING%'
+                  and attempts.resolution not like 'Live DingTalk readback corrected%'
                   and trim(attempts.oa_process_instance_id)<>''
                   and attempts.id=(
                       select max(latest.id)
@@ -26495,6 +26496,81 @@ class AutoReplyStore(ReviewedCandidateStoreMixin):
                 (max(1, limit),),
             ).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
+
+    def correct_legacy_oa_task_not_pending_resolution(
+        self,
+        attempt_id: int,
+        *,
+        process_instance_id: str,
+        task_id: str,
+        process_result: str,
+    ) -> bool:
+        """Append live terminal/return evidence to a falsely closed OA attempt."""
+        process_id = process_instance_id.strip()
+        original_task_id = task_id.strip()
+        if not process_id or not original_task_id:
+            raise ValueError("process_instance_id and task_id must be non-empty")
+        result = process_result.strip()
+        if not result:
+            raise ValueError("process_result must be non-empty")
+        verified = (
+            "the exact task has a verified return receipt"
+            if result == "OA_RETURNED"
+            else f"the process has a verified terminal result {result}"
+        )
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                """
+                select resolution
+                from reply_attempts
+                where id=?
+                  and send_status='skipped'
+                  and oa_process_instance_id=?
+                  and oa_task_id=?
+                  and resolution not like 'Live DingTalk readback corrected%'
+                  and id=(
+                      select max(latest.id)
+                      from reply_attempts latest
+                      where latest.oa_process_instance_id=?
+                  )
+                """,
+                (attempt_id, process_id, original_task_id, process_id),
+            ).fetchone()
+            if row is None:
+                return False
+            previous = str(row["resolution"] or "").strip()
+            if "OA_TASK_NOT_PENDING" not in previous:
+                return False
+            corrected = (
+                f"Live DingTalk readback corrected the earlier OA_TASK_NOT_PENDING "
+                f"closure: {verified}. Previous resolution retained: {previous}"
+            )
+            cursor = db.execute(
+                """
+                update reply_attempts
+                set resolution=?, updated_at=current_timestamp
+                where id=?
+                  and send_status='skipped'
+                  and oa_process_instance_id=?
+                  and oa_task_id=?
+                  and resolution=?
+                  and resolution not like 'Live DingTalk readback corrected%'
+                  and id=(
+                      select max(latest.id)
+                      from reply_attempts latest
+                      where latest.oa_process_instance_id=?
+                  )
+                """,
+                (
+                    corrected,
+                    attempt_id,
+                    process_id,
+                    original_task_id,
+                    previous,
+                    process_id,
+                ),
+            )
+            return cursor.rowcount == 1
 
     def list_oa_attempt_histories(
         self, process_instance_ids: Sequence[str]

@@ -58,6 +58,10 @@ projection when their live process is still running without a verified return.
 The service's DingTalk OpenAPI reader returns snake-case `process_instance`,
 `operation_records`, and operation fields; reconciliation reads those native
 records as well as the CLI detail projection before deciding a verified return.
+When a latest local attempt was previously closed solely as
+`OA_TASK_NOT_PENDING`, the scanner corrects that resolution only under an
+identity-and-original-resolution CAS after live terminal/return evidence; it
+retains the prior text and does not rewrite the attempt's outcome.
 
 Source feedback callback identities are opaque historical evidence, not newly
 generated outbound tokens. The validation copy removes only configured-origin
