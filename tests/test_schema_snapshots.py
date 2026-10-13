@@ -93,10 +93,17 @@ KNOWN_DRIFT: dict[str, tuple[str, str, str]] = {
     ),
 }
 
-# Hand-authored envelopes with no single root model: each wraps a list of an
-# inner model (ExtractedMemoryCandidate, DurableMemoryMatch) that carries no
-# top-level schema of its own, so there is nothing to compare them against.
+# Envelopes and structural projections without a matching direct Pydantic schema.
+# Native projections are pinned to their schema factory in test_native_agent_output.
 NO_SINGLE_MODEL: dict[str, str] = {
+    "consumer_agent_native_output.schema.json": (
+        "lossless native projection of ConsumerAgentWireResult; exact factory parity "
+        "is checked by tests/test_native_agent_output.py"
+    ),
+    "audit_agent_native_output.schema.json": (
+        "lossless native projection of AuditAgentWireResult; exact factory parity "
+        "is checked by tests/test_native_agent_output.py"
+    ),
     "wechat_memory_candidates.schema.json": (
         "envelope around a list of app.wechat.memory_import."
         "ExtractedMemoryCandidate"

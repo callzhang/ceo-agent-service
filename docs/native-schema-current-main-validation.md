@@ -126,3 +126,38 @@ On472eed9b, temporary stores and the real AuditAgentRunner/AgentTurnProcess run 
 A fixture-persisted Consumer R1 is linked to the previous Audit parent and changes only the genuine bad node. Its digest matches the legal candidate; Audit starts the existing fresh-per-revision session and still returns solely for the false numeric type. This is not stale same-session feedback alone and is not a fully model-generated Consumer feedback loop. No production fix, feedback filter or new prompt rule is adopted.
 
 The anonymous setup uses temporary databases, synthetic common configuration/Skill and empty Profile, with all external MCP replaced by read-only callbacks. Setup errors before model execution remain excluded; successful cold is not rerun after the harness parent/revision correction. Receipt: evals/trajectory_optimization/native_schema_audit_lifecycle.results.v1.json.
+
+## Current main and message Wire integration, 2026-10-13
+
+Merge47b84bcb preserves main ea99a352, including the deployed fresh message
+identifier validation and phase5A storage. Both independent claim rows were
+retained; no authored commit was rewritten. The first affected run reports
+357 passed,4 skipped,2 failed. Failures are test-boundary defects: the two native
+projection files were not registered in the schema inventory, and the fresh
+message lifecycle fixture sent a canonical map instead of the native entries
+representation, failing before canonical identifier validation.
+
+Projected files now use the existing non-direct-model inventory category; their
+exact generator equality remains checked by native output tests. The lifecycle
+fixture uses structural target/payload entries, retaining its numeric identifier,
+exact persisted field-error and next Result Correction assertions. Five additional
+native decode cases confirm numeric, boolean, object, array and blank identifiers
+are rejected by the complete current Wire model after structural restoration;
+a valid leading-zero string remains exact. Native grammar acceptance is deliberately
+not treated as business acceptance. No runtime validator, business rule or fallback
+was added for this test alignment.
+
+Disjoint verification groups: native codec/schema inventory/message lifecycle110
+passed; native preview, public preview, Codex adapter, Consumer and Audit257 passed,
+4 skipped. Combined affected scope367 passed,4 skipped. Ruff and diff checks pass.
+
+Local CLI is still0.154.0. Both generated native schema file hashes exactly match
+the prior approved Qwen full-role compatibility probe (Consumer911ad565…, Audit
+d328078c…). Current role declaration counts are42/38 versus the prior41/37, so the
+old probe is not fresh acceptance of the current full tool catalog. This equality
+proves structural output schema preservation only; it does not prove current
+provider behavior or business correctness. Fresh configured-route tool/schema
+controls and the unresolved complete business gates remain required. PR31 is
+still a draft, unmerged and disabled in production.
+
+Independent readonly review found no test/oracle weakening: exact dual-role native generator pinning remains, lifecycle numeric/field/correction assertions are unchanged, and native shape acceptance stays distinct from canonical business acceptance. Schema hashes and changed tool counts were directly checked; test counts were reviewed from the recorded runs without rerunning models/tests.

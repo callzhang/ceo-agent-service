@@ -184,3 +184,28 @@ def test_native_generation_orders_existing_evidence_before_actions_and_summary()
     assert list(schema["$defs"]["ConsumerProposal"]["properties"]) == [
         "objective", "sourced_facts", "authored_judgment", "actions"
     ]
+
+
+@pytest.mark.parametrize("identifier", [104265682397, True, {"entries": []}, [], "  "])
+def test_native_decode_preserves_current_message_identifier_validation(identifier):
+    payload = consumer()
+    action = payload["proposal"]["actions"][0]
+    action.update(capability="dingtalk-chat", operation="send_direct_message", effect="external")
+    action["target"] = {"entries": [{"key": "user_id", "value": "verified-user"},
+                                      {"key": "open_dingtalk_id", "value": identifier}]}
+    action["payload"] = {"entries": [{"key": "content", "value": "Exact notice."}]}
+    # Native structural grammar is a shape constraint. The full canonical
+    # business validator rejects wrong field types after lossless restoration.
+    assert Draft202012Validator(native_output_schema("consumer")).is_valid(payload)
+    with pytest.raises(ResultParseError):
+        parse_native_output(stream(payload), "consumer")
+
+
+def test_native_decode_keeps_leading_zero_message_identifier():
+    payload = consumer()
+    action = payload["proposal"]["actions"][0]
+    action.update(capability="dingtalk-chat", operation="send_direct_message", effect="external")
+    action["target"] = {"entries": [{"key": "open_dingtalk_id", "value": "000104265682397"}]}
+    action["payload"] = {"entries": [{"key": "content", "value": "Exact notice."}]}
+    result = ConsumerAgentWireResult.model_validate_json(parse_native_output(stream(payload), "consumer"))
+    assert result.root.proposal.actions[0].target["open_dingtalk_id"] == "000104265682397"
