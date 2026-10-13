@@ -118,6 +118,24 @@ def test_shared_source_bundle_separates_versions_and_provenance(tmp_path):
     assert len({r["document_id"] for r in bundle["source_signals"]}) == 4
 
 
+def test_agent_source_projection_preserves_provenance_without_storage_dedupe_key(tmp_path):
+    store = AutoReplyStore(tmp_path / "signal-context.sqlite3")
+    dedupe_key = "message:m:1:task-item:" + "a" * 64
+    signal_id = store.create_business_task_signal(**SOURCE, dedupe_key=dedupe_key)
+    signal = store.get_business_task_signal(signal_id)
+    bundle = task_source_documents.source_bundle((signal,))
+    reference = bundle["source_signals"][0]
+    assert "dedupe_key" not in reference
+    assert reference == {
+        **signal.model_dump(mode="json", exclude={"evidence_text", "dedupe_key"}),
+        "document_id": signal.source_document_id,
+    }
+    assert bundle["source_documents"][0]["visible_ranges"][0]["text"] == SOURCE["evidence_text"]
+    with store._connect() as db:
+        assert store.get_business_task_signal_by_dedupe_key(dedupe_key=dedupe_key, _db=db).id == signal_id
+    assert store.get_business_task_signal(signal_id).dedupe_key == dedupe_key
+
+
 def test_shared_source_bundle_includes_current_source_once_and_preserves_metadata(
     tmp_path,
 ):
