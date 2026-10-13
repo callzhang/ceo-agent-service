@@ -295,12 +295,13 @@
     "Synthetic Skill bodies, minimal synthetic Profile and callbacks do not establish full real OA business acceptance.",
     "Seven frozen OA source selection and rules are outside this installed-only change.",
     "MCP process log-prefix differs between arms, outputs/behavior preserved; native clock/env context may differ naturally.",
-    "Audit candidate initial native Developer additionally includes925-character plugin-creator catalog entry, absent in baseline. Service Developer is equal, native bootstrap is not; no causal attribution of Audit read counts."
+    "Audit candidate initial native Developer has924 additional joined text characters from a plugin-creator catalog entry, absent in baseline. Service Developer is equal, native bootstrap is not; no causal attribution of Audit read counts."
   ],
   "script_sha256": {
     "run.py": "267c00eab7fd3b6589cc352b7bd5d189a1b65bf4b2f0c8705d37c18f9d9ab1bd",
     "server.py": "4904c8ebe700af5575ab4c3f69ad3207e5fc5c0b90e31030a610b2b56e34d786",
     "baseline_business_skills.py": "51b3230c854c8f58f8a8e67407494b81dda36445d1fb8da77a5bb88daa66759b"
   },
-  "independent_review": "Read-only reviewer independently verified actual native Task receipt equality, callback/file/model body equality and business outcomes; identified failed-tool omissions and Audit native bootstrap drift."
+  "independent_review": "Read-only reviewer independently verified actual native Task receipt equality, callback/file/model body equality and business outcomes; identified failed-tool omissions and Audit native bootstrap drift.",
+  "audit_initial_native_developer_delta_chars": 924
 }
