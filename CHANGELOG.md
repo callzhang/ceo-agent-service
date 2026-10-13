@@ -1,5 +1,11 @@
 # Changelog
 
+## Fresh message identifier types
+
+- Reject nonstring or blank DingTalk message identifiers when parsing new Consumer
+  output, including executable human-choice plans. Preserve exact string values
+  and historical Pydantic result reads; update the output schema accordingly.
+
 ## Bounded attachment evidence
 
 - Bound downloaded and decompressed attachment material and serialized MCP
