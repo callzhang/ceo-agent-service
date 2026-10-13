@@ -444,5 +444,11 @@
       "open_handles_before_cleanup": 0
     }
   ],
-  "original_native_sessions_retained": true
+  "original_native_sessions_retained": true,
+  "representativeness_correction": {
+    "reason": "Evaluation builder supplied full Task audit_rules unlike actual production orchestrator, which supplies empty Task audit_rules. Actual native trajectories retained but not production-Task representative.",
+    "production_rules_duplicate": false,
+    "replacement_cohort": "native_contract_compaction.audit_business_control.v2.json",
+    "old_observations_unchanged": true
+  }
 }

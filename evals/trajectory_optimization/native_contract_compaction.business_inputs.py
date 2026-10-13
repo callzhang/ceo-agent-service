@@ -43,7 +43,7 @@ def task_context(case: dict, *, task_id: int = 1) -> AgentTaskContext:
     )
 
 
-def audit_context(case: dict, *, audit_rules: str) -> AuditTurnContext:
+def audit_context(case: dict) -> AuditTurnContext:
     task = task_context(case)
     facts = case["phases"]["cold"]
     false_claim = facts["candidate"]
@@ -101,5 +101,5 @@ def audit_context(case: dict, *, audit_rules: str) -> AuditTurnContext:
         operation_id="anonymous-audit-document-review",
         candidate=candidate,
         candidate_digest=candidate_digest(candidate),
-        audit_rules=audit_rules,
+        audit_rules="",
     )

@@ -176,13 +176,9 @@ for case in manifest["cases"]:
         checks += ["exact document identity and revision"]
     candidate_receipt = None
     if case["role"] == "audit":
-        from app.audit_rules import render_audit_rules
-        from app.store import AgentRole
         from app.reviewed_candidates import candidate_digest
 
-        audit = inputs.audit_context(
-            case, audit_rules=render_audit_rules(AgentRole.AUDIT, create_missing=False)
-        )
+        audit = inputs.audit_context(case)
         assert audit.candidate_digest == candidate_digest(audit.candidate)
         rendered = audit.render(current_time=manifest["fixed_runtime_time"])
         assert audit.candidate_digest in rendered

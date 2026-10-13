@@ -53,7 +53,7 @@ def main():
     inputs = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(inputs)
     rules = render_audit_rules(AgentRole.AUDIT, create_missing=False)
-    context = inputs.audit_context(case, audit_rules=rules)
+    context = inputs.audit_context(case)
     configuration = load_prompt_configuration(create_missing=False, role="audit")
     sections = audit_developer_sections(
         rules, runtime_context="", prompt_configuration=configuration

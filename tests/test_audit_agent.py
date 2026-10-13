@@ -341,6 +341,8 @@ def test_actual_audit_runner_uses_production_review_instructions(setup):
     from app.agent_context import _AUDIT_AGENT_RULES
     from app.audit_rules import render_audit_rules
     from app.consumer_agent import audit_developer_instructions
+    from app.consumer_agent import audit_developer_sections
+    from app.native_agent_output import native_developer_assembly
 
     _store, task, parent, _context, _config, _router = setup
     context = replace(_context, audit_rules="")
@@ -352,7 +354,11 @@ def test_actual_audit_runner_uses_production_review_instructions(setup):
     [snapshot] = [event for event in executor.active_events
                   if event.get("type") == "runtime.prompt"]
     rendered_rules = render_audit_rules(AgentRole.AUDIT)
-    assert actual == audit_developer_instructions(rendered_rules, runtime_context="") + "\n\n" + snapshot["runtime_context"]
+    sections = audit_developer_sections(rendered_rules, runtime_context="")
+    developer = native_developer_assembly(
+        audit_developer_instructions(rendered_rules, runtime_context=""), sections, "audit"
+    ).text
+    assert actual == developer + "\n\n" + snapshot["runtime_context"]
     assert actual == snapshot["developer_instructions"]
     assert (actual + executor.prompts[0]).count(_AUDIT_AGENT_RULES) == 1
     assert f"## Audit Rules\n{rendered_rules}" in actual
