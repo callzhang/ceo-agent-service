@@ -782,8 +782,6 @@ def scan_pending_oa_approvals(
     }
     legacy_attempts = store.list_oa_task_not_pending_attempts()
     for attempt in legacy_attempts:
-        if attempt.id in reconciled_legacy_oa_attempt_ids:
-            continue
         key = f"oa:{attempt.oa_process_instance_id}:{attempt.oa_task_id}"
         if not pending_scan_complete or not current_user_id:
             pending_business_object_keys.add(key)

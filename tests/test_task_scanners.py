@@ -1090,7 +1090,10 @@ def test_scan_clears_legacy_attention_for_provider_snake_case_return_receipt(
     store.set_daily_scan_state(
         "oa_pending",
         last_success_at="2026-10-12 00:00:00",
-        cursor_json=json.dumps({"pending_business_object_keys": [key]}),
+        cursor_json=json.dumps({
+            "pending_business_object_keys": [key],
+            "reconciled_legacy_oa_attempt_ids": [attempt_id],
+        }),
         last_error="",
     )
 
