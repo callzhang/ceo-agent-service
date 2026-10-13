@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "scope": "Synthetic unowned OA installed-Skill control; same seven sources in both arms. Not real OA rule acceptance.",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "time": "2026-10-13T12:00:00Z",
+  "profile": "Synthetic principal principal-7. No actual personal or business profile.",
+  "skills": [
+    {
+      "name": "dingtalk-oa-approval",
+      "text": "---\nname: dingtalk-oa-approval\ndescription: Generic OA ownership and live state workflow.\n---\n\n# Synthetic dingtalk-oa-approval\n\nFirst read live OA detail, current tasks and principal pending list. If no current task belongs to principal-7 or this instance is absent from principal pending, no action is applicable; stop business assessment. Only for a currently owned pending item classify its processCode and read applicable business criteria. Never perform writes in this read-only fixture.\n",
+      "sha256": "4f1e664717bf022f068c18412a86d0ff78c97a79733a5c27e46d4390bf56f239"
+    },
+    {
+      "name": "stardust-oa-attendance-travel-review",
+      "text": "---\nname: stardust-oa-attendance-travel-review\ndescription: Business criteria for synthetic category stardust-oa-attendance-travel-review only.\n---\n\n# Synthetic stardust-oa-attendance-travel-review\n\nThis source applies only to owned pending items in category stardust-oa-attendance-travel-review. It adds no requirement for an unowned item. Preserve the actual source evidence and do not invent an action.\n",
+      "sha256": "58269edc74e475e4985a5af2e0c5266923d41d7052998d826e17d8bd5afbd30e"
+    },
+    {
+      "name": "stardust-oa-cloud-resource-review",
+      "text": "---\nname: stardust-oa-cloud-resource-review\ndescription: Business criteria for synthetic category stardust-oa-cloud-resource-review only.\n---\n\n# Synthetic stardust-oa-cloud-resource-review\n\nThis source applies only to owned pending items in category stardust-oa-cloud-resource-review. It adds no requirement for an unowned item. Preserve the actual source evidence and do not invent an action.\n",
+      "sha256": "a59368cbfbd4d27c2669177b8395fe492610cb91ce1e5bdfe1c15a4eefd007ab"
+    },
+    {
+      "name": "stardust-oa-contract-review",
+      "text": "---\nname: stardust-oa-contract-review\ndescription: Business criteria for synthetic category stardust-oa-contract-review only.\n---\n\n# Synthetic stardust-oa-contract-review\n\nThis source applies only to owned pending items in category stardust-oa-contract-review. It adds no requirement for an unowned item. Preserve the actual source evidence and do not invent an action.\n",
+      "sha256": "dc64826e3f83b4ccb3432c27b447ea3673031ca347db28ee4cabbf6b8e230740"
+    },
+    {
+      "name": "stardust-oa-finance-review",
+      "text": "---\nname: stardust-oa-finance-review\ndescription: Business criteria for synthetic category stardust-oa-finance-review only.\n---\n\n# Synthetic stardust-oa-finance-review\n\nThis source applies only to owned pending items in category stardust-oa-finance-review. It adds no requirement for an unowned item. Preserve the actual source evidence and do not invent an action.\n",
+      "sha256": "dc3d18629dd2ab787b53ffedce420ffbca7b4081fb57d1f6b343a16c756d63e7"
+    },
+    {
+      "name": "stardust-oa-people-review",
+      "text": "---\nname: stardust-oa-people-review\ndescription: Business criteria for synthetic category stardust-oa-people-review only.\n---\n\n# Synthetic stardust-oa-people-review\n\nThis source applies only to owned pending items in category stardust-oa-people-review. It adds no requirement for an unowned item. Preserve the actual source evidence and do not invent an action.\n",
+      "sha256": "71c9c3120d463f74b137b361736bc0b2a05738259880e5927fd598353aae37ec"
+    },
+    {
+      "name": "stardust-oa-project-review",
+      "text": "---\nname: stardust-oa-project-review\ndescription: Business criteria for synthetic category stardust-oa-project-review only.\n---\n\n# Synthetic stardust-oa-project-review\n\nThis source applies only to owned pending items in category stardust-oa-project-review. It adds no requirement for an unowned item. Preserve the actual source evidence and do not invent an action.\n",
+      "sha256": "cf51c9c3eca440918598e853f996d651be6e6415b1a494210c6c8f95f34be634"
+    }
+  ],
+  "live_sources": {
+    "list_dingtalk_pending_oa": {
+      "result": {
+        "principalUserId": "principal-7",
+        "items": [],
+        "hasMore": false
+      }
+    },
+    "read_dingtalk_oa": {
+      "result": {
+        "processInstanceId": "proc-fixture",
+        "processCode": "synthetic-project",
+        "status": "RUNNING",
+        "tasks": [
+          {
+            "taskId": "task-other",
+            "userId": "other-9",
+            "status": "RUNNING"
+          }
+        ]
+      }
+    },
+    "read_dingtalk_oa_tasks": {
+      "result": {
+        "tasks": [
+          {
+            "taskId": "task-other",
+            "userId": "other-9",
+            "status": "RUNNING"
+          }
+        ]
+      }
+    }
+  },
+  "oracle": {
+    "consumer": "no_action because currently owned pending item is absent",
+    "audit": "approve same actual baseline candidate with exact digest and revision0",
+    "required_live_reads": [
+      "read_dingtalk_oa",
+      "read_dingtalk_oa_tasks",
+      "list_dingtalk_pending_oa"
+    ],
+    "source_fidelity": "every returned Skill model-visible body equals callback original",
+    "not_oracle": "no assertion that all arms read fewer bodies"
+  }
+}
