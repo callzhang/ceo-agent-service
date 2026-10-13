@@ -1,0 +1,49 @@
+# Installed Skill applicability — validation
+
+## Confirmed mechanism
+
+Production OA task386399 runs349148/349154/349160/349162 all receive seven installed entries and the same generated `For each installed selection` instruction. The generic OA Skill explicitly selects applicable domain guidance by process/category. Service-level all-entry reading contradicts that boundary. First Audit349154 reads all seven (80,792 characters); later Consumer/Audit read two (44,931). Those runs all use the old instruction; this35,861-character difference is not a candidate saving.
+
+The candidate changes only installed discovery to read applicable entries and dependencies required by their workflows. It removes the implication that merely naming another Skill makes it mandatory. Exact paths, catalog metadata, frozen selection requirements, source binding, result validation, role policy, session and routing remain unchanged. No keyword classifier, fallback or special OA branch is added. A separate dirty historical worktree already contains an uncommitted applicable-selection experiment; its edits are preserved and not attributed to this isolated change.
+
+## Verification and limits
+
+Two added focused tests fail before the change. The four affected suites afterwards have238 passed,4 skipped; Ruff and diff checks pass. These regressions verify instruction semantics and frozen lookup preservation, not model savings.
+
+Four native anonymous cold turns compare baseline7e6708ad with the candidate. Each arm receives three synthetic installed Skills, the same draft budget facts (stated120, rows40/50/20, actual110, difference10), same role-specific Developer, modelgpt-5.6-luna and existing production role command helpers. Consumer both returns valid no_action with correct arithmetic and no spending approval; Audit both approves the same actual baseline Consumer candidate/digest/revision. Native schema stays disabled for this independent test. Synthetic Profile is minimal; actual business sources, installed private Skill contents and business providers are excluded.
+
+All four turns read document, calendar and mail Skill bodies completely. Therefore this sample **does not prove reduced irrelevant body reads**. Baseline Consumer additionally makes one rejected AGENTS path lookup; both Audit arms make the same rejected lookup. The candidate does not generally eliminate that lookup. Task prompt is16 characters shorter; no token/cost/performance gain is established.
+
+The first Audit cold fails the native Git trust check before creating a session (exit1,noSID). It is retained in `pre-model-startup/`. Initializing the anonymous fixture directory as Git allows the existing Audit command to start without changing permissions, sandbox or approval policy. Only the Audit pair is then run; completed Consumers are not replayed. Consumer pair ran before Git initialization, Audit pair after; compare within roles, not across this environmental boundary. A verifier initially requested a native range beyond file length and received an empty range; it was corrected to exact file line count, without model reruns or changed outputs.
+
+Independent read-only review checked diff, production discovery, four native results, exact bodies and source/candidate equality. Concise records are `evals/trajectory_optimization/installed_skill_on_demand.results.v1.json`; raw anonymous controls are local at `/private/tmp/ceo-installed-skill-controls-drfqayre` while acceptance remains active.
+
+## Release boundary
+
+This is an unpublished draft with a confirmed contradictory instruction repaired and a valid limited business comparison. It is not production read-volume acceptance. Continue with realistic multi-domain cases and verify actual trajectories before claiming resource savings or publishing this optimization. No Audit policy change or previous-feedback injection is part of this change.
+
+
+## Native delivery and task-source follow-up
+
+The four first-comparison saved Task messages exactly match native user.text. Codex native base instructions require use of all available Skills explicitly named by the user. Generated user-message inventories could interact with that native rule, but this is a hypothesis about behavior, not a proven cause of every read.
+
+A second four-cold anonymous comparison holds the current candidate renderer against the existing zero-argument `read_skill()` discovery entry. All four runs use the same initialized temporary Git directory, production role helpers, synthetic facts/three Skills and same actual baseline Consumer candidate for Audit. Both Consumer arms return correct no_action; both Audit arms approve the same digest/revision. Both arms now read only the document body. The tool-discovery arm also queries metadata. Consequently this comparison does not prove a body-read reduction or tool-call improvement. It also prevents treating the first sample's three-body behavior as deterministic. No new application implementation or permissions were added for this experiment. Records: `installed_skill_tool_discovery.results.v1.json`.
+
+Read-only source configuration inspection establishes live OA scheduled Task4/version10 has seven operation Skill refs and seven explicit `$SkillName` references in its813-character prompt. All seven are named outside the generated discovery section in the real Audit input. Therefore changing generated discovery alone cannot remove those task-source references. The prompt already says to choose applicable categories, creating an avoidable mismatch between explicit per-Skill naming and applicability.
+
+An exact candidate for Task4 removes only the six business-domain names from the first sentence and retains the generic OA Skill ref. Prompt length813→628; source SHA91ccbae5fb0768536185c3036f7319aba25138b8b0379b7c8d57a0d8abc04baa, candidate SHAbd3bc5aed557df687f8a4bdd2c1d830b2c2ff4a3e2dd964d1dac20653843d455. All text after the first sentence—including personal decision rules—and all other payload fields remain identical. Both payloads validate through the existing ScheduledTaskUpdatePayload; candidate refs match its sole unique dollar reference. Exact before/after payloads remain local in the active anonymous-control directory; repository evidence stores only hashes/counts/ref metadata. No live update was issued.
+
+Next gate: fixed generic-entry/dependency comparison across approval categories, independently verify that applicable domain rules are still retrieved, then publish through the existing version-guarded scheduled-task API. Existing input snapshots remain immutable; no historical migration or replay. A smaller configuration declaration is not itself evidence that the model reads fewer bodies or decides correctly.
+
+
+Independent read-only review verified the second comparison and exact configuration diff. It identified two additional boundaries. The experimental candidate entry says “No task Skill was selected” while the synthetic context still lists three names; treat it as a transport probe, not a faithful production unselected-task input. Both metadata responses have three exact model-visible rows, and the document body is fully model-visible, but neither is proof of an applicability improvement.
+
+The Task4 candidate also changes future frozen source membership: only the generic operation snapshot would be frozen, with six domain rules obtained from installed Skills on demand. Existing business-rule text after the first sentence is preserved; complete domain delivery and same-run source-version consistency are **not** established. This is a configuration behavior tradeoff and the candidate is not release-ready. Do not publish merely because the API schema accepts it or the prompt is shorter. Existing input snapshots remain unchanged. No code beyond the original PR67 renderer change or production setting changed in this follow-up.
+
+## Current frozen OA source boundary (2026-10-13)
+
+Normal mergee1bada98 integrates released maine2652eea, preserving PR69's original OA scheduled wrapper and unchanged frozen-source session reuse. Documentation conflicts retain latest main behavior plus this draft's installed-applicability wording, and both claim rows. The first run reports83 pass/one obsolete draft assertion requiring the pre-PR62 frozen call phrase; corrected only to current exact-source/reuse assertions. Four affected suites pass84 in4.29s.
+
+Seven-name fully frozen discovery preflight shows the unchanged frozen clause and24-character difference in final installed-dependency wording (1097→1073); inputs are not byte-identical, and this does not show fewer frozen reads. Record: oa_frozen_applicability_preflight.v1.json.
+
+A natural post-PR69 OA task404387 already reads only generic and attendance/travel frozen bodies through read_task_skill in Consumer and both fresh Audits, without installed fallback or clipping. Consumer's same-session continuation rereads live state and reuses Skill content. The case/category differs from the historical seven-body project case, so the observed lower read count is not a controlled causal improvement or PR67 acceptance. External dispatch success is explicitly outside this source-delivery evidence. Record: oa_frozen_skill_binding.post_release.v1.json. Do not alter seven source membership or existing business rules based on that comparison.

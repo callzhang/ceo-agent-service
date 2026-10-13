@@ -1,0 +1,229 @@
+{
+  "version": 1,
+  "scope": "Anonymous document cold Consumer/Audit comparison; same3 selected installed Skill entries. No private data or business providers. Native schema off.",
+  "baseline_ref": "7e6708adbaf7b7275e7bfc06026b42b81a93d98c",
+  "candidate_file_sha256": "ffa8513990f808fd0e9523d20e6e79062bc0cf07bb729af68cf27a3fe0278fcf",
+  "runs": [
+    {
+      "role": "consumer",
+      "arm": "baseline",
+      "session_id": "01a13242-b923-7540-ad51-be2414ec5907",
+      "canonical_valid": true,
+      "outcome": "no_action",
+      "summary": "已完成只读预算文档复核：标题声明总额为 120 单位；三条完整项目行合计为 40 + 50 + 20 = 110 单位；两者相差 10 单位，实际行合计比声明总额少 10 单位。该草稿存在算术差异，但未批准任何更正或支出，也未执行外部操作。",
+      "candidate_digest": null,
+      "proposal_revision": 0,
+      "task_chars": 3068,
+      "task_sha256": "4fde393e35580f0a7e937ea4aa4f6ef7c0ab4a10d9b5ce927d38d56f2ad93d2d",
+      "developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T15-36-36-01a13242-b923-7540-ad51-be2414ec5907.jsonl",
+      "native_records": 50,
+      "native_sha256": "18691fff004f2e3268236e83704f1723ec27c90e7e866587e2fb3be04dddf70f",
+      "task_complete": true,
+      "skill_reads": [
+        {
+          "path": "/Users/derek/.agents/AGENTS.md",
+          "name": null,
+          "is_error": true,
+          "content_chars": 0,
+          "content_sha256": null
+        },
+        {
+          "path": "/private/tmp/ceo-installed-skill-controls-drfqayre/skills/fixture-document-review/SKILL.md",
+          "name": "fixture-document-review",
+          "is_error": false,
+          "content_chars": 256,
+          "content_sha256": "137ed8dd024ecc7e2416e5a18f52830a869f6ac8ecb94300c81a0c26f9de8aa9"
+        },
+        {
+          "path": "/private/tmp/ceo-installed-skill-controls-drfqayre/skills/fixture-calendar-review/SKILL.md",
+          "name": "fixture-calendar-review",
+          "is_error": false,
+          "content_chars": 188,
+          "content_sha256": "4fd4904306310f95a783537b27bace79f994fdb6fd5faf45d2bdfd53ad596d1a"
+        },
+        {
+          "path": "/private/tmp/ceo-installed-skill-controls-drfqayre/skills/fixture-mail-review/SKILL.md",
+          "name": "fixture-mail-review",
+          "is_error": false,
+          "content_chars": 164,
+          "content_sha256": "e7b008e6ebc961da6b5425f2023b918db335d6861e852f03c53a3a704b6468c4"
+        }
+      ]
+    },
+    {
+      "role": "consumer",
+      "arm": "candidate",
+      "session_id": "01a13243-1800-7301-a185-b8c67994b97c",
+      "canonical_valid": true,
+      "outcome": "no_action",
+      "summary": "文档审核完成：标题声明总额为120单位；三个完整项目行分别为40、50和20单位，实际合计为110单位。因此存在10单位的差异（声明总额高于项目行合计10单位）。该文档仍为草稿，差异不代表支出已获批准；本次仅报告差异，未改写源文档，也未声称任何更正已获批准。无需外部操作。",
+      "candidate_digest": null,
+      "proposal_revision": 0,
+      "task_chars": 3052,
+      "task_sha256": "5613c4a0af50c8fdd20c6a4a05e4660b9ac19a2cb3207899f1b536391061ae6d",
+      "developer_sha256": "12f34077bc738b3d3727f62e1519cf8ac17abecdd0f16c3ea30040a6684956e7",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T15-37-00-01a13243-1800-7301-a185-b8c67994b97c.jsonl",
+      "native_records": 43,
+      "native_sha256": "d71dd73f86620e8b838acc0a4c86192caea8d0b098b4b91f26bd19d7bd41d3b8",
+      "task_complete": true,
+      "skill_reads": [
+        {
+          "path": "/private/tmp/ceo-installed-skill-controls-drfqayre/skills/fixture-document-review/SKILL.md",
+          "name": "fixture-document-review",
+          "is_error": false,
+          "content_chars": 256,
+          "content_sha256": "137ed8dd024ecc7e2416e5a18f52830a869f6ac8ecb94300c81a0c26f9de8aa9"
+        },
+        {
+          "path": "/private/tmp/ceo-installed-skill-controls-drfqayre/skills/fixture-calendar-review/SKILL.md",
+          "name": "fixture-calendar-review",
+          "is_error": false,
+          "content_chars": 188,
+          "content_sha256": "4fd4904306310f95a783537b27bace79f994fdb6fd5faf45d2bdfd53ad596d1a"
+        },
+        {
+          "path": "/private/tmp/ceo-installed-skill-controls-drfqayre/skills/fixture-mail-review/SKILL.md",
+          "name": "fixture-mail-review",
+          "is_error": false,
+          "content_chars": 164,
+          "content_sha256": "e7b008e6ebc961da6b5425f2023b918db335d6861e852f03c53a3a704b6468c4"
+        }
+      ]
+    },
+    {
+      "role": "audit",
+      "arm": "baseline",
+      "session_id": "01a13244-02c3-77a3-8934-bf12290e8f4f",
+      "canonical_valid": true,
+      "outcome": "approve",
+      "summary": "Approved. The candidate correctly applies the document-review rule: the stated total is 120 units, while the three complete rows sum to 40 + 50 + 20 = 110 units, producing a 10-unit discrepancy. It accurately reports the discrepancy as a draft arithmetic issue, does not approve spending or claim a correction, and proposes no external action. Calendar and mail Skills are not applicable to this document-review task.",
+      "candidate_digest": "5223a55e9fbff8dbc2a000e8ef5a84491a7f34972e5d3af9f412b6f637b446a2",
+      "proposal_revision": 0,
+      "task_chars": 4401,
+      "task_sha256": "fc6d9813612eb4fb8eca69ce9694129f821062bd7e40ca873cc5866ed900709f",
+      "developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T15-38-00-01a13244-02c3-77a3-8934-bf12290e8f4f.jsonl",
+      "native_records": 41,
+      "native_sha256": "8d9a699b6e3dc0fe8560c4af2beda7316ddfe56959adafb21969b3555edcee0c",
+      "task_complete": true,
+      "skill_reads": [
+        {
+          "path": "/Users/derek/.agents/AGENTS.md",
+          "name": null,
+          "is_error": true,
+          "content_chars": 0,
+          "content_sha256": null
+        },
+        {
+          "path": "/private/tmp/ceo-installed-skill-controls-drfqayre/skills/fixture-document-review/SKILL.md",
+          "name": "fixture-document-review",
+          "is_error": false,
+          "content_chars": 256,
+          "content_sha256": "137ed8dd024ecc7e2416e5a18f52830a869f6ac8ecb94300c81a0c26f9de8aa9"
+        },
+        {
+          "path": "/private/tmp/ceo-installed-skill-controls-drfqayre/skills/fixture-calendar-review/SKILL.md",
+          "name": "fixture-calendar-review",
+          "is_error": false,
+          "content_chars": 188,
+          "content_sha256": "4fd4904306310f95a783537b27bace79f994fdb6fd5faf45d2bdfd53ad596d1a"
+        },
+        {
+          "path": "/private/tmp/ceo-installed-skill-controls-drfqayre/skills/fixture-mail-review/SKILL.md",
+          "name": "fixture-mail-review",
+          "is_error": false,
+          "content_chars": 164,
+          "content_sha256": "e7b008e6ebc961da6b5425f2023b918db335d6861e852f03c53a3a704b6468c4"
+        }
+      ]
+    },
+    {
+      "role": "audit",
+      "arm": "candidate",
+      "session_id": "01a13244-4f9a-70d0-9886-24897c3c21ed",
+      "canonical_valid": true,
+      "outcome": "approve",
+      "summary": "Approved. The candidate correctly applies the document-review Skill: the stated total is 120 units, the complete item rows sum to 40 + 50 + 20 = 110 units, and the discrepancy is 10 units, with the actual row sum below the stated total. It correctly reports a draft arithmetic discrepancy without claiming approval of a correction or spending and proposes no external action. Calendar and mail review Skills are not applicable.",
+      "candidate_digest": "5223a55e9fbff8dbc2a000e8ef5a84491a7f34972e5d3af9f412b6f637b446a2",
+      "proposal_revision": 0,
+      "task_chars": 4385,
+      "task_sha256": "2743090d57a438730600e3a24b1bfefd4c99d91f585e22d8dd76a7a0bc7af76a",
+      "developer_sha256": "5bc361abeb04c598e0b0a828c6e4e278b17c9b9256f8ea402885991a5bef35c3",
+      "native_path": "/Users/derek/.codex/sessions/2026/10/12/rollout-2026-10-12T15-38-20-01a13244-4f9a-70d0-9886-24897c3c21ed.jsonl",
+      "native_records": 41,
+      "native_sha256": "5839331f8cf01ff728f6a3c14091c5526a642a4d382b7dd3d7cf79791e83393d",
+      "task_complete": true,
+      "skill_reads": [
+        {
+          "path": "/Users/derek/.agents/AGENTS.md",
+          "name": null,
+          "is_error": true,
+          "content_chars": 0,
+          "content_sha256": null
+        },
+        {
+          "path": "/private/tmp/ceo-installed-skill-controls-drfqayre/skills/fixture-document-review/SKILL.md",
+          "name": "fixture-document-review",
+          "is_error": false,
+          "content_chars": 256,
+          "content_sha256": "137ed8dd024ecc7e2416e5a18f52830a869f6ac8ecb94300c81a0c26f9de8aa9"
+        },
+        {
+          "path": "/private/tmp/ceo-installed-skill-controls-drfqayre/skills/fixture-calendar-review/SKILL.md",
+          "name": "fixture-calendar-review",
+          "is_error": false,
+          "content_chars": 188,
+          "content_sha256": "4fd4904306310f95a783537b27bace79f994fdb6fd5faf45d2bdfd53ad596d1a"
+        },
+        {
+          "path": "/private/tmp/ceo-installed-skill-controls-drfqayre/skills/fixture-mail-review/SKILL.md",
+          "name": "fixture-mail-review",
+          "is_error": false,
+          "content_chars": 164,
+          "content_sha256": "e7b008e6ebc961da6b5425f2023b918db335d6861e852f03c53a3a704b6468c4"
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "Consumer pair before temporary Git initialization; Audit pair after Git initialization. No cross-role environment comparison.",
+    "First Audit pre-model trust-check exit1/noSID preserved; not business failure.",
+    "Candidate Consumer reads all3 Skills; no applicable-only body reduction proved.",
+    "Single synthetic document case is not calendar/mail/OA or full production acceptance."
+  ],
+  "independent_review": {
+    "agent": "native_catalog_review",
+    "mode": "read-only",
+    "all4canonical_and_task_complete": true,
+    "all3_skill_bodies_model_visible_each_arm": true,
+    "body_read_reduction_proved": false,
+    "runtime_policy_changes": false
+  },
+  "production_selection_evidence": {
+    "attempts": [
+      349148,
+      349154,
+      349160,
+      349162
+    ],
+    "selection_entries": 7,
+    "same_discovery_sha256_prefix": "c506fb89c9e7d8ed",
+    "mandatory_instruction": "For each installed selection, call its exact agent_cli.read_skill(path=...) entry before deciding or reviewing.",
+    "first_audit_skill_content_chars": 80792,
+    "later_applicable_skill_content_chars": 44931,
+    "difference_attribution": "All production runs use old renderer; not candidate improvement."
+  },
+  "tests": {
+    "red": {
+      "failed": 2,
+      "deselected": 28
+    },
+    "focused_green": {
+      "passed": 238,
+      "skipped": 4
+    },
+    "ruff": "passed",
+    "diff_check": "passed"
+  }
+}
